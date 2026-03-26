@@ -1128,8 +1128,14 @@ fn start_cliproxyapi(app: tauri::AppHandle) -> Result<serde_json::Value, String>
         eprintln!("[PORT_CLEANUP] Warning: {}", e);
     }
 
-    // Generate random password for local mode
-    let password = generate_random_password();
+    // Reuse existing secret-key from config if present, otherwise generate a new one
+    let existing_key = conf
+        .get("remote-management")
+        .and_then(|v| v.get("secret-key"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+    let password = existing_key.unwrap_or_else(|| generate_random_password());
 
     // Store the password for keep-alive authentication
     *CLI_PROXY_PASSWORD.lock() = Some(password.clone());
@@ -1258,8 +1264,14 @@ fn restart_cliproxyapi(app: tauri::AppHandle) -> Result<(), String> {
         eprintln!("[PORT_CLEANUP] Warning: {}", e);
     }
 
-    // Generate random password for local mode
-    let password = generate_random_password();
+    // Reuse existing secret-key from config if present, otherwise generate a new one
+    let existing_key = conf
+        .get("remote-management")
+        .and_then(|v| v.get("secret-key"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string());
+    let password = existing_key.unwrap_or_else(|| generate_random_password());
 
     // Store the password for keep-alive authentication
     *CLI_PROXY_PASSWORD.lock() = Some(password.clone());
