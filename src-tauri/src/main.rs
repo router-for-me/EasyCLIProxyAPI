@@ -914,6 +914,15 @@ fn generate_random_password() -> String {
         .collect()
 }
 
+fn get_or_generate_secret_key(conf: &serde_yaml::Value) -> String {
+    conf.get("remote-management")
+        .and_then(|v| v.get("secret-key"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(generate_random_password)
+}
+
 fn start_monitor(app: tauri::AppHandle) {
     let proc_ref = Arc::clone(&PROCESS);
     thread::spawn(move || {
@@ -1128,14 +1137,7 @@ fn start_cliproxyapi(app: tauri::AppHandle) -> Result<serde_json::Value, String>
         eprintln!("[PORT_CLEANUP] Warning: {}", e);
     }
 
-    // Reuse existing secret-key from config if present, otherwise generate a new one
-    let existing_key = conf
-        .get("remote-management")
-        .and_then(|v| v.get("secret-key"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string());
-    let password = existing_key.unwrap_or_else(|| generate_random_password());
+    let password = get_or_generate_secret_key(&conf);
 
     // Store the password for keep-alive authentication
     *CLI_PROXY_PASSWORD.lock() = Some(password.clone());
@@ -1264,14 +1266,7 @@ fn restart_cliproxyapi(app: tauri::AppHandle) -> Result<(), String> {
         eprintln!("[PORT_CLEANUP] Warning: {}", e);
     }
 
-    // Reuse existing secret-key from config if present, otherwise generate a new one
-    let existing_key = conf
-        .get("remote-management")
-        .and_then(|v| v.get("secret-key"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string());
-    let password = existing_key.unwrap_or_else(|| generate_random_password());
+    let password = get_or_generate_secret_key(&conf);
 
     // Store the password for keep-alive authentication
     *CLI_PROXY_PASSWORD.lock() = Some(password.clone());
