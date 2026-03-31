@@ -1128,36 +1128,45 @@ fn start_cliproxyapi(app: tauri::AppHandle) -> Result<serde_json::Value, String>
         eprintln!("[PORT_CLEANUP] Warning: {}", e);
     }
 
-    // Generate random password for local mode
-    let password = generate_random_password();
+    // Check if a password already exists in the config, otherwise generate one
+    let password = if let Some(sk) = conf
+        .get("remote-management")
+        .and_then(|rm| rm.get("secret-key"))
+        .and_then(|sk| sk.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        sk.to_string()
+    } else {
+        let new_pass = generate_random_password();
+
+        // Ensure remote-management section exists and insert new password
+        if !conf
+            .as_mapping()
+            .unwrap()
+            .contains_key(&serde_yaml::Value::from("remote-management"))
+        {
+            conf.as_mapping_mut().unwrap().insert(
+                serde_yaml::Value::from("remote-management"),
+                serde_yaml::Value::Mapping(Default::default()),
+            );
+        }
+
+        let rm = conf
+            .as_mapping_mut()
+            .unwrap()
+            .get_mut(&serde_yaml::Value::from("remote-management"))
+            .unwrap()
+            .as_mapping_mut()
+            .unwrap();
+        rm.insert(
+            serde_yaml::Value::from("secret-key"),
+            serde_yaml::Value::from(new_pass.as_str()),
+        );
+        new_pass
+    };
 
     // Store the password for keep-alive authentication
     *CLI_PROXY_PASSWORD.lock() = Some(password.clone());
-
-    // Ensure remote-management section exists
-    if !conf
-        .as_mapping()
-        .unwrap()
-        .contains_key(&serde_yaml::Value::from("remote-management"))
-    {
-        conf.as_mapping_mut().unwrap().insert(
-            serde_yaml::Value::from("remote-management"),
-            serde_yaml::Value::Mapping(Default::default()),
-        );
-    }
-
-    // Set the secret-key
-    let rm = conf
-        .as_mapping_mut()
-        .unwrap()
-        .get_mut(&serde_yaml::Value::from("remote-management"))
-        .unwrap()
-        .as_mapping_mut()
-        .unwrap();
-    rm.insert(
-        serde_yaml::Value::from("secret-key"),
-        serde_yaml::Value::from(password.as_str()),
-    );
 
     // Write updated config
     let updated_content = serde_yaml::to_string(&conf).map_err(|e| e.to_string())?;
@@ -1258,36 +1267,45 @@ fn restart_cliproxyapi(app: tauri::AppHandle) -> Result<(), String> {
         eprintln!("[PORT_CLEANUP] Warning: {}", e);
     }
 
-    // Generate random password for local mode
-    let password = generate_random_password();
+    // Check if a password already exists in the config, otherwise generate one
+    let password = if let Some(sk) = conf
+        .get("remote-management")
+        .and_then(|rm| rm.get("secret-key"))
+        .and_then(|sk| sk.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        sk.to_string()
+    } else {
+        let new_pass = generate_random_password();
+
+        // Ensure remote-management section exists and insert new password
+        if !conf
+            .as_mapping()
+            .unwrap()
+            .contains_key(&serde_yaml::Value::from("remote-management"))
+        {
+            conf.as_mapping_mut().unwrap().insert(
+                serde_yaml::Value::from("remote-management"),
+                serde_yaml::Value::Mapping(Default::default()),
+            );
+        }
+
+        let rm = conf
+            .as_mapping_mut()
+            .unwrap()
+            .get_mut(&serde_yaml::Value::from("remote-management"))
+            .unwrap()
+            .as_mapping_mut()
+            .unwrap();
+        rm.insert(
+            serde_yaml::Value::from("secret-key"),
+            serde_yaml::Value::from(new_pass.as_str()),
+        );
+        new_pass
+    };
 
     // Store the password for keep-alive authentication
     *CLI_PROXY_PASSWORD.lock() = Some(password.clone());
-
-    // Ensure remote-management section exists
-    if !conf
-        .as_mapping()
-        .unwrap()
-        .contains_key(&serde_yaml::Value::from("remote-management"))
-    {
-        conf.as_mapping_mut().unwrap().insert(
-            serde_yaml::Value::from("remote-management"),
-            serde_yaml::Value::Mapping(Default::default()),
-        );
-    }
-
-    // Set the secret-key
-    let rm = conf
-        .as_mapping_mut()
-        .unwrap()
-        .get_mut(&serde_yaml::Value::from("remote-management"))
-        .unwrap()
-        .as_mapping_mut()
-        .unwrap();
-    rm.insert(
-        serde_yaml::Value::from("secret-key"),
-        serde_yaml::Value::from(password.as_str()),
-    );
 
     // Write updated config
     let updated_content = serde_yaml::to_string(&conf).map_err(|e| e.to_string())?;
