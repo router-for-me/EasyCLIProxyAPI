@@ -1,0 +1,81 @@
+name: Sync Upstream and Release
+
+on:
+  schedule:
+    # Check for upstream changes daily at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force a release even if no upstream changes'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  UPSTREAM_REPO: https://github.com/router-for-me/EasyCLI.git
+  UPSTREAM_BRANCH: main
+
+jobs:
+  sync:
+    name: Sync Upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream ${{ env.UPSTREAM_REPO }} || true
+          git fetch upstream ${{ env.UPSTREAM_BRANCH }}
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          LOCAL_SHA=$(git rev-parse HEAD)
+          UPSTREAM_SHA=$(git rev-parse upstream/${{ env.UPSTREAM_BRANCH }})
+
+          if [ "$LOCAL_SHA" = "$UPSTREAM_SHA" ] && [ "${{ github.event.inputs.force_release }}" != "true" ]; then
+            echo "No upstream changes detected."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream changes detected or force release requested."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream changes
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          git merge upstream/${{ env.UPSTREAM_BRANCH }} --no-edit --allow-unrelated-histories || {
+            echo "::warning::Merge conflict detected. Resolving by keeping our changes."
+            git checkout --ours .
+            git add .
+            git commit -m "Merge upstream (conflicts resolved by keeping local)"
+          }
+
+      - name: Push merged changes
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          git push origin HEAD
+
+      - name: Create release tag (triggers build workflow)
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          DATE=$(date +%Y%m%d)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG="v${DATE}-sync-${SHORT_SHA}"
+          echo "Creating tag: ${TAG}"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Tag pushed — the 'Release on Tag' workflow will handle the build."
