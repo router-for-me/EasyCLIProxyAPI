@@ -4,7 +4,7 @@
 
 EasyCLI is a Tauri v2-based desktop GUI for managing and operating CLIProxyAPI in Local or Remote mode. Recent updates migrate the app from Electron to Tauri, add a system tray with hide-to-tray behavior, and introduce proxy support during the local download/update flow.
 
-Upstream project: https://github.com/luispater/CLIProxyAPI
+Upstream project: https://github.com/router-for-me/CLIProxyAPI
 
 ## Features
 - Local and Remote modes with quick switching.
@@ -27,7 +27,7 @@ Upstream project: https://github.com/luispater/CLIProxyAPI
 - Data directory: `~/cliproxyapi` holds the installed CLI and configuration.
 
 ### Release Download Logic
-- Checks GitHub API: `/repos/luispater/CLIProxyAPI/releases/latest`.
+- Checks GitHub API: `/repos/router-for-me/CLIProxyAPI/releases/latest`.
 - Selects by OS/arch with file names:
   - macOS arm64: `CLIProxyAPI_<ver>_darwin_arm64.tar.gz`
   - macOS amd64: `CLIProxyAPI_<ver>_darwin_amd64.tar.gz`
