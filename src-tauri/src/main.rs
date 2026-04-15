@@ -362,7 +362,7 @@ async fn fetch_latest_release(proxy_url: String) -> Result<VersionInfo, AppError
         .user_agent("EasyCLI")
         .build()?;
     let resp = client
-        .get("https://api.github.com/repos/luispater/CLIProxyAPI/releases/latest")
+        .get("https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest")
         .header("Accept", "application/vnd.github.v3+json")
         .send()
         .await?
