@@ -3,8 +3,16 @@ import { ConfigPanelPage } from './pages/ConfigPanel';
 import { KernelPage } from './pages/Kernel';
 
 const pages = [
-  { id: 'kernel', label: '内核管理', component: KernelPage },
-  { id: 'config', label: '配置面板', component: ConfigPanelPage },
+  {
+    id: 'kernel',
+    label: '内核',
+    component: KernelPage,
+  },
+  {
+    id: 'config',
+    label: '配置',
+    component: ConfigPanelPage,
+  },
 ] as const;
 
 type PageId = (typeof pages)[number]['id'];
@@ -22,10 +30,14 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand" title="CLI Proxy API GUI">
-          <strong>Easy CLIProxyAPI</strong>
+          <span className="brand-mark">CP</span>
+          <div>
+            <strong>Easy CLIProxyAPI</strong>
+            <span>Desktop Console</span>
+          </div>
         </div>
 
-        <nav className="nav-section">
+        <nav className="nav-section" aria-label="主导航">
           {pages.map((page) => (
             <button
               key={page.id}
@@ -37,11 +49,18 @@ function App() {
             </button>
           ))}
         </nav>
+
+        <div className="sidebar-footer">
+          <span>CPA GUI</span>
+          <strong>0.1</strong>
+        </div>
       </aside>
 
-      <main className="content">
-        <ActivePage />
-      </main>
+      <div className="workspace">
+        <main className="content">
+          <ActivePage />
+        </main>
+      </div>
     </div>
   );
 }
