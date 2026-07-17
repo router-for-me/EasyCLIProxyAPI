@@ -528,6 +528,7 @@ export function AuthFileManagementPage() {
               <span>共 {oauthModels.length} 个 · 已开放 {openOauthModelNames.size} 个</span>
               <div>
                 <button type="button" className="secondary-button compact-button" onClick={toggleAllVisibleOauthModels} disabled={oauthModelLoading || visibleOauthModels.length === 0}>{allVisibleOauthModelsOpen ? '关闭当前' : '开放当前'}</button>
+                <button type="button" className="secondary-button compact-button" onClick={() => setOpenOauthModelNames(new Set(oauthModels.map((model) => model.id.toLowerCase())))} disabled={oauthModelLoading || oauthModels.length === 0 || openOauthModelNames.size === oauthModels.length}>全部开放</button>
                 <button type="button" className="secondary-button compact-button" onClick={() => setOpenOauthModelNames(new Set())} disabled={oauthModelLoading || openOauthModelNames.size === 0}>全部关闭</button>
               </div>
             </div>

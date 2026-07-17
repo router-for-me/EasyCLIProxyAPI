@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  allModelSelectionForDiscovery,
   applyProviderPreset,
   buildProviderRecord,
   createProviderDraft,
@@ -67,7 +68,7 @@ describe('API 接入配置合并', () => {
       apiKey: 'openai-key',
       name: 'custom-openai',
       baseUrl: 'https://api.example.com',
-      thinkingLevels: ['low', 'high'],
+      thinkingLevels: ['fast', 'ultra'],
       models: [
         { name: 'reasoning-a' },
         { name: 'reasoning-b', thinking: { effort: 'high' } },
@@ -76,10 +77,10 @@ describe('API 接入配置合并', () => {
     const result = buildProviderRecord('openai-compatibility', draft);
 
     expect(result.models).toEqual([
-      { name: 'reasoning-a', thinking: { levels: ['low', 'high'] } },
+      { name: 'reasoning-a', thinking: { levels: ['fast', 'ultra'] } },
       {
         name: 'reasoning-b',
-        thinking: { effort: 'high', levels: ['low', 'high'] },
+        thinking: { effort: 'high', levels: ['fast', 'ultra'] },
       },
     ]);
   });
@@ -254,5 +255,19 @@ describe('API 接入配置合并', () => {
     );
 
     expect(Array.from(selected)).toEqual(['model-a', 'model-b']);
+  });
+
+  it('模型选择窗口每次打开都以接口返回的全部模型作为默认选择', () => {
+    const selected = allModelSelectionForDiscovery([
+      { name: 'deepseek-chat' },
+      { name: 'deepseek-reasoner' },
+      { name: 'deepseek-new-model' },
+    ]);
+
+    expect(Array.from(selected)).toEqual([
+      'deepseek-chat',
+      'deepseek-reasoner',
+      'deepseek-new-model',
+    ]);
   });
 });

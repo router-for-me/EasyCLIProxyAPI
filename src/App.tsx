@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FileKey, Gauge, LogIn, Network, ServerCog, Settings } from 'lucide-react';
+import { Bot, FileKey, Gauge, GitFork, LogIn, Network, ServerCog, Settings } from 'lucide-react';
 import appLogo from './assets/logo.jpg';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
 import { ConfigPanelPage } from './pages/ConfigPanel';
@@ -8,6 +8,8 @@ import { AuthFileManagementPage } from './pages/AuthFileManagementPage';
 import { KernelPage } from './pages/Kernel';
 import { OAuthLoginPage } from './pages/ManagementPages';
 import { QuotaPage } from './pages/QuotaPage';
+import { AgentsPage } from './pages/AgentsPage';
+import { ThinkingAliasesPage } from './pages/ThinkingAliasesPage';
 
 const pages = [
   {
@@ -21,6 +23,12 @@ const pages = [
     label: '配置',
     icon: Settings,
     component: ConfigPanelPage,
+  },
+  {
+    id: 'thinking-aliases',
+    label: '模型别名',
+    icon: GitFork,
+    component: ThinkingAliasesPage,
   },
   {
     id: 'oauth',
@@ -45,6 +53,12 @@ const pages = [
     label: '配额',
     icon: Gauge,
     component: QuotaPage,
+  },
+  {
+    id: 'agents',
+    label: '智能体',
+    icon: Bot,
+    component: AgentsPage,
   },
 ] as const;
 
