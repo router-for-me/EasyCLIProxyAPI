@@ -44,7 +44,6 @@ export type ProviderCategory = ProviderSection | 'deepseek';
 export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 export const OPENAI_THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 export const DEEPSEEK_THINKING_LEVELS = OPENAI_THINKING_LEVELS;
-export type ThinkingLevel = (typeof OPENAI_THINKING_LEVELS)[number];
 
 type ProviderDefinition = {
   id: ProviderCategory;
@@ -81,7 +80,7 @@ export type ProviderDraft = {
   disableCooling?: boolean;
   websockets?: boolean;
   testModel?: string;
-  thinkingLevels?: ThinkingLevel[];
+  thinkingLevels?: string[];
   disabled?: boolean;
   cloakMode?: string;
   cloakStrictMode?: boolean;
@@ -275,6 +274,9 @@ export const modelSelectionForDiscovery = (
   );
 };
 
+export const allModelSelectionForDiscovery = (models: ModelOption[]) =>
+  new Set(models.map((model) => model.name.trim().toLowerCase()).filter(Boolean));
+
 const mergeOpenAiApiKeyEntries = (current: unknown, apiKey: string) => {
   const entries = Array.isArray(current) ? current.filter(isRecord) : [];
   const keys = apiKey
@@ -295,19 +297,19 @@ const mergeOpenAiApiKeyEntries = (current: unknown, apiKey: string) => {
   });
 };
 
-const thinkingLevelsFromModels = (models: ModelOption[]): ThinkingLevel[] => {
-  const levels = new Set<ThinkingLevel>();
+const thinkingLevelsFromModels = (models: ModelOption[]): string[] => {
+  const levels: string[] = [];
   models.forEach((model) => {
     const configured = model.thinking?.levels;
     if (!Array.isArray(configured)) return;
     configured.forEach((level) => {
       const normalized = String(level).trim().toLowerCase();
-      if (OPENAI_THINKING_LEVELS.includes(normalized as ThinkingLevel)) {
-        levels.add(normalized as ThinkingLevel);
+      if (normalized && !levels.includes(normalized)) {
+        levels.push(normalized);
       }
     });
   });
-  return OPENAI_THINKING_LEVELS.filter((level) => levels.has(level));
+  return levels;
 };
 
 const draftFromRow = (row: ProviderRow): ProviderDraft => ({
@@ -377,15 +379,14 @@ const deepSeekDefaultModels = (): ModelOption[] => [
 
 export const createProviderDraft = (category: ProviderCategory): ProviderDraft => {
   const draft = emptyProviderDraft();
-  const withThinking = definitionFor(category).openAi
-    ? { ...draft, thinkingLevels: [...OPENAI_THINKING_LEVELS] }
-    : draft;
-  if (category !== 'deepseek') return withThinking;
+  if (category === 'openai-compatibility') return { ...draft, thinkingLevels: [] };
+  if (category !== 'deepseek') return draft;
   return {
-    ...withThinking,
+    ...draft,
     name: 'DeepSeek',
     baseUrl: DEEPSEEK_BASE_URL,
     models: deepSeekDefaultModels(),
+    thinkingLevels: [...DEEPSEEK_THINKING_LEVELS],
   };
 };
 
@@ -394,7 +395,9 @@ export const applyProviderPreset = (
   draft: ProviderDraft,
 ): ProviderDraft => {
   if (!definitionFor(category).openAi || draft.thinkingLevels === undefined) return draft;
-  const levels = draft.thinkingLevels;
+  const levels = category === 'deepseek'
+    ? [...DEEPSEEK_THINKING_LEVELS]
+    : draft.thinkingLevels;
   return {
     ...draft,
     models: draft.models.map((model) => {
@@ -625,7 +628,10 @@ export function ApiAccessPage() {
 
   const openEdit = (row: ProviderRow) => {
     setEditingRow(row);
-    setDialogDraft(draftFromRow(row));
+    const draft = draftFromRow(row);
+    setDialogDraft(activeCategory === 'deepseek'
+      ? { ...draft, thinkingLevels: [...DEEPSEEK_THINKING_LEVELS] }
+      : draft);
     setDialogOpen(true);
   };
 
@@ -652,10 +658,11 @@ export function ApiAccessPage() {
       return false;
     }
     let baseUrl = preparedDraft.baseUrl.trim();
+    let providerHeaders: Record<string, string> = {};
     try {
       if (baseUrl) baseUrl = normalizeBaseUrl(baseUrl);
       if (baseUrlRequired && !baseUrl) throw new Error(`${definition.label} 接入必须填写 Base URL`);
-      parseProviderHeaders(preparedDraft.headersText ?? '');
+      providerHeaders = parseProviderHeaders(preparedDraft.headersText ?? '');
     } catch (requestError) {
       setError(String(requestError));
       return false;
@@ -663,6 +670,23 @@ export function ApiAccessPage() {
     setBusy(true);
     setError('');
     try {
+      let draftToSave = { ...preparedDraft, baseUrl };
+      if (definition.openAi && draftToSave.models.length === 0) {
+        const fetchedModels = await fetchModels(
+          'openai',
+          baseUrl,
+          parsedApiKeys[0],
+          editingRow?.authIndex,
+          providerHeaders,
+        );
+        if (fetchedModels.length === 0) {
+          throw new Error('没有发现可放行的模型，请确认 Base URL 和 API 密钥');
+        }
+        draftToSave = applyProviderPreset(activeCategory, {
+          ...draftToSave,
+          models: fetchedModels,
+        });
+      }
       const latestConfig = await managementApi.get('/config');
       const current = sectionRecordsFromConfig(latestConfig, activeSection);
       let nextList: Record<string, unknown>[];
@@ -676,7 +700,7 @@ export function ApiAccessPage() {
         }
         const nextRecord = buildProviderRecord(
           activeSection,
-          { ...preparedDraft, baseUrl },
+          draftToSave,
           current[targetIndex],
         );
         nextList = current.map((record, index) =>
@@ -692,7 +716,7 @@ export function ApiAccessPage() {
         if (duplicate) throw new Error('相同的接入配置已经存在');
         nextList = [
           ...current,
-          buildProviderRecord(activeSection, { ...preparedDraft, baseUrl }),
+          buildProviderRecord(activeSection, draftToSave),
         ];
       }
 
@@ -846,7 +870,6 @@ export function ApiAccessPage() {
                   <div className="provider-row-main">
                     <div className="provider-row-title">
                       <strong title={row.name}>{row.name}</strong>
-                      {row.disabled ? <span className="state-pill error">已停用</span> : <span className="state-pill success">已启用</span>}
                     </div>
                     <code title={definitionFor(row.section).openAi ? `${row.apiKeys.length} 个密钥` : undefined}>
                       {definitionFor(row.section).openAi && row.apiKeys.length > 1
@@ -861,9 +884,19 @@ export function ApiAccessPage() {
                     {row.authIndex ? <span title={row.authIndex}>运行时凭据 {row.authIndex.slice(0, 8)}…</span> : null}
                   </div>
                   <div className="provider-row-actions">
-                    <button type="button" className="icon-button quiet" onClick={() => void toggleProvider(row)} disabled={busy} title={row.disabled ? '启用' : '停用'}>
-                      {row.disabled ? <Check size={16} /> : <X size={16} />}
-                    </button>
+                    <label className="provider-enabled-control" title={row.disabled ? '启用接入' : '停用接入'}>
+                      <span>{row.disabled ? '已停用' : '已启用'}</span>
+                      <span className="switch-control">
+                        <input
+                          type="checkbox"
+                          checked={!row.disabled}
+                          onChange={() => void toggleProvider(row)}
+                          disabled={busy}
+                          aria-label={`${row.name} 接入${row.disabled ? '启用' : '停用'}开关`}
+                        />
+                        <span className="switch-track" />
+                      </span>
+                    </label>
                     <button type="button" className="icon-button quiet" onClick={() => openEdit(row)} disabled={busy} title="编辑">
                       <Edit3 size={16} />
                     </button>
@@ -917,7 +950,7 @@ function ApiProviderDialog({
   const [discoveredModels, setDiscoveredModels] = useState<ModelOption[]>([]);
   const [modelDiscoveryOpen, setModelDiscoveryOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState('');
-  const [modelSelectionApplied, setModelSelectionApplied] = useState(false);
+  const [thinkingLevelInput, setThinkingLevelInput] = useState('');
   const [selectedModelNames, setSelectedModelNames] = useState<Set<string>>(
     () => new Set(initialDraft.models.map((model) => model.name.toLowerCase())),
   );
@@ -956,19 +989,28 @@ function ApiProviderDialog({
     setDraft((current) => ({ ...current, [field]: value }));
   };
 
-  const toggleThinkingLevel = (level: ThinkingLevel) => {
+  const addThinkingLevel = () => {
+    const level = thinkingLevelInput.trim().toLowerCase();
+    if (!level) return;
     setDraft((current) => {
-      const selected = new Set(current.thinkingLevels ?? []);
-      if (selected.has(level)) selected.delete(level);
-      else selected.add(level);
+      const levels = current.thinkingLevels ?? [];
+      if (levels.some((item) => item.toLowerCase() === level)) return current;
       return {
         ...current,
-        thinkingLevels: OPENAI_THINKING_LEVELS.filter((item) => selected.has(item)),
+        thinkingLevels: [...levels, level],
       };
     });
+    setThinkingLevelInput('');
   };
 
-  const discoverModels = async (initializeSelection = false) => {
+  const removeThinkingLevel = (level: string) => {
+    setDraft((current) => ({
+      ...current,
+      thinkingLevels: (current.thinkingLevels ?? []).filter((item) => item !== level),
+    }));
+  };
+
+  const discoverModels = async () => {
     const baseUrlRequired =
       activeSection === 'codex-api-key' || activeSection === 'openai-compatibility';
     if (baseUrlRequired && !draft.baseUrl.trim()) {
@@ -998,18 +1040,7 @@ function ApiProviderDialog({
         { ...draft, models: fetchedModels },
       ).models;
       setDiscoveredModels(models);
-      if (initializeSelection) {
-        setSelectedModelNames(
-          !editingRow && !modelSelectionApplied
-            ? new Set(models.map((model) => model.name.toLowerCase()))
-            : modelSelectionForDiscovery(
-                activeSection,
-                draft.models,
-                models,
-                draft.excludedModelsText ?? '',
-              ),
-        );
-      }
+      setSelectedModelNames(allModelSelectionForDiscovery(models));
       if (!models.length) setModelError('未发现可用模型');
     } catch (requestError) {
       setDiscoveredModels([]);
@@ -1029,7 +1060,7 @@ function ApiProviderDialog({
     setModelSearch('');
     setSelectedModelNames(new Set(draft.models.map((model) => model.name.toLowerCase())));
     setModelDiscoveryOpen(true);
-    void discoverModels(true);
+    void discoverModels();
   };
 
   const toggleModelSelection = (model: ModelOption) => {
@@ -1055,13 +1086,9 @@ function ApiProviderDialog({
   };
 
   const applyModelSelection = () => {
-    const useProviderDefault = activeSection !== 'openai-compatibility'
-      && draft.models.length === 0
-      && discoveredModels.length > 0
-      && discoveredModels.every((model) => selectedModelNames.has(model.name.toLowerCase()));
-    const models = useProviderDefault
-      ? []
-      : modelOptions.filter((model) => selectedModelNames.has(model.name.toLowerCase()));
+    const models = modelOptions.filter((model) =>
+      selectedModelNames.has(model.name.toLowerCase()),
+    );
     setDraft((current) => ({
       ...current,
       models,
@@ -1073,7 +1100,6 @@ function ApiProviderDialog({
             selectedModelNames,
           ),
     }));
-    setModelSelectionApplied(true);
     setModelDiscoveryOpen(false);
   };
 
@@ -1089,14 +1115,14 @@ function ApiProviderDialog({
     : hasModelExclusions
       ? '已配置模型限制'
       : activeSection === 'openai-compatibility'
-        ? '获取模型后默认全部开放'
+        ? '保存时默认开放全部模型'
         : '使用上游默认模型';
   const modelSummaryDetail = draft.models.length > 0
     ? draft.models.slice(0, 3).map((model) => model.name).join('、')
     : hasModelExclusions
       ? '未勾选的模型不会出现在开放列表'
       : activeSection === 'openai-compatibility'
-        ? '可在模型列表中取消不希望开放的项目'
+        ? '保存接入时会自动获取模型，也可提前取消不需要的项目'
         : '当前开放上游全部模型';
 
   return (
@@ -1133,28 +1159,51 @@ function ApiProviderDialog({
             </div>
           </div>
         ) : null}
-        {definition.openAi ? (
+        {activeCategory === 'deepseek' ? (
+          <div className="thinking-level-config">
+            <div className="thinking-level-heading">
+              <strong>内置思考等级</strong>
+              <span>自动应用到当前开放的全部模型</span>
+            </div>
+            <div className="thinking-level-tags readonly">
+              {DEEPSEEK_THINKING_LEVELS.map((level) => <span key={level}>{level}</span>)}
+            </div>
+          </div>
+        ) : activeCategory === 'openai-compatibility' ? (
           <div className="thinking-level-config">
             <div className="thinking-level-heading">
               <strong>思考等级</strong>
-              <span>应用到当前开放的全部模型</span>
+              <span>按上游支持情况自行添加</span>
             </div>
-            <div className="thinking-level-options">
-              {OPENAI_THINKING_LEVELS.map((level) => {
-                const checked = draft.thinkingLevels?.includes(level) ?? false;
-                return (
-                  <label className={checked ? 'selected' : ''} key={level}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleThinkingLevel(level)}
-                    />
-                    <span>{level}</span>
-                  </label>
-                );
-              })}
+            <div className="thinking-level-entry">
+              <input
+                value={thinkingLevelInput}
+                onChange={(event) => setThinkingLevelInput(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    addThinkingLevel();
+                  }
+                }}
+                placeholder="例如 low、medium 或自定义等级"
+              />
+              <button type="button" className="secondary-button compact-button" onClick={addThinkingLevel} disabled={!thinkingLevelInput.trim()}>
+                <Plus size={14} />添加
+              </button>
             </div>
-          </div>
+            {(draft.thinkingLevels?.length ?? 0) > 0 ? (
+              <div className="thinking-level-tags">
+                {draft.thinkingLevels?.map((level) => (
+                  <span key={level}>
+                    {level}
+                    <button type="button" onClick={() => removeThinkingLevel(level)} title={`删除 ${level}`} aria-label={`删除思考等级 ${level}`}>
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : <small className="thinking-level-empty">未添加时不写入 thinking.levels</small>}
+            </div>
         ) : null}
         <div className="model-config-card">
           <div className="model-config-heading">
