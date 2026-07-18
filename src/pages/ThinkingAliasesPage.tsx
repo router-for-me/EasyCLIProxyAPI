@@ -53,7 +53,7 @@ export const thinkingAliasSourceKindLabel = (kind: string) => {
 };
 
 const thinkingAliasProviderDetail = (kind: string, provider: string) => (
-  provider === thinkingAliasSourceKindLabel(kind) ? '内核模型目录' : provider
+  provider === thinkingAliasSourceKindLabel(kind) ? '内核当前可用模型' : provider
 );
 
 const thinkingAliasSourceDetail = (source: ThinkingAliasSource) => (

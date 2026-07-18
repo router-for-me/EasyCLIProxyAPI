@@ -26,15 +26,23 @@ describe('API 接入配置合并', () => {
     ]);
   });
 
-  it('DeepSeek 新增预设使用 OpenAI 兼容格式和内置思考等级', () => {
+  it('DeepSeek 新增预设默认发现全部模型并应用内置思考等级', () => {
     const draft = createProviderDraft('deepseek');
-    const result = buildProviderRecord('openai-compatibility', {
+    const discovered = [
+      { name: 'deepseek-chat' },
+      { name: 'deepseek-reasoner' },
+      { name: 'deepseek-new-model' },
+    ];
+    const prepared = applyProviderPreset('deepseek', {
       ...draft,
       apiKey: 'deepseek-key',
+      models: discovered,
     });
+    const result = buildProviderRecord('openai-compatibility', prepared);
 
     expect(draft.name).toBe('DeepSeek');
     expect(draft.baseUrl).toBe(DEEPSEEK_BASE_URL);
+    expect(draft.models).toEqual([]);
     expect(result).toMatchObject({
       name: 'DeepSeek',
       'base-url': 'https://api.deepseek.com',
@@ -46,6 +54,10 @@ describe('API 接入配置合并', () => {
         },
         {
           name: 'deepseek-reasoner',
+          thinking: { levels: [...DEEPSEEK_THINKING_LEVELS] },
+        },
+        {
+          name: 'deepseek-new-model',
           thinking: { levels: [...DEEPSEEK_THINKING_LEVELS] },
         },
       ],

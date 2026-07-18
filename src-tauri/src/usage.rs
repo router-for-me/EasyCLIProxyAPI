@@ -255,6 +255,18 @@ impl UsageCollectorState {
         }
     }
 
+    fn set_total_records(&self, total_records: u64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.status.total_records = total_records;
+        }
+    }
+
+    fn increment_total_records(&self, added: usize) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.status.total_records = inner.status.total_records.saturating_add(added as u64);
+        }
+    }
+
     fn status(&self) -> Result<UsageCollectorStatus, String> {
         self.inner
             .lock()
@@ -443,6 +455,9 @@ fn validate_legacy_schema(version: u8, path: &Path) -> Result<(), String> {
 
 pub(crate) fn start_usage_collector(app: tauri::AppHandle) {
     let state = app.state::<UsageCollectorState>();
+    if let Ok(total_records) = total_usage_records() {
+        state.set_total_records(total_records);
+    }
     let Some(token) = state.start() else {
         return;
     };
@@ -498,6 +513,10 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
             Ok(items) => match persist_queue_items(&root, items, &config) {
                 Ok(saved) => {
                     let collected_at = Local::now().to_rfc3339();
+                    if saved > 0 {
+                        app.state::<UsageCollectorState>()
+                            .increment_total_records(saved);
+                    }
                     set_collector_status(
                         &app,
                         "collecting",
@@ -568,9 +587,9 @@ fn set_collector_status(
 ) {
     let state = app.state::<UsageCollectorState>();
     let previous = state.status().ok();
-    let total_records = total_usage_records()
-        .ok()
-        .or_else(|| previous.as_ref().map(|value| value.total_records))
+    let total_records = previous
+        .as_ref()
+        .map(|value| value.total_records)
         .unwrap_or(0);
     state.set_status(UsageCollectorStatus {
         state: state_name.to_string(),
@@ -1280,6 +1299,15 @@ fn mask_api_key(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collector_total_records_are_cached_and_incremented() {
+        let state = UsageCollectorState::default();
+        state.set_total_records(40);
+        state.increment_total_records(2);
+
+        assert_eq!(state.status().unwrap().total_records, 42);
+    }
 
     fn test_root(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(

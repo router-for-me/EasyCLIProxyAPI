@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export type CoreStatus = {
   installed: boolean;
@@ -15,6 +16,7 @@ export type CoreStatus = {
 type CoreRuntimeContextValue = {
   status: CoreStatus | null;
   statusError: string;
+  refreshStatus: () => Promise<void>;
   publishStatus: (status: CoreStatus | null) => void;
 };
 
@@ -23,6 +25,13 @@ const CoreRuntimeContext = createContext<CoreRuntimeContextValue | null>(null);
 export function CoreRuntimeProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<CoreStatus | null>(null);
   const [statusError, setStatusError] = useState('');
+
+  const publishStatus = useCallback((nextStatus: CoreStatus | null) => {
+    setStatus(nextStatus);
+    if (nextStatus) {
+      setStatusError('');
+    }
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -36,17 +45,42 @@ export function CoreRuntimeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    listen<CoreStatus>('core-status-changed', (event) => {
+      if (!disposed) {
+        publishStatus(event.payload);
+      }
+    }).then((stop) => {
+      if (disposed) {
+        stop();
+      } else {
+        unlisten = stop;
+      }
+    }).catch((error) => {
+      if (!disposed) {
+        setStatusError(String(error));
+      }
+    });
+
     void refreshStatus();
     const timer = window.setInterval(() => {
-      void refreshStatus();
-    }, 1500);
+      if (!document.hidden) {
+        void refreshStatus();
+      }
+    }, 10_000);
 
-    return () => window.clearInterval(timer);
-  }, [refreshStatus]);
+    return () => {
+      disposed = true;
+      unlisten?.();
+      window.clearInterval(timer);
+    };
+  }, [publishStatus, refreshStatus]);
 
   const value = useMemo(
-    () => ({ status, statusError, publishStatus: setStatus }),
-    [status, statusError],
+    () => ({ status, statusError, refreshStatus, publishStatus }),
+    [publishStatus, refreshStatus, status, statusError],
   );
 
   return <CoreRuntimeContext.Provider value={value}>{children}</CoreRuntimeContext.Provider>;

@@ -366,17 +366,6 @@ const emptyProviderDraft = (): ProviderDraft => ({
   cloakCacheUserId: false,
 });
 
-const deepSeekDefaultModels = (): ModelOption[] => [
-  {
-    name: 'deepseek-chat',
-    thinking: { levels: [...DEEPSEEK_THINKING_LEVELS] },
-  },
-  {
-    name: 'deepseek-reasoner',
-    thinking: { levels: [...DEEPSEEK_THINKING_LEVELS] },
-  },
-];
-
 export const createProviderDraft = (category: ProviderCategory): ProviderDraft => {
   const draft = emptyProviderDraft();
   if (category === 'openai-compatibility') return { ...draft, thinkingLevels: [] };
@@ -385,7 +374,6 @@ export const createProviderDraft = (category: ProviderCategory): ProviderDraft =
     ...draft,
     name: 'DeepSeek',
     baseUrl: DEEPSEEK_BASE_URL,
-    models: deepSeekDefaultModels(),
     thinkingLevels: [...DEEPSEEK_THINKING_LEVELS],
   };
 };
@@ -1155,7 +1143,7 @@ function ApiProviderDialog({
             <img src={deepseekIcon} alt="" className="provider-logo" />
             <div>
               <strong>OpenAI 兼容预设</strong>
-              <span>已预填 DeepSeek 官方地址与常用模型</span>
+              <span>已预填 DeepSeek 官方地址，保存时自动发现并开放全部模型</span>
             </div>
           </div>
         ) : null}

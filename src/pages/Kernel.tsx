@@ -94,9 +94,12 @@ const compareVersions = (left: string, right: string) => {
 };
 
 export function KernelPage() {
-  const { publishStatus } = useCoreRuntime();
-  const [coreStatus, setCoreStatus] = useState<CoreStatus | null>(null);
-  const [statusError, setStatusError] = useState('');
+  const {
+    status: coreStatus,
+    statusError,
+    refreshStatus,
+    publishStatus,
+  } = useCoreRuntime();
   const [platform, setPlatform] = useState<CorePlatform | null>(null);
   const [platformError, setPlatformError] = useState('');
   const [latest, setLatest] = useState<CoreLatest | null>(cachedLatest);
@@ -165,7 +168,7 @@ export function KernelPage() {
     if (task.result) {
       setMessage(task.message || `${task.result.version} 安装完成`);
       setMessageType('success');
-      void loadCoreStatus();
+      void refreshStatus();
       return;
     }
 
@@ -196,7 +199,6 @@ export function KernelPage() {
         }
       });
 
-    loadCoreStatus();
     loadPlatform();
     loadBundledCore();
     loadInstallTask();
@@ -275,19 +277,6 @@ export function KernelPage() {
     };
   }, [allowLanAccess]);
 
-  const loadCoreStatus = async () => {
-    try {
-      const result = await invoke<CoreStatus>('get_core_status');
-      setCoreStatus(result);
-      publishStatus(result);
-      setStatusError('');
-    } catch (error) {
-      setCoreStatus(null);
-      publishStatus(null);
-      setStatusError(String(error));
-    }
-  };
-
   const runCoreProcessCommand = async (
     command: CoreProcessCommand,
     messages?: { success?: string; failure?: string },
@@ -302,15 +291,12 @@ export function KernelPage() {
 
     try {
       const result = await invoke<CoreStatus>(command);
-      setCoreStatus(result);
       publishStatus(result);
-      setStatusError('');
       showProcessNotice(messages?.success ?? `内核${actionLabel}成功`, 'success');
       return true;
     } catch (error) {
       const errorMessage = String(error);
-      await loadCoreStatus();
-      setStatusError(errorMessage);
+      await refreshStatus();
       showProcessNotice(
         `${messages?.failure ?? `内核${actionLabel}失败`}：${errorMessage}`,
         'error',
@@ -483,7 +469,7 @@ export function KernelPage() {
         message: `${result.version} 安装完成`,
         result,
       });
-      await Promise.all([loadCoreStatus(), loadBundledCore()]);
+      await Promise.all([refreshStatus(), loadBundledCore()]);
     } catch (error) {
       const errorMessage = String(error);
       setMessage(errorMessage);
@@ -532,7 +518,7 @@ export function KernelPage() {
       const result = await invoke<CoreInstallResult>('install_bundled_core');
       setMessage(`${result.version} 内置内核安装完成`);
       setMessageType('success');
-      await Promise.all([loadCoreStatus(), loadBundledCore()]);
+      await Promise.all([refreshStatus(), loadBundledCore()]);
     } catch (error) {
       const errorMessage = String(error);
       setMessage(errorMessage);
@@ -820,7 +806,7 @@ export function KernelPage() {
               type="button"
               className="secondary-button"
               disabled={processBusy || networkBusy}
-              onClick={loadCoreStatus}
+              onClick={() => void refreshStatus()}
             >
               刷新状态
             </button>
@@ -876,7 +862,7 @@ export function KernelPage() {
             </button>
             <button
               type="button"
-              className="primary-button"
+              className="secondary-button"
               title={latestVersion ? `安装 ${latestVersion}` : '安装最新版'}
               disabled={!latestVersion || installDisabled}
               onClick={() => installVersion(latestVersion)}
@@ -894,7 +880,7 @@ export function KernelPage() {
             </button>
             <button
               type="button"
-              className="secondary-button"
+              className="primary-button"
               title={(bundledCore?.assetName ?? bundledCoreError) || '当前发行包未包含内置内核'}
               disabled={!bundledCore || installDisabled}
               onClick={() => void installBundledCore()}

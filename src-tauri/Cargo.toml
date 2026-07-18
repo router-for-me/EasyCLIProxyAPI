@@ -9,6 +9,7 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 flate2 = "1"
 futures-util = "0.3"
