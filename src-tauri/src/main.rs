@@ -27,6 +27,7 @@ const RELEASE_ATOM_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/rel
 const RELEASE_DOWNLOAD_PREFIX: &str =
     "https://github.com/router-for-me/CLIProxyAPI/releases/download/";
 const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
+const CORE_STATUS_EVENT: &str = "core-status-changed";
 const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";
 const CORE_CONFIG_FILE: &str = "config.yaml";
 const CORE_EXAMPLE_CONFIG_FILE: &str = "config.example.yaml";
@@ -89,7 +90,7 @@ struct CorePlatform {
     archive_kind: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CoreStatus {
     installed: bool,
@@ -824,6 +825,10 @@ fn get_core_status(
     current_core_status(Some(process_state.inner()), Some(config.port))
 }
 
+fn emit_core_status(app: &tauri::AppHandle, status: &CoreStatus) {
+    let _ = app.emit(CORE_STATUS_EVENT, status);
+}
+
 #[tauri::command]
 fn get_gui_settings(
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -878,13 +883,16 @@ async fn get_thinking_alias_sources(
 ) -> Result<Vec<ThinkingAliasSource>, String> {
     let config = gui_config_state.snapshot()?;
     let content = fetch_management_config_yaml(&config).await?;
+    let available_models = fetch_agent_models(config.port).await?;
     let definitions = fetch_codex_model_definitions(&config)
         .await
         .unwrap_or_default();
-    Ok(resolved_thinking_alias_sources(&content, &definitions)?
-        .into_iter()
-        .map(|resolved| resolved.source)
-        .collect())
+    Ok(
+        resolved_thinking_alias_sources(&content, &definitions, &available_models)?
+            .into_iter()
+            .map(|resolved| resolved.source)
+            .collect(),
+    )
 }
 
 #[tauri::command]
@@ -902,20 +910,22 @@ async fn create_thinking_alias(
     let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
     let effort = validate_thinking_alias_effort(&effort)?;
     let content = fetch_management_config_yaml(&config).await?;
+    let available_models = fetch_agent_models(config.port).await?;
     let definitions = fetch_codex_model_definitions(&config)
         .await
         .unwrap_or_default();
-    let sources = resolved_thinking_alias_sources(&content, &definitions)?;
+    let sources = resolved_thinking_alias_sources(&content, &definitions, &available_models)?;
     let source = sources
         .iter()
         .find(|source| source.source.id == source_id)
         .cloned()
-        .ok_or_else(|| "原模型来源已经变化，请刷新后重新选择".to_string())?;
+        .ok_or_else(|| {
+            "原模型已不在内核当前可用模型中，或其配置来源已经变化，请刷新后重新选择".to_string()
+        })?;
     if source.source.model.eq_ignore_ascii_case(&alias) {
         return Err("别名模型不能和原模型相同".to_string());
     }
 
-    let available_models = fetch_agent_models(config.port).await?;
     if available_models
         .iter()
         .any(|model| model.name.eq_ignore_ascii_case(&alias))
@@ -1105,17 +1115,17 @@ fn launch_agent(
         .filter(|value| !value.is_empty());
 
     if client == AgentClient::Codex && requested_target != Some("cli") {
+        if let Some(app_target) = find_codex_app_target(&home) {
+            return launch_codex_app(&app_target);
+        }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(codex_cli) = find_agent_executable(AgentClient::Codex, &home) {
             if launch_codex_app_via_cli(&codex_cli, &home).is_ok() {
                 return Ok(());
             }
         }
-        if let Some(app_target) = find_codex_app_target(&home) {
-            return launch_codex_app(&app_target);
-        }
         if requested_target == Some("app") {
-            return Err("未检测到 Codex App，请重新检测或改用 Codex CLI".to_string());
+            return Err("未检测到 ChatGPT App，请重新检测或改用 Codex CLI".to_string());
         }
     }
     if requested_target.is_some_and(|value| value != "cli" && value != "app") {
@@ -1674,17 +1684,17 @@ fn agent_launch_targets(client: AgentClient, home: &Path) -> Vec<AgentLaunchTarg
     let mut targets = Vec::new();
     if client == AgentClient::Codex {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
-        if let Some(executable) = find_agent_executable(AgentClient::Codex, home) {
+        if let Some(target) = find_codex_app_target(home) {
             targets.push(AgentLaunchTarget {
                 id: "app".to_string(),
-                label: "Codex App".to_string(),
-                detail: format!("{} app", path_to_string(&executable)),
-            });
-        } else if let Some(target) = find_codex_app_target(home) {
-            targets.push(AgentLaunchTarget {
-                id: "app".to_string(),
-                label: "Codex App".to_string(),
+                label: "ChatGPT App".to_string(),
                 detail: codex_app_target_detail(&target),
+            });
+        } else if let Some(executable) = find_agent_executable(AgentClient::Codex, home) {
+            targets.push(AgentLaunchTarget {
+                id: "app".to_string(),
+                label: "ChatGPT App".to_string(),
+                detail: format!("{} app", path_to_string(&executable)),
             });
         }
     }
@@ -1718,7 +1728,12 @@ fn codex_app_target_detail(target: &CodexAppTarget) -> String {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn launch_codex_app_via_cli(executable: &Path, home: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut command = windows_command_for_executable(executable, false);
+
+    #[cfg(not(target_os = "windows"))]
     let mut command = Command::new(executable);
+
     command
         .arg("app")
         .arg(home)
@@ -1726,16 +1741,11 @@ fn launch_codex_app_via_cli(executable: &Path, home: &Path) -> Result<(), String
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
+    configure_background_command(&mut command);
     command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("通过 Codex CLI 启动 Codex App 失败: {error}"))
+        .map_err(|error| format!("通过 Codex CLI 启动 ChatGPT App 失败: {error}"))
 }
 
 fn find_codex_app_target(home: &Path) -> Option<CodexAppTarget> {
@@ -1745,10 +1755,10 @@ fn find_codex_app_target(home: &Path) -> Option<CodexAppTarget> {
             .into_iter()
             .flat_map(|directory| {
                 [
+                    "ChatGPT.app",
                     "Codex.app",
                     "OpenAI Codex.app",
                     "OpenAI.Codex.app",
-                    "ChatGPT.app",
                 ]
                 .into_iter()
                 .map(move |name| directory.join(name))
@@ -1759,10 +1769,7 @@ fn find_codex_app_target(home: &Path) -> Option<CodexAppTarget> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(executable) = find_windows_codex_app_executable(home) {
-            return Some(CodexAppTarget::Application(executable));
-        }
-        return find_windows_codex_app_id().map(CodexAppTarget::WindowsAppId);
+        return find_windows_codex_app_target(home);
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -1773,48 +1780,255 @@ fn find_codex_app_target(home: &Path) -> Option<CodexAppTarget> {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_system_root() -> PathBuf {
+    env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_powershell_executable() -> PathBuf {
+    let executable = windows_system_root().join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    if executable.is_file() {
+        executable
+    } else {
+        PathBuf::from("powershell.exe")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_explorer_executable() -> PathBuf {
+    let executable = windows_system_root().join("explorer.exe");
+    if executable.is_file() {
+        executable
+    } else {
+        PathBuf::from("explorer.exe")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_registry_executable() -> PathBuf {
+    let executable = windows_system_root().join("System32/reg.exe");
+    if executable.is_file() {
+        executable
+    } else {
+        PathBuf::from("reg.exe")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_command_processor() -> PathBuf {
+    env::var_os("ComSpec")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| windows_system_root().join("System32/cmd.exe"))
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_codex_app_target(home: &Path) -> Option<CodexAppTarget> {
+    find_windows_registered_codex_app_target()
+        .or_else(|| find_windows_codex_app_id_via_registry().map(CodexAppTarget::WindowsAppId))
+        .or_else(|| find_windows_codex_app_executable(home).map(CodexAppTarget::Application))
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_registered_codex_app_target() -> Option<CodexAppTarget> {
+    const DISCOVERY_SCRIPT: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+$startApps = @(Get-StartApps)
+$appId = $startApps |
+    Where-Object {
+        $_.AppID -like 'OpenAI.Codex_*!*' -or
+        $_.AppID -like 'OpenAI.CodexBeta_*!*' -or
+        $_.AppID -like 'OpenAI.ChatGPT_*!*'
+    } |
+    Select-Object -First 1 -ExpandProperty AppID
+if ($appId) {
+    Write-Output "APPID:$appId"
+    exit 0
+}
+
+$packages = @(Get-AppxPackage) |
+    Where-Object {
+        $_.Name -in @('OpenAI.Codex', 'OpenAI.CodexBeta', 'OpenAI.ChatGPT') -or
+        $_.PackageFamilyName -match '^OpenAI\.(Codex|CodexBeta|ChatGPT)_'
+    }
+foreach ($package in $packages) {
+    $manifest = Get-AppxPackageManifest -Package $package.PackageFullName
+    $application = @($manifest.Package.Applications.Application) |
+        Where-Object { $_.Id } |
+        Select-Object -First 1
+    if ($application -and $package.PackageFamilyName) {
+        Write-Output "APPID:$($package.PackageFamilyName)!$($application.Id)"
+        exit 0
+    }
+}
+
+$appPathKeys = @(
+    'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe',
+    'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe',
+    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe'
+)
+foreach ($key in $appPathKeys) {
+    if (-not (Test-Path -LiteralPath $key)) { continue }
+    $candidate = (Get-Item -LiteralPath $key).GetValue('')
+    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        Write-Output "EXE:$candidate"
+        exit 0
+    }
+}
+
+$shortcutRoots = @(
+    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
+    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
+)
+$shell = New-Object -ComObject WScript.Shell
+foreach ($shortcutFile in (Get-ChildItem -LiteralPath $shortcutRoots -Filter '*.lnk' -Recurse)) {
+    $shortcut = $shell.CreateShortcut($shortcutFile.FullName)
+    $target = $shortcut.TargetPath
+    if (-not $target -or -not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
+    $fileName = [System.IO.Path]::GetFileName($target)
+    if ($fileName -ieq 'Codex.exe' -and $target -match '(?i)\\(bin|node_modules|\.vscode\\extensions)\\') {
+        continue
+    }
+    if ($fileName -ieq 'ChatGPT.exe' -or $fileName -ieq 'Codex.exe') {
+        Write-Output "EXE:$target"
+        exit 0
+    }
+}
+"#;
+
+    let encoded_command = windows_powershell_encoded_command(DISCOVERY_SCRIPT);
+    let mut command = Command::new(windows_powershell_executable());
+    command.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        &encoded_command,
+    ]);
+    configure_background_command(&mut command);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout)).and_then(
+        |target| match &target {
+            CodexAppTarget::Application(path) if !path.is_file() => None,
+            _ => Some(target),
+        },
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn windows_powershell_encoded_command(script: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let bytes = script
+        .encode_utf16()
+        .flat_map(|unit| unit.to_le_bytes())
+        .collect::<Vec<_>>();
+    STANDARD.encode(bytes)
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_codex_app_discovery_output(output: &str) -> Option<CodexAppTarget> {
+    output.lines().find_map(|line| {
+        let line = line.trim();
+        if let Some(app_id) = line.strip_prefix("APPID:").map(str::trim) {
+            return (!app_id.is_empty()).then(|| CodexAppTarget::WindowsAppId(app_id.to_string()));
+        }
+        line.strip_prefix("EXE:")
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(|path| CodexAppTarget::Application(PathBuf::from(path)))
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_codex_app_id_via_registry() -> Option<String> {
+    const PACKAGES_KEY: &str = r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
+    for package_name in ["OpenAI.Codex_", "OpenAI.CodexBeta_", "OpenAI.ChatGPT_"] {
+        let mut command = Command::new(windows_registry_executable());
+        command.args(["query", PACKAGES_KEY, "/f", package_name, "/k", "/s"]);
+        configure_background_command(&mut command);
+        let Ok(output) = command.output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        if let Some(app_id) =
+            parse_windows_codex_app_id_from_registry(&String::from_utf8_lossy(&output.stdout))
+        {
+            return Some(app_id);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_codex_app_id_from_registry(output: &str) -> Option<String> {
+    const PACKAGE_MARKER: &str = "\\AppModel\\Repository\\Packages\\";
+    output.lines().find_map(|line| {
+        let line = line.trim();
+        let (_, package_full_name) = line.split_once(PACKAGE_MARKER)?;
+        if package_full_name.contains('\\') {
+            return None;
+        }
+        windows_codex_app_id_from_package_full_name(package_full_name)
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn windows_codex_app_id_from_package_full_name(package_full_name: &str) -> Option<String> {
+    let package_name = package_full_name.split('_').next()?.trim();
+    if !matches!(
+        package_name,
+        "OpenAI.Codex" | "OpenAI.CodexBeta" | "OpenAI.ChatGPT"
+    ) {
+        return None;
+    }
+    let publisher_id = package_full_name.rsplit('_').next()?.trim();
+    if publisher_id.is_empty() || publisher_id == package_name {
+        return None;
+    }
+    Some(format!("{package_name}_{publisher_id}!App"))
+}
+
+#[cfg(target_os = "windows")]
 fn find_windows_codex_app_executable(home: &Path) -> Option<PathBuf> {
     let local = env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join("AppData/Local"));
-    [
-        local.join("OpenAI/Codex/bin"),
-        local.join("OpenAI/Codex"),
-        local.join("Programs/OpenAI/Codex"),
-        local.join("Programs/Codex"),
-    ]
-    .into_iter()
-    .flat_map(|directory| {
-        ["Codex.exe", "ChatGPT.exe"]
-            .into_iter()
-            .map(move |name| directory.join(name))
-    })
-    .find(|path| path.is_file())
-}
-
-#[cfg(target_os = "windows")]
-fn find_windows_codex_app_id() -> Option<String> {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "$app = Get-StartApps | Where-Object { $_.AppID -like 'OpenAI.Codex*!App' -or $_.AppID -like 'OpenAI.CodexBeta*!App' } | Select-Object -First 1 -ExpandProperty AppID; if ($app) { Write-Output $app }",
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    let mut candidates = vec![
+        local.join("Programs/OpenAI/ChatGPT/ChatGPT.exe"),
+        local.join("Programs/ChatGPT/ChatGPT.exe"),
+        local.join("OpenAI/ChatGPT/ChatGPT.exe"),
+        local.join("OpenAI/Codex/Codex.exe"),
+        local.join("Programs/OpenAI/Codex/Codex.exe"),
+        local.join("Programs/Codex/Codex.exe"),
+        local.join("Microsoft/WindowsApps/ChatGPT.exe"),
+    ];
+    for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+        let Some(root) = env::var_os(variable)
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+        else {
+            continue;
+        };
+        candidates.extend([
+            root.join("OpenAI/ChatGPT/ChatGPT.exe"),
+            root.join("ChatGPT/ChatGPT.exe"),
+            root.join("OpenAI/Codex/Codex.exe"),
+            root.join("Codex/Codex.exe"),
+        ]);
     }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_string)
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 #[cfg(target_os = "macos")]
@@ -1827,18 +2041,15 @@ fn launch_codex_app(target: &CodexAppTarget) -> Result<(), String> {
         .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("启动 Codex App 失败: {error}"))
+        .map_err(|error| format!("启动 ChatGPT App 失败: {error}"))
 }
 
 #[cfg(target_os = "windows")]
 fn launch_codex_app(target: &CodexAppTarget) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut command = match target {
         CodexAppTarget::Application(executable) => Command::new(executable),
         CodexAppTarget::WindowsAppId(app_id) => {
-            let mut command = Command::new("explorer.exe");
+            let mut command = Command::new(windows_explorer_executable());
             command.arg(format!("shell:AppsFolder\\{app_id}"));
             command
         }
@@ -1846,16 +2057,17 @@ fn launch_codex_app(target: &CodexAppTarget) -> Result<(), String> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
+        .stderr(Stdio::null());
+    configure_background_command(&mut command);
+    command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("启动 Codex App 失败: {error}"))
+        .map_err(|error| format!("启动 ChatGPT App 失败: {error}"))
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn launch_codex_app(_target: &CodexAppTarget) -> Result<(), String> {
-    Err("当前平台不支持 Codex App".to_string())
+    Err("当前平台不支持 ChatGPT App".to_string())
 }
 
 fn find_agent_executable(client: AgentClient, home: &Path) -> Option<PathBuf> {
@@ -1987,8 +2199,41 @@ fn find_claude_desktop_executable(home: &Path) -> Option<PathBuf> {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn windows_command_for_executable(executable: &Path, keep_shell_open: bool) -> Command {
+    use std::os::windows::process::CommandExt;
+
+    let is_batch_script = executable
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        });
+    if !is_batch_script {
+        return Command::new(executable);
+    }
+
+    let mut command = Command::new(windows_command_processor());
+    command.args(["/D", if keep_shell_open { "/K" } else { "/C" }, "call"]);
+    command.raw_arg(windows_batch_executable_argument(executable));
+    command
+}
+
+#[cfg(target_os = "windows")]
+fn windows_batch_executable_argument(executable: &Path) -> String {
+    format!("\"{}\"", path_to_string(executable))
+}
+
 fn read_agent_version(path: &Path) -> Option<String> {
-    let output = Command::new(path).arg("--version").output().ok()?;
+    #[cfg(target_os = "windows")]
+    let mut command = windows_command_for_executable(path, false);
+
+    #[cfg(not(target_os = "windows"))]
+    let mut command = Command::new(path);
+
+    command.arg("--version");
+    configure_background_command(&mut command);
+    let output = command.output().ok()?;
     let text = if output.stdout.is_empty() {
         String::from_utf8_lossy(&output.stderr)
     } else {
@@ -2024,6 +2269,9 @@ fn launch_desktop_agent(executable: &Path, label: &str) -> Result<(), String> {
         let _ = (executable, label);
         return Err("当前平台不支持桌面智能体".to_string());
     }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    configure_background_command(&mut command);
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     command
@@ -2126,10 +2374,7 @@ fn launch_cli_agent(
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-    let command_line = format!("\"{}\"", path_to_string(executable).replace('"', "\"\""));
-    Command::new("cmd")
-        .args(["/D", "/K"])
-        .arg(command_line)
+    windows_command_for_executable(executable, true)
         .current_dir(working_directory)
         .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
@@ -4448,6 +4693,7 @@ async fn install_core_version(
 
 #[tauri::command]
 fn start_core_process(
+    app: tauri::AppHandle,
     process_state: tauri::State<'_, CoreProcessState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreStatus, String> {
@@ -4457,21 +4703,27 @@ fn start_core_process(
         let _ = stop_core_process_inner(process_state.inner());
         return Err(error);
     }
-    current_core_status(Some(process_state.inner()), Some(config.port))
+    let status = current_core_status(Some(process_state.inner()), Some(config.port))?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 #[tauri::command]
 fn stop_core_process(
+    app: tauri::AppHandle,
     process_state: tauri::State<'_, CoreProcessState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreStatus, String> {
     stop_core_process_inner(process_state.inner())?;
     let config = gui_config_state.set_run_on_startup(false)?;
-    current_core_status(Some(process_state.inner()), Some(config.port))
+    let status = current_core_status(Some(process_state.inner()), Some(config.port))?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 #[tauri::command]
 fn restart_core_process(
+    app: tauri::AppHandle,
     process_state: tauri::State<'_, CoreProcessState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreStatus, String> {
@@ -4482,7 +4734,9 @@ fn restart_core_process(
         let _ = stop_core_process_inner(process_state.inner());
         return Err(error);
     }
-    current_core_status(Some(process_state.inner()), Some(config.port))
+    let status = current_core_status(Some(process_state.inner()), Some(config.port))?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 async fn install_core_version_inner(
@@ -5010,13 +5264,15 @@ fn current_core_status(
     let binary_path = find_core_binary(&install_dir);
     let installed = binary_path.is_some();
     let managed_pid = process_state.and_then(|state| state.managed_pid());
-    let process_ids = binary_path
-        .as_ref()
-        .map(|path| find_core_process_ids(path))
-        .unwrap_or_default();
-    let process_id = managed_pid.or_else(|| process_ids.first().copied());
-    let running =
-        process_id.is_some() && management_port.map(is_management_port_open).unwrap_or(true);
+    let management_port_open = management_port.map(is_management_port_open);
+    let process_id = match managed_pid {
+        Some(process_id) => Some(process_id),
+        None if management_port_open.unwrap_or(true) => binary_path
+            .as_ref()
+            .and_then(|path| find_core_process_ids(path).first().copied()),
+        None => None,
+    };
+    let running = process_id.is_some() && management_port_open.unwrap_or(true);
     let current_version = read_core_metadata(&install_dir).map(|metadata| metadata.version);
 
     let message = if !installed {
@@ -5073,6 +5329,7 @@ fn start_core_process_inner(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    configure_background_command(&mut command);
     configure_child_lifetime(&mut command);
 
     let mut child = command
@@ -5135,6 +5392,19 @@ fn configure_child_lifetime(command: &mut Command) {
     }
 
     #[cfg(not(target_os = "linux"))]
+    let _ = command;
+}
+
+fn configure_background_command(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    #[cfg(not(windows))]
     let _ = command;
 }
 
@@ -5318,7 +5588,25 @@ fn render_yaml_value_changes(
     if original == updated {
         return Ok(content.to_string());
     }
-    let editable_content = normalize_nested_yaml_comment_indentation(content);
+    let mut editable_content = normalize_nested_yaml_comment_indentation(content);
+    let mut changes = Vec::new();
+    collect_yaml_value_changes(original, updated, &mut Vec::new(), &mut changes)?;
+    let mut remaining_changes = Vec::new();
+    for change in changes {
+        let sequence_length_changed = matches!(
+            (yaml_value_at_path(original, &change.path), &change.value),
+            (
+                Some(serde_norway::Value::Sequence(original_values)),
+                serde_norway::Value::Sequence(updated_values)
+            ) if original_values.len() != updated_values.len()
+        );
+        if sequence_length_changed {
+            editable_content =
+                replace_yaml_sequence_value(&editable_content, &change.path, &change.value)?;
+        } else {
+            remaining_changes.push(change);
+        }
+    }
     let file = editable_content
         .parse::<yaml_edit::YamlFile>()
         .map_err(|err| format!("解析可编辑内核配置失败: {err}"))?;
@@ -5328,9 +5616,7 @@ fn render_yaml_value_changes(
     let root = document
         .as_mapping()
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
-    let mut changes = Vec::new();
-    collect_yaml_value_changes(original, updated, &mut Vec::new(), &mut changes)?;
-    for change in changes {
+    for change in remaining_changes {
         set_yaml_edit_mapping_path(&root, &change.path, &change.value)?;
     }
     let rendered = file.to_string();
@@ -5435,6 +5721,85 @@ fn collect_yaml_value_changes(
     }
 }
 
+fn yaml_value_at_path<'a>(
+    root: &'a serde_norway::Value,
+    path: &[String],
+) -> Option<&'a serde_norway::Value> {
+    path.iter().try_fold(root, |current, key| {
+        current.as_mapping()?.get(yaml_key(key))
+    })
+}
+
+fn replace_yaml_sequence_value(
+    content: &str,
+    path: &[String],
+    value: &serde_norway::Value,
+) -> Result<String, String> {
+    let file = content
+        .parse::<yaml_edit::YamlFile>()
+        .map_err(|err| format!("解析可编辑内核配置失败: {err}"))?;
+    let document = file
+        .document()
+        .ok_or_else(|| "内核配置没有 YAML 文档".to_string())?;
+    let root = document
+        .as_mapping()
+        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+    let node = yaml_edit_node_at_path(&root, path)
+        .ok_or_else(|| format!("未找到内核配置序列 {}", path.join(".")))?;
+    let sequence = node
+        .as_sequence()
+        .ok_or_else(|| format!("内核配置字段 {} 必须是 YAML 序列", path.join(".")))?;
+    let range = sequence.byte_range();
+    let start = range.start as usize;
+    let end = range.end as usize;
+    let line_start = content[..start]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let prefix = &content[line_start..start];
+    let original = &content[start..end];
+    let trimmed_end = original.trim_end_matches(char::is_whitespace).len();
+    let trailing = &original[trimmed_end..];
+
+    let serialized = if prefix.trim().is_empty() {
+        let serialized = serde_norway::to_string(value)
+            .map_err(|err| format!("序列化内核配置序列失败: {err}"))?;
+        let serialized = serialized.trim_end_matches(['\r', '\n']);
+        let mut indented = String::with_capacity(serialized.len() + prefix.len() * 2);
+        for (index, line) in serialized.split('\n').enumerate() {
+            if index > 0 {
+                indented.push('\n');
+                indented.push_str(prefix);
+            }
+            indented.push_str(line);
+        }
+        indented
+    } else {
+        serde_json::to_string(value).map_err(|err| format!("序列化内核配置序列失败: {err}"))?
+    };
+
+    Ok(format!(
+        "{}{}{}{}",
+        &content[..start],
+        serialized,
+        trailing,
+        &content[end..]
+    ))
+}
+
+fn yaml_edit_node_at_path(
+    mapping: &yaml_edit::Mapping,
+    path: &[String],
+) -> Option<yaml_edit::YamlNode> {
+    let (key, remaining) = path.split_first()?;
+    let node = mapping.get(key.as_str())?;
+    if remaining.is_empty() {
+        return Some(node);
+    }
+    let child = node.as_mapping()?;
+    yaml_edit_node_at_path(child, remaining)
+}
+
 fn set_yaml_edit_mapping_path(
     mapping: &yaml_edit::Mapping,
     path: &[String],
@@ -5489,20 +5854,13 @@ fn set_yaml_edit_mapping_value(
     if let serde_norway::Value::Sequence(values) = value {
         if let Some(node) = mapping.get(key) {
             if let Some(sequence) = node.as_sequence() {
+                if sequence.len() != values.len() {
+                    return Err(format!("内核配置序列 {key} 长度变化未被预处理"));
+                }
                 for (index, value) in values.iter().enumerate() {
                     let value = yaml_edit_node_from_value(value)?;
-                    if index < sequence.len() {
-                        if !sequence.set(index, value) {
-                            return Err(format!("更新内核配置序列 {key}[{index}] 失败"));
-                        }
-                    } else {
-                        sequence.push(value);
-                    }
-                }
-                while sequence.len() > values.len() {
-                    let last = sequence.len() - 1;
-                    if sequence.remove(last).is_none() {
-                        return Err(format!("删除内核配置序列 {key}[{last}] 失败"));
+                    if !sequence.set(index, value) {
+                        return Err(format!("更新内核配置序列 {key}[{index}] 失败"));
                     }
                 }
                 return Ok(());
@@ -6046,6 +6404,7 @@ async fn fetch_codex_model_definitions(
 fn resolved_thinking_alias_sources(
     content: &str,
     definitions: &[CodexModelDefinition],
+    available_models: &[AgentModelOption],
 ) -> Result<Vec<ResolvedThinkingAliasSource>, String> {
     let document = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
@@ -6054,7 +6413,10 @@ fn resolved_thinking_alias_sources(
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
     let mut sources = definitions
         .iter()
-        .filter(|definition| !definition.reasoning_levels.is_empty())
+        .filter(|definition| {
+            !definition.reasoning_levels.is_empty()
+                && thinking_alias_model_is_available(available_models, &definition.id)
+        })
         .map(|definition| ResolvedThinkingAliasSource {
             source: ThinkingAliasSource {
                 id: format!("codex-oauth:{}", definition.id),
@@ -6073,6 +6435,7 @@ fn resolved_thinking_alias_sources(
         "Codex API",
         "codex-api",
         "codex",
+        available_models,
         &mut sources,
     )?;
     collect_config_thinking_alias_sources(
@@ -6081,9 +6444,16 @@ fn resolved_thinking_alias_sources(
         "OpenAI 兼容",
         "openai-compatible",
         "openai",
+        available_models,
         &mut sources,
     )?;
     Ok(sources)
+}
+
+fn thinking_alias_model_is_available(available_models: &[AgentModelOption], model: &str) -> bool {
+    available_models
+        .iter()
+        .any(|available| available.name.eq_ignore_ascii_case(model))
 }
 
 fn collect_config_thinking_alias_sources(
@@ -6092,6 +6462,7 @@ fn collect_config_thinking_alias_sources(
     fallback_provider: &str,
     kind: &str,
     protocol: &str,
+    available_models: &[AgentModelOption],
     sources: &mut Vec<ResolvedThinkingAliasSource>,
 ) -> Result<(), String> {
     let Some(providers) = yaml_mapping_value(root, section) else {
@@ -6124,6 +6495,9 @@ fn collect_config_thinking_alias_sources(
             else {
                 continue;
             };
+            if !thinking_alias_model_is_available(available_models, &client_model) {
+                continue;
+            }
             if client_model != upstream_model
                 && find_thinking_alias_effort(root, &client_model, protocol).is_some()
             {
@@ -6894,12 +7268,14 @@ fn open_external_url_inner(url: &str) -> Result<(), String> {
     let result = {
         #[cfg(target_os = "windows")]
         {
-            Command::new("cmd")
+            let mut command = Command::new("cmd");
+            command
                 .args(["/C", "start", "", url])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
+                .stderr(Stdio::null());
+            configure_background_command(&mut command);
+            command.spawn()
         }
         #[cfg(target_os = "macos")]
         {
@@ -7132,6 +7508,10 @@ fn write_bytes_atomically(path: &Path, content: &[u8]) -> Result<(), String> {
         let mut file = File::create(&temporary_path)?;
         file.write_all(content)?;
         file.sync_all()?;
+        // ReplaceFileW requires the replacement file handle to be closed.
+        // Unix rename permits replacing an open file, so this otherwise only
+        // surfaces on Windows as ERROR_SHARING_VIOLATION (os error 32).
+        drop(file);
         replace_file_atomically(&temporary_path, path)
     })();
 
@@ -7780,9 +8160,10 @@ fn find_core_process_ids_linux(binary_path: &Path) -> Vec<u32> {
 fn find_core_process_ids_by_name() -> Vec<u32> {
     let image_name = core_binary_name();
     let filter = format!("IMAGENAME eq {image_name}");
-    let output = Command::new("tasklist")
-        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
-        .output();
+    let mut command = Command::new("tasklist");
+    command.args(["/FI", &filter, "/FO", "CSV", "/NH"]);
+    configure_background_command(&mut command);
+    let output = command.output();
     let Ok(output) = output else {
         return Vec::new();
     };
@@ -7925,8 +8306,14 @@ fn terminate_process_id(process_id: u32) -> Result<(), String> {
     #[cfg(windows)]
     {
         let process_id = process_id.to_string();
-        let status = Command::new("taskkill")
+        let mut command = Command::new("taskkill");
+        command
             .args(["/PID", &process_id, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_background_command(&mut command);
+        let status = command
             .status()
             .map_err(|err| format!("关闭 CPA 内核进程失败: {err}"))?;
 
@@ -8174,19 +8561,34 @@ fn main() {
         .manage(usage::UsageCollectorState::default())
         .manage(GuiConfigState::new(gui_config))
         .setup(|app| {
-            if let Err(error) = usage::initialize_usage_storage() {
-                eprintln!("初始化使用记录目录失败: {error}");
-            }
-            usage::start_usage_collector(app.handle().clone());
-            let gui_config_state = app.state::<GuiConfigState>();
-            let process_state = app.state::<CoreProcessState>();
-            let config = gui_config_state.snapshot().map_err(io::Error::other)?;
-
-            if config.run_on_startup {
-                if let Err(error) = start_core_process_inner(process_state.inner(), &config) {
-                    eprintln!("自动启动 CPA 内核失败: {error}");
+            let usage_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = usage::initialize_usage_storage() {
+                    eprintln!("初始化使用记录目录失败: {error}");
                 }
-            }
+                usage::start_usage_collector(usage_app);
+            });
+
+            let core_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let gui_config_state = core_app.state::<GuiConfigState>();
+                let process_state = core_app.state::<CoreProcessState>();
+                let Ok(config) = gui_config_state.snapshot() else {
+                    return;
+                };
+
+                if config.run_on_startup {
+                    if let Err(error) = start_core_process_inner(process_state.inner(), &config) {
+                        eprintln!("自动启动 CPA 内核失败: {error}");
+                    }
+                }
+
+                if let Ok(status) =
+                    current_core_status(Some(process_state.inner()), Some(config.port))
+                {
+                    emit_core_status(&core_app, &status);
+                }
+            });
 
             Ok(())
         })
@@ -8622,6 +9024,125 @@ mod tests {
     }
 
     #[test]
+    fn thinking_alias_sources_only_include_current_core_models() {
+        let input = "codex-api-key:\n  - name: Codex API\n    api-key: test\n    models:\n      - name: config-only\nopenai-compatibility:\n  - name: DeepSeek\n    base-url: https://api.deepseek.com\n    api-key-entries:\n      - api-key: test\n    models:\n      - name: DeepSeek-Chat\n";
+        let definitions = parse_codex_model_definitions(&serde_json::json!({
+            "models": [
+                {
+                    "id": "gpt-runtime",
+                    "thinking": { "levels": ["low", "high"] }
+                },
+                {
+                    "id": "gpt-built-in-only",
+                    "thinking": { "levels": ["low", "high"] }
+                }
+            ]
+        }))
+        .unwrap();
+        let available_models = test_agent_models(&["GPT-RUNTIME", "deepseek-chat"]);
+
+        let sources =
+            resolved_thinking_alias_sources(input, &definitions, &available_models).unwrap();
+        let source_models = sources
+            .iter()
+            .map(|source| source.source.model.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(source_models, vec!["gpt-runtime", "DeepSeek-Chat"]);
+        assert!(!source_models.contains(&"gpt-built-in-only"));
+        assert!(!source_models.contains(&"config-only"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_batch_agent_commands_use_call_without_embedded_quotes() {
+        let executable = Path::new(r"C:\工具 目录\opencode.cmd");
+        let command = windows_command_for_executable(executable, true);
+        let args = command
+            .get_args()
+            .take(3)
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            Path::new(command.get_program())
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("cmd.exe")
+        );
+        assert_eq!(
+            args,
+            vec!["/D".to_string(), "/K".to_string(), "call".to_string(),]
+        );
+        assert_eq!(
+            windows_batch_executable_argument(executable),
+            r#""C:\工具 目录\opencode.cmd""#
+        );
+
+        let batch = windows_command_for_executable(Path::new(r"C:\tools\agent.bat"), false);
+        let batch_args = batch
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(batch_args[1], "/C");
+        assert_eq!(batch_args[2], "call");
+
+        let native = windows_command_for_executable(Path::new(r"C:\tools\agent.exe"), true);
+        assert_eq!(
+            native.get_program().to_string_lossy(),
+            r"C:\tools\agent.exe"
+        );
+        assert_eq!(native.get_args().count(), 0);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_chatgpt_discovery_parser_accepts_registered_app_and_executable() {
+        let app =
+            parse_windows_codex_app_discovery_output("APPID:OpenAI.Codex_2p2nqsd0c76g0!App\r\n")
+                .unwrap();
+        match app {
+            CodexAppTarget::WindowsAppId(app_id) => {
+                assert_eq!(app_id, "OpenAI.Codex_2p2nqsd0c76g0!App");
+            }
+            CodexAppTarget::Application(_) => panic!("expected Store application ID"),
+        }
+
+        let executable = parse_windows_codex_app_discovery_output(
+            "warning\r\nEXE:C:\\Program Files\\OpenAI\\ChatGPT\\ChatGPT.exe\r\n",
+        )
+        .unwrap();
+        match executable {
+            CodexAppTarget::Application(path) => {
+                assert_eq!(
+                    path,
+                    PathBuf::from(r"C:\Program Files\OpenAI\ChatGPT\ChatGPT.exe")
+                );
+            }
+            CodexAppTarget::WindowsAppId(_) => panic!("expected desktop executable"),
+        }
+
+        assert!(parse_windows_codex_app_discovery_output("MSEdgePWA:ChatGPT\r\n").is_none());
+
+        let registry_output = r"HKEY_CURRENT_USER\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages\OpenAI.Codex_26.715.4045.0_x64__2p2nqsd0c76g0";
+        assert_eq!(
+            parse_windows_codex_app_id_from_registry(registry_output).as_deref(),
+            Some("OpenAI.Codex_2p2nqsd0c76g0!App")
+        );
+        assert_eq!(
+            windows_codex_app_id_from_package_full_name(
+                "OpenAI.ChatGPT_1.2.3.4_arm64__2p2nqsd0c76g0"
+            )
+            .as_deref(),
+            Some("OpenAI.ChatGPT_2p2nqsd0c76g0!App")
+        );
+        assert!(windows_codex_app_id_from_package_full_name(
+            "Microsoft.MicrosoftEdge_1.0.0.0_x64__8wekyb3d8bbwe"
+        )
+        .is_none());
+    }
+
+    #[test]
     fn thinking_alias_adds_fork_and_matching_payload_rule() {
         let input = "# Keep this comment\ndebug: true\npayload:\n  override:\n    - models:\n        - name: existing-fast\n          protocol: codex\n      params:\n        service_tier: priority\n";
         let source = test_codex_oauth_thinking_source("gpt-5.5");
@@ -8683,7 +9204,8 @@ mod tests {
     #[test]
     fn thinking_alias_supports_openai_compatible_model_entries() {
         let input = "openai-compatibility:\n  - name: DeepSeek\n    base-url: https://api.deepseek.com\n    api-key-entries:\n      - api-key: test\n    models:\n      - name: deepseek-chat\n        display-name: DeepSeek Chat\n        thinking:\n          levels: [low, medium, high]\n";
-        let sources = resolved_thinking_alias_sources(input, &[]).unwrap();
+        let available_models = test_agent_models(&["deepseek-chat"]);
+        let sources = resolved_thinking_alias_sources(input, &[], &available_models).unwrap();
         let source = sources
             .iter()
             .find(|source| source.source.model == "deepseek-chat")
@@ -8727,7 +9249,8 @@ mod tests {
     #[test]
     fn thinking_alias_supports_codex_api_model_entries() {
         let input = "codex-api-key:\n  - api-key: test\n    base-url: https://example.com/v1\n    models:\n      - name: gpt-custom\n";
-        let sources = resolved_thinking_alias_sources(input, &[]).unwrap();
+        let available_models = test_agent_models(&["gpt-custom"]);
+        let sources = resolved_thinking_alias_sources(input, &[], &available_models).unwrap();
         let source = sources
             .iter()
             .find(|source| source.source.kind == "codex-api")
@@ -9379,6 +9902,24 @@ mod tests {
     }
 
     #[test]
+    fn yaml_edit_sequence_shrink_keeps_following_top_level_key_valid() {
+        let input = "# API keys for authentication\napi-keys:\n  - first-key\n  - second-key\n  - third-key\n\n# Enable debug logging\ndebug: false\n";
+        let original = serde_norway::from_str::<serde_norway::Value>(input).unwrap();
+        let mut updated = original.clone();
+        set_core_api_keys(&mut updated, vec!["first-key".to_string()]).unwrap();
+
+        let rendered = render_yaml_value_changes(input, &original, &updated)
+            .unwrap_or_else(|error| panic!("sequence shrink failed: {error}"));
+        let parsed = serde_norway::from_str::<serde_norway::Value>(&rendered)
+            .unwrap_or_else(|error| panic!("invalid YAML: {error}\n{rendered}"));
+
+        assert_eq!(parsed["api-keys"][0], "first-key");
+        assert_eq!(parsed["api-keys"].as_sequence().unwrap().len(), 1);
+        assert_eq!(parsed["debug"], false);
+        assert!(rendered.find("api-keys:").unwrap() < rendered.find("debug:").unwrap());
+    }
+
+    #[test]
     fn runtime_yaml_ast_patch_handles_core_comments_around_nested_mapping() {
         let input = "host: 127.0.0.1\nremote-management:\n# Whether to allow remote access.\n  allow-remote: false\n# Management key.\n# All requests require this key.\n  secret-key: old\n# Disable panel.\n  disable-control-panel: false\nauth-dir: /tmp/old\napi-keys:\n  - old-key\n";
         let rendered = patch_core_yaml_document(input, |document| {
@@ -9641,6 +10182,21 @@ mod tests {
         assert_eq!(document["plugins"]["enabled"], false);
         assert_eq!(document["routing"]["strategy"], "round-robin");
         assert_eq!(document["usage-statistics-enabled"], true);
+    }
+
+    #[test]
+    fn startup_merge_can_shrink_template_api_key_sequence() {
+        let template = "host: \"\"\nport: 8317\nremote-management:\n  secret-key: \"\"\nauth-dir: ~/.cli-proxy-api\napi-keys:\n  - template-one\n  - template-two\n  - template-three\ndebug: false\nplugins:\n  enabled: false\nrouting:\n  strategy: round-robin\n";
+        let current = "host: 127.0.0.1\nport: 8317\nremote-management:\n  secret-key: hashed\nauth-dir: C:/oauth\napi-keys:\n  - '123456'\ndebug: false\nplugins:\n  enabled: false\nrouting:\n  strategy: round-robin\n";
+
+        let merged =
+            merge_core_config_yaml(template, Some(current), &GuiConfigFile::default()).unwrap();
+        let document = serde_norway::from_str::<serde_norway::Value>(&merged)
+            .unwrap_or_else(|error| panic!("invalid YAML: {error}\n{merged}"));
+
+        assert_eq!(document["api-keys"][0], DEFAULT_API_KEY);
+        assert_eq!(document["api-keys"].as_sequence().unwrap().len(), 1);
+        assert_eq!(document["debug"], false);
     }
 
     #[test]
