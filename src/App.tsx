@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Bot, FileKey, Gauge, GitFork, History, LogIn, Network, ServerCog, Settings } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import {
+  Bot,
+  ExternalLink,
+  FileKey,
+  Gauge,
+  GitFork,
+  History,
+  LogIn,
+  MessageCircle,
+  Network,
+  ServerCog,
+  Settings,
+} from 'lucide-react';
 import appLogo from './assets/logo.jpg';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
 import { ConfigPanelPage } from './pages/ConfigPanel';
@@ -11,6 +24,8 @@ import { QuotaPage } from './pages/QuotaPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { ThinkingAliasesPage } from './pages/ThinkingAliasesPage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
+
+const CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 
 const pages = [
   {
@@ -99,6 +114,14 @@ function AppContent() {
     setActive(pageId);
   };
 
+  const openContact = async () => {
+    try {
+      await invoke('open_external_url', { url: CONTACT_URL });
+    } catch (error) {
+      console.error('打开联系我们链接失败', error);
+    }
+  };
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -132,9 +155,21 @@ function AppContent() {
           })}
         </nav>
 
-        <div className="sidebar-footer">
-          <span>CPA GUI</span>
-          <strong>0.1</strong>
+        <div className="sidebar-bottom">
+          <button
+            type="button"
+            className="sidebar-contact"
+            title="通过 QQ 联系我们"
+            onClick={() => void openContact()}
+          >
+            <MessageCircle size={16} aria-hidden="true" />
+            <span>联系我们</span>
+            <ExternalLink size={13} aria-hidden="true" />
+          </button>
+          <div className="sidebar-footer">
+            <span>Easy_CLIProxyAPI</span>
+            <strong>0.1</strong>
+          </div>
         </div>
       </aside>
 

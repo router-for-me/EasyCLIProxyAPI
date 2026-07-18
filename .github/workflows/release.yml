@@ -112,23 +112,37 @@ jobs:
         run: >-
           node scripts/prepare-portable.mjs
           --binary "src-tauri/target/release/cpa-gui${{ matrix.os == 'windows' && '.exe' || '' }}"
-          --output "release/cpa-gui-${{ matrix.os }}-${{ matrix.arch }}"
+          --output "release/Easy_CLIProxyAPI-${{ matrix.os }}-${{ matrix.arch }}"
           --os "${{ matrix.os }}"
           --arch "${{ matrix.arch }}"
           --download true
-          --clean-core true
         shell: bash
+      - name: Verify archive-only core payload
+        shell: bash
+        env:
+          CORE_DIR: release/Easy_CLIProxyAPI-${{ matrix.os }}-${{ matrix.arch }}/cpa-core
+        run: |
+          node - <<'NODE'
+          const { readdirSync } = require('node:fs');
+          const entries = readdirSync(process.env.CORE_DIR, { withFileTypes: true });
+          const valid = entries.length === 1
+            && entries[0].isFile()
+            && /\.(zip|tar\.gz)$/.test(entries[0].name);
+          if (!valid) {
+            throw new Error(`cpa-core must contain exactly one archive; found: ${entries.map((entry) => entry.name).join(', ')}`);
+          }
+          NODE
       - name: Archive Unix release
         if: matrix.os != 'windows'
-        run: tar -czf "cpa-gui-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" -C release "cpa-gui-${{ matrix.os }}-${{ matrix.arch }}"
+        run: tar -czf "Easy_CLIProxyAPI-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" -C release "Easy_CLIProxyAPI-${{ matrix.os }}-${{ matrix.arch }}"
       - name: Archive Windows release
         if: matrix.os == 'windows'
         shell: pwsh
-        run: Compress-Archive -Path "release/cpa-gui-${{ matrix.os }}-${{ matrix.arch }}" -DestinationPath "cpa-gui-${{ matrix.os }}-${{ matrix.arch }}.zip"
+        run: Compress-Archive -Path "release/Easy_CLIProxyAPI-${{ matrix.os }}-${{ matrix.arch }}" -DestinationPath "Easy_CLIProxyAPI-${{ matrix.os }}-${{ matrix.arch }}.zip"
       - uses: actions/upload-artifact@v7
         with:
-          name: cpa-gui-${{ matrix.os }}-${{ matrix.arch }}
-          path: cpa-gui-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.suffix }}
+          name: Easy_CLIProxyAPI-${{ matrix.os }}-${{ matrix.arch }}
+          path: Easy_CLIProxyAPI-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.suffix }}
           if-no-files-found: error
           retention-days: 14
 
@@ -159,7 +173,7 @@ jobs:
           fi
 
           prerelease="$MANUAL_PRERELEASE"
-          release_args=(--title "CPA GUI $RELEASE_TAG" --generate-notes)
+          release_args=(--title "Easy_CLIProxyAPI $RELEASE_TAG" --generate-notes)
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             release_args+=(--verify-tag)
             if [[ "$RELEASE_TAG" == *-* ]]; then

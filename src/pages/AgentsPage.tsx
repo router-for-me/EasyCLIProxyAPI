@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -215,6 +216,13 @@ type AgentModelPickerProps = {
   onRefresh: () => void;
 };
 
+type AgentModelDropdownLayout = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
 function AgentModelPicker({
   models,
   value,
@@ -227,6 +235,7 @@ function AgentModelPicker({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [dropdownLayout, setDropdownLayout] = useState<AgentModelDropdownLayout | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const visibleModels = useMemo(() => filterAgentModels(models, search), [models, search]);
@@ -235,6 +244,51 @@ function AgentModelPicker({
     [visibleModels],
   );
   const selectedAlias = agentModelAlias(models, value);
+
+  const updateDropdownLayout = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const rect = root.getBoundingClientRect();
+    const edgeGap = 12;
+    const triggerGap = 6;
+    const preferredHeight = 282;
+    const minimumHeight = 150;
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - triggerGap - edgeGap);
+    const spaceAbove = Math.max(0, rect.top - triggerGap - edgeGap);
+    const placeAbove = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
+    const availableHeight = placeAbove ? spaceAbove : spaceBelow;
+    const height = Math.min(preferredHeight, Math.max(minimumHeight, availableHeight));
+    const width = Math.min(rect.width, window.innerWidth - edgeGap * 2);
+    const left = Math.min(
+      Math.max(edgeGap, rect.left),
+      Math.max(edgeGap, window.innerWidth - edgeGap - width),
+    );
+    const desiredTop = placeAbove
+      ? rect.top - triggerGap - height
+      : rect.bottom + triggerGap;
+    const top = Math.min(
+      Math.max(edgeGap, desiredTop),
+      Math.max(edgeGap, window.innerHeight - edgeGap - height),
+    );
+
+    setDropdownLayout({ top, left, width, height });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setDropdownLayout(null);
+      return undefined;
+    }
+
+    updateDropdownLayout();
+    window.addEventListener('resize', updateDropdownLayout);
+    window.addEventListener('scroll', updateDropdownLayout);
+    return () => {
+      window.removeEventListener('resize', updateDropdownLayout);
+      window.removeEventListener('scroll', updateDropdownLayout);
+    };
+  }, [open, updateDropdownLayout]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -311,7 +365,12 @@ function AgentModelPicker({
       </button>
 
       {open ? (
-        <div className="agent-model-dropdown">
+        <div
+          className="agent-model-dropdown"
+          style={dropdownLayout
+            ? dropdownLayout
+            : { top: 0, left: 0, width: 0, height: 0, visibility: 'hidden' }}
+        >
           <div className="agent-model-search">
             <Search size={15} aria-hidden />
             <input

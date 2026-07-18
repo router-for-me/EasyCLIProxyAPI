@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 BUILD_JOBS="${CARGO_BUILD_JOBS:-20}"
 APP_BIN="$ROOT_DIR/src-tauri/target/release/cpa-gui"
 BIN_DIR="$ROOT_DIR/bin-work"
-BIN_OUT="$BIN_DIR/cpa-gui"
+BIN_OUT="$BIN_DIR/Easy_CLIProxyAPI"
 
 if ! command -v bun >/dev/null 2>&1; then
   echo "bun is not installed or not in PATH."

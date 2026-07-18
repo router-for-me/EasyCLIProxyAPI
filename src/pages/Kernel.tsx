@@ -82,17 +82,6 @@ function requestLatestCore() {
   return latestCheckPromise;
 }
 
-const compareVersions = (left: string, right: string) => {
-  const parse = (value: string) => value.replace(/^v/i, '').split('.').map((part) => Number(part) || 0);
-  const leftParts = parse(left);
-  const rightParts = parse(right);
-  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
-    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return 0;
-};
-
 export function KernelPage() {
   const {
     status: coreStatus,
@@ -491,13 +480,6 @@ export function KernelPage() {
 
   const installBundledCore = async () => {
     if (!bundledCore) return;
-    const comparison = currentVersion ? compareVersions(currentVersion, bundledCore.version) : 0;
-    const prompt = comparison > 0
-      ? `当前内核 ${currentVersion} 高于内置版本 ${bundledCore.version}，继续会降级。是否确认？`
-      : currentVersion === bundledCore.version
-        ? `将使用内置压缩包重新安装 ${bundledCore.version}，是否继续？`
-        : `将安装内置内核 ${bundledCore.version}，是否继续？`;
-    if (!window.confirm(prompt)) return;
 
     setInstalling(true);
     setMessage(`正在安装内置内核 ${bundledCore.version}`);

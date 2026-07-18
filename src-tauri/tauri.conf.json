@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CPA GUI",
+  "productName": "Easy_CLIProxyAPI",
   "version": "0.1.0-pre.4",
   "identifier": "com.cpa.gui",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "CPA GUI",
+        "title": "Easy_CLIProxyAPI",
         "width": 1200,
         "height": 800,
         "minWidth": 900,

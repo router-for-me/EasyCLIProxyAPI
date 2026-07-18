@@ -808,7 +808,7 @@ struct GithubAsset {
 
 #[tauri::command]
 fn health_check() -> &'static str {
-    "CPA GUI Rust backend is ready"
+    "Easy_CLIProxyAPI Rust backend is ready"
 }
 
 #[tauri::command]
@@ -5382,7 +5382,7 @@ fn configure_child_lifetime(command: &mut Command) {
 
                 if libc::getppid() != parent_process_id {
                     return Err(io::Error::other(
-                        "CPA GUI exited before the core process started",
+                        "Easy_CLIProxyAPI exited before the core process started",
                     ));
                 }
 
