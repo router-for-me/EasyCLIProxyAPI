@@ -21,6 +21,12 @@ type CoreLatest = {
   assetName: string;
 };
 
+type BundledCoreInfo = {
+  version: string;
+  assetName: string;
+  sizeBytes: number;
+};
+
 type CoreInstallResult = {
   version: string;
   assetName: string;
@@ -76,6 +82,17 @@ function requestLatestCore() {
   return latestCheckPromise;
 }
 
+const compareVersions = (left: string, right: string) => {
+  const parse = (value: string) => value.replace(/^v/i, '').split('.').map((part) => Number(part) || 0);
+  const leftParts = parse(left);
+  const rightParts = parse(right);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+};
+
 export function KernelPage() {
   const { publishStatus } = useCoreRuntime();
   const [coreStatus, setCoreStatus] = useState<CoreStatus | null>(null);
@@ -84,6 +101,8 @@ export function KernelPage() {
   const [platformError, setPlatformError] = useState('');
   const [latest, setLatest] = useState<CoreLatest | null>(cachedLatest);
   const [latestError, setLatestError] = useState(cachedLatestError);
+  const [bundledCore, setBundledCore] = useState<BundledCoreInfo | null>(null);
+  const [bundledCoreError, setBundledCoreError] = useState('');
   const [checkingLatest, setCheckingLatest] = useState(Boolean(latestCheckPromise));
   const [allowLanAccess, setAllowLanAccess] = useState(false);
   const [customPort, setCustomPort] = useState('8317');
@@ -179,6 +198,7 @@ export function KernelPage() {
 
     loadCoreStatus();
     loadPlatform();
+    loadBundledCore();
     loadInstallTask();
     loadGuiSettings();
 
@@ -394,6 +414,17 @@ export function KernelPage() {
     }
   };
 
+  const loadBundledCore = async () => {
+    try {
+      const result = await invoke<BundledCoreInfo | null>('detect_bundled_core');
+      setBundledCore(result);
+      setBundledCoreError('');
+    } catch (error) {
+      setBundledCore(null);
+      setBundledCoreError(String(error));
+    }
+  };
+
   const checkLatest = async () => {
     setCheckingLatest(true);
     setLatestError('');
@@ -452,7 +483,7 @@ export function KernelPage() {
         message: `${result.version} 安装完成`,
         result,
       });
-      await loadCoreStatus();
+      await Promise.all([loadCoreStatus(), loadBundledCore()]);
     } catch (error) {
       const errorMessage = String(error);
       setMessage(errorMessage);
@@ -461,6 +492,55 @@ export function KernelPage() {
         running: false,
         cancellable: false,
         phase: errorMessage.includes('取消') ? '已取消' : '安装失败',
+        downloaded: current?.downloaded ?? 0,
+        total: current?.total ?? null,
+        percent: current?.percent ?? null,
+        message: errorMessage,
+        result: null,
+      }));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const installBundledCore = async () => {
+    if (!bundledCore) return;
+    const comparison = currentVersion ? compareVersions(currentVersion, bundledCore.version) : 0;
+    const prompt = comparison > 0
+      ? `当前内核 ${currentVersion} 高于内置版本 ${bundledCore.version}，继续会降级。是否确认？`
+      : currentVersion === bundledCore.version
+        ? `将使用内置压缩包重新安装 ${bundledCore.version}，是否继续？`
+        : `将安装内置内核 ${bundledCore.version}，是否继续？`;
+    if (!window.confirm(prompt)) return;
+
+    setInstalling(true);
+    setMessage(`正在安装内置内核 ${bundledCore.version}`);
+    setMessageType('info');
+    setCancellingInstall(false);
+    setInstallDialogOpen(true);
+    setProgress({
+      running: true,
+      cancellable: false,
+      phase: '准备内置内核',
+      downloaded: 0,
+      total: bundledCore.sizeBytes,
+      percent: 0,
+      message: null,
+      result: null,
+    });
+    try {
+      const result = await invoke<CoreInstallResult>('install_bundled_core');
+      setMessage(`${result.version} 内置内核安装完成`);
+      setMessageType('success');
+      await Promise.all([loadCoreStatus(), loadBundledCore()]);
+    } catch (error) {
+      const errorMessage = String(error);
+      setMessage(errorMessage);
+      setMessageType('error');
+      setProgress((current) => ({
+        running: false,
+        cancellable: false,
+        phase: '安装失败',
         downloaded: current?.downloaded ?? 0,
         total: current?.total ?? null,
         percent: current?.percent ?? null,
@@ -750,8 +830,11 @@ export function KernelPage() {
 
         <div className="panel version-panel">
           <div className="panel-heading">
-            <div>
-              <h2>版本管理</h2>
+            <div className="version-heading-inline">
+              <h2>内核版本管理</h2>
+              <span className="version-offline-hint">
+                GitHub 无法连接时，可使用离线安装使用内置内核。
+              </span>
             </div>
           </div>
 
@@ -765,12 +848,14 @@ export function KernelPage() {
               <dd>{latestLabel}</dd>
             </div>
             <div className="panel-detail-row">
-              <dt>操作系统</dt>
-              <dd title={platformError || undefined}>{platformOsLabel}</dd>
+              <dt>内置版本</dt>
+              <dd title={bundledCoreError || bundledCore?.assetName}>
+                {bundledCore?.version ?? (bundledCoreError ? '检测失败' : '未包含')}
+              </dd>
             </div>
             <div className="panel-detail-row">
-              <dt>系统架构</dt>
-              <dd title={platformError || undefined}>{platformArchLabel}</dd>
+              <dt>运行平台</dt>
+              <dd title={platformError || undefined}>{platformOsLabel} / {platformArchLabel}</dd>
             </div>
             <div className="panel-detail-row">
               <dt>更新状态</dt>
@@ -806,6 +891,15 @@ export function KernelPage() {
               onClick={() => installVersion(currentVersion)}
             >
               重新安装
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              title={(bundledCore?.assetName ?? bundledCoreError) || '当前发行包未包含内置内核'}
+              disabled={!bundledCore || installDisabled}
+              onClick={() => void installBundledCore()}
+            >
+              离线安装
             </button>
           </div>
 

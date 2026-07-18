@@ -96,7 +96,7 @@ const agentDefinitions: AgentDefinition[] = [
     id: 'claude-desktop',
     name: 'Claude Desktop',
     icon: claudeIcon,
-    description: '使用 CPA 3P 推理网关，仅支持 Windows 和 macOS',
+    description: '使用 CPA 3P 推理网关，支持 Windows、macOS 和 Linux Beta',
   },
   {
     id: 'codex',
@@ -125,6 +125,29 @@ const agentDefinitions: AgentDefinition[] = [
 ];
 
 const AGENT_MODEL_SELECTIONS_KEY = 'cpa-gui.agent-model-selections.v1';
+const AGENT_SELECTED_CLIENT_KEY = 'cpa-gui.agent-selected-client.v1';
+
+const readSelectedAgentClient = (): AgentClientId => {
+  const fallback = agentDefinitions[0].id;
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const saved = window.localStorage.getItem(AGENT_SELECTED_CLIENT_KEY);
+    return agentDefinitions.some((agent) => agent.id === saved)
+      ? (saved as AgentClientId)
+      : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeSelectedAgentClient = (client: AgentClientId) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(AGENT_SELECTED_CLIENT_KEY, client);
+  } catch {
+    // Keep the current in-memory selection when persistent storage is unavailable.
+  }
+};
 
 const readAgentModelSelections = (): Partial<Record<AgentClientId, string>> => {
   if (typeof window === 'undefined') return {};
@@ -365,7 +388,7 @@ function AgentModelPicker({
 }
 
 export function AgentsPage() {
-  const [selected, setSelected] = useState<AgentClientId>('claude-code');
+  const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
   const [statuses, setStatuses] = useState<AgentConfigStatus[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelByClient, setModelByClient] = useState<Partial<Record<AgentClientId, string>>>(
@@ -420,6 +443,10 @@ export function AgentsPage() {
   }, [refresh]);
 
   useEffect(() => {
+    writeSelectedAgentClient(selected);
+  }, [selected]);
+
+  useEffect(() => {
     setLaunchTargetByClient((current) => agentDefinitions.reduce<Partial<Record<AgentClientId, string>>>(
       (next, definition) => {
         const targets = statuses.find((status) => status.id === definition.id)?.launchTargets ?? [];
@@ -460,6 +487,8 @@ export function AgentsPage() {
   const canLaunch = Boolean(
     activeStatus?.supportedPlatform
       && activeStatus.installed
+      && activeStatus.modificationEnabled
+      && activeStatus.modificationState === 'active'
       && selectedLaunchTarget,
   );
 
@@ -513,7 +542,7 @@ export function AgentsPage() {
       }
       setRestoreConflict(null);
       setNotice(result.enabled
-        ? `${activeDefinition.name} 已启用配置修改，请重启客户端`
+        ? `${activeDefinition.name} 已启用配置修改；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
         : `${activeDefinition.name} 的原配置已恢复，请重启客户端`);
       await loadStatuses();
     } catch (requestError) {
@@ -529,10 +558,10 @@ export function AgentsPage() {
     setNotice('');
     try {
       let appliedBeforeLaunch = false;
-      const shouldSyncCodexCatalog = Boolean(
-        selected === 'codex' && activeStatus?.modificationEnabled && selectedModelOption,
+      const shouldSyncModelCatalog = Boolean(
+        activeStatus?.modificationEnabled && selectedModelOption,
       );
-      if (draftChanged || shouldSyncCodexCatalog) {
+      if (draftChanged || shouldSyncModelCatalog) {
         if (activeStatus?.modificationState !== 'active') {
           throw new Error('当前配置存在冲突或恢复任务，暂时不能应用新模型');
         }
@@ -547,9 +576,11 @@ export function AgentsPage() {
       await invoke('launch_agent', { client: selected, target: selectedLaunchTarget?.id });
       setNotice(appliedBeforeLaunch
         ? draftChanged
-          ? `${activeDefinition.name} 已应用所选模型并启动`
-          : `${activeDefinition.name} 已同步模型目录并启动`
-        : `${activeDefinition.name} 已启动`);
+          ? `${activeDefinition.name} 已应用模型并启动；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
+          : `${activeDefinition.name} 已同步模型目录并启动；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
+        : activeStatus?.modificationEnabled
+          ? `${activeDefinition.name} 已启动；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
+          : `${activeDefinition.name} 已启动`);
       if (appliedBeforeLaunch) await loadStatuses();
     } catch (requestError) {
       setError(String(requestError));
@@ -655,7 +686,7 @@ export function AgentsPage() {
 
           <section className="agent-model-section">
             <div className="agent-section-heading">
-              <div><strong>使用模型</strong><span>只能选择内核当前实际开放的模型</span></div>
+              <div><strong>使用模型</strong><span>同步内核当前开放的模型，并将所选项设为默认模型</span></div>
               {draftChanged ? <span className="agent-pending-badge">尚未应用</span> : null}
             </div>
             <AgentModelPicker
@@ -689,7 +720,7 @@ export function AgentsPage() {
                   : activeStatus.modificationState === 'recovery'
                     ? '上次操作未完成，关闭开关可尝试恢复原配置'
                     : '原配置已备份，当前由 CPA 管理'
-                : '开启后先备份原配置，再写入 CPA 配置'}</span>
+                : '启动客户端前必须开启；程序会先备份原配置，再写入 CPA 配置'}</span>
             </div>
             <label className="switch-control" title="修改智能体配置">
               <input
@@ -708,7 +739,7 @@ export function AgentsPage() {
               <span>{activeStatus?.modificationEnabled
                 ? draftChanged
                   ? '模型选择已变化，启动时会先应用新模型'
-                  : '关闭开关会恢复开启前的原始配置；可直接启动智能体'
+                  : '退出软件前建议关闭“修改智能体配置”，恢复开启前的原配置文件'
                 : !activeStatus?.supportedPlatform
                   ? '当前系统无法配置该客户端'
                   : !activeStatus.installed
@@ -717,7 +748,7 @@ export function AgentsPage() {
                       ? '检测到配置文件，但没有找到客户端命令'
                       : !activeStatus.configValid
                         ? '原配置格式异常，无法安全修改'
-                        : '未开启修改配置时，将使用客户端原配置启动'}</span>
+                        : '请先开启“修改智能体配置”，确保 CPA 模型配置生效后再启动客户端'}</span>
             </div>
             <div className="agent-launch-actions">
               {activeLaunchTargets.length > 1 ? (
@@ -748,7 +779,9 @@ export function AgentsPage() {
                   || !canLaunch
                   || (draftChanged && activeStatus?.modificationState !== 'active')
                 }
-                title={selectedLaunchTarget?.detail}
+                title={activeStatus?.modificationEnabled
+                  ? selectedLaunchTarget?.detail
+                  : '请先开启“修改智能体配置”'}
               >
                 {busy ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
                 {busy ? '启动中' : selectedLaunchTarget ? `启动 ${selectedLaunchTarget.label}` : '无法启动'}

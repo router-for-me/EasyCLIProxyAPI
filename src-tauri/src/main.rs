@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod usage;
+
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -7,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::{
     env, fs,
     fs::File,
-    io::{self, Write},
+    io::{self, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket},
     path::{Component, Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -28,6 +30,8 @@ const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
 const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";
 const CORE_CONFIG_FILE: &str = "config.yaml";
 const CORE_EXAMPLE_CONFIG_FILE: &str = "config.example.yaml";
+const CORE_VERSION_FILE: &str = "core-version.txt";
+const CORE_CHECKSUMS_FILE: &str = "checksums.txt";
 const GUI_CONFIG_FILE: &str = "config.toml";
 const LEGACY_GUI_CONFIG_FILE: &str = "cpa-gui.yaml";
 const OAUTH_DIR_NAME: &str = "oauth";
@@ -98,6 +102,14 @@ struct CoreStatus {
 struct CoreLatest {
     version: String,
     asset_name: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BundledCoreInfo {
+    version: String,
+    asset_name: String,
+    size_bytes: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -393,7 +405,12 @@ impl AgentClient {
     }
 
     fn supported_platform(self) -> bool {
-        self != Self::ClaudeDesktop || cfg!(any(target_os = "windows", target_os = "macos"))
+        self != Self::ClaudeDesktop
+            || cfg!(any(
+                target_os = "windows",
+                target_os = "macos",
+                target_os = "linux"
+            ))
     }
 
     fn executable_names(self) -> &'static [&'static str] {
@@ -1002,7 +1019,14 @@ async fn set_agent_config_enabled(
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
             .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-        enable_agent_modification(client, &home, port, &model, codex_models.as_deref())
+        enable_agent_modification(
+            client,
+            &home,
+            port,
+            &model,
+            &available_models,
+            codex_models.as_deref(),
+        )
     } else {
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
@@ -1035,12 +1059,20 @@ async fn update_agent_config(
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    update_agent_modification(client, &home, port, &model, codex_models.as_deref())
+    update_agent_modification(
+        client,
+        &home,
+        port,
+        &model,
+        &available_models,
+        codex_models.as_deref(),
+    )
 }
 
 #[tauri::command]
 fn launch_agent(
     app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
     target: Option<String>,
 ) -> Result<(), String> {
@@ -1052,12 +1084,25 @@ fn launch_agent(
         .path()
         .home_dir()
         .map_err(|error| format!("无法获取用户目录: {error}"))?;
+    let port = gui_config_state.snapshot()?.port;
+    let status = inspect_agent_config(client, &home, port);
+    validate_agent_launch_modification(
+        client,
+        status.modification_enabled,
+        &status.modification_state,
+    )?;
     let requested_target = target
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
 
     if client == AgentClient::Codex && requested_target != Some("cli") {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let Some(codex_cli) = find_agent_executable(AgentClient::Codex, &home) {
+            if launch_codex_app_via_cli(&codex_cli, &home).is_ok() {
+                return Ok(());
+            }
+        }
         if let Some(app_target) = find_codex_app_target(&home) {
             return launch_codex_app(&app_target);
         }
@@ -1087,10 +1132,24 @@ fn launch_agent(
     }
 }
 
+fn validate_agent_launch_modification(
+    client: AgentClient,
+    enabled: bool,
+    state: &str,
+) -> Result<(), String> {
+    if enabled && state == AGENT_PHASE_ACTIVE {
+        return Ok(());
+    }
+    Err(format!(
+        "请先为 {} 开启“修改智能体配置”，确保 CPA 配置生效后再启动",
+        client.name()
+    ))
+}
+
 fn validate_agent_can_enable(client: AgentClient, home: &Path, port: u16) -> Result<(), String> {
     if !client.supported_platform() {
         return Err(format!(
-            "{} 当前仅支持在 Windows 和 macOS 上配置",
+            "{} 当前仅支持在 Windows、macOS 和 Linux 上配置",
             client.name()
         ));
     }
@@ -1405,10 +1464,18 @@ fn claude_desktop_config_paths(_home: &Path) -> Vec<PathBuf> {
             .unwrap_or_else(|| _home.join("AppData/Local"));
         (local.join("Claude"), local.join("Claude-3p"))
     };
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    let (normal, threep) = {
+        let config_home = env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| _home.join(".config"));
+        (config_home.join("Claude"), config_home.join("Claude-3p"))
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     return Vec::new();
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
         let library = threep.join("configLibrary");
         vec![
@@ -1600,7 +1667,14 @@ fn agent_has_managed_marker(client: AgentClient, paths: &[PathBuf]) -> Result<bo
 fn agent_launch_targets(client: AgentClient, home: &Path) -> Vec<AgentLaunchTarget> {
     let mut targets = Vec::new();
     if client == AgentClient::Codex {
-        if let Some(target) = find_codex_app_target(home) {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let Some(executable) = find_agent_executable(AgentClient::Codex, home) {
+            targets.push(AgentLaunchTarget {
+                id: "app".to_string(),
+                label: "Codex App".to_string(),
+                detail: format!("{} app", path_to_string(&executable)),
+            });
+        } else if let Some(target) = find_codex_app_target(home) {
             targets.push(AgentLaunchTarget {
                 id: "app".to_string(),
                 label: "Codex App".to_string(),
@@ -1633,6 +1707,28 @@ fn codex_app_target_detail(target: &CodexAppTarget) -> String {
         #[cfg(target_os = "windows")]
         CodexAppTarget::WindowsAppId(app_id) => format!("Microsoft Store · {app_id}"),
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn launch_codex_app_via_cli(executable: &Path, home: &Path) -> Result<(), String> {
+    let mut command = Command::new(executable);
+    command
+        .arg("app")
+        .arg(home)
+        .current_dir(home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("通过 Codex CLI 启动 Codex App 失败: {error}"))
 }
 
 fn find_codex_app_target(home: &Path) -> Option<CodexAppTarget> {
@@ -1864,7 +1960,20 @@ fn find_claude_desktop_executable(home: &Path) -> Option<PathBuf> {
         .into_iter()
         .find(|path| path.is_file());
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        let mut candidates = agent_executable_directories(home)
+            .into_iter()
+            .map(|directory| directory.join("claude-desktop"))
+            .collect::<Vec<_>>();
+        candidates.extend([
+            PathBuf::from("/opt/Claude/claude-desktop"),
+            PathBuf::from("/opt/Claude/claude"),
+            PathBuf::from("/opt/claude-desktop/claude-desktop"),
+        ]);
+        return candidates.into_iter().find(|path| path.is_file());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = home;
         None
@@ -1900,13 +2009,16 @@ fn launch_desktop_agent(executable: &Path, label: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = Command::new(executable);
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    let mut command = Command::new(executable);
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (executable, label);
         return Err("当前平台不支持桌面智能体".to_string());
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -2270,6 +2382,7 @@ fn build_agent_updates(
     home: &Path,
     port: u16,
     model: &str,
+    models: &[AgentModelOption],
     codex_models: Option<&[CodexModelCatalogSpec]>,
 ) -> Result<Vec<AgentFileUpdate>, String> {
     let paths = agent_config_paths(client, home);
@@ -2309,6 +2422,7 @@ fn build_agent_updates(
                         &root_base,
                         DEFAULT_API_KEY,
                         model,
+                        models,
                     )?,
                 },
                 AgentFileUpdate {
@@ -2340,6 +2454,7 @@ fn build_agent_updates(
                 &openai_base,
                 DEFAULT_API_KEY,
                 model,
+                models,
             )?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
@@ -2353,6 +2468,7 @@ fn build_agent_updates(
                 &openai_base,
                 DEFAULT_API_KEY,
                 model,
+                models,
             )?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
@@ -2361,8 +2477,13 @@ fn build_agent_updates(
         }
         AgentClient::Hermes => {
             let before = read_optional_text(&paths[0])?;
-            let after =
-                build_hermes_agent_config(before.as_deref(), &openai_base, DEFAULT_API_KEY, model)?;
+            let after = build_hermes_agent_config(
+                before.as_deref(),
+                &openai_base,
+                DEFAULT_API_KEY,
+                model,
+                models,
+            )?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -2407,6 +2528,7 @@ fn build_claude_agent_config(
         ("ANTHROPIC_DEFAULT_HAIKU_MODEL", model),
         ("ANTHROPIC_DEFAULT_SONNET_MODEL", model),
         ("ANTHROPIC_DEFAULT_OPUS_MODEL", model),
+        ("ANTHROPIC_DEFAULT_FABLE_MODEL", model),
     ] {
         env.insert(
             key.to_string(),
@@ -2448,6 +2570,34 @@ fn render_agent_json(
     Ok(rendered)
 }
 
+fn ordered_agent_models(
+    models: &[AgentModelOption],
+    selected_model: &str,
+) -> Vec<AgentModelOption> {
+    let mut ordered = Vec::with_capacity(models.len().max(1));
+    if let Some(selected) = models
+        .iter()
+        .find(|model| model.name.eq_ignore_ascii_case(selected_model))
+    {
+        ordered.push(selected.clone());
+    } else {
+        ordered.push(AgentModelOption {
+            name: selected_model.to_string(),
+            alias: None,
+        });
+    }
+    for model in models {
+        if ordered
+            .iter()
+            .any(|existing| existing.name.eq_ignore_ascii_case(&model.name))
+        {
+            continue;
+        }
+        ordered.push(model.clone());
+    }
+    ordered
+}
+
 fn build_claude_desktop_deployment_config(existing: Option<&str>) -> Result<String, String> {
     let mut root = parse_agent_json_object(existing, "Claude Desktop 配置")?;
     root.insert("deploymentMode".to_string(), serde_json::json!("3p"));
@@ -2459,6 +2609,7 @@ fn build_claude_desktop_profile(
     base_url: &str,
     api_key: &str,
     model: &str,
+    available_models: &[AgentModelOption],
 ) -> Result<String, String> {
     let mut root = parse_agent_json_object(existing, "Claude Desktop 网关配置")?;
     root.insert(
@@ -2485,7 +2636,20 @@ fn build_claude_desktop_profile(
         "inferenceProvider".to_string(),
         serde_json::json!("gateway"),
     );
-    root.insert("inferenceModels".to_string(), serde_json::json!([model]));
+    let inference_models = ordered_agent_models(available_models, model)
+        .into_iter()
+        .map(|model| match model.alias {
+            Some(alias) => serde_json::json!({
+                "name": model.name,
+                "labelOverride": alias,
+            }),
+            None => serde_json::json!(model.name),
+        })
+        .collect::<Vec<_>>();
+    root.insert(
+        "inferenceModels".to_string(),
+        serde_json::Value::Array(inference_models),
+    );
     render_agent_json(root, "Claude Desktop 网关配置")
 }
 
@@ -2636,6 +2800,7 @@ fn build_opencode_agent_config(
     base_url: &str,
     api_key: &str,
     model: &str,
+    available_models: &[AgentModelOption],
 ) -> Result<String, String> {
     let mut root = parse_agent_json_object(existing, "OpenCode opencode.json")?;
     root.entry("$schema".to_string())
@@ -2645,8 +2810,13 @@ fn build_opencode_agent_config(
         .or_insert_with(|| serde_json::json!({}))
         .as_object_mut()
         .ok_or_else(|| "OpenCode provider 必须是对象".to_string())?;
-    let mut models = serde_json::Map::new();
-    models.insert(model.to_string(), serde_json::json!({ "name": model }));
+    let models = ordered_agent_models(available_models, model)
+        .into_iter()
+        .map(|model| {
+            let display_name = model.alias.as_deref().unwrap_or(&model.name).to_string();
+            (model.name, serde_json::json!({ "name": display_name }))
+        })
+        .collect::<serde_json::Map<_, _>>();
     providers.insert(
         MANAGED_AGENT_PROVIDER_ID.to_string(),
         serde_json::json!({
@@ -2671,6 +2841,7 @@ fn build_openclaw_agent_config(
     base_url: &str,
     api_key: &str,
     model: &str,
+    available_models: &[AgentModelOption],
 ) -> Result<String, String> {
     let mut root = match existing.map(str::trim).filter(|value| !value.is_empty()) {
         Some(value) => json5::from_str::<serde_json::Value>(value)
@@ -2680,6 +2851,7 @@ fn build_openclaw_agent_config(
     let root = root
         .as_object_mut()
         .ok_or_else(|| "OpenClaw openclaw.json 根节点必须是对象".to_string())?;
+    let ordered_models = ordered_agent_models(available_models, model);
     let models = root
         .entry("models".to_string())
         .or_insert_with(|| serde_json::json!({}))
@@ -2699,7 +2871,10 @@ fn build_openclaw_agent_config(
             "baseUrl": base_url,
             "apiKey": api_key,
             "api": "openai-completions",
-            "models": [{ "id": model, "name": model }]
+            "models": ordered_models.iter().map(|model| serde_json::json!({
+                "id": model.name.clone(),
+                "name": model.alias.as_deref().unwrap_or(&model.name),
+            })).collect::<Vec<_>>()
         }),
     );
     let agents = root
@@ -2721,6 +2896,22 @@ fn build_openclaw_agent_config(
         "primary".to_string(),
         serde_json::json!(format!("{MANAGED_AGENT_PROVIDER_ID}/{model}")),
     );
+    let model_catalog = defaults
+        .entry("models".to_string())
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "OpenClaw agents.defaults.models 必须是对象".to_string())?;
+    let managed_prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
+    model_catalog.retain(|name, _| !name.starts_with(&managed_prefix));
+    for model in &ordered_models {
+        let name = format!("{MANAGED_AGENT_PROVIDER_ID}/{}", model.name);
+        let value = model
+            .alias
+            .as_deref()
+            .map(|alias| serde_json::json!({ "alias": alias }))
+            .unwrap_or_else(|| serde_json::json!({}));
+        model_catalog.insert(name, value);
+    }
     render_agent_json(root.clone(), "OpenClaw 配置")
 }
 
@@ -2729,6 +2920,7 @@ fn build_hermes_agent_config(
     base_url: &str,
     api_key: &str,
     model: &str,
+    available_models: &[AgentModelOption],
 ) -> Result<String, String> {
     let mut root = match existing.map(str::trim).filter(|value| !value.is_empty()) {
         Some(value) => serde_yaml::from_str::<serde_yaml::Value>(value)
@@ -2746,8 +2938,10 @@ fn build_hermes_agent_config(
     providers.retain(|provider| {
         provider.get("name").and_then(serde_yaml::Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID)
     });
-    let mut provider_models = serde_json::Map::new();
-    provider_models.insert(model.to_string(), serde_json::json!({}));
+    let provider_models = ordered_agent_models(available_models, model)
+        .into_iter()
+        .map(|model| (model.name, serde_json::json!({})))
+        .collect::<serde_json::Map<_, _>>();
     providers.push(
         serde_yaml::to_value(serde_json::json!({
             "name": MANAGED_AGENT_PROVIDER_ID,
@@ -3054,6 +3248,10 @@ fn fresh_agent_contents(
 ) -> Result<Vec<String>, String> {
     let root_base = format!("http://127.0.0.1:{port}");
     let openai_base = format!("{root_base}/v1");
+    let models = [AgentModelOption {
+        name: model.to_string(),
+        alias: None,
+    }];
     match client {
         AgentClient::ClaudeCode => Ok(vec![build_claude_agent_config(
             None,
@@ -3064,7 +3262,7 @@ fn fresh_agent_contents(
         AgentClient::ClaudeDesktop => Ok(vec![
             build_claude_desktop_deployment_config(None)?,
             build_claude_desktop_deployment_config(None)?,
-            build_claude_desktop_profile(None, &root_base, DEFAULT_API_KEY, model)?,
+            build_claude_desktop_profile(None, &root_base, DEFAULT_API_KEY, model, &models)?,
             build_claude_desktop_meta(None)?,
         ]),
         AgentClient::Codex => Ok(vec![build_codex_agent_config(
@@ -3078,18 +3276,21 @@ fn fresh_agent_contents(
             &openai_base,
             DEFAULT_API_KEY,
             model,
+            &models,
         )?]),
         AgentClient::OpenClaw => Ok(vec![build_openclaw_agent_config(
             None,
             &openai_base,
             DEFAULT_API_KEY,
             model,
+            &models,
         )?]),
         AgentClient::Hermes => Ok(vec![build_hermes_agent_config(
             None,
             &openai_base,
             DEFAULT_API_KEY,
             model,
+            &models,
         )?]),
     }
 }
@@ -3528,6 +3729,7 @@ fn enable_agent_modification(
     home: &Path,
     port: u16,
     model: &str,
+    models: &[AgentModelOption],
     codex_models: Option<&[CodexModelCatalogSpec]>,
 ) -> Result<AgentConfigActionResult, String> {
     let paths = agent_config_paths(client, home);
@@ -3560,7 +3762,7 @@ fn enable_agent_modification(
         );
     }
 
-    let updates = build_agent_updates(client, home, port, model, codex_models)?;
+    let updates = build_agent_updates(client, home, port, model, models, codex_models)?;
     let update_paths = updates
         .iter()
         .map(|update| update.path.clone())
@@ -3670,6 +3872,7 @@ fn update_agent_modification(
     home: &Path,
     port: u16,
     model: &str,
+    models: &[AgentModelOption],
     codex_models: Option<&[CodexModelCatalogSpec]>,
 ) -> Result<AgentConfigActionResult, String> {
     let paths = agent_config_paths(client, home);
@@ -3699,7 +3902,7 @@ fn update_agent_modification(
         ));
     }
 
-    let updates = build_agent_updates(client, home, port, model, codex_models)?;
+    let updates = build_agent_updates(client, home, port, model, models, codex_models)?;
     let (mut next, backup_snapshots) = extend_agent_record_for_updates(&record, &updates)?;
     next.phase = AGENT_PHASE_APPLYING.to_string();
     next.model = model.to_string();
@@ -4190,6 +4393,28 @@ async fn check_latest_core() -> Result<CoreLatest, String> {
 }
 
 #[tauri::command]
+fn detect_bundled_core() -> Result<Option<BundledCoreInfo>, String> {
+    bundled_core_archive().map(|value| value.map(|(info, _)| info))
+}
+
+#[tauri::command]
+fn install_bundled_core(
+    window: tauri::Window,
+    state: tauri::State<'_, CoreDownloadState>,
+) -> Result<CoreInstallResult, String> {
+    let (info, archive_path) = bundled_core_archive()?
+        .ok_or_else(|| "当前发行包没有匹配此系统架构的内置内核".to_string())?;
+    let token = CancellationToken::new();
+    state.start(token, Some(info.version.clone()))?;
+    let result = install_bundled_core_inner(&window, state.inner(), &info, &archive_path);
+    if result.is_err() {
+        let _ = cleanup_core_work_dirs();
+    }
+    state.finish(&window, result.clone());
+    result
+}
+
+#[tauri::command]
 fn cancel_core_install(state: tauri::State<'_, CoreDownloadState>) {
     state.cancel();
 }
@@ -4320,6 +4545,8 @@ async fn install_core_version_inner(
         .strip_prefix(&staging_dir)
         .map_err(|err| format!("计算内核二进制相对路径失败: {err}"))?
         .to_path_buf();
+    preserve_core_runtime_files(&install_dir, &staging_dir)?;
+    preserve_bundled_core_assets(&install_dir, &staging_dir)?;
     write_core_metadata(
         &staging_dir,
         &CoreMetadata {
@@ -4335,6 +4562,68 @@ async fn install_core_version_inner(
     Ok(CoreInstallResult {
         version: normalize_version(&release.tag_name),
         asset_name: asset.name.clone(),
+        install_dir: path_to_string(&install_dir),
+        binary_path: Some(path_to_string(&install_dir.join(binary_relative_path))),
+    })
+}
+
+fn install_bundled_core_inner(
+    window: &tauri::Window,
+    state: &CoreDownloadState,
+    info: &BundledCoreInfo,
+    archive_path: &Path,
+) -> Result<CoreInstallResult, String> {
+    let platform = current_core_platform()?;
+    let install_dir = core_install_dir()?;
+    let base_dir = core_base_dir()?;
+    let staging_dir = base_dir.join("cpa-core.staging");
+    let backup_dir = base_dir.join("cpa-core.backup");
+
+    if current_core_status(None, None)?.running {
+        return Err("CPA 内核正在运行，请先停止后再使用内置内核".to_string());
+    }
+
+    let archive_size = fs::metadata(archive_path)
+        .map_err(|error| format!("读取内置内核压缩包失败: {error}"))?
+        .len();
+    state.progress(window, "校验内置内核", 0, Some(archive_size), false);
+    validate_bundled_core_checksum(archive_path)?;
+    reset_dir(&staging_dir)?;
+    state.progress(
+        window,
+        "解压内置内核",
+        archive_size,
+        Some(archive_size),
+        false,
+    );
+    match platform.archive_kind.as_str() {
+        "tar.gz" => extract_tar_gz(archive_path, &staging_dir)?,
+        "zip" => extract_zip(archive_path, &staging_dir)?,
+        other => return Err(format!("不支持的内置压缩包类型: {other}")),
+    }
+
+    let binary_path = find_core_binary(&staging_dir)
+        .ok_or_else(|| "内置压缩包中没有 CPA 内核二进制文件".to_string())?;
+    let binary_relative_path = binary_path
+        .strip_prefix(&staging_dir)
+        .map_err(|error| format!("计算内置内核二进制路径失败: {error}"))?
+        .to_path_buf();
+    preserve_core_runtime_files(&install_dir, &staging_dir)?;
+    preserve_bundled_core_assets(&install_dir, &staging_dir)?;
+    preserve_selected_bundled_core_asset(archive_path, &staging_dir)?;
+    write_core_metadata(
+        &staging_dir,
+        &CoreMetadata {
+            version: info.version.clone(),
+            asset_name: info.asset_name.clone(),
+            installed_at_unix: unix_now(),
+        },
+    )?;
+    replace_install_dir(&install_dir, &staging_dir, &backup_dir)?;
+
+    Ok(CoreInstallResult {
+        version: info.version.clone(),
+        asset_name: info.asset_name.clone(),
         install_dir: path_to_string(&install_dir),
         binary_path: Some(path_to_string(&install_dir.join(binary_relative_path))),
     })
@@ -4554,12 +4843,7 @@ fn select_release_asset<'a>(
     release: &'a GithubRelease,
     platform: &CorePlatform,
 ) -> Result<&'a GithubAsset, String> {
-    let version = normalize_version(&release.tag_name);
-    let version = version.trim_start_matches('v');
-    let expected_name = format!(
-        "CLIProxyAPI_{}_{}_{}.{}",
-        version, platform.asset_os, platform.asset_arch, platform.archive_kind
-    );
+    let expected_name = core_release_asset_name(&release.tag_name, platform);
     let mut matches = release
         .assets
         .iter()
@@ -4573,6 +4857,15 @@ fn select_release_asset<'a>(
     }
 
     Ok(asset)
+}
+
+fn core_release_asset_name(version: &str, platform: &CorePlatform) -> String {
+    let version = normalize_version(version);
+    let version = version.trim_start_matches('v');
+    format!(
+        "CLIProxyAPI_{}_{}_{}.{}",
+        version, platform.asset_os, platform.asset_arch, platform.archive_kind
+    )
 }
 
 // Download progress and cancellation require the complete transfer context here.
@@ -5050,15 +5343,29 @@ fn set_core_yaml_nested_value(
 }
 
 fn patch_core_api_keys_yaml(content: &str, api_keys: &[String]) -> Result<String, String> {
-    let file = content
-        .parse::<yaml_edit::YamlFile>()
+    let parsed = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|err| format!("解析内核配置失败: {err}"))?;
-    let document = file
-        .document()
-        .ok_or_else(|| "内核配置没有 YAML 文档".to_string())?;
-    clear_legacy_api_key_paths(&document);
-
-    let content = file.to_string();
+    let root = parsed
+        .as_mapping()
+        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+    let has_legacy_api_keys = nested_yaml_value(
+        root,
+        &["auth", "providers", "config-api-key", "api-key-entries"],
+    )
+    .is_some()
+        || nested_yaml_value(root, &["auth", "providers", "config-api-key", "api-keys"]).is_some();
+    let content = if has_legacy_api_keys {
+        let file = content
+            .parse::<yaml_edit::YamlFile>()
+            .map_err(|err| format!("解析内核配置失败: {err}"))?;
+        let document = file
+            .document()
+            .ok_or_else(|| "内核配置没有 YAML 文档".to_string())?;
+        clear_legacy_api_key_paths(&document);
+        file.to_string()
+    } else {
+        content.to_string()
+    };
     let block = render_core_api_keys_yaml(api_keys)?;
     let updated = replace_top_level_yaml_block(&content, "api-keys", &block);
     serde_norway::from_str::<serde_norway::Value>(&updated)
@@ -5105,7 +5412,9 @@ fn replace_top_level_yaml_block(content: &str, key: &str, block: &str) -> String
         if value.is_empty() || value.starts_with('#') {
             for (next_start, next_end) in lines.iter().copied().skip(line_index + 1) {
                 let next = yaml_line_content(content, (next_start, next_end));
-                if next.chars().next().is_some_and(char::is_whitespace) {
+                if next.chars().next().is_some_and(char::is_whitespace)
+                    || is_indentationless_yaml_sequence_item(next)
+                {
                     replace_end = next_end;
                 } else {
                     break;
@@ -5133,6 +5442,13 @@ fn replace_top_level_yaml_block(content: &str, key: &str, block: &str) -> String
         })
         .unwrap_or(0);
     replace_yaml_range(content, insertion, insertion, block)
+}
+
+fn is_indentationless_yaml_sequence_item(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix('-') else {
+        return false;
+    };
+    rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace)
 }
 
 fn yaml_line_ranges(content: &str) -> Vec<(usize, usize)> {
@@ -6532,6 +6848,11 @@ fn apply_gui_managed_settings(content: &str, config: &GuiConfigFile) -> Result<S
         "auth-dir",
         serde_norway::Value::String(config.auth_dir.clone()),
     )?;
+    set_core_yaml_top_level_value(
+        &mut updated,
+        "usage-statistics-enabled",
+        serde_norway::Value::Bool(true),
+    )?;
     set_core_yaml_nested_value(
         &mut updated,
         "remote-management",
@@ -6885,6 +7206,213 @@ fn core_base_dir() -> Result<PathBuf, String> {
         .parent()
         .map(|path| path.to_path_buf())
         .ok_or_else(|| format!("当前程序路径没有父目录: {}", path_to_string(&exe_path)))
+}
+
+fn bundled_core_archive() -> Result<Option<(BundledCoreInfo, PathBuf)>, String> {
+    let platform = current_core_platform()?;
+    let base_dir = core_base_dir()?;
+    let mut locations = vec![(base_dir.join(CORE_VERSION_FILE), base_dir.join("cpa-core"))];
+    if let Some(project_root) = source_project_root(&base_dir) {
+        if project_root != base_dir {
+            locations.push((
+                project_root.join(CORE_VERSION_FILE),
+                project_root.join("cpa-core"),
+            ));
+        }
+    }
+
+    let configured_version = locations.iter().find_map(|(version_path, _)| {
+        fs::read_to_string(version_path)
+            .ok()
+            .map(|value| normalize_version(value.trim()))
+            .filter(|value| value != "v")
+    });
+    if let Some(version) = configured_version {
+        let asset_name = core_release_asset_name(&version, &platform);
+        for (_, archive_dir) in &locations {
+            let archive_path = archive_dir.join(&asset_name);
+            if !archive_path.is_file() {
+                continue;
+            }
+            let size_bytes = fs::metadata(&archive_path)
+                .map_err(|error| format!("读取内置内核信息失败: {error}"))?
+                .len();
+            return Ok(Some((
+                BundledCoreInfo {
+                    version,
+                    asset_name,
+                    size_bytes,
+                },
+                archive_path,
+            )));
+        }
+        return Ok(None);
+    }
+
+    let suffix = format!(
+        "_{}_{}.{}",
+        platform.asset_os, platform.asset_arch, platform.archive_kind
+    );
+    let mut matches = Vec::new();
+    for (_, archive_dir) in &locations {
+        if !archive_dir.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(archive_dir)
+            .map_err(|error| format!("读取内置内核目录失败: {error}"))?
+            .filter_map(Result::ok)
+        {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !entry.path().is_file()
+                || !name.starts_with("CLIProxyAPI_")
+                || !name.ends_with(&suffix)
+                || name.contains("_no-plugin")
+            {
+                continue;
+            }
+            let Some(version) = name
+                .strip_prefix("CLIProxyAPI_")
+                .and_then(|value| value.strip_suffix(&suffix))
+            else {
+                continue;
+            };
+            let version = normalize_version(version);
+            if matches.iter().any(|(existing, _, _)| existing == &version) {
+                continue;
+            }
+            matches.push((version, name, entry.path()));
+        }
+    }
+    matches.sort_by(|left, right| left.0.cmp(&right.0));
+    if matches.len() > 1 {
+        return Err(format!(
+            "发现多个匹配当前平台的内置内核，请在 {} 中指定发行版本",
+            CORE_VERSION_FILE
+        ));
+    }
+    let Some((version, asset_name, archive_path)) = matches.pop() else {
+        return Ok(None);
+    };
+    let size_bytes = fs::metadata(&archive_path)
+        .map_err(|error| format!("读取内置内核信息失败: {error}"))?
+        .len();
+    Ok(Some((
+        BundledCoreInfo {
+            version,
+            asset_name,
+            size_bytes,
+        },
+        archive_path,
+    )))
+}
+
+fn source_project_root(start: &Path) -> Option<PathBuf> {
+    start.ancestors().find_map(|directory| {
+        (directory.join("package.json").is_file() && directory.join("src-tauri").is_dir())
+            .then(|| directory.to_path_buf())
+    })
+}
+
+fn preserve_bundled_core_assets(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
+    if !source_dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(source_dir)
+        .map_err(|error| format!("读取内置内核文件失败: {error}"))?
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_archive = name.starts_with("CLIProxyAPI_")
+            && (name.ends_with(".tar.gz") || name.ends_with(".zip"))
+            && !name.contains("_no-plugin");
+        if !is_archive && name != CORE_CHECKSUMS_FILE {
+            continue;
+        }
+        fs::copy(&path, target_dir.join(&name))
+            .map_err(|error| format!("保留内置内核文件 {name} 失败: {error}"))?;
+    }
+    Ok(())
+}
+
+fn preserve_selected_bundled_core_asset(
+    archive_path: &Path,
+    target_dir: &Path,
+) -> Result<(), String> {
+    let archive_name = archive_path
+        .file_name()
+        .ok_or_else(|| "内置内核压缩包文件名无效".to_string())?;
+    fs::copy(archive_path, target_dir.join(archive_name))
+        .map_err(|error| format!("保留所选内置内核压缩包失败: {error}"))?;
+    if let Some(source_dir) = archive_path.parent() {
+        let checksums = source_dir.join(CORE_CHECKSUMS_FILE);
+        if checksums.is_file() {
+            fs::copy(&checksums, target_dir.join(CORE_CHECKSUMS_FILE))
+                .map_err(|error| format!("保留内置内核校验文件失败: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn preserve_core_runtime_files(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
+    if !source_dir.is_dir() {
+        return Ok(());
+    }
+    let source = source_dir.join(CORE_CONFIG_FILE);
+    if source.is_file() {
+        fs::copy(&source, target_dir.join(CORE_CONFIG_FILE))
+            .map_err(|error| format!("保留内核配置文件失败: {error}"))?;
+    }
+    Ok(())
+}
+
+fn validate_bundled_core_checksum(archive_path: &Path) -> Result<(), String> {
+    let Some(directory) = archive_path.parent() else {
+        return Err("内置内核压缩包没有父目录".to_string());
+    };
+    let checksums_path = directory.join(CORE_CHECKSUMS_FILE);
+    if !checksums_path.is_file() {
+        return Ok(());
+    }
+    let archive_name = archive_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "内置内核压缩包文件名无效".to_string())?;
+    let checksums = fs::read_to_string(&checksums_path)
+        .map_err(|error| format!("读取内置内核校验文件失败: {error}"))?;
+    let expected = checksums.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let digest = fields.next()?;
+        let name = fields.next()?.trim_start_matches('*');
+        (name == archive_name && digest.len() == 64).then(|| digest.to_ascii_lowercase())
+    });
+    let Some(expected) = expected else {
+        return Err(format!("校验文件中没有 {archive_name} 的 SHA-256"));
+    };
+    let actual = sha256_file(archive_path)?;
+    if actual != expected {
+        return Err("内置内核压缩包 SHA-256 校验失败".to_string());
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|error| format!("打开校验文件失败: {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("读取校验文件失败: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn read_core_metadata(install_dir: &Path) -> Option<CoreMetadata> {
@@ -7415,8 +7943,13 @@ fn main() {
     let app = tauri::Builder::default()
         .manage(CoreDownloadState::default())
         .manage(CoreProcessState::default())
+        .manage(usage::UsageCollectorState::default())
         .manage(GuiConfigState::new(gui_config))
         .setup(|app| {
+            if let Err(error) = usage::initialize_usage_storage() {
+                eprintln!("初始化使用记录目录失败: {error}");
+            }
+            usage::start_usage_collector(app.handle().clone());
             let gui_config_state = app.state::<GuiConfigState>();
             let process_state = app.state::<CoreProcessState>();
             let config = gui_config_state.snapshot().map_err(io::Error::other)?;
@@ -7460,9 +7993,15 @@ fn main() {
             submit_oauth_callback,
             open_external_url,
             check_latest_core,
+            detect_bundled_core,
             install_core_version,
+            install_bundled_core,
             cancel_core_install,
             get_core_install_task,
+            usage::get_usage_collector_status,
+            usage::get_usage_overview,
+            usage::get_usage_analysis,
+            usage::get_usage_events,
             start_core_process,
             stop_core_process,
             restart_core_process
@@ -7472,6 +8011,7 @@ fn main() {
 
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
+            usage::stop_usage_collector(app_handle);
             let process_state = app_handle.state::<CoreProcessState>();
             let gui_config_state = app_handle.state::<GuiConfigState>();
             shutdown_managed_core(process_state.inner(), gui_config_state.inner());
@@ -7496,15 +8036,18 @@ mod tests {
         path
     }
 
-    fn test_codex_models(names: &[&str]) -> Vec<CodexModelCatalogSpec> {
-        let models = names
+    fn test_agent_models(names: &[&str]) -> Vec<AgentModelOption> {
+        names
             .iter()
             .map(|name| AgentModelOption {
                 name: (*name).to_string(),
                 alias: None,
             })
-            .collect::<Vec<_>>();
-        merge_codex_model_catalog_specs(&models, &[])
+            .collect()
+    }
+
+    fn test_codex_models(names: &[&str]) -> Vec<CodexModelCatalogSpec> {
+        merge_codex_model_catalog_specs(&test_agent_models(names), &[])
     }
 
     fn test_codex_oauth_thinking_source(model: &str) -> ResolvedThinkingAliasSource {
@@ -7592,11 +8135,13 @@ mod tests {
 
     #[test]
     fn claude_desktop_config_builds_gateway_profile_and_index() {
+        let models = test_agent_models(&["claude-sonnet-test", "claude-opus-test"]);
         let profile = build_claude_desktop_profile(
             Some(r#"{"keep":true}"#),
             "http://127.0.0.1:8317",
             DEFAULT_API_KEY,
             "claude-sonnet-test",
+            &models,
         )
         .unwrap();
         let meta =
@@ -7609,17 +8154,53 @@ mod tests {
         assert_eq!(profile["inferenceGatewayApiKey"], DEFAULT_API_KEY);
         assert_eq!(profile["inferenceGatewayBaseUrl"], "http://127.0.0.1:8317");
         assert_eq!(profile["inferenceModels"][0], "claude-sonnet-test");
+        assert_eq!(profile["inferenceModels"][1], "claude-opus-test");
         assert_eq!(meta["appliedId"], CLAUDE_DESKTOP_PROFILE_ID);
         assert_eq!(meta["entries"].as_array().unwrap().len(), 2);
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn claude_desktop_uses_linux_beta_config_paths() {
+        let home = agent_test_home("claude-desktop-linux-paths");
+        let config_home = env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| home.join(".config"));
+        let paths = claude_desktop_config_paths(&home);
+
+        assert!(AgentClient::ClaudeDesktop.supported_platform());
+        assert_eq!(paths.len(), 4);
+        assert_eq!(
+            paths[0],
+            config_home.join("Claude/claude_desktop_config.json")
+        );
+        assert_eq!(
+            paths[1],
+            config_home.join("Claude-3p/claude_desktop_config.json")
+        );
+        assert_eq!(
+            paths[2],
+            config_home
+                .join("Claude-3p/configLibrary")
+                .join(format!("{CLAUDE_DESKTOP_PROFILE_ID}.json"))
+        );
+        assert_eq!(
+            paths[3],
+            config_home.join("Claude-3p/configLibrary/_meta.json")
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+
     #[test]
     fn opencode_agent_config_preserves_other_providers() {
+        let models = test_agent_models(&["gpt-test", "deepseek-test"]);
         let rendered = build_opencode_agent_config(
             Some(r#"{"theme":"dark","provider":{"other":{"npm":"other"}}}"#),
             "http://127.0.0.1:8317/v1",
             DEFAULT_API_KEY,
             "gpt-test",
+            &models,
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
@@ -7631,15 +8212,21 @@ mod tests {
             "http://127.0.0.1:8317/v1"
         );
         assert_eq!(value["model"], "cpa-gui/gpt-test");
+        assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["gpt-test"].is_object());
+        assert!(
+            value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["deepseek-test"].is_object()
+        );
     }
 
     #[test]
     fn openclaw_agent_config_accepts_json5_and_preserves_unknown_fields() {
+        let models = test_agent_models(&["gpt-test", "deepseek-test"]);
         let rendered = build_openclaw_agent_config(
             Some("{ theme: 'dark', models: { mode: 'merge', providers: {} } }"),
             "http://127.0.0.1:8317/v1",
             DEFAULT_API_KEY,
             "gpt-test",
+            &models,
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
@@ -7653,15 +8240,26 @@ mod tests {
             value["agents"]["defaults"]["model"]["primary"],
             "cpa-gui/gpt-test"
         );
+        assert_eq!(
+            value["models"]["providers"][MANAGED_AGENT_PROVIDER_ID]["models"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(value["agents"]["defaults"]["models"]["cpa-gui/gpt-test"].is_object());
+        assert!(value["agents"]["defaults"]["models"]["cpa-gui/deepseek-test"].is_object());
     }
 
     #[test]
     fn hermes_agent_config_preserves_unknown_fields_and_uses_current_schema() {
+        let models = test_agent_models(&["gpt-test", "deepseek-test"]);
         let rendered = build_hermes_agent_config(
             Some("theme: dark\ncustom_providers:\n  - name: other\n    base_url: https://example.com\n"),
             "http://127.0.0.1:8317/v1",
             DEFAULT_API_KEY,
             "gpt-test",
+            &models,
         )
         .unwrap();
         let value: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
@@ -7675,6 +8273,7 @@ mod tests {
         assert_eq!(managed["api_mode"].as_str(), Some("chat_completions"));
         assert_eq!(managed["model"].as_str(), Some("gpt-test"));
         assert!(managed["models"]["gpt-test"].is_mapping());
+        assert!(managed["models"]["deepseek-test"].is_mapping());
         assert_eq!(
             value["model"]["provider"].as_str(),
             Some(MANAGED_AGENT_PROVIDER_ID)
@@ -7925,10 +8524,17 @@ mod tests {
         let original = b"# original comment\napproval_policy = \"on-request\"\n";
         fs::write(&path, original).unwrap();
 
-        let models = test_codex_models(&["gpt-one", "gpt-two", "gpt-three"]);
-        let enabled =
-            enable_agent_modification(AgentClient::Codex, &home, 8317, "gpt-one", Some(&models))
-                .unwrap();
+        let available_models = test_agent_models(&["gpt-one", "gpt-two", "gpt-three"]);
+        let codex_models = test_codex_models(&["gpt-one", "gpt-two", "gpt-three"]);
+        let enabled = enable_agent_modification(
+            AgentClient::Codex,
+            &home,
+            8317,
+            "gpt-one",
+            &available_models,
+            Some(&codex_models),
+        )
+        .unwrap();
         assert_eq!(enabled.outcome, "enabled");
         let backup = agent_backup_path(&path).unwrap();
         let state = agent_state_path(&[path.clone()]).unwrap();
@@ -7937,9 +8543,15 @@ mod tests {
         assert!(state.is_file());
         assert!(catalog_path.is_file());
 
-        let updated =
-            update_agent_modification(AgentClient::Codex, &home, 8317, "gpt-two", Some(&models))
-                .unwrap();
+        let updated = update_agent_modification(
+            AgentClient::Codex,
+            &home,
+            8317,
+            "gpt-two",
+            &available_models,
+            Some(&codex_models),
+        )
+        .unwrap();
         assert_eq!(updated.outcome, "updated");
         assert_eq!(fs::read(&backup).unwrap(), original);
         assert!(fs::read_to_string(&path).unwrap().contains("gpt-two"));
@@ -7955,7 +8567,8 @@ mod tests {
             &home,
             8317,
             "gpt-three",
-            Some(&models),
+            &available_models,
+            Some(&codex_models),
         )
         .unwrap_err()
         .contains("其他程序修改"));
@@ -7979,7 +8592,16 @@ mod tests {
         let home = agent_test_home("opencode-absent");
         let path = home.join(".config/opencode/opencode.json");
 
-        enable_agent_modification(AgentClient::OpenCode, &home, 8317, "gpt-test", None).unwrap();
+        let models = test_agent_models(&["gpt-test"]);
+        enable_agent_modification(
+            AgentClient::OpenCode,
+            &home,
+            8317,
+            "gpt-test",
+            &models,
+            None,
+        )
+        .unwrap();
         assert!(path.is_file());
         assert!(!agent_backup_path(&path).unwrap().exists());
 
@@ -7998,13 +8620,15 @@ mod tests {
         let state_path = agent_state_path(&[path.clone()]).unwrap();
         fs::create_dir(&state_path).unwrap();
 
-        let models = test_codex_models(&["gpt-test"]);
+        let available_models = test_agent_models(&["gpt-test"]);
+        let codex_models = test_codex_models(&["gpt-test"]);
         assert!(enable_agent_modification(
             AgentClient::Codex,
             &home,
             8317,
             "gpt-test",
-            Some(&models),
+            &available_models,
+            Some(&codex_models),
         )
         .is_err());
         assert_eq!(fs::read(&path).unwrap(), b"approval_policy = \"never\"\n");
@@ -8101,9 +8725,17 @@ mod tests {
         assert_eq!(record.files.len(), 1);
         write_agent_state(&agent_state_path(&[path.clone()]).unwrap(), &record).unwrap();
 
-        let models = test_codex_models(&["gpt-new"]);
-        update_agent_modification(AgentClient::Codex, &home, 8317, "gpt-new", Some(&models))
-            .unwrap();
+        let available_models = test_agent_models(&["gpt-new"]);
+        let codex_models = test_codex_models(&["gpt-new"]);
+        update_agent_modification(
+            AgentClient::Codex,
+            &home,
+            8317,
+            "gpt-new",
+            &available_models,
+            Some(&codex_models),
+        )
+        .unwrap();
         let upgraded = load_agent_record(AgentClient::Codex, &[path.clone()])
             .unwrap()
             .unwrap();
@@ -8129,9 +8761,17 @@ mod tests {
         let path = home.join(".codex/config.toml");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "approval_policy = \"never\"\n").unwrap();
-        let models = test_codex_models(&["gpt-test"]);
-        enable_agent_modification(AgentClient::Codex, &home, 8317, "gpt-test", Some(&models))
-            .unwrap();
+        let available_models = test_agent_models(&["gpt-test"]);
+        let codex_models = test_codex_models(&["gpt-test"]);
+        enable_agent_modification(
+            AgentClient::Codex,
+            &home,
+            8317,
+            "gpt-test",
+            &available_models,
+            Some(&codex_models),
+        )
+        .unwrap();
 
         let state_path = agent_state_path(&[path.clone()]).unwrap();
         let mut record = load_agent_record(AgentClient::Codex, &[path])
@@ -8615,6 +9255,22 @@ mod tests {
     }
 
     #[test]
+    fn runtime_api_key_patch_replaces_indentationless_core_sequence() {
+        let input = "host: 0.0.0.0\nport: 8317\nauth-dir: /tmp/oauth\napi-keys:\n- '123456'\ndebug: false\n";
+        let rendered = patch_core_api_keys_yaml(input, &[DEFAULT_API_KEY.to_string()])
+            .unwrap_or_else(|error| panic!("patch failed: {error}"));
+        let parsed = serde_norway::from_str::<serde_norway::Value>(&rendered)
+            .unwrap_or_else(|error| panic!("invalid YAML: {error}\n{rendered}"));
+
+        assert_eq!(
+            core_config_settings_from_value(&parsed).unwrap().api_keys,
+            vec![DEFAULT_API_KEY]
+        );
+        assert_eq!(rendered.matches("- '123456'").count(), 1, "{rendered}");
+        assert!(rendered.contains("debug: false"), "{rendered}");
+    }
+
+    #[test]
     fn yaml_edit_runtime_patch_migrates_legacy_api_key_entries() {
         let input = "auth:\n  providers:\n    config-api-key:\n      api-key-entries:\n        - api-key: first-key\n        - key: second-key\nplugins:\n  enabled: false\n";
         let rendered = patch_core_api_keys_yaml(input, &["migrated-key".to_string()]).unwrap();
@@ -8708,6 +9364,7 @@ mod tests {
         assert_eq!(document["api-keys"][1], "gui-key");
         assert_eq!(document["plugins"]["enabled"], true, "{merged}");
         assert_eq!(document["routing"]["strategy"], "fill-first");
+        assert_eq!(document["usage-statistics-enabled"], true);
         assert_eq!(document["new-option"], serde_norway::Value::Bool(true));
         assert_eq!(
             document["nested"]["keep"],
@@ -8747,6 +9404,7 @@ mod tests {
         assert_eq!(document["api-keys"][0], DEFAULT_API_KEY, "{merged}");
         assert_eq!(document["plugins"]["enabled"], false);
         assert_eq!(document["routing"]["strategy"], "round-robin");
+        assert_eq!(document["usage-statistics-enabled"], true);
     }
 
     #[test]
@@ -8782,6 +9440,132 @@ mod tests {
             asset.browser_download_url,
             "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.80/CLIProxyAPI_7.2.80_linux_amd64.tar.gz"
         );
+    }
+
+    #[test]
+    fn release_asset_names_cover_the_six_supported_gui_targets() {
+        let targets = [
+            ("linux", "amd64", "tar.gz"),
+            ("linux", "aarch64", "tar.gz"),
+            ("darwin", "amd64", "tar.gz"),
+            ("darwin", "aarch64", "tar.gz"),
+            ("windows", "amd64", "zip"),
+            ("windows", "aarch64", "zip"),
+        ];
+        for (os, arch, archive_kind) in targets {
+            let platform = CorePlatform {
+                os: os.to_string(),
+                arch: arch.to_string(),
+                asset_os: os.to_string(),
+                asset_arch: arch.to_string(),
+                archive_kind: archive_kind.to_string(),
+            };
+            assert_eq!(
+                core_release_asset_name("v7.2.83", &platform),
+                format!("CLIProxyAPI_7.2.83_{os}_{arch}.{archive_kind}")
+            );
+        }
+    }
+
+    #[test]
+    fn agent_launch_requires_an_active_managed_configuration() {
+        assert!(
+            validate_agent_launch_modification(AgentClient::Codex, true, AGENT_PHASE_ACTIVE)
+                .is_ok()
+        );
+        assert!(
+            validate_agent_launch_modification(AgentClient::Codex, false, AGENT_PHASE_ACTIVE)
+                .is_err()
+        );
+        assert!(
+            validate_agent_launch_modification(AgentClient::Codex, true, AGENT_PHASE_CONFLICT)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn replacing_a_core_preserves_only_regular_bundled_assets() {
+        let root = agent_test_home("bundled-assets");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(
+            source.join("CLIProxyAPI_7.2.83_linux_amd64.tar.gz"),
+            b"archive",
+        )
+        .unwrap();
+        fs::write(
+            source.join("CLIProxyAPI_7.2.83_linux_amd64_no-plugin.tar.gz"),
+            b"portable",
+        )
+        .unwrap();
+        fs::write(source.join(CORE_CHECKSUMS_FILE), b"checksums").unwrap();
+
+        preserve_bundled_core_assets(&source, &target).unwrap();
+
+        assert!(target
+            .join("CLIProxyAPI_7.2.83_linux_amd64.tar.gz")
+            .is_file());
+        assert!(!target
+            .join("CLIProxyAPI_7.2.83_linux_amd64_no-plugin.tar.gz")
+            .exists());
+        assert!(target.join(CORE_CHECKSUMS_FILE).is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replacing_a_core_preserves_the_existing_configuration_bytes() {
+        let root = agent_test_home("core-config-preserve");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        let original = b"host: 127.0.0.1\n# keep this comment\ndebug: true\n";
+        fs::write(source.join(CORE_CONFIG_FILE), original).unwrap();
+
+        preserve_core_runtime_files(&source, &target).unwrap();
+
+        assert_eq!(fs::read(target.join(CORE_CONFIG_FILE)).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn source_project_root_is_detected_from_the_portable_development_directory() {
+        let root = agent_test_home("bundled-source-root");
+        fs::create_dir_all(root.join("src-tauri")).unwrap();
+        fs::create_dir_all(root.join("bin-work")).unwrap();
+        fs::write(root.join("package.json"), b"{}").unwrap();
+
+        assert_eq!(
+            source_project_root(&root.join("bin-work")),
+            Some(root.clone())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn selected_source_archive_and_checksums_are_copied_into_the_installation() {
+        let root = agent_test_home("selected-bundled-asset");
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        let archive = source.join("CLIProxyAPI_7.2.83_linux_amd64.tar.gz");
+        fs::write(&archive, b"archive").unwrap();
+        fs::write(source.join(CORE_CHECKSUMS_FILE), b"checksums").unwrap();
+
+        preserve_selected_bundled_core_asset(&archive, &target).unwrap();
+
+        assert_eq!(
+            fs::read(target.join("CLIProxyAPI_7.2.83_linux_amd64.tar.gz")).unwrap(),
+            b"archive"
+        );
+        assert_eq!(
+            fs::read(target.join(CORE_CHECKSUMS_FILE)).unwrap(),
+            b"checksums"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

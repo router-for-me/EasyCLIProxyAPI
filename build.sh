@@ -24,7 +24,9 @@ if [ ! -x "$APP_BIN" ]; then
 fi
 
 mkdir -p "$BIN_DIR"
-cp -f "$APP_BIN" "$BIN_OUT"
+bun "$ROOT_DIR/scripts/prepare-portable.mjs" \
+  --binary "$APP_BIN" \
+  --output "$BIN_DIR"
 chmod +x "$BIN_OUT"
 
 echo "Built: $APP_BIN"
