@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Bot, FileKey, Gauge, GitFork, LogIn, Network, ServerCog, Settings } from 'lucide-react';
+import { Bot, FileKey, Gauge, GitFork, History, LogIn, Network, ServerCog, Settings } from 'lucide-react';
 import appLogo from './assets/logo.jpg';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
 import { ConfigPanelPage } from './pages/ConfigPanel';
@@ -10,6 +10,7 @@ import { OAuthLoginPage } from './pages/ManagementPages';
 import { QuotaPage } from './pages/QuotaPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { ThinkingAliasesPage } from './pages/ThinkingAliasesPage';
+import { UsageRecordsPage } from './pages/UsageRecordsPage';
 
 const pages = [
   {
@@ -53,6 +54,12 @@ const pages = [
     label: '配额',
     icon: Gauge,
     component: QuotaPage,
+  },
+  {
+    id: 'usage-records',
+    label: '使用记录',
+    icon: History,
+    component: UsageRecordsPage,
   },
   {
     id: 'agents',
