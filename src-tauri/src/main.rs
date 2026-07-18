@@ -47,7 +47,12 @@ const AGENT_PHASE_APPLYING: &str = "applying";
 const AGENT_PHASE_ACTIVE: &str = "active";
 const AGENT_PHASE_RESTORING: &str = "restoring";
 const AGENT_PHASE_RECOVERY: &str = "recovery";
-const USER_AGENT: &str = "CPA-GUI/0.1.0 (+https://github.com/router-for-me/CLIProxyAPI)";
+const AGENT_MODIFICATION_STATE_CONFLICT: &str = "conflict";
+const USER_AGENT: &str = concat!(
+    "CPA-GUI/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/router-for-me/CLIProxyAPI)"
+);
 static CORE_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 static AGENT_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -362,7 +367,7 @@ enum AgentClient {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // The desktop-app variants are constructed only on macOS/Windows builds.
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))] // The desktop-app variants are constructed only on macOS/Windows builds.
 enum CodexAppTarget {
     Application(PathBuf),
     #[cfg(target_os = "windows")]
@@ -429,6 +434,9 @@ struct AgentFileUpdate {
     path: PathBuf,
     after: String,
 }
+
+type FileSnapshot = (PathBuf, Option<Vec<u8>>);
+type AgentRecordExtension = (AgentModificationRecord, Vec<FileSnapshot>);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1413,17 +1421,15 @@ fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBuf> {
             let directory = home.join(".claude");
             let settings = directory.join("settings.json");
             let legacy = directory.join("claude.json");
-            let settings_state_exists = agent_state_path(&[settings.clone()])
+            let settings_state_exists = agent_state_path(std::slice::from_ref(&settings))
                 .map(|path| path.exists())
                 .unwrap_or(false);
-            let legacy_state_exists = agent_state_path(&[legacy.clone()])
+            let legacy_state_exists = agent_state_path(std::slice::from_ref(&legacy))
                 .map(|path| path.exists())
                 .unwrap_or(false);
             vec![if settings_state_exists {
                 settings
-            } else if legacy_state_exists {
-                legacy
-            } else if !settings.exists() && legacy.exists() {
+            } else if legacy_state_exists || (!settings.exists() && legacy.exists()) {
                 legacy
             } else {
                 settings
@@ -1701,6 +1707,7 @@ fn agent_launch_targets(client: AgentClient, home: &Path) -> Vec<AgentLaunchTarg
     targets
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn codex_app_target_detail(target: &CodexAppTarget) -> String {
     match target {
         CodexAppTarget::Application(path) => path_to_string(path),
@@ -1971,7 +1978,7 @@ fn find_claude_desktop_executable(home: &Path) -> Option<PathBuf> {
             PathBuf::from("/opt/Claude/claude"),
             PathBuf::from("/opt/claude-desktop/claude-desktop"),
         ]);
-        return candidates.into_iter().find(|path| path.is_file());
+        candidates.into_iter().find(|path| path.is_file())
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
@@ -3155,7 +3162,7 @@ fn inspect_agent_modification(
                 } else {
                     match conflicts {
                         Ok(conflicts) if conflicts.is_empty() => "active",
-                        Ok(_) => "conflict",
+                        Ok(_) => AGENT_MODIFICATION_STATE_CONFLICT,
                         Err(_) => "recovery",
                     }
                 };
@@ -3163,7 +3170,7 @@ fn inspect_agent_modification(
                 if !backup_available {
                     warnings.push("原配置备份不完整，恢复前请勿删除剩余备份文件".to_string());
                 }
-                if state == "conflict" {
+                if state == AGENT_MODIFICATION_STATE_CONFLICT {
                     warnings.push("配置已被其他程序修改，关闭接管时需要确认强制恢复".to_string());
                 } else if state == "recovery" {
                     warnings.push("上次配置操作未完整结束，可关闭开关恢复原配置".to_string());
@@ -3487,7 +3494,7 @@ fn prepare_agent_record(
 fn extend_agent_record_for_updates(
     record: &AgentModificationRecord,
     updates: &[AgentFileUpdate],
-) -> Result<(AgentModificationRecord, Vec<(PathBuf, Option<Vec<u8>>)>), String> {
+) -> Result<AgentRecordExtension, String> {
     if record.files.len() > updates.len() {
         return Err("智能体配置更新文件数量不匹配".to_string());
     }
@@ -3578,7 +3585,7 @@ fn extend_agent_record_for_updates(
     Ok((next, backup_snapshots))
 }
 
-fn restore_snapshots(snapshots: &[(PathBuf, Option<Vec<u8>>)]) -> Result<(), String> {
+fn restore_snapshots(snapshots: &[FileSnapshot]) -> Result<(), String> {
     let mut errors = Vec::new();
     for (path, bytes) in snapshots.iter().rev() {
         let result = match bytes {
@@ -4141,8 +4148,6 @@ struct OAuthStatusResult {
 struct OAuthStartApiResponse {
     url: Option<String>,
     state: Option<String>,
-    #[allow(dead_code)]
-    status: Option<String>,
     error: Option<String>,
     #[serde(rename = "error_message")]
     error_message: Option<String>,
@@ -5291,17 +5296,248 @@ fn patch_core_yaml_document<F>(content: &str, update: F) -> Result<Option<String
 where
     F: FnOnce(&mut serde_norway::Value) -> Result<bool, String>,
 {
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
+    let original = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|err| format!("解析内核配置失败: {err}"))?;
-    let mut updated_value = document.get().clone();
-    if !update(&mut updated_value)? {
+    let mut updated = original.clone();
+    if !update(&mut updated)? {
         return Ok(None);
     }
-    document.set(updated_value);
-    let updated = document.get_string();
-    serde_norway::from_str::<serde_norway::Value>(&updated)
+    render_yaml_value_changes(content, &original, &updated).map(Some)
+}
+
+struct YamlValueChange {
+    path: Vec<String>,
+    value: serde_norway::Value,
+}
+
+fn render_yaml_value_changes(
+    content: &str,
+    original: &serde_norway::Value,
+    updated: &serde_norway::Value,
+) -> Result<String, String> {
+    if original == updated {
+        return Ok(content.to_string());
+    }
+    let editable_content = normalize_nested_yaml_comment_indentation(content);
+    let file = editable_content
+        .parse::<yaml_edit::YamlFile>()
+        .map_err(|err| format!("解析可编辑内核配置失败: {err}"))?;
+    let document = file
+        .document()
+        .ok_or_else(|| "内核配置没有 YAML 文档".to_string())?;
+    let root = document
+        .as_mapping()
+        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+    let mut changes = Vec::new();
+    collect_yaml_value_changes(original, updated, &mut Vec::new(), &mut changes)?;
+    for change in changes {
+        set_yaml_edit_mapping_path(&root, &change.path, &change.value)?;
+    }
+    let rendered = file.to_string();
+    let validated = serde_norway::from_str::<serde_norway::Value>(&rendered)
         .map_err(|err| format!("验证更新后的内核配置失败: {err}"))?;
-    Ok(Some(updated))
+    if validated != *updated {
+        return Err("更新后的内核配置与预期值不一致，已拒绝写入".to_string());
+    }
+    Ok(rendered)
+}
+
+fn normalize_nested_yaml_comment_indentation(content: &str) -> String {
+    let lines = content.split_inclusive('\n').collect::<Vec<_>>();
+    let mut normalized = String::with_capacity(content.len());
+    for (index, line) in lines.iter().enumerate() {
+        let body = line.trim_end_matches(['\r', '\n']);
+        let ending = &line[body.len()..];
+        let trimmed = body.trim_start_matches([' ', '\t']);
+        let current_indent = body.len().saturating_sub(trimmed.len());
+        if !trimmed.starts_with('#') {
+            normalized.push_str(line);
+            continue;
+        }
+        let next = lines.iter().skip(index + 1).find_map(|candidate| {
+            let candidate = candidate.trim_end_matches(['\r', '\n']);
+            let trimmed = candidate.trim_start_matches([' ', '\t']);
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                None
+            } else {
+                Some((candidate.len().saturating_sub(trimmed.len()), trimmed))
+            }
+        });
+        let Some((next_indent, _)) = next else {
+            normalized.push_str(line);
+            continue;
+        };
+        let belongs_to_nested_mapping = current_indent < next_indent
+            && lines[..index].iter().rev().any(|candidate| {
+                let candidate = candidate.trim_end_matches(['\r', '\n']);
+                let trimmed = candidate.trim_start_matches([' ', '\t']);
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    return false;
+                }
+                let indent = candidate.len().saturating_sub(trimmed.len());
+                indent < next_indent && trimmed.ends_with(':')
+            });
+        if belongs_to_nested_mapping {
+            normalized.push_str(&" ".repeat(next_indent));
+            normalized.push_str(trimmed);
+            normalized.push_str(ending);
+        } else {
+            normalized.push_str(line);
+        }
+    }
+    normalized
+}
+
+fn collect_yaml_value_changes(
+    original: &serde_norway::Value,
+    updated: &serde_norway::Value,
+    path: &mut Vec<String>,
+    changes: &mut Vec<YamlValueChange>,
+) -> Result<(), String> {
+    if original == updated {
+        return Ok(());
+    }
+    match (original, updated) {
+        (
+            serde_norway::Value::Mapping(original_mapping),
+            serde_norway::Value::Mapping(updated_mapping),
+        ) => {
+            for key in original_mapping.keys() {
+                if !updated_mapping.contains_key(key) {
+                    return Err("当前内核配置更新不支持删除任意 YAML 字段".to_string());
+                }
+            }
+            for (key, updated_value) in updated_mapping {
+                let key = key
+                    .as_str()
+                    .ok_or_else(|| "内核配置映射键必须是字符串".to_string())?;
+                path.push(key.to_string());
+                if let Some(original_value) = original_mapping.get(yaml_key(key)) {
+                    collect_yaml_value_changes(original_value, updated_value, path, changes)?;
+                } else {
+                    changes.push(YamlValueChange {
+                        path: path.clone(),
+                        value: updated_value.clone(),
+                    });
+                }
+                path.pop();
+            }
+            Ok(())
+        }
+        _ if path.is_empty() => Err("内核配置顶层必须保持为 YAML 映射".to_string()),
+        _ => {
+            changes.push(YamlValueChange {
+                path: path.clone(),
+                value: updated.clone(),
+            });
+            Ok(())
+        }
+    }
+}
+
+fn set_yaml_edit_mapping_path(
+    mapping: &yaml_edit::Mapping,
+    path: &[String],
+    value: &serde_norway::Value,
+) -> Result<(), String> {
+    let Some((key, remaining)) = path.split_first() else {
+        return Err("内核配置更新路径不能为空".to_string());
+    };
+    if remaining.is_empty() {
+        return set_yaml_edit_mapping_value(mapping, key, value);
+    }
+    if let Some(child) = mapping.get(key.as_str()) {
+        let child = child
+            .as_mapping()
+            .ok_or_else(|| format!("内核配置区段 {key} 必须是 YAML 映射"))?;
+        return set_yaml_edit_mapping_path(child, remaining, value);
+    }
+    let nested_value = nested_yaml_value_for_path(remaining, value.clone());
+    set_yaml_edit_mapping_value(mapping, key, &nested_value)
+}
+
+fn set_yaml_edit_mapping_value(
+    mapping: &yaml_edit::Mapping,
+    key: &str,
+    value: &serde_norway::Value,
+) -> Result<(), String> {
+    match value {
+        serde_norway::Value::String(value) => {
+            mapping.set(key, value.as_str());
+            return Ok(());
+        }
+        serde_norway::Value::Bool(value) => {
+            mapping.set(key, *value);
+            return Ok(());
+        }
+        serde_norway::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                mapping.set(key, value);
+                return Ok(());
+            }
+            if let Some(value) = value.as_u64() {
+                mapping.set(key, value);
+                return Ok(());
+            }
+            if let Some(value) = value.as_f64() {
+                mapping.set(key, value);
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+    if let serde_norway::Value::Sequence(values) = value {
+        if let Some(node) = mapping.get(key) {
+            if let Some(sequence) = node.as_sequence() {
+                for (index, value) in values.iter().enumerate() {
+                    let value = yaml_edit_node_from_value(value)?;
+                    if index < sequence.len() {
+                        if !sequence.set(index, value) {
+                            return Err(format!("更新内核配置序列 {key}[{index}] 失败"));
+                        }
+                    } else {
+                        sequence.push(value);
+                    }
+                }
+                while sequence.len() > values.len() {
+                    let last = sequence.len() - 1;
+                    if sequence.remove(last).is_none() {
+                        return Err(format!("删除内核配置序列 {key}[{last}] 失败"));
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
+    match yaml_edit_node_from_value(value)? {
+        yaml_edit::YamlNode::Scalar(node) => mapping.set(key, node),
+        yaml_edit::YamlNode::Sequence(node) => mapping.set(key, node),
+        yaml_edit::YamlNode::Mapping(node) => mapping.set(key, node),
+        yaml_edit::YamlNode::Alias(node) => mapping.set(key, node),
+        yaml_edit::YamlNode::TaggedNode(node) => mapping.set(key, node),
+    }
+    Ok(())
+}
+
+fn nested_yaml_value_for_path(path: &[String], value: serde_norway::Value) -> serde_norway::Value {
+    path.iter().rev().fold(value, |nested, key| {
+        let mut mapping = serde_norway::Mapping::new();
+        mapping.insert(yaml_key(key), nested);
+        serde_norway::Value::Mapping(mapping)
+    })
+}
+
+fn yaml_edit_node_from_value(value: &serde_norway::Value) -> Result<yaml_edit::YamlNode, String> {
+    const WRAPPER_KEY: &str = "__cpa_gui_value__";
+    let value =
+        serde_json::to_string(value).map_err(|err| format!("序列化内核配置值失败: {err}"))?;
+    let serialized = format!("{WRAPPER_KEY}: {value}\n");
+    let file = serialized
+        .parse::<yaml_edit::YamlFile>()
+        .map_err(|err| format!("解析内核配置值失败: {err}"))?;
+    file.document()
+        .and_then(|document| document.get(WRAPPER_KEY))
+        .ok_or_else(|| "无法构造内核配置值".to_string())
 }
 
 fn set_core_yaml_top_level_value(
@@ -6751,9 +6987,9 @@ fn merge_core_config_yaml(
     current: Option<&str>,
     config: &GuiConfigFile,
 ) -> Result<String, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(template)
+    let template_value = serde_norway::from_str::<serde_norway::Value>(template)
         .map_err(|err| format!("解析内核配置模板失败: {err}"))?;
-    let mut merged = document.get().clone();
+    let mut merged = template_value.clone();
 
     if let Some(current) = current {
         let current = serde_norway::from_str::<serde_norway::Value>(current)
@@ -6761,25 +6997,19 @@ fn merge_core_config_yaml(
         merge_yaml_values(&mut merged, current);
     }
 
-    document.set(merged);
-    apply_gui_managed_settings(&document.get_string(), config)
+    let merged = render_yaml_value_changes(template, &template_value, &merged)?;
+    apply_gui_managed_settings(&merged, config)
 }
 
 fn patch_core_network_yaml(
     content: &str,
     config: &GuiConfigFile,
 ) -> Result<Option<String>, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|err| format!("解析内核配置失败: {err}"))?;
-    let mut updated = document.get().clone();
-    apply_network_settings(&mut updated, config)?;
-
-    if updated == *document.get() {
-        return Ok(None);
-    }
-
-    document.set(updated);
-    Ok(Some(document.get_string()))
+    patch_core_yaml_document(content, |document| {
+        let original = document.clone();
+        apply_network_settings(document, config)?;
+        Ok(*document != original)
+    })
 }
 
 fn merge_yaml_values(base: &mut serde_norway::Value, current: serde_norway::Value) {
@@ -6825,58 +7055,57 @@ fn apply_network_settings(
 }
 
 fn apply_gui_managed_settings(content: &str, config: &GuiConfigFile) -> Result<String, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|err| format!("解析合并后的内核配置失败: {err}"))?;
     let host = if config.allow_lan {
         "0.0.0.0"
     } else {
         "127.0.0.1"
     };
-    let mut updated = document.get().clone();
-    set_core_yaml_top_level_value(
-        &mut updated,
-        "host",
-        serde_norway::Value::String(host.to_string()),
-    )?;
-    set_core_yaml_top_level_value(
-        &mut updated,
-        "port",
-        serde_norway::to_value(config.port).map_err(|err| format!("序列化内核端口失败: {err}"))?,
-    )?;
-    set_core_yaml_top_level_value(
-        &mut updated,
-        "auth-dir",
-        serde_norway::Value::String(config.auth_dir.clone()),
-    )?;
-    set_core_yaml_top_level_value(
-        &mut updated,
-        "usage-statistics-enabled",
-        serde_norway::Value::Bool(true),
-    )?;
-    set_core_yaml_nested_value(
-        &mut updated,
-        "remote-management",
-        "secret-key",
-        serde_norway::Value::String(DEFAULT_MANAGEMENT_SECRET_KEY.to_string()),
-    )?;
-    set_core_yaml_nested_value(
-        &mut updated,
-        "plugins",
-        "enabled",
-        serde_norway::Value::Bool(config.plugins_enabled),
-    )?;
-    set_core_yaml_nested_value(
-        &mut updated,
-        "routing",
-        "strategy",
-        serde_norway::Value::String(config.routing_strategy.clone()),
-    )?;
-    document.set(updated);
+    let updated = patch_core_yaml_document(content, |document| {
+        let mut changed = false;
+        changed |= set_core_yaml_top_level_value(
+            document,
+            "host",
+            serde_norway::Value::String(host.to_string()),
+        )?;
+        changed |= set_core_yaml_top_level_value(
+            document,
+            "port",
+            serde_norway::to_value(config.port)
+                .map_err(|err| format!("序列化内核端口失败: {err}"))?,
+        )?;
+        changed |= set_core_yaml_top_level_value(
+            document,
+            "auth-dir",
+            serde_norway::Value::String(config.auth_dir.clone()),
+        )?;
+        changed |= set_core_yaml_top_level_value(
+            document,
+            "usage-statistics-enabled",
+            serde_norway::Value::Bool(true),
+        )?;
+        changed |= set_core_yaml_nested_value(
+            document,
+            "remote-management",
+            "secret-key",
+            serde_norway::Value::String(DEFAULT_MANAGEMENT_SECRET_KEY.to_string()),
+        )?;
+        changed |= set_core_yaml_nested_value(
+            document,
+            "plugins",
+            "enabled",
+            serde_norway::Value::Bool(config.plugins_enabled),
+        )?;
+        changed |= set_core_yaml_nested_value(
+            document,
+            "routing",
+            "strategy",
+            serde_norway::Value::String(config.routing_strategy.clone()),
+        )?;
+        Ok(changed)
+    })?
+    .unwrap_or_else(|| content.to_string());
 
-    let updated = patch_core_api_keys_yaml(
-        &document.get_string(),
-        &gui_api_key_values(&config.api_keys),
-    )?;
+    let updated = patch_core_api_keys_yaml(&updated, &gui_api_key_values(&config.api_keys))?;
     serde_norway::from_str::<serde_norway::Value>(&updated)
         .map_err(|err| format!("验证启动内核配置失败: {err}"))?;
     Ok(updated)
@@ -7154,7 +7383,7 @@ fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> {
         return Err("GUI 配置路由策略不能为空".to_string());
     }
     let expected_auth_dir = fixed_oauth_dir()?;
-    if PathBuf::from(&config.auth_dir) != expected_auth_dir {
+    if Path::new(&config.auth_dir) != expected_auth_dir.as_path() {
         return Err(format!(
             "凭证目录固定为 {}，不允许自定义",
             path_to_string(&expected_auth_dir)
@@ -7657,8 +7886,6 @@ fn close_windows_handle(handle: isize) {
 }
 
 fn terminate_child(child: &mut Child) -> Result<(), String> {
-    let process_id = child.id();
-
     #[cfg(windows)]
     {
         child
@@ -7672,6 +7899,7 @@ fn terminate_child(child: &mut Child) -> Result<(), String> {
 
     #[cfg(not(windows))]
     {
+        let process_id = child.id();
         send_process_signal(process_id, "TERM")?;
 
         for _ in 0..20 {
@@ -8537,7 +8765,7 @@ mod tests {
         .unwrap();
         assert_eq!(enabled.outcome, "enabled");
         let backup = agent_backup_path(&path).unwrap();
-        let state = agent_state_path(&[path.clone()]).unwrap();
+        let state = agent_state_path(std::slice::from_ref(&path)).unwrap();
         let catalog_path = codex_model_catalog_path(&home);
         assert_eq!(fs::read(&backup).unwrap(), original);
         assert!(state.is_file());
@@ -8617,7 +8845,7 @@ mod tests {
         let path = home.join(".codex/config.toml");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, b"approval_policy = \"never\"\n").unwrap();
-        let state_path = agent_state_path(&[path.clone()]).unwrap();
+        let state_path = agent_state_path(std::slice::from_ref(&path)).unwrap();
         fs::create_dir(&state_path).unwrap();
 
         let available_models = test_agent_models(&["gpt-test"]);
@@ -8645,7 +8873,11 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         fs::write(&settings, b"{}\n").unwrap();
         fs::write(&legacy, b"{}\n").unwrap();
-        fs::write(agent_state_path(&[legacy.clone()]).unwrap(), b"{}\n").unwrap();
+        fs::write(
+            agent_state_path(std::slice::from_ref(&legacy)).unwrap(),
+            b"{}\n",
+        )
+        .unwrap();
 
         assert_eq!(
             agent_config_paths(AgentClient::ClaudeCode, &home),
@@ -8673,7 +8905,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(agent_has_managed_marker(AgentClient::Codex, &[path.clone()]).unwrap());
+        assert!(agent_has_managed_marker(AgentClient::Codex, std::slice::from_ref(&path)).unwrap());
         let result = disable_agent_modification(AgentClient::Codex, &home, 8317, false).unwrap();
         assert_eq!(result.outcome, "disabled");
         assert_eq!(fs::read(&path).unwrap(), original);
@@ -8723,7 +8955,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(record.files.len(), 1);
-        write_agent_state(&agent_state_path(&[path.clone()]).unwrap(), &record).unwrap();
+        write_agent_state(
+            &agent_state_path(std::slice::from_ref(&path)).unwrap(),
+            &record,
+        )
+        .unwrap();
 
         let available_models = test_agent_models(&["gpt-new"]);
         let codex_models = test_codex_models(&["gpt-new"]);
@@ -8736,7 +8972,7 @@ mod tests {
             Some(&codex_models),
         )
         .unwrap();
-        let upgraded = load_agent_record(AgentClient::Codex, &[path.clone()])
+        let upgraded = load_agent_record(AgentClient::Codex, std::slice::from_ref(&path))
             .unwrap()
             .unwrap();
         assert_eq!(upgraded.files.len(), 2);
@@ -8773,7 +9009,7 @@ mod tests {
         )
         .unwrap();
 
-        let state_path = agent_state_path(&[path.clone()]).unwrap();
+        let state_path = agent_state_path(std::slice::from_ref(&path)).unwrap();
         let mut record = load_agent_record(AgentClient::Codex, &[path])
             .unwrap()
             .unwrap();
@@ -9477,10 +9713,12 @@ mod tests {
             validate_agent_launch_modification(AgentClient::Codex, false, AGENT_PHASE_ACTIVE)
                 .is_err()
         );
-        assert!(
-            validate_agent_launch_modification(AgentClient::Codex, true, AGENT_PHASE_CONFLICT)
-                .is_err()
-        );
+        assert!(validate_agent_launch_modification(
+            AgentClient::Codex,
+            true,
+            AGENT_MODIFICATION_STATE_CONFLICT,
+        )
+        .is_err());
     }
 
     #[test]

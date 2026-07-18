@@ -1,6 +1,6 @@
 [package]
 name = "cpa-gui"
-version = "0.1.0"
+version = "0.1.0-pre.4"
 description = "CPA desktop management shell"
 authors = ["lzt404"]
 edition = "2021"
@@ -39,4 +39,5 @@ windows-sys = { version = "0.59", features = [
   "Win32_Security",
   "Win32_Storage_FileSystem",
   "Win32_System_JobObjects",
+  "Win32_System_Threading",
 ] }

@@ -69,8 +69,20 @@ await copyFile(join(root, 'core-version.txt'), join(output, 'core-version.txt'))
 const coreOutput = join(output, 'cpa-core');
 if (cleanCore) await rm(coreOutput, { recursive: true, force: true });
 await mkdir(coreOutput, { recursive: true });
-const extraction = spawnSync('tar', ['-xf', sourceArchive, '-C', coreOutput], { stdio: 'inherit' });
-if (extraction.status !== 0) throw new Error(`Failed to extract ${assetName}`);
+let extraction;
+if (extension === 'zip') {
+  if (process.platform === 'win32') {
+    const quotePowerShell = (value) => value.replaceAll("'", "''");
+    const command = `Expand-Archive -LiteralPath '${quotePowerShell(sourceArchive)}' -DestinationPath '${quotePowerShell(coreOutput)}' -Force`;
+    extraction = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], { stdio: 'inherit' });
+  } else {
+    extraction = spawnSync('unzip', ['-q', sourceArchive, '-d', coreOutput], { stdio: 'inherit' });
+  }
+} else {
+  extraction = spawnSync('tar', ['-xf', sourceArchive, '-C', coreOutput], { stdio: 'inherit' });
+}
+if (extraction.error) throw new Error(`Failed to start archive extractor for ${assetName}: ${extraction.error.message}`);
+if (extraction.status !== 0) throw new Error(`Failed to extract ${assetName} (exit code ${extraction.status})`);
 await copyFile(sourceArchive, join(coreOutput, assetName));
 if (existsSync(checksumsPath)) await copyFile(checksumsPath, join(coreOutput, 'checksums.txt'));
 await writeFile(join(coreOutput, 'cpa-gui-meta.json'), `${JSON.stringify({

@@ -1401,7 +1401,7 @@ mod tests {
         let record = sample_record("request-1", "2026-07-17T20:30:00+08:00", "gpt-test");
 
         assert_eq!(
-            insert_usage_records(&mut connection, &[record.clone()]).unwrap(),
+            insert_usage_records(&mut connection, std::slice::from_ref(&record)).unwrap(),
             1
         );
         assert_eq!(insert_usage_records(&mut connection, &[record]).unwrap(), 0);

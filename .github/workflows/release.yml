@@ -1,7 +1,20 @@
 name: Build portable releases
 
+run-name: >-
+  Portable release ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || github.ref_name }}
+
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional tag to create after all builds pass (leave empty to build artifacts only)
+        required: false
+        type: string
+      prerelease:
+        description: Mark a manually published release as a pre-release
+        required: true
+        default: true
+        type: boolean
   push:
     tags:
       - 'v*'
@@ -10,7 +23,43 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    name: Validate source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: Validate desktop icons
+        shell: bash
+        run: |
+          test -s src-tauri/icons/icon.png
+          test -s src-tauri/icons/icon.ico
+          test -s src-tauri/icons/icon.icns
+      - name: Validate frontend
+        run: |
+          bun run check
+          bun test
+      - name: Validate Rust
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml
+
   build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -40,8 +89,9 @@ jobs:
             arch: aarch64
             suffix: zip
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -52,6 +102,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: Build GUI
+        env:
+          RUSTFLAGS: -D warnings
         run: |
           bun install --frozen-lockfile
           bun tauri build --no-bundle
@@ -73,22 +125,57 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: Compress-Archive -Path "release/cpa-gui-${{ matrix.os }}-${{ matrix.arch }}" -DestinationPath "cpa-gui-${{ matrix.os }}-${{ matrix.arch }}.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cpa-gui-${{ matrix.os }}-${{ matrix.arch }}
           path: cpa-gui-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.suffix }}
           if-no-files-found: error
+          retention-days: 14
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/')
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
-      - name: Publish GitHub release
+      - name: Publish release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" artifacts/* --generate-notes --verify-tag
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
+          MANUAL_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          prerelease="$MANUAL_PRERELEASE"
+          release_args=(--title "CPA GUI $RELEASE_TAG" --generate-notes)
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            release_args+=(--verify-tag)
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              prerelease=true
+            else
+              prerelease=false
+            fi
+          else
+            release_args+=(--target "$GITHUB_SHA")
+          fi
+          if [[ "$prerelease" == "true" ]]; then
+            release_args+=(--prerelease)
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/* --clobber
+          else
+            gh release create "$RELEASE_TAG" "${release_args[@]}" artifacts/*
+          fi
