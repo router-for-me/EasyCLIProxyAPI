@@ -181,14 +181,52 @@ input:focus-visible {
   color: #2d2a26;
 }
 
+.sidebar-bottom {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 18px;
+  border-top: 1px solid #e3e1db;
+}
+
+.sidebar-contact {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #d8d4cc;
+  border-radius: 7px;
+  background: #fffdf8;
+  color: #4f4a43;
+  text-align: left;
+}
+
+.sidebar-contact:hover {
+  border-color: #c7c2b8;
+  background: #e8e5dc;
+  color: #2d2a26;
+}
+
+.sidebar-contact svg {
+  color: #7a746c;
+}
+
+.sidebar-contact span {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: auto;
-  padding-top: 18px;
-  border-top: 1px solid #e3e1db;
   color: #7a746c;
   font-size: 12px;
 }
@@ -3600,13 +3638,10 @@ input:focus-visible {
 }
 
 .agent-model-dropdown {
-  position: absolute;
+  position: fixed;
   z-index: 45;
-  top: calc(100% + 6px);
-  right: 0;
-  left: 0;
   display: grid;
-  grid-template-rows: 40px 260px 28px;
+  grid-template-rows: 40px minmax(0, 1fr) 28px;
   gap: 7px;
   padding: 9px;
   border: 1px solid #e3e1db;
@@ -4880,6 +4915,12 @@ input:focus-visible {
     display: none;
   }
 
+  .sidebar-bottom {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+
   .content {
     padding: 18px;
   }
@@ -5130,11 +5171,6 @@ input:focus-visible {
   .agent-modification-switch {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .agent-model-dropdown {
-    right: -4px;
-    left: -4px;
   }
 
   .agent-config-footer .primary-button {
