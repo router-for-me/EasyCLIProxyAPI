@@ -222,19 +222,6 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-.sidebar-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: #7a746c;
-  font-size: 12px;
-}
-
-.sidebar-footer strong {
-  color: #2d2a26;
-}
-
 .workspace {
   min-width: 0;
 }
@@ -336,16 +323,16 @@ input:focus-visible {
 
 .status-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
 .status-card {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  min-height: 84px;
-  padding: 16px;
+  min-height: 72px;
+  padding: 12px 14px;
   border: 1px solid #e3e1db;
   border-radius: 8px;
   background: #fffdf8;
@@ -354,12 +341,12 @@ input:focus-visible {
 .status-card-primary {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .status-card-primary > div {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -374,10 +361,61 @@ input:focus-visible {
 .status-card strong {
   overflow: hidden;
   color: #2d2a26;
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.software-version-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.software-version-line > strong {
+  flex: none;
+}
+
+.software-version-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  max-width: 62%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #817b73;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.software-version-action span {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.software-version-action:hover:not(:disabled) span {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.software-version-action:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.software-version-action.update {
+  color: #866b4d;
+}
+
+.software-version-action.error {
+  color: #8a625d;
 }
 
 .status-dot {
@@ -453,7 +491,7 @@ input:focus-visible {
 }
 
 .client-api-panel {
-  margin-top: 18px;
+  margin-top: 0;
 }
 
 .client-api-heading {
@@ -4819,7 +4857,7 @@ input:focus-visible {
   }
 
   .status-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .kernel-layout {
@@ -4909,10 +4947,6 @@ input:focus-visible {
 
   .nav-section button {
     grid-template-columns: 17px minmax(0, 1fr);
-  }
-
-  .sidebar-footer {
-    display: none;
   }
 
   .sidebar-bottom {

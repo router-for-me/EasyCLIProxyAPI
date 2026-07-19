@@ -166,10 +166,6 @@ function AppContent() {
             <span>联系我们</span>
             <ExternalLink size={13} aria-hidden="true" />
           </button>
-          <div className="sidebar-footer">
-            <span>Easy_CLIProxyAPI</span>
-            <strong>v0.1.9</strong>
-          </div>
         </div>
       </aside>
 

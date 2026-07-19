@@ -26,6 +26,7 @@ const RELEASE_PAGE_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/rel
 const RELEASE_ATOM_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/releases.atom";
 const RELEASE_DOWNLOAD_PREFIX: &str =
     "https://github.com/router-for-me/CLIProxyAPI/releases/download/";
+const APP_RELEASE_PAGE_URL: &str = "https://github.com/lzt404/Easy_CLIProxyAPI/releases/latest";
 const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
 const CORE_STATUS_EVENT: &str = "core-status-changed";
 const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";
@@ -53,6 +54,11 @@ const USER_AGENT: &str = concat!(
     "CPA-GUI/",
     env!("CARGO_PKG_VERSION"),
     " (+https://github.com/router-for-me/CLIProxyAPI)"
+);
+const APP_USER_AGENT: &str = concat!(
+    "Easy_CLIProxyAPI/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/lzt404/Easy_CLIProxyAPI)"
 );
 static CORE_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 static AGENT_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
@@ -108,6 +114,15 @@ struct CoreStatus {
 struct CoreLatest {
     version: String,
     asset_name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateInfo {
+    current_version: String,
+    latest_version: String,
+    update_available: bool,
+    release_url: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -4630,6 +4645,45 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn check_app_update() -> Result<AppUpdateInfo, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .read_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("创建版本检查客户端失败: {error}"))?;
+    let response = client
+        .get(APP_RELEASE_PAGE_URL)
+        .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+        .header(reqwest::header::USER_AGENT, APP_USER_AGENT)
+        .send()
+        .await
+        .map_err(|error| format!("检查软件更新失败: {error}"))?;
+    let status = response.status();
+    let final_url = response.url().clone();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .map_err(|error| format!("读取软件更新响应失败: {error}"))?;
+        return Err(format_github_error(status.as_u16(), &body));
+    }
+
+    let latest_version = release_tag_from_url(&final_url)
+        .map(|version| normalize_version(&version))
+        .ok_or_else(|| "GitHub latest 页面没有返回正式版本标签".to_string())?;
+    let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
+    let update_available = is_app_update_available(&current_version, &latest_version)?;
+
+    Ok(AppUpdateInfo {
+        current_version,
+        latest_version,
+        update_available,
+        release_url: APP_RELEASE_PAGE_URL.to_string(),
+    })
+}
+
+#[tauri::command]
 async fn check_latest_core() -> Result<CoreLatest, String> {
     let platform = current_core_platform()?;
     let client = http_client()?;
@@ -5008,6 +5062,14 @@ fn release_tag_from_url(url: &reqwest::Url) -> Option<String> {
     } else {
         Some(tag.to_string())
     }
+}
+
+fn is_app_update_available(current: &str, latest: &str) -> Result<bool, String> {
+    let parse = |value: &str| {
+        semver::Version::parse(value.trim().trim_start_matches('v'))
+            .map_err(|error| format!("无法解析版本号 {value}: {error}"))
+    };
+    Ok(parse(latest)? > parse(current)?)
 }
 
 #[cfg(test)]
@@ -8622,6 +8684,7 @@ fn main() {
             get_oauth_status,
             submit_oauth_callback,
             open_external_url,
+            check_app_update,
             check_latest_core,
             detect_bundled_core,
             install_core_version,
@@ -10212,6 +10275,14 @@ mod tests {
         "#;
 
         assert_eq!(release_tag_from_atom(xml).as_deref(), Some("v7.2.80"));
+    }
+
+    #[test]
+    fn app_update_comparison_uses_semantic_versions() {
+        assert!(is_app_update_available("v0.1.9", "v0.2.0").unwrap());
+        assert!(is_app_update_available("v0.2.0-beta.1", "v0.2.0").unwrap());
+        assert!(!is_app_update_available("v0.2.0", "v0.2.0").unwrap());
+        assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
     }
 
     #[test]

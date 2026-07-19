@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AlertCircle, Check, Copy, Info } from 'lucide-react';
+import { AlertCircle, Check, Copy, ExternalLink, Info, RefreshCw } from 'lucide-react';
 import { type CoreStatus, useCoreRuntime } from '../coreRuntime';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import { clientApiProfiles, DEFAULT_CLIENT_API_KEY } from '../services/clientAccess';
+import packageMetadata from '../../package.json';
 
 type CorePlatform = {
   os: string;
@@ -54,10 +56,30 @@ type GuiSettings = {
   runOnStartup: boolean;
 };
 
+type AppUpdateInfo = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseUrl: string;
+};
+
+const APP_RELEASE_URL = 'https://github.com/lzt404/Easy_CLIProxyAPI/releases/latest';
+
 let latestAutoCheckStarted = false;
 let cachedLatest: CoreLatest | null = null;
 let cachedLatestError = '';
 let latestCheckPromise: Promise<CoreLatest> | null = null;
+let initialAppUpdateCheck: Promise<AppUpdateInfo> | null = null;
+
+function displayAppVersion(version: string) {
+  const resolvedVersion = version.trim() || packageMetadata.version;
+  return resolvedVersion.startsWith('v') ? resolvedVersion : `v${resolvedVersion}`;
+}
+
+function requestInitialAppUpdate() {
+  initialAppUpdateCheck ??= invoke<AppUpdateInfo>('check_app_update');
+  return initialAppUpdateCheck;
+}
 
 function requestLatestCore() {
   if (latestCheckPromise) {
@@ -90,6 +112,10 @@ export function KernelPage() {
     publishStatus,
   } = useCoreRuntime();
   const [platform, setPlatform] = useState<CorePlatform | null>(null);
+  const [currentAppVersion, setCurrentAppVersion] = useState(() => displayAppVersion(packageMetadata.version));
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
+  const [appUpdateError, setAppUpdateError] = useState('');
+  const [checkingAppUpdate, setCheckingAppUpdate] = useState(true);
   const [platformError, setPlatformError] = useState('');
   const [latest, setLatest] = useState<CoreLatest | null>(cachedLatest);
   const [latestError, setLatestError] = useState(cachedLatestError);
@@ -209,6 +235,36 @@ export function KernelPage() {
       if (copiedApiTimerRef.current !== null) {
         window.clearTimeout(copiedApiTimerRef.current);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+
+    void getVersion()
+      .then((version) => {
+        if (!disposed) setCurrentAppVersion(displayAppVersion(version));
+      })
+      .catch((error) => console.warn('读取当前软件版本失败', error));
+
+    void requestInitialAppUpdate()
+      .then((info) => {
+        if (disposed) return;
+        setCurrentAppVersion(displayAppVersion(info.currentVersion));
+        setAppUpdate(info);
+        setAppUpdateError('');
+      })
+      .catch((error) => {
+        if (disposed) return;
+        console.warn('自动检查软件更新失败', error);
+        setAppUpdateError(String(error));
+      })
+      .finally(() => {
+        if (!disposed) setCheckingAppUpdate(false);
+      });
+
+    return () => {
+      disposed = true;
     };
   }, []);
 
@@ -565,12 +621,35 @@ export function KernelPage() {
     }
   };
 
+  const checkAppUpdate = async () => {
+    setCheckingAppUpdate(true);
+    setAppUpdateError('');
+    try {
+      const info = await invoke<AppUpdateInfo>('check_app_update');
+      setCurrentAppVersion(displayAppVersion(info.currentVersion));
+      setAppUpdate(info);
+    } catch (error) {
+      setAppUpdateError(String(error));
+    } finally {
+      setCheckingAppUpdate(false);
+    }
+  };
+
+  const openAppUpdate = async () => {
+    try {
+      await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
+    } catch (error) {
+      setAppUpdateError(`打开更新页面失败：${String(error)}`);
+    }
+  };
+
   const latestVersion = latest?.version ?? '';
   const currentVersion = coreStatus?.currentVersion ?? '';
   const coreInstalled = Boolean(coreStatus?.installed);
   const coreRunning = Boolean(coreStatus?.running);
   const busy = checkingLatest || installing || processBusy;
   const installDisabled = busy || Boolean(coreStatus?.running);
+  const offlineInstallDisabled = installing || processBusy || coreRunning;
   const computedPercent =
     progress?.percent ??
     (progress?.total && progress.total > 0 ? (progress.downloaded / progress.total) * 100 : null);
@@ -597,6 +676,12 @@ export function KernelPage() {
     : statusError
       ? '检测失败'
       : '检测中';
+  const appUpdateLabel = appUpdateError
+    ? '检查失败，重试'
+    : appUpdate?.updateAvailable
+      ? `更新至 ${displayAppVersion(appUpdate.latestVersion)}`
+      : '';
+  const appUpdateTone = appUpdateError ? 'error' : 'update';
   const latestLabel = checkingLatest
     ? '检查中'
     : latestVersion || (latestError ? '检查失败' : '未检查');
@@ -609,17 +694,21 @@ export function KernelPage() {
         : currentVersion === latestVersion
           ? '已是最新版本'
           : '可安装新版本';
-  const platformLabel = platform ? `${platform.os} / ${platform.arch}` : platformError || '检测中';
   const platformOsLabel = platform?.os || (platformError ? '检测失败' : '检测中');
   const platformArchLabel = platform?.arch || (platformError ? '检测失败' : '检测中');
   const installTaskRunning = Boolean(installing || progress?.running);
+  const offlineInstallRequired = Boolean(coreStatus && !coreInstalled && latestError);
   const versionStatusLabel = installTaskRunning
     ? cancellingInstall
       ? '正在取消下载'
       : progress?.phase || '正在安装'
-    : message || updateStateLabel;
+    : offlineInstallRequired
+      ? 'Github连接失败，请使用“离线安装”'
+      : message || updateStateLabel;
   const versionStatusTone: MessageType = installTaskRunning
     ? 'info'
+    : offlineInstallRequired
+      ? 'error'
     : message
       ? messageType
       : latestError
@@ -677,16 +766,27 @@ export function KernelPage() {
           </div>
         </div>
         <div className="status-card">
-          <span>当前版本</span>
+          <span>软件版本</span>
+          <div className="software-version-line">
+            <strong>{currentAppVersion}</strong>
+            {appUpdateLabel ? (
+              <button
+                type="button"
+                className={`software-version-action ${appUpdateTone}`}
+                title={appUpdateError || '打开 GitHub 最新版本页面'}
+                disabled={checkingAppUpdate}
+                onClick={() => void (appUpdateError ? checkAppUpdate() : openAppUpdate())}
+              >
+                {appUpdateError ? <RefreshCw size={11} aria-hidden="true" /> : null}
+                <span>{appUpdateLabel}</span>
+                {appUpdate?.updateAvailable && !appUpdateError ? <ExternalLink size={11} aria-hidden="true" /> : null}
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div className="status-card">
+          <span>内核版本</span>
           <strong>{currentVersion || '未安装'}</strong>
-        </div>
-        <div className="status-card">
-          <span>最新版本</span>
-          <strong>{latestLabel}</strong>
-        </div>
-        <div className="status-card">
-          <span>运行平台</span>
-          <strong>{platformLabel}</strong>
         </div>
       </div>
 
@@ -864,7 +964,7 @@ export function KernelPage() {
               type="button"
               className="primary-button"
               title={(bundledCore?.assetName ?? bundledCoreError) || '当前发行包未包含内置内核'}
-              disabled={!bundledCore || installDisabled}
+              disabled={!bundledCore || offlineInstallDisabled}
               onClick={() => void installBundledCore()}
             >
               离线安装
