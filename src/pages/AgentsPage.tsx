@@ -462,8 +462,11 @@ export function AgentsPage() {
   const [notice, setNotice] = useState('');
   const [restoreConflict, setRestoreConflict] = useState<string[] | null>(null);
 
-  const loadStatuses = useCallback(async () => {
-    const nextStatuses = await invoke<AgentConfigStatus[]>('get_agent_config_statuses');
+  const loadStatuses = useCallback(async (forceRefresh = false) => {
+    const command = forceRefresh
+      ? 'refresh_agent_config_statuses'
+      : 'get_agent_config_statuses';
+    const nextStatuses = await invoke<AgentConfigStatus[]>(command);
     setStatuses(nextStatuses);
   }, []);
 
@@ -489,7 +492,7 @@ export function AgentsPage() {
     setLoading(true);
     setError('');
     try {
-      await Promise.all([loadStatuses(), loadModels()]);
+      await Promise.all([loadStatuses(true), loadModels()]);
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -498,8 +501,12 @@ export function AgentsPage() {
   }, [loadModels, loadStatuses]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    setLoading(true);
+    setError('');
+    void Promise.all([loadStatuses(), loadModels()])
+      .catch((requestError) => setError(String(requestError)))
+      .finally(() => setLoading(false));
+  }, [loadModels, loadStatuses]);
 
   useEffect(() => {
     writeSelectedAgentClient(selected);
@@ -603,7 +610,7 @@ export function AgentsPage() {
       setNotice(result.enabled
         ? `${activeDefinition.name} 已启用配置修改；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
         : `${activeDefinition.name} 的原配置已恢复，请重启客户端`);
-      await loadStatuses();
+      await loadStatuses(true);
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -640,7 +647,7 @@ export function AgentsPage() {
         : activeStatus?.modificationEnabled
           ? `${activeDefinition.name} 已启动；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
           : `${activeDefinition.name} 已启动`);
-      if (appliedBeforeLaunch) await loadStatuses();
+      if (appliedBeforeLaunch) await loadStatuses(true);
     } catch (requestError) {
       setError(String(requestError));
     } finally {
