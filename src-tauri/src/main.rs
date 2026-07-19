@@ -26,7 +26,8 @@ const RELEASE_PAGE_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/rel
 const RELEASE_ATOM_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/releases.atom";
 const RELEASE_DOWNLOAD_PREFIX: &str =
     "https://github.com/router-for-me/CLIProxyAPI/releases/download/";
-const APP_RELEASE_PAGE_URL: &str = "https://github.com/lzt404/Easy_CLIProxyAPI/releases/latest";
+const APP_RELEASE_PAGE_URL: &str =
+    "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest";
 const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
 const CORE_STATUS_EVENT: &str = "core-status-changed";
 const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";
@@ -56,9 +57,9 @@ const USER_AGENT: &str = concat!(
     " (+https://github.com/router-for-me/CLIProxyAPI)"
 );
 const APP_USER_AGENT: &str = concat!(
-    "Easy_CLIProxyAPI/",
+    "EasyCLIProxyAPI/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/lzt404/Easy_CLIProxyAPI)"
+    " (+https://github.com/router-for-me/EasyCLIProxyAPI)"
 );
 static CORE_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 static AGENT_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
@@ -823,7 +824,7 @@ struct GithubAsset {
 
 #[tauri::command]
 fn health_check() -> &'static str {
-    "Easy_CLIProxyAPI Rust backend is ready"
+    "EasyCLIProxyAPI Rust backend is ready"
 }
 
 #[tauri::command]
@@ -2932,7 +2933,7 @@ fn build_claude_desktop_meta(existing: Option<&str>) -> Result<String, String> {
     });
     entries.push(serde_json::json!({
         "id": CLAUDE_DESKTOP_PROFILE_ID,
-        "name": "Easy CLIProxyAPI"
+        "name": "EasyCLIProxyAPI"
     }));
     root.insert(
         "appliedId".to_string(),
@@ -2969,7 +2970,7 @@ fn build_codex_agent_config(
         .and_then(Item::as_table)
         .cloned()
         .unwrap_or_default();
-    provider["name"] = value("Easy CLIProxyAPI");
+    provider["name"] = value("EasyCLIProxyAPI");
     provider["base_url"] = value(base_url);
     provider["wire_api"] = value("responses");
     provider["experimental_bearer_token"] = value(api_key);
@@ -3088,7 +3089,7 @@ fn build_opencode_agent_config(
         MANAGED_AGENT_PROVIDER_ID.to_string(),
         serde_json::json!({
             "npm": "@ai-sdk/openai-compatible",
-            "name": "Easy CLIProxyAPI",
+            "name": "EasyCLIProxyAPI",
             "options": {
                 "baseURL": base_url,
                 "apiKey": api_key
@@ -5444,7 +5445,7 @@ fn configure_child_lifetime(command: &mut Command) {
 
                 if libc::getppid() != parent_process_id {
                     return Err(io::Error::other(
-                        "Easy_CLIProxyAPI exited before the core process started",
+                        "EasyCLIProxyAPI exited before the core process started",
                     ));
                 }
 

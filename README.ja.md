@@ -5,21 +5,19 @@
 </p>
 
 <p align="center">
-  <img src="src/assets/logo.jpg" width="112" alt="Easy_CLIProxyAPI Logo">
+  <img src="src/assets/logo.jpg" width="112" alt="EasyCLIProxyAPI Logo">
 </p>
 
-<h1 align="center">Easy_CLIProxyAPI</h1>
+<h1 align="center">EasyCLIProxyAPI</h1>
 
 <p align="center">
   私たちの目標は、トークンを free（無料ではなく、自由という意味）にすることです。<br>
 </p>
 
-> [!IMPORTANT]
-> このリポジトリは正式版です。より先進的で実験的な機能については、[lzt404/Easy_CLIProxyAPI](https://github.com/lzt404/Easy_CLIProxyAPI) をご覧ください。
 
 ## 概要
 
-Easy_CLIProxyAPI は、[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) をベースにしたポータブルツールです。コア、OAuth アカウント、API 接続、モデルルーティング、認証ファイル、クォータ情報、使用履歴、エージェントクライアント設定をグラフィカルなインターフェースから管理できます。
+EasyCLIProxyAPI は、[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) をベースにしたポータブルツールです。コア、OAuth アカウント、API 接続、モデルルーティング、認証ファイル、クォータ情報、使用履歴、エージェントクライアント設定をグラフィカルなインターフェースから管理できます。
 
 本アプリケーションは Tauri、React、Rust で構築されています。
 

@@ -5,21 +5,19 @@
 </p>
 
 <p align="center">
-  <img src="src/assets/logo.jpg" width="112" alt="Easy_CLIProxyAPI Logo">
+  <img src="src/assets/logo.jpg" width="112" alt="EasyCLIProxyAPI Logo">
 </p>
 
-<h1 align="center">Easy_CLIProxyAPI</h1>
+<h1 align="center">EasyCLIProxyAPI</h1>
 
 <p align="center">
   Our goal is to make tokens free—as in freedom.<br>
 </p>
 
-> [!IMPORTANT]
-> This repository contains the official release. For more aggressive experimental features, visit [lzt404/Easy_CLIProxyAPI](https://github.com/lzt404/Easy_CLIProxyAPI).
 
 ## Overview
 
-Easy_CLIProxyAPI is a portable tool built on [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). It provides a graphical interface for managing the core, OAuth accounts, API providers, model routing, authentication files, quota information, usage records, and agent client configurations.
+EasyCLIProxyAPI is a portable tool built on [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). It provides a graphical interface for managing the core, OAuth accounts, API providers, model routing, authentication files, quota information, usage records, and agent client configurations.
 
 The application is built with Tauri, React, and Rust.
 

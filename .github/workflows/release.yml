@@ -137,7 +137,7 @@ jobs:
             exit 1
           fi
 
-          echo "stem=Easy_CLIProxyAPI-${version}-${{ matrix.display_os }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+          echo "stem=EasyCLIProxyAPI-${version}-${{ matrix.display_os }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
       - name: Install Linux dependencies
         if: matrix.os == 'linux'
         run: |
@@ -223,7 +223,7 @@ jobs:
           fi
 
           prerelease="$MANUAL_PRERELEASE"
-          release_args=(--title "Easy_CLIProxyAPI $RELEASE_TAG" --generate-notes)
+          release_args=(--title "EasyCLIProxyAPI $RELEASE_TAG" --generate-notes)
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             release_args+=(--verify-tag)
             if [[ "$RELEASE_TAG" == *-* ]]; then

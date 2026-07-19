@@ -53,7 +53,7 @@ if (existsSync(checksumsPath)) {
 }
 
 await mkdir(output, { recursive: true });
-const outputBinary = join(output, targetOS === 'windows' ? 'Easy_CLIProxyAPI.exe' : 'Easy_CLIProxyAPI');
+const outputBinary = join(output, targetOS === 'windows' ? 'EasyCLIProxyAPI.exe' : 'EasyCLIProxyAPI');
 const legacyOutputBinary = join(output, targetOS === 'windows' ? 'cpa-gui.exe' : 'cpa-gui');
 await rm(legacyOutputBinary, { force: true });
 await copyFile(binary, outputBinary);
