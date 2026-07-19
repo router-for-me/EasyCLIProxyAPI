@@ -1,6 +1,6 @@
 [package]
 name = "cpa-gui"
-version = "0.1.0-pre.4"
+version = "0.1.9"
 description = "CPA desktop management shell"
 authors = ["lzt404"]
 edition = "2021"
