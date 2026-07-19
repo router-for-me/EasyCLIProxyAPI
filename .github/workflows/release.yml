@@ -127,15 +127,29 @@ jobs:
             esac
           fi
 
-          if ! node -e 'process.exit(/^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$/.test(process.argv[1]) ? 0 : 1)' "$version"; then
+          if ! node -e 'process.exit(/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(process.argv[1]) ? 0 : 1)' "$version"; then
             echo "Invalid release version: $version" >&2
             exit 1
           fi
 
-          if [ "${version#v}" != "$source_version" ]; then
-            echo "Release version $version does not match project version v$source_version" >&2
-            exit 1
-          fi
+          RELEASE_VERSION="${version#v}" node <<'NODE'
+          const { readFileSync, writeFileSync } = require('node:fs');
+
+          const version = process.env.RELEASE_VERSION;
+          for (const file of ['package.json', 'src-tauri/tauri.conf.json']) {
+            const manifest = JSON.parse(readFileSync(file, 'utf8'));
+            manifest.version = version;
+            writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+          }
+
+          const cargoManifest = 'src-tauri/Cargo.toml';
+          const contents = readFileSync(cargoManifest, 'utf8');
+          const updated = contents.replace(/^version = "[^"]+"$/m, `version = "${version}"`);
+          if (updated === contents) {
+            throw new Error(`Could not update version in ${cargoManifest}`);
+          }
+          writeFileSync(cargoManifest, updated);
+          NODE
 
           echo "stem=EasyCLIProxyAPI-${version}-${{ matrix.display_os }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
       - name: Install Linux dependencies
@@ -252,7 +266,7 @@ jobs:
             *) RELEASE_TAG="v$RELEASE_TAG" ;;
           esac
 
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+          if ! node -e 'process.exit(/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(process.argv[1]) ? 0 : 1)' "$RELEASE_TAG"; then
             echo "Invalid release tag: $RELEASE_TAG" >&2
             exit 1
           fi
