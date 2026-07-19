@@ -208,22 +208,68 @@ jobs:
           test -n "$APPLE_SIGNING_IDENTITY"
           test -n "$APPLE_TEAM_ID"
 
-          bun tauri bundle --bundles dmg --ci --config src-tauri/tauri.dmg.conf.json
-
+          certificate_path="$RUNNER_TEMP/apple-signing-certificate.p12"
+          keychain_path="$RUNNER_TEMP/apple-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          signed_core_dir="$RUNNER_TEMP/signed-core"
+          verification_dir="$RUNNER_TEMP/verify-bundled-core"
           bundle_dir="src-tauri/target/release/bundle"
-          dmg_path="$(find "$bundle_dir/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           output_dmg="${{ steps.package.outputs.stem }}.dmg"
           mount_dir="$RUNNER_TEMP/easycli-dmg"
           mounted=false
+          keychain_list="$(security list-keychains -d user)"
+          existing_keychains=()
+          while IFS= read -r existing_keychain; do
+            existing_keychain="${existing_keychain#*\"}"
+            existing_keychain="${existing_keychain%\"*}"
+            if [ -n "$existing_keychain" ]; then
+              existing_keychains+=("$existing_keychain")
+            fi
+          done <<< "$keychain_list"
 
           cleanup() {
+            set +e
             if [ "$mounted" = true ]; then
-              hdiutil detach "$mount_dir" || true
+              hdiutil detach "$mount_dir"
             fi
-            rm -rf "$mount_dir"
+            rm -f "$certificate_path"
+            rm -rf "$mount_dir" "$signed_core_dir" "$verification_dir"
+            security delete-keychain "$keychain_path"
           }
           trap cleanup EXIT
 
+          (umask 077; printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$certificate_path")
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          if [ "${#existing_keychains[@]}" -gt 0 ]; then
+            security list-keychains -d user -s "$keychain_path" "${existing_keychains[@]}"
+          else
+            security list-keychains -d user -s "$keychain_path"
+          fi
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -k "$keychain_path" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+          if ! security find-identity -v -p codesigning "$keychain_path" | grep -F -- "$APPLE_SIGNING_IDENTITY"; then
+            echo "Signing identity was not imported into the temporary keychain" >&2
+            exit 1
+          fi
+
+          core_archive="$(find cpa-core -maxdepth 1 -type f -name 'CLIProxyAPI_*_darwin_${{ matrix.arch }}.tar.gz' -print -quit)"
+          test -n "$core_archive"
+          mkdir -p "$signed_core_dir"
+          tar -xzf "$core_archive" -C "$signed_core_dir"
+          core_binary="$(find "$signed_core_dir" -type f -name 'cli-proxy-api' -print -quit)"
+          test -n "$core_binary"
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$keychain_path" "$core_binary"
+          codesign --verify --strict --verbose=2 "$core_binary"
+          signed_archive="$RUNNER_TEMP/$(basename "$core_archive")"
+          COPYFILE_DISABLE=1 tar -czf "$signed_archive" -C "$signed_core_dir" .
+          mv "$signed_archive" "$core_archive"
+
+          env -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD \
+            bun tauri bundle --bundles dmg --ci --config src-tauri/tauri.dmg.conf.json
+
+          dmg_path="$(find "$bundle_dir/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           test -n "$dmg_path"
           mv "$dmg_path" "$output_dmg"
           test -s "$output_dmg"
@@ -249,6 +295,22 @@ jobs:
             echo "macOS app must contain exactly one bundled core archive" >&2
             exit 1
           fi
+          bundled_core_archive="$(find "$resources_dir/cpa-core" -maxdepth 1 -type f -name 'CLIProxyAPI_*.tar.gz' -print -quit)"
+          mkdir -p "$verification_dir"
+          tar -xzf "$bundled_core_archive" -C "$verification_dir"
+          bundled_core_binary="$(find "$verification_dir" -type f -name 'cli-proxy-api' -print -quit)"
+          test -n "$bundled_core_binary"
+          codesign --verify --strict --verbose=2 "$bundled_core_binary"
+          signature_details="$(codesign -d --verbose=4 "$bundled_core_binary" 2>&1)"
+          grep -F 'Authority=Developer ID Application' <<< "$signature_details"
+          grep -F 'Timestamp=' <<< "$signature_details"
+          grep -F 'Runtime Version=' <<< "$signature_details"
+          case "${{ matrix.arch }}" in
+            amd64) expected_core_arch="x86_64" ;;
+            aarch64) expected_core_arch="arm64" ;;
+            *) echo "Unsupported macOS architecture: ${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          file "$bundled_core_binary" | grep -F -- "$expected_core_arch"
 
           codesign --verify --deep --strict --verbose=2 "$app_path"
           xcrun stapler validate "$app_path"
