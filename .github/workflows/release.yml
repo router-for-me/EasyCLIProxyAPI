@@ -178,6 +178,15 @@ jobs:
           keychain_path="$RUNNER_TEMP/apple-signing.keychain-db"
           keychain_password="$(uuidgen)"
           binary="src-tauri/target/release/cpa-gui"
+          keychain_list="$(security list-keychains -d user)"
+          existing_keychains=()
+          while IFS= read -r existing_keychain; do
+            existing_keychain="${existing_keychain#*\"}"
+            existing_keychain="${existing_keychain%\"*}"
+            if [ -n "$existing_keychain" ]; then
+              existing_keychains+=("$existing_keychain")
+            fi
+          done <<< "$keychain_list"
 
           cleanup() {
             rm -f "$certificate_path"
@@ -192,6 +201,11 @@ jobs:
 
           printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$certificate_path"
           security create-keychain -p "$keychain_password" "$keychain_path"
+          if [ "${#existing_keychains[@]}" -gt 0 ]; then
+            security list-keychains -d user -s "$keychain_path" "${existing_keychains[@]}"
+          else
+            security list-keychains -d user -s "$keychain_path"
+          fi
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
           security import "$certificate_path" -k "$keychain_path" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
