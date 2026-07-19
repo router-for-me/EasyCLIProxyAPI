@@ -80,16 +80,16 @@ jobs:
             display_os: Linux
             arch: aarch64
             suffix: tar.gz
-          # - runner: macos-15-intel
-          #   os: darwin
-          #   display_os: Darwin
-          #   arch: amd64
-          #   suffix: tar.gz
-          # - runner: macos-15
-          #   os: darwin
-          #   display_os: Darwin
-          #   arch: aarch64
-          #   suffix: tar.gz
+          - runner: macos-15-intel
+            os: darwin
+            display_os: Darwin
+            arch: amd64
+            suffix: tar.gz
+          - runner: macos-15
+            os: darwin
+            display_os: Darwin
+            arch: aarch64
+            suffix: tar.gz
           - runner: windows-2025
             os: windows
             display_os: Windows
@@ -150,6 +150,41 @@ jobs:
           bun install --frozen-lockfile
           bun tauri build --no-bundle
         shell: bash
+      - name: Sign macOS binary
+        if: matrix.os == 'darwin'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+
+          certificate_path="$RUNNER_TEMP/apple-signing-certificate.p12"
+          keychain_path="$RUNNER_TEMP/apple-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          binary="src-tauri/target/release/cpa-gui"
+
+          cleanup() {
+            rm -f "$certificate_path"
+            security delete-keychain "$keychain_path" || true
+          }
+          trap cleanup EXIT
+
+          test -n "$APPLE_CERTIFICATE"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -f "$binary"
+
+          printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -k "$keychain_path" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$keychain_path" "$binary"
+          codesign --verify --strict --verbose=2 "$binary"
       - name: Prepare portable directory
         run: >-
           node scripts/prepare-portable.mjs
