@@ -26,7 +26,8 @@ fi
 mkdir -p "$BIN_DIR"
 bun "$ROOT_DIR/scripts/prepare-portable.mjs" \
   --binary "$APP_BIN" \
-  --output "$BIN_DIR"
+  --output "$BIN_DIR" \
+  --download true
 chmod +x "$BIN_OUT"
 
 echo "Built: $APP_BIN"

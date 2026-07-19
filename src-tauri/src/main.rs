@@ -4,8 +4,14 @@ mod usage;
 
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
+#[cfg(target_os = "macos")]
+use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSEvent};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "macos")]
+use std::sync::Arc;
 use std::{
     env, fs,
     fs::File,
@@ -18,6 +24,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tar::Archive;
+#[cfg(target_os = "macos")]
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
+};
 use tauri::{Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 use zip::ZipArchive;
@@ -8605,6 +8616,170 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+#[cfg(target_os = "macos")]
+const MACOS_TRAY_ID: &str = "macos-tray";
+
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct MacosTrayClickState {
+    last_click: Option<Instant>,
+    sequence: u64,
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_dock_visible(visible: bool) -> bool {
+    let Some(mtm) = MainThreadMarker::new() else {
+        eprintln!("更新 Dock 图标状态必须在主线程执行");
+        return false;
+    };
+    let policy = if visible {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    if !NSApplication::sharedApplication(mtm).setActivationPolicy(policy) {
+        eprintln!("更新 Dock 图标状态失败");
+        return false;
+    }
+    true
+}
+
+#[cfg(target_os = "macos")]
+fn show_main_window_on_main_thread(app_handle: &tauri::AppHandle) {
+    let Some(window) = app_handle.get_webview_window("main") else {
+        return;
+    };
+    if !set_macos_dock_visible(true) {
+        return;
+    }
+    if let Err(error) = window.show() {
+        eprintln!("显示主窗口失败: {error}");
+        set_macos_dock_visible(false);
+        return;
+    }
+    if let Err(error) = window.set_focus() {
+        eprintln!("聚焦主窗口失败: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn show_main_window(app_handle: &tauri::AppHandle) {
+    if MainThreadMarker::new().is_some() {
+        show_main_window_on_main_thread(app_handle);
+        return;
+    }
+
+    let app_handle = app_handle.clone();
+    if let Err(error) = app_handle.clone().run_on_main_thread(move || {
+        show_main_window_on_main_thread(&app_handle);
+    }) {
+        eprintln!("调度主窗口显示失败: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn show_macos_tray_menu<R: tauri::Runtime>(tray: &TrayIcon<R>) {
+    let result = tray.with_inner_tray_icon(|tray_icon| {
+        let Some(status_item) = tray_icon.ns_status_item() else {
+            return;
+        };
+        let mtm = MainThreadMarker::new().expect("tray menu must be shown on the main thread");
+        if let Some(menu) = status_item.menu(mtm) {
+            #[allow(deprecated)]
+            status_item.popUpStatusItemMenu(&menu);
+        }
+    });
+
+    if let Err(error) = result {
+        eprintln!("显示托盘菜单失败: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
+    let open_main_window =
+        MenuItem::with_id(app, "open-main-window", "打开主界面", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open_main_window, &quit])?;
+    let click_state = Arc::new(Mutex::new(MacosTrayClickState::default()));
+    let double_click_interval = Duration::from_secs_f64(NSEvent::doubleClickInterval());
+
+    TrayIconBuilder::with_id(MACOS_TRAY_ID)
+        .icon(
+            app.default_window_icon()
+                .cloned()
+                .expect("application icon is required for the tray"),
+        )
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app_handle, event| match event.id().as_ref() {
+            "open-main-window" => show_main_window(app_handle),
+            "quit" => app_handle.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(move |tray, event| {
+            if !matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            ) {
+                return;
+            }
+
+            let now = Instant::now();
+            let Ok(mut state) = click_state.lock() else {
+                eprintln!("读取托盘点击状态失败");
+                return;
+            };
+            state.sequence += 1;
+            let sequence = state.sequence;
+
+            if state
+                .last_click
+                .is_some_and(|last_click| now.duration_since(last_click) <= double_click_interval)
+            {
+                state.last_click = None;
+                drop(state);
+                show_main_window(tray.app_handle());
+                return;
+            }
+
+            state.last_click = Some(now);
+            drop(state);
+
+            let app_handle = tray.app_handle().clone();
+            let click_state = Arc::clone(&click_state);
+            let tray_id = tray.id().clone();
+            thread::spawn(move || {
+                thread::sleep(double_click_interval);
+                let should_show_menu = match click_state.lock() {
+                    Ok(mut state) if state.sequence == sequence => {
+                        state.last_click = None;
+                        true
+                    }
+                    Ok(_) => false,
+                    Err(_) => {
+                        eprintln!("读取托盘点击状态失败");
+                        false
+                    }
+                };
+                if !should_show_menu {
+                    return;
+                }
+
+                if let Some(tray) = app_handle.tray_by_id(&tray_id) {
+                    show_macos_tray_menu(&tray);
+                }
+            });
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
 fn main() {
     let gui_config = match load_or_create_gui_config() {
         Ok(config) => config,
@@ -8622,8 +8797,29 @@ fn main() {
         .manage(CoreDownloadState::default())
         .manage(CoreProcessState::default())
         .manage(usage::UsageCollectorState::default())
-        .manage(GuiConfigState::new(gui_config))
+        .manage(GuiConfigState::new(gui_config));
+
+    #[cfg(target_os = "macos")]
+    let app = app.on_window_event(|window, event| {
+        if window.label() == "main" {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if !set_macos_dock_visible(false) {
+                    return;
+                }
+                if let Err(error) = window.hide() {
+                    eprintln!("隐藏主窗口失败: {error}");
+                    set_macos_dock_visible(true);
+                }
+            }
+        }
+    });
+
+    let app = app
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            setup_macos_tray(app)?;
+
             let usage_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error) = usage::initialize_usage_storage() {
