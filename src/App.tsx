@@ -168,7 +168,7 @@ function AppContent() {
           </button>
           <div className="sidebar-footer">
             <span>Easy_CLIProxyAPI</span>
-            <strong>0.1</strong>
+            <strong>v0.1.9</strong>
           </div>
         </div>
       </aside>
