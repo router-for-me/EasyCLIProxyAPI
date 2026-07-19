@@ -58,7 +58,7 @@ if (-not (Test-Path -LiteralPath $AppBin -PathType Leaf)) {
     throw "Build finished, but executable not found: $AppBin"
 }
 
-& bun $PreparePortable --binary $AppBin --output $BinDir
+& bun $PreparePortable --binary $AppBin --output $BinDir --download true
 if ($LASTEXITCODE -ne 0) {
     throw "Portable preparation failed with exit code $LASTEXITCODE."
 }
