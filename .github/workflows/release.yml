@@ -84,12 +84,12 @@ jobs:
             os: darwin
             display_os: Darwin
             arch: amd64
-            suffix: tar.gz
+            suffix: dmg
           - runner: macos-15
             os: darwin
             display_os: Darwin
             arch: aarch64
-            suffix: tar.gz
+            suffix: dmg
           - runner: windows-2025
             os: windows
             display_os: Windows
@@ -164,59 +164,6 @@ jobs:
           bun install --frozen-lockfile
           bun tauri build --no-bundle
         shell: bash
-      - name: Sign macOS binary
-        if: matrix.os == 'darwin'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          set -euo pipefail
-
-          certificate_path="$RUNNER_TEMP/apple-signing-certificate.p12"
-          keychain_path="$RUNNER_TEMP/apple-signing.keychain-db"
-          keychain_password="$(uuidgen)"
-          binary="src-tauri/target/release/cpa-gui"
-          keychain_list="$(security list-keychains -d user)"
-          existing_keychains=()
-          while IFS= read -r existing_keychain; do
-            existing_keychain="${existing_keychain#*\"}"
-            existing_keychain="${existing_keychain%\"*}"
-            if [ -n "$existing_keychain" ]; then
-              existing_keychains+=("$existing_keychain")
-            fi
-          done <<< "$keychain_list"
-
-          cleanup() {
-            rm -f "$certificate_path"
-            security delete-keychain "$keychain_path" || true
-          }
-          trap cleanup EXIT
-
-          test -n "$APPLE_CERTIFICATE"
-          test -n "$APPLE_CERTIFICATE_PASSWORD"
-          test -n "$APPLE_SIGNING_IDENTITY"
-          test -f "$binary"
-
-          printf '%s' "$APPLE_CERTIFICATE" | base64 -D > "$certificate_path"
-          security create-keychain -p "$keychain_password" "$keychain_path"
-          if [ "${#existing_keychains[@]}" -gt 0 ]; then
-            security list-keychains -d user -s "$keychain_path" "${existing_keychains[@]}"
-          else
-            security list-keychains -d user -s "$keychain_path"
-          fi
-          security set-keychain-settings -lut 21600 "$keychain_path"
-          security unlock-keychain -p "$keychain_password" "$keychain_path"
-          security import "$certificate_path" -k "$keychain_path" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
-          if ! security find-identity -v -p codesigning "$keychain_path" | grep -F -- "$APPLE_SIGNING_IDENTITY"; then
-            echo "Signing identity was not imported into the temporary keychain" >&2
-            exit 1
-          fi
-
-          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$keychain_path" "$binary"
-          codesign --verify --strict --verbose=2 "$binary"
       - name: Prepare portable directory
         run: >-
           node scripts/prepare-portable.mjs
@@ -241,8 +188,74 @@ jobs:
             throw new Error(`cpa-core must contain exactly one archive; found: ${entries.map((entry) => entry.name).join(', ')}`);
           }
           NODE
-      - name: Archive Unix release
-        if: matrix.os != 'windows'
+      - name: Build signed macOS DMG
+        if: matrix.os == 'darwin'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          test -n "$APPLE_CERTIFICATE"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -n "$APPLE_TEAM_ID"
+
+          bun tauri bundle --bundles dmg --ci --config src-tauri/tauri.dmg.conf.json
+
+          bundle_dir="src-tauri/target/release/bundle"
+          dmg_path="$(find "$bundle_dir/dmg" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          output_dmg="${{ steps.package.outputs.stem }}.dmg"
+          mount_dir="$RUNNER_TEMP/easycli-dmg"
+          mounted=false
+
+          cleanup() {
+            if [ "$mounted" = true ]; then
+              hdiutil detach "$mount_dir" || true
+            fi
+            rm -rf "$mount_dir"
+          }
+          trap cleanup EXIT
+
+          test -n "$dmg_path"
+          mv "$dmg_path" "$output_dmg"
+          test -s "$output_dmg"
+          codesign --verify --strict --verbose=2 "$output_dmg"
+          xcrun notarytool submit "$output_dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$output_dmg"
+          xcrun stapler validate "$output_dmg"
+
+          mkdir -p "$mount_dir"
+          hdiutil attach "$output_dmg" -nobrowse -readonly -mountpoint "$mount_dir"
+          mounted=true
+
+          app_path="$mount_dir/EasyCLIProxyAPI.app"
+          resources_dir="$app_path/Contents/Resources"
+          test -d "$app_path"
+          test -s "$resources_dir/core-version.txt"
+          core_count="$(find "$resources_dir/cpa-core" -maxdepth 1 -type f -name 'CLIProxyAPI_*.tar.gz' | wc -l | tr -d '[:space:]')"
+          if [ "$core_count" -ne 1 ]; then
+            echo "macOS app must contain exactly one bundled core archive" >&2
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          xcrun stapler validate "$app_path"
+          hdiutil detach "$mount_dir"
+          mounted=false
+      - name: Archive Linux release
+        if: matrix.os == 'linux'
         run: tar -czf "${{ steps.package.outputs.stem }}.tar.gz" -C release "${{ steps.package.outputs.stem }}"
       - name: Archive Windows release
         if: matrix.os == 'windows'

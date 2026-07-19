@@ -1862,7 +1862,7 @@ fn launch_codex_app_via_cli(executable: &Path, home: &Path) -> Result<(), String
 fn find_codex_app_target(home: &Path) -> Option<CodexAppTarget> {
     #[cfg(target_os = "macos")]
     {
-        return [PathBuf::from("/Applications"), home.join("Applications")]
+        [PathBuf::from("/Applications"), home.join("Applications")]
             .into_iter()
             .flat_map(|directory| {
                 [
@@ -1875,7 +1875,7 @@ fn find_codex_app_target(home: &Path) -> Option<CodexAppTarget> {
                 .map(move |name| directory.join(name))
             })
             .find(|path| path.is_dir())
-            .map(CodexAppTarget::Application);
+            .map(CodexAppTarget::Application)
     }
 
     #[cfg(target_os = "windows")]
@@ -2271,12 +2271,12 @@ fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {
 fn find_claude_desktop_executable(home: &Path) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        return [
+        [
             PathBuf::from("/Applications/Claude.app/Contents/MacOS/Claude"),
             home.join("Applications/Claude.app/Contents/MacOS/Claude"),
         ]
         .into_iter()
-        .find(|path| path.is_file());
+        .find(|path| path.is_file())
     }
     #[cfg(target_os = "windows")]
     {
@@ -7978,7 +7978,7 @@ fn core_install_dir() -> Result<PathBuf, String> {
     Ok(core_base_dir()?.join("cpa-core"))
 }
 
-fn core_base_dir() -> Result<PathBuf, String> {
+fn executable_dir() -> Result<PathBuf, String> {
     let exe_path = env::current_exe().map_err(|err| format!("读取当前程序路径失败: {err}"))?;
     exe_path
         .parent()
@@ -7986,11 +7986,45 @@ fn core_base_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| format!("当前程序路径没有父目录: {}", path_to_string(&exe_path)))
 }
 
-fn bundled_core_archive() -> Result<Option<(BundledCoreInfo, PathBuf)>, String> {
-    let platform = current_core_platform()?;
-    let base_dir = core_base_dir()?;
+fn macos_app_resources_dir(executable_dir: &Path) -> Option<PathBuf> {
+    if executable_dir.file_name().and_then(|name| name.to_str()) != Some("MacOS") {
+        return None;
+    }
+    let contents_dir = executable_dir.parent()?;
+    if contents_dir.file_name().and_then(|name| name.to_str()) != Some("Contents") {
+        return None;
+    }
+    let app_dir = contents_dir.parent()?;
+    if app_dir.extension().and_then(|extension| extension.to_str()) != Some("app") {
+        return None;
+    }
+    Some(contents_dir.join("Resources"))
+}
+
+fn core_base_dir() -> Result<PathBuf, String> {
+    let executable_dir = executable_dir()?;
+    #[cfg(target_os = "macos")]
+    if macos_app_resources_dir(&executable_dir).is_some() {
+        let home_dir = env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| "无法确定 macOS 用户目录".to_string())?;
+        return Ok(home_dir
+            .join("Library")
+            .join("Application Support")
+            .join("com.cpa.gui"));
+    }
+    Ok(executable_dir)
+}
+
+fn bundled_core_locations(base_dir: &Path, executable_dir: &Path) -> Vec<(PathBuf, PathBuf)> {
     let mut locations = vec![(base_dir.join(CORE_VERSION_FILE), base_dir.join("cpa-core"))];
-    if let Some(project_root) = source_project_root(&base_dir) {
+    if let Some(resources_dir) = macos_app_resources_dir(executable_dir) {
+        locations.push((
+            resources_dir.join(CORE_VERSION_FILE),
+            resources_dir.join("cpa-core"),
+        ));
+    }
+    if let Some(project_root) = source_project_root(executable_dir) {
         if project_root != base_dir {
             locations.push((
                 project_root.join(CORE_VERSION_FILE),
@@ -7998,6 +8032,14 @@ fn bundled_core_archive() -> Result<Option<(BundledCoreInfo, PathBuf)>, String> 
             ));
         }
     }
+    locations
+}
+
+fn bundled_core_archive() -> Result<Option<(BundledCoreInfo, PathBuf)>, String> {
+    let platform = current_core_platform()?;
+    let base_dir = core_base_dir()?;
+    let executable_dir = executable_dir()?;
+    let locations = bundled_core_locations(&base_dir, &executable_dir);
 
     let configured_version = locations.iter().find_map(|(version_path, _)| {
         fs::read_to_string(version_path)
@@ -10715,6 +10757,25 @@ mod tests {
 
         assert_eq!(fs::read(target.join(CORE_CONFIG_FILE)).unwrap(), original);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bundled_core_locations_include_macos_app_resources() {
+        let contents_dir = agent_test_home("bundled-macos-resources")
+            .join("EasyCLIProxyAPI.app")
+            .join("Contents");
+        let executable_dir = contents_dir.join("MacOS");
+        let base_dir = agent_test_home("bundled-macos-data");
+        let resource_location = (
+            contents_dir.join("Resources").join(CORE_VERSION_FILE),
+            contents_dir.join("Resources").join("cpa-core"),
+        );
+
+        assert_eq!(
+            macos_app_resources_dir(&executable_dir),
+            Some(contents_dir.join("Resources"))
+        );
+        assert!(bundled_core_locations(&base_dir, &executable_dir).contains(&resource_location));
     }
 
     #[test]
