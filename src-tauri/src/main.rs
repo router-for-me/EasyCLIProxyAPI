@@ -98,6 +98,49 @@ struct GuiConfigState {
     inner: Mutex<GuiConfigFile>,
 }
 
+#[derive(Default)]
+struct AgentConfigStatusCache {
+    refresh_lock: Mutex<()>,
+    entry: Mutex<Option<AgentConfigStatusCacheEntry>>,
+}
+
+struct AgentConfigStatusCacheEntry {
+    port: u16,
+    statuses: Vec<AgentConfigStatus>,
+}
+
+impl AgentConfigStatusCache {
+    fn get(&self, port: u16) -> Result<Option<Vec<AgentConfigStatus>>, String> {
+        self.entry
+            .lock()
+            .map(|entry| {
+                entry
+                    .as_ref()
+                    .filter(|entry| entry.port == port)
+                    .map(|entry| entry.statuses.clone())
+            })
+            .map_err(|_| "智能体配置状态缓存锁已损坏".to_string())
+    }
+
+    fn replace(&self, port: u16, statuses: Vec<AgentConfigStatus>) -> Result<(), String> {
+        let mut current = self
+            .entry
+            .lock()
+            .map_err(|_| "智能体配置状态缓存锁已损坏".to_string())?;
+        *current = Some(AgentConfigStatusCacheEntry { port, statuses });
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), String> {
+        let mut current = self
+            .entry
+            .lock()
+            .map_err(|_| "智能体配置状态缓存锁已损坏".to_string())?;
+        *current = None;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CorePlatform {
@@ -864,16 +907,14 @@ fn get_gui_settings(
     Ok(GuiSettings::from(&config))
 }
 
-#[tauri::command]
-fn get_agent_config_statuses(
-    app: tauri::AppHandle,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
+fn inspect_agent_config_statuses(
+    app: &tauri::AppHandle,
+    port: u16,
 ) -> Result<Vec<AgentConfigStatus>, String> {
     let home = app
         .path()
         .home_dir()
         .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let port = gui_config_state.snapshot()?.port;
     Ok([
         AgentClient::ClaudeCode,
         AgentClient::ClaudeDesktop,
@@ -885,6 +926,49 @@ fn get_agent_config_statuses(
     .into_iter()
     .map(|client| inspect_agent_config(client, &home, port))
     .collect())
+}
+
+fn refresh_agent_config_status_cache(
+    app: &tauri::AppHandle,
+    gui_config_state: &GuiConfigState,
+    cache: &AgentConfigStatusCache,
+) -> Result<Vec<AgentConfigStatus>, String> {
+    let _refresh_guard = cache
+        .refresh_lock
+        .lock()
+        .map_err(|_| "智能体配置状态刷新锁已损坏".to_string())?;
+    let port = gui_config_state.snapshot()?.port;
+    let statuses = inspect_agent_config_statuses(app, port)?;
+    cache.replace(port, statuses.clone())?;
+    Ok(statuses)
+}
+
+#[tauri::command]
+fn get_agent_config_statuses(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    cache: tauri::State<'_, AgentConfigStatusCache>,
+) -> Result<Vec<AgentConfigStatus>, String> {
+    {
+        let _refresh_guard = cache
+            .refresh_lock
+            .lock()
+            .map_err(|_| "智能体配置状态刷新锁已损坏".to_string())?;
+        let port = gui_config_state.snapshot()?.port;
+        if let Some(statuses) = cache.get(port)? {
+            return Ok(statuses);
+        }
+    }
+    refresh_agent_config_status_cache(&app, gui_config_state.inner(), cache.inner())
+}
+
+#[tauri::command]
+fn refresh_agent_config_statuses(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    cache: tauri::State<'_, AgentConfigStatusCache>,
+) -> Result<Vec<AgentConfigStatus>, String> {
+    refresh_agent_config_status_cache(&app, gui_config_state.inner(), cache.inner())
 }
 
 #[tauri::command]
@@ -4254,12 +4338,17 @@ fn detect_lan_ipv4() -> Option<Ipv4Addr> {
 #[tauri::command]
 fn save_gui_settings(
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    cache: tauri::State<'_, AgentConfigStatusCache>,
     settings: GuiNetworkSettings,
 ) -> Result<GuiSettings, String> {
     if settings.port == 0 {
         return Err("端口必须在 1 到 65535 之间".to_string());
     }
 
+    let _refresh_guard = cache
+        .refresh_lock
+        .lock()
+        .map_err(|_| "智能体配置状态刷新锁已损坏".to_string())?;
     let previous = gui_config_state.snapshot()?;
     let mut next = previous.clone();
     next.port = settings.port;
@@ -4277,6 +4366,12 @@ fn save_gui_settings(
             });
         }
     };
+
+    if config.port != previous.port {
+        if let Err(error) = cache.clear() {
+            eprintln!("清空智能体配置状态缓存失败: {error}");
+        }
+    }
 
     Ok(GuiSettings::from(&config))
 }
@@ -8797,7 +8892,8 @@ fn main() {
         .manage(CoreDownloadState::default())
         .manage(CoreProcessState::default())
         .manage(usage::UsageCollectorState::default())
-        .manage(GuiConfigState::new(gui_config));
+        .manage(GuiConfigState::new(gui_config))
+        .manage(AgentConfigStatusCache::default());
 
     #[cfg(target_os = "macos")]
     let app = app.on_window_event(|window, event| {
@@ -8826,6 +8922,19 @@ fn main() {
                     eprintln!("初始化使用记录目录失败: {error}");
                 }
                 usage::start_usage_collector(usage_app);
+            });
+
+            let agent_status_app = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let gui_config_state = agent_status_app.state::<GuiConfigState>();
+                let cache = agent_status_app.state::<AgentConfigStatusCache>();
+                if let Err(error) = refresh_agent_config_status_cache(
+                    &agent_status_app,
+                    gui_config_state.inner(),
+                    cache.inner(),
+                ) {
+                    eprintln!("后台刷新智能体配置状态失败: {error}");
+                }
             });
 
             let core_app = app.handle().clone();
@@ -8857,6 +8966,7 @@ fn main() {
             get_core_status,
             get_gui_settings,
             get_agent_config_statuses,
+            refresh_agent_config_statuses,
             get_agent_models,
             get_thinking_aliases,
             get_thinking_alias_sources,
@@ -8912,6 +9022,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_status_cache_requires_matching_port() {
+        let cache = AgentConfigStatusCache::default();
+        cache.replace(8317, Vec::new()).unwrap();
+
+        assert!(cache.get(8317).unwrap().is_some_and(|statuses| statuses.is_empty()));
+        assert!(cache.get(8318).unwrap().is_none());
+
+        cache.clear().unwrap();
+        assert!(cache.get(8317).unwrap().is_none());
+    }
 
     fn agent_test_home(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
