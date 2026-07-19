@@ -9028,7 +9028,10 @@ mod tests {
         let cache = AgentConfigStatusCache::default();
         cache.replace(8317, Vec::new()).unwrap();
 
-        assert!(cache.get(8317).unwrap().is_some_and(|statuses| statuses.is_empty()));
+        assert!(cache
+            .get(8317)
+            .unwrap()
+            .is_some_and(|statuses| statuses.is_empty()));
         assert!(cache.get(8318).unwrap().is_none());
 
         cache.clear().unwrap();
