@@ -63,7 +63,7 @@ type AppUpdateInfo = {
   releaseUrl: string;
 };
 
-const APP_RELEASE_URL = 'https://github.com/lzt404/Easy_CLIProxyAPI/releases/latest';
+const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
 
 let latestAutoCheckStarted = false;
 let cachedLatest: CoreLatest | null = null;

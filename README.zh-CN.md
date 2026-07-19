@@ -5,21 +5,19 @@
 </p>
 
 <p align="center">
-  <img src="src/assets/logo.jpg" width="112" alt="Easy_CLIProxyAPI Logo">
+  <img src="src/assets/logo.jpg" width="112" alt="EasyCLIProxyAPI Logo">
 </p>
 
-<h1 align="center">Easy_CLIProxyAPI</h1>
+<h1 align="center">EasyCLIProxyAPI</h1>
 
 <p align="center">
   我们的目标是实现 token free（free 在这里的意思是自由）。<br>
 </p>
 
-> [!IMPORTANT]
-> 当前仓库为正式版本，如需更为激进的实验性功能，请前往 [lzt404/Easy_CLIProxyAPI](https://github.com/lzt404/Easy_CLIProxyAPI)。
 
 ## 项目简介
 
-Easy_CLIProxyAPI 是基于 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 的便携工具，提供图形化界面管理内核、OAuth 账号、API 接入、模型路由、认证文件、配额查询、使用记录和智能体客户端配置。
+EasyCLIProxyAPI 是基于 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 的便携工具，提供图形化界面管理内核、OAuth 账号、API 接入、模型路由、认证文件、配额查询、使用记录和智能体客户端配置。
 
 软件基于 Tauri、React 和 Rust 构建。
 

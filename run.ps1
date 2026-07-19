@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 $RootDir = $PSScriptRoot
 $BinDir = Join-Path $RootDir 'bin-work'
-$AppBin = Join-Path $BinDir 'Easy_CLIProxyAPI.exe'
+$AppBin = Join-Path $BinDir 'EasyCLIProxyAPI.exe'
 
 if (-not (Test-Path -LiteralPath $AppBin -PathType Leaf)) {
     Write-Host "Executable not found: $AppBin"

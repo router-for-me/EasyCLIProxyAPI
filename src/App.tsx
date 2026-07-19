@@ -128,7 +128,7 @@ function AppContent() {
         <div className="sidebar-brand" title="CLI Proxy API GUI">
           <img src={appLogo} alt="" className="brand-mark brand-logo" />
           <div>
-            <strong>Easy CLIProxyAPI</strong>
+            <strong>EasyCLIProxyAPI</strong>
             <span>Desktop Console</span>
           </div>
         </div>
