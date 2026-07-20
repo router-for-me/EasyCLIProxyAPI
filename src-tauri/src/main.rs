@@ -30,7 +30,6 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
 };
 use tauri::{Emitter, Manager};
-use tauri_plugin_opener::OpenerExt;
 use tokio_util::sync::CancellationToken;
 use zip::ZipArchive;
 
@@ -4628,7 +4627,6 @@ async fn download_auth_file(
 
 #[tauri::command]
 async fn start_oauth_login(
-    app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     provider: String,
 ) -> Result<OAuthStartResult, String> {
@@ -4666,7 +4664,7 @@ async fn start_oauth_login(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    let (opened, open_error) = match open_external_url_inner(&app, &url) {
+    let (opened, open_error) = match open_external_url_inner(&url) {
         Ok(()) => (true, None),
         Err(error) => (false, Some(error)),
     };
@@ -4749,8 +4747,8 @@ async fn submit_oauth_callback(
 }
 
 #[tauri::command]
-fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    open_external_url_inner(&app, &url)
+fn open_external_url(url: String) -> Result<(), String> {
+    open_external_url_inner(&url)
 }
 
 #[tauri::command]
@@ -7427,7 +7425,7 @@ fn truncate_for_error(value: &str) -> String {
     format!("{shortened}…")
 }
 
-fn open_external_url_inner(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+fn open_external_url_inner(url: &str) -> Result<(), String> {
     let url = url.trim();
     if url.is_empty() {
         return Err("链接为空".to_string());
@@ -7436,8 +7434,40 @@ fn open_external_url_inner(app: &tauri::AppHandle, url: &str) -> Result<(), Stri
         return Err("只允许打开 http/https 链接".to_string());
     }
 
-    app.opener()
-        .open_url(url, None::<&str>)
+    let result = {
+        #[cfg(target_os = "windows")]
+        {
+            let mut command = Command::new("cmd");
+            command
+                .args(["/C", "start", "", url])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            configure_background_command(&mut command);
+            command.spawn()
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Command::new("open")
+                .arg(url)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            Command::new("xdg-open")
+                .arg(url)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+        }
+    };
+
+    result
+        .map(|_| ())
         .map_err(|err| format!("打开浏览器失败: {err}"))
 }
 
@@ -8901,11 +8931,6 @@ fn main() {
     };
 
     let app = tauri::Builder::default()
-        .plugin(
-            tauri_plugin_opener::Builder::new()
-                .open_js_links_on_click(false)
-                .build(),
-        )
         .manage(CoreDownloadState::default())
         .manage(CoreProcessState::default())
         .manage(usage::UsageCollectorState::default())
