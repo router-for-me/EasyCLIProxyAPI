@@ -144,10 +144,11 @@ jobs:
 
           const cargoManifest = 'src-tauri/Cargo.toml';
           const contents = readFileSync(cargoManifest, 'utf8');
-          const updated = contents.replace(/^version = "[^"]+"$/m, `version = "${version}"`);
-          if (updated === contents) {
-            throw new Error(`Could not update version in ${cargoManifest}`);
+          const versionPattern = /^version = "[^"]+"$/m;
+          if (!versionPattern.test(contents)) {
+            throw new Error(`Could not find version in ${cargoManifest}`);
           }
+          const updated = contents.replace(versionPattern, `version = "${version}"`);
           writeFileSync(cargoManifest, updated);
           NODE
 
