@@ -1364,6 +1364,102 @@ input:focus-visible {
   height: 40px;
 }
 
+.close-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(45, 42, 38, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.close-dialog {
+  display: grid;
+  gap: 18px;
+  width: min(430px, 100%);
+  padding: 24px;
+  border: 1px solid #d5d2cb;
+  border-radius: 10px;
+  outline: none;
+  background: #fffdf8;
+  box-shadow: 0 22px 60px rgba(45, 42, 38, 0.28);
+}
+
+.close-dialog-heading {
+  display: grid;
+  gap: 5px;
+}
+
+.close-dialog-heading span {
+  color: #7a746c;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.close-dialog-heading h2 {
+  margin: 0;
+  color: #2d2a26;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.close-dialog > p {
+  margin: 0;
+  color: #5f5a53;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.close-dialog-error {
+  padding: 9px 11px;
+  border: 1px solid #dfb7b0;
+  border-radius: 6px;
+  background: #fff1ee;
+  color: #9f2d20;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.close-dialog-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.close-choice-button {
+  display: grid;
+  min-height: 58px;
+  gap: 3px;
+  padding: 8px 12px;
+}
+
+.close-choice-button span {
+  font-size: 13px;
+}
+
+.close-choice-button:focus-visible {
+  outline: 3px solid rgba(66, 99, 127, 0.36);
+  outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .close-dialog-backdrop {
+    padding: 16px;
+  }
+
+  .close-dialog {
+    padding: 20px;
+  }
+
+  .close-dialog-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .config-delete-dialog {
   grid-template-rows: 40px 52px 40px;
   height: 202px;
