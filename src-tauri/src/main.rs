@@ -10,6 +10,8 @@ use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSEvent};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
 use std::{
@@ -24,10 +26,14 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tar::Archive;
+#[cfg(target_os = "windows")]
+use tauri::menu::PredefinedMenuItem;
 #[cfg(target_os = "macos")]
+use tauri::tray::{MouseButtonState, TrayIcon};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
 };
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
@@ -42,6 +48,8 @@ const APP_RELEASE_PAGE_URL: &str =
     "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest";
 const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
 const CORE_STATUS_EVENT: &str = "core-status-changed";
+#[cfg(target_os = "windows")]
+const WINDOWS_CLOSE_REQUEST_EVENT: &str = "windows-close-requested";
 const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";
 const CORE_CONFIG_FILE: &str = "config.yaml";
 const CORE_EXAMPLE_CONFIG_FILE: &str = "config.example.yaml";
@@ -223,6 +231,13 @@ struct GuiConfigFile {
     management_secret_key: String,
     plugins_enabled: bool,
     routing_strategy: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum WindowsCloseAction {
+    Exit,
+    MinimizeToTray,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -897,6 +912,8 @@ fn get_core_status(
 }
 
 fn emit_core_status(app: &tauri::AppHandle, status: &CoreStatus) {
+    #[cfg(target_os = "windows")]
+    update_windows_tray_status(app, status);
     let _ = app.emit(CORE_STATUS_EVENT, status);
 }
 
@@ -906,6 +923,26 @@ fn get_gui_settings(
 ) -> Result<GuiSettings, String> {
     let config = gui_config_state.snapshot()?;
     Ok(GuiSettings::from(&config))
+}
+
+#[tauri::command]
+fn resolve_windows_close_request(
+    app: tauri::AppHandle,
+    action: WindowsCloseAction,
+) -> Result<(), String> {
+    match action {
+        WindowsCloseAction::Exit => app.exit(0),
+        WindowsCloseAction::MinimizeToTray => {
+            let window = app
+                .get_webview_window("main")
+                .ok_or_else(|| "主窗口不存在".to_string())?;
+            window
+                .hide()
+                .map_err(|error| format!("隐藏主窗口失败: {error}"))?;
+        }
+    }
+
+    Ok(())
 }
 
 fn inspect_agent_config_statuses(
@@ -4860,15 +4897,22 @@ fn start_core_process(
     process_state: tauri::State<'_, CoreProcessState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreStatus, String> {
-    let config = gui_config_state.snapshot()?;
-    start_core_process_inner(process_state.inner(), &config)?;
-    if let Err(error) = gui_config_state.set_run_on_startup(true) {
-        let _ = stop_core_process_inner(process_state.inner());
-        return Err(error);
-    }
-    let status = current_core_status(Some(process_state.inner()), Some(config.port))?;
+    let status = start_core_process_with_state(process_state.inner(), gui_config_state.inner())?;
     emit_core_status(&app, &status);
     Ok(status)
+}
+
+fn start_core_process_with_state(
+    process_state: &CoreProcessState,
+    gui_config_state: &GuiConfigState,
+) -> Result<CoreStatus, String> {
+    let config = gui_config_state.snapshot()?;
+    start_core_process_inner(process_state, &config)?;
+    if let Err(error) = gui_config_state.set_run_on_startup(true) {
+        let _ = stop_core_process_inner(process_state);
+        return Err(error);
+    }
+    current_core_status(Some(process_state), Some(config.port))
 }
 
 #[tauri::command]
@@ -4877,11 +4921,18 @@ fn stop_core_process(
     process_state: tauri::State<'_, CoreProcessState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreStatus, String> {
-    stop_core_process_inner(process_state.inner())?;
-    let config = gui_config_state.set_run_on_startup(false)?;
-    let status = current_core_status(Some(process_state.inner()), Some(config.port))?;
+    let status = stop_core_process_with_state(process_state.inner(), gui_config_state.inner())?;
     emit_core_status(&app, &status);
     Ok(status)
+}
+
+fn stop_core_process_with_state(
+    process_state: &CoreProcessState,
+    gui_config_state: &GuiConfigState,
+) -> Result<CoreStatus, String> {
+    stop_core_process_inner(process_state)?;
+    let config = gui_config_state.set_run_on_startup(false)?;
+    current_core_status(Some(process_state), Some(config.port))
 }
 
 #[tauri::command]
@@ -4890,16 +4941,23 @@ fn restart_core_process(
     process_state: tauri::State<'_, CoreProcessState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreStatus, String> {
-    let config = gui_config_state.snapshot()?;
-    let _ = stop_core_process_inner(process_state.inner());
-    start_core_process_inner(process_state.inner(), &config)?;
-    if let Err(error) = gui_config_state.set_run_on_startup(true) {
-        let _ = stop_core_process_inner(process_state.inner());
-        return Err(error);
-    }
-    let status = current_core_status(Some(process_state.inner()), Some(config.port))?;
+    let status = restart_core_process_with_state(process_state.inner(), gui_config_state.inner())?;
     emit_core_status(&app, &status);
     Ok(status)
+}
+
+fn restart_core_process_with_state(
+    process_state: &CoreProcessState,
+    gui_config_state: &GuiConfigState,
+) -> Result<CoreStatus, String> {
+    let config = gui_config_state.snapshot()?;
+    let _ = stop_core_process_inner(process_state);
+    start_core_process_inner(process_state, &config)?;
+    if let Err(error) = gui_config_state.set_run_on_startup(true) {
+        let _ = stop_core_process_inner(process_state);
+        return Err(error);
+    }
+    current_core_status(Some(process_state), Some(config.port))
 }
 
 async fn install_core_version_inner(
@@ -8764,6 +8822,11 @@ fn show_main_window_on_main_thread(app_handle: &tauri::AppHandle) {
         set_macos_dock_visible(false);
         return;
     }
+    if window.is_minimized().unwrap_or(false) {
+        if let Err(error) = window.unminimize() {
+            eprintln!("恢复主窗口失败: {error}");
+        }
+    }
     if let Err(error) = window.set_focus() {
         eprintln!("聚焦主窗口失败: {error}");
     }
@@ -8887,6 +8950,341 @@ fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+const WINDOWS_TRAY_ID: &str = "windows-tray";
+#[cfg(target_os = "windows")]
+const WINDOWS_TRAY_OPEN_MENU_ID: &str = "windows-tray-open-main-window";
+#[cfg(target_os = "windows")]
+const WINDOWS_TRAY_STATUS_MENU_ID: &str = "windows-tray-core-status";
+#[cfg(target_os = "windows")]
+const WINDOWS_TRAY_TOGGLE_CORE_MENU_ID: &str = "windows-tray-toggle-core";
+#[cfg(target_os = "windows")]
+const WINDOWS_TRAY_RESTART_CORE_MENU_ID: &str = "windows-tray-restart-core";
+#[cfg(target_os = "windows")]
+const WINDOWS_TRAY_QUIT_MENU_ID: &str = "windows-tray-quit";
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+enum WindowsTrayCoreAction {
+    Toggle,
+    Restart,
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsTrayPresentation {
+    status_text: &'static str,
+    toggle_text: &'static str,
+    toggle_enabled: bool,
+    restart_enabled: bool,
+    tooltip: &'static str,
+}
+
+#[cfg(target_os = "windows")]
+fn windows_tray_presentation(status: &CoreStatus, busy: bool) -> WindowsTrayPresentation {
+    let status_text = if busy {
+        "内核状态：处理中"
+    } else if !status.installed {
+        "内核状态：未安装"
+    } else if status.running {
+        "内核状态：运行中"
+    } else {
+        "内核状态：已停止"
+    };
+    let toggle_text = if busy {
+        "处理中..."
+    } else if status.running {
+        "停止内核"
+    } else {
+        "启动内核"
+    };
+    let tooltip = if busy {
+        "EasyCLIProxyAPI · 内核处理中"
+    } else if !status.installed {
+        "EasyCLIProxyAPI · 内核未安装"
+    } else if status.running {
+        "EasyCLIProxyAPI · 内核运行中"
+    } else {
+        "EasyCLIProxyAPI · 内核已停止"
+    };
+
+    WindowsTrayPresentation {
+        status_text,
+        toggle_text,
+        toggle_enabled: status.installed && !busy,
+        restart_enabled: status.installed && status.running && !busy,
+        tooltip,
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsTrayState {
+    status_item: MenuItem<tauri::Wry>,
+    toggle_core_item: MenuItem<tauri::Wry>,
+    restart_core_item: MenuItem<tauri::Wry>,
+    busy: AtomicBool,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsTrayState {
+    fn begin_action(&self) -> bool {
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+
+        if let Err(error) = self.status_item.set_text("内核状态：处理中") {
+            eprintln!("更新 Windows 托盘内核状态失败: {error}");
+        }
+        if let Err(error) = self.toggle_core_item.set_text("处理中...") {
+            eprintln!("更新 Windows 托盘操作文本失败: {error}");
+        }
+        if let Err(error) = self.toggle_core_item.set_enabled(false) {
+            eprintln!("更新 Windows 托盘操作状态失败: {error}");
+        }
+        if let Err(error) = self.restart_core_item.set_enabled(false) {
+            eprintln!("更新 Windows 托盘重启状态失败: {error}");
+        }
+        true
+    }
+
+    fn finish_action(&self) {
+        self.busy.store(false, Ordering::Release);
+    }
+
+    fn update(&self, status: &CoreStatus) -> &'static str {
+        let presentation = windows_tray_presentation(status, self.busy.load(Ordering::Acquire));
+        if let Err(error) = self.status_item.set_text(presentation.status_text) {
+            eprintln!("更新 Windows 托盘内核状态失败: {error}");
+        }
+        if let Err(error) = self.toggle_core_item.set_text(presentation.toggle_text) {
+            eprintln!("更新 Windows 托盘操作文本失败: {error}");
+        }
+        if let Err(error) = self
+            .toggle_core_item
+            .set_enabled(presentation.toggle_enabled)
+        {
+            eprintln!("更新 Windows 托盘操作状态失败: {error}");
+        }
+        if let Err(error) = self
+            .restart_core_item
+            .set_enabled(presentation.restart_enabled)
+        {
+            eprintln!("更新 Windows 托盘重启状态失败: {error}");
+        }
+        presentation.tooltip
+    }
+
+    fn show_error(&self, error: &str) {
+        let mut summary = error.chars().take(48).collect::<String>();
+        if error.chars().count() > 48 {
+            summary.push('…');
+        }
+        if let Err(update_error) = self.status_item.set_text(format!("操作失败：{summary}")) {
+            eprintln!("更新 Windows 托盘错误状态失败: {update_error}");
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn show_windows_main_window(app_handle: &tauri::AppHandle) {
+    let Some(window) = app_handle.get_webview_window("main") else {
+        return;
+    };
+    if let Err(error) = window.show() {
+        eprintln!("显示主窗口失败: {error}");
+        return;
+    }
+    if window.is_minimized().unwrap_or(false) {
+        if let Err(error) = window.unminimize() {
+            eprintln!("恢复主窗口失败: {error}");
+        }
+    }
+    if let Err(error) = window.set_focus() {
+        eprintln!("聚焦主窗口失败: {error}");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn update_windows_tray_status(app_handle: &tauri::AppHandle, status: &CoreStatus) {
+    let tooltip = app_handle
+        .try_state::<WindowsTrayState>()
+        .map(|tray_state| tray_state.update(status))
+        .unwrap_or_else(|| windows_tray_presentation(status, false).tooltip);
+
+    if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
+        if let Err(error) = tray.set_tooltip(Some(tooltip)) {
+            eprintln!("更新 Windows 托盘提示失败: {error}");
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn show_windows_tray_action_error(app_handle: &tauri::AppHandle, error: &str) {
+    eprintln!("Windows 托盘内核操作失败: {error}");
+    if let Some(tray_state) = app_handle.try_state::<WindowsTrayState>() {
+        tray_state.show_error(error);
+    }
+    if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
+        if let Err(update_error) = tray.set_tooltip(Some("EasyCLIProxyAPI · 内核操作失败")) {
+            eprintln!("更新 Windows 托盘错误提示失败: {update_error}");
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tray_core_action(app_handle: &tauri::AppHandle, action: WindowsTrayCoreAction) {
+    let Some(tray_state) = app_handle.try_state::<WindowsTrayState>() else {
+        return;
+    };
+    if !tray_state.begin_action() {
+        return;
+    }
+    if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
+        if let Err(error) = tray.set_tooltip(Some("EasyCLIProxyAPI · 内核处理中")) {
+            eprintln!("更新 Windows 托盘处理中提示失败: {error}");
+        }
+    }
+
+    let app_handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let process_state = app_handle.state::<CoreProcessState>();
+        let gui_config_state = app_handle.state::<GuiConfigState>();
+        let result = (|| -> Result<CoreStatus, String> {
+            match action {
+                WindowsTrayCoreAction::Toggle => {
+                    let config = gui_config_state.snapshot()?;
+                    let status =
+                        current_core_status(Some(process_state.inner()), Some(config.port))?;
+                    if status.running {
+                        stop_core_process_with_state(
+                            process_state.inner(),
+                            gui_config_state.inner(),
+                        )
+                    } else {
+                        start_core_process_with_state(
+                            process_state.inner(),
+                            gui_config_state.inner(),
+                        )
+                    }
+                }
+                WindowsTrayCoreAction::Restart => {
+                    restart_core_process_with_state(process_state.inner(), gui_config_state.inner())
+                }
+            }
+        })();
+
+        if let Some(tray_state) = app_handle.try_state::<WindowsTrayState>() {
+            tray_state.finish_action();
+        }
+
+        match result {
+            Ok(status) => emit_core_status(&app_handle, &status),
+            Err(error) => {
+                if let Ok(config) = gui_config_state.snapshot() {
+                    if let Ok(status) =
+                        current_core_status(Some(process_state.inner()), Some(config.port))
+                    {
+                        emit_core_status(&app_handle, &status);
+                    }
+                }
+                show_windows_tray_action_error(&app_handle, &error);
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn setup_windows_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
+    let open_main_window = MenuItem::with_id(
+        app,
+        WINDOWS_TRAY_OPEN_MENU_ID,
+        "打开主界面",
+        true,
+        None::<&str>,
+    )?;
+    let status_item = MenuItem::with_id(
+        app,
+        WINDOWS_TRAY_STATUS_MENU_ID,
+        "内核状态：正在检查",
+        false,
+        None::<&str>,
+    )?;
+    let toggle_core_item = MenuItem::with_id(
+        app,
+        WINDOWS_TRAY_TOGGLE_CORE_MENU_ID,
+        "启动内核",
+        false,
+        None::<&str>,
+    )?;
+    let restart_core_item = MenuItem::with_id(
+        app,
+        WINDOWS_TRAY_RESTART_CORE_MENU_ID,
+        "重启内核",
+        false,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, WINDOWS_TRAY_QUIT_MENU_ID, "退出", true, None::<&str>)?;
+    let separator_one = PredefinedMenuItem::separator(app)?;
+    let separator_two = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open_main_window,
+            &separator_one,
+            &status_item,
+            &toggle_core_item,
+            &restart_core_item,
+            &separator_two,
+            &quit,
+        ],
+    )?;
+
+    TrayIconBuilder::with_id(WINDOWS_TRAY_ID)
+        .icon(
+            app.default_window_icon()
+                .cloned()
+                .expect("application icon is required for the tray"),
+        )
+        .tooltip("EasyCLIProxyAPI")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app_handle, event| match event.id().as_ref() {
+            WINDOWS_TRAY_OPEN_MENU_ID => show_windows_main_window(app_handle),
+            WINDOWS_TRAY_TOGGLE_CORE_MENU_ID => {
+                run_windows_tray_core_action(app_handle, WindowsTrayCoreAction::Toggle)
+            }
+            WINDOWS_TRAY_RESTART_CORE_MENU_ID => {
+                run_windows_tray_core_action(app_handle, WindowsTrayCoreAction::Restart)
+            }
+            WINDOWS_TRAY_QUIT_MENU_ID => app_handle.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(move |tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                }
+            ) {
+                show_windows_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+
+    let _ = app.manage(WindowsTrayState {
+        status_item,
+        toggle_core_item,
+        restart_core_item,
+        busy: AtomicBool::new(false),
+    });
+
+    Ok(())
+}
+
 fn main() {
     let gui_config = match load_or_create_gui_config() {
         Ok(config) => config,
@@ -8928,10 +9326,24 @@ fn main() {
         }
     });
 
+    #[cfg(target_os = "windows")]
+    let app = app.on_window_event(|window, event| {
+        if window.label() == "main" {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if let Err(error) = window.emit(WINDOWS_CLOSE_REQUEST_EVENT, ()) {
+                    eprintln!("显示 Windows 关闭确认失败: {error}");
+                }
+            }
+        }
+    });
+
     let app = app
         .setup(|app| {
             #[cfg(target_os = "macos")]
             setup_macos_tray(app)?;
+            #[cfg(target_os = "windows")]
+            setup_windows_tray(app)?;
 
             let usage_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -8982,6 +9394,7 @@ fn main() {
             detect_core_platform,
             get_core_status,
             get_gui_settings,
+            resolve_windows_close_request,
             get_agent_config_statuses,
             refresh_agent_config_statuses,
             get_agent_models,
@@ -9495,6 +9908,44 @@ mod tests {
             r"C:\tools\agent.exe"
         );
         assert_eq!(native.get_args().count(), 0);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_tray_presentation_tracks_core_state_and_busy_actions() {
+        let mut status = CoreStatus {
+            installed: false,
+            running: false,
+            managed: false,
+            process_id: None,
+            current_version: None,
+            install_dir: String::new(),
+            binary_path: None,
+            message: String::new(),
+        };
+
+        let missing = windows_tray_presentation(&status, false);
+        assert_eq!(missing.status_text, "内核状态：未安装");
+        assert!(!missing.toggle_enabled);
+        assert!(!missing.restart_enabled);
+
+        status.installed = true;
+        let stopped = windows_tray_presentation(&status, false);
+        assert_eq!(stopped.toggle_text, "启动内核");
+        assert!(stopped.toggle_enabled);
+        assert!(!stopped.restart_enabled);
+
+        status.running = true;
+        let running = windows_tray_presentation(&status, false);
+        assert_eq!(running.status_text, "内核状态：运行中");
+        assert_eq!(running.toggle_text, "停止内核");
+        assert!(running.toggle_enabled);
+        assert!(running.restart_enabled);
+
+        let busy = windows_tray_presentation(&status, true);
+        assert_eq!(busy.status_text, "内核状态：处理中");
+        assert!(!busy.toggle_enabled);
+        assert!(!busy.restart_enabled);
     }
 
     #[cfg(target_os = "windows")]
