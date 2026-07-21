@@ -11,35 +11,112 @@
 <h1 align="center">EasyCLIProxyAPI</h1>
 
 <p align="center">
-  Our goal is to make tokens free—as in freedom.<br>
+  A portable desktop console for CLIProxyAPI.<br>
+  Our goal is to make tokens free—as in freedom.
 </p>
-
 
 ## Overview
 
-EasyCLIProxyAPI is a portable tool built on [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). It provides a graphical interface for managing the core, OAuth accounts, API providers, model routing, authentication files, quota information, usage records, and agent client configurations.
+EasyCLIProxyAPI is a graphical desktop management tool built on
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). It brings core lifecycle management,
+OAuth authorization, API provider aggregation, protocol conversion, credential management,
+quota inspection, usage records, model aliases, and agent client configuration into one interface.
 
-The application is built with Tauri, React, and Rust.
+The application is built with Tauri, React, and Rust. It can carry a matching CLIProxyAPI core
+archive, making first-time setup and offline installation easier.
 
-## Key Features
+## Feature Tour
 
-- OAuth account sign-in
-  - Supports signing in with Codex, Claude, Gemini, and more
+### Core dashboard and version management
 
-- API aggregation management
-  - Supports API Key integrations using OpenAI, Claude, Gemini, and other protocols
+![Core dashboard and version management](docs/images/1.png)
 
-- API format conversion
-  - Converts request and response formats between OpenAI, Claude, Gemini, and other protocols
+The core dashboard provides a complete view of the local proxy runtime:
 
-- Agent client configuration
-  - Automatically configures popular agent clients including Claude Code, Claude Desktop, Codex, OpenCode, OpenClaw, and Hermes Agent
+- Start, stop, restart, and refresh the CLIProxyAPI core.
+- View installation state, runtime state, process ID, listening port, and LAN access settings.
+- Compare the installed, latest, and bundled core versions.
+- Install the latest core, reinstall it, or use an offline package when GitHub is unavailable.
+- Copy ready-to-use OpenAI, Claude, and Gemini-compatible API endpoints.
+- Check the EasyCLIProxyAPI application version and local connectivity from one page.
+
+### OAuth account authorization
+
+![OAuth account authorization](docs/images/2.png)
+
+The OAuth page centralizes browser-based authorization for supported providers:
+
+- Codex OAuth
+- Claude OAuth
+- Antigravity OAuth
+- Kimi OAuth
+- xAI OAuth
+
+EasyCLIProxyAPI opens the authorization page in the browser and supports completing the callback
+flow when an automatic redirect is unavailable.
+
+### API provider aggregation
+
+![API provider aggregation](docs/images/3.png)
+
+The provider workspace manages upstream API credentials and endpoints by protocol or provider:
+
+- Codex
+- OpenAI-compatible providers
+- DeepSeek
+- Claude
+- Gemini
+
+You can add multiple connections, search existing entries, refresh provider state, and use them
+through the unified local CLIProxyAPI endpoint. Requests and responses can be converted between
+supported OpenAI, Claude, Gemini, and compatible formats.
+
+### Agent client configuration
+
+![Agent client configuration](docs/images/4.png)
+
+The agent client page detects installed desktop and CLI clients and helps connect them to the
+local proxy. Supported clients include:
+
+- Claude Code
+- Claude Desktop
+- Codex
+- OpenCode
+- OpenClaw
+- Hermes Agent
+
+For supported clients, the application can synchronize the available model catalog, select a
+default model, back up the original configuration before applying managed settings, restore the
+previous configuration, and launch an available desktop or CLI entry point.
+
+## Additional Capabilities
+
+- Manage core settings, API keys, remote management credentials, plugins, and routing strategy.
+- Create client-visible model aliases and map them to provider models and reasoning levels.
+- Upload, download, inspect, and manage authentication files.
+- Review provider quotas and account availability.
+- Browse local usage records and token statistics.
+- Keep the application available from the macOS menu bar or Windows system tray.
+
+## Quick Start
+
+1. Download the package for your operating system from
+   [GitHub Releases](https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest).
+2. Extract the Windows or Linux archive, or open the macOS DMG.
+3. Launch EasyCLIProxyAPI.
+4. Open the **Core** page and install the bundled or latest CLIProxyAPI core.
+5. Start the core, then copy the required local endpoint or configure an OAuth/API provider.
 
 ## Supported Platforms
 
-GitHub Actions currently produces the following portable release packages:
+GitHub Actions builds the following release packages:
 
-| Operating System | Architecture |
-| --- | --- |
-| Windows | amd64, aarch64 |
-| Linux | amd64, aarch64 |
+| Operating System | Architecture | Package |
+| --- | --- | --- |
+| Windows | amd64, aarch64 | ZIP |
+| macOS | amd64, aarch64 | DMG |
+| Linux | amd64, aarch64 | TAR.GZ |
+
+## Related Project
+
+- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — the proxy core managed by this application.
