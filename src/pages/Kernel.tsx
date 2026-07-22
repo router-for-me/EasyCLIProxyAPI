@@ -9,6 +9,7 @@ import claudeIcon from '../assets/icons/claude.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import { clientApiProfiles, DEFAULT_CLIENT_API_KEY } from '../services/clientAccess';
 import packageMetadata from '../../package.json';
+import { useI18n } from '../i18n';
 
 type CorePlatform = {
   os: string;
@@ -105,6 +106,7 @@ function requestLatestCore() {
 }
 
 export function KernelPage() {
+  const { t } = useI18n();
   const {
     status: coreStatus,
     statusError,
@@ -181,7 +183,7 @@ export function KernelPage() {
     }
 
     if (task.result) {
-      setMessage(task.message || `${task.result.version} 安装完成`);
+      setMessage(task.message || t('kernel.install.completed', { version: task.result.version }));
       setMessageType('success');
       void refreshStatus();
       return;
@@ -209,7 +211,7 @@ export function KernelPage() {
       })
       .catch((error) => {
         if (!disposed) {
-          setMessage(`监听下载进度失败: ${String(error)}`);
+          setMessage(t('kernel.error.progressListener', { error: String(error) }));
           setMessageType('error');
         }
       });
@@ -328,22 +330,24 @@ export function KernelPage() {
   ) => {
     const actionLabel =
       command === 'start_core_process'
-        ? '启动'
+        ? t('kernel.action.start')
         : command === 'stop_core_process'
-          ? '关闭'
-          : '重启';
+          ? t('kernel.action.stop')
+          : t('kernel.action.restart');
     setProcessBusy(true);
 
     try {
       const result = await invoke<CoreStatus>(command);
       publishStatus(result);
-      showProcessNotice(messages?.success ?? `内核${actionLabel}成功`, 'success');
+      showProcessNotice(messages?.success ?? t('kernel.notice.actionSuccess', { action: actionLabel }), 'success');
       return true;
     } catch (error) {
       const errorMessage = String(error);
       await refreshStatus();
       showProcessNotice(
-        `${messages?.failure ?? `内核${actionLabel}失败`}：${errorMessage}`,
+        messages?.failure
+          ? `${messages.failure}: ${errorMessage}`
+          : t('kernel.notice.actionFailed', { action: actionLabel, error: errorMessage }),
         'error',
       );
       return false;
@@ -390,11 +394,11 @@ export function KernelPage() {
       if (restartAfterSave) {
         if (coreStatus?.running) {
           await runCoreProcessCommand('restart_core_process', {
-            success: '网络设置已保存，内核已重启',
-            failure: '网络设置已保存，但内核重启失败',
+            success: t('kernel.notice.networkRestarted'),
+            failure: t('kernel.notice.networkRestartFailed'),
           });
         } else {
-          showProcessNotice('网络设置已保存，下次启动内核时生效', 'info');
+          showProcessNotice(t('kernel.notice.networkNextStart'), 'info');
         }
       }
     } catch (error) {
@@ -405,7 +409,7 @@ export function KernelPage() {
       setCustomPort(String(savedPortRef.current));
       setSettingsError(String(error));
       if (restartAfterSave) {
-        showProcessNotice(`保存网络设置失败：${String(error)}`, 'error');
+        showProcessNotice(t('kernel.notice.networkSaveFailed', { error: String(error) }), 'error');
       }
     }
   };
@@ -425,7 +429,7 @@ export function KernelPage() {
     const port = Number(customPort);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       setCustomPort(String(savedPortRef.current));
-      setSettingsError('端口必须在 1 到 65535 之间');
+      setSettingsError(t('kernel.error.port'));
       return;
     }
 
@@ -478,14 +482,14 @@ export function KernelPage() {
       const task = await invoke<CoreInstallTask>('get_core_install_task');
       applyInstallTask(task, false);
     } catch (error) {
-      setMessage(`读取安装任务失败: ${String(error)}`);
+      setMessage(t('kernel.error.installTask', { error: String(error) }));
       setMessageType('error');
     }
   };
 
   const installVersion = async (version: string) => {
     setInstalling(true);
-    setMessage(`正在安装 ${version}`);
+    setMessage(t('kernel.install.installingVersion', { version }));
     setMessageType('info');
     setCancellingInstall(false);
     setInstallDialogOpen(true);
@@ -502,7 +506,7 @@ export function KernelPage() {
 
     try {
       const result = await invoke<CoreInstallResult>('install_core_version', { version });
-      setMessage(`${result.version} 安装完成`);
+      setMessage(t('kernel.install.completed', { version: result.version }));
       setMessageType('success');
       setProgress({
         running: false,
@@ -511,7 +515,7 @@ export function KernelPage() {
         downloaded: 1,
         total: 1,
         percent: 100,
-        message: `${result.version} 安装完成`,
+        message: t('kernel.install.completed', { version: result.version }),
         result,
       });
       await Promise.all([refreshStatus(), loadBundledCore()]);
@@ -538,7 +542,7 @@ export function KernelPage() {
     if (!bundledCore) return;
 
     setInstalling(true);
-    setMessage(`正在安装内置内核 ${bundledCore.version}`);
+    setMessage(t('kernel.install.installingBundled', { version: bundledCore.version }));
     setMessageType('info');
     setCancellingInstall(false);
     setInstallDialogOpen(true);
@@ -554,7 +558,7 @@ export function KernelPage() {
     });
     try {
       const result = await invoke<CoreInstallResult>('install_bundled_core');
-      setMessage(`${result.version} 内置内核安装完成`);
+      setMessage(t('kernel.install.bundledCompleted', { version: result.version }));
       setMessageType('success');
       await Promise.all([refreshStatus(), loadBundledCore()]);
     } catch (error) {
@@ -582,7 +586,7 @@ export function KernelPage() {
     }
 
     setCancellingInstall(true);
-    setMessage('正在取消下载');
+    setMessage(t('kernel.install.cancelling'));
     setMessageType('info');
 
     try {
@@ -617,7 +621,7 @@ export function KernelPage() {
         copiedApiTimerRef.current = null;
       }, 1800);
     } catch {
-      showProcessNotice('复制接入信息失败', 'error');
+      showProcessNotice(t('kernel.notice.copyFailed'), 'error');
     }
   };
 
@@ -639,7 +643,7 @@ export function KernelPage() {
     try {
       await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
     } catch (error) {
-      setAppUpdateError(`打开更新页面失败：${String(error)}`);
+      setAppUpdateError(t('kernel.error.openUpdate', { error: String(error) }));
     }
   };
 
@@ -657,53 +661,53 @@ export function KernelPage() {
   const progressPercent = clampPercent(computedPercent ?? 0);
   const progressText = progress
     ? progress.phase === '安装完成'
-      ? '已完成'
+      ? t('kernel.progress.completed')
       : progress.phase === '解压中'
-        ? '正在解压文件'
+        ? t('kernel.progress.extracting')
         : progress.total
           ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
           : progress.downloaded > 0
             ? formatBytes(progress.downloaded)
-            : '等待进度信息'
+            : t('kernel.progress.waiting')
     : '';
   const statusTone = statusError ? 'error' : coreRunning ? 'success' : 'neutral';
   const statusLabel = coreStatus
     ? coreRunning
-      ? '运行中'
+      ? t('kernel.status.running')
       : coreInstalled
-        ? '已停止'
-        : '未安装'
+        ? t('kernel.status.stopped')
+        : t('kernel.status.notInstalled')
     : statusError
-      ? '检测失败'
-      : '检测中';
+      ? t('common.detectionFailed')
+      : t('common.detecting');
   const appUpdateLabel = appUpdateError
-    ? '检查失败，重试'
+    ? t('kernel.update.failedRetry')
     : appUpdate?.updateAvailable
-      ? `更新至 ${displayAppVersion(appUpdate.latestVersion)}`
+      ? t('kernel.update.toVersion', { version: displayAppVersion(appUpdate.latestVersion) })
       : '';
   const appUpdateTone = appUpdateError ? 'error' : 'update';
   const latestLabel = checkingLatest
-    ? '检查中'
-    : latestVersion || (latestError ? '检查失败' : '未检查');
+    ? t('kernel.update.checking')
+    : latestVersion || (latestError ? t('kernel.update.failed') : t('kernel.update.notChecked'));
   const updateStateLabel = checkingLatest
-    ? '正在检查'
+    ? t('kernel.update.statusChecking')
     : latestError
-      ? '检查失败'
+      ? t('kernel.update.failed')
       : !latestVersion
-        ? '尚未检查'
+        ? t('kernel.update.notYetChecked')
         : currentVersion === latestVersion
-          ? '已是最新版本'
-          : '可安装新版本';
-  const platformOsLabel = platform?.os || (platformError ? '检测失败' : '检测中');
-  const platformArchLabel = platform?.arch || (platformError ? '检测失败' : '检测中');
+          ? t('kernel.update.latest')
+          : t('kernel.update.available');
+  const platformOsLabel = platform?.os || (platformError ? t('common.detectionFailed') : t('common.detecting'));
+  const platformArchLabel = platform?.arch || (platformError ? t('common.detectionFailed') : t('common.detecting'));
   const installTaskRunning = Boolean(installing || progress?.running);
   const offlineInstallRequired = Boolean(coreStatus && !coreInstalled && latestError);
   const versionStatusLabel = installTaskRunning
     ? cancellingInstall
-      ? '正在取消下载'
-      : progress?.phase || '正在安装'
+      ? t('kernel.install.cancelling')
+      : progress?.phase ? localizeInstallPhase(progress.phase, t) : t('kernel.install.inProgress')
     : offlineInstallRequired
-      ? 'Github连接失败，请使用“离线安装”'
+      ? t('kernel.install.githubFailed')
       : message || updateStateLabel;
   const versionStatusTone: MessageType = installTaskRunning
     ? 'info'
@@ -723,23 +727,23 @@ export function KernelPage() {
       : 'info';
   const installDialogTitle = installTaskRunning
     ? cancellingInstall
-      ? '正在取消下载'
-      : '正在安装内核'
+      ? t('kernel.install.titleCancelling')
+      : t('kernel.install.titleInstalling')
     : progress?.result
-      ? '安装完成'
+      ? t('kernel.install.titleCompleted')
       : progress?.phase === '已取消'
-        ? '下载已取消'
-        : '安装失败';
+        ? t('kernel.install.titleCancelled')
+        : t('kernel.install.titleFailed');
   const installDialogMessage = cancellingInstall
-    ? '正在等待下载任务停止'
-    : progress?.message || (installTaskRunning ? message || '安装任务正在进行' : '');
+    ? t('kernel.install.waitingStop')
+    : progress?.message || (installTaskRunning ? message || t('kernel.install.taskRunning') : '');
   const installDialogAction = installTaskRunning
     ? cancellingInstall
-      ? '正在取消'
+      ? t('kernel.install.cancellingShort')
       : progress?.cancellable
-        ? '取消下载'
-        : '处理中'
-    : '关闭';
+        ? t('kernel.install.cancel')
+        : t('common.processing')
+    : t('common.close');
   const installDialogActionDisabled =
     installTaskRunning && (cancellingInstall || !progress?.cancellable);
   const apiPort = Number(customPort);
@@ -761,19 +765,19 @@ export function KernelPage() {
         <div className="status-card status-card-primary">
           <span className={`status-dot ${statusTone}`} />
           <div>
-            <span>内核状态</span>
+            <span>{t('kernel.overview.coreStatus')}</span>
             <strong>{statusLabel}</strong>
           </div>
         </div>
         <div className="status-card">
-          <span>软件版本</span>
+          <span>{t('kernel.overview.appVersion')}</span>
           <div className="software-version-line">
             <strong>{currentAppVersion}</strong>
             {appUpdateLabel ? (
               <button
                 type="button"
                 className={`software-version-action ${appUpdateTone}`}
-                title={appUpdateError || '打开 GitHub 最新版本页面'}
+                title={appUpdateError || t('kernel.update.openGithub')}
                 disabled={checkingAppUpdate}
                 onClick={() => void (appUpdateError ? checkAppUpdate() : openAppUpdate())}
               >
@@ -785,8 +789,8 @@ export function KernelPage() {
           </div>
         </div>
         <div className="status-card">
-          <span>内核版本</span>
-          <strong>{currentVersion || '未安装'}</strong>
+          <span>{t('kernel.overview.coreVersion')}</span>
+          <strong>{currentVersion || t('kernel.status.notInstalled')}</strong>
         </div>
       </div>
 
@@ -794,33 +798,33 @@ export function KernelPage() {
         <div className="panel control-panel">
           <div className="panel-heading">
             <div>
-              <h2>运行控制</h2>
+              <h2>{t('kernel.control.title')}</h2>
             </div>
             <span className={`state-pill ${statusTone}`} title={statusError || undefined}>
-              {processBusy || networkBusy ? '处理中' : statusLabel}
+              {processBusy || networkBusy ? t('common.processing') : statusLabel}
             </span>
           </div>
 
           <dl className="panel-detail-grid">
             <div className="panel-detail-row">
-              <dt>安装状态</dt>
-              <dd>{coreStatus ? (coreInstalled ? '已安装' : '未安装') : '检测中'}</dd>
+              <dt>{t('kernel.control.installStatus')}</dt>
+              <dd>{coreStatus ? (coreInstalled ? t('kernel.control.installed') : t('kernel.status.notInstalled')) : t('common.detecting')}</dd>
             </div>
             <div className="panel-detail-row">
-              <dt>运行状态</dt>
-              <dd>{coreStatus ? (coreRunning ? '运行中' : '未运行') : '检测中'}</dd>
+              <dt>{t('kernel.control.runStatus')}</dt>
+              <dd>{coreStatus ? (coreRunning ? t('kernel.status.running') : t('kernel.control.notRunning')) : t('common.detecting')}</dd>
             </div>
             <div className="panel-detail-row">
-              <dt>进程 PID</dt>
-              <dd>{coreStatus?.processId || '无'}</dd>
+              <dt>{t('kernel.control.pid')}</dt>
+              <dd>{coreStatus?.processId || t('kernel.control.noPid')}</dd>
             </div>
             <div className="panel-detail-row">
-              <dt>允许局域网</dt>
+              <dt>{t('kernel.control.allowLan')}</dt>
               <dd className="detail-control-cell">
-                <span className="switch-control" title="切换后会自动重启正在运行的内核">
+                <span className="switch-control" title={t('kernel.control.lanRestartHint')}>
                   <input
                     type="checkbox"
-                    aria-label="允许局域网访问"
+                    aria-label={t('kernel.control.allowLanAria')}
                     disabled={!settingsLoaded || networkBusy || processBusy}
                     checked={allowLanAccess}
                     onChange={(event) => updateAllowLanAccess(event.currentTarget.checked)}
@@ -831,7 +835,7 @@ export function KernelPage() {
             </div>
             <div className="panel-detail-row">
               <dt>
-                <label htmlFor="custom-port">端口</label>
+                <label htmlFor="custom-port">{t('kernel.control.port')}</label>
               </dt>
               <dd className="detail-control-cell">
                 <input
@@ -841,8 +845,8 @@ export function KernelPage() {
                   inputMode="numeric"
                   pattern="[0-9]*"
                   maxLength={5}
-                  placeholder="端口号"
-                  title={settingsError || '端口范围 1-65535'}
+                  placeholder={t('kernel.control.portPlaceholder')}
+                  title={settingsError || t('kernel.control.portRange')}
                   aria-invalid={Boolean(settingsError)}
                   disabled={!settingsLoaded || networkBusy || processBusy}
                   value={customPort}
@@ -868,21 +872,21 @@ export function KernelPage() {
               onClick={() =>
                 void runCoreProcessCommand(
                   coreRunning ? 'stop_core_process' : 'start_core_process',
-                  { success: coreRunning ? '内核已关闭' : '内核已启动' },
+                  { success: coreRunning ? t('kernel.notice.stopped') : t('kernel.notice.started') },
                 )
               }
             >
-              {processBusy ? '处理中' : coreRunning ? '关闭' : '启动'}
+              {processBusy ? t('common.processing') : coreRunning ? t('kernel.action.stop') : t('kernel.action.start')}
             </button>
             <button
               type="button"
               className="secondary-button"
               disabled={!coreInstalled || !coreRunning || installing || processBusy || networkBusy}
               onClick={() =>
-                void runCoreProcessCommand('restart_core_process', { success: '内核已重启' })
+                void runCoreProcessCommand('restart_core_process', { success: t('kernel.notice.restarted') })
               }
             >
-              重启
+              {t('kernel.action.restart')}
             </button>
             <button
               type="button"
@@ -890,7 +894,7 @@ export function KernelPage() {
               disabled={processBusy || networkBusy}
               onClick={() => void refreshStatus()}
             >
-              刷新状态
+              {t('kernel.control.refresh')}
             </button>
           </div>
 
@@ -899,34 +903,34 @@ export function KernelPage() {
         <div className="panel version-panel">
           <div className="panel-heading">
             <div className="version-heading-inline">
-              <h2>内核版本管理</h2>
+              <h2>{t('kernel.versions.title')}</h2>
               <span className="version-offline-hint">
-                GitHub 无法连接时，可使用离线安装使用内置内核。
+                {t('kernel.versions.offlineHint')}
               </span>
             </div>
           </div>
 
           <dl className="panel-detail-grid">
             <div className="panel-detail-row">
-              <dt>当前版本</dt>
-              <dd>{currentVersion || '未安装'}</dd>
+              <dt>{t('kernel.versions.current')}</dt>
+              <dd>{currentVersion || t('kernel.status.notInstalled')}</dd>
             </div>
             <div className="panel-detail-row">
-              <dt>最新版本</dt>
+              <dt>{t('kernel.versions.latest')}</dt>
               <dd>{latestLabel}</dd>
             </div>
             <div className="panel-detail-row">
-              <dt>内置版本</dt>
+              <dt>{t('kernel.versions.bundled')}</dt>
               <dd title={bundledCoreError || bundledCore?.assetName}>
-                {bundledCore?.version ?? (bundledCoreError ? '检测失败' : '未包含')}
+                {bundledCore?.version ?? (bundledCoreError ? t('common.detectionFailed') : t('kernel.versions.notIncluded'))}
               </dd>
             </div>
             <div className="panel-detail-row">
-              <dt>运行平台</dt>
+              <dt>{t('kernel.versions.platform')}</dt>
               <dd title={platformError || undefined}>{platformOsLabel} / {platformArchLabel}</dd>
             </div>
             <div className="panel-detail-row">
-              <dt>更新状态</dt>
+              <dt>{t('kernel.versions.updateStatus')}</dt>
               <dd className={versionStatusTone} title={versionStatusLabel}>
                 {versionStatusLabel}
               </dd>
@@ -940,34 +944,34 @@ export function KernelPage() {
               disabled={busy}
               onClick={checkLatest}
             >
-              {checkingLatest ? '检查中' : '检查更新'}
+              {checkingLatest ? t('kernel.update.checking') : t('kernel.versions.check')}
             </button>
             <button
               type="button"
               className="secondary-button"
-              title={latestVersion ? `安装 ${latestVersion}` : '安装最新版'}
+              title={latestVersion ? t('kernel.versions.installVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
               disabled={!latestVersion || installDisabled}
               onClick={() => installVersion(latestVersion)}
             >
-              安装最新
+              {t('kernel.versions.installLatest')}
             </button>
             <button
               type="button"
               className="secondary-button"
-              title="重新安装当前版本"
+              title={t('kernel.versions.reinstallTitle')}
               disabled={!currentVersion || installDisabled}
               onClick={() => installVersion(currentVersion)}
             >
-              重新安装
+              {t('kernel.versions.reinstall')}
             </button>
             <button
               type="button"
               className="primary-button"
-              title={(bundledCore?.assetName ?? bundledCoreError) || '当前发行包未包含内置内核'}
+              title={(bundledCore?.assetName ?? bundledCoreError) || t('kernel.versions.noBundled')}
               disabled={!bundledCore || offlineInstallDisabled}
               onClick={() => void installBundledCore()}
             >
-              离线安装
+              {t('kernel.versions.offlineInstall')}
             </button>
           </div>
 
@@ -978,10 +982,10 @@ export function KernelPage() {
         <div className="panel-heading client-api-heading">
           <div>
             <h2>API URL</h2>
-            <p>默认密钥：{DEFAULT_CLIENT_API_KEY}</p>
+            <p>{t('kernel.access.defaultKey', { key: DEFAULT_CLIENT_API_KEY })}</p>
           </div>
           <span className={`state-pill ${coreRunning ? 'success' : ''}`}>
-            {coreRunning ? '可连接' : '等待内核启动'}
+            {coreRunning ? t('kernel.access.connectable') : t('kernel.access.waiting')}
           </span>
         </div>
 
@@ -1000,7 +1004,7 @@ export function KernelPage() {
 
               <div className="client-api-values">
                 <div className="client-api-value-row">
-                  <span>本机 URL</span>
+                  <span>{t('kernel.access.localUrl')}</span>
                   <code title={profile.baseUrl}>{profile.baseUrl}</code>
                   <button
                     type="button"
@@ -1009,11 +1013,11 @@ export function KernelPage() {
                       void copyApiValue(
                         profile.baseUrl,
                         `${profile.id}:base`,
-                        `${profile.name} 本机 URL 已复制`,
+                        t('kernel.access.localCopied', { name: profile.name }),
                       )
                     }
-                    title={`复制 ${profile.name} 本机 URL`}
-                    aria-label={`复制 ${profile.name} 本机 URL`}
+                    title={t('kernel.access.copyLocal', { name: profile.name })}
+                    aria-label={t('kernel.access.copyLocal', { name: profile.name })}
                   >
                     {copiedApiField === `${profile.id}:base` ? (
                       <Check size={15} aria-hidden="true" />
@@ -1024,11 +1028,11 @@ export function KernelPage() {
                 </div>
                 {allowLanAccess ? (
                   <div className="client-api-value-row">
-                    <span>局域网 URL</span>
+                    <span>{t('kernel.access.lanUrl')}</span>
                     <code title={profile.lanUrl || undefined}>
                       {!lanIpChecked
-                        ? '正在检测局域网 IP'
-                        : profile.lanUrl || '未检测到局域网 IP'}
+                        ? t('kernel.access.detectingIp')
+                        : profile.lanUrl || t('kernel.access.noIp')}
                     </code>
                     {profile.lanUrl ? (
                       <button
@@ -1038,11 +1042,11 @@ export function KernelPage() {
                           void copyApiValue(
                             profile.lanUrl!,
                             `${profile.id}:lan`,
-                            `${profile.name} 局域网 URL 已复制`,
+                            t('kernel.access.lanCopied', { name: profile.name }),
                           )
                         }
-                        title={`复制 ${profile.name} 局域网 URL`}
-                        aria-label={`复制 ${profile.name} 局域网 URL`}
+                        title={t('kernel.access.copyLan', { name: profile.name })}
+                        aria-label={t('kernel.access.copyLan', { name: profile.name })}
                       >
                         {copiedApiField === `${profile.id}:lan` ? (
                           <Check size={15} aria-hidden="true" />
@@ -1074,13 +1078,13 @@ export function KernelPage() {
             tabIndex={-1}
           >
             <div className="install-dialog-heading">
-              <span>内核安装</span>
+              <span>{t('kernel.dialog.install')}</span>
               <h2 id="install-dialog-title">{installDialogTitle}</h2>
             </div>
 
             <div className="install-dialog-phase">
-              <span>当前阶段</span>
-              <strong>{cancellingInstall ? '正在取消' : progress.phase}</strong>
+              <span>{t('kernel.dialog.phase')}</span>
+              <strong>{cancellingInstall ? t('kernel.install.cancellingShort') : localizeInstallPhase(progress.phase, t)}</strong>
             </div>
 
             <div
@@ -1095,7 +1099,7 @@ export function KernelPage() {
             </div>
 
             <div className="install-progress-meta">
-              <strong>{progressKnown ? `${progressPercent.toFixed(1)}%` : '进度未知'}</strong>
+              <strong>{progressKnown ? `${progressPercent.toFixed(1)}%` : t('kernel.dialog.unknownProgress')}</strong>
               <span>{progressText}</span>
             </div>
 
@@ -1137,6 +1141,23 @@ export function KernelPage() {
       ) : null}
     </section>
   );
+}
+
+function localizeInstallPhase(
+  phase: string,
+  t: ReturnType<typeof useI18n>['t'],
+) {
+  const keys = {
+    '准备下载': 'kernel.phase.preparingDownload',
+    '下载中': 'kernel.phase.downloading',
+    '解压中': 'kernel.phase.extracting',
+    '准备内置内核': 'kernel.phase.preparingBundled',
+    '安装完成': 'kernel.phase.completed',
+    '安装失败': 'kernel.phase.failed',
+    '已取消': 'kernel.phase.cancelled',
+  } as const;
+  const key = keys[phase as keyof typeof keys];
+  return key ? t(key) : phase;
 }
 
 function clampPercent(percent: number) {

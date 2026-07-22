@@ -189,6 +189,108 @@ input:focus-visible {
   border-top: 1px solid #e3e1db;
 }
 
+.sidebar-language {
+  position: relative;
+  width: 100%;
+}
+
+.sidebar-language-trigger {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid #d8d4cc;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #716b61;
+  text-align: left;
+}
+
+.sidebar-language-trigger:hover,
+.sidebar-language-trigger[aria-expanded='true'] {
+  border-color: #c7c2b8;
+  background: #e8e5dc;
+  color: #2d2a26;
+}
+
+.sidebar-language-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-language-trigger > svg:last-child {
+  transition: transform 160ms ease;
+}
+
+.sidebar-language-trigger > svg:last-child.expanded {
+  transform: rotate(180deg);
+}
+
+.sidebar-language-list {
+  position: absolute;
+  z-index: 120;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  gap: 3px;
+  padding: 5px;
+  border: 1px solid #d8d4cc;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 -10px 28px rgba(45, 42, 38, 0.16);
+}
+
+.sidebar-language-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #5f5a53;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.sidebar-language-list button:hover {
+  background: #f0eee8;
+  color: #2d2a26;
+}
+
+.sidebar-language-list button.selected {
+  background: #e8e5dc;
+  color: #2d2a26;
+}
+
+.sidebar-language-list button svg {
+  color: #2d2a26;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .sidebar-contact {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) 14px;

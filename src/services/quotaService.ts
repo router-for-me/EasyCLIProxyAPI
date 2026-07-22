@@ -6,6 +6,12 @@ import {
   readString,
 } from './managementApi';
 import { authFileName } from './authFiles';
+import { getCurrentLocale, translate, type AppLocale } from '../i18n';
+
+const quotaText = (
+  key: Parameters<typeof translate>[1],
+  variables?: Parameters<typeof translate>[2],
+) => translate(getCurrentLocale(), key, variables);
 
 export type AuthFile = Record<string, unknown>;
 export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity';
@@ -124,7 +130,7 @@ const quotaFraction = (value: unknown): number | null => {
 
 const formatDateTime = (date: Date): string | undefined => {
   if (Number.isNaN(date.getTime())) return undefined;
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(getCurrentLocale(), {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -133,11 +139,11 @@ const formatDateTime = (date: Date): string | undefined => {
   }).format(date);
 };
 
-export const formatQuotaTimestamp = (value: string | undefined): string => {
+export const formatQuotaTimestamp = (value: string | undefined, locale: AppLocale = 'zh-CN'): string => {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(locale, {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -166,18 +172,22 @@ const relativeResetLabel = (value: unknown): string | undefined => {
   const remainingHours = Math.floor((minutes % 1440) / 60);
   const remainingMinutes = minutes % 60;
   if (days > 0) {
-    return remainingHours > 0 ? `${days} 天 ${remainingHours} 小时后` : `${days} 天后`;
+    return remainingHours > 0
+      ? quotaText('quota.service.relative.daysHours', { days, hours: remainingHours })
+      : quotaText('quota.service.relative.days', { days });
   }
   if (hours > 0) {
-    return remainingMinutes > 0 ? `${hours} 小时 ${remainingMinutes} 分钟后` : `${hours} 小时后`;
+    return remainingMinutes > 0
+      ? quotaText('quota.service.relative.hoursMinutes', { hours, minutes: remainingMinutes })
+      : quotaText('quota.service.relative.hours', { hours });
   }
-  return `${minutes} 分钟后`;
+  return quotaText('quota.service.relative.minutes', { minutes });
 };
 
 const formatUsdFromCents = (value: number | null) =>
   value === null
     ? undefined
-    : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(value / 100);
+    : new Intl.NumberFormat(getCurrentLocale(), { style: 'currency', currency: 'USD' }).format(value / 100);
 
 const codexResetLabel = (window: Record<string, unknown>): string | undefined =>
   absoluteResetLabel(window.reset_at ?? window.resetAt)
@@ -189,14 +199,14 @@ const MIN_MONTH_SECONDS = 28 * 86_400;
 const MAX_MONTH_SECONDS = 31 * 86_400;
 
 const formatWindowDuration = (seconds: number | null): string => {
-  if (seconds === null || seconds <= 0) return '未知周期';
+  if (seconds === null || seconds <= 0) return quotaText('quota.service.duration.unknown');
   const day = 86_400;
   const hour = 3_600;
   const minute = 60;
-  if (seconds % day === 0) return `${seconds / day} 天`;
-  if (seconds % hour === 0) return `${seconds / hour} 小时`;
-  if (seconds % minute === 0) return `${seconds / minute} 分钟`;
-  return `${seconds} 秒`;
+  if (seconds % day === 0) return quotaText('quota.service.duration.days', { count: seconds / day });
+  if (seconds % hour === 0) return quotaText('quota.service.duration.hours', { count: seconds / hour });
+  if (seconds % minute === 0) return quotaText('quota.service.duration.minutes', { count: seconds / minute });
+  return quotaText('quota.service.duration.seconds', { count: seconds });
 };
 
 const codexWindowLabel = (
@@ -205,14 +215,16 @@ const codexWindowLabel = (
   kind: 'primary' | 'secondary',
   teamPlan: boolean,
 ) => {
-  if (duration === FIVE_HOUR_SECONDS) return `${prefix}5 小时限额`;
-  if (duration === WEEK_SECONDS) return `${prefix}周限额`;
+  if (duration === FIVE_HOUR_SECONDS) return `${prefix}${quotaText('quota.service.limit.fiveHours')}`;
+  if (duration === WEEK_SECONDS) return `${prefix}${quotaText('quota.service.limit.week')}`;
   if (duration !== null && duration >= MIN_MONTH_SECONDS && duration <= MAX_MONTH_SECONDS) {
-    return `${prefix}月限额`;
+    return `${prefix}${quotaText('quota.service.limit.month')}`;
   }
-  if (duration !== null) return `${prefix}${formatWindowDuration(duration)}限额`;
-  if (kind === 'primary') return `${prefix}5 小时限额`;
-  return `${prefix}${teamPlan ? '月限额' : '周限额'}`;
+  if (duration !== null) {
+    return `${prefix}${quotaText('quota.service.limit.duration', { duration: formatWindowDuration(duration) })}`;
+  }
+  if (kind === 'primary') return `${prefix}${quotaText('quota.service.limit.fiveHours')}`;
+  return `${prefix}${quotaText(teamPlan ? 'quota.service.limit.month' : 'quota.service.limit.week')}`;
 };
 
 const codexWindowRows = (value: Record<string, unknown>): QuotaRow[] => {
@@ -231,12 +243,16 @@ const codexWindowRows = (value: Record<string, unknown>): QuotaRow[] => {
   };
 
   addRateLimit(value.rate_limit ?? value.rateLimit, '');
-  addRateLimit(value.code_review_rate_limit ?? value.codeReviewRateLimit, '代码审查 ');
+  addRateLimit(
+    value.code_review_rate_limit ?? value.codeReviewRateLimit,
+    `${quotaText('quota.service.codeReview')} `,
+  );
   const additional = value.additional_rate_limits ?? value.additionalRateLimits;
   if (Array.isArray(additional)) {
     additional.forEach((item, index) => {
       if (!isRecord(item)) return;
-      const name = readString(item, 'limit_name', 'limitName', 'metered_feature', 'meteredFeature') || `附加 ${index + 1}`;
+      const name = readString(item, 'limit_name', 'limitName', 'metered_feature', 'meteredFeature')
+        || quotaText('quota.service.additional', { index: index + 1 });
       addRateLimit(item.rate_limit ?? item.rateLimit, `${name} `);
     });
   }
@@ -307,12 +323,12 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
 
   if (provider === 'claude') {
     const labels: Record<string, string> = {
-      five_hour: '5 小时窗口',
-      seven_day: '7 天窗口',
-      seven_day_oauth_apps: '7 天 OAuth 应用窗口',
-      seven_day_opus: '7 天 Opus 窗口',
-      seven_day_sonnet: '7 天 Sonnet 窗口',
-      seven_day_cowork: '7 天 Cowork 窗口',
+      five_hour: quotaText('quota.service.window.fiveHour'),
+      seven_day: quotaText('quota.service.window.sevenDay'),
+      seven_day_oauth_apps: quotaText('quota.service.window.sevenDayOAuth'),
+      seven_day_opus: quotaText('quota.service.window.sevenDayOpus'),
+      seven_day_sonnet: quotaText('quota.service.window.sevenDaySonnet'),
+      seven_day_cowork: quotaText('quota.service.window.sevenDayCowork'),
       iguana_necktie: 'Iguana Necktie',
     };
     const rows = Object.entries(value)
@@ -340,11 +356,13 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
       const usedLabel = formatUsdFromCents(usedCredits);
       const limitLabel = formatUsdFromCents(monthlyLimit);
       rows.push({
-        label: '额外用量',
+        label: quotaText('quota.service.extraUsage'),
         remainingPercent:
           remainingFromUsedPercent(extraUsage.utilization)
           ?? clampPercent(computedRemaining),
-        detail: usedLabel && limitLabel ? `已用 ${usedLabel} / ${limitLabel}` : undefined,
+        detail: usedLabel && limitLabel
+          ? quotaText('quota.service.usedOf', { used: usedLabel, limit: limitLabel })
+          : undefined,
       });
     }
     return rows;
@@ -352,7 +370,9 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
 
   if (provider === 'kimi') {
     const items: unknown[] = [];
-    if (isRecord(value.usage)) items.push({ ...value.usage, label: '每周额度' });
+    if (isRecord(value.usage)) {
+      items.push({ ...value.usage, label: quotaText('quota.service.weekly') });
+    }
     if (Array.isArray(value.limits)) items.push(...value.limits);
     return items
       .map((raw, index): QuotaRow | null => {
@@ -368,23 +388,26 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
         const unit = readString(window, 'timeUnit', 'time_unit')
           || readString(raw, 'timeUnit', 'time_unit')
           || readString(detail, 'timeUnit', 'time_unit');
-        const durationLabel = duration !== null && duration > 0
-          ? `${unit.toLowerCase().startsWith('day')
-            ? `${duration} 天`
+        const durationText = duration !== null && duration > 0
+          ? unit.toLowerCase().startsWith('day')
+            ? quotaText('quota.service.duration.days', { count: duration })
             : unit.toLowerCase().startsWith('hour')
-              ? `${duration} 小时`
+              ? quotaText('quota.service.duration.hours', { count: duration })
               : unit.toLowerCase().startsWith('second')
-                ? `${duration} 秒`
+                ? quotaText('quota.service.duration.seconds', { count: duration })
                 : duration % 60 === 0
-                  ? `${duration / 60} 小时`
-                  : `${duration} 分钟`}窗口`
+                  ? quotaText('quota.service.duration.hours', { count: duration / 60 })
+                  : quotaText('quota.service.duration.minutes', { count: duration })
+          : '';
+        const durationLabel = durationText
+          ? quotaText('quota.service.window.duration', { duration: durationText })
           : '';
         return {
           label:
             readString(raw, 'label', 'name', 'title', 'scope')
             || readString(detail, 'name', 'title', 'scope')
             || durationLabel
-            || `限制 ${index + 1}`,
+            || quotaText('quota.service.limit.numbered', { index: index + 1 }),
           remainingPercent: clampPercent(
             limit !== null && limit > 0
               ? (Math.max(0, limit - (usedValue ?? 0)) / limit) * 100
@@ -422,7 +445,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
 
       if (weeklyUsed !== null || periodType.includes('week')) {
         rows.push({
-          label: '每周额度',
+          label: quotaText('quota.service.weekly'),
           remainingPercent: remainingFromUsedPercent(weeklyUsed),
           reset: absoluteResetLabel(currentPeriod?.end),
         });
@@ -434,7 +457,8 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
         productUsage.forEach((item, index) => {
           if (!isRecord(item)) return;
           rows.push({
-            label: readString(item, 'product') || `产品 ${index + 1}`,
+            label: readString(item, 'product')
+              || quotaText('quota.service.product.numbered', { index: index + 1 }),
             remainingPercent: remainingFromUsedPercent(
               item.usage_percent ?? item.usagePercent,
             ),
@@ -455,7 +479,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
           ? ((limit - includedUsed) / limit) * 100
           : null;
         rows.push({
-          label: '月度包含额度',
+          label: quotaText('quota.service.monthlyIncluded'),
           remainingPercent: clampPercent(remaining),
           reset: absoluteResetLabel(config.billing_period_end ?? config.billingPeriodEnd),
           detail: limit !== null
@@ -470,7 +494,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
         ?? (used !== null && limit !== null ? Math.max(0, used - limit) : null);
       if (onDemandCap !== null && onDemandCap > 0) {
         rows.push({
-          label: '按量付费额度',
+          label: quotaText('quota.service.onDemand'),
           remainingPercent: clampPercent(
             onDemandUsed === null ? null : ((onDemandCap - onDemandUsed) / onDemandCap) * 100,
           ),
@@ -493,7 +517,8 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
   return groups.flatMap((group) => {
     if (!isRecord(group) || !Array.isArray(group.buckets)) return [];
     const buckets = group.buckets;
-    const groupLabel = readString(group, 'display_name', 'displayName') || '配额';
+    const groupLabel = readString(group, 'display_name', 'displayName')
+      || quotaText('quota.service.quota');
     const groupDescription = readString(group, 'description');
     return buckets
       .map((bucket, index): QuotaRow | null => {
@@ -505,7 +530,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
           ? `${groupLabel} · ${bucketLabel}`
           : groupLabel;
         return {
-          label: label || `配额 ${index + 1}`,
+          label: label || quotaText('quota.service.quota.numbered', { index: index + 1 }),
           remainingPercent: remaining * 100,
           reset: absoluteResetLabel(bucket.reset_time ?? bucket.resetTime),
           detail: readString(bucket, 'description') || groupDescription || undefined,
@@ -652,7 +677,7 @@ const requestQuotaPayload = async (
 
 const callXaiQuota = async (file: AuthFile): Promise<unknown> => {
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
-  if (!authIndex) throw new Error('缺少 auth-index，无法查询配额');
+  if (!authIndex) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
   const header = { ...headersByProvider.xai };
   const userId = await resolveXaiUserId(file);
   if (userId) header['x-userid'] = userId;
@@ -752,14 +777,16 @@ async function callUpstreamQuota(
   resolvedCodexAccountId?: string,
 ): Promise<unknown> {
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
-  if (!authIndex) throw new Error('缺少 auth-index，无法查询配额');
+  if (!authIndex) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
   const header = { ...headersByProvider[provider] };
   if (provider === 'codex') {
     const accountId = resolvedCodexAccountId ?? await resolveCodexAccountId(file);
     if (accountId) header['Chatgpt-Account-Id'] = accountId;
   }
   const project = provider === 'antigravity' ? await resolveProjectId(file) : '';
-  if (provider === 'antigravity' && !project) throw new Error('缺少 Antigravity project ID');
+  if (provider === 'antigravity' && !project) {
+    throw new Error(quotaText('quota.service.error.missingProject'));
+  }
   const urls = provider === 'antigravity'
     ? [endpointByProvider.antigravity, 'https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary', 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary']
     : [endpointByProvider[provider]];
@@ -777,7 +804,7 @@ async function callUpstreamQuota(
       if (provider === 'antigravity') {
         hadSuccessfulResponse = true;
         if (quotaRowsFor('antigravity', payload).length === 0) {
-          lastError = 'Antigravity 返回成功，但没有可识别的配额分组';
+          lastError = quotaText('quota.service.error.antigravityEmpty');
           continue;
         }
       }
@@ -787,7 +814,11 @@ async function callUpstreamQuota(
     }
   }
   throw new Error(
-    lastError || (hadSuccessfulResponse ? '上游返回了空配额数据' : '配额接口无响应'),
+    lastError || quotaText(
+      hadSuccessfulResponse
+        ? 'quota.service.error.upstreamEmpty'
+        : 'quota.service.error.noResponse',
+    ),
   );
 }
 
@@ -796,7 +827,7 @@ const callCodexResetCredits = async (
   accountId: string,
 ): Promise<{ availableCount?: number; earliestExpiry?: string }> => {
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
-  if (!authIndex) throw new Error('缺少 auth-index，无法查询主动重置次数');
+  if (!authIndex) throw new Error(quotaText('quota.service.error.missingResetAuthIndex'));
   const header: Record<string, string> = {
     ...headersByProvider.codex,
     Accept: 'application/json',
@@ -810,7 +841,13 @@ const callCodexResetCredits = async (
 
 export async function loadQuota(file: AuthFile): Promise<QuotaState> {
   const provider = providerForFile(file);
-  if (!provider) return { status: 'error', rows: [], error: '暂不支持该提供商的配额查询' };
+  if (!provider) {
+    return {
+      status: 'error',
+      rows: [],
+      error: quotaText('quota.service.error.unsupportedProvider'),
+    };
+  }
   try {
     const codexAccountId = provider === 'codex' ? await resolveCodexAccountId(file) : '';
     const payloadPromise = provider === 'xai'
@@ -830,7 +867,13 @@ export async function loadQuota(file: AuthFile): Promise<QuotaState> {
       resetCreditsPromise,
     ]);
     const rows = quotaRowsFor(provider, payload);
-    if (rows.length === 0) return { status: 'error', rows: [], error: '上游返回了配额数据，但无法识别' };
+    if (rows.length === 0) {
+      return {
+        status: 'error',
+        rows: [],
+        error: quotaText('quota.service.error.unrecognized'),
+      };
+    }
     return {
       status: 'success',
       rows,
@@ -862,10 +905,10 @@ const createRedeemRequestId = () => {
 
 export async function consumeCodexResetCredit(file: AuthFile): Promise<QuotaState> {
   if (providerForFile(file) !== 'codex') {
-    throw new Error('只有 Codex 凭据支持使用重置额度');
+    throw new Error(quotaText('quota.service.error.codexResetOnly'));
   }
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
-  if (!authIndex) throw new Error('缺少 auth-index，无法使用重置额度');
+  if (!authIndex) throw new Error(quotaText('quota.service.error.missingConsumeAuthIndex'));
   const header = {
     ...headersByProvider.codex,
   };

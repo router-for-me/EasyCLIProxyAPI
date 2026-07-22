@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentLocale, translate } from '../i18n';
 
 export type ManagementJson = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
@@ -117,7 +118,7 @@ export function responseList(payload: unknown, key: string): Record<string, unkn
 export function maskSecret(value: string): string {
   const normalized = value.trim();
   if (!normalized) {
-    return '未配置';
+    return translate(getCurrentLocale(), 'management.notConfigured');
   }
   if (normalized.length <= 8) {
     return `${normalized.slice(0, 2)}••••`;
@@ -136,7 +137,7 @@ export function formatDate(value: unknown): string {
   if (Number.isNaN(date.getTime())) {
     return String(value);
   }
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(getCurrentLocale(), {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -181,10 +182,12 @@ const messageFromPayload = (value: unknown, depth = 0): string => {
 
 export function apiCallErrorMessage(
   response: Record<string, unknown>,
-  fallback = '上游请求失败',
+  fallback = translate(getCurrentLocale(), 'management.error.upstream'),
 ): string {
   const status = Number(response.status_code ?? response.statusCode ?? 0);
   const message = messageFromPayload(response.body ?? response.bodyText);
   if (message) return message;
-  return status > 0 ? `上游返回 HTTP ${status}` : fallback;
+  return status > 0
+    ? translate(getCurrentLocale(), 'management.error.upstreamHttp', { status })
+    : fallback;
 }

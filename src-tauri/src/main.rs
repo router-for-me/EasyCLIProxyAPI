@@ -84,6 +84,68 @@ const APP_USER_AGENT: &str = concat!(
 static CORE_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 static AGENT_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 
+fn normalize_app_locale(locale: &str) -> &'static str {
+    let normalized = locale.trim().to_ascii_lowercase();
+    if normalized.starts_with("en") {
+        "en"
+    } else if normalized.starts_with("ja") {
+        "ja"
+    } else if normalized == "zh-tw"
+        || normalized == "zh-hk"
+        || normalized == "zh-mo"
+        || normalized.starts_with("zh-hant")
+    {
+        "zh-TW"
+    } else {
+        "zh-CN"
+    }
+}
+
+fn locale_text<'a>(locale: &str, zh_cn: &'a str, en: &'a str) -> &'a str {
+    match normalize_app_locale(locale) {
+        "en" => en,
+        "zh-TW" => match zh_cn {
+            "打开主界面" => "開啟主介面",
+            "退出" => "退出",
+            "内核状态：处理中" => "核心狀態：處理中",
+            "内核状态：未安装" => "核心狀態：未安裝",
+            "内核状态：运行中" => "核心狀態：執行中",
+            "内核状态：已停止" => "核心狀態：已停止",
+            "处理中..." => "處理中...",
+            "停止内核" => "停止核心",
+            "启动内核" => "啟動核心",
+            "重启内核" => "重新啟動核心",
+            "EasyCLIProxyAPI · 内核处理中" => "EasyCLIProxyAPI · 核心處理中",
+            "EasyCLIProxyAPI · 内核未安装" => "EasyCLIProxyAPI · 核心未安裝",
+            "EasyCLIProxyAPI · 内核运行中" => "EasyCLIProxyAPI · 核心執行中",
+            "EasyCLIProxyAPI · 内核已停止" => "EasyCLIProxyAPI · 核心已停止",
+            "EasyCLIProxyAPI · 内核操作失败" => "EasyCLIProxyAPI · 核心操作失敗",
+            "内核状态：正在检查" => "核心狀態：正在檢查",
+            _ => zh_cn,
+        },
+        "ja" => match zh_cn {
+            "打开主界面" => "メイン画面を開く",
+            "退出" => "終了",
+            "内核状态：处理中" => "コア状態：処理中",
+            "内核状态：未安装" => "コア状態：未インストール",
+            "内核状态：运行中" => "コア状態：実行中",
+            "内核状态：已停止" => "コア状態：停止済み",
+            "处理中..." => "処理中...",
+            "停止内核" => "コアを停止",
+            "启动内核" => "コアを起動",
+            "重启内核" => "コアを再起動",
+            "EasyCLIProxyAPI · 内核处理中" => "EasyCLIProxyAPI · コア処理中",
+            "EasyCLIProxyAPI · 内核未安装" => "EasyCLIProxyAPI · コア未インストール",
+            "EasyCLIProxyAPI · 内核运行中" => "EasyCLIProxyAPI · コア実行中",
+            "EasyCLIProxyAPI · 内核已停止" => "EasyCLIProxyAPI · コア停止済み",
+            "EasyCLIProxyAPI · 内核操作失败" => "EasyCLIProxyAPI · コア操作失敗",
+            "内核状态：正在检查" => "コア状態：確認中",
+            _ => zh_cn,
+        },
+        _ => zh_cn,
+    }
+}
+
 #[derive(Default)]
 struct CoreDownloadState {
     inner: Mutex<CoreDownloadInner>,
@@ -222,6 +284,7 @@ struct CoreInstallTask {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 struct GuiConfigFile {
+    locale: String,
     port: u16,
     allow_lan: bool,
     run_on_startup: bool,
@@ -274,6 +337,7 @@ where
 impl Default for GuiConfigFile {
     fn default() -> Self {
         Self {
+            locale: "zh-CN".to_string(),
             port: 8317,
             allow_lan: false,
             run_on_startup: false,
@@ -295,6 +359,7 @@ impl Default for GuiConfigFile {
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 struct GuiConfigPresence {
+    locale: Option<String>,
     auth_dir: Option<String>,
     api_keys: Option<Vec<GuiApiKeyInput>>,
     management_secret_key: Option<String>,
@@ -793,6 +858,13 @@ impl GuiConfigState {
         })
     }
 
+    fn set_locale(&self, locale: String) -> Result<GuiConfigFile, String> {
+        self.update(|config| {
+            config.locale = normalize_app_locale(&locale).to_string();
+            Ok(())
+        })
+    }
+
     fn set_management_secret_key(&self, secret_key: String) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.management_secret_key = secret_key;
@@ -923,6 +995,23 @@ fn get_gui_settings(
 ) -> Result<GuiSettings, String> {
     let config = gui_config_state.snapshot()?;
     Ok(GuiSettings::from(&config))
+}
+
+#[tauri::command]
+fn set_app_locale(
+    app: tauri::AppHandle,
+    process_state: tauri::State<'_, CoreProcessState>,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    locale: String,
+) -> Result<String, String> {
+    let config = gui_config_state.set_locale(locale)?;
+    #[cfg(target_os = "windows")]
+    if let Ok(status) = current_core_status(Some(process_state.inner()), Some(config.port)) {
+        update_windows_tray_locale(&app, &config.locale, &status);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (app, process_state);
+    Ok(config.locale)
 }
 
 #[tauri::command]
@@ -7840,6 +7929,9 @@ fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     if presence.auth_dir.is_none() {
         changed = true;
     }
+    if presence.locale.is_none() {
+        changed = true;
+    }
     changed |= sanitize_gui_config(&mut config)?;
     validate_gui_config(&config)?;
     if changed {
@@ -7910,6 +8002,11 @@ fn merge_core_api_keys_with_gui_metadata(
 
 fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, String> {
     let mut changed = false;
+    let normalized_locale = normalize_app_locale(&config.locale);
+    if config.locale != normalized_locale {
+        config.locale = normalized_locale.to_string();
+        changed = true;
+    }
     let original_api_keys = config.api_keys.clone();
     let configured_keys = config
         .api_keys
@@ -8867,9 +8964,25 @@ fn show_macos_tray_menu<R: tauri::Runtime>(tray: &TrayIcon<R>) {
 
 #[cfg(target_os = "macos")]
 fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
-    let open_main_window =
-        MenuItem::with_id(app, "open-main-window", "打开主界面", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let locale = app
+        .state::<GuiConfigState>()
+        .snapshot()
+        .map(|config| config.locale)
+        .unwrap_or_else(|_| "zh-CN".to_string());
+    let open_main_window = MenuItem::with_id(
+        app,
+        "open-main-window",
+        locale_text(&locale, "打开主界面", "Open Main Window"),
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(
+        app,
+        "quit",
+        locale_text(&locale, "退出", "Quit"),
+        true,
+        None::<&str>,
+    )?;
     let menu = Menu::with_items(app, &[&open_main_window, &quit])?;
     let click_state = Arc::new(Mutex::new(MacosTrayClickState::default()));
     let double_click_interval = Duration::from_secs_f64(NSEvent::doubleClickInterval());
@@ -8972,60 +9085,113 @@ enum WindowsTrayCoreAction {
 
 #[cfg(target_os = "windows")]
 struct WindowsTrayPresentation {
-    status_text: &'static str,
-    toggle_text: &'static str,
+    status_text: String,
+    toggle_text: String,
     toggle_enabled: bool,
     restart_enabled: bool,
-    tooltip: &'static str,
+    tooltip: String,
 }
 
 #[cfg(target_os = "windows")]
-fn windows_tray_presentation(status: &CoreStatus, busy: bool) -> WindowsTrayPresentation {
+fn windows_tray_presentation(
+    status: &CoreStatus,
+    busy: bool,
+    locale: &str,
+) -> WindowsTrayPresentation {
     let status_text = if busy {
-        "内核状态：处理中"
+        locale_text(locale, "内核状态：处理中", "Core status: Working")
     } else if !status.installed {
-        "内核状态：未安装"
+        locale_text(locale, "内核状态：未安装", "Core status: Not installed")
     } else if status.running {
-        "内核状态：运行中"
+        locale_text(locale, "内核状态：运行中", "Core status: Running")
     } else {
-        "内核状态：已停止"
+        locale_text(locale, "内核状态：已停止", "Core status: Stopped")
     };
     let toggle_text = if busy {
-        "处理中..."
+        locale_text(locale, "处理中...", "Working...")
     } else if status.running {
-        "停止内核"
+        locale_text(locale, "停止内核", "Stop Core")
     } else {
-        "启动内核"
+        locale_text(locale, "启动内核", "Start Core")
     };
     let tooltip = if busy {
-        "EasyCLIProxyAPI · 内核处理中"
+        locale_text(
+            locale,
+            "EasyCLIProxyAPI · 内核处理中",
+            "EasyCLIProxyAPI · Core working",
+        )
     } else if !status.installed {
-        "EasyCLIProxyAPI · 内核未安装"
+        locale_text(
+            locale,
+            "EasyCLIProxyAPI · 内核未安装",
+            "EasyCLIProxyAPI · Core not installed",
+        )
     } else if status.running {
-        "EasyCLIProxyAPI · 内核运行中"
+        locale_text(
+            locale,
+            "EasyCLIProxyAPI · 内核运行中",
+            "EasyCLIProxyAPI · Core running",
+        )
     } else {
-        "EasyCLIProxyAPI · 内核已停止"
+        locale_text(
+            locale,
+            "EasyCLIProxyAPI · 内核已停止",
+            "EasyCLIProxyAPI · Core stopped",
+        )
     };
 
     WindowsTrayPresentation {
-        status_text,
-        toggle_text,
+        status_text: status_text.to_string(),
+        toggle_text: toggle_text.to_string(),
         toggle_enabled: status.installed && !busy,
         restart_enabled: status.installed && status.running && !busy,
-        tooltip,
+        tooltip: tooltip.to_string(),
     }
 }
 
 #[cfg(target_os = "windows")]
 struct WindowsTrayState {
+    open_main_window: MenuItem<tauri::Wry>,
     status_item: MenuItem<tauri::Wry>,
     toggle_core_item: MenuItem<tauri::Wry>,
     restart_core_item: MenuItem<tauri::Wry>,
+    quit_item: MenuItem<tauri::Wry>,
+    locale: Mutex<String>,
     busy: AtomicBool,
 }
 
 #[cfg(target_os = "windows")]
 impl WindowsTrayState {
+    fn locale(&self) -> String {
+        self.locale
+            .lock()
+            .map(|locale| locale.clone())
+            .unwrap_or_else(|_| "zh-CN".to_string())
+    }
+
+    fn set_locale(&self, locale: &str) {
+        let normalized = normalize_app_locale(locale);
+        if let Ok(mut current) = self.locale.lock() {
+            *current = normalized.to_string();
+        }
+        let labels = [
+            (
+                &self.open_main_window,
+                locale_text(normalized, "打开主界面", "Open Main Window"),
+            ),
+            (
+                &self.restart_core_item,
+                locale_text(normalized, "重启内核", "Restart Core"),
+            ),
+            (&self.quit_item, locale_text(normalized, "退出", "Quit")),
+        ];
+        for (item, label) in labels {
+            if let Err(error) = item.set_text(label) {
+                eprintln!("更新 Windows 托盘语言失败: {error}");
+            }
+        }
+    }
+
     fn begin_action(&self) -> bool {
         if self
             .busy
@@ -9035,10 +9201,18 @@ impl WindowsTrayState {
             return false;
         }
 
-        if let Err(error) = self.status_item.set_text("内核状态：处理中") {
+        let locale = self.locale();
+        if let Err(error) = self.status_item.set_text(locale_text(
+            &locale,
+            "内核状态：处理中",
+            "Core status: Working",
+        )) {
             eprintln!("更新 Windows 托盘内核状态失败: {error}");
         }
-        if let Err(error) = self.toggle_core_item.set_text("处理中...") {
+        if let Err(error) =
+            self.toggle_core_item
+                .set_text(locale_text(&locale, "处理中...", "Working..."))
+        {
             eprintln!("更新 Windows 托盘操作文本失败: {error}");
         }
         if let Err(error) = self.toggle_core_item.set_enabled(false) {
@@ -9054,12 +9228,16 @@ impl WindowsTrayState {
         self.busy.store(false, Ordering::Release);
     }
 
-    fn update(&self, status: &CoreStatus) -> &'static str {
-        let presentation = windows_tray_presentation(status, self.busy.load(Ordering::Acquire));
-        if let Err(error) = self.status_item.set_text(presentation.status_text) {
+    fn update(&self, status: &CoreStatus) -> String {
+        let presentation =
+            windows_tray_presentation(status, self.busy.load(Ordering::Acquire), &self.locale());
+        if let Err(error) = self.status_item.set_text(presentation.status_text.clone()) {
             eprintln!("更新 Windows 托盘内核状态失败: {error}");
         }
-        if let Err(error) = self.toggle_core_item.set_text(presentation.toggle_text) {
+        if let Err(error) = self
+            .toggle_core_item
+            .set_text(presentation.toggle_text.clone())
+        {
             eprintln!("更新 Windows 托盘操作文本失败: {error}");
         }
         if let Err(error) = self
@@ -9082,7 +9260,13 @@ impl WindowsTrayState {
         if error.chars().count() > 48 {
             summary.push('…');
         }
-        if let Err(update_error) = self.status_item.set_text(format!("操作失败：{summary}")) {
+        let text = match normalize_app_locale(&self.locale()) {
+            "en" => format!("Operation failed: {summary}"),
+            "zh-TW" => format!("操作失敗：{summary}"),
+            "ja" => format!("操作に失敗しました：{summary}"),
+            _ => format!("操作失败：{summary}"),
+        };
+        if let Err(update_error) = self.status_item.set_text(text) {
             eprintln!("更新 Windows 托盘错误状态失败: {update_error}");
         }
     }
@@ -9112,23 +9296,39 @@ fn update_windows_tray_status(app_handle: &tauri::AppHandle, status: &CoreStatus
     let tooltip = app_handle
         .try_state::<WindowsTrayState>()
         .map(|tray_state| tray_state.update(status))
-        .unwrap_or_else(|| windows_tray_presentation(status, false).tooltip);
+        .unwrap_or_else(|| windows_tray_presentation(status, false, "zh-CN").tooltip);
 
     if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
-        if let Err(error) = tray.set_tooltip(Some(tooltip)) {
+        if let Err(error) = tray.set_tooltip(Some(&tooltip)) {
             eprintln!("更新 Windows 托盘提示失败: {error}");
         }
     }
 }
 
 #[cfg(target_os = "windows")]
+fn update_windows_tray_locale(app_handle: &tauri::AppHandle, locale: &str, status: &CoreStatus) {
+    if let Some(tray_state) = app_handle.try_state::<WindowsTrayState>() {
+        tray_state.set_locale(locale);
+    }
+    update_windows_tray_status(app_handle, status);
+}
+
+#[cfg(target_os = "windows")]
 fn show_windows_tray_action_error(app_handle: &tauri::AppHandle, error: &str) {
     eprintln!("Windows 托盘内核操作失败: {error}");
+    let locale = app_handle
+        .try_state::<WindowsTrayState>()
+        .map(|state| state.locale())
+        .unwrap_or_else(|| "zh-CN".to_string());
     if let Some(tray_state) = app_handle.try_state::<WindowsTrayState>() {
         tray_state.show_error(error);
     }
     if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
-        if let Err(update_error) = tray.set_tooltip(Some("EasyCLIProxyAPI · 内核操作失败")) {
+        if let Err(update_error) = tray.set_tooltip(Some(locale_text(
+            &locale,
+            "EasyCLIProxyAPI · 内核操作失败",
+            "EasyCLIProxyAPI · Core operation failed",
+        ))) {
             eprintln!("更新 Windows 托盘错误提示失败: {update_error}");
         }
     }
@@ -9143,7 +9343,11 @@ fn run_windows_tray_core_action(app_handle: &tauri::AppHandle, action: WindowsTr
         return;
     }
     if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
-        if let Err(error) = tray.set_tooltip(Some("EasyCLIProxyAPI · 内核处理中")) {
+        if let Err(error) = tray.set_tooltip(Some(locale_text(
+            &tray_state.locale(),
+            "EasyCLIProxyAPI · 内核处理中",
+            "EasyCLIProxyAPI · Core working",
+        ))) {
             eprintln!("更新 Windows 托盘处理中提示失败: {error}");
         }
     }
@@ -9198,35 +9402,46 @@ fn run_windows_tray_core_action(app_handle: &tauri::AppHandle, action: WindowsTr
 
 #[cfg(target_os = "windows")]
 fn setup_windows_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
+    let locale = app
+        .state::<GuiConfigState>()
+        .snapshot()
+        .map(|config| config.locale)
+        .unwrap_or_else(|_| "zh-CN".to_string());
     let open_main_window = MenuItem::with_id(
         app,
         WINDOWS_TRAY_OPEN_MENU_ID,
-        "打开主界面",
+        locale_text(&locale, "打开主界面", "Open Main Window"),
         true,
         None::<&str>,
     )?;
     let status_item = MenuItem::with_id(
         app,
         WINDOWS_TRAY_STATUS_MENU_ID,
-        "内核状态：正在检查",
+        locale_text(&locale, "内核状态：正在检查", "Core status: Checking"),
         false,
         None::<&str>,
     )?;
     let toggle_core_item = MenuItem::with_id(
         app,
         WINDOWS_TRAY_TOGGLE_CORE_MENU_ID,
-        "启动内核",
+        locale_text(&locale, "启动内核", "Start Core"),
         false,
         None::<&str>,
     )?;
     let restart_core_item = MenuItem::with_id(
         app,
         WINDOWS_TRAY_RESTART_CORE_MENU_ID,
-        "重启内核",
+        locale_text(&locale, "重启内核", "Restart Core"),
         false,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, WINDOWS_TRAY_QUIT_MENU_ID, "退出", true, None::<&str>)?;
+    let quit = MenuItem::with_id(
+        app,
+        WINDOWS_TRAY_QUIT_MENU_ID,
+        locale_text(&locale, "退出", "Quit"),
+        true,
+        None::<&str>,
+    )?;
     let separator_one = PredefinedMenuItem::separator(app)?;
     let separator_two = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(
@@ -9276,9 +9491,12 @@ fn setup_windows_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
         .build(app)?;
 
     let _ = app.manage(WindowsTrayState {
+        open_main_window,
         status_item,
         toggle_core_item,
         restart_core_item,
+        quit_item: quit,
+        locale: Mutex::new(locale),
         busy: AtomicBool::new(false),
     });
 
@@ -9394,6 +9612,7 @@ fn main() {
             detect_core_platform,
             get_core_status,
             get_gui_settings,
+            set_app_locale,
             resolve_windows_close_request,
             get_agent_config_statuses,
             refresh_agent_config_statuses,
@@ -9924,28 +10143,47 @@ mod tests {
             message: String::new(),
         };
 
-        let missing = windows_tray_presentation(&status, false);
+        let missing = windows_tray_presentation(&status, false, "zh-CN");
         assert_eq!(missing.status_text, "内核状态：未安装");
         assert!(!missing.toggle_enabled);
         assert!(!missing.restart_enabled);
 
         status.installed = true;
-        let stopped = windows_tray_presentation(&status, false);
+        let stopped = windows_tray_presentation(&status, false, "zh-CN");
         assert_eq!(stopped.toggle_text, "启动内核");
         assert!(stopped.toggle_enabled);
         assert!(!stopped.restart_enabled);
 
         status.running = true;
-        let running = windows_tray_presentation(&status, false);
+        let running = windows_tray_presentation(&status, false, "zh-CN");
         assert_eq!(running.status_text, "内核状态：运行中");
         assert_eq!(running.toggle_text, "停止内核");
         assert!(running.toggle_enabled);
         assert!(running.restart_enabled);
 
-        let busy = windows_tray_presentation(&status, true);
+        let busy = windows_tray_presentation(&status, true, "zh-CN");
         assert_eq!(busy.status_text, "内核状态：处理中");
         assert!(!busy.toggle_enabled);
         assert!(!busy.restart_enabled);
+
+        let english = windows_tray_presentation(&status, false, "en-US");
+        assert_eq!(english.status_text, "Core status: Running");
+        assert_eq!(english.toggle_text, "Stop Core");
+
+        let japanese = windows_tray_presentation(&status, false, "ja-JP");
+        assert_eq!(japanese.status_text, "コア状態：実行中");
+        assert_eq!(japanese.toggle_text, "コアを停止");
+    }
+
+    #[test]
+    fn app_locale_normalization_has_a_stable_chinese_fallback() {
+        assert_eq!(normalize_app_locale("en"), "en");
+        assert_eq!(normalize_app_locale("en-US"), "en");
+        assert_eq!(normalize_app_locale("ja-JP"), "ja");
+        assert_eq!(normalize_app_locale("zh-TW"), "zh-TW");
+        assert_eq!(normalize_app_locale("zh-Hant-HK"), "zh-TW");
+        assert_eq!(normalize_app_locale("unsupported"), "zh-CN");
+        assert_eq!(GuiConfigFile::default().locale, "zh-CN");
     }
 
     #[cfg(target_os = "windows")]
@@ -10645,6 +10883,7 @@ mod tests {
     #[test]
     fn runtime_network_patch_preserves_comments_and_other_settings() {
         let config = GuiConfigFile {
+            locale: "zh-CN".to_string(),
             port: 9527,
             allow_lan: true,
             run_on_startup: false,
@@ -10962,6 +11201,7 @@ mod tests {
         let template = "# Current release template\nhost: \"\" # template bind address\nport: 8317\n\n# Client authentication\napi-keys:\n  - template-key\n\n# Plugin runtime\nplugins:\n  enabled: false # plugin switch\n\n# Credential routing\nrouting:\n  strategy: round-robin # routing switch\n\n# New release option\nnew-option: true\nnested:\n  # Nested template comment\n  keep: template\n  added: from-template\nlist:\n  - template-item\n";
         let current = "host: 127.0.0.1\nport: 9000\nnested:\n  keep: current\n  current-only: retained\nlist:\n  - current-a\n  - current-b\nextra: true\n";
         let config = GuiConfigFile {
+            locale: "zh-CN".to_string(),
             port: 9527,
             allow_lan: true,
             run_on_startup: false,

@@ -34,6 +34,7 @@ import {
   resolveAgentModelSelection,
 } from '../services/agentModelPicker';
 import type { ModelOption } from '../services/modelService';
+import { getCurrentLocale, translate, useI18n } from '../i18n';
 
 type AgentClientId =
   | 'claude-code'
@@ -83,7 +84,7 @@ type AgentDefinition = {
   name: string;
   icon?: string;
   Icon?: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  description: string;
+  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes';
 };
 
 const agentDefinitions: AgentDefinition[] = [
@@ -91,37 +92,37 @@ const agentDefinitions: AgentDefinition[] = [
     id: 'claude-code',
     name: 'Claude Code',
     icon: claudeIcon,
-    description: '使用 CPA 的 Anthropic 兼容接口',
+    descriptionKey: 'agents.description.claudeCode',
   },
   {
     id: 'claude-desktop',
     name: 'Claude Desktop',
     icon: claudeIcon,
-    description: '使用 CPA 3P 推理网关，支持 Windows、macOS 和 Linux Beta',
+    descriptionKey: 'agents.description.claudeDesktop',
   },
   {
     id: 'codex',
     name: 'Codex',
     icon: codexIcon,
-    description: '使用 CPA Responses 接口',
+    descriptionKey: 'agents.description.codex',
   },
   {
     id: 'opencode',
     name: 'OpenCode',
     icon: opencodeIcon,
-    description: '使用 CPA OpenAI Compatible provider',
+    descriptionKey: 'agents.description.opencode',
   },
   {
     id: 'openclaw',
     name: 'OpenClaw',
     icon: openclawIcon,
-    description: '使用 CPA 模型供应商和默认模型',
+    descriptionKey: 'agents.description.openclaw',
   },
   {
     id: 'hermes',
     name: 'Hermes Agent',
     icon: hermesIcon,
-    description: '使用 CPA custom provider',
+    descriptionKey: 'agents.description.hermes',
   },
 ];
 
@@ -197,13 +198,16 @@ function AgentMark({ definition, size = 26 }: { definition: AgentDefinition; siz
 }
 
 const listStatusText = (status: AgentConfigStatus | undefined) => {
-  if (!status) return '正在检测';
-  if (!status.supportedPlatform) return '当前平台不支持';
-  if (!status.installed) return '未检测到安装';
-  if (status.modificationState === 'conflict') return '配置冲突 · 等待恢复';
-  if (status.modificationState === 'recovery') return '操作未完成 · 可恢复';
-  if (status.modificationEnabled) return `已修改 · ${status.appliedModel ?? '未记录模型'}`;
-  return status.version ? `已安装 · ${status.version}` : '已安装 · 保持原配置';
+  const locale = getCurrentLocale();
+  if (!status) return translate(locale, 'agents.list.detecting');
+  if (!status.supportedPlatform) return translate(locale, 'agents.list.unsupported');
+  if (!status.installed) return translate(locale, 'agents.list.notInstalled');
+  if (status.modificationState === 'conflict') return translate(locale, 'agents.list.conflict');
+  if (status.modificationState === 'recovery') return translate(locale, 'agents.list.recovery');
+  if (status.modificationEnabled) return translate(locale, 'agents.list.modified', { model: status.appliedModel ?? '—' });
+  return status.version
+    ? translate(locale, 'agents.list.installedVersion', { version: status.version })
+    : translate(locale, 'agents.list.installed');
 };
 
 type AgentModelPickerProps = {
@@ -232,6 +236,7 @@ function AgentModelPicker({
   onChange,
   onRefresh,
 }: AgentModelPickerProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -357,7 +362,7 @@ function AgentModelPicker({
       >
         <span>
           <strong title={value || undefined}>
-            {value || (loading ? '正在读取模型' : error ? '获取模型失败' : models.length ? '选择模型' : '无可选模型')}
+            {value || (loading ? t('agents.model.loading') : error ? t('agents.model.loadFailed') : models.length ? t('agents.model.select') : t('agents.model.none'))}
           </strong>
           {selectedAlias ? <small title={selectedAlias}>{selectedAlias}</small> : null}
         </span>
@@ -381,7 +386,7 @@ function AgentModelPicker({
                 setActiveIndex(0);
               }}
               onKeyDown={handleSearchKeyDown}
-              placeholder="搜索模型名称或别名"
+              placeholder={t('agents.model.search')}
               role="combobox"
               aria-controls="agent-model-listbox"
               aria-expanded="true"
@@ -395,25 +400,25 @@ function AgentModelPicker({
                   setActiveIndex(0);
                   searchRef.current?.focus();
                 }}
-                title="清空搜索"
+                title={t('agents.model.clearSearch')}
               >
                 <X size={14} />
               </button>
             ) : null}
-            <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={loading} title="刷新模型">
+            <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={loading} title={t('agents.model.refresh')}>
               <RefreshCw size={14} className={loading ? 'spin' : ''} />
             </button>
           </div>
 
           <div className="agent-model-list" id="agent-model-listbox" role="listbox">
             {loading && models.length === 0 ? (
-              <div className="agent-model-empty"><LoaderCircle size={18} className="spin" />正在获取模型</div>
+              <div className="agent-model-empty"><LoaderCircle size={18} className="spin" />{t('agents.model.fetching')}</div>
             ) : error && models.length === 0 ? (
-              <div className="agent-model-empty error"><strong>获取模型失败</strong><span>{error}</span></div>
+              <div className="agent-model-empty error"><strong>{t('agents.model.loadFailed')}</strong><span>{error}</span></div>
             ) : choices.length === 0 ? (
               <div className="agent-model-empty">
-                <strong>{search.trim() ? '没有匹配的模型' : '暂时没有可用模型'}</strong>
-                <span>{search.trim() ? '尝试其他关键词' : '请先接入可用模型后刷新'}</span>
+                <strong>{search.trim() ? t('agents.model.noMatch') : t('agents.model.unavailable')}</strong>
+                <span>{search.trim() ? t('agents.model.tryKeywords') : t('agents.model.connectFirst')}</span>
               </div>
             ) : choices.map((choice, index) => {
               const selected = choice.name.toLocaleLowerCase() === value.trim().toLocaleLowerCase();
@@ -429,7 +434,7 @@ function AgentModelPicker({
                 >
                   <span>
                     <strong title={choice.name}>{choice.name}</strong>
-                    <small>{choice.alias || '可用模型'}</small>
+                    <small>{choice.alias || t('agents.model.available')}</small>
                   </span>
                   {selected ? <Check size={16} aria-hidden /> : null}
                 </button>
@@ -437,8 +442,8 @@ function AgentModelPicker({
             })}
           </div>
           <div className="agent-model-dropdown-footer">
-            <span>{models.length} 个可用模型</span>
-            {error && models.length > 0 ? <span className="error">刷新失败，显示上次结果</span> : null}
+            <span>{t('agents.model.count', { count: models.length })}</span>
+            {error && models.length > 0 ? <span className="error">{t('agents.model.stale')}</span> : null}
           </div>
         </div>
       ) : null}
@@ -447,6 +452,7 @@ function AgentModelPicker({
 }
 
 export function AgentsPage() {
+  const { t } = useI18n();
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
   const [statuses, setStatuses] = useState<AgentConfigStatus[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -574,16 +580,16 @@ export function AgentsPage() {
 
   const requireSelectedModel = () => {
     if (modelLoading) {
-      setError('模型列表仍在加载，请稍后再试');
+      setError(t('agents.error.modelsLoading'));
       return null;
     }
     if (models.length === 0) {
-      setError(modelError || '当前没有可选模型，无法修改智能体配置');
+      setError(modelError || t('agents.error.noModels'));
       return null;
     }
     const model = findAgentModel(models, selectedModel);
     if (!model) {
-      setError('当前选择已不在可用模型列表中，请刷新模型后重新选择');
+      setError(t('agents.error.selectionGone'));
       return null;
     }
     return model.name;
@@ -608,8 +614,8 @@ export function AgentsPage() {
       }
       setRestoreConflict(null);
       setNotice(result.enabled
-        ? `${activeDefinition.name} 已启用配置修改；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
-        : `${activeDefinition.name} 的原配置已恢复，请重启客户端`);
+        ? t('agents.notice.enabled', { name: activeDefinition.name })
+        : t('agents.notice.restored', { name: activeDefinition.name }));
       await loadStatuses(true);
     } catch (requestError) {
       setError(String(requestError));
@@ -629,7 +635,7 @@ export function AgentsPage() {
       );
       if (draftChanged || shouldSyncModelCatalog) {
         if (activeStatus?.modificationState !== 'active') {
-          throw new Error('当前配置存在冲突或恢复任务，暂时不能应用新模型');
+          throw new Error(t('agents.error.conflict'));
         }
         const model = requireSelectedModel();
         if (!model) return;
@@ -642,11 +648,11 @@ export function AgentsPage() {
       await invoke('launch_agent', { client: selected, target: selectedLaunchTarget?.id });
       setNotice(appliedBeforeLaunch
         ? draftChanged
-          ? `${activeDefinition.name} 已应用模型并启动；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
-          : `${activeDefinition.name} 已同步模型目录并启动；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
+          ? t('agents.notice.appliedLaunch', { name: activeDefinition.name })
+          : t('agents.notice.syncedLaunch', { name: activeDefinition.name })
         : activeStatus?.modificationEnabled
-          ? `${activeDefinition.name} 已启动；退出软件前建议关闭“修改智能体配置”，恢复原配置文件`
-          : `${activeDefinition.name} 已启动`);
+          ? t('agents.notice.managedLaunch', { name: activeDefinition.name })
+          : t('agents.notice.launched', { name: activeDefinition.name }));
       if (appliedBeforeLaunch) await loadStatuses(true);
     } catch (requestError) {
       setError(String(requestError));
@@ -656,18 +662,18 @@ export function AgentsPage() {
   };
 
   const statusLabel = loading
-    ? '检测中'
+    ? t('agents.status.detecting')
     : !activeStatus?.supportedPlatform
-      ? '平台不支持'
+      ? t('agents.status.unsupported')
       : !activeStatus.installed
-        ? '未安装'
+        ? t('agents.status.notInstalled')
         : activeStatus.modificationState === 'conflict'
-          ? '配置冲突'
+          ? t('agents.status.conflict')
           : activeStatus.modificationState === 'recovery'
-            ? '需要恢复'
+            ? t('agents.status.recovery')
             : activeStatus.modificationEnabled
-              ? '已修改配置'
-              : '保持原配置';
+              ? t('agents.status.modified')
+              : t('agents.status.original');
   const statusTone = activeStatus?.modificationState === 'conflict'
     || activeStatus?.modificationState === 'recovery'
     || !activeStatus?.supportedPlatform
@@ -681,11 +687,11 @@ export function AgentsPage() {
       <header className="management-header">
         <div>
           <span>Agent Clients</span>
-          <h1>智能体配置</h1>
+          <h1>{t('agents.title')}</h1>
         </div>
         <button type="button" className="secondary-button compact-button" onClick={() => void refresh()} disabled={loading || busy}>
           <RefreshCw size={16} className={loading ? 'spin' : ''} />
-          重新检测
+          {t('agents.redetect')}
         </button>
       </header>
 
@@ -698,7 +704,7 @@ export function AgentsPage() {
         <aside className="panel agent-client-list">
           <div className="agent-list-heading">
             <Bot size={18} />
-            <div><strong>本机客户端</strong><span>选择需要管理的智能体</span></div>
+            <div><strong>{t('agents.localClients')}</strong><span>{t('agents.selectClient')}</span></div>
           </div>
           <div className="agent-list-items">
             {agentDefinitions.map((agent) => {
@@ -727,7 +733,7 @@ export function AgentsPage() {
           <div className="agent-config-heading">
             <div className="agent-config-title">
               <span className="agent-logo"><AgentMark definition={activeDefinition} size={24} /></span>
-              <div><h2>{activeDefinition.name}</h2><span>{activeDefinition.description}</span></div>
+              <div><h2>{activeDefinition.name}</h2><span>{t(activeDefinition.descriptionKey)}</span></div>
             </div>
             <span className={`state-pill ${statusTone}`}>{statusLabel}</span>
           </div>
@@ -741,19 +747,19 @@ export function AgentsPage() {
 
           <div className="agent-status-grid">
             <div>
-              <span><BadgeCheck size={14} />安装状态</span>
-              <strong>{activeStatus?.installed ? '已检测到客户端' : '未检测到客户端'}</strong>
+              <span><BadgeCheck size={14} />{t('agents.installStatus')}</span>
+              <strong>{activeStatus?.installed ? t('agents.clientDetected') : t('agents.clientNotDetected')}</strong>
             </div>
             <div>
-              <span>客户端版本</span>
-              <strong title={activeStatus?.version ?? undefined}>{activeStatus?.version ?? '未获取'}</strong>
+              <span>{t('agents.clientVersion')}</span>
+              <strong title={activeStatus?.version ?? undefined}>{activeStatus?.version ?? t('agents.notFetched')}</strong>
             </div>
           </div>
 
           <section className="agent-model-section">
             <div className="agent-section-heading">
-              <div><strong>使用模型</strong><span>同步内核当前开放的模型，并将所选项设为默认模型</span></div>
-              {draftChanged ? <span className="agent-pending-badge">尚未应用</span> : null}
+              <div><strong>{t('agents.useModel')}</strong><span>{t('agents.useModelDescription')}</span></div>
+              {draftChanged ? <span className="agent-pending-badge">{t('agents.pending')}</span> : null}
             </div>
             <AgentModelPicker
               models={models}
@@ -766,29 +772,29 @@ export function AgentsPage() {
             />
             <span className="agent-model-hint">
               {modelLoading
-                ? '正在读取可用模型'
+                ? t('agents.model.readingAvailable')
                 : modelError && models.length === 0
                   ? modelError
                   : models.length === 0
-                    ? '无可选模型，不能开启或更新配置'
+                    ? t('agents.model.cannotConfigure')
                     : activeStatus?.modificationEnabled
-                      ? `当前已应用：${appliedModel || '未记录模型'}`
-                      : `${models.length} 个可用模型，首次默认选择第一项`}
+                      ? t('agents.model.current', { model: appliedModel || '—' })
+                      : t('agents.model.firstSelection', { count: models.length })}
             </span>
           </section>
 
           <section className={`agent-modification-switch ${activeStatus?.modificationEnabled ? 'enabled' : ''}`}>
             <div>
-              <strong>修改智能体配置</strong>
+              <strong>{t('agents.modify.title')}</strong>
               <span>{activeStatus?.modificationEnabled
                 ? activeStatus.modificationState === 'conflict'
-                  ? '配置已被外部修改，关闭时需要确认恢复'
+                  ? t('agents.modify.conflict')
                   : activeStatus.modificationState === 'recovery'
-                    ? '上次操作未完成，关闭开关可尝试恢复原配置'
-                    : '原配置已备份，当前由 CPA 管理'
-                : '启动客户端前必须开启；程序会先备份原配置，再写入 CPA 配置'}</span>
+                    ? t('agents.modify.recovery')
+                    : t('agents.modify.managed')
+                : t('agents.modify.disabled')}</span>
             </div>
-            <label className="switch-control" title="修改智能体配置">
+            <label className="switch-control" title={t('agents.modify.title')}>
               <input
                 type="checkbox"
                 checked={Boolean(activeStatus?.modificationEnabled)}
@@ -804,21 +810,21 @@ export function AgentsPage() {
               {activeStatus?.modificationEnabled ? <Check size={16} /> : <Sparkles size={16} />}
               <span>{activeStatus?.modificationEnabled
                 ? draftChanged
-                  ? '模型选择已变化，启动时会先应用新模型'
-                  : '退出软件前建议关闭“修改智能体配置”，恢复开启前的原配置文件'
+                  ? t('agents.footer.changed')
+                  : t('agents.footer.restore')
                 : !activeStatus?.supportedPlatform
-                  ? '当前系统无法配置该客户端'
+                  ? t('agents.footer.unsupported')
                   : !activeStatus.installed
-                    ? '请先安装客户端并重新检测'
+                    ? t('agents.footer.installFirst')
                     : activeStatus.launchTargets.length === 0
-                      ? '检测到配置文件，但没有找到客户端命令'
+                      ? t('agents.footer.noCommand')
                       : !activeStatus.configValid
-                        ? '原配置格式异常，无法安全修改'
-                        : '请先开启“修改智能体配置”，确保 CPA 模型配置生效后再启动客户端'}</span>
+                        ? t('agents.footer.invalidConfig')
+                        : t('agents.footer.enableFirst')}</span>
             </div>
             <div className="agent-launch-actions">
               {activeLaunchTargets.length > 1 ? (
-                <div className="agent-launch-targets" aria-label="Codex 启动方式">
+                <div className="agent-launch-targets" aria-label={t('agents.launchMethods')}>
                   {activeLaunchTargets.map((target) => (
                     <button
                       type="button"
@@ -847,10 +853,10 @@ export function AgentsPage() {
                 }
                 title={activeStatus?.modificationEnabled
                   ? selectedLaunchTarget?.detail
-                  : '请先开启“修改智能体配置”'}
+                  : t('agents.launch.enableFirst')}
               >
                 {busy ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
-                {busy ? '启动中' : selectedLaunchTarget ? `启动 ${selectedLaunchTarget.label}` : '无法启动'}
+                {busy ? t('agents.launch.starting') : selectedLaunchTarget ? t('agents.launch.start', { target: selectedLaunchTarget.label }) : t('agents.launch.unavailable')}
               </button>
             </div>
           </div>
@@ -861,17 +867,16 @@ export function AgentsPage() {
         <div className="config-dialog-backdrop">
           <section className="config-dialog agent-restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="agent-restore-title">
             <div className="config-dialog-heading">
-              <div><AlertTriangle size={19} /><h2 id="agent-restore-title">配置已发生外部变化</h2></div>
+              <div><AlertTriangle size={19} /><h2 id="agent-restore-title">{t('agents.restore.title')}</h2></div>
             </div>
             <p>
-              开启修改配置后，有 {restoreConflict.length} 个配置文件又被其他程序修改。
-              继续恢复会使用开启前的备份覆盖这些变化。
+              {t('agents.restore.description', { count: restoreConflict.length })}
             </p>
             <div className="config-dialog-actions two-actions">
-              <button type="button" className="secondary-button" onClick={() => setRestoreConflict(null)} disabled={busy}>取消</button>
+              <button type="button" className="secondary-button" onClick={() => setRestoreConflict(null)} disabled={busy}>{t('common.cancel')}</button>
               <button type="button" className="danger-button" onClick={() => void setModificationEnabled(false, true)} disabled={busy}>
                 {busy ? <LoaderCircle size={16} className="spin" /> : null}
-                确认强制恢复
+                {t('agents.restore.confirm')}
               </button>
             </div>
           </section>

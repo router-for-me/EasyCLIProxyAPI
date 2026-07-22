@@ -1,3 +1,5 @@
+import { getCurrentLocale, translate } from '../i18n';
+
 export const DEFAULT_CLIENT_API_KEY = '123456';
 
 export type ClientApiProfile = {
@@ -17,21 +19,21 @@ export function clientApiProfiles(port: number, lanIpv4?: string | null): Client
     {
       id: 'openai',
       name: 'OpenAI',
-      description: '适用于 OpenAI SDK、OpenCode 等兼容客户端',
+      description: translate(getCurrentLocale(), 'kernel.access.openaiDescription'),
       baseUrl: `${origin}/v1`,
       lanUrl: lanOrigin ? `${lanOrigin}/v1` : null,
     },
     {
       id: 'claude',
       name: 'Claude',
-      description: '适用于 Claude SDK 与 Claude Code',
+      description: translate(getCurrentLocale(), 'kernel.access.claudeDescription'),
       baseUrl: origin,
       lanUrl: lanOrigin,
     },
     {
       id: 'gemini',
       name: 'Gemini',
-      description: '适用于 Gemini 原生兼容客户端',
+      description: translate(getCurrentLocale(), 'kernel.access.geminiDescription'),
       baseUrl: origin,
       lanUrl: lanOrigin,
     },

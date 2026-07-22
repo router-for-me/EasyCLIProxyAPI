@@ -15,6 +15,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useI18n } from '../i18n';
 
 type CoreConfigSettings = {
   apiKeys: CoreApiKey[];
@@ -32,11 +33,12 @@ type ConfigAction = 'add-key' | 'delete-key' | 'plugins' | 'routing' | null;
 type NoticeTone = 'success' | 'error';
 
 const ROUTING_OPTIONS = [
-  { value: 'round-robin', label: '轮询' },
-  { value: 'fill-first', label: '优先填充' },
+  { value: 'round-robin', labelKey: 'config.routing.roundRobin' },
+  { value: 'fill-first', labelKey: 'config.routing.fillFirst' },
 ] as const;
 
 export function ConfigPanelPage() {
+  const { t } = useI18n();
   const [settings, setSettings] = useState<CoreConfigSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -140,20 +142,20 @@ export function ConfigPanelPage() {
     event.preventDefault();
     const apiKey = newApiKey.trim();
     if (!apiKey) {
-      setFormError('鉴权密钥不能为空');
+      setFormError(t('config.error.emptyKey'));
       return;
     }
     if (!/^[\x21-\x7e]+$/.test(apiKey)) {
-      setFormError('只能使用 ASCII 可见字符，且不能包含空格');
+      setFormError(t('config.error.invalidKey'));
       return;
     }
     if (settings?.apiKeys.some((entry) => entry.apiKey === apiKey)) {
-      setFormError('该鉴权密钥已经存在');
+      setFormError(t('config.error.duplicateKey'));
       return;
     }
     const remark = newApiKeyRemark.trim();
     if (remark.length > 80) {
-      setFormError('备注不能超过 80 个字符');
+      setFormError(t('config.error.remarkTooLong'));
       return;
     }
 
@@ -161,7 +163,7 @@ export function ConfigPanelPage() {
       'add-key',
       'add_core_api_key',
       { apiKey, remark },
-      '鉴权密钥已新增',
+      t('config.notice.keyAdded'),
     );
     if (saved) {
       setAddDialogOpen(false);
@@ -178,7 +180,7 @@ export function ConfigPanelPage() {
       'delete-key',
       'delete_core_api_key',
       { apiKey: selectedDeleteKey },
-      '鉴权密钥已删除',
+      t('config.notice.keyDeleted'),
     );
     if (deleted) {
       setDeleteIndex(null);
@@ -189,7 +191,7 @@ export function ConfigPanelPage() {
     try {
       await navigator.clipboard.writeText(apiKey);
       setCopiedIndex(index);
-      showNotice('鉴权密钥已复制', 'success');
+      showNotice(t('config.notice.keyCopied'), 'success');
       if (copyTimerRef.current !== null) {
         window.clearTimeout(copyTimerRef.current);
       }
@@ -198,7 +200,7 @@ export function ConfigPanelPage() {
         copyTimerRef.current = null;
       }, 1800);
     } catch {
-      showNotice('复制鉴权密钥失败', 'error');
+      showNotice(t('config.notice.keyCopyFailed'), 'error');
     }
   };
 
@@ -207,7 +209,7 @@ export function ConfigPanelPage() {
       'plugins',
       'set_core_plugins_enabled',
       { enabled },
-      enabled ? '插件系统已启用' : '插件系统已停用',
+      enabled ? t('config.notice.pluginsEnabled') : t('config.notice.pluginsDisabled'),
     );
   };
 
@@ -219,7 +221,7 @@ export function ConfigPanelPage() {
       'routing',
       'set_core_routing_strategy',
       { strategy },
-      '路由策略已更新',
+      t('config.notice.routingUpdated'),
     );
   };
 
@@ -234,10 +236,10 @@ export function ConfigPanelPage() {
           <div className="config-panel-heading">
             <div className="config-heading-title">
               <KeyRound size={18} aria-hidden="true" />
-              <h2>鉴权密钥</h2>
+              <h2>{t('config.keys.title')}</h2>
             </div>
             <div className="config-heading-actions">
-              <span className="config-count" aria-label="密钥数量">
+              <span className="config-count" aria-label={t('config.keys.count')}>
                 {settings?.apiKeys.length ?? 0}
               </span>
               <button
@@ -245,8 +247,8 @@ export function ConfigPanelPage() {
                 className="icon-button"
                 onClick={openAddDialog}
                 disabled={controlsDisabled}
-                title="新增鉴权密钥"
-                aria-label="新增鉴权密钥"
+                title={t('config.keys.add')}
+                aria-label={t('config.keys.add')}
               >
                 <Plus size={18} aria-hidden="true" />
               </button>
@@ -264,11 +266,11 @@ export function ConfigPanelPage() {
             ) : loadError ? (
               <div className="config-unavailable">
                 <AlertCircle size={24} aria-hidden="true" />
-                <strong>配置不可用</strong>
+                <strong>{t('config.unavailable')}</strong>
                 <span title={loadError}>{loadError}</span>
                 <button type="button" className="secondary-button compact-button" onClick={loadSettings}>
                   <RefreshCw size={16} aria-hidden="true" />
-                  重试
+                  {t('common.retry')}
                 </button>
               </div>
             ) : settings && settings.apiKeys.length > 0 ? (
@@ -278,8 +280,8 @@ export function ConfigPanelPage() {
                     <span className="config-key-index">{String(index + 1).padStart(2, '0')}</span>
                     <div className="config-key-details">
                       <div className="config-key-label-line">
-                        <strong title={entry.remark || '未填写备注'}>
-                          {entry.remark || '未填写备注'}
+                        <strong title={entry.remark || t('config.keys.noRemark')}>
+                          {entry.remark || t('config.keys.noRemark')}
                         </strong>
                       </div>
                       <code title={maskApiKey(entry.apiKey)}>{maskApiKey(entry.apiKey)}</code>
@@ -291,8 +293,8 @@ export function ConfigPanelPage() {
                       className="icon-button quiet"
                       onClick={() => void copyApiKey(entry.apiKey, index)}
                       disabled={controlsDisabled}
-                      title="复制鉴权密钥"
-                      aria-label={`复制第 ${index + 1} 个鉴权密钥`}
+                      title={t('config.keys.copy')}
+                      aria-label={t('config.keys.copyNth', { number: index + 1 })}
                     >
                       {copiedIndex === index ? (
                         <Check size={16} aria-hidden="true" />
@@ -301,8 +303,8 @@ export function ConfigPanelPage() {
                       )}
                     </button>
                     {entry.builtIn ? (
-                      <span className="config-protected-key" title="内置密钥不能删除">
-                        内置
+                      <span className="config-protected-key" title={t('config.keys.builtInProtected')}>
+                        {t('config.keys.builtIn')}
                       </span>
                     ) : (
                       <button
@@ -310,8 +312,8 @@ export function ConfigPanelPage() {
                         className="icon-button danger"
                         onClick={() => setDeleteIndex(index)}
                         disabled={controlsDisabled}
-                        title="删除鉴权密钥"
-                        aria-label={`删除第 ${index + 1} 个鉴权密钥`}
+                        title={t('config.keys.delete')}
+                        aria-label={t('config.keys.deleteNth', { number: index + 1 })}
                       >
                         <Trash2 size={16} aria-hidden="true" />
                       </button>
@@ -322,7 +324,7 @@ export function ConfigPanelPage() {
             ) : (
               <div className="config-empty-list">
                 <KeyRound size={26} aria-hidden="true" />
-                <strong>暂无鉴权密钥</strong>
+                <strong>{t('config.keys.empty')}</strong>
               </div>
             )}
           </div>
@@ -333,24 +335,24 @@ export function ConfigPanelPage() {
             <div className="config-panel-heading">
               <div className="config-heading-title">
                 <Plug size={18} aria-hidden="true" />
-                <h2>插件系统</h2>
+                <h2>{t('config.plugins.title')}</h2>
               </div>
               <span className={`state-pill ${settings?.pluginsEnabled ? 'success' : ''}`}>
                 {loading
-                  ? '读取中'
+                  ? t('common.loading')
                   : settings === null
-                    ? '不可用'
+                    ? t('common.unavailable')
                     : settings.pluginsEnabled
-                      ? '已启用'
-                      : '已停用'}
+                      ? t('common.enabled')
+                      : t('common.disabled')}
               </span>
             </div>
             <div className="config-single-control">
-              <span>启用插件系统</span>
-              <label className="switch-control" title="启用插件系统">
+              <span>{t('config.plugins.enable')}</span>
+              <label className="switch-control" title={t('config.plugins.enable')}>
                 <input
                   type="checkbox"
-                  aria-label="启用插件系统"
+                  aria-label={t('config.plugins.enable')}
                   checked={Boolean(settings?.pluginsEnabled)}
                   disabled={controlsDisabled}
                   onChange={(event) => void togglePlugins(event.currentTarget.checked)}
@@ -364,17 +366,17 @@ export function ConfigPanelPage() {
             <div className="config-panel-heading">
               <div className="config-heading-title">
                 <Route size={18} aria-hidden="true" />
-                <h2>路由策略</h2>
+                <h2>{t('config.routing.title')}</h2>
               </div>
               <span className="state-pill" title={settings?.routingStrategy || undefined}>
                 {loading
-                  ? '读取中'
+                  ? t('common.loading')
                   : settings === null
-                    ? '不可用'
-                    : routingStrategyLabel(settings.routingStrategy)}
+                    ? t('common.unavailable')
+                    : routingStrategyLabel(settings.routingStrategy, t)}
               </span>
             </div>
-            <div className="routing-segmented" role="group" aria-label="路由策略">
+            <div className="routing-segmented" role="group" aria-label={t('config.routing.title')}>
               {ROUTING_OPTIONS.map((option) => (
                 <button
                   type="button"
@@ -385,7 +387,7 @@ export function ConfigPanelPage() {
                   onClick={() => void changeRoutingStrategy(option.value)}
                   title={option.value}
                 >
-                  {option.label}
+                  {t(option.labelKey)}
                 </button>
               ))}
             </div>
@@ -407,22 +409,22 @@ export function ConfigPanelPage() {
             <div className="config-dialog-heading">
               <div>
                 <KeyRound size={19} aria-hidden="true" />
-                <h2 id="add-api-key-title">新增鉴权密钥</h2>
+                <h2 id="add-api-key-title">{t('config.keys.addTitle')}</h2>
               </div>
               <button
                 type="button"
                 className="icon-button quiet"
                 onClick={closeAddDialog}
                 disabled={busyAction === 'add-key'}
-                title="关闭"
-                aria-label="关闭"
+                title={t('common.close')}
+                aria-label={t('common.close')}
               >
                 <X size={18} aria-hidden="true" />
               </button>
             </div>
 
             <label className="config-dialog-field">
-              <span>鉴权密钥</span>
+              <span>{t('config.keys.label')}</span>
               <div className="config-secret-input">
                 <input
                   autoFocus
@@ -441,8 +443,8 @@ export function ConfigPanelPage() {
                   className="icon-button quiet"
                   onClick={() => setShowApiKey((visible) => !visible)}
                   disabled={busyAction === 'add-key'}
-                  title={showApiKey ? '隐藏密钥' : '显示密钥'}
-                  aria-label={showApiKey ? '隐藏密钥' : '显示密钥'}
+                  title={showApiKey ? t('config.keys.hide') : t('config.keys.show')}
+                  aria-label={showApiKey ? t('config.keys.hide') : t('config.keys.show')}
                 >
                   {showApiKey ? (
                     <EyeOff size={17} aria-hidden="true" />
@@ -454,7 +456,7 @@ export function ConfigPanelPage() {
             </label>
 
             <label className="config-dialog-field">
-              <span>备注</span>
+              <span>{t('config.keys.remark')}</span>
               <input
                 className="config-dialog-text-input"
                 type="text"
@@ -465,7 +467,7 @@ export function ConfigPanelPage() {
                   setFormError('');
                 }}
                 disabled={busyAction === 'add-key'}
-                placeholder="例如：开发环境、张三的密钥"
+                placeholder={t('config.keys.remarkPlaceholder')}
               />
             </label>
 
@@ -481,11 +483,11 @@ export function ConfigPanelPage() {
                 disabled={busyAction === 'add-key'}
               >
                 <Sparkles size={16} aria-hidden="true" />
-                生成密钥
+                {t('config.keys.generate')}
               </button>
               <button type="submit" className="primary-button" disabled={busyAction === 'add-key'}>
                 <Plus size={16} aria-hidden="true" />
-                {busyAction === 'add-key' ? '正在新增' : '新增'}
+                {busyAction === 'add-key' ? t('config.keys.adding') : t('common.add')}
               </button>
             </div>
           </form>
@@ -507,7 +509,7 @@ export function ConfigPanelPage() {
             <div className="config-dialog-heading">
               <div>
                 <Trash2 size={19} aria-hidden="true" />
-                <h2 id="delete-api-key-title">删除鉴权密钥</h2>
+                <h2 id="delete-api-key-title">{t('config.keys.deleteTitle')}</h2>
               </div>
             </div>
             <code className="config-delete-key">{maskApiKey(selectedDeleteKey)}</code>
@@ -518,7 +520,7 @@ export function ConfigPanelPage() {
                 onClick={() => setDeleteIndex(null)}
                 disabled={busyAction === 'delete-key'}
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
@@ -527,7 +529,7 @@ export function ConfigPanelPage() {
                 disabled={busyAction === 'delete-key'}
               >
                 <Trash2 size={16} aria-hidden="true" />
-                {busyAction === 'delete-key' ? '正在删除' : '删除'}
+                {busyAction === 'delete-key' ? t('common.deleting') : t('common.delete')}
               </button>
             </div>
           </div>
@@ -557,9 +559,10 @@ function maskApiKey(apiKey: string) {
   return `${value.slice(0, visible)}${'*'.repeat(Math.max(6, 10 - visible * 2))}${value.slice(-visible)}`;
 }
 
-function routingStrategyLabel(strategy?: string) {
+function routingStrategyLabel(strategy: string | undefined, t: ReturnType<typeof useI18n>['t']) {
   if (!strategy) {
-    return '读取中';
+    return t('common.loading');
   }
-  return ROUTING_OPTIONS.find((option) => option.value === strategy)?.label ?? strategy;
+  const option = ROUTING_OPTIONS.find((item) => item.value === strategy);
+  return option ? t(option.labelKey) : strategy;
 }

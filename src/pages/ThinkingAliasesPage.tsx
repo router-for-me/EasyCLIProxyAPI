@@ -17,6 +17,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { getCurrentLocale, translate, useI18n } from '../i18n';
 
 type PresetThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -37,23 +38,25 @@ type ThinkingAliasSource = {
   protocol: string;
 };
 
-const effortOptions: { value: PresetThinkingEffort; label: string; hint: string }[] = [
-  { value: 'low', label: 'Low', hint: '轻量' },
-  { value: 'medium', label: 'Medium', hint: '均衡' },
-  { value: 'high', label: 'High', hint: '深入' },
-  { value: 'xhigh', label: 'XHigh', hint: '超高' },
-  { value: 'max', label: 'Max', hint: '最大' },
-];
+const effortOptions = [
+  { value: 'low', label: 'Low', hintKey: 'aliases.effort.low' },
+  { value: 'medium', label: 'Medium', hintKey: 'aliases.effort.medium' },
+  { value: 'high', label: 'High', hintKey: 'aliases.effort.high' },
+  { value: 'xhigh', label: 'XHigh', hintKey: 'aliases.effort.xhigh' },
+  { value: 'max', label: 'Max', hintKey: 'aliases.effort.max' },
+] as const satisfies ReadonlyArray<{ value: PresetThinkingEffort; label: string; hintKey: string }>;
 
 export const thinkingAliasSourceKindLabel = (kind: string) => {
   if (kind === 'codex-oauth') return 'Codex OAuth';
   if (kind === 'codex-api') return 'Codex API';
-  if (kind === 'openai-compatible') return 'OpenAI 兼容';
-  return '其他来源';
+  if (kind === 'openai-compatible') return translate(getCurrentLocale(), 'aliases.source.openAiCompatible');
+  return translate(getCurrentLocale(), 'aliases.source.other');
 };
 
 const thinkingAliasProviderDetail = (kind: string, provider: string) => (
-  provider === thinkingAliasSourceKindLabel(kind) ? '内核当前可用模型' : provider
+  provider === thinkingAliasSourceKindLabel(kind)
+    ? translate(getCurrentLocale(), 'aliases.source.available')
+    : provider
 );
 
 const thinkingAliasSourceDetail = (source: ThinkingAliasSource) => (
@@ -61,6 +64,7 @@ const thinkingAliasSourceDetail = (source: ThinkingAliasSource) => (
 );
 
 export function ThinkingAliasesPage() {
+  const { t } = useI18n();
   const [entries, setEntries] = useState<ThinkingAliasEntry[]>([]);
   const [sources, setSources] = useState<ThinkingAliasSource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState('');
@@ -187,16 +191,16 @@ export function ThinkingAliasesPage() {
 
   const createAlias = async () => {
     if (!selectedSource) {
-      setError('请先选择原模型');
+      setError(t('aliases.error.selectModel'));
       return;
     }
     const normalizedAlias = alias.trim();
     if (!normalizedAlias) {
-      setError('别名模型不能为空');
+      setError(t('aliases.error.emptyAlias'));
       return;
     }
     if (!normalizedEffort) {
-      setError('思考强度不能为空');
+      setError(t('aliases.error.emptyEffort'));
       return;
     }
     setBusyAlias(normalizedAlias);
@@ -210,7 +214,7 @@ export function ThinkingAliasesPage() {
         effort: normalizedEffort,
       });
       setEntries(nextEntries);
-      setNotice(`已创建 ${normalizedAlias}，思考强度固定为 ${normalizedEffort}`);
+      setNotice(t('aliases.created', { alias: normalizedAlias, effort: normalizedEffort }));
       setAlias('');
     } catch (requestError) {
       setError(String(requestError));
@@ -222,7 +226,7 @@ export function ThinkingAliasesPage() {
 
   const deleteAlias = async (entry: ThinkingAliasEntry) => {
     if (!window.confirm(
-      `确定删除别名模型「${entry.alias}」吗？\n将同时移除对应的思考强度覆盖规则。`,
+      t('aliases.deleteConfirm', { alias: entry.alias }),
     )) return;
     setBusyAlias(entry.alias);
     setBusyAction('delete');
@@ -233,7 +237,7 @@ export function ThinkingAliasesPage() {
         alias: entry.alias,
       });
       setEntries(nextEntries);
-      setNotice(`已删除 ${entry.alias}`);
+      setNotice(t('aliases.deleted', { alias: entry.alias }));
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -247,7 +251,7 @@ export function ThinkingAliasesPage() {
       <header className="management-header">
         <div>
           <span>Model Alias</span>
-          <h1>思考别名</h1>
+          <h1>{t('aliases.title')}</h1>
         </div>
       </header>
 
@@ -259,16 +263,16 @@ export function ThinkingAliasesPage() {
       <div className="thinking-alias-guide">
         <BrainCircuit size={20} />
         <div className="thinking-alias-guide-copy">
-          <strong>为原模型新增一个固定思考强度的自定义别名</strong>
-          <p>别名名称由你填写，客户端调用它时 CPA 才会注入所选思考强度；直接调用原模型时，原有名称、配置和行为全部保持不变。</p>
-          <span>原模型不受影响</span>
+          <strong>{t('aliases.intro.title')}</strong>
+          <p>{t('aliases.intro.description')}</p>
+          <span>{t('aliases.intro.badge')}</span>
         </div>
-        <div className="thinking-alias-flow" aria-label="思考别名工作流程">
-          <span><small>原模型</small><code>deepseek-v4-pro</code></span>
+        <div className="thinking-alias-flow" aria-label={t('aliases.flow.aria')}>
+          <span><small>{t('aliases.flow.original')}</small><code>deepseek-v4-pro</code></span>
           <ArrowRight size={14} />
           <div>
-            <span><small>直接调用</small><code>deepseek-v4-pro · 保持不变</code></span>
-            <span><small>别名调用</small><code>deepseek-v4-pro-max · 固定max强度</code></span>
+            <span><small>{t('aliases.flow.direct')}</small><code>{t('aliases.flow.directValue')}</code></span>
+            <span><small>{t('aliases.flow.alias')}</small><code>{t('aliases.flow.aliasValue')}</code></span>
           </div>
         </div>
       </div>
@@ -278,13 +282,13 @@ export function ThinkingAliasesPage() {
           <div className="thinking-alias-panel-heading">
             <span><GitFork size={18} /></span>
             <div>
-              <h2>创建思考别名</h2>
-              <p>支持 Codex OAuth、Codex API 和 OpenAI 兼容接入</p>
+              <h2>{t('aliases.create.title')}</h2>
+              <p>{t('aliases.create.description')}</p>
             </div>
           </div>
 
           <div className="thinking-alias-field thinking-model-field">
-            <label htmlFor="thinking-model-search">原模型</label>
+            <label htmlFor="thinking-model-search">{t('aliases.originalModel')}</label>
             <div className="thinking-model-picker" ref={modelPickerRef}>
               <div className="thinking-model-search">
                 {loading ? <LoaderCircle size={15} className="spin" /> : <Search size={15} />}
@@ -308,7 +312,7 @@ export function ThinkingAliasesPage() {
                     setModelPickerOpen(true);
                   }}
                   onKeyDown={handleModelSearchKeyDown}
-                  placeholder={loading ? '正在读取模型' : '搜索并选择原模型'}
+                  placeholder={loading ? t('aliases.loadingModels') : t('aliases.searchModel')}
                   autoComplete="off"
                   spellCheck={false}
                   disabled={loading}
@@ -324,11 +328,11 @@ export function ThinkingAliasesPage() {
                   className="thinking-model-list"
                   id="thinking-model-options"
                   role="listbox"
-                  aria-label="可用原模型"
+                  aria-label={t('aliases.availableModels')}
                 >
                   {filteredSources.length === 0 ? (
                     <div className="thinking-model-empty">
-                      {sources.length ? '没有匹配的模型或来源' : '当前没有可选模型'}
+                      {sources.length ? t('aliases.noMatch') : t('aliases.noModels')}
                     </div>
                   ) : filteredSources.map((source, index) => {
                     const selected = source.id === selectedSourceId;
@@ -369,18 +373,18 @@ export function ThinkingAliasesPage() {
               <div className="thinking-model-selection">
                 <span>{thinkingAliasSourceKindLabel(selectedSource.kind)}</span>
                 <strong title={thinkingAliasSourceDetail(selectedSource)}>
-                  来源：{thinkingAliasSourceDetail(selectedSource)}
+                  {t('aliases.sourceLabel', { source: thinkingAliasSourceDetail(selectedSource) })}
                 </strong>
               </div>
             ) : (
-              <small className="thinking-model-hint">同名模型会按 Codex OAuth、Codex API 和 OpenAI 兼容来源分别列出</small>
+              <small className="thinking-model-hint">{t('aliases.sourceHint')}</small>
             )}
           </div>
 
           <div className="thinking-alias-field">
             <div className="thinking-field-heading">
-              <strong>思考强度</strong>
-              <span>选择常用等级，或输入上游支持的自定义值</span>
+              <strong>{t('aliases.effort.title')}</strong>
+              <span>{t('aliases.effort.description')}</span>
             </div>
             <div className="thinking-effort-options">
               {effortOptions.map((option) => (
@@ -393,7 +397,7 @@ export function ThinkingAliasesPage() {
                     setCustomEffortOpen(false);
                   }}
                   disabled={Boolean(busyAlias)}
-                  title={option.hint}
+                  title={t(option.hintKey)}
                 >
                   {option.label}
                 </button>
@@ -407,10 +411,10 @@ export function ThinkingAliasesPage() {
                 }}
                 disabled={Boolean(busyAlias)}
                 title={customEffortSelected
-                  ? `自定义等级：${normalizedEffort}`
-                  : '输入模型提供商支持的其他思考等级'}
+                  ? t('aliases.customLevel', { effort: normalizedEffort })
+                  : t('aliases.customLevelHint')}
               >
-                {customEffortSelected ? normalizedEffort : '自定义'}
+                {customEffortSelected ? normalizedEffort : t('aliases.custom')}
               </button>
             </div>
             {customEffortOpen ? <div className="thinking-effort-custom">
@@ -418,7 +422,7 @@ export function ThinkingAliasesPage() {
                 id="thinking-effort-custom"
                 value={customEffortSelected ? effort : ''}
                 onChange={(event) => chooseEffort(event.currentTarget.value)}
-                placeholder="例如 minimal、auto、ultra 或厂商等级"
+                placeholder={t('aliases.customPlaceholder')}
                 maxLength={64}
                 spellCheck={false}
                 autoFocus
@@ -428,19 +432,19 @@ export function ThinkingAliasesPage() {
                 type="button"
                 className="icon-button quiet"
                 onClick={() => setCustomEffortOpen(false)}
-                title="收起自定义输入"
-                aria-label="收起自定义输入"
+                title={t('aliases.collapseCustom')}
+                aria-label={t('aliases.collapseCustom')}
               >
                 <X size={14} />
               </button>
-              <small>仅填写目标模型实际支持的等级名称</small>
+              <small>{t('aliases.customHelp')}</small>
             </div> : null}
           </div>
 
           <div className="thinking-alias-field">
             <div className="thinking-field-heading">
-              <strong>别名模型名称</strong>
-              <span>由你填写，仅新增入口，不会改名原模型</span>
+              <strong>{t('aliases.aliasName.title')}</strong>
+              <span>{t('aliases.aliasName.description')}</span>
             </div>
             <input
               id="thinking-alias-name"
@@ -448,8 +452,8 @@ export function ThinkingAliasesPage() {
               value={alias}
               onChange={(event) => setAlias(event.currentTarget.value)}
               placeholder={selectedSource
-                ? `例如 ${selectedSource.model}-${normalizedEffort || 'high'}`
-                : '先选择原模型，再填写客户端使用的别名'}
+                ? t('aliases.aliasName.example', { model: selectedSource.model, effort: normalizedEffort || 'high' })
+                : t('aliases.aliasName.selectFirst')}
               disabled={Boolean(busyAlias)}
             />
           </div>
@@ -457,8 +461,8 @@ export function ThinkingAliasesPage() {
           <div className="thinking-alias-preview">
             <BrainCircuit size={18} />
             <div>
-              <span>{selectedSource?.model || '未选择模型'} <ArrowRight size={13} /> {alias || '请输入别名模型名称'}</span>
-              <code>{selectedSource?.protocol === 'openai' ? 'reasoning_effort' : 'reasoning.effort'} = {normalizedEffort || '未填写'}</code>
+              <span>{selectedSource?.model || t('aliases.notSelected')} <ArrowRight size={13} /> {alias || t('aliases.enterAlias')}</span>
+              <code>{selectedSource?.protocol === 'openai' ? 'reasoning_effort' : 'reasoning.effort'} = {normalizedEffort || t('aliases.notSet')}</code>
             </div>
           </div>
 
@@ -469,27 +473,27 @@ export function ThinkingAliasesPage() {
             disabled={loading || Boolean(busyAlias) || !selectedSource || !effort.trim() || !alias.trim()}
           >
             {busyAction === 'create' ? <LoaderCircle size={16} className="spin" /> : <GitFork size={16} />}
-            {busyAction === 'create' ? '创建中' : '创建别名'}
+            {busyAction === 'create' ? t('aliases.creating') : t('aliases.create')}
           </button>
         </section>
 
         <section className="panel thinking-alias-list-panel">
           <div className="thinking-alias-list-heading">
             <div>
-              <h2>已创建别名</h2>
-              <span>每个别名都保留原模型、来源和固定思考强度</span>
+              <h2>{t('aliases.createdList.title')}</h2>
+              <span>{t('aliases.createdList.description')}</span>
             </div>
             <strong>{entries.length}</strong>
           </div>
 
           <div className="thinking-alias-list">
             {loading ? (
-              <div className="management-loading"><LoaderCircle size={20} className="spin" />读取配置中</div>
+              <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('aliases.loadingConfig')}</div>
             ) : entries.length === 0 ? (
               <div className="management-empty">
                 <GitFork size={25} />
-                <strong>尚未创建思考别名</strong>
-                <span>从左侧选择模型和强度即可创建</span>
+                <strong>{t('aliases.empty.title')}</strong>
+                <span>{t('aliases.empty.description')}</span>
               </div>
             ) : entries.map((entry) => (
               <article className="thinking-alias-row" key={`${entry.kind}:${entry.provider}:${entry.alias}`}>
@@ -507,14 +511,14 @@ export function ThinkingAliasesPage() {
                   <strong title={entry.alias}>{entry.alias}</strong>
                 </div>
                 <span className={`thinking-effort-badge ${entry.effort ? '' : 'missing'}`}>
-                  {entry.effort ?? '未绑定强度'}
+                  {entry.effort ?? t('aliases.unboundEffort')}
                 </span>
                 <button
                   type="button"
                   className="icon-button danger"
                   onClick={() => void deleteAlias(entry)}
                   disabled={Boolean(busyAlias)}
-                  title={`删除 ${entry.alias}`}
+                  title={t('aliases.delete', { alias: entry.alias })}
                 >
                   {busyAction === 'delete' && busyAlias === entry.alias
                     ? <LoaderCircle size={15} className="spin" />
