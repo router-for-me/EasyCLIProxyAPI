@@ -1,9 +1,10 @@
 import { readBoolean, readString } from './managementApi';
+import { getCurrentLocale, translate } from '../i18n';
 
 export type AuthFileRecord = Record<string, unknown>;
 
 export const authFileName = (file: AuthFileRecord) =>
-  readString(file, 'name') || '未命名认证文件';
+  readString(file, 'name') || translate(getCurrentLocale(), 'authFiles.unnamed');
 
 export const isRuntimeOnlyAuthFile = (file: AuthFileRecord) =>
   readBoolean(file, 'runtime_only', 'runtimeOnly');

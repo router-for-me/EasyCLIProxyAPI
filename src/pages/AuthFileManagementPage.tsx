@@ -53,6 +53,7 @@ import {
   openOAuthModelNames,
   type OAuthModelDefinition,
 } from '../services/oauthModels';
+import { getCurrentLocale, translate, useI18n } from '../i18n';
 
 type AuthFile = Record<string, unknown>;
 
@@ -71,7 +72,7 @@ const providerName = (file: AuthFile) => {
   if (value === 'anthropic') return 'Claude';
   if (value === 'anti-gravity') return 'Antigravity';
   if (value === 'xai') return 'xAI';
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : '未知提供商';
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : translate(getCurrentLocale(), 'authFiles.unknownProvider');
 };
 
 const providerKey = (file: AuthFile) => {
@@ -84,24 +85,25 @@ const fileName = authFileName;
 const isRuntimeOnly = isRuntimeOnlyAuthFile;
 
 const statusText = (file: AuthFile) => {
-  if (readBoolean(file, 'disabled')) return '已停用';
-  if (readBoolean(file, 'unavailable')) return '不可用';
-  return readString(file, 'status') || '就绪';
+  if (readBoolean(file, 'disabled')) return translate(getCurrentLocale(), 'authFiles.status.disabled');
+  if (readBoolean(file, 'unavailable')) return translate(getCurrentLocale(), 'authFiles.status.unavailable');
+  return readString(file, 'status') || translate(getCurrentLocale(), 'authFiles.status.ready');
 };
 
 function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
+  const { locale, t } = useI18n();
   if (quota.status === 'loading') {
     return (
       <div className="auth-file-quota loading">
         <LoaderCircle size={13} className="spin" />
-        <span>额度查询中</span>
+        <span>{t('authFiles.quota.loading')}</span>
       </div>
     );
   }
   if (quota.status === 'error') {
     return (
       <div className="auth-file-quota error" title={quota.error}>
-        <span>额度获取失败</span>
+        <span>{t('authFiles.quota.failed')}</span>
         {quota.error ? <small>{quota.error}</small> : null}
       </div>
     );
@@ -109,7 +111,7 @@ function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
   if (quota.status !== 'success') return null;
 
   return (
-    <div className="auth-file-quota" aria-label="额度信息">
+    <div className="auth-file-quota" aria-label={t('authFiles.quota.aria')}>
       {quota.plan ? <span className="auth-file-quota-plan">{quota.plan}</span> : null}
       {quota.rows.length > 0 ? quota.rows.map((row, index) => {
         const detail = [row.detail, row.reset].filter(Boolean).join(' · ');
@@ -120,18 +122,19 @@ function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
             {row.reset ? <small>{row.reset}</small> : null}
           </span>
         );
-      }) : <span className="auth-file-quota-empty">暂无额度数据</span>}
+      }) : <span className="auth-file-quota-empty">{t('authFiles.quota.empty')}</span>}
       {quota.resetCredits !== undefined ? (
-        <span className="auth-file-quota-credit">主动重置 {quota.resetCredits} 次</span>
+        <span className="auth-file-quota-credit">{t('authFiles.quota.resets', { count: quota.resetCredits })}</span>
       ) : null}
       {quota.resetCreditsEarliestExpiry ? (
-        <span className="auth-file-quota-credit">最早过期 {formatQuotaTimestamp(quota.resetCreditsEarliestExpiry)}</span>
+        <span className="auth-file-quota-credit">{t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) })}</span>
       ) : null}
     </div>
   );
 }
 
 export function AuthFileManagementPage() {
+  const { t } = useI18n();
   const [files, setFiles] = useState<AuthFile[]>([]);
   const [filter, setFilter] = useState('');
   const [providerFilter, setProviderFilter] = useState('all');
@@ -218,7 +221,7 @@ export function AuthFileManagementPage() {
       setOauthModels(models);
       setOauthExcludedRules(excludedRules);
       setOpenOauthModelNames(openOAuthModelNames(models, excludedRules));
-      if (models.length === 0) setOauthModelError('该提供商没有可配置的模型定义');
+      if (models.length === 0) setOauthModelError(t('authFiles.models.noneForProvider'));
     } catch (requestError) {
       if (oauthModelRequestRef.current === requestId) setOauthModelError(String(requestError));
     } finally {
@@ -242,7 +245,7 @@ export function AuthFileManagementPage() {
           models: excludedModels,
         });
       }
-      setNotice(`${oauthModelProviderLabel} 开放模型已更新`);
+      setNotice(t('authFiles.models.updated', { provider: oauthModelProviderLabel }));
       closeOauthModels();
     } catch (requestError) {
       setOauthModelError(String(requestError));
@@ -331,8 +334,8 @@ export function AuthFileManagementPage() {
     }
     try {
       await loadFiles();
-      if (uploaded > 0) setNotice(`已上传 ${uploaded} 个认证文件`);
-      if (failures.length > 0) setError(`${failures.length} 个文件上传失败：${failures.join('；')}`);
+      if (uploaded > 0) setNotice(t('authFiles.uploaded', { count: uploaded }));
+      if (failures.length > 0) setError(t('authFiles.uploadFailed', { count: failures.length, errors: failures.join('; ') }));
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -349,7 +352,7 @@ export function AuthFileManagementPage() {
         name,
         disabled: !readBoolean(file, 'disabled'),
       });
-      setNotice(readBoolean(file, 'disabled') ? '认证文件已启用' : '认证文件已停用');
+      setNotice(readBoolean(file, 'disabled') ? t('authFiles.notice.enabled') : t('authFiles.notice.disabled'));
       await loadFiles();
     } catch (requestError) {
       setError(String(requestError));
@@ -361,15 +364,15 @@ export function AuthFileManagementPage() {
   const deleteFile = async (file: AuthFile) => {
     const name = fileName(file);
     if (isRuntimeOnly(file)) {
-      setError('运行时认证文件不能从磁盘删除');
+      setError(t('authFiles.runtimeDeleteError'));
       return;
     }
-    if (!window.confirm(`确定删除「${name}」吗？`)) return;
+    if (!window.confirm(t('authFiles.deleteConfirm', { name }))) return;
     setBusy(true);
     setError('');
     try {
       await managementApi.delete('/auth-files', { query: { name } });
-      setNotice('认证文件已删除');
+      setNotice(t('authFiles.deleted'));
       await loadFiles();
     } catch (requestError) {
       setError(String(requestError));
@@ -379,12 +382,12 @@ export function AuthFileManagementPage() {
   };
 
   const deleteAll = async () => {
-    if (!window.confirm('确定删除所有磁盘认证文件吗？运行时认证不会被删除。')) return;
+    if (!window.confirm(t('authFiles.deleteAllConfirm'))) return;
     setBusy(true);
     setError('');
     try {
       await managementApi.delete('/auth-files', { query: { all: true } });
-      setNotice('磁盘认证文件已全部删除');
+      setNotice(t('authFiles.deletedAll'));
       await loadFiles();
     } catch (requestError) {
       setError(String(requestError));
@@ -396,7 +399,7 @@ export function AuthFileManagementPage() {
   const downloadFile = async (file: AuthFile) => {
     const name = fileName(file);
     if (isRuntimeOnly(file)) {
-      setError('运行时认证文件没有可下载的磁盘文件');
+      setError(t('authFiles.runtimeDownloadError'));
       return;
     }
     setBusy(true);
@@ -409,7 +412,7 @@ export function AuthFileManagementPage() {
       anchor.download = name;
       anchor.click();
       URL.revokeObjectURL(url);
-      setNotice('认证文件已下载');
+      setNotice(t('authFiles.downloaded'));
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -423,7 +426,7 @@ export function AuthFileManagementPage() {
       setCopied(name);
       window.setTimeout(() => setCopied((current) => (current === name ? '' : current)), 1500);
     } catch {
-      setError('复制失败');
+      setError(t('common.copyFailed'));
     }
   };
 
@@ -436,18 +439,18 @@ export function AuthFileManagementPage() {
       <header className="management-header">
         <div>
           <span>Auth Files</span>
-          <h1>认证文件</h1>
+          <h1>{t('authFiles.title')}</h1>
         </div>
         <div className="management-heading-actions">
-          <span className="muted-summary">{files.length} 个文件 · {disabledCount} 个停用</span>
+          <span className="muted-summary">{t('authFiles.summary', { files: files.length, disabled: disabledCount })}</span>
           <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || busy}>
-            <RefreshCw size={16} />刷新
+            <RefreshCw size={16} />{t('common.refresh')}
           </button>
           <button type="button" className="secondary-button compact-button" onClick={deleteAll} disabled={loading || busy || diskCount === 0}>
-            <Trash2 size={16} />清空磁盘文件
+            <Trash2 size={16} />{t('authFiles.clearDisk')}
           </button>
           <button type="button" className="primary-button compact-button" onClick={() => fileInputRef.current?.click()} disabled={busy}>
-            <Upload size={16} />上传
+            <Upload size={16} />{t('common.upload')}
           </button>
           <input ref={fileInputRef} type="file" accept=".json,application/json" multiple hidden onChange={(event) => void handleUpload(event)} />
         </div>
@@ -459,23 +462,23 @@ export function AuthFileManagementPage() {
       <section className="panel auth-files-panel real-auth-files-panel">
         <div className="management-toolbar auth-files-toolbar">
           <Search size={16} />
-          <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder="搜索文件名、账号或提供商" />
+          <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder={t('authFiles.searchPlaceholder')} />
           <select value={providerFilter} onChange={(event) => setProviderFilter(event.currentTarget.value)}>
-            <option value="all">全部提供商</option>
+            <option value="all">{t('authFiles.filter.allProviders')}</option>
             {providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
           </select>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value as typeof statusFilter)}>
-            <option value="all">全部状态</option>
-            <option value="enabled">已启用</option>
-            <option value="disabled">已停用</option>
-            <option value="runtime">仅运行时</option>
+            <option value="all">{t('authFiles.filter.allStatuses')}</option>
+            <option value="enabled">{t('authFiles.filter.enabled')}</option>
+            <option value="disabled">{t('authFiles.filter.disabled')}</option>
+            <option value="runtime">{t('authFiles.filter.runtime')}</option>
           </select>
         </div>
 
         {loading ? (
-          <div className="management-loading"><LoaderCircle size={20} className="spin" />读取认证文件中</div>
+          <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('authFiles.loading')}</div>
         ) : visibleFiles.length === 0 ? (
-          <div className="management-empty"><FileDown size={24} /><strong>{files.length ? '没有匹配的认证文件' : '暂无认证文件'}</strong><span>{files.length ? '换个筛选条件试试' : '上传 JSON 认证文件后会显示在这里'}</span></div>
+          <div className="management-empty"><FileDown size={24} /><strong>{files.length ? t('authFiles.empty.filtered') : t('authFiles.empty.none')}</strong><span>{files.length ? t('authFiles.empty.tryFilter') : t('authFiles.empty.upload')}</span></div>
         ) : (
           <div className="real-auth-file-list">
             {visibleFiles.map((file) => {
@@ -490,17 +493,17 @@ export function AuthFileManagementPage() {
                     <span>{providerName(file)}{readString(file, 'email', 'account', 'label') ? ` · ${readString(file, 'email', 'account', 'label')}` : ''}</span>
                   </div>
                   <div className="auth-file-meta">
-                    <span>{readNumber(file, 'size') === null ? '大小未知' : `${Math.ceil((readNumber(file, 'size') ?? 0) / 1024)} KB`}</span>
+                    <span>{readNumber(file, 'size') === null ? t('authFiles.unknownSize') : `${Math.ceil((readNumber(file, 'size') ?? 0) / 1024)} KB`}</span>
                     <span>{formatDate(file.modtime ?? file.updated_at ?? file.last_refresh)}</span>
-                    {isRuntimeOnly(file) ? <span className="state-pill">运行时</span> : null}
+                    {isRuntimeOnly(file) ? <span className="state-pill">{t('authFiles.runtime')}</span> : null}
                   </div>
                   <div className="auth-file-actions">
-                    {quotaProviderForFile(file) ? <button type="button" className="secondary-button compact-button" onClick={() => void refreshQuota(file)} disabled={busy || disabled || quotas[quotaKey(file)]?.status === 'loading'}>{disabled ? '已停用' : quotas[quotaKey(file)]?.status === 'loading' ? '查询中' : quotas[quotaKey(file)]?.status === 'success' ? '刷新额度' : '获取额度'}</button> : null}
-                    {providerKey(file) ? <button type="button" className="secondary-button compact-button" onClick={() => void openOauthModels(file)} disabled={busy} title="设置开放模型">模型</button> : null}
-                    <button type="button" className="icon-button quiet" onClick={() => void copyName(name)} disabled={busy} title="复制文件名">{copied === name ? <Check size={16} /> : <Copy size={16} />}</button>
-                    <button type="button" className="icon-button quiet" onClick={() => void downloadFile(file)} disabled={busy || isRuntimeOnly(file)} title="下载"><Download size={16} /></button>
-                    <button type="button" className="secondary-button compact-button" onClick={() => void toggleStatus(file)} disabled={busy}>{disabled ? '启用' : '停用'}</button>
-                    <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title="删除"><Trash2 size={16} /></button>
+                    {quotaProviderForFile(file) ? <button type="button" className="secondary-button compact-button" onClick={() => void refreshQuota(file)} disabled={busy || disabled || quotas[quotaKey(file)]?.status === 'loading'}>{disabled ? t('authFiles.status.disabled') : quotas[quotaKey(file)]?.status === 'loading' ? t('authFiles.quota.querying') : quotas[quotaKey(file)]?.status === 'success' ? t('authFiles.quota.refresh') : t('authFiles.quota.fetch')}</button> : null}
+                    {providerKey(file) ? <button type="button" className="secondary-button compact-button" onClick={() => void openOauthModels(file)} disabled={busy} title={t('authFiles.models.settings')}>{t('authFiles.models.button')}</button> : null}
+                    <button type="button" className="icon-button quiet" onClick={() => void copyName(name)} disabled={busy} title={t('authFiles.copyName')}>{copied === name ? <Check size={16} /> : <Copy size={16} />}</button>
+                    <button type="button" className="icon-button quiet" onClick={() => void downloadFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.download')}><Download size={16} /></button>
+                    <button type="button" className="secondary-button compact-button" onClick={() => void toggleStatus(file)} disabled={busy}>{disabled ? t('common.enable') : t('common.disable')}</button>
+                    <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.delete')}><Trash2 size={16} /></button>
                   </div>
                   {quotaProviderForFile(file) && quotas[quotaKey(file)]?.status !== 'idle' ? <AuthFileQuotaSummary quota={quotas[quotaKey(file)] ?? idleQuota()} /> : null}
                 </article>
@@ -509,37 +512,37 @@ export function AuthFileManagementPage() {
           </div>
         )}
       </section>
-      {runtimeCount > 0 ? <p className="page-footnote">{runtimeCount} 个凭据来自运行时存储，只能在对应提供商或认证源中管理。</p> : null}
+      {runtimeCount > 0 ? <p className="page-footnote">{t('authFiles.runtimeFootnote', { count: runtimeCount })}</p> : null}
 
       {oauthModelProvider ? (
         <div className="model-discovery-backdrop" onMouseDown={(event) => event.currentTarget === event.target && !oauthModelSaving && closeOauthModels()}>
           <section className="model-discovery-dialog" role="dialog" aria-modal="true" aria-labelledby="oauth-model-title">
             <div className="model-discovery-header">
-              <div><h2 id="oauth-model-title">开放模型</h2><span>{oauthModelProviderLabel} · 默认全部开放，可取消不需要的模型</span></div>
-              <button type="button" className="icon-button quiet" onClick={closeOauthModels} disabled={oauthModelSaving} title="关闭"><X size={18} /></button>
+              <div><h2 id="oauth-model-title">{t('authFiles.models.title')}</h2><span>{t('authFiles.models.description', { provider: oauthModelProviderLabel })}</span></div>
+              <button type="button" className="icon-button quiet" onClick={closeOauthModels} disabled={oauthModelSaving} title={t('common.close')}><X size={18} /></button>
             </div>
 
             <div className="model-discovery-search">
               <Search size={16} aria-hidden="true" />
-              <input value={oauthModelSearch} onChange={(event) => setOauthModelSearch(event.currentTarget.value)} placeholder="搜索模型名称" />
+              <input value={oauthModelSearch} onChange={(event) => setOauthModelSearch(event.currentTarget.value)} placeholder={t('authFiles.models.search')} />
             </div>
 
             <div className="model-discovery-toolbar">
-              <span>共 {oauthModels.length} 个 · 已开放 {openOauthModelNames.size} 个</span>
+              <span>{t('authFiles.models.summary', { total: oauthModels.length, open: openOauthModelNames.size })}</span>
               <div>
-                <button type="button" className="secondary-button compact-button" onClick={toggleAllVisibleOauthModels} disabled={oauthModelLoading || visibleOauthModels.length === 0}>{allVisibleOauthModelsOpen ? '关闭当前' : '开放当前'}</button>
-                <button type="button" className="secondary-button compact-button" onClick={() => setOpenOauthModelNames(new Set(oauthModels.map((model) => model.id.toLowerCase())))} disabled={oauthModelLoading || oauthModels.length === 0 || openOauthModelNames.size === oauthModels.length}>全部开放</button>
-                <button type="button" className="secondary-button compact-button" onClick={() => setOpenOauthModelNames(new Set())} disabled={oauthModelLoading || openOauthModelNames.size === 0}>全部关闭</button>
+                <button type="button" className="secondary-button compact-button" onClick={toggleAllVisibleOauthModels} disabled={oauthModelLoading || visibleOauthModels.length === 0}>{allVisibleOauthModelsOpen ? t('authFiles.models.closeVisible') : t('authFiles.models.openVisible')}</button>
+                <button type="button" className="secondary-button compact-button" onClick={() => setOpenOauthModelNames(new Set(oauthModels.map((model) => model.id.toLowerCase())))} disabled={oauthModelLoading || oauthModels.length === 0 || openOauthModelNames.size === oauthModels.length}>{t('authFiles.models.openAll')}</button>
+                <button type="button" className="secondary-button compact-button" onClick={() => setOpenOauthModelNames(new Set())} disabled={oauthModelLoading || openOauthModelNames.size === 0}>{t('authFiles.models.closeAll')}</button>
               </div>
             </div>
 
             <div className="model-discovery-content">
               {oauthModelLoading ? (
-                <div className="model-discovery-message"><LoaderCircle size={20} className="spin" />正在读取模型定义</div>
+                <div className="model-discovery-message"><LoaderCircle size={20} className="spin" />{t('authFiles.models.loading')}</div>
               ) : oauthModelError ? (
-                <div className="model-discovery-message error"><strong>读取模型失败</strong><span>{oauthModelError}</span></div>
+                <div className="model-discovery-message error"><strong>{t('authFiles.models.loadFailed')}</strong><span>{oauthModelError}</span></div>
               ) : visibleOauthModels.length === 0 ? (
-                <div className="model-discovery-message"><strong>{oauthModels.length ? '没有匹配的模型' : '暂无模型定义'}</strong></div>
+                <div className="model-discovery-message"><strong>{oauthModels.length ? t('authFiles.models.noMatch') : t('authFiles.models.empty')}</strong></div>
               ) : (
                 <div className="model-discovery-list">
                   {visibleOauthModels.map((model) => {
@@ -557,8 +560,8 @@ export function AuthFileManagementPage() {
             </div>
 
             <div className="model-discovery-actions">
-              <button type="button" className="secondary-button" onClick={closeOauthModels} disabled={oauthModelSaving}>取消</button>
-              <button type="button" className="primary-button" onClick={() => void saveOauthModels()} disabled={oauthModelLoading || oauthModelSaving || oauthModels.length === 0}>{oauthModelSaving ? '保存中' : `保存（开放 ${openOauthModelNames.size} 个）`}</button>
+              <button type="button" className="secondary-button" onClick={closeOauthModels} disabled={oauthModelSaving}>{t('common.cancel')}</button>
+              <button type="button" className="primary-button" onClick={() => void saveOauthModels()} disabled={oauthModelLoading || oauthModelSaving || oauthModels.length === 0}>{oauthModelSaving ? t('common.saving') : t('authFiles.models.save', { count: openOauthModelNames.size })}</button>
             </div>
           </section>
         </div>

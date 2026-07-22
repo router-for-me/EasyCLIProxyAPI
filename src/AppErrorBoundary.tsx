@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { useI18n } from './i18n';
 
 type Props = { children: ReactNode };
 type State = { error: Error | null };
@@ -16,17 +17,21 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   render() {
     if (!this.state.error) return this.props.children;
-
-    return (
-      <main className="app-error-boundary">
-        <section className="empty-state">
-          <strong>页面渲染出现异常</strong>
-          <span>{this.state.error.message || '未知错误'}</span>
-          <button type="button" className="primary-button" onClick={() => window.location.reload()}>
-            重新加载页面
-          </button>
-        </section>
-      </main>
-    );
+    return <AppErrorFallback error={this.state.error} />;
   }
+}
+
+function AppErrorFallback({ error }: { error: Error }) {
+  const { t } = useI18n();
+  return (
+    <main className="app-error-boundary">
+      <section className="empty-state">
+        <strong>{t('error.render.title')}</strong>
+        <span>{error.message || t('error.unknown')}</span>
+        <button type="button" className="primary-button" onClick={() => window.location.reload()}>
+          {t('error.reload')}
+        </button>
+      </section>
+    </main>
+  );
 }

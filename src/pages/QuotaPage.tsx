@@ -26,6 +26,7 @@ import {
   useQuotaCache,
 } from '../services/quotaCache';
 import { dedupeAuthFiles } from '../services/authFiles';
+import { useI18n } from '../i18n';
 
 const providerMeta: Record<QuotaProvider, { label: string; icon: string }> = {
   claude: { label: 'Claude', icon: claudeIcon },
@@ -39,6 +40,7 @@ const providerOrder: QuotaProvider[] = ['claude', 'antigravity', 'codex', 'xai',
 const REFRESH_CONCURRENCY = 4;
 
 export function QuotaPage() {
+  const { locale, t } = useI18n();
   const [files, setFiles] = useState<AuthFile[]>([]);
   const quotas = useQuotaCache();
   const [loading, setLoading] = useState(true);
@@ -87,13 +89,13 @@ export function QuotaPage() {
 
   const resetCodexQuota = useCallback(async (file: AuthFile, quota: QuotaState) => {
     const confirmed = window.confirm([
-      `确认重置「${fileName(file)}」的 Codex 额度吗？`,
+      t('quota.confirm.title', { name: fileName(file) }),
       '',
-      '本操作将消耗 1 次主动重置机会。',
-      `当前可用：${quota.resetCredits ?? '未记录'} 次`,
-      `最早过期：${formatQuotaTimestamp(quota.resetCreditsEarliestExpiry)}`,
+      t('quota.confirm.cost'),
+      t('quota.confirm.available', { count: quota.resetCredits ?? '—' }),
+      t('quota.confirm.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) }),
       '',
-      '只有点击“确定”后才会执行；点击“取消”不会消耗重置机会。',
+      t('quota.confirm.warning'),
     ].join('\n'));
     if (!confirmed) return;
     const key = quotaKey(file);
@@ -116,7 +118,7 @@ export function QuotaPage() {
         }));
       });
     }
-  }, []);
+  }, [locale, t]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
@@ -156,27 +158,27 @@ export function QuotaPage() {
   return (
     <section className="page management-page quota-page">
       <header className="management-header">
-        <div><span>Quota</span><h1>配额</h1></div>
+        <div><span>Quota</span><h1>{t('quota.title')}</h1></div>
         <div className="management-heading-actions">
-          <span className="muted-summary">{files.length} 个可查询凭据</span>
+          <span className="muted-summary">{t(files.length === 1 ? 'quota.queryableCredentials.one' : 'quota.queryableCredentials.other', { count: files.length })}</span>
           <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || refreshing}>
-            <RefreshCw size={16} />读取列表
+            <RefreshCw size={16} />{t('quota.readList')}
           </button>
           <button type="button" className="secondary-button compact-button" onClick={() => void refreshAll()} disabled={refreshing || loading || files.length === 0}>
-            <RefreshCw size={16} className={refreshing ? 'spin' : ''} />刷新全部
+            <RefreshCw size={16} className={refreshing ? 'spin' : ''} />{t('quota.refreshAll')}
           </button>
         </div>
       </header>
       {error ? <div className="management-alert error">{error}</div> : null}
       {loading ? (
-        <div className="management-loading"><LoaderCircle size={20} className="spin" />读取认证文件中</div>
+        <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('quota.loadingFiles')}</div>
       ) : grouped.length === 0 ? (
-        <div className="management-empty"><AlertCircle size={24} /><strong>暂无可查询配额</strong><span>先在认证文件中添加支持配额查询的凭据。</span></div>
+        <div className="management-empty"><AlertCircle size={24} /><strong>{t('quota.empty.title')}</strong><span>{t('quota.empty.description')}</span></div>
       ) : (
         <div className="quota-group-list">
           {grouped.map(([provider, items]) => (
             <section className="quota-provider-group" key={provider}>
-              <div className="quota-group-heading"><div><img src={providerMeta[provider].icon} alt="" className="provider-logo" /><h2>{providerMeta[provider].label}</h2></div><span>{items.length} 个凭据</span></div>
+              <div className="quota-group-heading"><div><img src={providerMeta[provider].icon} alt="" className="provider-logo" /><h2>{providerMeta[provider].label}</h2></div><span>{t(items.length === 1 ? 'quota.credentials.one' : 'quota.credentials.other', { count: items.length })}</span></div>
               <div className="real-quota-grid">{items.map(({ file, quota }) => <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' ? () => void resetCodexQuota(file, quota) : undefined} />)}</div>
             </section>
           ))}
@@ -187,17 +189,18 @@ export function QuotaPage() {
 }
 
 export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile; quota: QuotaState; onRefresh: () => void; onReset?: () => void }) {
+  const { locale, t } = useI18n();
   const provider = providerForFile(file);
   const name = fileName(file);
   const disabled = readBoolean(file, 'disabled');
   return (
     <article className="panel real-quota-card">
-      <div className="real-quota-card-header"><div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : '未知'}{quota.plan ? ` · ${quota.plan}` : ''}</span></div><div className="quota-card-actions">{onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={disabled || quota.status === 'loading'}>重置额度</button> : null}<button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? '认证文件已停用' : '获取/刷新额度'}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} /></button></div></div>
-      {quota.status === 'idle' ? <div className="quota-card-message"><span>{disabled ? '认证文件已停用' : '尚未获取额度'}</span><button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={disabled}>{disabled ? '已停用' : '获取额度'}</button></div> : null}
-      {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />查询中</div> : null}
+      <div className="real-quota-card-header"><div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}{quota.plan ? ` · ${quota.plan}` : ''}</span></div><div className="quota-card-actions">{onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={disabled || quota.status === 'loading'}>{t('quota.reset')}</button> : null}<button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} /></button></div></div>
+      {quota.status === 'idle' ? <div className="quota-card-message"><span>{disabled ? t('quota.fileDisabled') : t('quota.notFetched')}</span><button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={disabled}>{disabled ? t('quota.disabled') : t('quota.fetch')}</button></div> : null}
+      {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />{t('quota.querying')}</div> : null}
       {quota.status === 'error' ? <div className="quota-card-error"><AlertCircle size={18} />{quota.error}</div> : null}
-      {quota.status === 'success' && provider === 'codex' ? <div className="quota-reset-credit-summary"><span>主动重置次数 <strong>{quota.resetCredits ?? '未记录'}</strong></span><span>最早过期 <strong>{formatQuotaTimestamp(quota.resetCreditsEarliestExpiry)}</strong></span></div> : null}
-      {quota.status === 'success' ? <div className="quota-row-list">{quota.rows.map((row, index) => <div className="real-quota-row" key={`${row.label}-${index}`}><div><span>{row.label}</span><strong>{row.remainingPercent === null ? '—' : `剩余 ${Math.round(row.remainingPercent)}%`}</strong></div><div className="real-quota-track"><span style={{ width: `${Math.max(0, Math.min(100, row.remainingPercent ?? 0))}%` }} /></div><small>{row.detail ?? ''}{row.reset ? `${row.detail ? ' · ' : ''}${row.reset}` : ''}</small></div>)}</div> : null}
+      {quota.status === 'success' && provider === 'codex' ? <div className="quota-reset-credit-summary"><span>{t('quota.resetCredits')} <strong>{quota.resetCredits ?? '—'}</strong></span><span>{t('quota.earliestExpiry')} <strong>{formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale)}</strong></span></div> : null}
+      {quota.status === 'success' ? <div className="quota-row-list">{quota.rows.map((row, index) => <div className="real-quota-row" key={`${row.label}-${index}`}><div><span>{row.label}</span><strong>{row.remainingPercent === null ? '—' : t('quota.remaining', { percent: Math.round(row.remainingPercent) })}</strong></div><div className="real-quota-track"><span style={{ width: `${Math.max(0, Math.min(100, row.remainingPercent ?? 0))}%` }} /></div><small>{row.detail ?? ''}{row.reset ? `${row.detail ? ' · ' : ''}${row.reset}` : ''}</small></div>)}</div> : null}
     </article>
   );
 }

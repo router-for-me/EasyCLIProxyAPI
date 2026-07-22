@@ -3,11 +3,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   Bot,
+  Check,
+  ChevronUp,
   ExternalLink,
   FileKey,
   Gauge,
   GitFork,
   History,
+  Languages,
   LogIn,
   MessageCircle,
   Network,
@@ -25,61 +28,69 @@ import { QuotaPage } from './pages/QuotaPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { ThinkingAliasesPage } from './pages/ThinkingAliasesPage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
+import { useI18n } from './i18n';
 
 const CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
+
+const languageOptions = [
+  { value: 'zh-CN', labelKey: 'app.language.zhCN' },
+  { value: 'zh-TW', labelKey: 'app.language.zhTW' },
+  { value: 'ja', labelKey: 'app.language.ja' },
+  { value: 'en', labelKey: 'app.language.en' },
+] as const;
 
 const pages = [
   {
     id: 'kernel',
-    label: '内核',
+    labelKey: 'app.nav.kernel',
     icon: ServerCog,
     component: KernelPage,
   },
   {
     id: 'config',
-    label: '配置',
+    labelKey: 'app.nav.config',
     icon: Settings,
     component: ConfigPanelPage,
   },
   {
     id: 'thinking-aliases',
-    label: '模型别名',
+    labelKey: 'app.nav.thinkingAliases',
     icon: GitFork,
     component: ThinkingAliasesPage,
   },
   {
     id: 'oauth',
-    label: 'OAuth',
+    labelKey: 'app.nav.oauth',
     icon: LogIn,
     component: OAuthLoginPage,
   },
   {
     id: 'api',
-    label: 'API 接入',
+    labelKey: 'app.nav.api',
     icon: Network,
     component: ApiAccessPage,
   },
   {
     id: 'auth-files',
-    label: '认证文件',
+    labelKey: 'app.nav.authFiles',
     icon: FileKey,
     component: AuthFileManagementPage,
   },
   {
     id: 'quota',
-    label: '配额',
+    labelKey: 'app.nav.quota',
     icon: Gauge,
     component: QuotaPage,
   },
   {
     id: 'usage-records',
-    label: '使用记录',
+    labelKey: 'app.nav.usageRecords',
     icon: History,
     component: UsageRecordsPage,
   },
   {
     id: 'agents',
-    label: '智能体',
+    labelKey: 'app.nav.agents',
     icon: Bot,
     component: AgentsPage,
   },
@@ -102,19 +113,45 @@ function App() {
 }
 
 function AppContent() {
+  const { locale, setLocale, t } = useI18n();
   const [active, setActive] = useState<PageId>('kernel');
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
   const closeDialogRef = useRef<HTMLElement>(null);
+  const languageMenuRef = useRef<HTMLDivElement>(null);
+  const languageButtonRef = useRef<HTMLButtonElement>(null);
   const { status } = useCoreRuntime();
   const coreRunning = Boolean(status?.running);
   const activePage = pages.find((page) => page.id === active) ?? pages[0];
   const ActivePage = activePage.component;
+  const selectedLanguage = languageOptions.find((option) => option.value === locale)
+    ?? languageOptions[0];
 
   useEffect(() => {
     if (!coreRunning && active !== 'kernel') {
       setActive('kernel');
     }
   }, [active, coreRunning]);
+
+  useEffect(() => {
+    if (!languageMenuOpen) return undefined;
+    const closeFromOutside = (event: PointerEvent) => {
+      if (!languageMenuRef.current?.contains(event.target as Node)) {
+        setLanguageMenuOpen(false);
+      }
+    };
+    const closeFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setLanguageMenuOpen(false);
+      languageButtonRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', closeFromOutside);
+    document.addEventListener('keydown', closeFromKeyboard);
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside);
+      document.removeEventListener('keydown', closeFromKeyboard);
+    };
+  }, [languageMenuOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -206,11 +243,11 @@ function AppContent() {
             <img src={appLogo} alt="" className="brand-mark brand-logo" />
             <div>
               <strong>EasyCLIProxyAPI</strong>
-              <span>Desktop Console</span>
+              <span>{t('app.desktopConsole')}</span>
             </div>
           </div>
 
-          <nav className="nav-section" aria-label="主导航">
+          <nav className="nav-section" aria-label={t('app.navigation')}>
             {pages.map((page) => {
               const Icon = page.icon;
               const locked = page.id !== 'kernel' && !coreRunning;
@@ -222,25 +259,73 @@ function AppContent() {
                     .filter(Boolean)
                     .join(' ')}
                   disabled={locked}
-                  title={locked ? '请先启动内核' : undefined}
+                  title={locked ? t('app.coreRequired.title') : undefined}
                   onClick={() => select(page.id)}
                 >
                   <Icon size={17} aria-hidden="true" />
-                  <span>{page.label}</span>
+                  <span>{t(page.labelKey)}</span>
                 </button>
               );
             })}
           </nav>
 
           <div className="sidebar-bottom">
+            <div ref={languageMenuRef} className="sidebar-language">
+              <button
+                ref={languageButtonRef}
+                type="button"
+                className="sidebar-language-trigger"
+                aria-label={t('app.language')}
+                aria-haspopup="listbox"
+                aria-expanded={languageMenuOpen}
+                aria-controls="sidebar-language-list"
+                onClick={() => setLanguageMenuOpen((open) => !open)}
+              >
+                <Languages size={16} aria-hidden="true" />
+                <span>{t(selectedLanguage.labelKey)}</span>
+                <ChevronUp
+                  size={14}
+                  aria-hidden="true"
+                  className={languageMenuOpen ? 'expanded' : ''}
+                />
+              </button>
+              {languageMenuOpen ? (
+                <div
+                  id="sidebar-language-list"
+                  className="sidebar-language-list"
+                  role="listbox"
+                  aria-label={t('app.language')}
+                >
+                  {languageOptions.map((option) => {
+                    const selected = option.value === locale;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={selected ? 'selected' : ''}
+                        role="option"
+                        aria-selected={selected}
+                        onClick={() => {
+                          setLocale(option.value);
+                          setLanguageMenuOpen(false);
+                        }}
+                      >
+                        <span>{t(option.labelKey)}</span>
+                        {selected ? <Check size={14} aria-hidden="true" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
             <button
               type="button"
               className="sidebar-contact"
-              title="通过 QQ 联系我们"
+              title={t('app.contact.title')}
               onClick={() => void openContact()}
             >
               <MessageCircle size={16} aria-hidden="true" />
-              <span>联系我们</span>
+              <span>{t('app.contact.label')}</span>
               <ExternalLink size={13} aria-hidden="true" />
             </button>
           </div>
@@ -274,11 +359,11 @@ function AppContent() {
             }}
           >
             <div className="close-dialog-heading">
-              <span>关闭窗口</span>
-              <h2 id="close-dialog-title">请选择后续操作</h2>
+              <span>{t('app.close.eyebrow')}</span>
+              <h2 id="close-dialog-title">{t('app.close.title')}</h2>
             </div>
             <p id="close-dialog-description">
-              你可以退出程序，或让 EasyCLIProxyAPI 继续在系统托盘中运行。
+              {t('app.close.description')}
             </p>
             {windowsClosePrompt.error ? (
               <div className="close-dialog-error" role="alert">
@@ -294,8 +379,8 @@ function AppContent() {
               >
                 <span>
                   {windowsClosePrompt.resolvingAction === 'minimize-to-tray'
-                    ? '正在最小化...'
-                    : '最小化到托盘'}
+                    ? t('app.close.minimizing')
+                    : t('app.close.minimize')}
                 </span>
               </button>
               <button
@@ -305,7 +390,9 @@ function AppContent() {
                 onClick={() => void resolveWindowsCloseRequest('exit')}
               >
                 <span>
-                  {windowsClosePrompt.resolvingAction === 'exit' ? '正在退出...' : '退出程序'}
+                  {windowsClosePrompt.resolvingAction === 'exit'
+                    ? t('app.close.exiting')
+                    : t('app.close.exit')}
                 </span>
               </button>
             </div>
@@ -317,12 +404,13 @@ function AppContent() {
 }
 
 function CoreLockedPage() {
+  const { t } = useI18n();
   return (
     <section className="page core-locked-page">
       <div className="empty-state core-locked-panel">
         <ServerCog size={26} aria-hidden="true" />
-        <strong>请先启动内核</strong>
-        <span>启动 CPA 内核后，才能使用配置、OAuth、API 接入等功能。</span>
+        <strong>{t('app.coreRequired.title')}</strong>
+        <span>{t('app.coreRequired.description')}</span>
       </div>
     </section>
   );

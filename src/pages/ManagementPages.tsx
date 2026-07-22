@@ -12,6 +12,7 @@ import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
+import { useI18n } from '../i18n';
 
 type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai';
 type OAuthFlowStatus = 'idle' | 'waiting' | 'success' | 'error';
@@ -59,6 +60,7 @@ const OAUTH_SUCCESS_RESET_MS = 5000;
 const OAUTH_POLL_INTERVAL_MS = 3000;
 
 export function OAuthLoginPage() {
+  const { t } = useI18n();
   const [states, setStates] = useState<Partial<Record<OAuthProviderId, OAuthProviderState>>>({});
   const [notice, setNotice] = useState<{
     message: string;
@@ -153,16 +155,19 @@ export function OAuthLoginPage() {
           const status = (result.status || '').toLowerCase();
           if (status === 'ok') {
             completeProviderAuth(provider);
-            showNotice(`${providerLabel(provider)} 登录成功`, 'success');
+            showNotice(t('oauth.loginSuccess', { provider: providerLabel(provider) }), 'success');
           } else if (status === 'error') {
             updateProviderState(provider, {
               status: 'error',
-              error: result.error || '认证失败',
+              error: result.error || t('oauth.authFailed'),
               polling: false,
             });
             clearPollingTimer(provider);
             showNotice(
-              `${providerLabel(provider)} 登录失败${result.error ? `：${result.error}` : ''}`,
+              t('oauth.loginFailed', {
+                provider: providerLabel(provider),
+                detail: result.error ? `: ${result.error}` : '',
+              }),
               'error',
             );
           }
@@ -183,7 +188,7 @@ export function OAuthLoginPage() {
         OAUTH_POLL_INTERVAL_MS,
       );
     },
-    [clearPollingTimer, completeProviderAuth, showNotice, updateProviderState],
+    [clearPollingTimer, completeProviderAuth, showNotice, t, updateProviderState],
   );
 
   useEffect(() => {
@@ -218,10 +223,10 @@ export function OAuthLoginPage() {
           url: result.url,
           state: undefined,
           status: 'error',
-          error: '内核未返回 OAuth state',
+          error: t('oauth.missingState'),
           polling: false,
         });
-        showNotice('内核未返回 OAuth state，无法轮询登录状态', 'error');
+        showNotice(t('oauth.missingStatePolling'), 'error');
         return;
       }
 
@@ -236,8 +241,8 @@ export function OAuthLoginPage() {
       if (!result.opened) {
         showNotice(
           result.openError
-            ? `已获取登录链接，但自动打开浏览器失败：${result.openError}`
-            : '已获取登录链接，但自动打开浏览器失败，请手动打开',
+            ? t('oauth.openFailedDetail', { error: result.openError })
+            : t('oauth.openFailed'),
           'info',
         );
       }
@@ -264,9 +269,9 @@ export function OAuthLoginPage() {
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
-      showNotice('登录链接已复制', 'success');
+      showNotice(t('oauth.linkCopied'), 'success');
     } catch {
-      showNotice('复制登录链接失败', 'error');
+      showNotice(t('oauth.linkCopyFailed'), 'error');
     }
   };
 
@@ -275,7 +280,7 @@ export function OAuthLoginPage() {
     const callbackInput = (current?.callbackUrl || '').trim();
     if (!callbackInput) {
       showNotice(
-        provider === 'xai' ? '请粘贴 xAI 返回的 code 或回调 URL' : '请粘贴回调 URL',
+        provider === 'xai' ? t('oauth.pasteXaiCallback') : t('oauth.pasteCallback'),
         'error',
       );
       return;
@@ -285,8 +290,8 @@ export function OAuthLoginPage() {
     if (!redirectUrl) {
       showNotice(
         provider === 'xai'
-          ? '无法从输入内容构造 xAI 回调，请检查 code 与 state'
-          : '回调内容无效',
+          ? t('oauth.invalidXaiCallback')
+          : t('oauth.invalidCallback'),
         'error',
       );
       return;
@@ -303,7 +308,7 @@ export function OAuthLoginPage() {
         callbackSubmitting: false,
         callbackStatus: 'success',
       });
-      showNotice('回调已提交，正在等待认证完成', 'success');
+      showNotice(t('oauth.callbackSubmittedNotice'), 'success');
     } catch (error) {
       updateProviderState(provider, {
         callbackSubmitting: false,
@@ -317,7 +322,7 @@ export function OAuthLoginPage() {
   return (
     <section className="page management-page">
       <header className="management-header">
-        <div><span>OAuth</span><h1>OAuth 登录</h1></div>
+        <div><span>OAuth</span><h1>{t('oauth.title')}</h1></div>
       </header>
 
       {notice ? (
@@ -331,10 +336,10 @@ export function OAuthLoginPage() {
           const state = states[provider.id] ?? { status: 'idle' as const };
           const canSubmitCallback = OAUTH_CALLBACK_SUPPORTED.has(provider.id) && Boolean(state.url);
           const loginLabel = state.status === 'success'
-            ? '登录另一个账号'
+            ? t('oauth.loginAnother')
             : state.polling
-              ? '登录中…'
-              : '开始登录';
+              ? t('oauth.loggingIn')
+              : t('oauth.startLogin');
 
           return (
             <section className="panel oauth-card" key={provider.id}>
@@ -343,23 +348,23 @@ export function OAuthLoginPage() {
                 <div>
                   <h2>{provider.name}</h2>
                   <span className={`state-pill ${state.status === 'success' ? 'success' : state.status === 'error' ? 'error' : ''}`}>
-                    {oauthStatusLabel(state)}
+                    {oauthStatusLabel(state, t)}
                   </span>
                 </div>
               </div>
 
               <div className="oauth-card-body">
-                <p className="oauth-hint">点击开始登录后，将自动打开浏览器完成授权；如未自动跳转，可手动打开链接</p>
+                <p className="oauth-hint">{t('oauth.hint')}</p>
                 {state.url ? (
                   <div className="oauth-auth-url-box">
-                    <div className="oauth-auth-url-label">授权链接</div>
+                    <div className="oauth-auth-url-label">{t('oauth.authorizationLink')}</div>
                     <div className="oauth-auth-url-value" title={state.url}>{state.url}</div>
                     <div className="oauth-auth-url-actions">
                       <button type="button" className="secondary-button compact-button" onClick={() => void copyAuthUrl(state.url)}>
-                        <Copy size={15} aria-hidden="true" />复制链接
+                        <Copy size={15} aria-hidden="true" />{t('oauth.copyLink')}
                       </button>
                       <button type="button" className="secondary-button compact-button" onClick={() => void openAuthUrl(state.url)}>
-                        <ExternalLink size={15} aria-hidden="true" />打开链接
+                        <ExternalLink size={15} aria-hidden="true" />{t('oauth.openLink')}
                       </button>
                     </div>
                   </div>
@@ -378,18 +383,18 @@ export function OAuthLoginPage() {
                             callbackError: undefined,
                           });
                         }}
-                        placeholder={provider.id === 'xai' ? '粘贴 code 或完整回调 URL' : '粘贴完整回调 URL'}
+                        placeholder={provider.id === 'xai' ? t('oauth.xaiCallbackPlaceholder') : t('oauth.callbackPlaceholder')}
                       />
                       <button type="button" className="secondary-button" disabled={state.callbackSubmitting} onClick={() => void submitCallback(provider.id)}>
                         {state.callbackSubmitting ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : <Check size={16} aria-hidden="true" />}
-                        提交回调
+                        {t('oauth.submitCallback')}
                       </button>
                     </div>
                     {state.callbackStatus === 'success' && state.status === 'waiting' ? (
-                      <div className="oauth-inline-status success">回调已提交，等待认证完成</div>
+                      <div className="oauth-inline-status success">{t('oauth.callbackSubmitted')}</div>
                     ) : null}
                     {state.callbackStatus === 'error' ? (
-                      <div className="oauth-inline-status error">回调提交失败{state.callbackError ? `：${state.callbackError}` : ''}</div>
+                      <div className="oauth-inline-status error">{t('oauth.callbackFailed', { detail: state.callbackError ? `: ${state.callbackError}` : '' })}</div>
                     ) : null}
                   </div>
                 ) : null}
@@ -406,7 +411,7 @@ export function OAuthLoginPage() {
                 </button>
                 {state.url ? (
                   <button type="button" className="secondary-button" onClick={() => void openAuthUrl(state.url)}>
-                    <ExternalLink size={16} aria-hidden="true" />打开浏览器
+                    <ExternalLink size={16} aria-hidden="true" />{t('oauth.openBrowser')}
                   </button>
                 ) : null}
               </div>
@@ -418,11 +423,11 @@ export function OAuthLoginPage() {
   );
 }
 
-function oauthStatusLabel(state: OAuthProviderState) {
-  if (state.status === 'success') return '已完成';
-  if (state.status === 'error') return '失败';
-  if (state.status === 'waiting' || state.polling) return '等待回调';
-  return '未登录';
+function oauthStatusLabel(state: OAuthProviderState, t: ReturnType<typeof useI18n>['t']) {
+  if (state.status === 'success') return t('oauth.status.completed');
+  if (state.status === 'error') return t('oauth.status.failed');
+  if (state.status === 'waiting' || state.polling) return t('oauth.status.waiting');
+  return t('oauth.status.signedOut');
 }
 
 function providerLabel(provider: OAuthProviderId) {

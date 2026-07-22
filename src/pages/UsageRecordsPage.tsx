@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Activity, BarChart3, Clock3, Database, List, ShieldCheck, Sparkles, TriangleAlert } from 'lucide-react';
+import { getCurrentLocale, useI18n } from '../i18n';
 
 type UsageTab = 'overview' | 'analysis' | 'events';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
@@ -141,14 +142,14 @@ const rangeQuery = (range: UsageRange, customStart: string, customEnd: string): 
   return { start: new Date(now.getTime() - hours * 3_600_000).toISOString(), end: now.toISOString() };
 };
 
-const compactNumber = (value: number) => new Intl.NumberFormat('zh-CN', {
+const compactNumber = (value: number) => new Intl.NumberFormat(getCurrentLocale(), {
   notation: value >= 10_000 ? 'compact' : 'standard',
   maximumFractionDigits: 1,
 }).format(Number.isFinite(value) ? value : 0);
 
 const formatTime = (value: string) => {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('zh-CN', {
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(getCurrentLocale(), {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
   }).format(date);
 };
@@ -156,6 +157,7 @@ const formatTime = (value: string) => {
 const filterOptions = (items: UsageCategory[]) => items.filter((item) => item.key && item.label);
 
 export function UsageRecordsPage() {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<UsageTab>(loadTab);
   const [range, setRange] = useState<UsageRange>(loadRange);
   const [customStart, setCustomStart] = useState('');
@@ -293,38 +295,38 @@ export function UsageRecordsPage() {
       <header className="management-header usage-records-header">
         <div>
           <span>Local Usage</span>
-          <h1>使用记录</h1>
+          <h1>{t('usage.title')}</h1>
         </div>
         <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
           <span className="status-dot" />
           <div>
-            <strong>{status?.state === 'collecting' ? '本地采集中' : status?.state === 'error' ? '采集异常' : '等待内核'}</strong>
-            <span>{compactNumber(status?.totalRecords ?? 0)} 条长期记录</span>
+            <strong>{status?.state === 'collecting' ? t('usage.collector.collecting') : status?.state === 'error' ? t('usage.collector.error') : t('usage.collector.waiting')}</strong>
+            <span>{t('usage.longTermRecords', { count: compactNumber(status?.totalRecords ?? 0) })}</span>
           </div>
         </div>
       </header>
 
       {error ? <div className="management-alert error">{error}</div> : null}
 
-      <div className="usage-tabs" role="tablist" aria-label="使用记录页面">
-        <button type="button" className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}><Activity size={15} />总览</button>
-        <button type="button" className={activeTab === 'analysis' ? 'active' : ''} onClick={() => setActiveTab('analysis')}><BarChart3 size={15} />分析</button>
-        <button type="button" className={activeTab === 'events' ? 'active' : ''} onClick={() => setActiveTab('events')}><List size={15} />请求明细</button>
+      <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
+        <button type="button" className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}><Activity size={15} />{t('usage.tab.overview')}</button>
+        <button type="button" className={activeTab === 'analysis' ? 'active' : ''} onClick={() => setActiveTab('analysis')}><BarChart3 size={15} />{t('usage.tab.analysis')}</button>
+        <button type="button" className={activeTab === 'events' ? 'active' : ''} onClick={() => setActiveTab('events')}><List size={15} />{t('usage.tab.events')}</button>
       </div>
 
       <section className="panel usage-filter-panel">
-        <select value={range} onChange={(event) => { setRange(event.currentTarget.value as UsageRange); setPage(1); }} aria-label="时间范围">
-          <option value="4h">最近 4 小时</option><option value="24h">最近 24 小时</option><option value="today">今天</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option><option value="all">全部时间</option><option value="custom">自定义</option>
+        <select value={range} onChange={(event) => { setRange(event.currentTarget.value as UsageRange); setPage(1); }} aria-label={t('usage.filter.timeRange')}>
+          <option value="4h">{t('usage.range.4h')}</option><option value="24h">{t('usage.range.24h')}</option><option value="today">{t('usage.range.today')}</option><option value="7d">{t('usage.range.7d')}</option><option value="30d">{t('usage.range.30d')}</option><option value="all">{t('usage.range.all')}</option><option value="custom">{t('usage.range.custom')}</option>
         </select>
-        <select value={model} onChange={(event) => changeFilter(setModel, event.currentTarget.value)} aria-label="模型"><option value="">全部模型</option>{filterOptions(optionsAnalysis.models).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
-        <select value={provider} onChange={(event) => changeFilter(setProvider, event.currentTarget.value)} aria-label="Provider"><option value="">全部 Provider</option>{filterOptions(optionsAnalysis.providers).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
-        <select value={source} onChange={(event) => changeFilter(setSource, event.currentTarget.value)} aria-label="来源"><option value="">全部来源</option>{filterOptions(optionsAnalysis.sources).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
-        <select value={apiKeyHash} onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)} aria-label="API Key"><option value="">全部密钥</option>{filterOptions(optionsAnalysis.apiKeys).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
-        <select value={result} onChange={(event) => changeFilter(setResult, event.currentTarget.value)} aria-label="请求结果"><option value="all">全部结果</option><option value="success">成功</option><option value="failed">失败</option></select>
-        {range === 'custom' ? <div className="usage-custom-range"><input type="datetime-local" value={customStart} onChange={(event) => setCustomStart(event.currentTarget.value)} aria-label="开始时间" /><span>至</span><input type="datetime-local" value={customEnd} onChange={(event) => setCustomEnd(event.currentTarget.value)} aria-label="结束时间" /></div> : null}
+        <select value={model} onChange={(event) => changeFilter(setModel, event.currentTarget.value)} aria-label={t('usage.filter.model')}><option value="">{t('usage.filter.allModels')}</option>{filterOptions(optionsAnalysis.models).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
+        <select value={provider} onChange={(event) => changeFilter(setProvider, event.currentTarget.value)} aria-label="Provider"><option value="">{t('usage.filter.allProviders')}</option>{filterOptions(optionsAnalysis.providers).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
+        <select value={source} onChange={(event) => changeFilter(setSource, event.currentTarget.value)} aria-label={t('usage.filter.source')}><option value="">{t('usage.filter.allSources')}</option>{filterOptions(optionsAnalysis.sources).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
+        <select value={apiKeyHash} onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)} aria-label="API Key"><option value="">{t('usage.filter.allKeys')}</option>{filterOptions(optionsAnalysis.apiKeys).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
+        <select value={result} onChange={(event) => changeFilter(setResult, event.currentTarget.value)} aria-label={t('usage.filter.result')}><option value="all">{t('usage.filter.allResults')}</option><option value="success">{t('usage.result.success')}</option><option value="failed">{t('usage.result.failed')}</option></select>
+        {range === 'custom' ? <div className="usage-custom-range"><input type="datetime-local" value={customStart} onChange={(event) => setCustomStart(event.currentTarget.value)} aria-label={t('usage.filter.startTime')} /><span>{t('usage.filter.to')}</span><input type="datetime-local" value={customEnd} onChange={(event) => setCustomEnd(event.currentTarget.value)} aria-label={t('usage.filter.endTime')} /></div> : null}
       </section>
 
-      {showInitialLoading ? <div className="usage-initial-loading"><Database size={22} /><span>正在读取本地 SQLite 使用记录</span></div> : null}
+      {showInitialLoading ? <div className="usage-initial-loading"><Database size={22} /><span>{t('usage.loading')}</span></div> : null}
 
       {activeTab === 'overview' && overview ? <OverviewView overview={overview} /> : null}
       {activeTab === 'analysis' ? <AnalysisView analysis={analysis} overview={overview} /> : null}
@@ -334,24 +336,26 @@ export function UsageRecordsPage() {
 }
 
 function OverviewView({ overview }: { overview: UsageOverview }) {
+  const { t } = useI18n();
   const cards = [
-    { icon: Activity, label: '请求总数', value: compactNumber(overview.totalRequests), meta: `${overview.successCount} 成功 · ${overview.failureCount} 失败` },
-    { icon: Sparkles, label: 'Token 总量', value: compactNumber(overview.totalTokens), meta: `输入 ${compactNumber(overview.inputTokens)} · 输出 ${compactNumber(overview.outputTokens)}` },
-    { icon: ShieldCheck, label: '成功率', value: `${overview.successRate.toFixed(1)}%`, meta: `思考 ${compactNumber(overview.reasoningTokens)} Token` },
-    { icon: Clock3, label: '平均延迟', value: `${Math.round(overview.averageLatencyMs)} ms`, meta: `${overview.rpm.toFixed(2)} RPM · ${compactNumber(overview.tpm)} TPM` },
+    { icon: Activity, label: t('usage.stat.requests'), value: compactNumber(overview.totalRequests), meta: t('usage.stat.requestMeta', { success: overview.successCount, failed: overview.failureCount }) },
+    { icon: Sparkles, label: t('usage.stat.tokens'), value: compactNumber(overview.totalTokens), meta: t('usage.stat.tokenMeta', { input: compactNumber(overview.inputTokens), output: compactNumber(overview.outputTokens) }) },
+    { icon: ShieldCheck, label: t('usage.stat.successRate'), value: `${overview.successRate.toFixed(1)}%`, meta: t('usage.stat.reasoningMeta', { tokens: compactNumber(overview.reasoningTokens) }) },
+    { icon: Clock3, label: t('usage.stat.averageLatency'), value: `${Math.round(overview.averageLatencyMs)} ms`, meta: `${overview.rpm.toFixed(2)} RPM · ${compactNumber(overview.tpm)} TPM` },
   ];
   return <div className="usage-overview-layout">
     <div className="usage-stat-grid">{cards.map(({ icon: Icon, label, value, meta }) => <article className="panel usage-stat-card" key={label}><span><Icon size={16} />{label}</span><strong>{value}</strong><small>{meta}</small></article>)}</div>
-    <section className="panel usage-trend-panel"><div className="usage-section-heading"><div><strong>请求与 Token 趋势</strong><span>按系统本地小时聚合</span></div></div>{overview.timeline.length ? <UsageTrend points={overview.timeline} /> : <UsageEmpty />}</section>
-    <section className="panel usage-health-panel"><div className="usage-section-heading"><div><strong>Token 构成</strong><span>缓存、思考与生成消耗</span></div></div><div className="usage-token-breakdown"><TokenMetric label="输入" value={overview.inputTokens} total={overview.totalTokens} /><TokenMetric label="输出" value={overview.outputTokens} total={overview.totalTokens} /><TokenMetric label="思考" value={overview.reasoningTokens} total={overview.totalTokens} /><TokenMetric label="缓存读取" value={overview.cacheReadTokens} total={overview.totalTokens} /><TokenMetric label="缓存创建" value={overview.cacheCreationTokens} total={overview.totalTokens} /></div></section>
+    <section className="panel usage-trend-panel"><div className="usage-section-heading"><div><strong>{t('usage.trend.title')}</strong><span>{t('usage.trend.description')}</span></div></div>{overview.timeline.length ? <UsageTrend points={overview.timeline} /> : <UsageEmpty />}</section>
+    <section className="panel usage-health-panel"><div className="usage-section-heading"><div><strong>{t('usage.token.title')}</strong><span>{t('usage.token.description')}</span></div></div><div className="usage-token-breakdown"><TokenMetric label={t('usage.token.input')} value={overview.inputTokens} total={overview.totalTokens} /><TokenMetric label={t('usage.token.output')} value={overview.outputTokens} total={overview.totalTokens} /><TokenMetric label={t('usage.token.reasoning')} value={overview.reasoningTokens} total={overview.totalTokens} /><TokenMetric label={t('usage.token.cacheRead')} value={overview.cacheReadTokens} total={overview.totalTokens} /><TokenMetric label={t('usage.token.cacheCreation')} value={overview.cacheCreationTokens} total={overview.totalTokens} /></div></section>
   </div>;
 }
 
 function UsageTrend({ points }: { points: TimelinePoint[] }) {
+  const { t } = useI18n();
   const recent = points.slice(-48);
   const max = Math.max(...recent.map((point) => point.requests), 1);
   const polyline = recent.map((point, index) => `${recent.length === 1 ? 50 : index * 100 / (recent.length - 1)},${28 - point.requests * 24 / max}`).join(' ');
-  return <div className="usage-trend"><svg viewBox="0 0 100 32" preserveAspectRatio="none" aria-label="请求趋势"><polyline points={polyline} fill="none" vectorEffect="non-scaling-stroke" /></svg><div className="usage-trend-labels"><span>{recent[0]?.hour ?? ''}</span><strong>{compactNumber(recent.reduce((sum, point) => sum + point.tokens, 0))} Token</strong><span>{recent[recent.length - 1]?.hour ?? ''}</span></div></div>;
+  return <div className="usage-trend"><svg viewBox="0 0 100 32" preserveAspectRatio="none" aria-label={t('usage.trend.aria')}><polyline points={polyline} fill="none" vectorEffect="non-scaling-stroke" /></svg><div className="usage-trend-labels"><span>{recent[0]?.hour ?? ''}</span><strong>{compactNumber(recent.reduce((sum, point) => sum + point.tokens, 0))} Token</strong><span>{recent[recent.length - 1]?.hour ?? ''}</span></div></div>;
 }
 
 function TokenMetric({ label, value, total }: { label: string; value: number; total: number }) {
@@ -360,6 +364,7 @@ function TokenMetric({ label, value, total }: { label: string; value: number; to
 }
 
 function AnalysisView({ analysis, overview }: { analysis: UsageAnalysis; overview: UsageOverview | null }) {
+  const { t } = useI18n();
   const hours = (overview?.timeline ?? []).map((point) => ({
     key: point.hour,
     label: point.hour,
@@ -367,19 +372,22 @@ function AnalysisView({ analysis, overview }: { analysis: UsageAnalysis; overvie
     failures: point.failure,
     tokens: point.tokens,
   })).sort((left, right) => right.tokens - left.tokens);
-  return <div className="usage-analysis-grid"><CategoryPanel title="模型使用" items={analysis.models} /><CategoryPanel title="Provider" items={analysis.providers} /><CategoryPanel title="请求来源" items={analysis.sources} /><CategoryPanel title="鉴权密钥" items={analysis.apiKeys} /><CategoryPanel title="时段分布" items={hours} /></div>;
+  return <div className="usage-analysis-grid"><CategoryPanel title={t('usage.analysis.models')} items={analysis.models} /><CategoryPanel title="Provider" items={analysis.providers} /><CategoryPanel title={t('usage.analysis.sources')} items={analysis.sources} /><CategoryPanel title={t('usage.analysis.keys')} items={analysis.apiKeys} /><CategoryPanel title={t('usage.analysis.hours')} items={hours} /></div>;
 }
 
 function CategoryPanel({ title, items }: { title: string; items: UsageCategory[] }) {
+  const { t } = useI18n();
   const max = Math.max(...items.map((item) => item.tokens), 1);
   const total = items.reduce((sum, item) => sum + item.tokens, 0);
-  return <section className="panel usage-category-panel"><div className="usage-section-heading"><div><strong>{title}</strong><span>按 Token 排序</span></div></div>{items.length ? <div className="usage-category-list">{items.slice(0, 10).map((item) => <div key={item.key}><span><strong title={item.label}>{item.label}</strong><small>{compactNumber(item.requests)} 次 · {total ? (item.tokens * 100 / total).toFixed(1) : '0.0'}% · {compactNumber(item.tokens)} Token</small></span><i><b style={{ width: `${item.tokens * 100 / max}%` }} /></i></div>)}</div> : <UsageEmpty />}</section>;
+  return <section className="panel usage-category-panel"><div className="usage-section-heading"><div><strong>{title}</strong><span>{t('usage.analysis.sortedByTokens')}</span></div></div>{items.length ? <div className="usage-category-list">{items.slice(0, 10).map((item) => <div key={item.key}><span><strong title={item.label}>{item.label}</strong><small>{t('usage.analysis.itemMeta', { requests: compactNumber(item.requests), percent: total ? (item.tokens * 100 / total).toFixed(1) : '0.0', tokens: compactNumber(item.tokens) })}</small></span><i><b style={{ width: `${item.tokens * 100 / max}%` }} /></i></div>)}</div> : <UsageEmpty />}</section>;
 }
 
 function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page: number) => void }) {
-  return <section className="panel usage-events-panel"><div className="usage-events-summary"><span>共 {compactNumber(events.total)} 条记录</span><span>第 {events.page} / {events.totalPages} 页</span></div>{events.items.length ? <div className="usage-table-wrap"><table className="usage-events-table"><thead><tr><th>时间</th><th>模型</th><th>Provider</th><th>来源</th><th>API Key</th><th>结果</th><th>延迟</th><th>TTFT</th><th>输入</th><th>输出</th><th>思考</th><th>缓存</th><th>总计</th></tr></thead><tbody>{events.items.map((record) => <tr key={record.id}><td>{formatTime(record.timestamp)}</td><td className="usage-stacked-cell"><strong title={record.alias || record.model}>{record.alias || record.model}</strong>{record.alias || record.reasoning_effort ? <small title={record.model}>{record.alias ? record.model : ''}{record.alias && record.reasoning_effort ? ' · ' : ''}{record.reasoning_effort}</small> : null}</td><td title={record.provider}>{record.provider || '—'}</td><td title={record.source}>{record.source || '—'}</td><td className="usage-stacked-cell"><strong title={record.api_key_remark}>{record.api_key_remark || '未备注'}</strong><small>{record.api_key_display || '—'}</small></td><td><span className={`usage-result ${record.failed ? 'failed' : 'success'}`}>{record.failed ? '失败' : '成功'}</span></td><td>{record.latency_ms} ms</td><td>{record.ttft_ms == null ? '—' : `${record.ttft_ms} ms`}</td><td>{compactNumber(record.tokens.input_tokens)}</td><td>{compactNumber(record.tokens.output_tokens)}</td><td>{compactNumber(record.tokens.reasoning_tokens)}</td><td>{compactNumber(record.tokens.cache_read_tokens)}</td><td><strong>{compactNumber(record.tokens.total_tokens)}</strong></td></tr>)}</tbody></table></div> : <UsageEmpty />}<div className="usage-pagination"><button type="button" className="secondary-button" disabled={events.page <= 1} onClick={() => onPage(events.page - 1)}>上一页</button><button type="button" className="secondary-button" disabled={events.page >= events.totalPages} onClick={() => onPage(events.page + 1)}>下一页</button></div></section>;
+  const { t } = useI18n();
+  return <section className="panel usage-events-panel"><div className="usage-events-summary"><span>{t('usage.events.total', { count: compactNumber(events.total) })}</span><span>{t('usage.events.page', { page: events.page, total: events.totalPages })}</span></div>{events.items.length ? <div className="usage-table-wrap"><table className="usage-events-table"><thead><tr><th>{t('usage.column.time')}</th><th>{t('usage.column.model')}</th><th>Provider</th><th>{t('usage.column.source')}</th><th>API Key</th><th>{t('usage.column.result')}</th><th>{t('usage.column.latency')}</th><th>TTFT</th><th>{t('usage.column.input')}</th><th>{t('usage.column.output')}</th><th>{t('usage.column.reasoning')}</th><th>{t('usage.column.cache')}</th><th>{t('usage.column.total')}</th></tr></thead><tbody>{events.items.map((record) => <tr key={record.id}><td>{formatTime(record.timestamp)}</td><td className="usage-stacked-cell"><strong title={record.alias || record.model}>{record.alias || record.model}</strong>{record.alias || record.reasoning_effort ? <small title={record.model}>{record.alias ? record.model : ''}{record.alias && record.reasoning_effort ? ' · ' : ''}{record.reasoning_effort}</small> : null}</td><td title={record.provider}>{record.provider || '—'}</td><td title={record.source}>{record.source || '—'}</td><td className="usage-stacked-cell"><strong title={record.api_key_remark}>{record.api_key_remark || t('usage.key.noRemark')}</strong><small>{record.api_key_display || '—'}</small></td><td><span className={`usage-result ${record.failed ? 'failed' : 'success'}`}>{record.failed ? t('usage.result.failed') : t('usage.result.success')}</span></td><td>{record.latency_ms} ms</td><td>{record.ttft_ms == null ? '—' : `${record.ttft_ms} ms`}</td><td>{compactNumber(record.tokens.input_tokens)}</td><td>{compactNumber(record.tokens.output_tokens)}</td><td>{compactNumber(record.tokens.reasoning_tokens)}</td><td>{compactNumber(record.tokens.cache_read_tokens)}</td><td><strong>{compactNumber(record.tokens.total_tokens)}</strong></td></tr>)}</tbody></table></div> : <UsageEmpty />}<div className="usage-pagination"><button type="button" className="secondary-button" disabled={events.page <= 1} onClick={() => onPage(events.page - 1)}>{t('usage.previous')}</button><button type="button" className="secondary-button" disabled={events.page >= events.totalPages} onClick={() => onPage(events.page + 1)}>{t('usage.next')}</button></div></section>;
 }
 
 function UsageEmpty() {
-  return <div className="usage-empty"><TriangleAlert size={18} /><span>当前筛选范围没有使用记录</span></div>;
+  const { t } = useI18n();
+  return <div className="usage-empty"><TriangleAlert size={18} /><span>{t('usage.empty')}</span></div>;
 }

@@ -1372,6 +1372,7 @@ mod tests {
     #[test]
     fn normalizes_queue_records_without_persisting_secrets_or_headers() {
         let config = GuiConfigFile {
+            locale: "zh-CN".to_string(),
             port: 8317,
             allow_lan: false,
             run_on_startup: false,

@@ -1,4 +1,7 @@
 import { apiCallErrorMessage, isRecord, managementApi, readString } from './managementApi';
+import { getCurrentLocale, translate } from '../i18n';
+
+const modelText = (key: Parameters<typeof translate>[1]) => translate(getCurrentLocale(), key);
 
 export type ModelOption = {
   name: string;
@@ -18,10 +21,10 @@ export function normalizeBaseUrl(value: string): string {
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error('Base URL 不是有效地址，请输入类似 https://api.example.com 的 URL');
+    throw new Error(modelText('model.error.invalidBaseUrl'));
   }
   if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
-    throw new Error('Base URL 只支持 http:// 或 https:// 地址');
+    throw new Error(modelText('model.error.unsupportedBaseUrl'));
   }
   parsed.hash = '';
   parsed.search = '';
@@ -90,7 +93,7 @@ export async function fetchModels(
 ): Promise<ModelOption[]> {
   const normalized = baseUrl.trim() ? normalizeBaseUrl(baseUrl) : '';
   const candidates = endpointCandidates(provider, normalized);
-  if (candidates.length === 0) throw new Error('请先输入 Base URL');
+  if (candidates.length === 0) throw new Error(modelText('model.error.baseUrlRequired'));
   const headers: Record<string, string> = { ...customHeaders };
   const hasHeader = (name: string) =>
     Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase());
@@ -188,5 +191,5 @@ export async function fetchModels(
       }
     }
   }
-  throw new Error(lastError || '模型接口无响应');
+  throw new Error(lastError || modelText('model.error.noResponse'));
 }

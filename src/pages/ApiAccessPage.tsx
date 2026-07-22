@@ -32,6 +32,7 @@ import {
   type ModelProvider,
 } from '../services/modelService';
 import { modelMatchesRule } from '../services/oauthModels';
+import { getCurrentLocale, translate, useI18n } from '../i18n';
 
 export type ProviderSection =
   | 'gemini-api-key'
@@ -94,7 +95,7 @@ const providerDefinitions: ProviderDefinition[] = [
     id: 'openai-compatibility',
     section: 'openai-compatibility',
     responseKey: 'openai-compatibility',
-    label: 'OpenAI 兼容',
+    label: 'OpenAI Compatible',
     icon: openaiIcon,
     openAi: true,
   },
@@ -168,7 +169,7 @@ const rowFromRecord = (
     index,
     record,
     name: definitionFor(section).openAi
-      ? readString(record, 'name') || `OpenAI 兼容 ${index + 1}`
+      ? readString(record, 'name') || translate(getCurrentLocale(), 'apiAccess.compatibleName', { number: index + 1 })
       : definitionFor(section).label,
     apiKey: entry ? readString(entry, 'api-key', 'apiKey') : singleApiKey,
     apiKeys: entry ? apiKeys : singleApiKey ? [singleApiKey] : [],
@@ -406,11 +407,11 @@ export const parseProviderHeaders = (value: string): Record<string, string> => {
     const trimmed = line.trim();
     if (!trimmed) return;
     const separator = trimmed.indexOf(':');
-    if (separator <= 0) throw new Error(`自定义请求头第 ${index + 1} 行缺少冒号`);
+    if (separator <= 0) throw new Error(translate(getCurrentLocale(), 'apiAccess.error.headerMissingColon', { number: index + 1 }));
     const key = trimmed.slice(0, separator).trim();
     const headerValue = trimmed.slice(separator + 1).trim();
     if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(key) || !headerValue) {
-      throw new Error(`自定义请求头第 ${index + 1} 行格式无效`);
+      throw new Error(translate(getCurrentLocale(), 'apiAccess.error.headerInvalid', { number: index + 1 }));
     }
     const duplicateKey = Object.keys(headers).find(
       (current) => current.toLowerCase() === key.toLowerCase(),
@@ -539,6 +540,7 @@ const providerIdentityMatches = (row: ProviderRow, record: Record<string, unknow
 };
 
 export function ApiAccessPage() {
+  const { t } = useI18n();
   const [records, setRecords] = useState(emptyRecords);
   const [activeCategory, setActiveCategory] = useState<ProviderCategory>('codex-api-key');
   const [filter, setFilter] = useState('');
@@ -579,7 +581,7 @@ export function ApiAccessPage() {
         return next;
       });
       if (failures.length > 0) {
-        setError(`部分接入读取失败：${failures.join('；')}`);
+        setError(t('apiAccess.error.partialLoad', { errors: failures.join('; ') }));
       }
     } catch (requestError) {
       setError(String(requestError));
@@ -638,10 +640,10 @@ export function ApiAccessPage() {
     ) {
       setError(
         definition.openAi
-          ? '名称、Base URL 和密钥不能为空'
+          ? t('apiAccess.error.requiredAll')
           : baseUrlRequired
-            ? 'Base URL 和 API 密钥不能为空'
-            : 'API 密钥不能为空',
+            ? t('apiAccess.error.requiredBaseKey')
+            : t('apiAccess.error.requiredKey'),
       );
       return false;
     }
@@ -649,7 +651,7 @@ export function ApiAccessPage() {
     let providerHeaders: Record<string, string> = {};
     try {
       if (baseUrl) baseUrl = normalizeBaseUrl(baseUrl);
-      if (baseUrlRequired && !baseUrl) throw new Error(`${definition.label} 接入必须填写 Base URL`);
+      if (baseUrlRequired && !baseUrl) throw new Error(t('apiAccess.error.baseRequired', { provider: definition.label }));
       providerHeaders = parseProviderHeaders(preparedDraft.headersText ?? '');
     } catch (requestError) {
       setError(String(requestError));
@@ -668,7 +670,7 @@ export function ApiAccessPage() {
           providerHeaders,
         );
         if (fetchedModels.length === 0) {
-          throw new Error('没有发现可放行的模型，请确认 Base URL 和 API 密钥');
+          throw new Error(t('apiAccess.error.noModels'));
         }
         draftToSave = applyProviderPreset(activeCategory, {
           ...draftToSave,
@@ -684,7 +686,7 @@ export function ApiAccessPage() {
           providerIdentityMatches(editingRow, record),
         );
         if (targetIndex < 0) {
-          throw new Error('接入配置已被其他操作修改，请刷新后重试');
+          throw new Error(t('apiAccess.error.stale'));
         }
         const nextRecord = buildProviderRecord(
           activeSection,
@@ -701,7 +703,7 @@ export function ApiAccessPage() {
             : readString(record, 'api-key', 'apiKey') === preparedDraft.apiKey.trim()
               && readString(record, 'base-url', 'baseUrl') === baseUrl,
         );
-        if (duplicate) throw new Error('相同的接入配置已经存在');
+        if (duplicate) throw new Error(t('apiAccess.error.duplicate'));
         nextList = [
           ...current,
           buildProviderRecord(activeSection, draftToSave),
@@ -709,7 +711,7 @@ export function ApiAccessPage() {
       }
 
       await managementApi.put(`/${activeSection}`, nextList.map(stripResponseFields));
-      setNotice(editingRow ? '接入已更新' : '接入已新增');
+      setNotice(editingRow ? t('apiAccess.notice.updated') : t('apiAccess.notice.added'));
       await loadProviders();
       return true;
     } catch (requestError) {
@@ -721,7 +723,7 @@ export function ApiAccessPage() {
   };
 
   const deleteRow = async (row: ProviderRow) => {
-    if (!window.confirm(`确定删除「${row.name}」吗？`)) return;
+    if (!window.confirm(t('apiAccess.deleteConfirm', { name: row.name }))) return;
     setBusy(true);
     setError('');
     try {
@@ -732,7 +734,7 @@ export function ApiAccessPage() {
           query: { 'api-key': row.apiKey, 'base-url': row.baseUrl },
         });
       }
-      setNotice('接入已删除');
+      setNotice(t('apiAccess.notice.deleted'));
       await loadProviders();
     } catch (requestError) {
       setError(String(requestError));
@@ -749,7 +751,7 @@ export function ApiAccessPage() {
       const latestRows = sectionRecordsFromConfig(latestConfig, row.section);
       const targetIndex = latestRows.findIndex((record) => providerIdentityMatches(row, record));
       if (targetIndex < 0) {
-        throw new Error('接入配置已被其他操作修改，请刷新后重试');
+        throw new Error(t('apiAccess.error.stale'));
       }
       const latestRecord = latestRows[targetIndex];
       const definition = definitionFor(row.section);
@@ -775,7 +777,7 @@ export function ApiAccessPage() {
           value: nextRecord,
         });
       }
-      setNotice(currentlyDisabled ? '接入已启用' : '接入已停用');
+      setNotice(currentlyDisabled ? t('apiAccess.notice.enabled') : t('apiAccess.notice.disabled'));
       await loadProviders();
     } catch (requestError) {
       setError(String(requestError));
@@ -796,17 +798,17 @@ export function ApiAccessPage() {
       <header className="management-header">
         <div>
           <span>Providers</span>
-          <h1>API 接入</h1>
+          <h1>{t('apiAccess.title')}</h1>
         </div>
         <div className="management-heading-actions">
-          <span className="muted-summary">{totalCount} 个接入</span>
+          <span className="muted-summary">{t('apiAccess.count', { count: totalCount })}</span>
           <button type="button" className="secondary-button compact-button" onClick={() => void loadProviders()} disabled={loading || busy}>
             <RefreshCw size={16} aria-hidden="true" />
-            刷新
+            {t('common.refresh')}
           </button>
           <button type="button" className="primary-button compact-button" onClick={openCreate} disabled={loading || busy}>
             <Plus size={16} aria-hidden="true" />
-            新增
+            {t('apiAccess.add')}
           </button>
         </div>
       </header>
@@ -835,21 +837,21 @@ export function ApiAccessPage() {
           <div className="management-panel-heading">
             <div>
               <h2 title={activeDefinition.label}>{activeDefinition.label}</h2>
-              <span>{rows.length} 个匹配接入</span>
+              <span>{t('apiAccess.matches', { count: rows.length })}</span>
             </div>
             <div className="management-toolbar compact-toolbar">
               <Search size={16} aria-hidden="true" />
-              <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder="搜索名称、密钥或地址" />
+              <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder={t('apiAccess.search')} />
             </div>
           </div>
 
           {loading ? (
-            <div className="management-loading"><LoaderCircle size={20} className="spin" />读取配置中</div>
+            <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('apiAccess.loading')}</div>
           ) : rows.length === 0 ? (
             <div className="management-empty">
               <Filter size={24} aria-hidden="true" />
-              <strong>{filter ? '没有匹配的接入' : '暂无接入配置'}</strong>
-              <span>{filter ? '换个关键词试试' : '点击右上角“新增”添加第一个接入'}</span>
+              <strong>{filter ? t('apiAccess.empty.filtered') : t('apiAccess.empty.none')}</strong>
+              <span>{filter ? t('apiAccess.empty.tryKeyword') : t('apiAccess.empty.addFirst')}</span>
             </div>
           ) : (
             <div className="real-provider-list">
@@ -859,36 +861,36 @@ export function ApiAccessPage() {
                     <div className="provider-row-title">
                       <strong title={row.name}>{row.name}</strong>
                     </div>
-                    <code title={definitionFor(row.section).openAi ? `${row.apiKeys.length} 个密钥` : undefined}>
+                    <code title={definitionFor(row.section).openAi ? t('apiAccess.keys.count', { count: row.apiKeys.length }) : undefined}>
                       {definitionFor(row.section).openAi && row.apiKeys.length > 1
-                        ? `${maskSecret(row.apiKey)} · 共 ${row.apiKeys.length} 个密钥`
+                        ? t('apiAccess.keys.summary', { key: maskSecret(row.apiKey), count: row.apiKeys.length })
                         : maskSecret(row.apiKey)}
                     </code>
-                    <span className="provider-row-url" title={row.baseUrl || undefined}>{row.baseUrl || '使用默认地址'}</span>
-                    {row.models.length > 0 ? <span className="provider-row-models" title={row.models.map((model) => model.name).join(', ')}>模型 {row.models.length} 个 · {row.models.slice(0, 3).map((model) => model.name).join(', ')}</span> : null}
+                    <span className="provider-row-url" title={row.baseUrl || undefined}>{row.baseUrl || t('apiAccess.defaultUrl')}</span>
+                    {row.models.length > 0 ? <span className="provider-row-models" title={row.models.map((model) => model.name).join(', ')}>{t('apiAccess.models.summary', { count: row.models.length, models: row.models.slice(0, 3).map((model) => model.name).join(', ') })}</span> : null}
                   </div>
                   <div className="provider-row-meta">
-                    {row.priority === null ? null : <span>优先级 {row.priority}</span>}
-                    {row.authIndex ? <span title={row.authIndex}>运行时凭据 {row.authIndex.slice(0, 8)}…</span> : null}
+                    {row.priority === null ? null : <span>{t('apiAccess.priorityValue', { priority: row.priority })}</span>}
+                    {row.authIndex ? <span title={row.authIndex}>{t('apiAccess.runtimeCredential', { index: row.authIndex.slice(0, 8) })}</span> : null}
                   </div>
                   <div className="provider-row-actions">
-                    <label className="provider-enabled-control" title={row.disabled ? '启用接入' : '停用接入'}>
-                      <span>{row.disabled ? '已停用' : '已启用'}</span>
+                    <label className="provider-enabled-control" title={row.disabled ? t('apiAccess.enable') : t('apiAccess.disable')}>
+                      <span>{row.disabled ? t('apiAccess.status.disabled') : t('apiAccess.status.enabled')}</span>
                       <span className="switch-control">
                         <input
                           type="checkbox"
                           checked={!row.disabled}
                           onChange={() => void toggleProvider(row)}
                           disabled={busy}
-                          aria-label={`${row.name} 接入${row.disabled ? '启用' : '停用'}开关`}
+                          aria-label={t('apiAccess.toggleAria', { name: row.name, action: row.disabled ? t('common.enable') : t('common.disable') })}
                         />
                         <span className="switch-track" />
                       </span>
                     </label>
-                    <button type="button" className="icon-button quiet" onClick={() => openEdit(row)} disabled={busy} title="编辑">
+                    <button type="button" className="icon-button quiet" onClick={() => openEdit(row)} disabled={busy} title={t('common.edit')}>
                       <Edit3 size={16} />
                     </button>
-                    <button type="button" className="icon-button danger" onClick={() => void deleteRow(row)} disabled={busy} title="删除">
+                    <button type="button" className="icon-button danger" onClick={() => void deleteRow(row)} disabled={busy} title={t('common.delete')}>
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -930,6 +932,7 @@ function ApiProviderDialog({
   onClose,
   onSave,
 }: ApiProviderDialogProps) {
+  const { t } = useI18n();
   const definition = definitionFor(activeCategory);
   const activeSection = definition.section;
   const [draft, setDraft] = useState<ProviderDraft>(initialDraft);
@@ -1002,7 +1005,7 @@ function ApiProviderDialog({
     const baseUrlRequired =
       activeSection === 'codex-api-key' || activeSection === 'openai-compatibility';
     if (baseUrlRequired && !draft.baseUrl.trim()) {
-      setModelError('请先填写 Base URL');
+      setModelError(t('apiAccess.error.enterBaseUrl'));
       return;
     }
     setModelLoading(true);
@@ -1029,7 +1032,7 @@ function ApiProviderDialog({
       ).models;
       setDiscoveredModels(models);
       setSelectedModelNames(allModelSelectionForDiscovery(models));
-      if (!models.length) setModelError('未发现可用模型');
+      if (!models.length) setModelError(t('apiAccess.error.noAvailableModels'));
     } catch (requestError) {
       setDiscoveredModels([]);
       setModelError(String(requestError));
@@ -1042,7 +1045,7 @@ function ApiProviderDialog({
     const baseUrlRequired =
       activeSection === 'codex-api-key' || activeSection === 'openai-compatibility';
     if (baseUrlRequired && !draft.baseUrl.trim()) {
-      setModelError('请先填写 Base URL，再获取模型');
+      setModelError(t('apiAccess.error.baseBeforeModels'));
       return;
     }
     setModelSearch('');
@@ -1099,19 +1102,19 @@ function ApiProviderDialog({
   const hasModelExclusions = activeSection !== 'openai-compatibility'
     && Boolean(draft.excludedModelsText?.trim());
   const modelSummaryTitle = draft.models.length > 0
-    ? `已选择 ${draft.models.length} 个模型`
+    ? t('apiAccess.models.selected', { count: draft.models.length })
     : hasModelExclusions
-      ? '已配置模型限制'
+      ? t('apiAccess.models.restricted')
       : activeSection === 'openai-compatibility'
-        ? '保存时默认开放全部模型'
-        : '使用上游默认模型';
+        ? t('apiAccess.models.autoAll')
+        : t('apiAccess.models.upstreamDefault');
   const modelSummaryDetail = draft.models.length > 0
     ? draft.models.slice(0, 3).map((model) => model.name).join('、')
     : hasModelExclusions
-      ? '未勾选的模型不会出现在开放列表'
+      ? t('apiAccess.models.hiddenHint')
       : activeSection === 'openai-compatibility'
-        ? '保存接入时会自动获取模型，也可提前取消不需要的项目'
-        : '当前开放上游全部模型';
+        ? t('apiAccess.models.autoHint')
+        : t('apiAccess.models.allHint');
 
   return (
     <>
@@ -1120,38 +1123,38 @@ function ApiProviderDialog({
         <div className="config-dialog-heading">
           <div>
             <Plus size={19} aria-hidden="true" />
-            <h2>{editingRow ? '编辑 API 接入' : '新增 API 接入'}</h2>
+            <h2>{editingRow ? t('apiAccess.dialog.edit') : t('apiAccess.dialog.add')}</h2>
           </div>
-          <button type="button" className="icon-button quiet" onClick={onClose} disabled={busy} title="关闭">
+          <button type="button" className="icon-button quiet" onClick={onClose} disabled={busy} title={t('common.close')}>
             <X size={18} />
           </button>
         </div>
         {definition.openAi ? (
-          <label><span>名称</span><input autoFocus value={draft.name} onChange={(event) => updateTextField('name', event.currentTarget.value)} placeholder="openrouter" /></label>
+          <label><span>{t('apiAccess.field.name')}</span><input autoFocus value={draft.name} onChange={(event) => updateTextField('name', event.currentTarget.value)} placeholder="openrouter" /></label>
         ) : null}
         <label className={definition.openAi ? 'multiline-field' : undefined}>
-          <span>{definition.openAi ? 'API 密钥（每行一个）' : 'API 密钥'}</span>
+          <span>{definition.openAi ? t('apiAccess.field.keysMany') : t('apiAccess.field.key')}</span>
           {definition.openAi ? (
             <textarea value={draft.apiKey} onChange={(event) => updateTextField('apiKey', event.currentTarget.value)} placeholder={'sk-...\nsk-...'} rows={3} />
           ) : (
             <input autoFocus type="password" value={draft.apiKey} onChange={(event) => updateTextField('apiKey', event.currentTarget.value)} placeholder="sk-..." />
           )}
         </label>
-        <label><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? '必填，例如 https://api.example.com' : '可选，留空使用默认地址'} /></label>
+        <label><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
         {activeCategory === 'deepseek' ? (
           <div className="provider-preset-summary">
             <img src={deepseekIcon} alt="" className="provider-logo" />
             <div>
-              <strong>OpenAI 兼容预设</strong>
-              <span>已预填 DeepSeek 官方地址，保存时自动发现并开放全部模型</span>
+              <strong>{t('apiAccess.preset.title')}</strong>
+              <span>{t('apiAccess.preset.description')}</span>
             </div>
           </div>
         ) : null}
         {activeCategory === 'deepseek' ? (
           <div className="thinking-level-config">
             <div className="thinking-level-heading">
-              <strong>内置思考等级</strong>
-              <span>自动应用到当前开放的全部模型</span>
+              <strong>{t('apiAccess.thinking.builtIn')}</strong>
+              <span>{t('apiAccess.thinking.builtInDescription')}</span>
             </div>
             <div className="thinking-level-tags readonly">
               {DEEPSEEK_THINKING_LEVELS.map((level) => <span key={level}>{level}</span>)}
@@ -1160,8 +1163,8 @@ function ApiProviderDialog({
         ) : activeCategory === 'openai-compatibility' ? (
           <div className="thinking-level-config">
             <div className="thinking-level-heading">
-              <strong>思考等级</strong>
-              <span>按上游支持情况自行添加</span>
+              <strong>{t('apiAccess.thinking.title')}</strong>
+              <span>{t('apiAccess.thinking.description')}</span>
             </div>
             <div className="thinking-level-entry">
               <input
@@ -1173,10 +1176,10 @@ function ApiProviderDialog({
                     addThinkingLevel();
                   }
                 }}
-                placeholder="例如 low、medium 或自定义等级"
+                placeholder={t('apiAccess.thinking.placeholder')}
               />
               <button type="button" className="secondary-button compact-button" onClick={addThinkingLevel} disabled={!thinkingLevelInput.trim()}>
-                <Plus size={14} />添加
+                <Plus size={14} />{t('apiAccess.thinking.add')}
               </button>
             </div>
             {(draft.thinkingLevels?.length ?? 0) > 0 ? (
@@ -1184,20 +1187,20 @@ function ApiProviderDialog({
                 {draft.thinkingLevels?.map((level) => (
                   <span key={level}>
                     {level}
-                    <button type="button" onClick={() => removeThinkingLevel(level)} title={`删除 ${level}`} aria-label={`删除思考等级 ${level}`}>
+                    <button type="button" onClick={() => removeThinkingLevel(level)} title={t('apiAccess.thinking.delete', { level })} aria-label={t('apiAccess.thinking.deleteAria', { level })}>
                       <X size={12} />
                     </button>
                   </span>
                 ))}
               </div>
-            ) : <small className="thinking-level-empty">未添加时不写入 thinking.levels</small>}
+            ) : <small className="thinking-level-empty">{t('apiAccess.thinking.empty')}</small>}
             </div>
         ) : null}
         <div className="model-config-card">
           <div className="model-config-heading">
-            <div><span>模型</span><small>勾选表示当前开放，取消勾选后将从模型列表隐藏</small></div>
+            <div><span>{t('apiAccess.models.title')}</span><small>{t('apiAccess.models.description')}</small></div>
             <button type="button" className="secondary-button compact-button" onClick={openModelDiscovery} disabled={busy}>
-              <RefreshCw size={15} />获取模型
+              <RefreshCw size={15} />{t('apiAccess.models.fetch')}
             </button>
           </div>
           <div className={`model-config-summary ${draft.models.length || hasModelExclusions ? 'has-models' : ''}`}>
@@ -1206,64 +1209,64 @@ function ApiProviderDialog({
           </div>
           {modelError && !modelDiscoveryOpen ? <small className="model-picker-error">{modelError}</small> : null}
         </div>
-        <label><span>优先级</span><input inputMode="numeric" value={draft.priority} onChange={(event) => updateTextField('priority', event.currentTarget.value.replace(/\D/g, ''))} placeholder="可选" /></label>
+        <label><span>{t('apiAccess.field.priority')}</span><input inputMode="numeric" value={draft.priority} onChange={(event) => updateTextField('priority', event.currentTarget.value.replace(/\D/g, ''))} placeholder={t('common.optional')} /></label>
         <details className="provider-advanced-settings">
-          <summary>高级设置</summary>
+          <summary>{t('apiAccess.advanced')}</summary>
           <div className="provider-advanced-fields">
-            <label><span>模型前缀</span><input value={draft.prefix ?? ''} onChange={(event) => updateTextField('prefix', event.currentTarget.value)} placeholder="可选，例如 team-a" /></label>
+            <label><span>{t('apiAccess.field.prefix')}</span><input value={draft.prefix ?? ''} onChange={(event) => updateTextField('prefix', event.currentTarget.value)} placeholder={t('apiAccess.prefixPlaceholder')} /></label>
             <label className="multiline-field">
-              <span>自定义请求头（每行 Name: Value）</span>
+              <span>{t('apiAccess.field.headers')}</span>
               <textarea value={draft.headersText ?? ''} onChange={(event) => updateTextField('headersText', event.currentTarget.value)} rows={3} placeholder={'X-Team: production\nAuthorization: Bearer ...'} />
             </label>
             {activeSection !== 'openai-compatibility' ? (
               <label className="multiline-field">
-                <span>排除模型（每行一个，支持通配符）</span>
+                <span>{t('apiAccess.field.excludedModels')}</span>
                 <textarea value={draft.excludedModelsText ?? ''} onChange={(event) => updateTextField('excludedModelsText', event.currentTarget.value)} rows={3} placeholder={'model-old-*\nmodel-preview'} />
               </label>
             ) : null}
             {activeSection === 'openai-compatibility' ? (
-              <label><span>测试模型</span><input value={draft.testModel ?? ''} onChange={(event) => updateTextField('testModel', event.currentTarget.value)} placeholder="可选" /></label>
+              <label><span>{t('apiAccess.field.testModel')}</span><input value={draft.testModel ?? ''} onChange={(event) => updateTextField('testModel', event.currentTarget.value)} placeholder={t('common.optional')} /></label>
             ) : null}
             {activeSection === 'claude-api-key' ? (
               <div className="provider-cloak-settings">
                 <label>
-                  <span>Claude 伪装模式</span>
+                  <span>{t('apiAccess.cloak.mode')}</span>
                   <select value={draft.cloakMode ?? ''} onChange={(event) => updateTextField('cloakMode', event.currentTarget.value)}>
-                    <option value="">默认（auto）</option>
+                    <option value="">{t('apiAccess.cloak.default')}</option>
                     <option value="auto">Auto</option>
                     <option value="always">Always</option>
                     <option value="never">Never</option>
                   </select>
                 </label>
                 <label className="multiline-field">
-                  <span>伪装敏感词（每行一个）</span>
+                  <span>{t('apiAccess.cloak.words')}</span>
                   <textarea value={draft.cloakSensitiveWordsText ?? ''} onChange={(event) => updateTextField('cloakSensitiveWordsText', event.currentTarget.value)} rows={3} placeholder={'internal-name\nworkspace-id'} />
                 </label>
                 <div className="provider-advanced-toggle">
-                  <div><strong>严格模式</strong><span>仅保留 Claude Code 系统提示</span></div>
-                  <label className="switch-control" title="启用严格模式"><input type="checkbox" checked={Boolean(draft.cloakStrictMode)} onChange={(event) => updateBooleanField('cloakStrictMode', event.currentTarget.checked)} /><span className="switch-track" /></label>
+                  <div><strong>{t('apiAccess.cloak.strict')}</strong><span>{t('apiAccess.cloak.strictDescription')}</span></div>
+                  <label className="switch-control" title={t('apiAccess.cloak.enableStrict')}><input type="checkbox" checked={Boolean(draft.cloakStrictMode)} onChange={(event) => updateBooleanField('cloakStrictMode', event.currentTarget.checked)} /><span className="switch-track" /></label>
                 </div>
                 <div className="provider-advanced-toggle">
-                  <div><strong>缓存用户标识</strong><span>复用伪装后的用户标识</span></div>
-                  <label className="switch-control" title="缓存用户标识"><input type="checkbox" checked={Boolean(draft.cloakCacheUserId)} onChange={(event) => updateBooleanField('cloakCacheUserId', event.currentTarget.checked)} /><span className="switch-track" /></label>
+                  <div><strong>{t('apiAccess.cloak.cacheUser')}</strong><span>{t('apiAccess.cloak.cacheUserDescription')}</span></div>
+                  <label className="switch-control" title={t('apiAccess.cloak.cacheUser')}><input type="checkbox" checked={Boolean(draft.cloakCacheUserId)} onChange={(event) => updateBooleanField('cloakCacheUserId', event.currentTarget.checked)} /><span className="switch-track" /></label>
                 </div>
               </div>
             ) : null}
             {activeSection === 'codex-api-key' ? (
               <div className="provider-advanced-toggle">
-                <div><strong>WebSocket</strong><span>为该 Codex 接入启用 WebSocket</span></div>
-                <label className="switch-control" title="启用 WebSocket"><input type="checkbox" checked={Boolean(draft.websockets)} onChange={(event) => updateBooleanField('websockets', event.currentTarget.checked)} /><span className="switch-track" /></label>
+                <div><strong>WebSocket</strong><span>{t('apiAccess.websocket.description')}</span></div>
+                <label className="switch-control" title={t('apiAccess.websocket.enable')}><input type="checkbox" checked={Boolean(draft.websockets)} onChange={(event) => updateBooleanField('websockets', event.currentTarget.checked)} /><span className="switch-track" /></label>
               </div>
             ) : null}
             <div className="provider-advanced-toggle">
-              <div><strong>禁用冷却</strong><span>上游限流后仍允许继续选择该接入</span></div>
-              <label className="switch-control" title="禁用冷却"><input type="checkbox" checked={Boolean(draft.disableCooling)} onChange={(event) => updateBooleanField('disableCooling', event.currentTarget.checked)} /><span className="switch-track" /></label>
+              <div><strong>{t('apiAccess.cooling.title')}</strong><span>{t('apiAccess.cooling.description')}</span></div>
+              <label className="switch-control" title={t('apiAccess.cooling.title')}><input type="checkbox" checked={Boolean(draft.disableCooling)} onChange={(event) => updateBooleanField('disableCooling', event.currentTarget.checked)} /><span className="switch-track" /></label>
             </div>
           </div>
         </details>
         <div className="config-dialog-actions two-actions">
-          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>取消</button>
-          <button type="submit" className="primary-button" disabled={busy}>{busy ? '保存中' : '保存'}</button>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
+          <button type="submit" className="primary-button" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</button>
         </div>
       </form>
       </div>
@@ -1272,33 +1275,33 @@ function ApiProviderDialog({
         <div className="model-discovery-backdrop" onMouseDown={(event) => event.currentTarget === event.target && setModelDiscoveryOpen(false)}>
           <section className="model-discovery-dialog" role="dialog" aria-modal="true" aria-labelledby="model-discovery-title">
             <div className="model-discovery-header">
-              <div><h2 id="model-discovery-title">选择模型</h2><span>{definition.label}</span></div>
-              <button type="button" className="icon-button quiet" onClick={() => setModelDiscoveryOpen(false)} title="关闭"><X size={18} /></button>
+              <div><h2 id="model-discovery-title">{t('apiAccess.modelDialog.title')}</h2><span>{definition.label}</span></div>
+              <button type="button" className="icon-button quiet" onClick={() => setModelDiscoveryOpen(false)} title={t('common.close')}><X size={18} /></button>
             </div>
 
             <div className="model-discovery-search">
               <Search size={16} aria-hidden="true" />
-              <input value={modelSearch} onChange={(event) => setModelSearch(event.currentTarget.value)} placeholder="搜索模型名称或别名" />
+              <input value={modelSearch} onChange={(event) => setModelSearch(event.currentTarget.value)} placeholder={t('agents.model.search')} />
               <button type="button" className="secondary-button compact-button" onClick={() => void discoverModels()} disabled={modelLoading}>
-                <RefreshCw size={15} className={modelLoading ? 'spin' : ''} />刷新
+                <RefreshCw size={15} className={modelLoading ? 'spin' : ''} />{t('common.refresh')}
               </button>
             </div>
 
             <div className="model-discovery-toolbar">
-              <span>找到 {modelOptions.length} 个 · 已选择 {selectedModelNames.size} 个</span>
+              <span>{t('apiAccess.modelDialog.summary', { found: modelOptions.length, selected: selectedModelNames.size })}</span>
               <div>
-                <button type="button" className="secondary-button compact-button" onClick={toggleAllVisibleModels} disabled={modelLoading || visibleModelOptions.length === 0}>{allVisibleModelsSelected ? '取消全选' : '全选当前'}</button>
-                <button type="button" className="secondary-button compact-button" onClick={() => setSelectedModelNames(new Set())} disabled={modelLoading || selectedModelNames.size === 0}>清空</button>
+                <button type="button" className="secondary-button compact-button" onClick={toggleAllVisibleModels} disabled={modelLoading || visibleModelOptions.length === 0}>{allVisibleModelsSelected ? t('apiAccess.modelDialog.deselectAll') : t('apiAccess.modelDialog.selectVisible')}</button>
+                <button type="button" className="secondary-button compact-button" onClick={() => setSelectedModelNames(new Set())} disabled={modelLoading || selectedModelNames.size === 0}>{t('common.clear')}</button>
               </div>
             </div>
 
             <div className="model-discovery-content">
               {modelLoading ? (
-                <div className="model-discovery-message"><LoaderCircle size={20} className="spin" />正在获取模型</div>
+                <div className="model-discovery-message"><LoaderCircle size={20} className="spin" />{t('apiAccess.modelDialog.fetching')}</div>
               ) : modelError ? (
-                <div className="model-discovery-message error"><strong>获取模型失败</strong><span>{modelError}</span></div>
+                <div className="model-discovery-message error"><strong>{t('apiAccess.modelDialog.fetchFailed')}</strong><span>{modelError}</span></div>
               ) : visibleModelOptions.length === 0 ? (
-                <div className="model-discovery-message"><strong>{modelOptions.length ? '没有匹配的模型' : '未发现模型'}</strong><span>{modelOptions.length ? '换个关键词试试' : '请检查 Base URL 和 API 密钥'}</span></div>
+                <div className="model-discovery-message"><strong>{modelOptions.length ? t('apiAccess.modelDialog.noMatch') : t('apiAccess.modelDialog.none')}</strong><span>{modelOptions.length ? t('apiAccess.modelDialog.tryKeyword') : t('apiAccess.modelDialog.checkCredentials')}</span></div>
               ) : (
                 <div className="model-discovery-list">
                   {visibleModelOptions.map((model) => {
@@ -1316,8 +1319,8 @@ function ApiProviderDialog({
             </div>
 
             <div className="model-discovery-actions">
-              <button type="button" className="secondary-button" onClick={() => setModelDiscoveryOpen(false)}>取消</button>
-              <button type="button" className="primary-button" onClick={applyModelSelection} disabled={modelLoading}>应用选择（{selectedModelNames.size}）</button>
+              <button type="button" className="secondary-button" onClick={() => setModelDiscoveryOpen(false)}>{t('common.cancel')}</button>
+              <button type="button" className="primary-button" onClick={applyModelSelection} disabled={modelLoading}>{t('apiAccess.modelDialog.apply', { count: selectedModelNames.size })}</button>
             </div>
           </section>
         </div>
