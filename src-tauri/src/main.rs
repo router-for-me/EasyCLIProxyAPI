@@ -101,6 +101,7 @@ fn normalize_app_locale(locale: &str) -> &'static str {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn locale_text<'a>(locale: &str, zh_cn: &'a str, en: &'a str) -> &'a str {
     match normalize_app_locale(locale) {
         "en" => en,
