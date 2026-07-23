@@ -120,7 +120,7 @@ function App() {
 }
 
 function AppContent() {
-  const { locale, setLocale, t } = useI18n();
+  const { locale, setLocale, t, localizeText } = useI18n();
   const { mode, setMode } = useTheme();
   const [active, setActive] = useState<PageId>('kernel');
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
@@ -398,7 +398,7 @@ function AppContent() {
             </p>
             {windowsClosePrompt.error ? (
               <div className="close-dialog-error" role="alert">
-                {windowsClosePrompt.error}
+                {localizeText(windowsClosePrompt.error)}
               </div>
             ) : null}
             <div className="close-dialog-actions">

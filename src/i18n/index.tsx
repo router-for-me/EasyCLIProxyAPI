@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { en, ja, zhCN, zhTW, type MessageKey, type MessageVariables } from './resources';
+import { localizeRuntimeText } from './runtimeText';
 
 export type AppLocale = 'zh-CN' | 'zh-TW' | 'ja' | 'en';
 
@@ -56,13 +57,14 @@ function interpolate(template: string, variables?: MessageVariables): string {
 }
 
 export function translate(locale: AppLocale, key: MessageKey, variables?: MessageVariables): string {
-  return interpolate(resources[locale][key] ?? zhCN[key], variables);
+  return interpolate(resources[locale][key] ?? en[key] ?? key, variables);
 }
 
 type I18nContextValue = {
   locale: AppLocale;
   setLocale: (locale: AppLocale) => void;
   t: (key: MessageKey, variables?: MessageVariables) => string;
+  localizeText: (value: string | null | undefined) => string;
   formatNumber: (value: number, options?: Intl.NumberFormatOptions) => string;
   formatDate: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string;
 };
@@ -94,6 +96,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     (key: MessageKey, variables?: MessageVariables) => translate(locale, key, variables),
     [locale],
   );
+  const localizeText = useCallback(
+    (value: string | null | undefined) => localizeRuntimeText(locale, value),
+    [locale],
+  );
   const formatNumber = useCallback(
     (value: number, options?: Intl.NumberFormatOptions) =>
       new Intl.NumberFormat(locale, options).format(value),
@@ -108,8 +114,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   );
 
   const context = useMemo<I18nContextValue>(
-    () => ({ locale, setLocale, t, formatNumber, formatDate }),
-    [formatDate, formatNumber, locale, setLocale, t],
+    () => ({ locale, setLocale, t, localizeText, formatNumber, formatDate }),
+    [formatDate, formatNumber, localizeText, locale, setLocale, t],
   );
 
   return <I18nContext.Provider value={context}>{children}</I18nContext.Provider>;

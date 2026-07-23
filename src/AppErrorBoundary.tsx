@@ -22,12 +22,12 @@ export class AppErrorBoundary extends Component<Props, State> {
 }
 
 function AppErrorFallback({ error }: { error: Error }) {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   return (
     <main className="app-error-boundary">
       <section className="empty-state">
         <strong>{t('error.render.title')}</strong>
-        <span>{error.message || t('error.unknown')}</span>
+        <span>{localizeText(error.message) || t('error.unknown')}</span>
         <button type="button" className="primary-button" onClick={() => window.location.reload()}>
           {t('error.reload')}
         </button>

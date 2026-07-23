@@ -236,7 +236,7 @@ function AgentModelPicker({
   onChange,
   onRefresh,
 }: AgentModelPickerProps) {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -414,7 +414,7 @@ function AgentModelPicker({
             {loading && models.length === 0 ? (
               <div className="agent-model-empty"><LoaderCircle size={18} className="spin" />{t('agents.model.fetching')}</div>
             ) : error && models.length === 0 ? (
-              <div className="agent-model-empty error"><strong>{t('agents.model.loadFailed')}</strong><span>{error}</span></div>
+              <div className="agent-model-empty error"><strong>{t('agents.model.loadFailed')}</strong><span>{localizeText(error)}</span></div>
             ) : choices.length === 0 ? (
               <div className="agent-model-empty">
                 <strong>{search.trim() ? t('agents.model.noMatch') : t('agents.model.unavailable')}</strong>
@@ -452,7 +452,7 @@ function AgentModelPicker({
 }
 
 export function AgentsPage() {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
   const [statuses, setStatuses] = useState<AgentConfigStatus[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -696,8 +696,8 @@ export function AgentsPage() {
       </header>
 
       <div className="agent-feedback-slot" aria-live="polite">
-        {error ? <div className="management-alert error">{error}</div> : null}
-        {!error && notice ? <div className="management-alert success">{notice}</div> : null}
+        {error ? <div className="management-alert error">{localizeText(error)}</div> : null}
+        {!error && notice ? <div className="management-alert success">{localizeText(notice)}</div> : null}
       </div>
 
       <div className="agent-workbench">
@@ -739,9 +739,9 @@ export function AgentsPage() {
           </div>
 
           <div className="agent-config-message-slot">
-            {activeStatus?.error ? <div className="management-alert error">{activeStatus.error}</div> : null}
+            {activeStatus?.error ? <div className="management-alert error">{localizeText(activeStatus.error)}</div> : null}
             {activeStatus?.warnings.length && !activeStatus.error ? (
-              <div className="agent-warning-line">{activeStatus.warnings.join('；')}</div>
+              <div className="agent-warning-line">{activeStatus.warnings.map((warning) => localizeText(warning)).join(' · ')}</div>
             ) : null}
           </div>
 

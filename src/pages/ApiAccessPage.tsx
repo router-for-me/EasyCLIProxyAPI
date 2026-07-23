@@ -540,7 +540,7 @@ const providerIdentityMatches = (row: ProviderRow, record: Record<string, unknow
 };
 
 export function ApiAccessPage() {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const [records, setRecords] = useState(emptyRecords);
   const [activeCategory, setActiveCategory] = useState<ProviderCategory>('codex-api-key');
   const [filter, setFilter] = useState('');
@@ -581,7 +581,7 @@ export function ApiAccessPage() {
         return next;
       });
       if (failures.length > 0) {
-        setError(t('apiAccess.error.partialLoad', { errors: failures.join('; ') }));
+        setError(t('apiAccess.error.partialLoad', { errors: failures.map((failure) => localizeText(failure)).join('; ') }));
       }
     } catch (requestError) {
       setError(String(requestError));
@@ -813,8 +813,8 @@ export function ApiAccessPage() {
         </div>
       </header>
 
-      {error ? <div className="management-alert error">{error}</div> : null}
-      {notice ? <div className="management-alert success">{notice}</div> : null}
+      {error ? <div className="management-alert error">{localizeText(error)}</div> : null}
+      {notice ? <div className="management-alert success">{localizeText(notice)}</div> : null}
 
       <div className="provider-workbench real-provider-workbench">
         <aside className="panel provider-category-panel">
@@ -932,7 +932,7 @@ function ApiProviderDialog({
   onClose,
   onSave,
 }: ApiProviderDialogProps) {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const definition = definitionFor(activeCategory);
   const activeSection = definition.section;
   const [draft, setDraft] = useState<ProviderDraft>(initialDraft);
@@ -1207,7 +1207,7 @@ function ApiProviderDialog({
             <strong>{modelSummaryTitle}</strong>
             <span>{modelSummaryDetail}</span>
           </div>
-          {modelError && !modelDiscoveryOpen ? <small className="model-picker-error">{modelError}</small> : null}
+          {modelError && !modelDiscoveryOpen ? <small className="model-picker-error">{localizeText(modelError)}</small> : null}
         </div>
         <label><span>{t('apiAccess.field.priority')}</span><input inputMode="numeric" value={draft.priority} onChange={(event) => updateTextField('priority', event.currentTarget.value.replace(/\D/g, ''))} placeholder={t('common.optional')} /></label>
         <details className="provider-advanced-settings">

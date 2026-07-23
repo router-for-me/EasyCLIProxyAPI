@@ -64,7 +64,7 @@ const thinkingAliasSourceDetail = (source: ThinkingAliasSource) => (
 );
 
 export function ThinkingAliasesPage() {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const [entries, setEntries] = useState<ThinkingAliasEntry[]>([]);
   const [sources, setSources] = useState<ThinkingAliasSource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState('');
@@ -256,8 +256,8 @@ export function ThinkingAliasesPage() {
       </header>
 
       <div className="thinking-alias-feedback" aria-live="polite">
-        {error ? <div className="management-alert error">{error}</div> : null}
-        {!error && notice ? <div className="management-alert success">{notice}</div> : null}
+        {error ? <div className="management-alert error">{localizeText(error)}</div> : null}
+        {!error && notice ? <div className="management-alert success">{localizeText(notice)}</div> : null}
       </div>
 
       <div className="thinking-alias-guide">

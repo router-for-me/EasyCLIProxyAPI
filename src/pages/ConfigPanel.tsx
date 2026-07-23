@@ -38,7 +38,7 @@ const ROUTING_OPTIONS = [
 ] as const;
 
 export function ConfigPanelPage() {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const [settings, setSettings] = useState<CoreConfigSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -267,7 +267,7 @@ export function ConfigPanelPage() {
               <div className="config-unavailable">
                 <AlertCircle size={24} aria-hidden="true" />
                 <strong>{t('config.unavailable')}</strong>
-                <span title={loadError}>{loadError}</span>
+                <span title={localizeText(loadError)}>{localizeText(loadError)}</span>
                 <button type="button" className="secondary-button compact-button" onClick={loadSettings}>
                   <RefreshCw size={16} aria-hidden="true" />
                   {t('common.retry')}
@@ -472,7 +472,7 @@ export function ConfigPanelPage() {
             </label>
 
             <div className={`config-form-message ${formError ? 'error' : ''}`}>
-              {formError || ' '}
+              {localizeText(formError) || ' '}
             </div>
 
             <div className="config-dialog-actions">
@@ -537,13 +537,13 @@ export function ConfigPanelPage() {
       ) : null}
 
       {notice ? (
-        <div className={`config-toast ${notice.tone}`} role="status" title={notice.message}>
+        <div className={`config-toast ${notice.tone}`} role="status" title={localizeText(notice.message)}>
           {notice.tone === 'success' ? (
             <Check size={17} aria-hidden="true" />
           ) : (
             <AlertCircle size={17} aria-hidden="true" />
           )}
-          <span>{notice.message}</span>
+          <span>{localizeText(notice.message)}</span>
         </div>
       ) : null}
     </section>

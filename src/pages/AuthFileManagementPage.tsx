@@ -91,7 +91,7 @@ const statusText = (file: AuthFile) => {
 };
 
 function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
-  const { locale, t } = useI18n();
+  const { locale, t, localizeText } = useI18n();
   if (quota.status === 'loading') {
     return (
       <div className="auth-file-quota loading">
@@ -102,9 +102,9 @@ function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
   }
   if (quota.status === 'error') {
     return (
-      <div className="auth-file-quota error" title={quota.error}>
+      <div className="auth-file-quota error" title={localizeText(quota.error)}>
         <span>{t('authFiles.quota.failed')}</span>
-        {quota.error ? <small>{quota.error}</small> : null}
+        {quota.error ? <small>{localizeText(quota.error)}</small> : null}
       </div>
     );
   }
@@ -134,7 +134,7 @@ function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
 }
 
 export function AuthFileManagementPage() {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const [files, setFiles] = useState<AuthFile[]>([]);
   const [filter, setFilter] = useState('');
   const [providerFilter, setProviderFilter] = useState('all');
@@ -335,7 +335,7 @@ export function AuthFileManagementPage() {
     try {
       await loadFiles();
       if (uploaded > 0) setNotice(t('authFiles.uploaded', { count: uploaded }));
-      if (failures.length > 0) setError(t('authFiles.uploadFailed', { count: failures.length, errors: failures.join('; ') }));
+      if (failures.length > 0) setError(t('authFiles.uploadFailed', { count: failures.length, errors: failures.map((failure) => localizeText(failure)).join('; ') }));
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -456,8 +456,8 @@ export function AuthFileManagementPage() {
         </div>
       </header>
 
-      {error ? <div className="management-alert error">{error}</div> : null}
-      {notice ? <div className="management-alert success">{notice}</div> : null}
+      {error ? <div className="management-alert error">{localizeText(error)}</div> : null}
+      {notice ? <div className="management-alert success">{localizeText(notice)}</div> : null}
 
       <section className="panel auth-files-panel real-auth-files-panel">
         <div className="management-toolbar auth-files-toolbar">
