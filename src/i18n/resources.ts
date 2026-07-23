@@ -5,10 +5,6 @@ export type MessageVariables = Record<string, string | number>;
 
 export const zhCN = {
   'app.language': '语言',
-  'app.language.zhCN': '简体中文',
-  'app.language.zhTW': '繁体中文',
-  'app.language.ja': '日语',
-  'app.language.en': 'English',
   'app.desktopConsole': '桌面控制台',
   'app.navigation': '主导航',
   'app.nav.kernel': '内核',
@@ -682,10 +678,6 @@ export type MessageKey = keyof typeof zhCN;
 
 export const en: Record<MessageKey, string> = {
   'app.language': 'Language',
-  'app.language.zhCN': '简体中文',
-  'app.language.zhTW': 'Traditional Chinese',
-  'app.language.ja': 'Japanese',
-  'app.language.en': 'English',
   'app.desktopConsole': 'Desktop Console',
   'app.navigation': 'Main navigation',
   'app.nav.kernel': 'Core',
