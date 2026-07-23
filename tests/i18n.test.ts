@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { normalizeLocale, translate } from '../src/i18n';
+import { languageOptions, normalizeLocale, translate } from '../src/i18n';
 import { en, ja, zhCN, zhTW } from '../src/i18n/resources';
 import { jaOverrides } from '../src/i18n/ja';
 
@@ -23,6 +23,15 @@ describe('i18n', () => {
       .toBe('正在安裝 1.2.3');
     expect(translate('ja', 'kernel.install.installingVersion', { version: '1.2.3' }))
       .toBe('1.2.3 をインストールしています');
+  });
+
+  it('uses each language native name independently of the active locale', () => {
+    expect(languageOptions).toEqual([
+      { value: 'zh-CN', nativeLabel: '简体中文' },
+      { value: 'zh-TW', nativeLabel: '繁體中文' },
+      { value: 'ja', nativeLabel: '日本語' },
+      { value: 'en', nativeLabel: 'English' },
+    ]);
   });
 
   it('keeps both locale dictionaries structurally aligned', () => {

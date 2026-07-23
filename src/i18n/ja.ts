@@ -2,10 +2,6 @@ import type { MessageKey } from './resources';
 
 export const jaOverrides = {
   'app.language': '言語',
-  'app.language.zhCN': '簡体字中国語',
-  'app.language.zhTW': '繁体字中国語',
-  'app.language.ja': '日本語',
-  'app.language.en': 'English',
   'app.desktopConsole': 'デスクトップコンソール',
   'app.navigation': 'メインナビゲーション',
   'app.nav.kernel': 'コア',

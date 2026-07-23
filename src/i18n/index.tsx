@@ -4,6 +4,16 @@ import { en, ja, zhCN, zhTW, type MessageKey, type MessageVariables } from './re
 
 export type AppLocale = 'zh-CN' | 'zh-TW' | 'ja' | 'en';
 
+export const languageOptions: ReadonlyArray<{
+  value: AppLocale;
+  nativeLabel: string;
+}> = [
+  { value: 'zh-CN', nativeLabel: '简体中文' },
+  { value: 'zh-TW', nativeLabel: '繁體中文' },
+  { value: 'ja', nativeLabel: '日本語' },
+  { value: 'en', nativeLabel: 'English' },
+];
+
 const STORAGE_KEY = 'easy-cli-proxy-api.locale';
 const resources = { 'zh-CN': zhCN, 'zh-TW': zhTW, ja, en } as const;
 let currentLocale: AppLocale = 'zh-CN';

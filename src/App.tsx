@@ -28,16 +28,9 @@ import { QuotaPage } from './pages/QuotaPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { ThinkingAliasesPage } from './pages/ThinkingAliasesPage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
-import { useI18n } from './i18n';
+import { languageOptions, useI18n } from './i18n';
 
 const CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
-
-const languageOptions = [
-  { value: 'zh-CN', labelKey: 'app.language.zhCN' },
-  { value: 'zh-TW', labelKey: 'app.language.zhTW' },
-  { value: 'ja', labelKey: 'app.language.ja' },
-  { value: 'en', labelKey: 'app.language.en' },
-] as const;
 
 const pages = [
   {
@@ -282,7 +275,7 @@ function AppContent() {
                 onClick={() => setLanguageMenuOpen((open) => !open)}
               >
                 <Languages size={16} aria-hidden="true" />
-                <span>{t(selectedLanguage.labelKey)}</span>
+                <span lang={selectedLanguage.value}>{selectedLanguage.nativeLabel}</span>
                 <ChevronUp
                   size={14}
                   aria-hidden="true"
@@ -310,7 +303,7 @@ function AppContent() {
                           setLanguageMenuOpen(false);
                         }}
                       >
-                        <span>{t(option.labelKey)}</span>
+                        <span lang={option.value}>{option.nativeLabel}</span>
                         {selected ? <Check size={14} aria-hidden="true" /> : null}
                       </button>
                     );
