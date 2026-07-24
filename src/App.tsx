@@ -399,7 +399,6 @@ function AppContent() {
               <X size={17} aria-hidden="true" />
             </button>
             <div className="close-dialog-heading">
-              <span>{t('app.close.eyebrow')}</span>
               <h2 id="close-dialog-title">{t('app.close.title')}</h2>
             </div>
             <p id="close-dialog-description">

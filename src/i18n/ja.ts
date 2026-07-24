@@ -19,7 +19,6 @@ export const jaOverrides = {
   'app.coreRequired.description': '設定、OAuth、API 接続などを使用するには CPA コアを起動してください。',
   'app.contact.title': 'QQ でお問い合わせ',
   'app.contact.label': 'お問い合わせ',
-  'app.close.eyebrow': 'ウィンドウを閉じる',
   'app.close.title': '次の操作を選択してください',
   'app.close.description': 'アプリを終了するか、EasyCLIProxyAPI をシステムトレイで実行し続けることができます。',
   'app.close.minimizing': '最小化しています...',

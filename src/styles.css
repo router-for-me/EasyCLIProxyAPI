@@ -1556,7 +1556,6 @@ input:focus-visible {
 
 .close-dialog-heading {
   display: grid;
-  gap: 5px;
   padding-right: 34px;
 }
 
@@ -1589,13 +1588,6 @@ input:focus-visible {
 .close-dialog-dismiss:disabled {
   cursor: not-allowed;
   opacity: 0.45;
-}
-
-.close-dialog-heading span {
-  color: #7a746c;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
 }
 
 .close-dialog-heading h2 {
