@@ -636,6 +636,63 @@ input:focus-visible {
   flex: none;
 }
 
+.client-api-key-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 0 0;
+}
+
+.client-api-default-key {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 19px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #5f5a53;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.client-api-default-key span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.client-api-default-key svg {
+  flex: none;
+  color: #7a746c;
+}
+
+.client-api-default-key:hover span {
+  color: #2d2a26;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.client-api-key-copy {
+  width: 26px;
+  height: 26px;
+  border-color: transparent !important;
+  background: transparent !important;
+}
+
+.client-api-key-copy:hover:not(:disabled) {
+  border-color: #d5d2cb !important;
+  background: #f4f1ea !important;
+}
+
+.client-api-no-key {
+  color: #9f2d20 !important;
+}
+
 .client-api-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
@@ -1247,7 +1304,7 @@ input:focus-visible {
 
 .config-key-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 86px;
+  grid-template-columns: minmax(0, 1fr) 112px;
   align-items: center;
   gap: 12px;
   min-height: 66px;
@@ -1301,24 +1358,6 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-.config-protected-key {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #c9c4ba;
-  border-radius: 999px;
-  background: #f4f1ea;
-  color: #6d6760;
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.config-protected-key {
-  width: 40px;
-  height: 28px;
-}
-
 .config-key-details code {
   min-width: 0;
   overflow: hidden;
@@ -1331,7 +1370,7 @@ input:focus-visible {
 
 .config-key-actions {
   display: grid;
-  grid-template-columns: 32px 40px;
+  grid-template-columns: repeat(3, 32px);
   justify-content: end;
   gap: 8px;
 }
@@ -1710,6 +1749,12 @@ input:focus-visible {
   height: 202px;
 }
 
+.config-delete-dialog.has-warning {
+  grid-template-rows: 40px 52px auto 40px;
+  height: auto;
+  min-height: 254px;
+}
+
 .config-delete-key {
   display: flex;
   min-width: 0;
@@ -1723,6 +1768,24 @@ input:focus-visible {
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.config-delete-warning {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid #e2b6ae;
+  border-radius: 6px;
+  background: #fff1ee;
+  color: #8f3025;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.config-delete-warning svg {
+  margin-top: 1px;
 }
 
 .config-toast {

@@ -67,7 +67,7 @@ const MIN_MAIN_WINDOW_HEIGHT: u32 = 600;
 const MAX_SAVED_WINDOW_DIMENSION: u32 = 16_384;
 const OAUTH_DIR_NAME: &str = "oauth";
 const DEFAULT_API_KEY: &str = "123456";
-const DEFAULT_API_KEY_REMARK: &str = "内置密钥";
+const DEFAULT_API_KEY_INITIAL_REMARK: &str = "默认密钥";
 const DEFAULT_MANAGEMENT_SECRET_KEY: &str = "123456";
 const MANAGED_AGENT_PROVIDER_ID: &str = "cpa-gui";
 const CODEX_MODEL_CATALOG_FILE: &str = "cpa-gui-model-catalog.json";
@@ -465,7 +465,7 @@ impl Default for GuiConfigFile {
                 .and_then(|path| path.parent().map(|parent| parent.join(OAUTH_DIR_NAME)))
                 .map(|path| path_to_string(&path))
                 .unwrap_or_else(|| OAUTH_DIR_NAME.to_string()),
-            api_keys: vec![built_in_api_key_entry()],
+            api_keys: vec![default_api_key_entry()],
             // Keep plaintext here for management API auth. Core hashes the
             // value written into config.yaml on startup.
             management_secret_key: DEFAULT_MANAGEMENT_SECRET_KEY.to_string(),
@@ -734,7 +734,6 @@ struct CoreConfigSettings {
 struct CoreApiKeyView {
     api_key: String,
     remark: String,
-    built_in: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -1166,7 +1165,6 @@ impl From<&GuiConfigFile> for CoreConfigView {
                 .map(|entry| CoreApiKeyView {
                     api_key: entry.key.clone(),
                     remark: entry.remark.clone(),
-                    built_in: entry.key == DEFAULT_API_KEY,
                 })
                 .collect(),
             management_secret_configured: !config.management_secret_key.is_empty(),
@@ -4753,16 +4751,12 @@ fn add_core_api_key(
     validate_core_api_key(&api_key)?;
     validate_api_key_remark(&remark)?;
     let mut settings = current_core_config_settings(gui_config_state.inner())?;
-    if api_key == DEFAULT_API_KEY
-        || settings
-            .api_keys
-            .iter()
-            .any(|existing| existing == &api_key)
+    if settings
+        .api_keys
+        .iter()
+        .any(|existing| existing == &api_key)
     {
         return Err("该鉴权密钥已经存在".to_string());
-    }
-    if !settings.api_keys.iter().any(|key| key == DEFAULT_API_KEY) {
-        settings.api_keys.insert(0, DEFAULT_API_KEY.to_string());
     }
     settings.api_keys.push(api_key);
     patch_core_api_keys(&settings.api_keys)?;
@@ -4771,6 +4765,64 @@ fn add_core_api_key(
         remark,
     });
     let config = gui_config_state.sync_core_settings_with_api_key(&settings, added_api_key)?;
+    Ok(CoreConfigView::from(&config))
+}
+
+fn replace_core_api_key_value(
+    api_keys: &mut [String],
+    original_api_key: &str,
+    replacement_api_key: String,
+) -> Result<(), String> {
+    let index = api_keys
+        .iter()
+        .position(|existing| existing == original_api_key)
+        .ok_or_else(|| "要编辑的鉴权密钥不存在，请刷新后重试".to_string())?;
+    if replacement_api_key != original_api_key
+        && api_keys
+            .iter()
+            .any(|existing| existing == &replacement_api_key)
+    {
+        return Err("该鉴权密钥已经存在".to_string());
+    }
+    api_keys[index] = replacement_api_key;
+    Ok(())
+}
+
+fn remove_core_api_key_value(api_keys: &mut Vec<String>, api_key: &str) -> Result<(), String> {
+    let index = api_keys
+        .iter()
+        .position(|existing| existing == api_key)
+        .ok_or_else(|| "要删除的鉴权密钥不存在，请刷新后重试".to_string())?;
+    api_keys.remove(index);
+    Ok(())
+}
+
+#[tauri::command]
+fn update_core_api_key(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    original_api_key: String,
+    api_key: String,
+    remark: String,
+) -> Result<CoreConfigView, String> {
+    let original_api_key = original_api_key.trim();
+    let api_key = api_key.trim().to_string();
+    let remark = remark.trim().to_string();
+    if original_api_key.is_empty() {
+        return Err("要编辑的鉴权密钥不能为空".to_string());
+    }
+    validate_core_api_key(&api_key)?;
+    validate_api_key_remark(&remark)?;
+
+    let mut settings = current_core_config_settings(gui_config_state.inner())?;
+    replace_core_api_key_value(&mut settings.api_keys, original_api_key, api_key.clone())?;
+    patch_core_api_keys(&settings.api_keys)?;
+    let config = gui_config_state.sync_core_settings_with_api_key(
+        &settings,
+        Some(GuiApiKeyEntry {
+            key: api_key,
+            remark,
+        }),
+    )?;
     Ok(CoreConfigView::from(&config))
 }
 
@@ -4783,16 +4835,8 @@ fn delete_core_api_key(
     if api_key.is_empty() {
         return Err("要删除的鉴权密钥不能为空".to_string());
     }
-    if api_key == DEFAULT_API_KEY {
-        return Err("内置密钥不能删除".to_string());
-    }
     let mut settings = current_core_config_settings(gui_config_state.inner())?;
-    let index = settings
-        .api_keys
-        .iter()
-        .position(|existing| existing == api_key)
-        .ok_or_else(|| "要删除的鉴权密钥不存在，请刷新后重试".to_string())?;
-    settings.api_keys.remove(index);
+    remove_core_api_key_value(&mut settings.api_keys, api_key)?;
     patch_core_api_keys(&settings.api_keys)?;
     let config = gui_config_state.sync_core_settings(&settings)?;
     Ok(CoreConfigView::from(&config))
@@ -8625,12 +8669,19 @@ fn ensure_fixed_oauth_dir() -> Result<PathBuf, String> {
     Ok(directory)
 }
 
+fn should_import_core_api_keys(had_existing_gui_config: bool, core_api_keys: &[String]) -> bool {
+    had_existing_gui_config || !core_api_keys.is_empty()
+}
+
 fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     ensure_fixed_oauth_dir()?;
     let config_path = gui_config_path()?;
     let legacy_config_path = legacy_gui_config_path()?;
+    let gui_config_exists = config_path.is_file();
+    let legacy_config_exists = legacy_config_path.is_file();
+    let had_existing_gui_config = gui_config_exists || legacy_config_exists;
 
-    let (mut config, presence, mut changed) = if config_path.is_file() {
+    let (mut config, presence, mut changed) = if gui_config_exists {
         let content = fs::read_to_string(&config_path)
             .map_err(|err| format!("读取 GUI 配置失败 {}: {err}", path_to_string(&config_path)))?;
         let config = toml::from_str::<GuiConfigFile>(&content)
@@ -8638,7 +8689,7 @@ fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         let presence = toml::from_str::<GuiConfigPresence>(&content)
             .map_err(|err| format!("解析 GUI 配置字段失败: {err}"))?;
         (config, presence, false)
-    } else if legacy_config_path.is_file() {
+    } else if legacy_config_exists {
         let content = fs::read_to_string(&legacy_config_path).map_err(|err| {
             format!(
                 "读取旧 GUI 配置失败 {}: {err}",
@@ -8660,7 +8711,9 @@ fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         || presence.routing_strategy.is_none();
     if missing_core_settings {
         if let Ok(core_settings) = read_installed_core_config_settings() {
-            if presence.api_keys.is_none() {
+            if presence.api_keys.is_none()
+                && should_import_core_api_keys(had_existing_gui_config, &core_settings.api_keys)
+            {
                 config.api_keys = merge_core_api_keys_with_gui_metadata(
                     &config.api_keys,
                     &core_settings.api_keys,
@@ -8704,10 +8757,10 @@ fn apply_core_settings_to_gui_config(
     config.routing_strategy = core_settings.routing_strategy.clone();
 }
 
-fn built_in_api_key_entry() -> GuiApiKeyEntry {
+fn default_api_key_entry() -> GuiApiKeyEntry {
     GuiApiKeyEntry {
         key: DEFAULT_API_KEY.to_string(),
-        remark: DEFAULT_API_KEY_REMARK.to_string(),
+        remark: DEFAULT_API_KEY_INITIAL_REMARK.to_string(),
     }
 }
 
@@ -8720,11 +8773,11 @@ fn merge_core_api_keys_with_gui_metadata(
     core_api_keys: &[String],
     added_api_key: Option<&GuiApiKeyEntry>,
 ) -> Vec<GuiApiKeyEntry> {
-    let mut merged = vec![built_in_api_key_entry()];
+    let mut merged: Vec<GuiApiKeyEntry> = Vec::new();
 
     for api_key in core_api_keys {
         let api_key = api_key.trim();
-        if api_key.is_empty() || api_key == DEFAULT_API_KEY || is_example_core_api_key(api_key) {
+        if api_key.is_empty() || is_example_core_api_key(api_key) {
             continue;
         }
         if merged.iter().any(|entry| entry.key == api_key) {
@@ -8885,9 +8938,6 @@ fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, String> {
     for entry in &mut config.api_keys {
         entry.key = entry.key.trim().to_string();
         entry.remark = entry.remark.trim().to_string();
-        if entry.key == DEFAULT_API_KEY {
-            entry.remark = DEFAULT_API_KEY_REMARK.to_string();
-        }
     }
     if config.api_keys != original_api_keys {
         changed = true;
@@ -10828,6 +10878,7 @@ fn main() {
             save_gui_settings,
             get_core_config_settings,
             add_core_api_key,
+            update_core_api_key,
             delete_core_api_key,
             set_core_management_secret_key,
             clear_core_management_secret_key,
@@ -10948,7 +10999,7 @@ mod tests {
         assert!(content.contains("auth-dir = "));
         assert!(content.contains("[[api-keys]]"));
         assert!(content.contains("key = \"123456\""));
-        assert!(content.contains("remark = \"内置密钥\""));
+        assert!(content.contains("remark = \"默认密钥\""));
         assert!(content.contains("management-secret-key = \"123456\""));
         assert!(content.contains("plugins-enabled = false"));
         assert!(content.contains("routing-strategy = \"round-robin\""));
@@ -11998,7 +12049,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_string_api_keys_gain_remarks_and_keep_custom_keys() {
+    fn legacy_string_api_keys_keep_custom_keys_without_special_protection() {
         let legacy = "port = 8317\nallow-lan = false\nrun-on-startup = false\nauth-dir = \"/tmp/oauth\"\napi-keys = [\"123456\", \"custom-key\"]\nmanagement-secret-key = \"123456\"\nplugins-enabled = false\nrouting-strategy = \"round-robin\"\n";
         let mut config = toml::from_str::<GuiConfigFile>(legacy).unwrap();
 
@@ -12007,12 +12058,11 @@ mod tests {
             gui_api_key_values(&config.api_keys),
             vec!["123456", "custom-key"]
         );
-        assert_eq!(config.api_keys[0].remark, DEFAULT_API_KEY_REMARK);
+        assert!(config.api_keys[0].remark.is_empty());
         assert!(config.api_keys[1].remark.is_empty());
 
         let serialized = toml::to_string_pretty(&config).unwrap();
         assert!(serialized.contains("[[api-keys]]"));
-        assert!(serialized.contains("remark = \"内置密钥\""));
         let reparsed = toml::from_str::<GuiConfigFile>(&serialized).unwrap();
         assert_eq!(reparsed.api_keys, config.api_keys);
     }
@@ -12020,7 +12070,7 @@ mod tests {
     #[test]
     fn api_key_remarks_follow_matching_core_keys() {
         let existing = vec![
-            built_in_api_key_entry(),
+            default_api_key_entry(),
             GuiApiKeyEntry {
                 key: "custom-key".to_string(),
                 remark: "开发环境".to_string(),
@@ -12030,12 +12080,48 @@ mod tests {
 
         let merged = merge_core_api_keys_with_gui_metadata(&existing, &core_keys, None);
 
-        assert_eq!(
-            gui_api_key_values(&merged),
-            vec!["123456", "custom-key", "new-key"]
-        );
-        assert_eq!(merged[1].remark, "开发环境");
-        assert!(merged[2].remark.is_empty());
+        assert_eq!(gui_api_key_values(&merged), vec!["custom-key", "new-key"]);
+        assert_eq!(merged[0].remark, "开发环境");
+        assert!(merged[1].remark.is_empty());
+    }
+
+    #[test]
+    fn explicit_empty_api_key_list_stays_empty() {
+        let existing = vec![default_api_key_entry()];
+        assert!(merge_core_api_keys_with_gui_metadata(&existing, &[], None).is_empty());
+
+        let mut config = GuiConfigFile {
+            api_keys: Vec::new(),
+            ..GuiConfigFile::default()
+        };
+        sanitize_gui_config(&mut config).unwrap();
+        assert!(config.api_keys.is_empty());
+
+        let content = toml::to_string_pretty(&config).unwrap();
+        let restored = toml::from_str::<GuiConfigFile>(&content).unwrap();
+        assert!(restored.api_keys.is_empty());
+    }
+
+    #[test]
+    fn fresh_config_keeps_initial_default_unless_core_has_real_keys() {
+        assert!(!should_import_core_api_keys(false, &[]));
+        assert!(should_import_core_api_keys(
+            false,
+            &["existing-key".to_string()]
+        ));
+        assert!(should_import_core_api_keys(true, &[]));
+    }
+
+    #[test]
+    fn initial_default_api_key_can_be_edited_and_deleted() {
+        let mut api_keys = vec![DEFAULT_API_KEY.to_string()];
+
+        replace_core_api_key_value(&mut api_keys, DEFAULT_API_KEY, "custom-key".to_string())
+            .unwrap();
+        assert_eq!(api_keys, vec!["custom-key"]);
+
+        remove_core_api_key_value(&mut api_keys, "custom-key").unwrap();
+        assert!(api_keys.is_empty());
     }
 
     #[test]
@@ -12043,8 +12129,8 @@ mod tests {
         let view = serde_json::to_value(CoreConfigView::from(&GuiConfigFile::default())).unwrap();
 
         assert_eq!(view["apiKeys"][0]["apiKey"], DEFAULT_API_KEY);
-        assert_eq!(view["apiKeys"][0]["remark"], DEFAULT_API_KEY_REMARK);
-        assert_eq!(view["apiKeys"][0]["builtIn"], true);
+        assert_eq!(view["apiKeys"][0]["remark"], DEFAULT_API_KEY_INITIAL_REMARK);
+        assert!(view["apiKeys"][0].get("builtIn").is_none());
     }
 
     #[test]
@@ -12101,10 +12187,7 @@ mod tests {
         assert!(presence.routing_strategy.is_none());
         apply_core_settings_to_gui_config(&mut config, &core_settings);
 
-        assert_eq!(
-            gui_api_key_values(&config.api_keys),
-            vec!["123456", "existing-key"]
-        );
+        assert_eq!(gui_api_key_values(&config.api_keys), vec!["existing-key"]);
         assert_eq!(config.management_secret_key, DEFAULT_MANAGEMENT_SECRET_KEY);
         assert!(config.plugins_enabled);
         assert_eq!(config.routing_strategy, "fill-first");
@@ -12121,10 +12204,7 @@ mod tests {
         apply_core_settings_to_gui_config(&mut config, &core_settings);
 
         assert_eq!(core_settings.api_keys, vec!["real-key"]);
-        assert_eq!(
-            gui_api_key_values(&config.api_keys),
-            vec!["123456", "real-key"]
-        );
+        assert_eq!(gui_api_key_values(&config.api_keys), vec!["real-key"]);
         assert_eq!(
             core_settings.management_secret_key.as_deref(),
             Some("plain-management-secret")
@@ -12472,7 +12552,7 @@ mod tests {
             window_height: None,
             auth_dir: path_to_string(&fixed_oauth_dir().unwrap()),
             api_keys: vec![
-                built_in_api_key_entry(),
+                default_api_key_entry(),
                 GuiApiKeyEntry {
                     key: "gui-key".to_string(),
                     remark: "测试密钥".to_string(),

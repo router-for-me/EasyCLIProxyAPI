@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  Pencil,
   Plus,
   Plug,
   RefreshCw,
@@ -26,10 +27,9 @@ type CoreConfigSettings = {
 type CoreApiKey = {
   apiKey: string;
   remark: string;
-  builtIn: boolean;
 };
 
-type ConfigAction = 'add-key' | 'delete-key' | 'plugins' | 'routing' | null;
+type ConfigAction = 'add-key' | 'update-key' | 'delete-key' | 'plugins' | 'routing' | null;
 type NoticeTone = 'success' | 'error';
 
 const ROUTING_OPTIONS = [
@@ -44,6 +44,7 @@ export function ConfigPanelPage() {
   const [loadError, setLoadError] = useState('');
   const [busyAction, setBusyAction] = useState<ConfigAction>(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [editingApiKey, setEditingApiKey] = useState<string | null>(null);
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
   const [newApiKey, setNewApiKey] = useState('');
   const [newApiKeyRemark, setNewApiKeyRemark] = useState('');
@@ -114,6 +115,7 @@ export function ConfigPanelPage() {
   };
 
   const openAddDialog = () => {
+    setEditingApiKey(null);
     setNewApiKey('');
     setNewApiKeyRemark('');
     setShowApiKey(false);
@@ -121,11 +123,21 @@ export function ConfigPanelPage() {
     setAddDialogOpen(true);
   };
 
+  const openEditDialog = (entry: CoreApiKey) => {
+    setEditingApiKey(entry.apiKey);
+    setNewApiKey(entry.apiKey);
+    setNewApiKeyRemark(entry.remark);
+    setShowApiKey(false);
+    setFormError('');
+    setAddDialogOpen(true);
+  };
+
   const closeAddDialog = () => {
-    if (busyAction === 'add-key') {
+    if (busyAction === 'add-key' || busyAction === 'update-key') {
       return;
     }
     setAddDialogOpen(false);
+    setEditingApiKey(null);
     setFormError('');
   };
 
@@ -149,7 +161,7 @@ export function ConfigPanelPage() {
       setFormError(t('config.error.invalidKey'));
       return;
     }
-    if (settings?.apiKeys.some((entry) => entry.apiKey === apiKey)) {
+    if (settings?.apiKeys.some((entry) => entry.apiKey === apiKey && entry.apiKey !== editingApiKey)) {
       setFormError(t('config.error.duplicateKey'));
       return;
     }
@@ -159,14 +171,16 @@ export function ConfigPanelPage() {
       return;
     }
 
+    const editing = editingApiKey !== null;
     const saved = await runMutation(
-      'add-key',
-      'add_core_api_key',
-      { apiKey, remark },
-      t('config.notice.keyAdded'),
+      editing ? 'update-key' : 'add-key',
+      editing ? 'update_core_api_key' : 'add_core_api_key',
+      editing ? { originalApiKey: editingApiKey, apiKey, remark } : { apiKey, remark },
+      editing ? t('config.notice.keyUpdated') : t('config.notice.keyAdded'),
     );
     if (saved) {
       setAddDialogOpen(false);
+      setEditingApiKey(null);
       setNewApiKey('');
       setNewApiKeyRemark('');
     }
@@ -228,6 +242,8 @@ export function ConfigPanelPage() {
   const controlsDisabled = loading || settings === null || busyAction !== null;
   const selectedDeleteKey =
     deleteIndex === null ? '' : settings?.apiKeys[deleteIndex]?.apiKey || '';
+  const deletingLastKey = deleteIndex !== null && settings?.apiKeys.length === 1;
+  const keyMutationBusy = busyAction === 'add-key' || busyAction === 'update-key';
 
   return (
     <section className="page config-page">
@@ -302,22 +318,26 @@ export function ConfigPanelPage() {
                         <Copy size={16} aria-hidden="true" />
                       )}
                     </button>
-                    {entry.builtIn ? (
-                      <span className="config-protected-key" title={t('config.keys.builtInProtected')}>
-                        {t('config.keys.builtIn')}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="icon-button danger"
-                        onClick={() => setDeleteIndex(index)}
-                        disabled={controlsDisabled}
-                        title={t('config.keys.delete')}
-                        aria-label={t('config.keys.deleteNth', { number: index + 1 })}
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="icon-button quiet"
+                      onClick={() => openEditDialog(entry)}
+                      disabled={controlsDisabled}
+                      title={t('config.keys.edit')}
+                      aria-label={t('config.keys.editNth', { number: index + 1 })}
+                    >
+                      <Pencil size={16} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button danger"
+                      onClick={() => setDeleteIndex(index)}
+                      disabled={controlsDisabled}
+                      title={t('config.keys.delete')}
+                      aria-label={t('config.keys.deleteNth', { number: index + 1 })}
+                    >
+                      <Trash2 size={16} aria-hidden="true" />
+                    </button>
                   </div>
                 </div>
               ))
@@ -409,13 +429,15 @@ export function ConfigPanelPage() {
             <div className="config-dialog-heading">
               <div>
                 <KeyRound size={19} aria-hidden="true" />
-                <h2 id="add-api-key-title">{t('config.keys.addTitle')}</h2>
+                <h2 id="add-api-key-title">
+                  {editingApiKey === null ? t('config.keys.addTitle') : t('config.keys.editTitle')}
+                </h2>
               </div>
               <button
                 type="button"
                 className="icon-button quiet"
                 onClick={closeAddDialog}
-                disabled={busyAction === 'add-key'}
+                disabled={keyMutationBusy}
                 title={t('common.close')}
                 aria-label={t('common.close')}
               >
@@ -434,7 +456,7 @@ export function ConfigPanelPage() {
                     setNewApiKey(event.currentTarget.value);
                     setFormError('');
                   }}
-                  disabled={busyAction === 'add-key'}
+                  disabled={keyMutationBusy}
                   aria-invalid={Boolean(formError)}
                   placeholder="sk-..."
                 />
@@ -442,7 +464,7 @@ export function ConfigPanelPage() {
                   type="button"
                   className="icon-button quiet"
                   onClick={() => setShowApiKey((visible) => !visible)}
-                  disabled={busyAction === 'add-key'}
+                  disabled={keyMutationBusy}
                   title={showApiKey ? t('config.keys.hide') : t('config.keys.show')}
                   aria-label={showApiKey ? t('config.keys.hide') : t('config.keys.show')}
                 >
@@ -466,7 +488,7 @@ export function ConfigPanelPage() {
                   setNewApiKeyRemark(event.currentTarget.value);
                   setFormError('');
                 }}
-                disabled={busyAction === 'add-key'}
+                disabled={keyMutationBusy}
                 placeholder={t('config.keys.remarkPlaceholder')}
               />
             </label>
@@ -480,14 +502,16 @@ export function ConfigPanelPage() {
                 type="button"
                 className="secondary-button"
                 onClick={generateApiKey}
-                disabled={busyAction === 'add-key'}
+                disabled={keyMutationBusy}
               >
                 <Sparkles size={16} aria-hidden="true" />
                 {t('config.keys.generate')}
               </button>
-              <button type="submit" className="primary-button" disabled={busyAction === 'add-key'}>
-                <Plus size={16} aria-hidden="true" />
-                {busyAction === 'add-key' ? t('config.keys.adding') : t('common.add')}
+              <button type="submit" className="primary-button" disabled={keyMutationBusy}>
+                {editingApiKey === null ? <Plus size={16} aria-hidden="true" /> : <Check size={16} aria-hidden="true" />}
+                {keyMutationBusy
+                  ? editingApiKey === null ? t('config.keys.adding') : t('common.saving')
+                  : editingApiKey === null ? t('common.add') : t('common.save')}
               </button>
             </div>
           </form>
@@ -501,7 +525,7 @@ export function ConfigPanelPage() {
           }
         }}>
           <div
-            className="config-dialog config-delete-dialog"
+            className={`config-dialog config-delete-dialog ${deletingLastKey ? 'has-warning' : ''}`}
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="delete-api-key-title"
@@ -513,6 +537,12 @@ export function ConfigPanelPage() {
               </div>
             </div>
             <code className="config-delete-key">{maskApiKey(selectedDeleteKey)}</code>
+            {deletingLastKey ? (
+              <div className="config-delete-warning">
+                <AlertCircle size={17} aria-hidden="true" />
+                <span>{t('config.keys.deleteAllWarning')}</span>
+              </div>
+            ) : null}
             <div className="config-dialog-actions two-actions">
               <button
                 type="button"

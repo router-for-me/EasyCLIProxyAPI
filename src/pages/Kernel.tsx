@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AlertCircle, Check, Copy, ExternalLink, Info } from 'lucide-react';
+import { AlertCircle, Check, Copy, ExternalLink, Eye, EyeOff, Info } from 'lucide-react';
 import { type CoreStatus, useCoreRuntime } from '../coreRuntime';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import claudeIcon from '../assets/icons/claude.svg';
@@ -55,6 +55,10 @@ type GuiSettings = {
   port: number;
   allowLan: boolean;
   runOnStartup: boolean;
+};
+
+type CoreConfigSummary = {
+  apiKeys: Array<{ apiKey: string }>;
 };
 
 const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
@@ -134,6 +138,8 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [cancellingInstall, setCancellingInstall] = useState(false);
   const [copiedApiField, setCopiedApiField] = useState('');
+  const [homeApiKey, setHomeApiKey] = useState<string | null>(DEFAULT_CLIENT_API_KEY);
+  const [showHomeApiKey, setShowHomeApiKey] = useState(false);
   const [lanIpv4, setLanIpv4] = useState<string | null>(null);
   const [lanIpChecked, setLanIpChecked] = useState(false);
   const installDialogRef = useRef<HTMLDivElement>(null);
@@ -213,6 +219,9 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     loadBundledCore();
     loadInstallTask();
     loadGuiSettings();
+    if (view === 'home') {
+      void loadHomeApiKey();
+    }
 
     if (!latestAutoCheckStarted) {
       latestAutoCheckStarted = true;
@@ -331,6 +340,15 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
       setSettingsError(String(error));
     } finally {
       setSettingsLoaded(true);
+    }
+  };
+
+  const loadHomeApiKey = async () => {
+    try {
+      const settings = await invoke<CoreConfigSummary>('get_core_config_settings');
+      setHomeApiKey(settings.apiKeys[0]?.apiKey ?? null);
+    } catch {
+      setHomeApiKey(DEFAULT_CLIENT_API_KEY);
     }
   };
 
@@ -969,7 +987,49 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         <div className="panel-heading client-api-heading">
           <div>
             <h2>API URL</h2>
-            <p>{t('kernel.access.defaultKey', { key: DEFAULT_CLIENT_API_KEY })}</p>
+            {homeApiKey ? (
+              <div className="client-api-key-actions">
+                <button
+                  type="button"
+                  className="client-api-default-key"
+                  aria-pressed={showHomeApiKey}
+                  title={showHomeApiKey ? t('config.keys.hide') : t('config.keys.show')}
+                  onClick={() => setShowHomeApiKey((visible) => !visible)}
+                >
+                  <span>
+                    {t('kernel.access.defaultKey', {
+                      key: showHomeApiKey ? homeApiKey : '••••••',
+                    })}
+                  </span>
+                  {showHomeApiKey ? (
+                    <EyeOff size={14} aria-hidden="true" />
+                  ) : (
+                    <Eye size={14} aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="icon-button quiet client-api-key-copy"
+                  title={t('config.keys.copy')}
+                  aria-label={t('config.keys.copy')}
+                  onClick={() =>
+                    void copyApiValue(
+                      homeApiKey,
+                      'home:api-key',
+                      t('config.notice.keyCopied'),
+                    )
+                  }
+                >
+                  {copiedApiField === 'home:api-key' ? (
+                    <Check size={14} aria-hidden="true" />
+                  ) : (
+                    <Copy size={14} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            ) : (
+              <p className="client-api-no-key">{t('kernel.access.noConfiguredKey')}</p>
+            )}
           </div>
           <span className={`state-pill ${coreRunning ? 'success' : ''}`}>
             {coreRunning ? t('kernel.access.connectable') : t('kernel.access.waiting')}
