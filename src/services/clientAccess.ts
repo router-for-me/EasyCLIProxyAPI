@@ -1,7 +1,5 @@
 import { getCurrentLocale, translate } from '../i18n';
 
-export const DEFAULT_CLIENT_API_KEY = '123456';
-
 export type ClientApiProfile = {
   id: 'openai' | 'claude' | 'gemini';
   name: string;

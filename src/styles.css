@@ -661,7 +661,17 @@ input:focus-visible {
 }
 
 .client-api-default-key span {
+  flex: none;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.client-api-default-key code {
+  min-width: 0;
+  overflow: hidden;
+  color: #2d2a26;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -673,8 +683,6 @@ input:focus-visible {
 
 .client-api-default-key:hover span {
   color: #2d2a26;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .client-api-key-copy {

@@ -635,7 +635,7 @@ export const jaOverrides = {
   'kernel.versions.reinstall': '再インストール',
   'kernel.versions.noBundled': 'このリリースには組み込みコアが含まれていません',
   'kernel.versions.offlineInstall': 'オフラインインストール',
-  'kernel.access.defaultKey': '既定のキー：{key}',
+  'kernel.access.firstKey': '最初のキー',
   'kernel.access.noConfiguredKey': 'キーが設定されていないため、現在はすべてのキーがデフォルトで許可されます',
   'kernel.access.connectable': '接続可能',
   'kernel.access.waiting': 'コアの起動を待っています',

@@ -6,7 +6,7 @@ import { type CoreStatus, useCoreRuntime } from '../coreRuntime';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
-import { clientApiProfiles, DEFAULT_CLIENT_API_KEY } from '../services/clientAccess';
+import { clientApiProfiles } from '../services/clientAccess';
 import packageMetadata from '../../package.json';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
@@ -138,7 +138,8 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [cancellingInstall, setCancellingInstall] = useState(false);
   const [copiedApiField, setCopiedApiField] = useState('');
-  const [homeApiKey, setHomeApiKey] = useState<string | null>(DEFAULT_CLIENT_API_KEY);
+  const [homeApiKey, setHomeApiKey] = useState<string | null | undefined>(undefined);
+  const [homeApiKeyError, setHomeApiKeyError] = useState(false);
   const [showHomeApiKey, setShowHomeApiKey] = useState(false);
   const [lanIpv4, setLanIpv4] = useState<string | null>(null);
   const [lanIpChecked, setLanIpChecked] = useState(false);
@@ -347,8 +348,10 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     try {
       const settings = await invoke<CoreConfigSummary>('get_core_config_settings');
       setHomeApiKey(settings.apiKeys[0]?.apiKey ?? null);
+      setHomeApiKeyError(false);
     } catch {
-      setHomeApiKey(DEFAULT_CLIENT_API_KEY);
+      setHomeApiKey(undefined);
+      setHomeApiKeyError(true);
     }
   };
 
@@ -987,7 +990,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         <div className="panel-heading client-api-heading">
           <div>
             <h2>API URL</h2>
-            {homeApiKey ? (
+            {typeof homeApiKey === 'string' ? (
               <div className="client-api-key-actions">
                 <button
                   type="button"
@@ -996,11 +999,8 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                   title={showHomeApiKey ? t('config.keys.hide') : t('config.keys.show')}
                   onClick={() => setShowHomeApiKey((visible) => !visible)}
                 >
-                  <span>
-                    {t('kernel.access.defaultKey', {
-                      key: showHomeApiKey ? homeApiKey : '••••••',
-                    })}
-                  </span>
+                  <span>{t('kernel.access.firstKey')}</span>
+                  <code>{showHomeApiKey ? homeApiKey : '******'}</code>
                   {showHomeApiKey ? (
                     <EyeOff size={14} aria-hidden="true" />
                   ) : (
@@ -1027,8 +1027,12 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                   )}
                 </button>
               </div>
-            ) : (
+            ) : homeApiKey === null ? (
               <p className="client-api-no-key">{t('kernel.access.noConfiguredKey')}</p>
+            ) : (
+              <p className={homeApiKeyError ? 'error' : undefined}>
+                {homeApiKeyError ? t('common.unavailable') : t('common.loading')}
+              </p>
             )}
           </div>
           <span className={`state-pill ${coreRunning ? 'success' : ''}`}>
