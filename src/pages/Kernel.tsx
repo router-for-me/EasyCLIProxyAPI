@@ -106,7 +106,7 @@ function requestLatestCore() {
 }
 
 export function KernelPage() {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const {
     status: coreStatus,
     statusError,
@@ -211,7 +211,7 @@ export function KernelPage() {
       })
       .catch((error) => {
         if (!disposed) {
-          setMessage(t('kernel.error.progressListener', { error: String(error) }));
+          setMessage(t('kernel.error.progressListener', { error: localizeText(String(error)) }));
           setMessageType('error');
         }
       });
@@ -259,7 +259,7 @@ export function KernelPage() {
       .catch((error) => {
         if (disposed) return;
         console.warn('自动检查软件更新失败', error);
-        setAppUpdateError(String(error));
+        setAppUpdateError(localizeText(String(error)));
       })
       .finally(() => {
         if (!disposed) setCheckingAppUpdate(false);
@@ -342,7 +342,7 @@ export function KernelPage() {
       showProcessNotice(messages?.success ?? t('kernel.notice.actionSuccess', { action: actionLabel }), 'success');
       return true;
     } catch (error) {
-      const errorMessage = String(error);
+      const errorMessage = localizeText(String(error));
       await refreshStatus();
       showProcessNotice(
         messages?.failure
@@ -365,7 +365,7 @@ export function KernelPage() {
       savedAllowLanRef.current = settings.allowLan;
       setSettingsError('');
     } catch (error) {
-      setSettingsError(String(error));
+      setSettingsError(localizeText(String(error)));
     } finally {
       setSettingsLoaded(true);
     }
@@ -407,9 +407,9 @@ export function KernelPage() {
       }
       setAllowLanAccess(savedAllowLanRef.current);
       setCustomPort(String(savedPortRef.current));
-      setSettingsError(String(error));
+      setSettingsError(localizeText(String(error)));
       if (restartAfterSave) {
-        showProcessNotice(t('kernel.notice.networkSaveFailed', { error: String(error) }), 'error');
+        showProcessNotice(t('kernel.notice.networkSaveFailed', { error: localizeText(String(error)) }), 'error');
       }
     }
   };
@@ -445,7 +445,7 @@ export function KernelPage() {
       setPlatformError('');
     } catch (error) {
       setPlatform(null);
-      setPlatformError(String(error));
+      setPlatformError(localizeText(String(error)));
     }
   };
 
@@ -456,7 +456,7 @@ export function KernelPage() {
       setBundledCoreError('');
     } catch (error) {
       setBundledCore(null);
-      setBundledCoreError(String(error));
+      setBundledCoreError(localizeText(String(error)));
     }
   };
 
@@ -471,7 +471,7 @@ export function KernelPage() {
       setLatest(result);
     } catch (error) {
       setLatest(null);
-      setLatestError(String(error));
+      setLatestError(localizeText(String(error)));
     } finally {
       setCheckingLatest(false);
     }
@@ -482,7 +482,7 @@ export function KernelPage() {
       const task = await invoke<CoreInstallTask>('get_core_install_task');
       applyInstallTask(task, false);
     } catch (error) {
-      setMessage(t('kernel.error.installTask', { error: String(error) }));
+      setMessage(t('kernel.error.installTask', { error: localizeText(String(error)) }));
       setMessageType('error');
     }
   };
@@ -520,7 +520,7 @@ export function KernelPage() {
       });
       await Promise.all([refreshStatus(), loadBundledCore()]);
     } catch (error) {
-      const errorMessage = String(error);
+      const errorMessage = localizeText(String(error));
       setMessage(errorMessage);
       setMessageType(errorMessage.includes('取消') ? 'info' : 'error');
       setProgress((current) => ({
@@ -562,7 +562,7 @@ export function KernelPage() {
       setMessageType('success');
       await Promise.all([refreshStatus(), loadBundledCore()]);
     } catch (error) {
-      const errorMessage = String(error);
+      const errorMessage = localizeText(String(error));
       setMessage(errorMessage);
       setMessageType('error');
       setProgress((current) => ({
@@ -593,7 +593,7 @@ export function KernelPage() {
       await invoke('cancel_core_install');
     } catch (error) {
       setCancellingInstall(false);
-      setMessage(String(error));
+      setMessage(localizeText(String(error)));
       setMessageType('error');
     }
   };
@@ -633,7 +633,7 @@ export function KernelPage() {
       setCurrentAppVersion(displayAppVersion(info.currentVersion));
       setAppUpdate(info);
     } catch (error) {
-      setAppUpdateError(String(error));
+      setAppUpdateError(localizeText(String(error)));
     } finally {
       setCheckingAppUpdate(false);
     }
@@ -643,7 +643,7 @@ export function KernelPage() {
     try {
       await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
     } catch (error) {
-      setAppUpdateError(t('kernel.error.openUpdate', { error: String(error) }));
+      setAppUpdateError(t('kernel.error.openUpdate', { error: localizeText(String(error)) }));
     }
   };
 
@@ -708,7 +708,7 @@ export function KernelPage() {
       : progress?.phase ? localizeInstallPhase(progress.phase, t) : t('kernel.install.inProgress')
     : offlineInstallRequired
       ? t('kernel.install.githubFailed')
-      : message || updateStateLabel;
+      : localizeText(message) || updateStateLabel;
   const versionStatusTone: MessageType = installTaskRunning
     ? 'info'
     : offlineInstallRequired
@@ -736,7 +736,7 @@ export function KernelPage() {
         : t('kernel.install.titleFailed');
   const installDialogMessage = cancellingInstall
     ? t('kernel.install.waitingStop')
-    : progress?.message || (installTaskRunning ? message || t('kernel.install.taskRunning') : '');
+    : localizeText(progress?.message) || (installTaskRunning ? localizeText(message) || t('kernel.install.taskRunning') : '');
   const installDialogAction = installTaskRunning
     ? cancellingInstall
       ? t('kernel.install.cancellingShort')
@@ -1127,7 +1127,7 @@ export function KernelPage() {
         <div
           className={`config-toast ${processNotice.tone}`}
           role="status"
-          title={processNotice.message}
+          title={localizeText(processNotice.message)}
         >
           {processNotice.tone === 'success' ? (
             <Check size={17} aria-hidden="true" />
@@ -1136,7 +1136,7 @@ export function KernelPage() {
           ) : (
             <Info size={17} aria-hidden="true" />
           )}
-          <span>{processNotice.message}</span>
+          <span>{localizeText(processNotice.message)}</span>
         </div>
       ) : null}
     </section>

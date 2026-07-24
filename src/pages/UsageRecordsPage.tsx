@@ -157,7 +157,7 @@ const formatTime = (value: string) => {
 const filterOptions = (items: UsageCategory[]) => items.filter((item) => item.key && item.label);
 
 export function UsageRecordsPage() {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const [activeTab, setActiveTab] = useState<UsageTab>(loadTab);
   const [range, setRange] = useState<UsageRange>(loadRange);
   const [customStart, setCustomStart] = useState('');
@@ -297,7 +297,7 @@ export function UsageRecordsPage() {
           <span>Local Usage</span>
           <h1>{t('usage.title')}</h1>
         </div>
-        <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
+        <div className={`usage-collector-state ${collectorTone}`} title={localizeText(status?.message)}>
           <span className="status-dot" />
           <div>
             <strong>{status?.state === 'collecting' ? t('usage.collector.collecting') : status?.state === 'error' ? t('usage.collector.error') : t('usage.collector.waiting')}</strong>
@@ -306,7 +306,7 @@ export function UsageRecordsPage() {
         </div>
       </header>
 
-      {error ? <div className="management-alert error">{error}</div> : null}
+      {error ? <div className="management-alert error">{localizeText(error)}</div> : null}
 
       <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
         <button type="button" className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}><Activity size={15} />{t('usage.tab.overview')}</button>

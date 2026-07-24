@@ -2,6 +2,10 @@ import type { MessageKey } from './resources';
 
 export const jaOverrides = {
   'app.language': '言語',
+  'app.theme': 'テーマ',
+  'app.theme.system': 'システム',
+  'app.theme.light': 'ライト',
+  'app.theme.dark': 'ダーク',
   'app.desktopConsole': 'デスクトップコンソール',
   'app.navigation': 'メインナビゲーション',
   'app.nav.kernel': 'コア',

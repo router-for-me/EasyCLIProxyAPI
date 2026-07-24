@@ -40,7 +40,7 @@ const providerOrder: QuotaProvider[] = ['claude', 'antigravity', 'codex', 'xai',
 const REFRESH_CONCURRENCY = 4;
 
 export function QuotaPage() {
-  const { locale, t } = useI18n();
+  const { locale, t, localizeText } = useI18n();
   const [files, setFiles] = useState<AuthFile[]>([]);
   const quotas = useQuotaCache();
   const [loading, setLoading] = useState(true);
@@ -169,7 +169,7 @@ export function QuotaPage() {
           </button>
         </div>
       </header>
-      {error ? <div className="management-alert error">{error}</div> : null}
+      {error ? <div className="management-alert error">{localizeText(error)}</div> : null}
       {loading ? (
         <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('quota.loadingFiles')}</div>
       ) : grouped.length === 0 ? (
@@ -189,7 +189,7 @@ export function QuotaPage() {
 }
 
 export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile; quota: QuotaState; onRefresh: () => void; onReset?: () => void }) {
-  const { locale, t } = useI18n();
+  const { locale, t, localizeText } = useI18n();
   const provider = providerForFile(file);
   const name = fileName(file);
   const disabled = readBoolean(file, 'disabled');
@@ -198,7 +198,7 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
       <div className="real-quota-card-header"><div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}{quota.plan ? ` · ${quota.plan}` : ''}</span></div><div className="quota-card-actions">{onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={disabled || quota.status === 'loading'}>{t('quota.reset')}</button> : null}<button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} /></button></div></div>
       {quota.status === 'idle' ? <div className="quota-card-message"><span>{disabled ? t('quota.fileDisabled') : t('quota.notFetched')}</span><button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={disabled}>{disabled ? t('quota.disabled') : t('quota.fetch')}</button></div> : null}
       {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />{t('quota.querying')}</div> : null}
-      {quota.status === 'error' ? <div className="quota-card-error"><AlertCircle size={18} />{quota.error}</div> : null}
+      {quota.status === 'error' ? <div className="quota-card-error"><AlertCircle size={18} />{localizeText(quota.error)}</div> : null}
       {quota.status === 'success' && provider === 'codex' ? <div className="quota-reset-credit-summary"><span>{t('quota.resetCredits')} <strong>{quota.resetCredits ?? '—'}</strong></span><span>{t('quota.earliestExpiry')} <strong>{formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale)}</strong></span></div> : null}
       {quota.status === 'success' ? <div className="quota-row-list">{quota.rows.map((row, index) => <div className="real-quota-row" key={`${row.label}-${index}`}><div><span>{row.label}</span><strong>{row.remainingPercent === null ? '—' : t('quota.remaining', { percent: Math.round(row.remainingPercent) })}</strong></div><div className="real-quota-track"><span style={{ width: `${Math.max(0, Math.min(100, row.remainingPercent ?? 0))}%` }} /></div><small>{row.detail ?? ''}{row.reset ? `${row.detail ? ' · ' : ''}${row.reset}` : ''}</small></div>)}</div> : null}
     </article>

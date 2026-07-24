@@ -60,7 +60,7 @@ const OAUTH_SUCCESS_RESET_MS = 5000;
 const OAUTH_POLL_INTERVAL_MS = 3000;
 
 export function OAuthLoginPage() {
-  const { t } = useI18n();
+  const { t, localizeText } = useI18n();
   const [states, setStates] = useState<Partial<Record<OAuthProviderId, OAuthProviderState>>>({});
   const [notice, setNotice] = useState<{
     message: string;
@@ -166,7 +166,7 @@ export function OAuthLoginPage() {
             showNotice(
               t('oauth.loginFailed', {
                 provider: providerLabel(provider),
-                detail: result.error ? `: ${result.error}` : '',
+                detail: result.error ? `: ${localizeText(result.error)}` : '',
               }),
               'error',
             );
@@ -188,7 +188,7 @@ export function OAuthLoginPage() {
         OAUTH_POLL_INTERVAL_MS,
       );
     },
-    [clearPollingTimer, completeProviderAuth, showNotice, t, updateProviderState],
+    [clearPollingTimer, completeProviderAuth, localizeText, showNotice, t, updateProviderState],
   );
 
   useEffect(() => {
@@ -241,7 +241,7 @@ export function OAuthLoginPage() {
       if (!result.opened) {
         showNotice(
           result.openError
-            ? t('oauth.openFailedDetail', { error: result.openError })
+            ? t('oauth.openFailedDetail', { error: localizeText(result.openError) })
             : t('oauth.openFailed'),
           'info',
         );
@@ -327,7 +327,7 @@ export function OAuthLoginPage() {
 
       {notice ? (
         <div className={`inline-notice ${notice.tone === 'error' ? 'error' : notice.tone === 'success' ? 'success' : ''}`}>
-          {notice.message}
+          {localizeText(notice.message)}
         </div>
       ) : null}
 
@@ -394,13 +394,13 @@ export function OAuthLoginPage() {
                       <div className="oauth-inline-status success">{t('oauth.callbackSubmitted')}</div>
                     ) : null}
                     {state.callbackStatus === 'error' ? (
-                      <div className="oauth-inline-status error">{t('oauth.callbackFailed', { detail: state.callbackError ? `: ${state.callbackError}` : '' })}</div>
+                      <div className="oauth-inline-status error">{t('oauth.callbackFailed', { detail: state.callbackError ? `: ${localizeText(state.callbackError)}` : '' })}</div>
                     ) : null}
                   </div>
                 ) : null}
 
                 {state.status === 'error' && state.error ? (
-                  <div className="oauth-inline-status error">{state.error}</div>
+                  <div className="oauth-inline-status error">{localizeText(state.error)}</div>
                 ) : null}
               </div>
 

@@ -13,12 +13,16 @@ import {
   Languages,
   LogIn,
   MessageCircle,
+  Monitor,
+  Moon,
   Network,
   ServerCog,
   Settings,
+  Sun,
 } from 'lucide-react';
 import appLogo from './assets/logo.jpg';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
+import { useTheme, type ThemeMode } from './theme';
 import { ConfigPanelPage } from './pages/ConfigPanel';
 import { ApiAccessPage } from './pages/ApiAccessPage';
 import { AuthFileManagementPage } from './pages/AuthFileManagementPage';
@@ -89,6 +93,16 @@ const pages = [
   },
 ] as const;
 
+const themeOptions: ReadonlyArray<{
+  value: ThemeMode;
+  labelKey: 'app.theme.system' | 'app.theme.light' | 'app.theme.dark';
+  icon: typeof Monitor;
+}> = [
+  { value: 'system', labelKey: 'app.theme.system', icon: Monitor },
+  { value: 'light', labelKey: 'app.theme.light', icon: Sun },
+  { value: 'dark', labelKey: 'app.theme.dark', icon: Moon },
+];
+
 type PageId = (typeof pages)[number]['id'];
 type WindowsCloseAction = 'exit' | 'minimize-to-tray';
 
@@ -106,7 +120,8 @@ function App() {
 }
 
 function AppContent() {
-  const { locale, setLocale, t } = useI18n();
+  const { locale, setLocale, t, localizeText } = useI18n();
+  const { mode, setMode } = useTheme();
   const [active, setActive] = useState<PageId>('kernel');
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
@@ -263,6 +278,29 @@ function AppContent() {
           </nav>
 
           <div className="sidebar-bottom">
+            <div className="sidebar-theme" aria-label={t('app.theme')}>
+              <span className="sidebar-theme-label">{t('app.theme')}</span>
+              <div className="sidebar-theme-options" role="group" aria-label={t('app.theme')}>
+                {themeOptions.map((option) => {
+                  const Icon = option.icon;
+                  const selected = option.value === mode;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={selected ? 'selected' : ''}
+                      aria-pressed={selected}
+                      aria-label={t(option.labelKey)}
+                      title={t(option.labelKey)}
+                      onClick={() => setMode(option.value)}
+                    >
+                      <Icon size={14} aria-hidden="true" />
+                      <span>{t(option.labelKey)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div ref={languageMenuRef} className="sidebar-language">
               <button
                 ref={languageButtonRef}
@@ -360,7 +398,7 @@ function AppContent() {
             </p>
             {windowsClosePrompt.error ? (
               <div className="close-dialog-error" role="alert">
-                {windowsClosePrompt.error}
+                {localizeText(windowsClosePrompt.error)}
               </div>
             ) : null}
             <div className="close-dialog-actions">
