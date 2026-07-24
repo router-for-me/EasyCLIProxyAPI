@@ -56,8 +56,15 @@ function interpolate(template: string, variables?: MessageVariables): string {
   );
 }
 
+function fallbackResource(locale: AppLocale): Record<MessageKey, string> {
+  if (locale === 'zh-TW') return zhTW;
+  if (locale === 'zh-CN') return zhCN;
+  return en;
+}
+
 export function translate(locale: AppLocale, key: MessageKey, variables?: MessageVariables): string {
-  return interpolate(resources[locale][key] ?? en[key] ?? key, variables);
+  const message = resources[locale][key] ?? fallbackResource(locale)[key] ?? key;
+  return interpolate(message, variables);
 }
 
 type I18nContextValue = {
