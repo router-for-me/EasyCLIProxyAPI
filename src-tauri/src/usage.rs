@@ -1376,6 +1376,8 @@ mod tests {
             port: 8317,
             allow_lan: false,
             run_on_startup: false,
+            window_width: None,
+            window_height: None,
             auth_dir: String::new(),
             api_keys: Vec::new(),
             management_secret_key: "123456".to_string(),

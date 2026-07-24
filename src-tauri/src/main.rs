@@ -35,7 +35,7 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
 };
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, LogicalSize, Manager};
 use tauri_plugin_opener::OpenerExt;
 use tokio_util::sync::CancellationToken;
 use zip::ZipArchive;
@@ -62,6 +62,9 @@ const CORE_VERSION_FILE: &str = "core-version.txt";
 const CORE_CHECKSUMS_FILE: &str = "checksums.txt";
 const GUI_CONFIG_FILE: &str = "config.toml";
 const LEGACY_GUI_CONFIG_FILE: &str = "cpa-gui.yaml";
+const MIN_MAIN_WINDOW_WIDTH: u32 = 640;
+const MIN_MAIN_WINDOW_HEIGHT: u32 = 600;
+const MAX_SAVED_WINDOW_DIMENSION: u32 = 16_384;
 const OAUTH_DIR_NAME: &str = "oauth";
 const DEFAULT_API_KEY: &str = "123456";
 const DEFAULT_API_KEY_REMARK: &str = "内置密钥";
@@ -185,6 +188,16 @@ struct CoreProcessState {
 
 struct GuiConfigState {
     inner: Mutex<GuiConfigFile>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SavedWindowSize {
+    width: u32,
+    height: u32,
+}
+
+struct MainWindowSizeState {
+    inner: Mutex<Option<SavedWindowSize>>,
 }
 
 #[derive(Default)]
@@ -390,6 +403,8 @@ struct GuiConfigFile {
     port: u16,
     allow_lan: bool,
     run_on_startup: bool,
+    window_width: Option<u32>,
+    window_height: Option<u32>,
     auth_dir: String,
     #[serde(deserialize_with = "deserialize_gui_api_keys")]
     api_keys: Vec<GuiApiKeyEntry>,
@@ -443,6 +458,8 @@ impl Default for GuiConfigFile {
             port: 8317,
             allow_lan: false,
             run_on_startup: false,
+            window_width: None,
+            window_height: None,
             auth_dir: env::current_exe()
                 .ok()
                 .and_then(|path| path.parent().map(|parent| parent.join(OAUTH_DIR_NAME)))
@@ -1006,6 +1023,30 @@ impl CoreProcessState {
     }
 }
 
+impl MainWindowSizeState {
+    fn new(size: Option<SavedWindowSize>) -> Self {
+        Self {
+            inner: Mutex::new(size),
+        }
+    }
+
+    fn snapshot(&self) -> Result<Option<SavedWindowSize>, String> {
+        self.inner
+            .lock()
+            .map(|size| *size)
+            .map_err(|_| "主窗口尺寸状态锁已损坏".to_string())
+    }
+
+    fn replace(&self, size: SavedWindowSize) -> Result<(), String> {
+        let mut current = self
+            .inner
+            .lock()
+            .map_err(|_| "主窗口尺寸状态锁已损坏".to_string())?;
+        *current = Some(size);
+        Ok(())
+    }
+}
+
 impl GuiConfigState {
     fn new(config: GuiConfigFile) -> Self {
         Self {
@@ -1038,6 +1079,14 @@ impl GuiConfigState {
     fn set_locale(&self, locale: String) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.locale = normalize_app_locale(&locale).to_string();
+            Ok(())
+        })
+    }
+
+    fn set_window_size(&self, size: SavedWindowSize) -> Result<GuiConfigFile, String> {
+        self.update(|config| {
+            config.window_width = Some(size.width);
+            config.window_height = Some(size.height);
             Ok(())
         })
     }
@@ -8701,6 +8750,123 @@ fn merge_core_api_keys_with_gui_metadata(
     merged
 }
 
+fn normalized_saved_window_size(width: u32, height: u32) -> SavedWindowSize {
+    SavedWindowSize {
+        width: width.clamp(MIN_MAIN_WINDOW_WIDTH, MAX_SAVED_WINDOW_DIMENSION),
+        height: height.clamp(MIN_MAIN_WINDOW_HEIGHT, MAX_SAVED_WINDOW_DIMENSION),
+    }
+}
+
+fn configured_window_size(config: &GuiConfigFile) -> Option<SavedWindowSize> {
+    match (config.window_width, config.window_height) {
+        (Some(width), Some(height)) => Some(normalized_saved_window_size(width, height)),
+        _ => None,
+    }
+}
+
+fn logical_window_size_from_physical(
+    physical_size: &tauri::PhysicalSize<u32>,
+    scale_factor: f64,
+) -> Option<SavedWindowSize> {
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return None;
+    }
+
+    let width = (f64::from(physical_size.width) / scale_factor).round() as u32;
+    let height = (f64::from(physical_size.height) / scale_factor).round() as u32;
+    if width < MIN_MAIN_WINDOW_WIDTH || height < MIN_MAIN_WINDOW_HEIGHT {
+        return None;
+    }
+
+    Some(normalized_saved_window_size(width, height))
+}
+
+fn fit_window_size_to_current_monitor<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    saved_size: SavedWindowSize,
+) -> SavedWindowSize {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return saved_size;
+    };
+
+    let scale_factor = monitor.scale_factor();
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return saved_size;
+    }
+
+    let (frame_width, frame_height) = window
+        .outer_size()
+        .ok()
+        .zip(window.inner_size().ok())
+        .map(|(outer, inner)| {
+            (
+                outer.width.saturating_sub(inner.width),
+                outer.height.saturating_sub(inner.height),
+            )
+        })
+        .unwrap_or_default();
+    let work_area = monitor.work_area();
+    let max_width =
+        (f64::from(work_area.size.width.saturating_sub(frame_width)) / scale_factor).floor() as u32;
+    let max_height = (f64::from(work_area.size.height.saturating_sub(frame_height)) / scale_factor)
+        .floor() as u32;
+
+    SavedWindowSize {
+        width: saved_size.width.min(max_width.max(MIN_MAIN_WINDOW_WIDTH)),
+        height: saved_size
+            .height
+            .min(max_height.max(MIN_MAIN_WINDOW_HEIGHT)),
+    }
+}
+
+fn restore_main_window_size(app: &tauri::AppHandle) -> Result<(), String> {
+    let window_size_state = app.state::<MainWindowSizeState>();
+    let Some(saved_size) = window_size_state.snapshot()? else {
+        return Ok(());
+    };
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "主窗口不存在，无法恢复窗口尺寸".to_string())?;
+    let restored_size = fit_window_size_to_current_monitor(&window, saved_size);
+
+    window
+        .set_size(LogicalSize::new(
+            f64::from(restored_size.width),
+            f64::from(restored_size.height),
+        ))
+        .map_err(|error| format!("恢复主窗口尺寸失败: {error}"))?;
+    window_size_state.replace(restored_size)
+}
+
+fn persist_main_window_size(app: &tauri::AppHandle) -> Result<(), String> {
+    let window_size_state = app.state::<MainWindowSizeState>();
+    let saved_size = match window_size_state.snapshot()? {
+        Some(size) => size,
+        None => {
+            let window = app
+                .get_webview_window("main")
+                .ok_or_else(|| "主窗口不存在，无法保存窗口尺寸".to_string())?;
+            let physical_size = window
+                .inner_size()
+                .map_err(|error| format!("读取主窗口尺寸失败: {error}"))?;
+            let scale_factor = window
+                .scale_factor()
+                .map_err(|error| format!("读取主窗口缩放比例失败: {error}"))?;
+            logical_window_size_from_physical(&physical_size, scale_factor)
+                .ok_or_else(|| "主窗口尺寸无效，已跳过保存".to_string())?
+        }
+    };
+
+    app.state::<GuiConfigState>()
+        .set_window_size(saved_size)
+        .map(|_| ())
+}
+
 fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, String> {
     let mut changed = false;
     let normalized_locale = normalize_app_locale(&config.locale);
@@ -8728,6 +8894,16 @@ fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, String> {
     }
     if config.management_secret_key != DEFAULT_MANAGEMENT_SECRET_KEY {
         config.management_secret_key = DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
+        changed = true;
+    }
+    let window_size = configured_window_size(config);
+    let normalized_window_width = window_size.map(|size| size.width);
+    let normalized_window_height = window_size.map(|size| size.height);
+    if config.window_width != normalized_window_width
+        || config.window_height != normalized_window_height
+    {
+        config.window_width = normalized_window_width;
+        config.window_height = normalized_window_height;
         changed = true;
     }
     let auth_dir = path_to_string(&fixed_oauth_dir()?);
@@ -10494,6 +10670,7 @@ fn main() {
             config
         }
     };
+    let initial_window_size = configured_window_size(&gui_config);
 
     let app = tauri::Builder::default()
         .plugin(
@@ -10506,7 +10683,35 @@ fn main() {
         .manage(CoreProcessState::default())
         .manage(usage::UsageCollectorState::default())
         .manage(GuiConfigState::new(gui_config))
+        .manage(MainWindowSizeState::new(initial_window_size))
         .manage(AgentConfigStatusCache::default());
+
+    let app = app.on_window_event(|window, event| {
+        if window.label() != "main" {
+            return;
+        }
+
+        let observed_size = match event {
+            tauri::WindowEvent::Resized(physical_size) => {
+                window.scale_factor().ok().and_then(|scale_factor| {
+                    logical_window_size_from_physical(physical_size, scale_factor)
+                })
+            }
+            tauri::WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                new_inner_size,
+                ..
+            } => logical_window_size_from_physical(new_inner_size, *scale_factor),
+            _ => None,
+        };
+
+        if let Some(observed_size) = observed_size {
+            let window_size_state = window.state::<MainWindowSizeState>();
+            if let Err(error) = window_size_state.replace(observed_size) {
+                eprintln!("记录主窗口尺寸失败: {error}");
+            }
+        }
+    });
 
     #[cfg(target_os = "macos")]
     let app = app.on_window_event(|window, event| {
@@ -10538,6 +10743,10 @@ fn main() {
 
     let app = app
         .setup(move |app| {
+            if let Err(error) = restore_main_window_size(app.handle()) {
+                eprintln!("{error}");
+            }
+
             #[cfg(target_os = "macos")]
             setup_macos_tray(app)?;
             #[cfg(target_os = "windows")]
@@ -10652,13 +10861,19 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build app");
 
-    app.run(|app_handle, event| {
-        if matches!(event, tauri::RunEvent::Exit) {
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { .. } => {
+            if let Err(error) = persist_main_window_size(app_handle) {
+                eprintln!("保存主窗口尺寸失败: {error}");
+            }
+        }
+        tauri::RunEvent::Exit => {
             usage::stop_usage_collector(app_handle);
             let process_state = app_handle.state::<CoreProcessState>();
             let gui_config_state = app_handle.state::<GuiConfigState>();
             shutdown_managed_core(process_state.inner(), gui_config_state.inner());
         }
+        _ => {}
     });
 }
 
@@ -10737,6 +10952,60 @@ mod tests {
         assert!(content.contains("management-secret-key = \"123456\""));
         assert!(content.contains("plugins-enabled = false"));
         assert!(content.contains("routing-strategy = \"round-robin\""));
+    }
+
+    #[test]
+    fn gui_window_size_round_trips_through_portable_config() {
+        let config = GuiConfigFile {
+            window_width: Some(1440),
+            window_height: Some(900),
+            ..GuiConfigFile::default()
+        };
+
+        let content = toml::to_string_pretty(&config).unwrap();
+        let restored = toml::from_str::<GuiConfigFile>(&content).unwrap();
+
+        assert!(content.contains("window-width = 1440"));
+        assert!(content.contains("window-height = 900"));
+        assert_eq!(
+            configured_window_size(&restored),
+            Some(SavedWindowSize {
+                width: 1440,
+                height: 900,
+            })
+        );
+    }
+
+    #[test]
+    fn gui_window_size_is_clamped_and_requires_both_dimensions() {
+        let mut config = GuiConfigFile {
+            window_width: Some(320),
+            window_height: Some(30_000),
+            ..GuiConfigFile::default()
+        };
+
+        assert!(sanitize_gui_config(&mut config).unwrap());
+        assert_eq!(config.window_width, Some(MIN_MAIN_WINDOW_WIDTH));
+        assert_eq!(config.window_height, Some(MAX_SAVED_WINDOW_DIMENSION));
+
+        config.window_height = None;
+        assert!(sanitize_gui_config(&mut config).unwrap());
+        assert_eq!(config.window_width, None);
+        assert_eq!(config.window_height, None);
+    }
+
+    #[test]
+    fn physical_window_size_uses_display_scale_and_ignores_minimized_sizes() {
+        let physical_size = tauri::PhysicalSize::new(1500, 1000);
+        assert_eq!(
+            logical_window_size_from_physical(&physical_size, 1.25),
+            Some(SavedWindowSize {
+                width: 1200,
+                height: 800,
+            })
+        );
+        assert!(logical_window_size_from_physical(&tauri::PhysicalSize::new(0, 0), 1.0).is_none());
+        assert!(logical_window_size_from_physical(&physical_size, 0.0).is_none());
     }
 
     #[test]
@@ -12199,6 +12468,8 @@ mod tests {
             port: 9527,
             allow_lan: true,
             run_on_startup: false,
+            window_width: None,
+            window_height: None,
             auth_dir: path_to_string(&fixed_oauth_dir().unwrap()),
             api_keys: vec![
                 built_in_api_key_entry(),
