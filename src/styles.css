@@ -1542,6 +1542,7 @@ input:focus-visible {
 }
 
 .close-dialog {
+  position: relative;
   display: grid;
   gap: 18px;
   width: min(430px, 100%);
@@ -1556,6 +1557,38 @@ input:focus-visible {
 .close-dialog-heading {
   display: grid;
   gap: 5px;
+  padding-right: 34px;
+}
+
+.close-dialog-dismiss {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #7a746c;
+}
+
+.close-dialog-dismiss:hover:not(:disabled) {
+  border-color: #d5d2cb;
+  background: #f0ede6;
+  color: #2d2a26;
+}
+
+.close-dialog-dismiss:focus-visible {
+  outline: 3px solid rgba(66, 99, 127, 0.3);
+  outline-offset: 2px;
+}
+
+.close-dialog-dismiss:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .close-dialog-heading span {

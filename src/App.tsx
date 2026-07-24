@@ -18,6 +18,7 @@ import {
   PackageOpen,
   ServerCog,
   Settings,
+  X,
 } from 'lucide-react';
 import appLogo from './assets/logo.jpg';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
@@ -387,6 +388,16 @@ function AppContent() {
               }
             }}
           >
+            <button
+              type="button"
+              className="close-dialog-dismiss"
+              aria-label={t('common.cancel')}
+              title={t('common.cancel')}
+              disabled={windowsClosePrompt.resolvingAction !== null}
+              onClick={() => setWindowsClosePrompt(null)}
+            >
+              <X size={17} aria-hidden="true" />
+            </button>
             <div className="close-dialog-heading">
               <span>{t('app.close.eyebrow')}</span>
               <h2 id="close-dialog-title">{t('app.close.title')}</h2>

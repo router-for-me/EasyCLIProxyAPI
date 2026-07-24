@@ -5627,6 +5627,33 @@ fn install_bundled_core(
     result
 }
 
+fn core_needs_bundled_bootstrap(install_dir: &Path) -> bool {
+    find_core_binary(install_dir).is_none()
+}
+
+fn auto_install_bundled_core_if_missing(app: &tauri::AppHandle) -> Result<bool, String> {
+    let install_dir = core_install_dir()?;
+    if !core_needs_bundled_bootstrap(&install_dir) {
+        return Ok(false);
+    }
+
+    let (info, archive_path) = bundled_core_archive()?
+        .ok_or_else(|| "未检测到 CPA 内核，且当前发行包没有匹配的离线内核".to_string())?;
+    let window = app
+        .get_webview_window("main")
+        .map(|webview| webview.as_ref().window())
+        .ok_or_else(|| "无法获取主窗口，不能自动安装离线内核".to_string())?;
+    let state = app.state::<CoreDownloadState>();
+    state.start(CancellationToken::new(), Some(info.version.clone()))?;
+    let result = install_bundled_core_inner(&window, state.inner(), &info, &archive_path);
+    if result.is_err() {
+        let _ = cleanup_core_work_dirs();
+    }
+    state.finish(&window, result.clone());
+    result?;
+    Ok(true)
+}
+
 #[tauri::command]
 fn cancel_core_install(state: tauri::State<'_, CoreDownloadState>) {
     state.cancel();
@@ -10545,6 +10572,12 @@ fn main() {
                     return;
                 };
 
+                match auto_install_bundled_core_if_missing(&core_app) {
+                    Ok(true) => eprintln!("未检测到 CPA 内核，已自动安装内置离线版本"),
+                    Ok(false) => {}
+                    Err(error) => eprintln!("自动安装 CPA 离线内核失败: {error}"),
+                }
+
                 if config.run_on_startup {
                     if let Err(error) = start_core_process_inner(process_state.inner(), &config) {
                         eprintln!("自动启动 CPA 内核失败: {error}");
@@ -12609,6 +12642,21 @@ mod tests {
         preserve_core_runtime_files(&source, &target).unwrap();
 
         assert_eq!(fs::read(target.join(CORE_CONFIG_FILE)).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bundled_core_bootstrap_runs_only_when_no_core_binary_exists() {
+        let root = agent_test_home("bundled-bootstrap-detection");
+        let install_dir = root.join("cpa-core");
+
+        assert!(core_needs_bundled_bootstrap(&install_dir));
+
+        let existing_version = install_dir.join("existing-version");
+        fs::create_dir_all(&existing_version).unwrap();
+        fs::write(existing_version.join(core_binary_name()), b"existing core").unwrap();
+
+        assert!(!core_needs_bundled_bootstrap(&install_dir));
         fs::remove_dir_all(root).unwrap();
     }
 
