@@ -123,7 +123,7 @@ input:focus-visible {
 
 .nav-section button {
   display: grid;
-  grid-template-columns: 19px minmax(0, 1fr);
+  grid-template-columns: 19px minmax(0, 1fr) 10px;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -145,6 +145,28 @@ input:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nav-update-indicator {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #c77b30;
+  box-shadow: 0 0 0 3px rgba(199, 123, 48, 0.14);
+}
+
+.nav-update-indicator.processing {
+  background: #4d78a8;
+  box-shadow: 0 0 0 3px rgba(77, 120, 168, 0.15);
+  animation: update-indicator-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes update-indicator-pulse {
+  50% {
+    opacity: 0.45;
+    transform: scale(0.78);
+  }
 }
 
 .nav-section button:hover {
@@ -355,13 +377,22 @@ input:focus-visible {
   color: #9f2d20;
 }
 
+.state-pill.update {
+  border-color: #dfbf91;
+  background: #fff7e9;
+  color: #8b5b21;
+}
+
 .content {
   width: 100%;
   padding: 24px 40px 42px;
+  container-type: inline-size;
+  container-name: workspace;
 }
 
 .page {
   width: min(100%, 1180px);
+  margin-inline: auto;
 }
 
 .kernel-page,
@@ -545,9 +576,9 @@ input:focus-visible {
 
 .kernel-layout {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: stretch;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
 }
 
 .config-workspace-grid {
@@ -559,11 +590,11 @@ input:focus-visible {
 }
 
 .control-panel {
-  grid-column: span 2;
+  grid-column: auto;
 }
 
 .version-panel {
-  grid-column: span 2;
+  grid-column: auto;
 }
 
 .version-heading-inline {
@@ -607,7 +638,7 @@ input:focus-visible {
 
 .client-api-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
   gap: 12px;
 }
 
@@ -719,26 +750,25 @@ input:focus-visible {
 .kernel-layout > .panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 45px 232px 56px;
-  height: 375px;
+  grid-template-rows: repeat(3, auto);
 }
 
 .kernel-layout > .panel > .panel-heading {
   min-height: 0;
-  height: 45px;
+  height: auto;
   margin: 0;
   padding-bottom: 16px;
 }
 
 .kernel-layout .panel-action-row {
-  height: 56px;
+  height: auto;
   margin: 0;
   padding-top: 18px;
 }
 
 .panel-detail-grid {
   display: grid;
-  grid-template-rows: repeat(5, 40px);
+  grid-auto-rows: auto;
   gap: 8px;
   min-height: 0;
   margin: 0;
@@ -810,11 +840,45 @@ input:focus-visible {
 }
 
 .control-action-row {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(120px, 100%), 1fr));
+  grid-auto-flow: row;
 }
 
 .version-action-row {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(120px, 100%), 1fr));
+  grid-auto-flow: row;
+}
+
+.software-update-details {
+  align-content: start;
+}
+
+.software-update-actions {
+  grid-template-columns: repeat(auto-fit, minmax(min(120px, 100%), 1fr));
+  grid-auto-flow: row;
+}
+
+.software-update-panel .panel-heading p {
+  white-space: normal;
+}
+
+@container workspace (min-width: 840px) {
+  .home-page {
+    grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+    align-items: start;
+  }
+
+  .home-page > .home-layout {
+    display: contents;
+  }
+
+  .home-page > .client-api-panel {
+    grid-column: 2;
+  }
+
+  .version-management-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .info-list {
@@ -5039,6 +5103,29 @@ input:focus-visible {
   height: 40px;
 }
 
+.app-update-dialog {
+  gap: 16px;
+}
+
+.app-update-confirm-copy {
+  margin: 0;
+  color: #5f5a53;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.app-update-dialog-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.app-update-dialog .install-dialog-message {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 @keyframes install-progress-slide {
   from {
     transform: translateX(-120%);
@@ -5060,14 +5147,6 @@ input:focus-visible {
 
   .kernel-layout {
     grid-template-columns: 1fr;
-  }
-
-  .client-api-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .client-api-card:last-child {
-    grid-column: 1 / -1;
   }
 
   .config-workspace-grid {
@@ -5139,12 +5218,12 @@ input:focus-visible {
 
   .nav-section button {
     width: auto;
-    min-width: 96px;
+    min-width: 116px;
     text-align: center;
   }
 
   .nav-section button {
-    grid-template-columns: 17px minmax(0, 1fr);
+    grid-template-columns: 17px minmax(0, 1fr) 10px;
   }
 
   .sidebar-bottom {
@@ -5326,25 +5405,6 @@ input:focus-visible {
 
   .kernel-layout .panel-heading {
     flex-direction: row;
-  }
-
-  .kernel-layout .panel-action-row {
-    grid-auto-flow: column;
-  }
-
-  .kernel-layout .control-action-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .kernel-layout .version-action-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-flow: row;
-    height: auto;
-  }
-
-  .kernel-layout > .version-panel {
-    grid-template-rows: auto 232px auto;
-    height: auto;
   }
 
   .management-header {

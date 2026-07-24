@@ -153,6 +153,7 @@ jobs:
           NODE
 
           echo "stem=EasyCLIProxyAPI-${version}-${{ matrix.display_os }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+          echo "version=${version#v}" >> "$GITHUB_OUTPUT"
       - name: Install Linux dependencies
         if: matrix.os == 'linux'
         run: |
@@ -189,6 +190,23 @@ jobs:
             throw new Error(`cpa-core must contain exactly one archive; found: ${entries.map((entry) => entry.name).join(', ')}`);
           }
           NODE
+      - name: Prepare Windows portable updater payload
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $updateDir = "release/update-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path $updateDir | Out-Null
+          Copy-Item -LiteralPath "release/${{ steps.package.outputs.stem }}/EasyCLIProxyAPI.exe" -Destination $updateDir
+          Copy-Item -LiteralPath "release/${{ steps.package.outputs.stem }}/portable-app.json" -Destination $updateDir
+          $marker = Get-Content -Raw -LiteralPath "$updateDir/portable-app.json" | ConvertFrom-Json
+          if ($marker.schemaVersion -ne 1 -or
+              $marker.application -ne "EasyCLIProxyAPI" -or
+              $marker.version -ne "${{ steps.package.outputs.version }}" -or
+              $marker.platform -ne "windows" -or
+              $marker.arch -ne "${{ matrix.arch }}" -or
+              $marker.autoUpdate -ne $true) {
+            throw "portable-app.json does not match the Windows updater target"
+          }
       - name: Build signed macOS DMG
         if: matrix.os == 'darwin'
         shell: bash
@@ -323,11 +341,33 @@ jobs:
       - name: Archive Windows release
         if: matrix.os == 'windows'
         shell: pwsh
-        run: Compress-Archive -Path "release/${{ steps.package.outputs.stem }}" -DestinationPath "${{ steps.package.outputs.stem }}.zip"
+        run: |
+          Compress-Archive -Path "release/${{ steps.package.outputs.stem }}" -DestinationPath "${{ steps.package.outputs.stem }}.zip"
+          $updateArchive = "EasyCLIProxyAPI-update-v${{ steps.package.outputs.version }}-Windows-${{ matrix.arch }}.zip"
+          Compress-Archive -Path "release/update-${{ matrix.arch }}/*" -DestinationPath $updateArchive
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $updateArchive))
+          try {
+            $entries = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
+            if ($entries.Count -ne 2 -or
+                $entries -notcontains "EasyCLIProxyAPI.exe" -or
+                $entries -notcontains "portable-app.json") {
+              throw "Portable updater ZIP contains unexpected entries: $($entries -join ', ')"
+            }
+          } finally {
+            $zip.Dispose()
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.stem }}
           path: ${{ steps.package.outputs.stem }}.${{ matrix.suffix }}
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'windows'
+        with:
+          name: portable-updater-windows-${{ matrix.arch }}
+          path: EasyCLIProxyAPI-update-v${{ steps.package.outputs.version }}-Windows-${{ matrix.arch }}.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -341,10 +381,23 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
+      - name: Generate Windows portable update manifest
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag }}
+        run: >-
+          node scripts/generate-portable-update-manifest.mjs
+          --directory artifacts
+          --output artifacts/portable-update-windows.json
+          --repository "${{ github.repository }}"
+          --tag "$RELEASE_TAG"
       - name: Publish release
         shell: bash
         env:

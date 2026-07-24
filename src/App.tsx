@@ -10,10 +10,12 @@ import {
   Gauge,
   GitFork,
   History,
+  House,
   Languages,
   LogIn,
   MessageCircle,
   Network,
+  PackageOpen,
   ServerCog,
   Settings,
 } from 'lucide-react';
@@ -29,15 +31,24 @@ import { AgentsPage } from './pages/AgentsPage';
 import { ThinkingAliasesPage } from './pages/ThinkingAliasesPage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
 import { languageOptions, useI18n } from './i18n';
+import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
+import { appUpdateIndicatorState } from './appUpdateModel';
+import { canOpenAppPage, isAlwaysAvailablePage } from './navigation';
 
 const CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 
 const pages = [
   {
-    id: 'kernel',
-    labelKey: 'app.nav.kernel',
-    icon: ServerCog,
-    component: KernelPage,
+    id: 'home',
+    labelKey: 'app.nav.home',
+    icon: House,
+    component: HomePage,
+  },
+  {
+    id: 'versions',
+    labelKey: 'app.nav.versions',
+    icon: PackageOpen,
+    component: VersionManagementPage,
   },
   {
     id: 'config',
@@ -97,17 +108,28 @@ type WindowsClosePrompt = {
   error: string | null;
 };
 
+function HomePage() {
+  return <KernelPage view="home" />;
+}
+
+function VersionManagementPage() {
+  return <KernelPage view="versions" />;
+}
+
 function App() {
   return (
-    <CoreRuntimeProvider>
-      <AppContent />
-    </CoreRuntimeProvider>
+    <AppUpdateProvider>
+      <CoreRuntimeProvider>
+        <AppContent />
+      </CoreRuntimeProvider>
+    </AppUpdateProvider>
   );
 }
 
 function AppContent() {
   const { locale, setLocale, t } = useI18n();
-  const [active, setActive] = useState<PageId>('kernel');
+  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
+  const [active, setActive] = useState<PageId>('home');
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
   const closeDialogRef = useRef<HTMLElement>(null);
@@ -121,8 +143,8 @@ function AppContent() {
     ?? languageOptions[0];
 
   useEffect(() => {
-    if (!coreRunning && active !== 'kernel') {
-      setActive('kernel');
+    if (!canOpenAppPage(active, coreRunning)) {
+      setActive('home');
     }
   }, [active, coreRunning]);
 
@@ -187,7 +209,7 @@ function AppContent() {
   }, [windowsClosePrompt]);
 
   const select = (pageId: PageId) => {
-    if (pageId !== 'kernel' && !coreRunning) {
+    if (!canOpenAppPage(pageId, coreRunning)) {
       return;
     }
     setActive(pageId);
@@ -243,7 +265,10 @@ function AppContent() {
           <nav className="nav-section" aria-label={t('app.navigation')}>
             {pages.map((page) => {
               const Icon = page.icon;
-              const locked = page.id !== 'kernel' && !coreRunning;
+              const locked = !canOpenAppPage(page.id, coreRunning);
+              const updateIndicator = page.id === 'versions'
+                ? appUpdateIndicatorState(hasUpdate, appUpdateProcessing)
+                : null;
               return (
                 <button
                   key={page.id}
@@ -257,6 +282,17 @@ function AppContent() {
                 >
                   <Icon size={17} aria-hidden="true" />
                   <span>{t(page.labelKey)}</span>
+                  {updateIndicator ? (
+                    <i
+                      className={`nav-update-indicator ${updateIndicator}`}
+                      title={updateIndicator === 'processing'
+                        ? t('appUpdate.progressTitle')
+                        : t('appUpdate.badgeAvailable', { version: appUpdateInfo?.latestVersion ?? '' })}
+                      aria-label={updateIndicator === 'processing'
+                        ? t('appUpdate.progressTitle')
+                        : t('appUpdate.badgeAvailable', { version: appUpdateInfo?.latestVersion ?? '' })}
+                    />
+                  ) : null}
                 </button>
               );
             })}
@@ -326,7 +362,7 @@ function AppContent() {
 
         <div className="workspace">
           <main className="content">
-            {activePage.id === 'kernel' || coreRunning ? (
+            {isAlwaysAvailablePage(activePage.id) || coreRunning ? (
               <ActivePage />
             ) : (
               <CoreLockedPage />
@@ -392,6 +428,8 @@ function AppContent() {
           </section>
         </div>
       ) : null}
+
+      <AppUpdateDialog />
     </>
   );
 }

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AlertCircle, Check, Copy, ExternalLink, Info, RefreshCw } from 'lucide-react';
+import { AlertCircle, Check, Copy, ExternalLink, Info } from 'lucide-react';
 import { type CoreStatus, useCoreRuntime } from '../coreRuntime';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import claudeIcon from '../assets/icons/claude.svg';
@@ -10,6 +9,7 @@ import geminiIcon from '../assets/icons/gemini.svg';
 import { clientApiProfiles, DEFAULT_CLIENT_API_KEY } from '../services/clientAccess';
 import packageMetadata from '../../package.json';
 import { useI18n } from '../i18n';
+import { useAppUpdate } from '../appUpdate';
 
 type CorePlatform = {
   os: string;
@@ -57,29 +57,16 @@ type GuiSettings = {
   runOnStartup: boolean;
 };
 
-type AppUpdateInfo = {
-  currentVersion: string;
-  latestVersion: string;
-  updateAvailable: boolean;
-  releaseUrl: string;
-};
-
 const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
 
 let latestAutoCheckStarted = false;
 let cachedLatest: CoreLatest | null = null;
 let cachedLatestError = '';
 let latestCheckPromise: Promise<CoreLatest> | null = null;
-let initialAppUpdateCheck: Promise<AppUpdateInfo> | null = null;
 
 function displayAppVersion(version: string) {
   const resolvedVersion = version.trim() || packageMetadata.version;
   return resolvedVersion.startsWith('v') ? resolvedVersion : `v${resolvedVersion}`;
-}
-
-function requestInitialAppUpdate() {
-  initialAppUpdateCheck ??= invoke<AppUpdateInfo>('check_app_update');
-  return initialAppUpdateCheck;
 }
 
 function requestLatestCore() {
@@ -105,8 +92,18 @@ function requestLatestCore() {
   return latestCheckPromise;
 }
 
-export function KernelPage() {
+export type KernelView = 'home' | 'versions';
+
+export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const { t } = useI18n();
+  const {
+    info: appUpdate,
+    error: appUpdateError,
+    checking: checkingAppUpdate,
+    task: appUpdateTask,
+    check: checkAppUpdate,
+    requestInstall: requestAppUpdate,
+  } = useAppUpdate();
   const {
     status: coreStatus,
     statusError,
@@ -114,10 +111,6 @@ export function KernelPage() {
     publishStatus,
   } = useCoreRuntime();
   const [platform, setPlatform] = useState<CorePlatform | null>(null);
-  const [currentAppVersion, setCurrentAppVersion] = useState(() => displayAppVersion(packageMetadata.version));
-  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
-  const [appUpdateError, setAppUpdateError] = useState('');
-  const [checkingAppUpdate, setCheckingAppUpdate] = useState(true);
   const [platformError, setPlatformError] = useState('');
   const [latest, setLatest] = useState<CoreLatest | null>(cachedLatest);
   const [latestError, setLatestError] = useState(cachedLatestError);
@@ -237,36 +230,6 @@ export function KernelPage() {
       if (copiedApiTimerRef.current !== null) {
         window.clearTimeout(copiedApiTimerRef.current);
       }
-    };
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-
-    void getVersion()
-      .then((version) => {
-        if (!disposed) setCurrentAppVersion(displayAppVersion(version));
-      })
-      .catch((error) => console.warn('读取当前软件版本失败', error));
-
-    void requestInitialAppUpdate()
-      .then((info) => {
-        if (disposed) return;
-        setCurrentAppVersion(displayAppVersion(info.currentVersion));
-        setAppUpdate(info);
-        setAppUpdateError('');
-      })
-      .catch((error) => {
-        if (disposed) return;
-        console.warn('自动检查软件更新失败', error);
-        setAppUpdateError(String(error));
-      })
-      .finally(() => {
-        if (!disposed) setCheckingAppUpdate(false);
-      });
-
-    return () => {
-      disposed = true;
     };
   }, []);
 
@@ -625,25 +588,11 @@ export function KernelPage() {
     }
   };
 
-  const checkAppUpdate = async () => {
-    setCheckingAppUpdate(true);
-    setAppUpdateError('');
-    try {
-      const info = await invoke<AppUpdateInfo>('check_app_update');
-      setCurrentAppVersion(displayAppVersion(info.currentVersion));
-      setAppUpdate(info);
-    } catch (error) {
-      setAppUpdateError(String(error));
-    } finally {
-      setCheckingAppUpdate(false);
-    }
-  };
-
-  const openAppUpdate = async () => {
+  const openAppRelease = async () => {
     try {
       await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
     } catch (error) {
-      setAppUpdateError(t('kernel.error.openUpdate', { error: String(error) }));
+      showProcessNotice(t('kernel.error.openUpdate', { error: String(error) }), 'error');
     }
   };
 
@@ -680,12 +629,7 @@ export function KernelPage() {
     : statusError
       ? t('common.detectionFailed')
       : t('common.detecting');
-  const appUpdateLabel = appUpdateError
-    ? t('kernel.update.failedRetry')
-    : appUpdate?.updateAvailable
-      ? t('kernel.update.toVersion', { version: displayAppVersion(appUpdate.latestVersion) })
-      : '';
-  const appUpdateTone = appUpdateError ? 'error' : 'update';
+  const currentAppVersion = displayAppVersion(appUpdate?.currentVersion || packageMetadata.version);
   const latestLabel = checkingLatest
     ? t('kernel.update.checking')
     : latestVersion || (latestError ? t('kernel.update.failed') : t('kernel.update.notChecked'));
@@ -760,41 +704,9 @@ export function KernelPage() {
   } as const;
 
   return (
-    <section className="page kernel-page">
-      <div className="status-strip">
-        <div className="status-card status-card-primary">
-          <span className={`status-dot ${statusTone}`} />
-          <div>
-            <span>{t('kernel.overview.coreStatus')}</span>
-            <strong>{statusLabel}</strong>
-          </div>
-        </div>
-        <div className="status-card">
-          <span>{t('kernel.overview.appVersion')}</span>
-          <div className="software-version-line">
-            <strong>{currentAppVersion}</strong>
-            {appUpdateLabel ? (
-              <button
-                type="button"
-                className={`software-version-action ${appUpdateTone}`}
-                title={appUpdateError || t('kernel.update.openGithub')}
-                disabled={checkingAppUpdate}
-                onClick={() => void (appUpdateError ? checkAppUpdate() : openAppUpdate())}
-              >
-                {appUpdateError ? <RefreshCw size={11} aria-hidden="true" /> : null}
-                <span>{appUpdateLabel}</span>
-                {appUpdate?.updateAvailable && !appUpdateError ? <ExternalLink size={11} aria-hidden="true" /> : null}
-              </button>
-            ) : null}
-          </div>
-        </div>
-        <div className="status-card">
-          <span>{t('kernel.overview.coreVersion')}</span>
-          <strong>{currentVersion || t('kernel.status.notInstalled')}</strong>
-        </div>
-      </div>
-
-      <div className="kernel-layout">
+    <section className={`page kernel-page ${view === 'home' ? 'home-page' : 'version-management-page'}`}>
+      <div className={view === 'home' ? 'kernel-layout home-layout' : 'kernel-layout version-management-layout'}>
+        {view === 'home' ? (
         <div className="panel control-panel">
           <div className="panel-heading">
             <div>
@@ -899,7 +811,80 @@ export function KernelPage() {
           </div>
 
         </div>
+        ) : null}
 
+        {view === 'versions' ? (
+          <div className="panel software-update-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>{t('appUpdate.title')}</h2>
+                <p className={appUpdateError ? 'error' : appUpdate?.updateAvailable ? 'success' : ''}>
+                  {appUpdateError
+                    || (appUpdate?.updateAvailable
+                      ? t('appUpdate.available', { version: displayAppVersion(appUpdate.latestVersion) })
+                      : appUpdate
+                        ? t('appUpdate.upToDate')
+                        : t('appUpdate.phase.checking'))}
+                </p>
+              </div>
+              <span className={`state-pill ${appUpdate?.updateAvailable ? 'update' : appUpdateError ? 'error' : 'success'}`}>
+                {appUpdate?.autoUpdateSupported ? t('appUpdate.portableReady') : t('appUpdate.manualOnly')}
+              </span>
+            </div>
+
+            <dl className="panel-detail-grid software-update-details">
+              <div className="panel-detail-row">
+                <dt>{t('appUpdate.current')}</dt>
+                <dd>{currentAppVersion}</dd>
+              </div>
+              <div className="panel-detail-row">
+                <dt>{t('appUpdate.latest')}</dt>
+                <dd>{appUpdate ? displayAppVersion(appUpdate.latestVersion) : t('common.detecting')}</dd>
+              </div>
+              <div className="panel-detail-row">
+                <dt>{t('appUpdate.status')}</dt>
+                <dd className={appUpdateError ? 'error' : appUpdate?.updateAvailable ? 'success' : ''}>
+                  {appUpdateTask.running
+                    ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
+                    : appUpdateError
+                      ? t('kernel.update.failed')
+                      : appUpdate?.updateAvailable
+                        ? t('appUpdate.available', { version: displayAppVersion(appUpdate.latestVersion) })
+                        : appUpdate
+                          ? t('appUpdate.upToDate')
+                          : t('appUpdate.phase.checking')}
+                </dd>
+              </div>
+            </dl>
+
+            <div className="button-row panel-action-row software-update-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={checkingAppUpdate || appUpdateTask.running}
+                onClick={() => void checkAppUpdate()}
+              >
+                {checkingAppUpdate ? t('appUpdate.checking') : t('appUpdate.check')}
+              </button>
+              {appUpdate?.updateAvailable && appUpdate.autoUpdateSupported ? (
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={appUpdateTask.running}
+                  onClick={requestAppUpdate}
+                >
+                  {t('appUpdate.installNow')}
+                </button>
+              ) : (
+                <button type="button" className="secondary-button" onClick={() => void openAppRelease()}>
+                  {t('appUpdate.openRelease')} <ExternalLink size={14} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {view === 'versions' ? (
         <div className="panel version-panel">
           <div className="panel-heading">
             <div className="version-heading-inline">
@@ -976,8 +961,10 @@ export function KernelPage() {
           </div>
 
         </div>
+        ) : null}
       </div>
 
+      {view === 'home' ? (
       <section className="panel client-api-panel">
         <div className="panel-heading client-api-heading">
           <div>
@@ -1064,8 +1051,9 @@ export function KernelPage() {
           ))}
         </div>
       </section>
+      ) : null}
 
-      {installDialogOpen && progress ? (
+      {view === 'versions' && installDialogOpen && progress ? (
         <div className="install-dialog-backdrop">
           <div
             ref={installDialogRef}

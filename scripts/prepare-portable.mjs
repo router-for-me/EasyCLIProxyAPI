@@ -21,6 +21,12 @@ if (!existsSync(binary)) throw new Error(`GUI binary not found: ${binary}`);
 const rawVersion = (await readFile(join(root, 'core-version.txt'), 'utf8')).trim();
 if (!/^v?\d+(?:\.\d+)+$/.test(rawVersion)) throw new Error(`Invalid core-version.txt: ${rawVersion}`);
 const version = rawVersion.replace(/^v/i, '');
+const packageMetadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+const appVersion = String(packageMetadata.version ?? '').trim();
+const semverPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+if (!semverPattern.test(appVersion)) {
+  throw new Error(`Invalid package.json version: ${appVersion}`);
+}
 const extension = targetOS === 'windows' ? 'zip' : 'tar.gz';
 const assetName = `CLIProxyAPI_${version}_${targetOS}_${targetArch}.${extension}`;
 const sourceDir = join(root, 'cpa-core');
@@ -59,6 +65,14 @@ await rm(legacyOutputBinary, { force: true });
 await copyFile(binary, outputBinary);
 if (targetOS !== 'windows') await chmod(outputBinary, 0o755);
 await copyFile(join(root, 'core-version.txt'), join(output, 'core-version.txt'));
+await writeFile(join(output, 'portable-app.json'), `${JSON.stringify({
+  schemaVersion: 1,
+  application: 'EasyCLIProxyAPI',
+  version: appVersion,
+  platform: targetOS,
+  arch: targetArch,
+  autoUpdate: targetOS === 'windows',
+}, null, 2)}\n`);
 
 const coreOutput = join(output, 'cpa-core');
 await rm(coreOutput, { recursive: true, force: true });
