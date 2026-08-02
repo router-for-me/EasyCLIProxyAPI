@@ -85,6 +85,7 @@ export function ConfigPanelPage() {
   const [sessionTtlDraft, setSessionTtlDraft] = useState('');
   const [portError, setPortError] = useState('');
   const [savedStatusVisible, setSavedStatusVisible] = useState(false);
+  const settingsRef = useRef<CoreConfigSettings | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const copyTimerRef = useRef<number | null>(null);
 
@@ -93,7 +94,7 @@ export function ConfigPanelPage() {
     let stop: (() => void) | null = null;
     void loadSettings();
     void listen('config-files-changed', () => {
-      if (!disposed) void loadSettings();
+      if (!disposed) void loadSettings('preserve-dirty');
     }).then((unlisten) => {
       if (disposed) unlisten();
       else stop = unlisten;
@@ -121,25 +122,40 @@ export function ConfigPanelPage() {
     }, 3200);
   };
 
-  const applySettings = (result: CoreConfigSettings, syncNetworkDrafts = true) => {
+  type DraftSyncMode = 'sync' | 'preserve-dirty' | 'keep';
+
+  const applySettings = (result: CoreConfigSettings, drafts: DraftSyncMode = 'sync') => {
+    const previous = settingsRef.current;
+    settingsRef.current = result;
     setSettings(result);
-    if (syncNetworkDrafts) {
-      setPortDraft(String(result.port));
-      setAllowLanDraft(result.allowLan);
-      setProxyUrlDraft(result.proxyUrl);
-      setSessionAffinityDraft(result.routingSessionAffinity);
-      setSessionTtlDraft(result.routingSessionAffinityTtl);
+    if (drafts === 'keep') {
+      return;
+    }
+    // On externally triggered reloads keep drafts the user has already edited
+    // so unsaved toggles/inputs are not silently reverted.
+    const base = drafts === 'preserve-dirty' ? previous : null;
+    setPortDraft((draft) => (base && draft !== String(base.port) ? draft : String(result.port)));
+    setAllowLanDraft((draft) => (base && draft !== base.allowLan ? draft : result.allowLan));
+    setProxyUrlDraft((draft) => (base && draft !== base.proxyUrl ? draft : result.proxyUrl));
+    setSessionAffinityDraft((draft) =>
+      base && draft !== base.routingSessionAffinity ? draft : result.routingSessionAffinity,
+    );
+    setSessionTtlDraft((draft) =>
+      base && draft !== base.routingSessionAffinityTtl ? draft : result.routingSessionAffinityTtl,
+    );
+    if (!base) {
       setPortError('');
     }
   };
 
-  async function loadSettings(syncNetworkDrafts = true) {
+  async function loadSettings(drafts: DraftSyncMode = 'sync') {
     setLoading(true);
     setLoadError('');
     try {
       const result = await invoke<CoreConfigSettings>('get_core_config_settings');
-      applySettings(result, syncNetworkDrafts);
+      applySettings(result, drafts);
     } catch (error) {
+      settingsRef.current = null;
       setSettings(null);
       setLoadError(String(error));
     } finally {
@@ -156,14 +172,14 @@ export function ConfigPanelPage() {
     setBusyAction(action);
     try {
       const result = await invoke<CoreConfigSettings>(command, args);
-      applySettings(result, false);
+      applySettings(result, 'keep');
       setLoadError('');
       showNotice(successMessage, 'success');
       return true;
     } catch (error) {
-      if (settings) applySettings(settings, false);
+      if (settings) applySettings(settings, 'keep');
       showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
-      void loadSettings(false);
+      void loadSettings('keep');
       return false;
     } finally {
       setBusyAction(null);

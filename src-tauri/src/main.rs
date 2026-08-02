@@ -17672,6 +17672,12 @@ fn start_configuration_file_watcher(app: tauri::AppHandle) -> Result<(), String>
     let (sender, receiver) = std::sync::mpsc::channel();
     let mut watcher: RecommendedWatcher =
         notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
+            // Linux inotify also reports access events (e.g. IN_OPEN) for plain
+            // reads. Reacting to them creates a feedback loop because handling a
+            // change re-reads the config files, so only mutations are forwarded.
+            if matches!(&event, Ok(event) if event.kind.is_access()) {
+                return;
+            }
             let _ = sender.send(event);
         })
         .map_err(|error| format!("创建配置文件监控器失败: {error}"))?;
