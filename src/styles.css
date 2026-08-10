@@ -5972,6 +5972,30 @@ textarea:focus-visible {
   min-height: 54px;
 }
 
+.usage-header-actions,
+.usage-export-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.usage-export-actions .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.usage-export-notice {
+  word-break: break-all;
+}
+
 .usage-collector-state {
   display: flex;
   align-items: center;

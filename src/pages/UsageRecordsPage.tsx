@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Activity, BarChart3, CircleDollarSign, Clock3, Database, List, Pencil, RefreshCw, ShieldCheck, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
+import { save } from '@tauri-apps/plugin-dialog';
+import { Activity, BarChart3, CircleDollarSign, Clock3, Database, Download, List, Pencil, RefreshCw, ShieldCheck, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import { formatUsageNumber } from '../services/usageNumber';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
+type UsageExportFormat = 'csv' | 'json';
+
+type UsageExportResult = {
+  path: string;
+  recordCount: number;
+};
 
 type CollectorStatus = {
   state: 'waiting-core' | 'collecting' | 'error';
@@ -238,6 +245,8 @@ export function UsageRecordsPage() {
   const [pricing, setPricing] = useState<UsagePricing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [exporting, setExporting] = useState<UsageExportFormat | null>(null);
+  const [exportNotice, setExportNotice] = useState('');
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -356,6 +365,35 @@ export function UsageRecordsPage() {
     setPage(1);
   };
 
+  const exportUsageRecords = async (format: UsageExportFormat) => {
+    if (exporting) return;
+    setExporting(format);
+    setError('');
+    setExportNotice('');
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const path = await save({
+        title: t('usage.export.dialogTitle'),
+        defaultPath: `easycliproxy-usage-${timestamp}.${format}`,
+        filters: [{ name: format.toUpperCase(), extensions: [format] }],
+      });
+      if (!path) return;
+      const exported = await invoke<UsageExportResult>('export_usage_records', {
+        path,
+        format,
+        query: buildQueries().query,
+      });
+      setExportNotice(t('usage.export.success', {
+        count: compactNumber(exported.recordCount),
+        path: exported.path,
+      }));
+    } catch (exportError) {
+      setError(t('usage.export.failed', { error: String(exportError) }));
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const collectorTone = status?.state === 'error' ? 'error' : status?.state === 'collecting' ? 'success' : '';
   const showInitialLoading = loading && (
     (activeTab === 'overview' && !overview)
@@ -371,16 +409,23 @@ export function UsageRecordsPage() {
           <span>Local Usage</span>
           <h1>{t('usage.title')}</h1>
         </div>
-        <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
-          <span className="status-dot" />
-          <div>
-            <strong>{status?.state === 'collecting' ? t('usage.collector.collecting') : status?.state === 'error' ? t('usage.collector.error') : t('usage.collector.waiting')}</strong>
-            <span>{t('usage.longTermRecords', { count: compactNumber(status?.totalRecords ?? 0) })}</span>
+        <div className="usage-header-actions">
+          <div className="usage-export-actions">
+            <button type="button" className="secondary-button" disabled={exporting !== null} onClick={() => void exportUsageRecords('csv')}><Download size={15} />{exporting === 'csv' ? t('usage.export.exporting') : t('usage.export.csv')}</button>
+            <button type="button" className="secondary-button" disabled={exporting !== null} onClick={() => void exportUsageRecords('json')}><Download size={15} />{exporting === 'json' ? t('usage.export.exporting') : t('usage.export.json')}</button>
+          </div>
+          <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
+            <span className="status-dot" />
+            <div>
+              <strong>{status?.state === 'collecting' ? t('usage.collector.collecting') : status?.state === 'error' ? t('usage.collector.error') : t('usage.collector.waiting')}</strong>
+              <span>{t('usage.longTermRecords', { count: compactNumber(status?.totalRecords ?? 0) })}</span>
+            </div>
           </div>
         </div>
       </header>
 
       {error ? <div className="management-alert error">{error}</div> : null}
+      {exportNotice ? <div className="management-alert success usage-export-notice" title={exportNotice}>{exportNotice}</div> : null}
 
       <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
         <button type="button" className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}><Activity size={15} />{t('usage.tab.overview')}</button>
