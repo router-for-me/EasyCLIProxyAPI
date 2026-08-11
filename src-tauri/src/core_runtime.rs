@@ -1,5 +1,9 @@
 use super::*;
 
+const CORE_MONITOR_INTERVAL: Duration = Duration::from_millis(500);
+const CORE_RESTART_STABLE_AFTER: Duration = Duration::from_secs(60);
+const CORE_RESTART_DELAYS_SECS: [u64; 5] = [1, 2, 5, 10, 30];
+
 #[tauri::command]
 pub(crate) async fn check_latest_core(
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -116,6 +120,7 @@ pub(crate) fn start_core_process_with_state(
         let _ = stop_core_process_inner(process_state);
         return Err(error);
     }
+    process_state.set_auto_restart_enabled(true);
     current_core_status(Some(process_state), Some(config.port))
 }
 
@@ -134,7 +139,12 @@ pub(crate) fn stop_core_process_with_state(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) -> Result<CoreStatus, String> {
-    stop_core_process_inner(process_state)?;
+    let was_auto_restart_enabled = process_state.auto_restart_enabled();
+    process_state.set_auto_restart_enabled(false);
+    if let Err(error) = stop_core_process_inner(process_state) {
+        process_state.set_auto_restart_enabled(was_auto_restart_enabled);
+        return Err(error);
+    }
     let config = gui_config_state.set_run_on_startup(false)?;
     current_core_status(Some(process_state), Some(config.port))
 }
@@ -155,12 +165,17 @@ pub(crate) fn restart_core_process_with_state(
     gui_config_state: &GuiConfigState,
 ) -> Result<CoreStatus, String> {
     let config = gui_config_state.snapshot()?;
+    process_state.set_auto_restart_enabled(false);
     let _ = stop_core_process_inner(process_state);
-    start_core_process_inner(process_state, &config)?;
+    if let Err(error) = start_core_process_inner(process_state, &config) {
+        process_state.set_auto_restart_enabled(true);
+        return Err(error);
+    }
     if let Err(error) = gui_config_state.set_run_on_startup(true) {
         let _ = stop_core_process_inner(process_state);
         return Err(error);
     }
+    process_state.set_auto_restart_enabled(true);
     current_core_status(Some(process_state), Some(config.port))
 }
 
@@ -826,6 +841,9 @@ pub(crate) fn current_core_status(
         installed,
         running,
         managed: managed_pid.is_some(),
+        auto_restart_enabled: process_state
+            .map(CoreProcessState::auto_restart_enabled)
+            .unwrap_or(false),
         process_id,
         current_version,
         install_dir: path_to_string(&install_dir),
@@ -839,10 +857,146 @@ pub(crate) fn is_management_port_open(port: u16) -> bool {
     TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok()
 }
 
+pub(crate) fn core_restart_delay(attempt: u32) -> Duration {
+    let index = attempt
+        .saturating_sub(1)
+        .min((CORE_RESTART_DELAYS_SECS.len() - 1) as u32) as usize;
+    Duration::from_secs(CORE_RESTART_DELAYS_SECS[index])
+}
+
+pub(crate) fn should_auto_restart_core(
+    auto_restart_enabled: bool,
+    managed_process_running: bool,
+    management_port_open: bool,
+) -> bool {
+    auto_restart_enabled && !managed_process_running && !management_port_open
+}
+
+pub(crate) fn start_core_process_monitor(app: tauri::AppHandle) {
+    thread::spawn(move || monitor_core_process(app));
+}
+
+fn monitor_core_process(app: tauri::AppHandle) {
+    let mut consecutive_attempts = 0_u32;
+    let mut running_since: Option<Instant> = None;
+    let mut restart_at: Option<Instant> = None;
+
+    loop {
+        thread::sleep(CORE_MONITOR_INTERVAL);
+
+        let process_state = app.state::<CoreProcessState>();
+        if !process_state.auto_restart_enabled() {
+            consecutive_attempts = 0;
+            running_since = None;
+            restart_at = None;
+            continue;
+        }
+
+        let gui_config_state = app.state::<GuiConfigState>();
+        let config = match gui_config_state.snapshot() {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("读取核心自动重启配置失败: {error}");
+                continue;
+            }
+        };
+        let managed_process_running = process_state.managed_pid().is_some();
+        let management_port_open = is_management_port_open(config.port);
+
+        if !should_auto_restart_core(
+            process_state.auto_restart_enabled(),
+            managed_process_running,
+            management_port_open,
+        ) {
+            restart_at = None;
+            let started_at = running_since.get_or_insert_with(Instant::now);
+            if started_at.elapsed() >= CORE_RESTART_STABLE_AFTER {
+                consecutive_attempts = 0;
+            }
+            continue;
+        }
+
+        running_since = None;
+        let now = Instant::now();
+        let scheduled_restart = match restart_at {
+            Some(scheduled_restart) => scheduled_restart,
+            None => {
+                let attempt = consecutive_attempts.saturating_add(1);
+                let delay = core_restart_delay(attempt);
+                let scheduled_restart = now + delay;
+                restart_at = Some(scheduled_restart);
+                emit_core_recovery_status(
+                    &app,
+                    process_state.inner(),
+                    config.port,
+                    format!(
+                        "CPA 核心意外停止，将在 {} 秒后自动重启（第 {attempt} 次）",
+                        delay.as_secs()
+                    ),
+                );
+                scheduled_restart
+            }
+        };
+
+        if now < scheduled_restart {
+            continue;
+        }
+        if !process_state.auto_restart_enabled() {
+            restart_at = None;
+            continue;
+        }
+
+        let attempt = consecutive_attempts.saturating_add(1);
+        consecutive_attempts = attempt;
+        restart_at = None;
+        match start_core_process_inner(process_state.inner(), &config) {
+            Ok(()) => {
+                eprintln!("CPA 核心已自动重启（第 {attempt} 次尝试）");
+                running_since = Some(Instant::now());
+                if let Ok(status) =
+                    current_core_status(Some(process_state.inner()), Some(config.port))
+                {
+                    emit_core_status(&app, &status);
+                }
+            }
+            Err(error) => {
+                let next_delay = core_restart_delay(attempt.saturating_add(1));
+                restart_at = Some(Instant::now() + next_delay);
+                eprintln!("CPA 核心自动重启失败（第 {attempt} 次尝试）: {error}");
+                emit_core_recovery_status(
+                    &app,
+                    process_state.inner(),
+                    config.port,
+                    format!(
+                        "CPA 核心自动重启失败，将在 {} 秒后重试: {error}",
+                        next_delay.as_secs()
+                    ),
+                );
+            }
+        }
+    }
+}
+
+fn emit_core_recovery_status(
+    app: &tauri::AppHandle,
+    process_state: &CoreProcessState,
+    management_port: u16,
+    message: String,
+) {
+    if let Ok(mut status) = current_core_status(Some(process_state), Some(management_port)) {
+        status.message = message;
+        emit_core_status(app, &status);
+    }
+}
+
 pub(crate) fn start_core_process_inner(
     process_state: &CoreProcessState,
     gui_config: &GuiConfigFile,
 ) -> Result<(), String> {
+    let _operation = process_state
+        .operation
+        .lock()
+        .map_err(|_| "核心进程操作锁已损坏".to_string())?;
     let install_dir = core_install_dir()?;
     if !gui_config.auth_dir.trim().is_empty() {
         let auth_dir = auth_dir_path_for_core(&gui_config.auth_dir, &install_dir);
@@ -973,6 +1127,10 @@ pub(crate) fn configure_networked_command(command: &mut Command, proxy_url: &str
 }
 
 pub(crate) fn stop_core_process_inner(process_state: &CoreProcessState) -> Result<(), String> {
+    let _operation = process_state
+        .operation
+        .lock()
+        .map_err(|_| "核心进程操作锁已损坏".to_string())?;
     if let Some(mut child) = process_state.take_child() {
         terminate_child(&mut child)?;
         process_state.clear_lifetime_guard();
@@ -1481,8 +1639,12 @@ pub(crate) fn shutdown_managed_core(
     gui_config_state: &GuiConfigState,
 ) {
     let was_running = process_state.managed_pid().is_some();
+    process_state.set_auto_restart_enabled(false);
     let _ = gui_config_state.set_run_on_startup(was_running);
 
+    let Ok(_operation) = process_state.operation.lock() else {
+        return;
+    };
     if let Some(mut child) = process_state.take_child() {
         let _ = terminate_child(&mut child);
     }

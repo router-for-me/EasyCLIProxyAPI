@@ -2,6 +2,36 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn core_restart_backoff_increases_and_caps_at_thirty_seconds() {
+    assert_eq!(core_restart_delay(1), Duration::from_secs(1));
+    assert_eq!(core_restart_delay(2), Duration::from_secs(2));
+    assert_eq!(core_restart_delay(3), Duration::from_secs(5));
+    assert_eq!(core_restart_delay(4), Duration::from_secs(10));
+    assert_eq!(core_restart_delay(5), Duration::from_secs(30));
+    assert_eq!(core_restart_delay(20), Duration::from_secs(30));
+}
+
+#[test]
+fn core_restart_requires_persistent_intent_and_a_fully_stopped_core() {
+    assert!(should_auto_restart_core(true, false, false));
+    assert!(!should_auto_restart_core(false, false, false));
+    assert!(!should_auto_restart_core(true, true, false));
+    assert!(!should_auto_restart_core(true, false, true));
+}
+
+#[test]
+fn core_restart_intent_can_be_disabled_before_an_intentional_stop() {
+    let state = CoreProcessState::default();
+    assert!(!state.auto_restart_enabled());
+
+    state.set_auto_restart_enabled(true);
+    assert!(state.auto_restart_enabled());
+
+    state.set_auto_restart_enabled(false);
+    assert!(!state.auto_restart_enabled());
+}
+
+#[test]
 fn replacing_a_core_preserves_only_regular_bundled_assets() {
     let root = agent_test_home("bundled-assets");
     let source = root.join("source");

@@ -37,7 +37,6 @@ use objc2::MainThreadMarker;
 use objc2_app_kit::NSEvent;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-#[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
@@ -267,6 +266,8 @@ struct AppUpdateInner {
 #[derive(Default)]
 struct CoreProcessState {
     child: Mutex<Option<Child>>,
+    operation: Mutex<()>,
+    auto_restart_enabled: AtomicBool,
     #[cfg(windows)]
     job: Mutex<Option<isize>>,
 }
@@ -362,6 +363,7 @@ struct CoreStatus {
     installed: bool,
     running: bool,
     managed: bool,
+    auto_restart_enabled: bool,
     process_id: Option<u32>,
     current_version: Option<String>,
     install_dir: String,
@@ -1286,6 +1288,14 @@ impl AppUpdateState {
 }
 
 impl CoreProcessState {
+    fn set_auto_restart_enabled(&self, enabled: bool) {
+        self.auto_restart_enabled.store(enabled, Ordering::Release);
+    }
+
+    fn auto_restart_enabled(&self) -> bool {
+        self.auto_restart_enabled.load(Ordering::Acquire)
+    }
+
     fn managed_pid(&self) -> Option<u32> {
         let Ok(mut child) = self.child.lock() else {
             return None;
@@ -1781,6 +1791,7 @@ fn main() {
                 let Ok(config) = gui_config_state.snapshot() else {
                     return;
                 };
+                process_state.set_auto_restart_enabled(config.run_on_startup);
 
                 match auto_install_bundled_core_if_missing(&core_app) {
                     Ok(true) => eprintln!("未检测到 CPA 内核，已自动安装内置离线版本"),
@@ -1799,6 +1810,8 @@ fn main() {
                 {
                     emit_core_status(&core_app, &status);
                 }
+
+                start_core_process_monitor(core_app);
             });
 
             if let Some(ack_path) = portable_update_ack.as_ref() {
