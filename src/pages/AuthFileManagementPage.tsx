@@ -1,6 +1,7 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
+  CheckSquare2,
   Copy,
   FileDown,
   FolderOpen,
@@ -9,6 +10,7 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  Square,
   Trash2,
   X,
 } from 'lucide-react';
@@ -43,6 +45,7 @@ import {
   useQuotaCache,
 } from '../services/quotaCache';
 import {
+  authFilesForBatchAction,
   authFileName,
   dedupeAuthFiles,
   isRuntimeOnlyAuthFile,
@@ -154,6 +157,7 @@ export function AuthFileManagementPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState('');
+  const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
   const [priorityEditor, setPriorityEditor] = useState<PriorityEditor | null>(null);
   const [oauthModelProvider, setOauthModelProvider] = useState('');
   const [oauthModelProviderLabel, setOauthModelProviderLabel] = useState('');
@@ -175,6 +179,10 @@ export function AuthFileManagementPage() {
       const payload = await managementApi.get('/auth-files');
       const nextFiles = dedupeAuthFiles(responseList(payload, 'files'));
       setFiles(nextFiles);
+      const validNames = new Set(nextFiles.map(fileName));
+      setSelectedNames((current) => new Set(
+        Array.from(current).filter((name) => validNames.has(name)),
+      ));
       const validQuotaKeys = new Set(nextFiles.map(quotaKey));
       pruneQuotaCache(validQuotaKeys);
       updateQuotaCache((current) => {
@@ -327,6 +335,46 @@ export function AuthFileManagementPage() {
     });
   }, [files, filter, providerFilter, statusFilter]);
 
+  const selectedFiles = useMemo(
+    () => files.filter((file) => selectedNames.has(fileName(file))),
+    [files, selectedNames],
+  );
+  const enableTargets = useMemo(
+    () => authFilesForBatchAction(files, selectedNames, 'enable'),
+    [files, selectedNames],
+  );
+  const disableTargets = useMemo(
+    () => authFilesForBatchAction(files, selectedNames, 'disable'),
+    [files, selectedNames],
+  );
+  const deleteTargets = useMemo(
+    () => authFilesForBatchAction(files, selectedNames, 'delete'),
+    [files, selectedNames],
+  );
+  const visibleNames = visibleFiles.map(fileName);
+  const allVisibleSelected = visibleNames.length > 0
+    && visibleNames.every((name) => selectedNames.has(name));
+
+  const toggleFileSelection = (name: string) => {
+    setSelectedNames((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const toggleVisibleSelection = () => {
+    setSelectedNames((current) => {
+      const next = new Set(current);
+      visibleNames.forEach((name) => {
+        if (allVisibleSelected) next.delete(name);
+        else next.add(name);
+      });
+      return next;
+    });
+  };
+
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = '';
@@ -459,6 +507,60 @@ export function AuthFileManagementPage() {
     }
   };
 
+  const runBatchAction = async (
+    action: 'enable' | 'disable' | 'delete',
+    targets: AuthFile[],
+  ) => {
+    if (busy || targets.length === 0) return;
+    if (action === 'delete') {
+      const skipped = selectedFiles.length - targets.length;
+      const detail = skipped > 0 ? `\n\n${t('authFiles.batch.runtimeSkipped', { count: skipped })}` : '';
+      if (!window.confirm(`${t('authFiles.batch.deleteConfirm', { count: targets.length })}${detail}`)) return;
+    }
+
+    setBusy(true);
+    setError('');
+    setNotice('');
+    let completed = 0;
+    const failures: string[] = [];
+    for (const file of targets) {
+      const name = fileName(file);
+      try {
+        if (action === 'delete') {
+          await managementApi.delete('/auth-files', { query: { name } });
+        } else {
+          await managementApi.patch('/auth-files/status', {
+            name,
+            disabled: action === 'disable',
+          });
+        }
+        completed += 1;
+      } catch (requestError) {
+        failures.push(`${name}: ${String(requestError)}`);
+      }
+    }
+
+    try {
+      await loadFiles();
+      if (completed > 0) {
+        const messageKey = action === 'enable'
+          ? 'authFiles.batch.enabled'
+          : action === 'disable'
+            ? 'authFiles.batch.disabled'
+            : 'authFiles.batch.deleted';
+        setNotice(t(messageKey, { count: completed }));
+      }
+      if (failures.length > 0) {
+        setError(t('authFiles.batch.failed', {
+          count: failures.length,
+          errors: failures.join('; '),
+        }));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const disabledCount = files.filter((file) => readBoolean(file, 'disabled')).length;
   const runtimeCount = files.filter(isRuntimeOnly).length;
 
@@ -503,6 +605,24 @@ export function AuthFileManagementPage() {
           </select>
         </div>
 
+        {files.length > 0 ? (
+          <div className={`auth-files-batch-toolbar ${selectedNames.size > 0 ? 'active' : ''}`}>
+            <button type="button" className="secondary-button compact-button" onClick={toggleVisibleSelection} disabled={busy || visibleNames.length === 0}>
+              {allVisibleSelected ? <CheckSquare2 size={16} /> : <Square size={16} />}
+              {allVisibleSelected ? t('authFiles.batch.deselectVisible') : t('authFiles.batch.selectVisible')}
+            </button>
+            <strong>{t('authFiles.batch.selected', { count: selectedNames.size })}</strong>
+            {selectedNames.size > 0 ? (
+              <div className="auth-files-batch-actions">
+                <button type="button" className="secondary-button compact-button" onClick={() => void runBatchAction('enable', enableTargets)} disabled={busy || enableTargets.length === 0}>{t('authFiles.batch.enable', { count: enableTargets.length })}</button>
+                <button type="button" className="secondary-button compact-button" onClick={() => void runBatchAction('disable', disableTargets)} disabled={busy || disableTargets.length === 0}>{t('authFiles.batch.disable', { count: disableTargets.length })}</button>
+                <button type="button" className="danger-button compact-button" onClick={() => void runBatchAction('delete', deleteTargets)} disabled={busy || deleteTargets.length === 0}><Trash2 size={15} />{t('authFiles.batch.delete', { count: deleteTargets.length })}</button>
+                <button type="button" className="icon-button quiet" onClick={() => setSelectedNames(new Set())} disabled={busy} title={t('authFiles.batch.clear')}><X size={16} /></button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
         {loading ? (
           <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('authFiles.loading')}</div>
         ) : visibleFiles.length === 0 ? (
@@ -515,7 +635,10 @@ export function AuthFileManagementPage() {
               const disabled = readBoolean(file, 'disabled');
               const priority = parseAuthFilePriority(file.priority) ?? 0;
               return (
-                <article className={`real-auth-file-row ${disabled ? 'disabled' : ''}`} key={`${name}-${readString(file, 'auth_index', 'authIndex')}`}>
+                <article className={`real-auth-file-row ${disabled ? 'disabled' : ''} ${selectedNames.has(name) ? 'selected' : ''}`} key={`${name}-${readString(file, 'auth_index', 'authIndex')}`}>
+                  <label className="auth-file-select" title={t('authFiles.batch.selectCredential', { name })}>
+                    <input type="checkbox" checked={selectedNames.has(name)} onChange={() => toggleFileSelection(name)} aria-label={t('authFiles.batch.selectCredential', { name })} />
+                  </label>
                   <img src={icon} alt="" className="provider-logo" />
                   <div className="auth-file-main">
                     <div className="auth-file-title"><strong title={name}>{name}</strong><span className={`state-pill ${disabled ? 'error' : readBoolean(file, 'unavailable') ? 'error' : 'success'}`} title={readString(file, 'status_message', 'statusMessage') || undefined}>{statusText(file)}</span></div>

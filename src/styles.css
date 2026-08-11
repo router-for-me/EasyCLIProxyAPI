@@ -6617,6 +6617,52 @@ textarea:focus-visible {
   color: var(--theme-5f5a53);
 }
 
+.auth-files-batch-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 8px;
+  background: var(--theme-f8f6f1);
+}
+
+.auth-files-batch-toolbar.active {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+}
+
+.auth-files-batch-toolbar > strong {
+  color: var(--theme-5f5a53);
+  font-size: var(--font-size-body);
+}
+
+.auth-files-batch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.auth-file-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 32px;
+  cursor: pointer;
+}
+
+.auth-file-select input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ui-accent);
+}
+
 .real-auth-file-list {
   margin-top: 14px;
   border-top: 1px solid var(--theme-e3e1db);
@@ -6624,7 +6670,7 @@ textarea:focus-visible {
 
 .real-auth-file-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1.2fr) minmax(160px, 0.8fr) auto;
+  grid-template-columns: 26px 34px minmax(0, 1.2fr) minmax(160px, 0.8fr) auto;
   align-items: center;
   gap: 14px;
   min-height: 76px;
@@ -6632,9 +6678,13 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--theme-eeece6);
 }
 
+.real-auth-file-row.selected {
+  box-shadow: inset 3px 0 0 var(--ui-accent);
+}
+
 .auth-file-quota {
   display: flex;
-  grid-column: 2 / -1;
+  grid-column: 3 / -1;
   align-items: center;
   flex-wrap: wrap;
   gap: 5px 8px;
@@ -7500,7 +7550,7 @@ textarea:focus-visible {
   }
 
   .real-auth-file-row {
-    grid-template-columns: 34px minmax(0, 1fr) auto;
+    grid-template-columns: 26px 34px minmax(0, 1fr) auto;
   }
 
   .provider-row-meta,
@@ -7904,7 +7954,7 @@ textarea:focus-visible {
   }
 
   .real-auth-file-row {
-    grid-template-columns: 30px minmax(0, 1fr);
+    grid-template-columns: 26px 30px minmax(0, 1fr);
   }
 
   .provider-row-actions {
@@ -7913,7 +7963,7 @@ textarea:focus-visible {
   }
 
   .auth-file-actions {
-    grid-column: 2;
+    grid-column: 3;
     flex-wrap: wrap;
     justify-content: flex-start;
   }
