@@ -6639,6 +6639,36 @@ textarea:focus-visible {
   font-size: var(--font-size-body);
 }
 
+.auth-files-select-visible {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 3px;
+  color: var(--theme-433f39);
+  font-size: var(--font-size-body);
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.auth-files-select-visible input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ui-accent);
+  cursor: pointer;
+}
+
+.auth-files-select-visible.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.auth-files-select-visible input:disabled {
+  cursor: not-allowed;
+}
+
 .auth-files-batch-actions {
   display: flex;
   align-items: center;

@@ -399,7 +399,7 @@ export const jaOverrides = {
   'authFiles.deleteConfirm': '「{name}」を削除しますか？',
   'authFiles.deleted': '認証ファイルを削除しました',
   'authFiles.batch.selected': '{count} 件選択中',
-  'authFiles.batch.selectVisible': '表示中を選択',
+  'authFiles.batch.selectVisible': 'すべて選択',
   'authFiles.batch.deselectVisible': '表示中の選択を解除',
   'authFiles.batch.clear': '選択を解除',
   'authFiles.batch.selectCredential': '{name} を選択',

@@ -399,7 +399,7 @@ export const en: Record<MessageKey, string> = {
   'authFiles.deleteConfirm': 'Delete “{name}”?',
   'authFiles.deleted': 'Authentication file deleted',
   'authFiles.batch.selected': '{count} selected',
-  'authFiles.batch.selectVisible': 'Select Visible',
+  'authFiles.batch.selectVisible': 'Select all',
   'authFiles.batch.deselectVisible': 'Deselect Visible',
   'authFiles.batch.clear': 'Clear selection',
   'authFiles.batch.selectCredential': 'Select {name}',

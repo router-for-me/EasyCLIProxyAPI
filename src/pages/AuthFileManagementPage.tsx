@@ -1,7 +1,6 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
-  CheckSquare2,
   Copy,
   FileDown,
   FolderOpen,
@@ -10,7 +9,6 @@ import {
   Pencil,
   RefreshCw,
   Search,
-  Square,
   Trash2,
   X,
 } from 'lucide-react';
@@ -170,6 +168,7 @@ export function AuthFileManagementPage() {
   const [oauthModelError, setOauthModelError] = useState('');
   const quotas = useQuotaCache();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const selectVisibleRef = useRef<HTMLInputElement | null>(null);
   const oauthModelRequestRef = useRef(0);
 
   const loadFiles = useCallback(async () => {
@@ -352,8 +351,15 @@ export function AuthFileManagementPage() {
     [files, selectedNames],
   );
   const visibleNames = visibleFiles.map(fileName);
-  const allVisibleSelected = visibleNames.length > 0
-    && visibleNames.every((name) => selectedNames.has(name));
+  const selectedVisibleCount = visibleNames.filter((name) => selectedNames.has(name)).length;
+  const allVisibleSelected = visibleNames.length > 0 && selectedVisibleCount === visibleNames.length;
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
+
+  useEffect(() => {
+    if (selectVisibleRef.current) {
+      selectVisibleRef.current.indeterminate = someVisibleSelected;
+    }
+  }, [someVisibleSelected]);
 
   const toggleFileSelection = (name: string) => {
     setSelectedNames((current) => {
@@ -607,10 +613,17 @@ export function AuthFileManagementPage() {
 
         {files.length > 0 ? (
           <div className={`auth-files-batch-toolbar ${selectedNames.size > 0 ? 'active' : ''}`}>
-            <button type="button" className="secondary-button compact-button" onClick={toggleVisibleSelection} disabled={busy || visibleNames.length === 0}>
-              {allVisibleSelected ? <CheckSquare2 size={16} /> : <Square size={16} />}
-              {allVisibleSelected ? t('authFiles.batch.deselectVisible') : t('authFiles.batch.selectVisible')}
-            </button>
+            <label className={`auth-files-select-visible ${busy || visibleNames.length === 0 ? 'disabled' : ''}`}>
+              <input
+                ref={selectVisibleRef}
+                type="checkbox"
+                checked={allVisibleSelected}
+                disabled={busy || visibleNames.length === 0}
+                aria-label={allVisibleSelected ? t('authFiles.batch.deselectVisible') : t('authFiles.batch.selectVisible')}
+                onChange={toggleVisibleSelection}
+              />
+              <span>{t('authFiles.batch.selectVisible')}</span>
+            </label>
             <strong>{t('authFiles.batch.selected', { count: selectedNames.size })}</strong>
             {selectedNames.size > 0 ? (
               <div className="auth-files-batch-actions">

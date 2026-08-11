@@ -397,7 +397,7 @@ export const zhCN = {
   'authFiles.deleteConfirm': '确定删除“{name}”吗？',
   'authFiles.deleted': '认证文件已删除',
   'authFiles.batch.selected': '已选择 {count} 个',
-  'authFiles.batch.selectVisible': '选择当前结果',
+  'authFiles.batch.selectVisible': '全选',
   'authFiles.batch.deselectVisible': '取消当前结果',
   'authFiles.batch.clear': '清除选择',
   'authFiles.batch.selectCredential': '选择 {name}',
