@@ -19,6 +19,7 @@ import geminiIcon from '../assets/icons/gemini.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import vertexIcon from '../assets/icons/vertex.svg';
+import { AppSelect } from '../components/AppSelect';
 import {
   formatDate,
   managementApi,
@@ -491,16 +492,26 @@ export function AuthFileManagementPage() {
         <div className="management-toolbar auth-files-toolbar">
           <Search size={16} />
           <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder={t('authFiles.searchPlaceholder')} />
-          <select value={providerFilter} onChange={(event) => setProviderFilter(event.currentTarget.value)}>
-            <option value="all">{t('authFiles.filter.allProviders')}</option>
-            {providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
-          </select>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value as typeof statusFilter)}>
-            <option value="all">{t('authFiles.filter.allStatuses')}</option>
-            <option value="enabled">{t('authFiles.filter.enabled')}</option>
-            <option value="disabled">{t('authFiles.filter.disabled')}</option>
-            <option value="runtime">{t('authFiles.filter.runtime')}</option>
-          </select>
+          <AppSelect
+            value={providerFilter}
+            onChange={setProviderFilter}
+            ariaLabel={t('authFiles.filter.allProviders')}
+            options={[
+              { value: 'all', label: t('authFiles.filter.allProviders') },
+              ...providers.map((provider) => ({ value: provider, label: provider })),
+            ]}
+          />
+          <AppSelect
+            value={statusFilter}
+            onChange={(value) => setStatusFilter(value as typeof statusFilter)}
+            ariaLabel={t('authFiles.filter.allStatuses')}
+            options={[
+              { value: 'all', label: t('authFiles.filter.allStatuses') },
+              { value: 'enabled', label: t('authFiles.filter.enabled') },
+              { value: 'disabled', label: t('authFiles.filter.disabled') },
+              { value: 'runtime', label: t('authFiles.filter.runtime') },
+            ]}
+          />
         </div>
 
         {loading ? (

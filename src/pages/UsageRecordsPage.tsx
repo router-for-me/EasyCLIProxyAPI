@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Activity, BarChart3, CircleDollarSign, Clock3, Database, List, Pencil, RefreshCw, ShieldCheck, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
+import { AppSelect } from '../components/AppSelect';
 import { getCurrentLocale, useI18n } from '../i18n';
 import { formatUsageNumber } from '../services/usageNumber';
 
@@ -390,14 +391,25 @@ export function UsageRecordsPage() {
       </div>
 
       <section className="panel usage-filter-panel">
-        <select value={range} onChange={(event) => { setRange(event.currentTarget.value as UsageRange); setPage(1); }} aria-label={t('usage.filter.timeRange')}>
-          <option value="4h">{t('usage.range.4h')}</option><option value="24h">{t('usage.range.24h')}</option><option value="today">{t('usage.range.today')}</option><option value="7d">{t('usage.range.7d')}</option><option value="30d">{t('usage.range.30d')}</option><option value="all">{t('usage.range.all')}</option><option value="custom">{t('usage.range.custom')}</option>
-        </select>
-        <select value={model} onChange={(event) => changeFilter(setModel, event.currentTarget.value)} aria-label={t('usage.filter.model')}><option value="">{t('usage.filter.allModels')}</option>{filterOptions(optionsAnalysis.models).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
-        <select value={provider} onChange={(event) => changeFilter(setProvider, event.currentTarget.value)} aria-label="Provider"><option value="">{t('usage.filter.allProviders')}</option>{filterOptions(optionsAnalysis.providers).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
-        <select value={source} onChange={(event) => changeFilter(setSource, event.currentTarget.value)} aria-label={t('usage.filter.source')}><option value="">{t('usage.filter.allSources')}</option>{filterOptions(optionsAnalysis.sources).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
-        <select value={apiKeyHash} onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)} aria-label="API Key"><option value="">{t('usage.filter.allKeys')}</option>{filterOptions(optionsAnalysis.apiKeys).map((item) => <option value={item.key} key={item.key}>{item.label}</option>)}</select>
-        <select value={result} onChange={(event) => changeFilter(setResult, event.currentTarget.value)} aria-label={t('usage.filter.result')}><option value="all">{t('usage.filter.allResults')}</option><option value="success">{t('usage.result.success')}</option><option value="failed">{t('usage.result.failed')}</option></select>
+        <AppSelect
+          value={range}
+          onChange={(value) => { setRange(value as UsageRange); setPage(1); }}
+          ariaLabel={t('usage.filter.timeRange')}
+          options={[
+            { value: '4h', label: t('usage.range.4h') },
+            { value: '24h', label: t('usage.range.24h') },
+            { value: 'today', label: t('usage.range.today') },
+            { value: '7d', label: t('usage.range.7d') },
+            { value: '30d', label: t('usage.range.30d') },
+            { value: 'all', label: t('usage.range.all') },
+            { value: 'custom', label: t('usage.range.custom') },
+          ]}
+        />
+        <AppSelect value={model} onChange={(value) => changeFilter(setModel, value)} ariaLabel={t('usage.filter.model')} options={[{ value: '', label: t('usage.filter.allModels') }, ...filterOptions(optionsAnalysis.models).map((item) => ({ value: item.key, label: item.label }))]} />
+        <AppSelect value={provider} onChange={(value) => changeFilter(setProvider, value)} ariaLabel="Provider" options={[{ value: '', label: t('usage.filter.allProviders') }, ...filterOptions(optionsAnalysis.providers).map((item) => ({ value: item.key, label: item.label }))]} />
+        <AppSelect value={source} onChange={(value) => changeFilter(setSource, value)} ariaLabel={t('usage.filter.source')} options={[{ value: '', label: t('usage.filter.allSources') }, ...filterOptions(optionsAnalysis.sources).map((item) => ({ value: item.key, label: item.label }))]} />
+        <AppSelect value={apiKeyHash} onChange={(value) => changeFilter(setApiKeyHash, value)} ariaLabel="API Key" options={[{ value: '', label: t('usage.filter.allKeys') }, ...filterOptions(optionsAnalysis.apiKeys).map((item) => ({ value: item.key, label: item.label }))]} />
+        <AppSelect value={result} onChange={(value) => changeFilter(setResult, value)} ariaLabel={t('usage.filter.result')} options={[{ value: 'all', label: t('usage.filter.allResults') }, { value: 'success', label: t('usage.result.success') }, { value: 'failed', label: t('usage.result.failed') }]} />
         {range === 'custom' ? <div className="usage-custom-range"><input type="datetime-local" value={customStart} onChange={(event) => setCustomStart(event.currentTarget.value)} aria-label={t('usage.filter.startTime')} /><span>{t('usage.filter.to')}</span><input type="datetime-local" value={customEnd} onChange={(event) => setCustomEnd(event.currentTarget.value)} aria-label={t('usage.filter.endTime')} /></div> : null}
       </section>
 
