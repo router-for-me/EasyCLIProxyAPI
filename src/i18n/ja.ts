@@ -129,6 +129,7 @@ export const jaOverrides = {
   'usage.filter.endTime': '終了日時',
   'usage.filter.to': '～',
   'usage.loading': 'ローカル SQLite の使用履歴を読み込んでいます',
+  'usage.export.action': 'エクスポート',
   'usage.export.csv': 'CSV をエクスポート',
   'usage.export.json': 'JSON をエクスポート',
   'usage.export.exporting': 'エクスポート中',

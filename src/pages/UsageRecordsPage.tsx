@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save } from '@tauri-apps/plugin-dialog';
-import { Activity, BarChart3, CircleDollarSign, Clock3, Database, Download, List, Pencil, RefreshCw, ShieldCheck, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Activity, BarChart3, ChevronDown, CircleDollarSign, Clock3, Database, Download, List, Pencil, RefreshCw, ShieldCheck, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import { formatUsageNumber } from '../services/usageNumber';
 
@@ -246,7 +246,9 @@ export function UsageRecordsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState<UsageExportFormat | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportNotice, setExportNotice] = useState('');
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -256,6 +258,26 @@ export function UsageRecordsPage() {
   useEffect(() => {
     try { localStorage.setItem(RANGE_KEY, range); } catch { /* Keep the in-memory range. */ }
   }, [range]);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExportMenuOpen(false);
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [exportMenuOpen]);
 
   const buildQueries = useCallback(() => {
     const nextTimeQuery = rangeQuery(range, customStart, customEnd);
@@ -410,9 +432,25 @@ export function UsageRecordsPage() {
           <h1>{t('usage.title')}</h1>
         </div>
         <div className="usage-header-actions">
-          <div className="usage-export-actions">
-            <button type="button" className="secondary-button" disabled={exporting !== null} onClick={() => void exportUsageRecords('csv')}><Download size={15} />{exporting === 'csv' ? t('usage.export.exporting') : t('usage.export.csv')}</button>
-            <button type="button" className="secondary-button" disabled={exporting !== null} onClick={() => void exportUsageRecords('json')}><Download size={15} />{exporting === 'json' ? t('usage.export.exporting') : t('usage.export.json')}</button>
+          <div className="usage-export-actions" ref={exportMenuRef}>
+            <button
+              type="button"
+              className="secondary-button usage-export-trigger"
+              disabled={exporting !== null}
+              aria-haspopup="menu"
+              aria-expanded={exportMenuOpen}
+              onClick={() => setExportMenuOpen((open) => !open)}
+            >
+              <Download size={15} />
+              {exporting ? t('usage.export.exporting') : t('usage.export.action')}
+              <ChevronDown size={14} className={exportMenuOpen ? 'is-open' : ''} />
+            </button>
+            {exportMenuOpen ? (
+              <div className="usage-export-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => { setExportMenuOpen(false); void exportUsageRecords('csv'); }}>{t('usage.export.csv')}</button>
+                <button type="button" role="menuitem" onClick={() => { setExportMenuOpen(false); void exportUsageRecords('json'); }}>{t('usage.export.json')}</button>
+              </div>
+            ) : null}
           </div>
           <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
             <span className="status-dot" />

@@ -129,6 +129,7 @@ export const en: Record<MessageKey, string> = {
   'usage.filter.endTime': 'End time',
   'usage.filter.to': 'to',
   'usage.loading': 'Loading local SQLite usage history',
+  'usage.export.action': 'Export',
   'usage.export.csv': 'Export CSV',
   'usage.export.json': 'Export JSON',
   'usage.export.exporting': 'Exporting',

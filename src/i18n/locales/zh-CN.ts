@@ -127,6 +127,7 @@ export const zhCN = {
   'usage.filter.endTime': '结束时间',
   'usage.filter.to': '至',
   'usage.loading': '正在读取本地 SQLite 使用记录',
+  'usage.export.action': '导出',
   'usage.export.csv': '导出 CSV',
   'usage.export.json': '导出 JSON',
   'usage.export.exporting': '正在导出',
