@@ -4,8 +4,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 
 export type AppSelectOption = {
@@ -48,7 +50,9 @@ export function AppSelect({
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const listboxId = useId();
   const selectedIndex = useMemo(
@@ -58,12 +62,39 @@ export function AppSelect({
   const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : undefined;
   const selectedLabel = selectedOption?.label ?? value;
 
+  const updatePlacement = () => {
+    const bounds = rootRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const viewportPadding = 12;
+    const menuGap = 6;
+    const spaceBelow = window.innerHeight - bounds.bottom - viewportPadding;
+    const spaceAbove = bounds.top - viewportPadding;
+    const upward = spaceBelow < 250 && spaceAbove > spaceBelow;
+    const availableHeight = Math.max(96, (upward ? spaceAbove : spaceBelow) - menuGap);
+    const width = Math.min(bounds.width, window.innerWidth - viewportPadding * 2);
+    const left = Math.min(
+      Math.max(viewportPadding, bounds.left),
+      Math.max(viewportPadding, window.innerWidth - viewportPadding - width),
+    );
+
+    setOpenUpward(upward);
+    setMenuStyle({
+      left,
+      width,
+      maxHeight: Math.min(280, availableHeight),
+      ...(upward
+        ? { top: 'auto', bottom: window.innerHeight - bounds.top + menuGap }
+        : { top: bounds.bottom + menuGap, bottom: 'auto' }),
+    });
+  };
+
   const openMenu = () => {
     if (disabled || options.length === 0) return;
     const initialIndex = selectedIndex >= 0 && !options[selectedIndex]?.disabled
       ? selectedIndex
       : nextEnabledOptionIndex(options, -1, 1);
     setHighlightedIndex(initialIndex);
+    updatePlacement();
     setOpen(true);
   };
 
@@ -116,13 +147,8 @@ export function AppSelect({
     if (!open) return;
 
     const closeOnOutsideClick = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) closeMenu();
-    };
-    const updatePlacement = () => {
-      const bounds = rootRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      const spaceBelow = window.innerHeight - bounds.bottom;
-      setOpenUpward(spaceBelow < 250 && bounds.top > spaceBelow);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu();
     };
 
     updatePlacement();
@@ -134,7 +160,7 @@ export function AppSelect({
       window.removeEventListener('resize', updatePlacement);
       window.removeEventListener('scroll', updatePlacement, true);
     };
-  }, [open]);
+  }, [open, options.length]);
 
   useEffect(() => {
     if (open && highlightedIndex >= 0) {
@@ -166,8 +192,15 @@ export function AppSelect({
         <span className="app-select-value" title={selectedLabel}>{selectedLabel}</span>
         <ChevronDown size={15} aria-hidden="true" />
       </button>
-      {open ? (
-        <div className="app-select-menu" id={listboxId} role="listbox" aria-label={ariaLabel}>
+      {open && typeof document !== 'undefined' ? createPortal(
+        <div
+          ref={menuRef}
+          className={`app-select-menu ${openUpward ? 'open-upward' : ''}`}
+          id={listboxId}
+          role="listbox"
+          aria-label={ariaLabel}
+          style={menuStyle}
+        >
           {options.map((option, index) => (
             <button
               key={`${option.value}-${index}`}
@@ -186,7 +219,8 @@ export function AppSelect({
               {option.value === value ? <Check size={15} aria-hidden="true" /> : null}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );

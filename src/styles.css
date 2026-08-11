@@ -490,15 +490,11 @@ textarea:focus-visible {
 }
 
 .app-select-menu {
-  position: absolute;
+  position: fixed;
   z-index: 120;
-  top: calc(100% + 6px);
-  left: 0;
   display: grid;
   gap: 2px;
-  width: 100%;
   min-width: 0;
-  max-height: min(280px, calc(100vh - 32px));
   overflow-x: hidden;
   overflow-y: auto;
   padding: 6px;
@@ -509,9 +505,7 @@ textarea:focus-visible {
   animation: app-select-menu-in 120ms ease-out;
 }
 
-.app-select.open-upward .app-select-menu {
-  top: auto;
-  bottom: calc(100% + 6px);
+.app-select-menu.open-upward {
   transform-origin: bottom;
 }
 
@@ -572,7 +566,7 @@ textarea:focus-visible {
   }
 }
 
-.app-select.open-upward .app-select-menu {
+.app-select-menu.open-upward {
   animation-name: app-select-menu-in-upward;
 }
 
