@@ -716,6 +716,16 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               <dd>{coreStatus ? (coreRunning ? t('kernel.status.running') : t('kernel.control.notRunning')) : t('common.detecting')}</dd>
             </div>
             <div className="panel-detail-row">
+              <dt>{t('kernel.control.crashRecovery')}</dt>
+              <dd>
+                {coreStatus
+                  ? coreStatus.autoRestartEnabled
+                    ? t('kernel.control.crashRecoveryEnabled')
+                    : t('kernel.control.crashRecoveryInactive')
+                  : t('common.detecting')}
+              </dd>
+            </div>
+            <div className="panel-detail-row">
               <dt>{t('kernel.control.pid')}</dt>
               <dd>{coreStatus?.processId || t('kernel.control.noPid')}</dd>
             </div>

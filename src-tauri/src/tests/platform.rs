@@ -7,6 +7,7 @@ fn windows_tray_presentation_tracks_core_state_and_busy_actions() {
         installed: false,
         running: false,
         managed: false,
+        auto_restart_enabled: false,
         process_id: None,
         current_version: None,
         install_dir: String::new(),

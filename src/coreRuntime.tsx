@@ -6,6 +6,7 @@ export type CoreStatus = {
   installed: boolean;
   running: boolean;
   managed: boolean;
+  autoRestartEnabled: boolean;
   processId: number | null;
   currentVersion: string | null;
   installDir: string;
