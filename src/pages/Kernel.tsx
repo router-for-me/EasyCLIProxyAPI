@@ -48,10 +48,6 @@ type CoreInstallTask = {
   result: CoreInstallResult | null;
 };
 
-type CodexModelCatalogUpdateResult = {
-  outcome: 'updated' | 'unchanged';
-};
-
 type MessageType = 'info' | 'success' | 'error';
 type CoreProcessCommand = 'start_core_process' | 'stop_core_process' | 'restart_core_process';
 
@@ -136,9 +132,6 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   } | null>(null);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<MessageType>('info');
-  const [catalogUpdating, setCatalogUpdating] = useState(false);
-  const [catalogUpdateError, setCatalogUpdateError] = useState('');
-  const [catalogUpdateNotice, setCatalogUpdateNotice] = useState('');
   const [progress, setProgress] = useState<CoreInstallTask | null>(null);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [cancellingInstall, setCancellingInstall] = useState(false);
@@ -564,22 +557,6 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     }
   };
 
-  const updateCodexModelCatalog = async () => {
-    setCatalogUpdating(true);
-    setCatalogUpdateError('');
-    setCatalogUpdateNotice('');
-    try {
-      const result = await invoke<CodexModelCatalogUpdateResult>('update_codex_model_catalog');
-      setCatalogUpdateNotice(result.outcome === 'updated'
-        ? t('appUpdate.catalog.updated')
-        : t('appUpdate.catalog.unchanged'));
-    } catch (error) {
-      setCatalogUpdateError(String(error));
-    } finally {
-      setCatalogUpdating(false);
-    }
-  };
-
   const latestVersion = latest?.version ?? '';
   const currentVersion = coreStatus?.currentVersion ?? '';
   const coreInstalled = Boolean(coreStatus?.installed);
@@ -815,15 +792,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               </div>
               <div className="panel-detail-row">
                 <dt>{t('appUpdate.catalog.label')}</dt>
-                <dd
-                  className={catalogUpdateError ? 'error' : catalogUpdateNotice ? 'success' : ''}
-                  role={catalogUpdateError ? 'alert' : undefined}
-                  aria-live="polite"
-                >
-                  {catalogUpdateError
-                    || catalogUpdateNotice
-                    || t('appUpdate.catalog.description')}
-                </dd>
+                <dd>{t('appUpdate.catalog.description')}</dd>
               </div>
             </dl>
 
@@ -850,17 +819,6 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                   {t('appUpdate.openRelease')} <ExternalLink size={14} aria-hidden="true" />
                 </button>
               )}
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={catalogUpdating || appUpdateTask.running}
-                onClick={() => void updateCodexModelCatalog()}
-                title={t('appUpdate.catalog.updateHint')}
-              >
-                {catalogUpdating
-                  ? t('appUpdate.catalog.updating')
-                  : t('appUpdate.catalog.update')}
-              </button>
             </div>
           </div>
         ) : null}

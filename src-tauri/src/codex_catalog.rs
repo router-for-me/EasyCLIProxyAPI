@@ -36,7 +36,6 @@ struct CatalogSources {
 #[derive(Clone, Debug)]
 struct CatalogState {
     sources: CatalogSources,
-    json: String,
 }
 
 #[derive(Clone, Debug)]
@@ -53,30 +52,6 @@ struct CatalogEntry {
 
 pub(crate) fn validate_embedded_catalog() -> Result<(), String> {
     catalog_state().map(|_| ())
-}
-
-pub(crate) fn activate_catalog_json(catalog_json: &str) -> Result<bool, String> {
-    let parsed = parse_sources(catalog_json)?;
-    let mut state = catalog_state()?
-        .write()
-        .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
-    if state.json == catalog_json {
-        return Ok(false);
-    }
-    state.sources = parsed;
-    state.json = catalog_json.to_string();
-    Ok(true)
-}
-
-pub(crate) fn validate_catalog_json(catalog_json: &str) -> Result<(), String> {
-    parse_sources(catalog_json).map(|_| ())
-}
-
-pub(crate) fn current_catalog_json() -> Result<String, String> {
-    let state = catalog_state()?
-        .read()
-        .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
-    Ok(state.json.clone())
 }
 
 pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeModel>, String> {
@@ -166,12 +141,7 @@ pub(crate) fn prepare_catalog(
 fn catalog_state() -> Result<&'static RwLock<CatalogState>, String> {
     CATALOG_STATE
         .get_or_init(|| {
-            parse_sources(MODEL_CATALOG_JSON).map(|sources| {
-                RwLock::new(CatalogState {
-                    sources,
-                    json: MODEL_CATALOG_JSON.to_string(),
-                })
-            })
+            parse_sources(MODEL_CATALOG_JSON).map(|sources| RwLock::new(CatalogState { sources }))
         })
         .as_ref()
         .map_err(Clone::clone)

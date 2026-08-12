@@ -121,7 +121,7 @@ fn agent_status_cache_requires_matching_port_and_api_key() {
 }
 
 #[test]
-fn agent_api_key_uses_first_configured_key_and_falls_back_when_empty() {
+fn agent_api_key_uses_first_configured_key_and_has_no_weak_fallback() {
     let mut config = GuiConfigFile {
         api_keys: vec![GuiApiKeyEntry {
             key: "custom-agent-key".to_string(),
@@ -132,7 +132,7 @@ fn agent_api_key_uses_first_configured_key_and_falls_back_when_empty() {
     assert_eq!(effective_agent_api_key(&config), "custom-agent-key");
 
     config.api_keys.clear();
-    assert_eq!(effective_agent_api_key(&config), DEFAULT_API_KEY);
+    assert_eq!(effective_agent_api_key(&config), "");
 }
 
 #[test]

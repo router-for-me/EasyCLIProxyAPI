@@ -71,10 +71,10 @@ use tokio_util::sync::CancellationToken;
 use tray::*;
 use zip::ZipArchive;
 
-const RELEASE_PAGE_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/releases/latest";
-const RELEASE_ATOM_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/releases.atom";
-const RELEASE_DOWNLOAD_PREFIX: &str =
-    "https://github.com/router-for-me/CLIProxyAPI/releases/download/";
+const CORE_RELEASE_API_URL: &str =
+    "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest";
+const CORE_RELEASE_TAG_API_PREFIX: &str =
+    "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/tags/";
 #[cfg(windows)]
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-windows.json";
 #[cfg(target_os = "linux")]
@@ -89,10 +89,6 @@ const APP_UPDATE_MANIFEST_NAME: &str = "portable-update-windows.json";
 const APP_UPDATE_MANIFEST_NAME: &str = "portable-update-linux.json";
 #[cfg(target_os = "macos")]
 const APP_UPDATE_MANIFEST_NAME: &str = "portable-update-darwin.json";
-const CODEX_MODEL_CATALOG_URL: &str = "https://raw.githubusercontent.com/router-for-me/EasyCLIProxyAPI/main/src-tauri/resources/codex_models/model-catalog.json";
-const CODEX_MODEL_CATALOG_OVERRIDE_DIR: &str = "codex_models";
-const CODEX_MODEL_CATALOG_SOURCE_FILE: &str = "model-catalog.json";
-const MAX_CODEX_MODEL_CATALOG_BYTES: usize = 4 * 1024 * 1024;
 const APP_UPDATE_PROGRESS_EVENT: &str = "app-update-progress";
 const PORTABLE_APP_MANIFEST_FILE: &str = "portable-app.json";
 #[cfg(windows)]
@@ -118,8 +114,12 @@ const DEFAULT_MAIN_WINDOW_WIDTH: u32 = 1531;
 const DEFAULT_MAIN_WINDOW_HEIGHT: u32 = 891;
 const OAUTH_DIR_NAME: &str = "oauth";
 const DEFAULT_AUTH_DIR: &str = "../oauth";
-const DEFAULT_API_KEY: &str = "123456";
-const DEFAULT_API_KEY_INITIAL_REMARK: &str = "默认密钥";
+const LEGACY_DEFAULT_API_KEY: &str = "123456";
+const GENERATED_API_KEY_INITIAL_REMARK: &str = "自动生成密钥";
+#[cfg(test)]
+const DEFAULT_API_KEY: &str = "test-api-key";
+#[cfg(test)]
+const DEFAULT_API_KEY_INITIAL_REMARK: &str = "test key";
 const LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY: &str = "123456";
 const MANAGED_AGENT_PROVIDER_ID: &str = "cpa-gui";
 const PI_AGENT_ID: &str = "pi";
@@ -657,7 +657,7 @@ impl Default for GuiConfigFile {
             window_width: Some(DEFAULT_MAIN_WINDOW_WIDTH),
             window_height: Some(DEFAULT_MAIN_WINDOW_HEIGHT),
             auth_dir: DEFAULT_AUTH_DIR.to_string(),
-            api_keys: vec![default_api_key_entry()],
+            api_keys: Vec::new(),
             api_access_remarks: Vec::new(),
             // Populated with an OS-generated secret while loading the GUI
             // configuration. Core hashes the value written into config.yaml.
@@ -762,12 +762,6 @@ struct PiProviderUpdateStatus {
     installed_version: Option<String>,
     latest_version: Option<String>,
     update_available: bool,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexModelCatalogUpdateResult {
-    outcome: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -1615,13 +1609,13 @@ impl From<&GuiConfigFile> for CoreConfigView {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
     assets: Vec<GithubAsset>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GithubAsset {
     name: String,
     browser_download_url: String,
@@ -1656,6 +1650,10 @@ fn main() {
         Err(error) => {
             eprintln!("{error}");
             let mut config = GuiConfigFile::default();
+            if let Err(api_key_error) = ensure_strong_api_keys(&mut config) {
+                eprintln!("初始化 API 鉴权密钥失败: {api_key_error}");
+                return;
+            }
             if let Err(secret_error) = ensure_strong_management_secret(&mut config) {
                 eprintln!("初始化 WebUI 安全密钥失败: {secret_error}");
                 return;
@@ -1745,15 +1743,6 @@ fn main() {
             if let Err(error) = codex_catalog::validate_embedded_catalog() {
                 eprintln!("Codex 内置模型目录无效: {error}");
             }
-            if let Err(error) = load_codex_model_catalog_override(app.handle()) {
-                eprintln!("加载 Codex 模型目录更新文件失败，将使用内置目录: {error}");
-            }
-            let catalog_update_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = update_codex_model_catalog_inner(&catalog_update_app).await {
-                    eprintln!("后台更新 Codex 模型目录失败，继续使用当前目录: {error}");
-                }
-            });
             if let Err(error) = restore_main_window_size(app.handle()) {
                 eprintln!("{error}");
             }
@@ -1848,7 +1837,6 @@ fn main() {
             repair_pi_provider,
             uninstall_pi_provider,
             check_codex_oauth_login,
-            update_codex_model_catalog,
             get_thinking_aliases,
             get_thinking_alias_sources,
             create_thinking_alias,

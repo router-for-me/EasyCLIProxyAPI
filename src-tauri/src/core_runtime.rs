@@ -308,186 +308,47 @@ pub(crate) async fn fetch_release(
     client: &reqwest::Client,
     version: Option<&str>,
 ) -> Result<GithubRelease, String> {
-    if let Some(version) = version {
-        return Ok(release_from_tag(version));
-    }
-    let atom_result = fetch_release_from_atom(client).await;
-    let github_result = match atom_result {
-        Ok(release) => Ok(release),
-        Err(atom_error) => fetch_release_from_page(client).await.map_err(|page_error| {
-            format!("GitHub 发布源请求失败: {atom_error}；release 页面请求失败: {page_error}")
-        }),
-    };
-    match github_result {
-        Ok(release) => Ok(release),
-        Err(github_error) => {
-            let Some(repository) = configured_gitcode_core_repository() else {
-                return Err(github_error);
-            };
-            fetch_release_from_gitcode(client, repository)
-                .await
-                .map_err(|gitcode_error| {
-                    format!(
-                        "GitHub 内核发布源失败: {github_error}；GitCode 回退源失败: {gitcode_error}"
-                    )
-                })
+    let url = match version {
+        Some(version) => {
+            let tag = normalize_version(version);
+            validate_release_tag(&tag)?;
+            format!("{CORE_RELEASE_TAG_API_PREFIX}{tag}")
         }
-    }
-}
-
-pub(crate) async fn fetch_release_from_gitcode(
-    client: &reqwest::Client,
-    repository: &str,
-) -> Result<GithubRelease, String> {
-    let release_url = format!("https://api.gitcode.com/api/v5/repos/{repository}/releases/latest");
-    let release = client
-        .get(release_url)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .header(reqwest::header::USER_AGENT, USER_AGENT)
-        .send()
-        .await
-        .map_err(|error| format!("查询 GitCode 最新内核发行版失败: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("读取 GitCode 最新内核发行版失败: {error}"))?
-        .json::<GitcodeRelease>()
-        .await
-        .map_err(|error| format!("解析 GitCode 最新内核发行版失败: {error}"))?;
-    validate_release_tag(&release.tag_name)?;
-    Ok(release_from_gitcode_tag(&release.tag_name, repository))
-}
-
-pub(crate) async fn fetch_release_from_page(
-    client: &reqwest::Client,
-) -> Result<GithubRelease, String> {
+        None => CORE_RELEASE_API_URL.to_string(),
+    };
     let response = client
-        .get(RELEASE_PAGE_URL)
-        .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .header(reqwest::header::USER_AGENT, USER_AGENT)
         .send()
         .await
-        .map_err(|err| format!("GitHub release 页面请求失败: {err}"))?;
-    let status = response.status();
-    let final_url = response.url().clone();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .await
-            .map_err(|err| format!("读取 GitHub release 页面失败: {err}"))?;
-        return Err(format_github_error(status.as_u16(), &body));
-    }
-
-    let tag = release_tag_from_url(&final_url)
-        .ok_or_else(|| "GitHub release 页面没有返回版本标签".to_string())?;
-    Ok(release_from_tag(&tag))
-}
-
-pub(crate) async fn fetch_release_from_atom(
-    client: &reqwest::Client,
-) -> Result<GithubRelease, String> {
-    let response = client
-        .get(RELEASE_ATOM_URL)
-        .header(
-            reqwest::header::ACCEPT,
-            "application/atom+xml,application/xml,text/xml",
-        )
-        .header(reqwest::header::USER_AGENT, USER_AGENT)
-        .send()
-        .await
-        .map_err(|err| format!("GitHub Atom feed 请求失败: {err}"))?;
+        .map_err(|error| format!("查询 GitHub 内核发行版失败: {error}"))?;
     let status = response.status();
     let body = response
-        .text()
+        .bytes()
         .await
-        .map_err(|err| format!("读取 GitHub Atom feed 失败: {err}"))?;
+        .map_err(|error| format!("读取 GitHub 内核发行版失败: {error}"))?;
     if !status.is_success() {
-        return Err(format_github_error(status.as_u16(), &body));
+        return Err(format_github_error(
+            status.as_u16(),
+            &String::from_utf8_lossy(&body),
+        ));
     }
-    let tag = release_tag_from_atom(&body)
-        .ok_or_else(|| "GitHub Atom feed 没有返回版本标签".to_string())?;
-    Ok(release_from_tag(&tag))
-}
-
-pub(crate) fn release_tag_from_atom(xml: &str) -> Option<String> {
-    let entry = xml.split_once("<entry>")?.1;
-    if let Some(tag_path) = entry.split_once("/releases/tag/").map(|(_, value)| value) {
-        let tag = tag_path
-            .split(['\"', '<', '?', '#'])
-            .next()
-            .unwrap_or_default()
-            .trim_matches('/');
-        if !tag.is_empty() {
-            return Some(normalize_version(tag));
+    let mut release = serde_json::from_slice::<GithubRelease>(&body)
+        .map_err(|error| format!("解析 GitHub 内核发行版失败: {error}"))?;
+    validate_release_tag(&release.tag_name)?;
+    if let Some(repository) = configured_gitcode_core_repository() {
+        for asset in &mut release.assets {
+            asset
+                .fallback_download_urls
+                .push(gitcode_release_attachment_url(
+                    repository,
+                    &release.tag_name,
+                    &asset.name,
+                ));
         }
     }
-    let title = entry
-        .split_once("<title>")?
-        .1
-        .split_once("</title>")?
-        .0
-        .trim();
-    (!title.is_empty()).then(|| normalize_version(title))
-}
-
-pub(crate) fn release_from_tag(tag: &str) -> GithubRelease {
-    release_from_tag_for_repositories(tag, configured_gitcode_core_repository(), false)
-}
-
-pub(crate) fn release_from_gitcode_tag(tag: &str, repository: &str) -> GithubRelease {
-    release_from_tag_for_repositories(tag, Some(repository), true)
-}
-
-pub(crate) fn release_from_tag_for_repositories(
-    tag: &str,
-    gitcode_repository: Option<&str>,
-    prefer_gitcode: bool,
-) -> GithubRelease {
-    let tag = normalize_version(tag);
-    let version = tag.trim_start_matches('v');
-    let assets = [
-        ("linux", "amd64", "tar.gz"),
-        ("linux", "aarch64", "tar.gz"),
-        ("darwin", "amd64", "tar.gz"),
-        ("darwin", "aarch64", "tar.gz"),
-        ("windows", "amd64", "zip"),
-        ("windows", "aarch64", "zip"),
-    ]
-    .into_iter()
-    .map(|(os, arch, extension)| {
-        let name = format!("CLIProxyAPI_{version}_{os}_{arch}.{extension}");
-        let github_url = format!("{RELEASE_DOWNLOAD_PREFIX}{tag}/{name}");
-        let gitcode_url = gitcode_repository
-            .map(|repository| gitcode_release_attachment_url(repository, &tag, &name));
-        let (browser_download_url, fallback_download_urls) = if prefer_gitcode {
-            (
-                gitcode_url.unwrap_or_else(|| github_url.clone()),
-                Vec::new(),
-            )
-        } else {
-            (github_url, gitcode_url.into_iter().collect())
-        };
-        GithubAsset {
-            browser_download_url,
-            fallback_download_urls,
-            name,
-            size: None,
-            digest: None,
-        }
-    })
-    .collect();
-    GithubRelease {
-        tag_name: tag,
-        assets,
-    }
-}
-
-pub(crate) fn release_tag_from_url(url: &reqwest::Url) -> Option<String> {
-    let mut segments = url.path_segments()?;
-    let tag = segments.next_back()?.trim();
-    if tag.is_empty() || tag == "latest" {
-        None
-    } else {
-        Some(tag.to_string())
-    }
+    Ok(release)
 }
 
 pub(crate) fn is_app_update_available(current: &str, latest: &str) -> Result<bool, String> {
@@ -496,61 +357,6 @@ pub(crate) fn is_app_update_available(current: &str, latest: &str) -> Result<boo
             .map_err(|error| format!("无法解析版本号 {value}: {error}"))
     };
     Ok(parse(latest)? > parse(current)?)
-}
-
-#[cfg(test)]
-pub(crate) fn parse_release_assets(html: &str) -> Vec<GithubAsset> {
-    let mut assets = Vec::new();
-    let mut cursor = 0;
-
-    while let Some(relative_start) = html[cursor..].find("releases/download/") {
-        let download_start = cursor + relative_start;
-        let Some(href_start) = html[..download_start].rfind("href=\"") else {
-            cursor = download_start + "releases/download/".len();
-            continue;
-        };
-        let href_start = href_start + "href=\"".len();
-        let Some(relative_end) = html[download_start..].find('"') else {
-            break;
-        };
-        let href_end = download_start + relative_end;
-        let href = &html[href_start..href_end];
-        let Some(name) = href.rsplit('/').next().filter(|name| !name.is_empty()) else {
-            cursor = href_end + 1;
-            continue;
-        };
-        let item_end = html[href_end..]
-            .find("</li>")
-            .map(|offset| href_end + offset)
-            .unwrap_or(html.len());
-        let item = &html[href_start..item_end];
-        let digest = item.find("sha256:").and_then(|offset| {
-            let value = &item[offset + "sha256:".len()..];
-            let hash: String = value
-                .chars()
-                .take_while(|character| character.is_ascii_hexdigit())
-                .collect();
-            (hash.len() == 64).then(|| format!("sha256:{hash}"))
-        });
-        let browser_download_url = if href.starts_with("http://") || href.starts_with("https://") {
-            href.to_string()
-        } else {
-            format!("https://github.com{href}")
-        };
-
-        if !assets.iter().any(|asset: &GithubAsset| asset.name == name) {
-            assets.push(GithubAsset {
-                name: name.to_string(),
-                browser_download_url,
-                fallback_download_urls: Vec::new(),
-                size: None,
-                digest,
-            });
-        }
-        cursor = href_end + 1;
-    }
-
-    assets
 }
 
 pub(crate) fn format_github_error(status: u16, body: &str) -> String {
@@ -630,8 +436,45 @@ pub(crate) fn select_release_asset<'a>(
     if matches.next().is_some() {
         return Err(format!("找到多个匹配的 release asset: {expected_name}"));
     }
-
+    validate_core_release_asset(&release.tag_name, asset)?;
     Ok(asset)
+}
+
+pub(crate) fn validate_core_release_asset(tag: &str, asset: &GithubAsset) -> Result<(), String> {
+    if !asset.size.is_some_and(|size| size > 0) {
+        return Err(format!("内核发行资产 {} 缺少可信大小", asset.name));
+    }
+
+    let digest = asset
+        .digest
+        .as_deref()
+        .ok_or_else(|| format!("内核发行资产 {} 缺少 GitHub SHA-256 摘要", asset.name))?;
+    let digest = digest.strip_prefix("sha256:").unwrap_or(digest);
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("内核发行资产 {} 的 SHA-256 摘要无效", asset.name));
+    }
+
+    let url = reqwest::Url::parse(&asset.browser_download_url)
+        .map_err(|error| format!("内核发行资产 {} 的下载地址无效: {error}", asset.name))?;
+    let expected_path = format!(
+        "/router-for-me/CLIProxyAPI/releases/download/{tag}/{}",
+        asset.name
+    );
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != expected_path
+    {
+        return Err(format!(
+            "内核发行资产 {} 的下载地址不是预期的 GitHub Release 地址",
+            asset.name
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn core_release_asset_name(version: &str, platform: &CorePlatform) -> String {
@@ -866,12 +709,7 @@ pub(crate) fn start_core_process_inner(
     let config_path = merge_core_config_for_start(&install_dir, gui_config)?;
     let config_path = path_to_string(&config_path);
     let mut command = Command::new(&binary_path);
-    command
-        .args(["-config", &config_path])
-        .current_dir(&install_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    configure_managed_core_command(&mut command, &config_path, &install_dir);
     configure_background_command(&mut command);
     configure_child_lifetime(&mut command);
 
@@ -887,6 +725,26 @@ pub(crate) fn start_core_process_inner(
     process_state.store_child(child)?;
 
     Ok(())
+}
+
+pub(crate) fn core_process_arguments(config_path: &str) -> [&str; 3] {
+    ["-config", config_path, "--local-model"]
+}
+
+pub(crate) fn configure_managed_core_command(
+    command: &mut Command,
+    config_path: &str,
+    install_dir: &Path,
+) {
+    command
+        .args(core_process_arguments(config_path))
+        // GITSTORE activates an optional network-backed storage path in the
+        // downloaded core. A GUI-managed local process must never inherit it.
+        .env_remove("GITSTORE")
+        .current_dir(install_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
 }
 
 pub(crate) fn wait_for_core_management_port(
@@ -1338,15 +1196,17 @@ pub(crate) fn validate_download_metadata(
         }
     }
 
-    if let Some(expected_digest) = expected_digest {
-        let expected = expected_digest
-            .strip_prefix("sha256:")
-            .unwrap_or(expected_digest)
-            .to_ascii_lowercase();
-
-        if !expected.is_empty() && sha256 != expected {
-            return Err("下载文件 SHA-256 校验失败".to_string());
-        }
+    let expected_digest =
+        expected_digest.ok_or_else(|| "内核下载缺少预期 SHA-256，已拒绝安装".to_string())?;
+    let expected = expected_digest
+        .strip_prefix("sha256:")
+        .unwrap_or(expected_digest)
+        .to_ascii_lowercase();
+    if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("内核下载的预期 SHA-256 无效".to_string());
+    }
+    if sha256 != expected {
+        return Err("下载文件 SHA-256 校验失败".to_string());
     }
 
     Ok(())

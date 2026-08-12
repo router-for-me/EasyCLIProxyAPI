@@ -2,26 +2,16 @@ use super::support::*;
 use super::*;
 
 #[test]
-fn release_atom_parser_reads_first_release_tag() {
-    let xml = r#"
-          <feed>
-            <entry>
-              <link href="https://github.com/router-for-me/CLIProxyAPI/releases/tag/v7.2.80"/>
-              <title>v7.2.80</title>
-            </entry>
-            <entry><title>v7.2.79</title></entry>
-          </feed>
-        "#;
-
-    assert_eq!(release_tag_from_atom(xml).as_deref(), Some("v7.2.80"));
-}
-
-#[test]
 fn app_update_comparison_uses_semantic_versions() {
     assert!(is_app_update_available("v0.1.9", "v0.2.0").unwrap());
     assert!(is_app_update_available("v0.2.0-beta.1", "v0.2.0").unwrap());
     assert!(!is_app_update_available("v0.2.0", "v0.2.0").unwrap());
     assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
+}
+
+#[test]
+fn unsigned_application_updates_cannot_replace_the_running_build() {
+    assert!(!automatic_app_update_enabled());
 }
 
 fn portable_update_test_asset(version: &str, arch: &str) -> PortableUpdateAsset {
@@ -522,9 +512,26 @@ fn macos_update_descriptor_is_confined_to_the_app_and_temp_directories() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn verified_core_release() -> GithubRelease {
+    let tag = "v7.2.80";
+    let name = "CLIProxyAPI_7.2.80_linux_amd64.tar.gz";
+    GithubRelease {
+        tag_name: tag.to_string(),
+        assets: vec![GithubAsset {
+            name: name.to_string(),
+            browser_download_url: format!(
+                "https://github.com/router-for-me/CLIProxyAPI/releases/download/{tag}/{name}"
+            ),
+            fallback_download_urls: Vec::new(),
+            size: Some(1024),
+            digest: Some(format!("sha256:{}", "ab".repeat(32))),
+        }],
+    }
+}
+
 #[test]
-fn synthetic_release_uses_official_asset_names_and_urls() {
-    let release = release_from_tag("7.2.80");
+fn core_release_requires_github_asset_metadata() {
+    let release = verified_core_release();
     let platform = CorePlatform {
         os: "linux".to_string(),
         arch: "x86_64".to_string(),
@@ -536,52 +543,44 @@ fn synthetic_release_uses_official_asset_names_and_urls() {
 
     assert_eq!(release.tag_name, "v7.2.80");
     assert_eq!(asset.name, "CLIProxyAPI_7.2.80_linux_amd64.tar.gz");
+    assert_eq!(asset.size, Some(1024));
     assert_eq!(
-            asset.browser_download_url,
-            "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.80/CLIProxyAPI_7.2.80_linux_amd64.tar.gz"
-        );
+        asset.digest.as_deref(),
+        Some(&*format!("sha256:{}", "ab".repeat(32)))
+    );
 }
 
 #[test]
-fn synthetic_core_release_uses_gitcode_as_download_fallback() {
-    let repository = "lzt404/CLIProxyAPI";
-    let release = release_from_tag_for_repositories("7.2.80", Some(repository), false);
-    let platform = CorePlatform {
-        os: "windows".to_string(),
-        arch: "x86_64".to_string(),
-        asset_os: "windows".to_string(),
-        asset_arch: "amd64".to_string(),
-        archive_kind: "zip".to_string(),
-    };
-    let asset = select_release_asset(&release, &platform).unwrap();
-
-    assert_eq!(
-            asset.browser_download_url,
-            "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.80/CLIProxyAPI_7.2.80_windows_amd64.zip"
-        );
-    assert_eq!(
-            asset.fallback_download_urls,
-            ["https://api.gitcode.com/api/v5/repos/lzt404/CLIProxyAPI/releases/v7.2.80/attach_files/CLIProxyAPI_7.2.80_windows_amd64.zip/download"]
-        );
-}
-
-#[test]
-fn gitcode_discovered_core_release_downloads_from_gitcode_first() {
-    let release = release_from_gitcode_tag("v7.2.80", "lzt404/CLIProxyAPI");
+fn core_release_without_digest_is_rejected() {
+    let mut release = verified_core_release();
+    release.assets[0].digest = None;
     let platform = CorePlatform {
         os: "linux".to_string(),
-        arch: "aarch64".to_string(),
+        arch: "x86_64".to_string(),
         asset_os: "linux".to_string(),
-        asset_arch: "aarch64".to_string(),
+        asset_arch: "amd64".to_string(),
         archive_kind: "tar.gz".to_string(),
     };
-    let asset = select_release_asset(&release, &platform).unwrap();
+    assert!(select_release_asset(&release, &platform)
+        .unwrap_err()
+        .contains("SHA-256"));
+}
 
-    assert_eq!(
-            asset.browser_download_url,
-            "https://api.gitcode.com/api/v5/repos/lzt404/CLIProxyAPI/releases/v7.2.80/attach_files/CLIProxyAPI_7.2.80_linux_aarch64.tar.gz/download"
-        );
-    assert!(asset.fallback_download_urls.is_empty());
+#[test]
+fn core_release_from_an_unexpected_host_is_rejected() {
+    let mut release = verified_core_release();
+    release.assets[0].browser_download_url =
+        "https://example.invalid/CLIProxyAPI_7.2.80_linux_amd64.tar.gz".to_string();
+    let platform = CorePlatform {
+        os: "linux".to_string(),
+        arch: "x86_64".to_string(),
+        asset_os: "linux".to_string(),
+        asset_arch: "amd64".to_string(),
+        archive_kind: "tar.gz".to_string(),
+    };
+    assert!(select_release_asset(&release, &platform)
+        .unwrap_err()
+        .contains("GitHub Release"));
 }
 
 #[test]

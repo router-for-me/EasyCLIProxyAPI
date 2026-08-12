@@ -30,9 +30,15 @@ pub(crate) async fn check_app_update(
     let portable_support = target
         .map(|(_, arch)| validate_local_portable_app_manifest(arch))
         .transpose()?;
-    let auto_update_supported = portable_support == Some(true) && asset.is_some();
+    let auto_update_supported =
+        automatic_app_update_enabled() && portable_support == Some(true) && asset.is_some();
     let unsupported_reason = if auto_update_supported {
         None
+    } else if !automatic_app_update_enabled() {
+        Some(
+            "自动安装已禁用：更新清单尚未使用受信任的发布密钥进行签名，请从发布页面手动更新"
+                .to_string(),
+        )
     } else if portable_support != Some(true) {
         Some("当前程序不是支持自动升级的便携版，请手动下载首个支持版本".to_string())
     } else {
@@ -72,6 +78,13 @@ pub(crate) async fn check_app_update(
         download_size_bytes: asset.map(|value| value.size_bytes),
         unsupported_reason,
     })
+}
+
+/// Portable update manifests currently carry hashes but no signature rooted in
+/// a key shipped with the application. Keep automatic replacement disabled
+/// until manifests are authenticated independently of their download host.
+pub(crate) fn automatic_app_update_enabled() -> bool {
+    false
 }
 
 pub(crate) async fn fetch_portable_update_manifest(
@@ -191,31 +204,6 @@ pub(crate) fn release_https_redirect_policy() -> reqwest::redirect::Policy {
                     | "api.gitcode.com"
                     | "gitcode.com"
                     | "file-cdn.gitcode.com"
-            )
-        );
-        if url.scheme() == "https"
-            && url.port().is_none()
-            && url.username().is_empty()
-            && url.password().is_none()
-            && trusted_host
-        {
-            attempt.follow()
-        } else {
-            attempt.stop()
-        }
-    })
-}
-
-pub(crate) fn github_https_redirect_policy() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
-        let url = attempt.url();
-        let trusted_host = matches!(
-            url.host_str(),
-            Some(
-                "github.com"
-                    | "raw.githubusercontent.com"
-                    | "objects.githubusercontent.com"
-                    | "release-assets.githubusercontent.com"
             )
         );
         if url.scheme() == "https"
@@ -464,6 +452,12 @@ pub(crate) async fn start_app_update(
     state: tauri::State<'_, AppUpdateState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<(), String> {
+    if !automatic_app_update_enabled() {
+        return Err(
+            "自动安装已禁用：更新清单尚未使用受信任的发布密钥进行签名，请从发布页面手动更新"
+                .to_string(),
+        );
+    }
     if portable_update_platform_key().is_none() {
         return Err("当前平台不支持应用内自动升级".to_string());
     }

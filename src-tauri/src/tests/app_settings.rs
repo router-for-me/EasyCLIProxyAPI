@@ -10,7 +10,7 @@ fn gui_field_edit_preserves_comments_and_unknown_configuration() {
             "# keep this comment\ncustom-option = \"keep\"\ncodex-session-repair-on-launch = true\nclaude-code-working-directory = \"legacy\"\nclaude-code-working-directory-prompt-disabled = true\nport = 7000\n\n[third-party]\nenabled = true\n",
         )
         .unwrap();
-    let config = GuiConfigFile {
+    let mut config = GuiConfigFile {
         port: 9527,
         host: "0.0.0.0".to_string(),
         allow_lan: true,
@@ -20,6 +20,7 @@ fn gui_field_edit_preserves_comments_and_unknown_configuration() {
         usage_statistics_enabled: false,
         ..GuiConfigFile::default()
     };
+    ensure_strong_api_keys(&mut config).unwrap();
 
     write_gui_config_to_path(&config, &path).unwrap();
     let content = fs::read_to_string(&path).unwrap();
@@ -82,12 +83,36 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("window-width = 1531"));
     assert!(content.contains("window-height = 891"));
     assert!(content.contains("auth-dir = \"../oauth\""));
-    assert!(content.contains("[[api-keys]]"));
-    assert!(content.contains("key = \"123456\""));
-    assert!(content.contains("remark = \"默认密钥\""));
+    assert!(config.api_keys.is_empty());
+    assert!(!content.contains("123456"));
     assert!(content.contains("management-secret-key = \"\""));
     assert!(content.contains("plugins-enabled = false"));
     assert!(content.contains("routing-strategy = \"round-robin\""));
+}
+
+#[cfg(unix)]
+#[test]
+fn configuration_writers_enforce_owner_only_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = agent_test_home("secure-config-permissions");
+    let direct = home.join("direct.toml");
+    let atomic = home.join("atomic.json");
+    fs::write(&direct, b"old").unwrap();
+    fs::set_permissions(&direct, fs::Permissions::from_mode(0o644)).unwrap();
+
+    write_bytes_directly(&direct, b"secret").unwrap();
+    write_bytes_atomically(&atomic, b"secret").unwrap();
+
+    assert_eq!(
+        fs::metadata(&direct).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        fs::metadata(&atomic).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    fs::remove_dir_all(home).unwrap();
 }
 
 #[test]

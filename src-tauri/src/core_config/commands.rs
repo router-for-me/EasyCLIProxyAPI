@@ -194,6 +194,9 @@ pub(crate) fn remove_core_api_key_value(
     api_keys: &mut Vec<String>,
     api_key: &str,
 ) -> Result<(), String> {
+    if api_keys.len() <= 1 {
+        return Err("至少需要保留一个 API 鉴权密钥".to_string());
+    }
     let index = api_keys
         .iter()
         .position(|existing| existing == api_key)
