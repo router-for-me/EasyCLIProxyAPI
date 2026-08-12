@@ -66,27 +66,59 @@ fn fresh_config_keeps_initial_default_unless_core_has_real_keys() {
 }
 
 #[test]
-fn initial_default_api_key_can_be_edited_and_deleted() {
+fn api_keys_can_be_edited_but_the_last_key_is_retained() {
     let mut api_keys = vec![DEFAULT_API_KEY.to_string()];
 
     replace_core_api_key_value(&mut api_keys, DEFAULT_API_KEY, "custom-key".to_string()).unwrap();
     assert_eq!(api_keys, vec!["custom-key"]);
 
+    assert!(remove_core_api_key_value(&mut api_keys, "custom-key").is_err());
+    api_keys.push("backup-key".to_string());
     remove_core_api_key_value(&mut api_keys, "custom-key").unwrap();
-    assert!(api_keys.is_empty());
+    assert_eq!(api_keys, vec!["backup-key"]);
 }
 
 #[test]
 fn core_config_view_exposes_api_key_metadata_for_the_webview() {
     let mut config = GuiConfigFile::default();
+    ensure_strong_api_keys(&mut config).unwrap();
     ensure_strong_management_secret(&mut config).unwrap();
     let view = serde_json::to_value(CoreConfigView::from(&config)).unwrap();
 
-    assert_eq!(view["apiKeys"][0]["apiKey"], DEFAULT_API_KEY);
-    assert_eq!(view["apiKeys"][0]["remark"], DEFAULT_API_KEY_INITIAL_REMARK);
+    assert!(view["apiKeys"][0]["apiKey"]
+        .as_str()
+        .unwrap()
+        .starts_with("cpa_"));
+    assert_eq!(
+        view["apiKeys"][0]["remark"],
+        GENERATED_API_KEY_INITIAL_REMARK
+    );
     assert!(view["apiKeys"][0].get("builtIn").is_none());
     assert_eq!(view["managementSecretConfigured"], true);
     assert!(view.get("managementSecretKey").is_none());
+}
+
+#[test]
+fn api_key_initialization_generates_and_rotates_weak_credentials() {
+    let mut fresh = GuiConfigFile::default();
+    assert!(ensure_strong_api_keys(&mut fresh).unwrap());
+    assert_eq!(fresh.api_keys.len(), 1);
+    assert!(fresh.api_keys[0].key.starts_with("cpa_"));
+    assert!(fresh.api_keys[0].key.len() >= 47);
+    assert_ne!(fresh.api_keys[0].key, LEGACY_DEFAULT_API_KEY);
+    assert!(!ensure_strong_api_keys(&mut fresh).unwrap());
+
+    let mut legacy = GuiConfigFile {
+        api_keys: vec![GuiApiKeyEntry {
+            key: LEGACY_DEFAULT_API_KEY.to_string(),
+            remark: String::new(),
+        }],
+        ..GuiConfigFile::default()
+    };
+    assert!(ensure_strong_api_keys(&mut legacy).unwrap());
+    assert!(legacy.api_keys[0].key.starts_with("cpa_"));
+    assert_eq!(legacy.api_keys[0].remark, GENERATED_API_KEY_INITIAL_REMARK);
+    assert!(validate_core_api_key(LEGACY_DEFAULT_API_KEY).is_err());
 }
 
 #[test]
@@ -167,6 +199,7 @@ fn custom_auth_directory_is_preserved_and_written_to_core_config() {
         auth_dir: "/tmp/user-selected-auth".to_string(),
         ..GuiConfigFile::default()
     };
+    ensure_strong_api_keys(&mut config).unwrap();
     ensure_strong_management_secret(&mut config).unwrap();
 
     assert!(validate_gui_config(&config).is_ok());
@@ -577,7 +610,11 @@ fn runtime_api_key_patch_replaces_indentationless_core_sequence() {
         core_config_settings_from_value(&parsed).unwrap().api_keys,
         vec![DEFAULT_API_KEY]
     );
-    assert_eq!(rendered.matches("- '123456'").count(), 1, "{rendered}");
+    assert_eq!(
+        rendered.matches(&format!("- {DEFAULT_API_KEY}")).count(),
+        1,
+        "{rendered}"
+    );
     assert!(rendered.contains("debug: false"), "{rendered}");
 }
 
@@ -649,6 +686,11 @@ fn managed_session_settings_use_canonical_yaml_and_preserve_unrelated_content() 
     assert_eq!(document["proxy-url"], "http://127.0.0.1:8080");
     assert_eq!(document["routing"]["session-affinity"], true);
     assert_eq!(document["routing"]["session-affinity-ttl"], "1h");
+    assert_eq!(document["remote-management"]["disable-control-panel"], true);
+    assert_eq!(
+        document["remote-management"]["disable-auto-update-panel"],
+        true
+    );
     assert!(rendered.contains("# global proxy"));
     assert!(rendered.contains("# unrelated option"));
     assert_eq!(document["debug"], true);
@@ -817,6 +859,7 @@ fn startup_merge_preserves_plugin_store_config_written_by_core() {
 fn startup_merge_without_current_config_uses_gui_defaults() {
     let template = "# Template\nhost: \"\"\nport: 9000\napi-keys:\n  - template-key\nplugins:\n  enabled: true\nrouting:\n  strategy: fill-first\ndebug: false\n";
     let mut config = GuiConfigFile::default();
+    ensure_strong_api_keys(&mut config).unwrap();
     ensure_strong_management_secret(&mut config).unwrap();
     let merged = merge_core_config_yaml(template, None, &config).unwrap();
     let document = serde_norway::from_str::<serde_norway::Value>(&merged).unwrap();
@@ -828,13 +871,18 @@ fn startup_merge_without_current_config_uses_gui_defaults() {
     );
     assert_eq!(document["port"], serde_norway::to_value(8317_u16).unwrap());
     assert_eq!(document["debug"], serde_norway::Value::Bool(false));
-    assert_eq!(document["api-keys"][0], DEFAULT_API_KEY, "{merged}");
+    assert_eq!(document["api-keys"][0], config.api_keys[0].key, "{merged}");
     assert_eq!(document["plugins"]["enabled"], false);
     assert_eq!(document["routing"]["strategy"], "round-robin");
     assert_eq!(document["usage-statistics-enabled"], true);
     assert_eq!(
         document["remote-management"]["secret-key"],
         config.management_secret_key
+    );
+    assert_eq!(document["remote-management"]["disable-control-panel"], true);
+    assert_eq!(
+        document["remote-management"]["disable-auto-update-panel"],
+        true
     );
 }
 
@@ -844,12 +892,13 @@ fn startup_merge_can_shrink_template_api_key_sequence() {
     let current = "host: 127.0.0.1\nport: 8317\nremote-management:\n  secret-key: hashed\nauth-dir: C:/oauth\napi-keys:\n  - '123456'\ndebug: false\nplugins:\n  enabled: false\nrouting:\n  strategy: round-robin\n";
 
     let mut config = GuiConfigFile::default();
+    ensure_strong_api_keys(&mut config).unwrap();
     ensure_strong_management_secret(&mut config).unwrap();
     let merged = merge_core_config_yaml(template, Some(current), &config).unwrap();
     let document = serde_norway::from_str::<serde_norway::Value>(&merged)
         .unwrap_or_else(|error| panic!("invalid YAML: {error}\n{merged}"));
 
-    assert_eq!(document["api-keys"][0], DEFAULT_API_KEY);
+    assert_eq!(document["api-keys"][0], config.api_keys[0].key);
     assert_eq!(document["api-keys"].as_sequence().unwrap().len(), 1);
     assert_eq!(document["debug"], false);
     assert_eq!(

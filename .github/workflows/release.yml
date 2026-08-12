@@ -23,7 +23,11 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   version:
@@ -33,9 +37,10 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          persist-credentials: false
       - name: Read and validate app version
         id: resolve
         shell: bash
@@ -67,17 +72,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      - uses: oven-sh/setup-bun@v2
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
+          no-cache: true
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           components: clippy, rustfmt
       - name: Apply release version
-        run: node scripts/set-version.mjs "${{ needs.version.outputs.version }}"
+        env:
+          APP_VERSION: ${{ needs.version.outputs.version }}
+        run: node scripts/set-version.mjs "$APP_VERSION"
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -142,22 +151,28 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      - uses: oven-sh/setup-bun@v2
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
+          no-cache: true
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - name: Apply release version
-        run: node scripts/set-version.mjs "${{ needs.version.outputs.version }}"
+        env:
+          APP_VERSION: ${{ needs.version.outputs.version }}
+        run: node scripts/set-version.mjs "$APP_VERSION"
       - name: Resolve release package name
         id: package
         shell: bash
         env:
           APP_VERSION: ${{ needs.version.outputs.version }}
+          DISPLAY_OS: ${{ matrix.display_os }}
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
-          echo "stem=EasyCLIProxyAPI-v${APP_VERSION}-${{ matrix.display_os }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+          echo "stem=EasyCLIProxyAPI-v${APP_VERSION}-${DISPLAY_OS}-${TARGET_ARCH}" >> "$GITHUB_OUTPUT"
           echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
       - name: Install Linux dependencies
         if: matrix.os == 'linux'
@@ -174,12 +189,17 @@ jobs:
           bun tauri build --no-bundle
         shell: bash
       - name: Prepare portable directory
+        env:
+          BINARY_SUFFIX: ${{ matrix.os == 'windows' && '.exe' || '' }}
+          PACKAGE_STEM: ${{ steps.package.outputs.stem }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_OS: ${{ matrix.os }}
         run: >-
           node scripts/portable.mjs
-          --binary "src-tauri/target/release/cpa-gui${{ matrix.os == 'windows' && '.exe' || '' }}"
-          --output "release/${{ steps.package.outputs.stem }}"
-          --os "${{ matrix.os }}"
-          --arch "${{ matrix.arch }}"
+          --binary "src-tauri/target/release/cpa-gui${BINARY_SUFFIX}"
+          --output "release/${PACKAGE_STEM}"
+          --os "${TARGET_OS}"
+          --arch "${TARGET_ARCH}"
           --download true
         shell: bash
       - name: Verify archive-only core payload
@@ -200,17 +220,21 @@ jobs:
       - name: Prepare Windows legacy updater payload
         if: matrix.os == 'windows'
         shell: pwsh
+        env:
+          PACKAGE_STEM: ${{ steps.package.outputs.stem }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
-          $updateDir = "release/update-${{ matrix.arch }}"
+          $updateDir = "release/update-$env:TARGET_ARCH"
           New-Item -ItemType Directory -Force -Path $updateDir | Out-Null
-          Copy-Item -LiteralPath "release/${{ steps.package.outputs.stem }}/EasyCLIProxyAPI.exe" -Destination $updateDir
-          Copy-Item -LiteralPath "release/${{ steps.package.outputs.stem }}/portable-app.json" -Destination $updateDir
+          Copy-Item -LiteralPath "release/$env:PACKAGE_STEM/EasyCLIProxyAPI.exe" -Destination $updateDir
+          Copy-Item -LiteralPath "release/$env:PACKAGE_STEM/portable-app.json" -Destination $updateDir
           $marker = Get-Content -Raw -LiteralPath "$updateDir/portable-app.json" | ConvertFrom-Json
           if ($marker.schemaVersion -ne 1 -or
               $marker.application -ne "EasyCLIProxyAPI" -or
-              $marker.version -ne "${{ steps.package.outputs.version }}" -or
+              $marker.version -ne $env:PACKAGE_VERSION -or
               $marker.platform -ne "windows" -or
-              $marker.arch -ne "${{ matrix.arch }}" -or
+              $marker.arch -ne $env:TARGET_ARCH -or
               $marker.autoUpdate -ne $true) {
             throw "Legacy updater payload does not match the Windows target"
           }
@@ -224,6 +248,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PACKAGE_STEM: ${{ steps.package.outputs.stem }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
 
@@ -241,7 +268,7 @@ jobs:
           verification_dir="$RUNNER_TEMP/verify-bundled-core"
           staging_dir="$RUNNER_TEMP/easycli-dmg-staging"
           bundle_dir="src-tauri/target/release/bundle"
-          output_dmg="${{ steps.package.outputs.stem }}.dmg"
+          output_dmg="${PACKAGE_STEM}.dmg"
           mount_dir="$RUNNER_TEMP/easycli-dmg"
           mounted=false
           keychain_list="$(security list-keychains -d user)"
@@ -281,7 +308,7 @@ jobs:
             exit 1
           fi
 
-          core_archive="$(find cpa-core -maxdepth 1 -type f -name 'CLIProxyAPI_*_darwin_${{ matrix.arch }}.tar.gz' -print -quit)"
+          core_archive="$(find cpa-core -maxdepth 1 -type f -name "CLIProxyAPI_*_darwin_${TARGET_ARCH}.tar.gz" -print -quit)"
           test -n "$core_archive"
           mkdir -p "$signed_core_dir"
           tar -xzf "$core_archive" -C "$signed_core_dir"
@@ -293,7 +320,7 @@ jobs:
           COPYFILE_DISABLE=1 tar -czf "$signed_archive" -C "$signed_core_dir" .
           mv "$signed_archive" "$core_archive"
 
-          cp "release/${{ steps.package.outputs.stem }}/portable-app.json" portable-app.json
+          cp "release/${PACKAGE_STEM}/portable-app.json" portable-app.json
           node -e '
             const marker = require("./portable-app.json");
             if (marker.schemaVersion !== 1 || marker.application !== "EasyCLIProxyAPI"
@@ -301,7 +328,7 @@ jobs:
                 || marker.arch !== process.argv[2] || marker.autoUpdate !== true) {
               throw new Error("macOS auto-update marker does not match the release target");
             }
-          ' "${{ steps.package.outputs.version }}" "${{ matrix.arch }}"
+          ' "$PACKAGE_VERSION" "$TARGET_ARCH"
 
           # Build the notarized app with Tauri, then create the DMG with hdiutil.
           # Tauri's generated create-dmg script is unreliable on GitHub's macOS runners.
@@ -357,10 +384,10 @@ jobs:
           grep -F 'Authority=Developer ID Application' <<< "$signature_details"
           grep -F 'Timestamp=' <<< "$signature_details"
           grep -F 'Runtime Version=' <<< "$signature_details"
-          case "${{ matrix.arch }}" in
+          case "$TARGET_ARCH" in
             amd64) expected_core_arch="x86_64" ;;
             aarch64) expected_core_arch="arm64" ;;
-            *) echo "Unsupported macOS architecture: ${{ matrix.arch }}" >&2; exit 1 ;;
+            *) echo "Unsupported macOS architecture: $TARGET_ARCH" >&2; exit 1 ;;
           esac
           file "$bundled_core_binary" | grep -F -- "$expected_core_arch"
 
@@ -370,29 +397,37 @@ jobs:
           mounted=false
       - name: Archive Linux release
         if: matrix.os == 'linux'
-        run: tar -czf "${{ steps.package.outputs.stem }}.tar.gz" -C release "${{ steps.package.outputs.stem }}"
+        env:
+          PACKAGE_STEM: ${{ steps.package.outputs.stem }}
+        run: tar -czf "${PACKAGE_STEM}.tar.gz" -C release "$PACKAGE_STEM"
       - name: Archive Windows release
         if: matrix.os == 'windows'
         shell: pwsh
+        env:
+          PACKAGE_STEM: ${{ steps.package.outputs.stem }}
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
-          Compress-Archive -Path "release/${{ steps.package.outputs.stem }}" -DestinationPath "${{ steps.package.outputs.stem }}.zip"
+          $stem = $env:PACKAGE_STEM
+          $arch = $env:TARGET_ARCH
+          Compress-Archive -Path "release/$stem" -DestinationPath "$stem.zip"
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $releaseArchive = "${{ steps.package.outputs.stem }}.zip"
+          $releaseArchive = "$stem.zip"
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $releaseArchive))
           try {
             $entries = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
-            $root = "${{ steps.package.outputs.stem }}"
+            $root = $stem
             if ($entries -notcontains "$root/EasyCLIProxyAPI.exe" -or
                 $entries -notcontains "$root/portable-app.json" -or
                 $entries -notcontains "$root/core-version.txt" -or
-                -not ($entries | Where-Object { $_ -match "^$([regex]::Escape($root))/cpa-core/CLIProxyAPI_.+_windows_${{ matrix.arch }}\.zip$" })) {
+                -not ($entries | Where-Object { $_ -match "^$([regex]::Escape($root))/cpa-core/CLIProxyAPI_.+_windows_$([regex]::Escape($arch))\.zip$" })) {
               throw "Full Windows release ZIP is incomplete: $($entries -join ', ')"
             }
           } finally {
             $zip.Dispose()
           }
-          $updateArchive = "EasyCLIProxyAPI-update-v${{ steps.package.outputs.version }}-Windows-${{ matrix.arch }}.zip"
-          Compress-Archive -Path "release/update-${{ matrix.arch }}/*" -DestinationPath $updateArchive
+          $updateArchive = "EasyCLIProxyAPI-update-v$($env:PACKAGE_VERSION)-Windows-$arch.zip"
+          Compress-Archive -Path "release/update-$arch/*" -DestinationPath $updateArchive
           $updateZip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $updateArchive))
           try {
             $updateEntries = @($updateZip.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
@@ -404,13 +439,13 @@ jobs:
           } finally {
             $updateZip.Dispose()
           }
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ steps.package.outputs.stem }}
           path: ${{ steps.package.outputs.stem }}.${{ matrix.suffix }}
           if-no-files-found: error
           retention-days: 14
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: matrix.os == 'windows'
         with:
           name: portable-updater-windows-${{ matrix.arch }}
@@ -428,18 +463,23 @@ jobs:
       - build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: write # Required only here to upload assets to the GitHub release.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      - uses: actions/download-artifact@v8
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           merge-multiple: true
       - name: Generate portable update manifests
         shell: bash
         env:
+          GITCODE_REPOSITORY: ${{ vars.GITCODE_GUI_REPOSITORY }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          TARGET_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           for platform in windows linux darwin; do
@@ -447,8 +487,8 @@ jobs:
               --directory artifacts \
               --output "artifacts/portable-update-${platform}.json" \
               --platform "$platform" \
-              --repository "${{ github.repository }}" \
-              --gitcode-repository "${{ vars.GITCODE_GUI_REPOSITORY }}" \
+              --repository "$TARGET_REPOSITORY" \
+              --gitcode-repository "$GITCODE_REPOSITORY" \
               --tag "$RELEASE_TAG"
           done
       - name: Publish release

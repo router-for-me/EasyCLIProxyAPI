@@ -10,6 +10,9 @@ pub(crate) fn validate_core_api_key(api_key: &str) -> Result<(), String> {
     if is_example_core_api_key(api_key) {
         return Err("不能使用内核模板里的示例鉴权密钥".to_string());
     }
+    if api_key.trim() == LEGACY_DEFAULT_API_KEY {
+        return Err("不能使用旧版默认 API 鉴权密钥 123456".to_string());
+    }
     Ok(())
 }
 
@@ -103,6 +106,35 @@ pub(crate) fn generate_management_secret_key() -> Result<String, String> {
     let mut random = [0_u8; 32];
     getrandom::fill(&mut random).map_err(|error| format!("生成 WebUI 安全密钥失败: {error}"))?;
     Ok(format!("wui-Aa9_{}", URL_SAFE_NO_PAD.encode(random)))
+}
+
+pub(crate) fn generate_core_api_key() -> Result<String, String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+    let mut random = [0_u8; 32];
+    getrandom::fill(&mut random).map_err(|error| format!("生成 API 鉴权密钥失败: {error}"))?;
+    Ok(format!("cpa_{}", URL_SAFE_NO_PAD.encode(random)))
+}
+
+pub(crate) fn ensure_strong_api_keys(config: &mut GuiConfigFile) -> Result<bool, String> {
+    let mut changed = false;
+    if config.api_keys.is_empty() {
+        config.api_keys.push(GuiApiKeyEntry {
+            key: generate_core_api_key()?,
+            remark: GENERATED_API_KEY_INITIAL_REMARK.to_string(),
+        });
+        changed = true;
+    }
+    for entry in &mut config.api_keys {
+        if entry.key.trim() == LEGACY_DEFAULT_API_KEY || is_example_core_api_key(&entry.key) {
+            entry.key = generate_core_api_key()?;
+            if entry.remark.trim().is_empty() {
+                entry.remark = GENERATED_API_KEY_INITIAL_REMARK.to_string();
+            }
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 pub(crate) fn management_secret_requires_rotation(secret_key: &str) -> bool {
@@ -417,6 +449,21 @@ pub(crate) fn apply_gui_managed_settings(
             "secret-key",
             serde_norway::Value::String(config.management_secret_key.clone()),
         )?;
+        // EasyCLIProxyAPI is the management UI. Keep the core's separately
+        // downloaded HTML control panel disabled so it cannot become an
+        // unsigned same-origin management client.
+        changed |= set_core_yaml_nested_value(
+            document,
+            "remote-management",
+            "disable-control-panel",
+            serde_norway::Value::Bool(true),
+        )?;
+        changed |= set_core_yaml_nested_value(
+            document,
+            "remote-management",
+            "disable-auto-update-panel",
+            serde_norway::Value::Bool(true),
+        )?;
         changed |= set_core_yaml_nested_value(
             document,
             "plugins",
@@ -462,11 +509,15 @@ pub(crate) fn write_bytes_directly(path: &Path, content: &[u8]) -> Result<(), St
         .map_err(|error| format!("创建配置目录失败 {}: {error}", path_to_string(directory)))?;
 
     let write_result = (|| -> io::Result<()> {
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(path)?;
+        let mut options = fs::OpenOptions::new();
+        options.create(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(path)?;
+        restrict_file_permissions(path)?;
         file.seek(SeekFrom::Start(0))?;
         file.write_all(content)?;
         file.set_len(content.len() as u64)?;
@@ -496,14 +547,22 @@ pub(crate) fn write_bytes_atomically(path: &Path, content: &[u8]) -> Result<(), 
     ));
 
     let write_result = (|| -> io::Result<()> {
-        let mut file = File::create(&temporary_path)?;
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary_path)?;
         file.write_all(content)?;
         file.sync_all()?;
         // ReplaceFileW requires the replacement file handle to be closed.
         // Unix rename permits replacing an open file, so this otherwise only
         // surfaces on Windows as ERROR_SHARING_VIOLATION (os error 32).
         drop(file);
-        replace_file_atomically(&temporary_path, path)
+        replace_file_atomically(&temporary_path, path)?;
+        restrict_file_permissions(path)
     })();
 
     if let Err(error) = write_result {
@@ -516,6 +575,18 @@ pub(crate) fn write_bytes_atomically(path: &Path, content: &[u8]) -> Result<(), 
 
     remember_software_write(path, content);
 
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) fn restrict_file_permissions(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn restrict_file_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -784,6 +855,8 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     if presence.silent_start.is_none() {
         changed = true;
     }
+    let api_keys_rotated = ensure_strong_api_keys(&mut config)?;
+    changed |= api_keys_rotated;
     let management_secret_rotated = ensure_strong_management_secret(&mut config)?;
     changed |= management_secret_rotated;
     changed |= sanitize_gui_config(&mut config)?;
@@ -794,6 +867,11 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     if management_secret_rotated {
         if let Err(error) = patch_core_management_secret_key(&config.management_secret_key) {
             eprintln!("更新旧版 CPA WebUI 密钥失败，将在下次启动内核时重试: {error}");
+        }
+    }
+    if api_keys_rotated {
+        if let Err(error) = patch_core_api_keys(&gui_api_key_values(&config.api_keys)) {
+            eprintln!("更新旧版 CPA API 鉴权密钥失败，将在下次启动内核时重试: {error}");
         }
     }
     if !config.auth_dir.trim().is_empty() {
@@ -830,15 +908,16 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.routing_session_affinity_ttl = core_settings.routing_session_affinity_ttl.clone();
 }
 
+pub(crate) fn gui_api_key_values(entries: &[GuiApiKeyEntry]) -> Vec<String> {
+    entries.iter().map(|entry| entry.key.clone()).collect()
+}
+
+#[cfg(test)]
 pub(crate) fn default_api_key_entry() -> GuiApiKeyEntry {
     GuiApiKeyEntry {
         key: DEFAULT_API_KEY.to_string(),
         remark: DEFAULT_API_KEY_INITIAL_REMARK.to_string(),
     }
-}
-
-pub(crate) fn gui_api_key_values(entries: &[GuiApiKeyEntry]) -> Vec<String> {
-    entries.iter().map(|entry| entry.key.clone()).collect()
 }
 
 pub(crate) fn effective_agent_api_key(config: &GuiConfigFile) -> &str {
@@ -847,7 +926,7 @@ pub(crate) fn effective_agent_api_key(config: &GuiConfigFile) -> &str {
         .iter()
         .map(|entry| entry.key.trim())
         .find(|key| !key.is_empty())
-        .unwrap_or(DEFAULT_API_KEY)
+        .unwrap_or("")
 }
 
 pub(crate) fn merge_core_api_keys_with_gui_metadata(
@@ -1193,6 +1272,9 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
     }
     if config.auth_dir.trim().is_empty() || config.auth_dir.chars().any(char::is_control) {
         return Err("凭证目录不能为空或包含控制字符".to_string());
+    }
+    if config.api_keys.is_empty() {
+        return Err("至少需要一个 API 鉴权密钥".to_string());
     }
     for entry in &config.api_keys {
         validate_core_api_key(&entry.key)?;

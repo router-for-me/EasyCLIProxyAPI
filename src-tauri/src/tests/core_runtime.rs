@@ -2,6 +2,25 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn managed_core_uses_only_bundled_model_catalogs() {
+    assert_eq!(
+        core_process_arguments("/tmp/config.yaml"),
+        ["-config", "/tmp/config.yaml", "--local-model"]
+    );
+}
+
+#[test]
+fn managed_core_cannot_inherit_network_git_storage() {
+    let root = agent_test_home("managed-core-command");
+    let mut command = Command::new("cpa-core-test");
+    configure_managed_core_command(&mut command, "/tmp/config.yaml", &root);
+
+    assert!(command
+        .get_envs()
+        .any(|(name, value)| name == "GITSTORE" && value.is_none()));
+}
+
+#[test]
 fn replacing_a_core_preserves_only_regular_bundled_assets() {
     let root = agent_test_home("bundled-assets");
     let source = root.join("source");
@@ -170,22 +189,9 @@ fn selected_source_archive_and_checksums_are_copied_into_the_installation() {
 }
 
 #[test]
-fn release_page_assets_parse_download_links_and_sha256() {
-    let html = r#"
-          <li><a href="/router-for-me/CLIProxyAPI/releases/download/v1.2.3/checksums.txt">checksums.txt</a></li>
-          <li><a href="/router-for-me/CLIProxyAPI/releases/download/v1.2.3/CLIProxyAPI_1.2.3_linux_amd64.tar.gz">asset</a>
-            <span>sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef</span>
-          </li>
-        "#;
-
-    let assets = parse_release_assets(html);
-    assert_eq!(assets.len(), 2);
-    assert_eq!(assets[1].name, "CLIProxyAPI_1.2.3_linux_amd64.tar.gz");
-    assert_eq!(
-        assets[1].digest.as_deref(),
-        Some("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-    );
-    assert!(assets[1]
-        .browser_download_url
-        .ends_with("/releases/download/v1.2.3/CLIProxyAPI_1.2.3_linux_amd64.tar.gz"));
+fn downloaded_core_metadata_requires_the_expected_digest() {
+    let digest = "ab".repeat(32);
+    assert!(validate_download_metadata(10, Some(10), &digest, Some(&digest)).is_ok());
+    assert!(validate_download_metadata(10, Some(10), &digest, None).is_err());
+    assert!(validate_download_metadata(10, Some(10), &digest, Some(&"cd".repeat(32))).is_err());
 }
