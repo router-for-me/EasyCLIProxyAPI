@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Activity, BarChart3, CircleDollarSign, Clock3, Database, List, Pencil, RefreshCw, ShieldCheck, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
+import { save } from '@tauri-apps/plugin-dialog';
+import { Activity, BarChart3, ChevronDown, CircleDollarSign, Clock3, Database, Download, List, Pencil, RefreshCw, ShieldCheck, Sparkles, Trash2, TriangleAlert, X } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import { formatUsageNumber } from '../services/usageNumber';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
+type UsageExportFormat = 'csv' | 'json';
+
+type UsageExportResult = {
+  path: string;
+  recordCount: number;
+};
 
 type CollectorStatus = {
   state: 'waiting-core' | 'collecting' | 'error';
@@ -238,6 +245,10 @@ export function UsageRecordsPage() {
   const [pricing, setPricing] = useState<UsagePricing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [exporting, setExporting] = useState<UsageExportFormat | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportNotice, setExportNotice] = useState('');
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -247,6 +258,26 @@ export function UsageRecordsPage() {
   useEffect(() => {
     try { localStorage.setItem(RANGE_KEY, range); } catch { /* Keep the in-memory range. */ }
   }, [range]);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExportMenuOpen(false);
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [exportMenuOpen]);
 
   const buildQueries = useCallback(() => {
     const nextTimeQuery = rangeQuery(range, customStart, customEnd);
@@ -356,6 +387,35 @@ export function UsageRecordsPage() {
     setPage(1);
   };
 
+  const exportUsageRecords = async (format: UsageExportFormat) => {
+    if (exporting) return;
+    setExporting(format);
+    setError('');
+    setExportNotice('');
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const path = await save({
+        title: t('usage.export.dialogTitle'),
+        defaultPath: `easycliproxy-usage-${timestamp}.${format}`,
+        filters: [{ name: format.toUpperCase(), extensions: [format] }],
+      });
+      if (!path) return;
+      const exported = await invoke<UsageExportResult>('export_usage_records', {
+        path,
+        format,
+        query: buildQueries().query,
+      });
+      setExportNotice(t('usage.export.success', {
+        count: compactNumber(exported.recordCount),
+        path: exported.path,
+      }));
+    } catch (exportError) {
+      setError(t('usage.export.failed', { error: String(exportError) }));
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const collectorTone = status?.state === 'error' ? 'error' : status?.state === 'collecting' ? 'success' : '';
   const showInitialLoading = loading && (
     (activeTab === 'overview' && !overview)
@@ -371,16 +431,39 @@ export function UsageRecordsPage() {
           <span>Local Usage</span>
           <h1>{t('usage.title')}</h1>
         </div>
-        <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
-          <span className="status-dot" />
-          <div>
-            <strong>{status?.state === 'collecting' ? t('usage.collector.collecting') : status?.state === 'error' ? t('usage.collector.error') : t('usage.collector.waiting')}</strong>
-            <span>{t('usage.longTermRecords', { count: compactNumber(status?.totalRecords ?? 0) })}</span>
+        <div className="usage-header-actions">
+          <div className="usage-export-actions" ref={exportMenuRef}>
+            <button
+              type="button"
+              className="secondary-button usage-export-trigger"
+              disabled={exporting !== null}
+              aria-haspopup="menu"
+              aria-expanded={exportMenuOpen}
+              onClick={() => setExportMenuOpen((open) => !open)}
+            >
+              <Download size={15} />
+              {exporting ? t('usage.export.exporting') : t('usage.export.action')}
+              <ChevronDown size={14} className={exportMenuOpen ? 'is-open' : ''} />
+            </button>
+            {exportMenuOpen ? (
+              <div className="usage-export-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => { setExportMenuOpen(false); void exportUsageRecords('csv'); }}>{t('usage.export.csv')}</button>
+                <button type="button" role="menuitem" onClick={() => { setExportMenuOpen(false); void exportUsageRecords('json'); }}>{t('usage.export.json')}</button>
+              </div>
+            ) : null}
+          </div>
+          <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
+            <span className="status-dot" />
+            <div>
+              <strong>{status?.state === 'collecting' ? t('usage.collector.collecting') : status?.state === 'error' ? t('usage.collector.error') : t('usage.collector.waiting')}</strong>
+              <span>{t('usage.longTermRecords', { count: compactNumber(status?.totalRecords ?? 0) })}</span>
+            </div>
           </div>
         </div>
       </header>
 
       {error ? <div className="management-alert error">{error}</div> : null}
+      {exportNotice ? <div className="management-alert success usage-export-notice" title={exportNotice}>{exportNotice}</div> : null}
 
       <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
         <button type="button" className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}><Activity size={15} />{t('usage.tab.overview')}</button>

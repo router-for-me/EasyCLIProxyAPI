@@ -191,6 +191,29 @@ pub(crate) struct UsageRecord {
     tokens: UsageTokenStats,
 }
 
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum UsageExportFormat {
+    Csv,
+    Json,
+}
+
+impl UsageExportFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Csv => "csv",
+            Self::Json => "json",
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsageExportResult {
+    path: String,
+    record_count: usize,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LegacyUsageHourFile {
@@ -2590,6 +2613,190 @@ pub(crate) fn get_usage_events(
     load_usage_events(&connection, &query, &config)
 }
 
+#[tauri::command]
+pub(crate) fn export_usage_records(
+    path: String,
+    format: UsageExportFormat,
+    query: UsageQuery,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<UsageExportResult, String> {
+    let connection = open_usage_database()?;
+    let config = gui_config_state.snapshot()?;
+    let records = load_usage_records_for_export(&connection, &query, &config)?;
+    let path = normalized_usage_export_path(&path, format)?;
+    let content = match format {
+        UsageExportFormat::Csv => render_usage_records_csv(&records).into_bytes(),
+        UsageExportFormat::Json => serde_json::to_vec_pretty(&records)
+            .map_err(|error| format!("Failed to serialize usage records as JSON: {error}"))?,
+    };
+    fs::write(&path, content).map_err(|error| {
+        format!(
+            "Failed to write usage export {}: {error}",
+            path.to_string_lossy()
+        )
+    })?;
+    Ok(UsageExportResult {
+        path: path.to_string_lossy().into_owned(),
+        record_count: records.len(),
+    })
+}
+
+fn normalized_usage_export_path(value: &str, format: UsageExportFormat) -> Result<PathBuf, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("Usage export path is empty".to_string());
+    }
+    let mut path = PathBuf::from(value);
+    if path.file_name().is_none() {
+        return Err("Usage export path does not contain a file name".to_string());
+    }
+    if path.extension().and_then(|value| value.to_str()) != Some(format.extension()) {
+        path.set_extension(format.extension());
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    if !parent.is_dir() {
+        return Err(format!(
+            "Usage export directory does not exist: {}",
+            parent.to_string_lossy()
+        ));
+    }
+    Ok(path)
+}
+
+fn load_usage_records_for_export(
+    connection: &Connection,
+    query: &UsageQuery,
+    config: &GuiConfigFile,
+) -> Result<Vec<UsageRecord>, String> {
+    let filter = build_usage_filter(query);
+    let sql = format!(
+        r#"
+        SELECT
+            event_key, timestamp, latency_ms, ttft_ms, source, auth_index, failed,
+            provider, model, alias, reasoning_effort, service_tier,
+            response_service_tier, executor_type, endpoint, auth_type,
+            api_key_hash, api_key_display, api_key_remark, request_id,
+            input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
+            cache_creation_tokens, total_tokens
+        FROM usage_events{}
+        ORDER BY timestamp_ms DESC, id DESC
+        "#,
+        filter.clause
+    );
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("Failed to prepare usage export query: {error}"))?;
+    let mut records = statement
+        .query_map(
+            params_from_iter(filter.params.iter()),
+            usage_record_from_row,
+        )
+        .map_err(|error| format!("Failed to query usage records for export: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read usage records for export: {error}"))?;
+    for record in &mut records {
+        record.source_display = usage_source_display(config, &record.provider, &record.source);
+    }
+    Ok(records)
+}
+
+fn render_usage_records_csv(records: &[UsageRecord]) -> String {
+    const HEADERS: [&str; 27] = [
+        "id",
+        "timestamp",
+        "result",
+        "latency_ms",
+        "ttft_ms",
+        "provider",
+        "model",
+        "alias",
+        "source_display",
+        "source",
+        "auth_index",
+        "auth_type",
+        "api_key_display",
+        "api_key_remark",
+        "api_key_hash",
+        "endpoint",
+        "reasoning_effort",
+        "service_tier",
+        "response_service_tier",
+        "executor_type",
+        "request_id",
+        "input_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "total_tokens",
+    ];
+
+    let mut output = String::from('\u{feff}');
+    append_csv_row(&mut output, HEADERS.iter().copied());
+    for record in records {
+        let ttft_ms = record
+            .ttft_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        append_csv_row(
+            &mut output,
+            [
+                record.id.clone(),
+                record.timestamp.clone(),
+                if record.failed { "failed" } else { "success" }.to_string(),
+                record.latency_ms.to_string(),
+                ttft_ms,
+                record.provider.clone(),
+                record.model.clone(),
+                record.alias.clone(),
+                record.source_display.clone(),
+                record.source.clone(),
+                record.auth_index.clone(),
+                record.auth_type.clone(),
+                record.api_key_display.clone(),
+                record.api_key_remark.clone(),
+                record.api_key_hash.clone(),
+                record.endpoint.clone(),
+                record.reasoning_effort.clone(),
+                record.service_tier.clone(),
+                record.response_service_tier.clone(),
+                record.executor_type.clone(),
+                record.request_id.clone(),
+                record.tokens.input_tokens.to_string(),
+                record.tokens.output_tokens.to_string(),
+                record.tokens.reasoning_tokens.to_string(),
+                record.tokens.cache_read_tokens.to_string(),
+                record.tokens.cache_creation_tokens.to_string(),
+                record.tokens.total_tokens.to_string(),
+            ],
+        );
+    }
+    output
+}
+
+fn append_csv_row<I, S>(output: &mut String, fields: I)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut first = true;
+    for field in fields {
+        if !first {
+            output.push(',');
+        }
+        first = false;
+        let field = field.as_ref();
+        if field.contains([',', '"', '\r', '\n']) {
+            output.push('"');
+            output.push_str(&field.replace('"', "\"\""));
+            output.push('"');
+        } else {
+            output.push_str(field);
+        }
+    }
+    output.push_str("\r\n");
+}
+
 fn load_usage_events(
     connection: &Connection,
     query: &UsageQuery,
@@ -3447,6 +3654,84 @@ mod tests {
         assert_eq!(events.total, 1);
         assert_eq!(events.items[0].id, "request-2");
         drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn usage_export_query_applies_filters_without_pagination() {
+        let root = test_root("export-query");
+        let mut connection = open_test_database(&root);
+        let first = sample_record("request-1", "2026-07-17T20:30:00+08:00", "gpt-a");
+        let second = sample_record("request-2", "2026-07-17T21:30:00+08:00", "gpt-a");
+        let mut failed = sample_record("request-3", "2026-07-17T22:30:00+08:00", "gpt-a");
+        failed.failed = true;
+        insert_usage_records(&mut connection, &[first, second, failed]).unwrap();
+
+        let records = load_usage_records_for_export(
+            &connection,
+            &UsageQuery {
+                model: Some("GPT-A".to_string()),
+                failed: Some(false),
+                page: Some(2),
+                page_size: Some(1),
+                ..UsageQuery::default()
+            },
+            &GuiConfigFile::default(),
+        )
+        .unwrap();
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, "request-2");
+        assert_eq!(records[1].id, "request-1");
+        assert!(records.iter().all(|record| !record.failed));
+        assert!(records
+            .iter()
+            .all(|record| record.source_display == "source"));
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn csv_export_is_excel_friendly_and_escapes_special_characters() {
+        let mut record = sample_record(
+            "request-1",
+            "2026-07-17T20:30:00+08:00",
+            "模型, \"A\"\n下一行",
+        );
+        record.api_key_remark = "繁體中文".to_string();
+        let csv = render_usage_records_csv(&[record]);
+
+        assert!(csv.starts_with('\u{feff}'));
+        assert!(csv.starts_with("\u{feff}id,timestamp,result,"));
+        assert!(csv.contains("\"模型, \"\"A\"\"\n下一行\""));
+        assert!(csv.contains("繁體中文"));
+        assert!(csv.ends_with("\r\n"));
+    }
+
+    #[test]
+    fn export_path_adds_the_selected_extension() {
+        let root = test_root("export-path");
+        let base = root.join("usage-history");
+        let csv =
+            normalized_usage_export_path(base.to_string_lossy().as_ref(), UsageExportFormat::Csv)
+                .unwrap();
+        let explicit_json = root.join("usage-history.json");
+        let json = normalized_usage_export_path(
+            explicit_json.to_string_lossy().as_ref(),
+            UsageExportFormat::Json,
+        )
+        .unwrap();
+
+        assert_eq!(csv, base.with_extension("csv"));
+        assert_eq!(json, explicit_json);
+        assert_eq!(
+            normalized_usage_export_path(
+                explicit_json.to_string_lossy().as_ref(),
+                UsageExportFormat::Csv,
+            )
+            .unwrap(),
+            explicit_json.with_extension("csv")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

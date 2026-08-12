@@ -8,6 +8,7 @@
     "core:event:allow-unlisten",
     "core:window:allow-set-theme",
     "core:window:allow-set-background-color",
-    "core:webview:allow-set-webview-background-color"
+    "core:webview:allow-set-webview-background-color",
+    "dialog:allow-save"
   ]
 }

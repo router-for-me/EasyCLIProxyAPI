@@ -6087,6 +6087,73 @@ textarea:focus-visible {
   min-height: 54px;
 }
 
+.usage-header-actions,
+.usage-export-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-export-actions {
+  position: relative;
+}
+
+.usage-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.usage-export-actions .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.usage-export-trigger svg:last-child {
+  transition: transform 160ms ease;
+}
+
+.usage-export-trigger svg:last-child.is-open {
+  transform: rotate(180deg);
+}
+
+.usage-export-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  min-width: 148px;
+  padding: 5px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 9px;
+  background: var(--theme-fffdf8);
+  box-shadow: 0 12px 28px rgba(49, 45, 39, 0.14);
+}
+
+.usage-export-menu button {
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--theme-2d2a26);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.usage-export-menu button:hover,
+.usage-export-menu button:focus-visible {
+  background: var(--theme-f4f1ea);
+  outline: none;
+}
+
+.usage-export-notice {
+  word-break: break-all;
+}
+
 .usage-collector-state {
   display: flex;
   align-items: center;

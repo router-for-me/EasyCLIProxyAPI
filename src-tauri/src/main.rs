@@ -1707,6 +1707,7 @@ fn main() {
     let start_hidden = should_start_hidden(&gui_config);
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -1936,6 +1937,7 @@ fn main() {
             usage::get_usage_overview,
             usage::get_usage_analysis,
             usage::get_usage_events,
+            usage::export_usage_records,
             usage::get_usage_pricing,
             usage::save_usage_model_price,
             usage::delete_usage_model_price,
