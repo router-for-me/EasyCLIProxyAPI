@@ -151,6 +151,17 @@ const CLAUDE_DESKTOP_PROFILE_ID: &str = "00000000-0000-4000-8000-000000831700";
 const CLAUDE_DESKTOP_OPUS_MODEL_ID: &str = "claude-opus-5";
 const CLAUDE_DESKTOP_SONNET_MODEL_ID: &str = "claude-sonnet-4-6";
 const CLAUDE_DESKTOP_HAIKU_MODEL_ID: &str = "claude-haiku-4-5";
+const CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY: &str = "coworkEgressAllowedHosts";
+const DEFAULT_CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS: &[&str] = &[
+    "localhost",
+    "127.0.0.1",
+    "api.anthropic.com",
+    "github.com",
+    "*.github.com",
+    "*.githubusercontent.com",
+    "gitlab.com",
+    "*.gitlab.com",
+];
 const MANAGED_CLAUDE_OPUS_ALIAS_DISPLAY_NAME: &str = "EasyCLIProxyAPI managed Claude Opus mapping";
 const MANAGED_CLAUDE_SONNET_ALIAS_DISPLAY_NAME: &str =
     "EasyCLIProxyAPI managed Claude Sonnet mapping";
@@ -781,6 +792,7 @@ struct AgentConfigStatus {
     applied_model: Option<String>,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    claude_desktop_egress_allowed_hosts: Option<Vec<String>>,
     warnings: Vec<String>,
     error: Option<String>,
 }
@@ -1086,6 +1098,7 @@ struct AgentConfigurationOptions<'a> {
     oauth_configuration: bool,
     claude_code_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
+    claude_desktop_egress_allowed_hosts: Option<&'a [String]>,
 }
 
 struct PreparedAgentModels {

@@ -1,3 +1,5 @@
+import { sameClaudeDesktopEgressAllowedHosts } from './claudeDesktopEgress';
+
 export type AgentConfigurationClientId =
   | 'claude-code'
   | 'claude-desktop'
@@ -39,6 +41,8 @@ type ResolveAgentConfigurationActionOptions = {
   appliedOauthConfiguration: boolean;
   modelMappings: AgentModelMappings;
   appliedModelMappings: AgentModelMappings;
+  egressAllowedHosts?: readonly string[];
+  appliedEgressAllowedHosts?: readonly string[];
 };
 
 const normalizedModel = (value: string) => value.trim().toLocaleLowerCase();
@@ -90,6 +94,8 @@ export function resolveAgentConfigurationAction({
   appliedOauthConfiguration,
   modelMappings,
   appliedModelMappings,
+  egressAllowedHosts = [],
+  appliedEgressAllowedHosts = [],
 }: ResolveAgentConfigurationActionOptions): AgentConfigurationAction {
   if (modificationState !== 'applied') return 'apply';
   if (client === 'pi') return 'close';
@@ -107,6 +113,11 @@ export function resolveAgentConfigurationAction({
     );
   const oauthChanged = client === 'codex'
     && oauthConfiguration !== appliedOauthConfiguration;
+  const egressChanged = client === 'claude-desktop'
+    && !sameClaudeDesktopEgressAllowedHosts(
+      egressAllowedHosts,
+      appliedEgressAllowedHosts,
+    );
 
-  return modelChanged || oauthChanged ? 'update' : 'close';
+  return modelChanged || oauthChanged || egressChanged ? 'update' : 'close';
 }

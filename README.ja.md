@@ -105,6 +105,14 @@ OpenAI、Claude、Gemini、およびその他の互換形式の間で変換で�
 対応クライアントでは、利用可能なモデルカタログの同期、デフォルトモデルの選択、管理設定を適用する前の
 元設定のバックアップ、以前の設定への復元、利用可能なデスクトップまたは CLI エントリーポイントの起動ができます。
 
+Claude Desktop では、Cowork タスクと Claude Code セッションの両方が使用するツールネットワークの
+許可リスト `coworkEgressAllowedHosts` もエージェント画面で管理できます。推奨初期値は
+`localhost`、`127.0.0.1`、`api.anthropic.com`、`github.com`、`*.github.com`、
+`*.githubusercontent.com`、`gitlab.com`、`*.gitlab.com` で、連携を再適用しても既存のカスタム項目は
+保持されます。1 行に 1 件、`localhost`、`host[:port]`、または `*.host[:port]` を入力してください。
+互換性のため単独の `*` も使用できますが、すべてのホストを許可してネットワークサンドボックスの制限を
+無効にするため、既定値には使用しません。
+
 ## その他の機能
 
 - コア設定、API Key、リモート管理用認証情報、ルーティング戦略の管理。

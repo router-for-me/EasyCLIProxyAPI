@@ -22,6 +22,7 @@ pub(crate) fn build_agent_updates(
             oauth_configuration: false,
             claude_code_model_mappings: None,
             claude_desktop_model_mappings: None,
+            claude_desktop_egress_allowed_hosts: None,
         },
     )
 }
@@ -40,6 +41,7 @@ pub(crate) fn build_agent_updates_with_oauth(
         oauth_configuration,
         claude_code_model_mappings,
         claude_desktop_model_mappings,
+        claude_desktop_egress_allowed_hosts,
     } = options;
     let paths = agent_config_paths(client, home);
     let root_base = format!("http://127.0.0.1:{port}");
@@ -98,6 +100,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                         model,
                         models,
                         claude_desktop_model_mappings,
+                        claude_desktop_egress_allowed_hosts,
                     )
                     .or_else(|_| {
                         build_claude_desktop_profile(
@@ -107,6 +110,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                             model,
                             models,
                             claude_desktop_model_mappings,
+                            claude_desktop_egress_allowed_hosts,
                         )
                     })?,
                 },
@@ -637,6 +641,113 @@ pub(crate) fn ordered_agent_models(
     ordered
 }
 
+pub(crate) fn default_claude_desktop_egress_allowed_hosts() -> Vec<String> {
+    DEFAULT_CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS
+        .iter()
+        .map(|host| (*host).to_string())
+        .collect()
+}
+
+fn claude_desktop_egress_host_is_valid(value: &str) -> bool {
+    if value == "*" {
+        return true;
+    }
+    if value.is_empty() || value.chars().any(char::is_whitespace) {
+        return false;
+    }
+
+    let mut parts = value.split(':');
+    let host = parts.next().unwrap_or_default();
+    if let Some(port) = parts.next() {
+        if parts.next().is_some()
+            || port.is_empty()
+            || !port.bytes().all(|byte| byte.is_ascii_digit())
+            || port.parse::<u16>().ok().filter(|port| *port > 0).is_none()
+        {
+            return false;
+        }
+    }
+
+    let (wildcard, host) = match host.strip_prefix("*.") {
+        Some(host) => (true, host),
+        None => (false, host),
+    };
+    if host.is_empty() || host.contains('*') || host.len() > 253 {
+        return false;
+    }
+    if host.eq_ignore_ascii_case("localhost") {
+        return !wildcard;
+    }
+    if host.parse::<std::net::Ipv4Addr>().is_ok() {
+        return !wildcard;
+    }
+    if host.contains('.')
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.')
+    {
+        return false;
+    }
+
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && label
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            && label
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+    })
+}
+
+pub(crate) fn normalize_claude_desktop_egress_allowed_hosts(
+    hosts: &[String],
+) -> Result<Vec<String>, String> {
+    if hosts.is_empty() {
+        return Err("Claude Desktop 出站主机列表不能为空".to_string());
+    }
+    let mut normalized = Vec::with_capacity(hosts.len());
+    for host in hosts {
+        let value = host.trim().to_ascii_lowercase();
+        if !claude_desktop_egress_host_is_valid(&value) {
+            return Err(format!(
+                "Claude Desktop 出站主机格式无效: {host}；仅支持 *、localhost、host[:port] 或 *.host[:port]"
+            ));
+        }
+        if !normalized.iter().any(|existing| existing == &value) {
+            normalized.push(value);
+        }
+    }
+    Ok(normalized)
+}
+
+pub(crate) fn claude_desktop_egress_allowed_hosts_from_root(
+    root: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<Vec<String>>, String> {
+    let Some(value) = root.get(CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY) else {
+        return Ok(None);
+    };
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "Claude Desktop 出站主机必须是数组".to_string())?;
+    let hosts = entries
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| "Claude Desktop 出站主机必须是字符串".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    normalize_claude_desktop_egress_allowed_hosts(&hosts).map(Some)
+}
+
 pub(crate) fn build_claude_desktop_deployment_config(
     existing: Option<&str>,
 ) -> Result<String, String> {
@@ -652,9 +763,20 @@ pub(crate) fn build_claude_desktop_profile(
     model: &str,
     models: &[AgentModelOption],
     mappings: Option<&ClaudeDesktopModelMappings>,
+    egress_allowed_hosts: Option<&[String]>,
 ) -> Result<String, String> {
     let mut root = parse_agent_json_object(existing, "Claude Desktop 网关配置")?;
-    root.remove("coworkEgressAllowedHosts");
+    let egress_allowed_hosts = match egress_allowed_hosts {
+        Some(hosts) => normalize_claude_desktop_egress_allowed_hosts(hosts)?,
+        None => claude_desktop_egress_allowed_hosts_from_root(&root)
+            .ok()
+            .flatten()
+            .unwrap_or_else(default_claude_desktop_egress_allowed_hosts),
+    };
+    root.insert(
+        CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY.to_string(),
+        serde_json::json!(egress_allowed_hosts),
+    );
     root.insert(
         "disableDeploymentModeChooser".to_string(),
         serde_json::json!(true),
@@ -841,7 +963,7 @@ pub(crate) fn remove_claude_desktop_managed_configuration(
     if update_agent_json_file(&paths[2], "Claude Desktop 网关配置", |root| {
         let mut updated = false;
         for key in [
-            "coworkEgressAllowedHosts",
+            CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY,
             "disableDeploymentModeChooser",
             "inferenceGatewayApiKey",
             "inferenceGatewayAuthScheme",
@@ -1614,7 +1736,7 @@ pub(crate) fn build_restored_claude_desktop_config(
         0 | 1 => restore_json_key(&mut root, original_root.as_ref(), "deploymentMode"),
         2 => {
             for key in [
-                "coworkEgressAllowedHosts",
+                CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY,
                 "disableDeploymentModeChooser",
                 "inferenceGatewayApiKey",
                 "inferenceGatewayAuthScheme",

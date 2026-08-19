@@ -5776,8 +5776,56 @@ textarea:focus-visible {
   min-height: 0;
 }
 
-.agent-claude-desktop-mapping {
+.agent-claude-desktop-mapping,
+.agent-claude-desktop-egress {
   grid-column: 1 / -1;
+}
+
+.agent-claude-desktop-egress-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 164px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--theme-d3d0c9);
+  border-radius: 8px;
+  background: var(--theme-fff);
+  color: var(--theme-2f2c28);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: var(--font-size-label);
+  line-height: 1.55;
+}
+
+.agent-claude-desktop-egress-input:focus {
+  border-color: var(--theme-8069ad);
+  outline: 2px solid rgba(128, 105, 173, 0.14);
+}
+
+.agent-claude-desktop-egress-input[aria-invalid="true"] {
+  border-color: rgba(159, 45, 32, 0.62);
+  outline-color: rgba(159, 45, 32, 0.12);
+}
+
+.agent-claude-desktop-egress-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.agent-claude-desktop-egress-hint {
+  color: var(--theme-817b72);
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+}
+
+.agent-claude-desktop-egress-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.agent-claude-desktop-egress-warning svg {
+  flex: none;
+  margin-top: 2px;
 }
 
 .agent-claude-desktop-mapping-grid {
@@ -7638,12 +7686,14 @@ textarea:focus-visible {
 }
 
 @container agent-panel (max-width: 640px) {
-  .agent-claude-desktop-mapping > .agent-section-heading {
+  .agent-claude-desktop-mapping > .agent-section-heading,
+  .agent-claude-desktop-egress > .agent-section-heading {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .agent-claude-desktop-mapping .agent-section-heading-actions {
+  .agent-claude-desktop-mapping .agent-section-heading-actions,
+  .agent-claude-desktop-egress .agent-section-heading-actions {
     justify-content: space-between;
   }
 
