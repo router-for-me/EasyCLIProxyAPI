@@ -2043,6 +2043,11 @@ fn main() {
         .expect("failed to build app");
 
     app.run(|app_handle, event| match event {
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen {
+            has_visible_windows: false,
+            ..
+        } => show_main_window(app_handle),
         tauri::RunEvent::ExitRequested { .. } => {
             if let Err(error) = persist_main_window_size(app_handle) {
                 eprintln!("保存主窗口尺寸失败: {error}");
