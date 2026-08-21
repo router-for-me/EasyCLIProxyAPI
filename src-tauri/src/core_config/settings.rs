@@ -670,6 +670,246 @@ pub(crate) fn auth_dir_path_for_core(auth_dir: &str, install_dir: &Path) -> Path
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(
+                    normalized.components().next_back(),
+                    Some(Component::Normal(_))
+                ) {
+                    normalized.pop();
+                } else if !normalized.has_root() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn auth_dir_is_inside_macos_app_bundle(path: &Path) -> bool {
+    let normalized = normalize_path_lexically(path);
+    let mut previous_component_was_app = false;
+    for component in normalized.components() {
+        let Component::Normal(name) = component else {
+            previous_component_was_app = false;
+            continue;
+        };
+        if previous_component_was_app && name == std::ffi::OsStr::new("Contents") {
+            return true;
+        }
+        previous_component_was_app = Path::new(name)
+            .extension()
+            .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("app"));
+    }
+    false
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn copy_auth_file_atomically(source: &Path, destination: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(format!(
+                    "OAuth 迁移目标不是普通文件: {}",
+                    path_to_string(destination)
+                ));
+            }
+            let source_bytes = fs::read(source).map_err(|error| {
+                format!("读取旧 OAuth 文件失败 {}: {error}", path_to_string(source))
+            })?;
+            let destination_bytes = fs::read(destination).map_err(|error| {
+                format!(
+                    "读取现有 OAuth 文件失败 {}: {error}",
+                    path_to_string(destination)
+                )
+            })?;
+            if source_bytes == destination_bytes {
+                return Ok(());
+            }
+            return Err(format!(
+                "OAuth 迁移目标已存在不同内容，未覆盖: {}",
+                path_to_string(destination)
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "检查 OAuth 迁移目标失败 {}: {error}",
+                path_to_string(destination)
+            ));
+        }
+    }
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let directory = destination.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(directory).map_err(|error| {
+        format!(
+            "创建 OAuth 迁移目录失败 {}: {error}",
+            path_to_string(directory)
+        )
+    })?;
+    let file_name = destination
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "oauth".into());
+    let temporary_path = directory.join(format!(
+        ".{file_name}.migration.{}.{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let copy_result = (|| -> io::Result<()> {
+        fs::copy(source, &temporary_path)?;
+        let temporary_file = fs::OpenOptions::new().write(true).open(&temporary_path)?;
+        temporary_file.sync_all()?;
+        drop(temporary_file);
+        fs::rename(&temporary_path, destination)
+    })();
+    if let Err(error) = copy_result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(format!(
+            "复制 OAuth 文件失败 {} -> {}: {error}",
+            path_to_string(source),
+            path_to_string(destination)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn copy_auth_directory(source: &Path, destination: &Path) -> Result<(), String> {
+    let source_metadata = match fs::symlink_metadata(source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return fs::create_dir_all(destination).map_err(|create_error| {
+                format!(
+                    "创建 OAuth 目录失败 {}: {create_error}",
+                    path_to_string(destination)
+                )
+            });
+        }
+        Err(error) => {
+            return Err(format!(
+                "检查旧 OAuth 目录失败 {}: {error}",
+                path_to_string(source)
+            ));
+        }
+    };
+    if source_metadata.file_type().is_symlink() || !source_metadata.is_dir() {
+        return Err(format!(
+            "旧 OAuth 路径不是普通目录: {}",
+            path_to_string(source)
+        ));
+    }
+
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(format!(
+                "OAuth 迁移目标不是普通目录: {}",
+                path_to_string(destination)
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir_all(destination).map_err(|create_error| {
+                format!(
+                    "创建 OAuth 迁移目录失败 {}: {create_error}",
+                    path_to_string(destination)
+                )
+            })?;
+        }
+        Err(error) => {
+            return Err(format!(
+                "检查 OAuth 迁移目录失败 {}: {error}",
+                path_to_string(destination)
+            ));
+        }
+    }
+
+    for entry in fs::read_dir(source)
+        .map_err(|error| format!("读取旧 OAuth 目录失败 {}: {error}", path_to_string(source)))?
+    {
+        let entry = entry.map_err(|error| {
+            format!(
+                "读取旧 OAuth 目录项失败 {}: {error}",
+                path_to_string(source)
+            )
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "检查旧 OAuth 目录项失败 {}: {error}",
+                path_to_string(&entry.path())
+            )
+        })?;
+        if file_type.is_symlink() {
+            return Err(format!(
+                "OAuth 迁移不接受符号链接: {}",
+                path_to_string(&entry.path())
+            ));
+        }
+        let target = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_auth_directory(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            copy_auth_file_atomically(&entry.path(), &target)?;
+        } else {
+            return Err(format!(
+                "OAuth 迁移不支持该文件类型: {}",
+                path_to_string(&entry.path())
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn migrate_auth_dir_from_macos_app_bundle(
+    config: &mut GuiConfigFile,
+    install_dir: &Path,
+    persistent_auth_dir: &Path,
+) -> Result<bool, String> {
+    let source = normalize_path_lexically(&auth_dir_path_for_core(&config.auth_dir, install_dir));
+    if !auth_dir_is_inside_macos_app_bundle(&source) {
+        return Ok(false);
+    }
+    let destination = normalize_path_lexically(persistent_auth_dir);
+    if auth_dir_is_inside_macos_app_bundle(&destination) {
+        return Err(format!(
+            "OAuth 持久化目录不能位于 macOS 应用包内: {}",
+            path_to_string(&destination)
+        ));
+    }
+
+    copy_auth_directory(&source, &destination)?;
+    config.auth_dir = DEFAULT_AUTH_DIR.to_string();
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn migrate_packaged_macos_auth_dir(config: &mut GuiConfigFile) -> Result<bool, String> {
+    let previous_auth_dir = config.auth_dir.clone();
+    let install_dir = core_install_dir()?;
+    let persistent_auth_dir = fixed_oauth_dir()?;
+    let migrated =
+        migrate_auth_dir_from_macos_app_bundle(config, &install_dir, &persistent_auth_dir)?;
+    if migrated {
+        if let Err(error) = patch_core_auth_dir(&config.auth_dir) {
+            config.auth_dir = previous_auth_dir;
+            return Err(format!("更新内核 OAuth 目录失败: {error}"));
+        }
+    }
+    Ok(migrated)
+}
+
 pub(crate) fn should_import_core_api_keys(
     had_existing_gui_config: bool,
     core_api_keys: &[String],
@@ -1105,6 +1345,10 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
         config.allow_lan = allow_lan;
         changed = true;
     }
+    #[cfg(target_os = "macos")]
+    {
+        changed |= migrate_packaged_macos_auth_dir(config)?;
+    }
     let legacy_default_auth_dir = fixed_oauth_dir()?;
     if config.auth_dir.trim().is_empty()
         || Path::new(config.auth_dir.trim()) == legacy_default_auth_dir
@@ -1280,6 +1524,13 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
     }
     if config.auth_dir.trim().is_empty() || config.auth_dir.chars().any(char::is_control) {
         return Err("凭证目录不能为空或包含控制字符".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let auth_dir = auth_dir_path_for_core(&config.auth_dir, &core_install_dir()?);
+        if auth_dir_is_inside_macos_app_bundle(&auth_dir) {
+            return Err("OAuth 凭证目录不能位于 macOS 应用包内".to_string());
+        }
     }
     for entry in &config.api_keys {
         validate_core_api_key(&entry.key)?;

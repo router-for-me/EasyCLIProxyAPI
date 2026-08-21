@@ -1525,6 +1525,7 @@ impl GuiConfigState {
             .map_err(|_| "GUI 配置状态锁已损坏".to_string())?;
         let mut config = current.clone();
         apply_core_settings_to_gui_config(&mut config, settings);
+        sanitize_gui_config(&mut config)?;
         validate_gui_config(&config)?;
         *current = config.clone();
         Ok(config)
@@ -1659,6 +1660,7 @@ impl GuiConfigState {
             .map_err(|_| "GUI 配置状态锁已损坏".to_string())?;
         let mut config = current.clone();
         update(&mut config)?;
+        sanitize_gui_config(&mut config)?;
         write_gui_config(&config)?;
         *current = config.clone();
         Ok(config)

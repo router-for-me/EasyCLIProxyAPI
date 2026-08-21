@@ -117,6 +117,14 @@ pub(crate) fn patch_core_management_secret_key(secret_key: &str) -> Result<(), S
     })
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn patch_core_auth_dir(auth_dir: &str) -> Result<(), String> {
+    let auth_dir = auth_dir.to_string();
+    patch_existing_core_config(move |document| {
+        set_core_yaml_top_level_value(document, "auth-dir", serde_norway::Value::String(auth_dir))
+    })
+}
+
 pub(crate) fn patch_core_plugins_enabled(enabled: bool) -> Result<(), String> {
     patch_existing_core_config(|document| {
         set_core_yaml_nested_value(

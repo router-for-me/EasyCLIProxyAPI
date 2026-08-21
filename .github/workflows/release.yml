@@ -236,6 +236,11 @@ jobs:
             bun tauri bundle --bundles app --ci --config src-tauri/tauri.dmg.conf.json
 
           app_path="$bundle_dir/macos/EasyCLIProxyAPI.app"
+          resources_dir="$app_path/Contents/Resources"
+          test -d "$app_path"
+          test ! -e "$app_path/Contents/MacOS/oauth"
+          test ! -e "$resources_dir/oauth"
+          test -s "$resources_dir/core-version.txt"
 
           rm -rf "$staging_dir"
           mkdir -p "$staging_dir"

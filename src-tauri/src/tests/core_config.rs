@@ -197,6 +197,134 @@ fn default_auth_directory_is_relative_and_legacy_absolute_value_is_migrated() {
 }
 
 #[test]
+fn packaged_macos_auth_directory_is_copied_before_config_is_repointed() {
+    let root = agent_test_home("packaged-macos-auth-migration");
+    let contents_dir = root.join("EasyCLIProxyAPI.app").join("Contents");
+    let source = contents_dir.join("MacOS").join("oauth");
+    let configured_source = contents_dir
+        .join("MacOS")
+        .join("unused")
+        .join("..")
+        .join("oauth");
+    let persistent_root = root
+        .join("Library")
+        .join("Application Support")
+        .join("com.cpa.gui");
+    let destination = persistent_root.join(OAUTH_DIR_NAME);
+    let install_dir = persistent_root.join("cpa-core");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("account.json"), b"oauth-account").unwrap();
+    fs::write(source.join("nested").join("token.json"), b"oauth-token").unwrap();
+    let mut config = GuiConfigFile {
+        auth_dir: path_to_string(&configured_source),
+        ..GuiConfigFile::default()
+    };
+
+    assert!(auth_dir_is_inside_macos_app_bundle(&configured_source));
+    assert!(
+        migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination,).unwrap()
+    );
+
+    assert_eq!(config.auth_dir, DEFAULT_AUTH_DIR);
+    assert_eq!(
+        fs::read(destination.join("account.json")).unwrap(),
+        b"oauth-account"
+    );
+    assert_eq!(
+        fs::read(destination.join("nested").join("token.json")).unwrap(),
+        b"oauth-token"
+    );
+    assert_eq!(
+        fs::read(source.join("account.json")).unwrap(),
+        b"oauth-account"
+    );
+
+    config.auth_dir = path_to_string(&configured_source);
+    assert!(
+        migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination).unwrap()
+    );
+    assert_eq!(config.auth_dir, DEFAULT_AUTH_DIR);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn packaged_macos_auth_migration_does_not_overwrite_conflicting_credentials() {
+    let root = agent_test_home("packaged-macos-auth-conflict");
+    let source = root
+        .join("EasyCLIProxyAPI.app")
+        .join("Contents")
+        .join("MacOS")
+        .join("oauth");
+    let persistent_root = root.join("persistent");
+    let destination = persistent_root.join(OAUTH_DIR_NAME);
+    let install_dir = persistent_root.join("cpa-core");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&destination).unwrap();
+    fs::write(source.join("account.json"), b"old-app-credential").unwrap();
+    fs::write(destination.join("account.json"), b"persistent-credential").unwrap();
+    let original_auth_dir = path_to_string(&source);
+    let mut config = GuiConfigFile {
+        auth_dir: original_auth_dir.clone(),
+        ..GuiConfigFile::default()
+    };
+
+    let error = migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination)
+        .unwrap_err();
+
+    assert!(error.contains("未覆盖"), "{error}");
+    assert_eq!(config.auth_dir, original_auth_dir);
+    assert_eq!(
+        fs::read(destination.join("account.json")).unwrap(),
+        b"persistent-credential"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn missing_packaged_macos_auth_directory_is_repointed_to_persistent_storage() {
+    let root = agent_test_home("missing-packaged-macos-auth");
+    let source = root
+        .join("EasyCLIProxyAPI.app")
+        .join("Contents")
+        .join("MacOS")
+        .join("oauth");
+    let persistent_root = root.join("persistent");
+    let destination = persistent_root.join(OAUTH_DIR_NAME);
+    let install_dir = persistent_root.join("cpa-core");
+    let mut config = GuiConfigFile {
+        auth_dir: path_to_string(&source),
+        ..GuiConfigFile::default()
+    };
+
+    assert!(
+        migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination,).unwrap()
+    );
+
+    assert_eq!(config.auth_dir, DEFAULT_AUTH_DIR);
+    assert!(destination.is_dir());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn external_custom_auth_directory_is_not_migrated() {
+    let root = agent_test_home("external-custom-auth");
+    let install_dir = root.join("cpa-core");
+    let destination = root.join(OAUTH_DIR_NAME);
+    let custom = root.join("custom-auth");
+    let mut config = GuiConfigFile {
+        auth_dir: path_to_string(&custom),
+        ..GuiConfigFile::default()
+    };
+
+    assert!(
+        !migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination,).unwrap()
+    );
+    assert_eq!(config.auth_dir, path_to_string(&custom));
+    assert!(!destination.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn legacy_gui_config_can_seed_managed_core_settings() {
     let legacy = "port: 8317\nallow-lan: false\nrun-on-startup: true\n";
     let mut config = serde_yaml::from_str::<GuiConfigFile>(legacy).unwrap();
