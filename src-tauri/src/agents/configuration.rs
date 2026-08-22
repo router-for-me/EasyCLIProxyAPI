@@ -573,6 +573,21 @@ pub(crate) fn parse_agent_json_object(
         .ok_or_else(|| format!("{label} 根节点必须是对象"))
 }
 
+pub(crate) fn parse_agent_json5_object(
+    existing: Option<&str>,
+    label: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let value = match existing.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => json5::from_str::<serde_json::Value>(value)
+            .map_err(|error| format!("{label} 格式无效: {error}"))?,
+        None => serde_json::json!({}),
+    };
+    value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| format!("{label} 根节点必须是对象"))
+}
+
 pub(crate) fn ensure_json_object_entry<'a>(
     root: &'a mut serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -1023,7 +1038,7 @@ pub(crate) fn remove_opencode_managed_configuration(
         return Err("OpenCode 当前平台配置路径不可用".to_string());
     };
     let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
-    let updated = update_agent_json_file(path, "OpenCode 配置", |root| {
+    let updated = update_agent_json5_file(path, "OpenCode 配置", |root| {
         let mut changed = false;
         if root
             .get("model")
@@ -1550,6 +1565,15 @@ pub(crate) fn parse_restored_json_object(
         .transpose()
 }
 
+pub(crate) fn parse_restored_json5_object(
+    content: Option<&str>,
+    label: &str,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, String> {
+    content
+        .map(|content| parse_agent_json5_object(Some(content), label))
+        .transpose()
+}
+
 pub(crate) fn render_restored_json(
     root: serde_json::Map<String, serde_json::Value>,
     original_existed: bool,
@@ -1665,8 +1689,8 @@ pub(crate) fn build_restored_opencode_config(
     current: &str,
     original: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let mut root = parse_agent_json_object(Some(current), "当前 OpenCode 配置")?;
-    let original_root = parse_restored_json_object(original, "原始 OpenCode 配置")?;
+    let mut root = parse_agent_json5_object(Some(current), "当前 OpenCode 配置")?;
+    let original_root = parse_restored_json5_object(original, "原始 OpenCode 配置")?;
     for key in ["$schema", "model"] {
         restore_json_key(&mut root, original_root.as_ref(), key);
     }
@@ -1731,7 +1755,15 @@ pub(crate) fn build_restored_opencode_config(
     } else {
         restore_json_key(&mut root, original_root.as_ref(), "provider");
     }
-    render_restored_json(root, original.is_some(), "恢复后的 OpenCode 配置")
+    let restored = render_restored_json(root, original.is_some(), "恢复后的 OpenCode 配置")?;
+    Ok(restored.map(|rendered| {
+        let comments = extract_json5_comments(current);
+        if comments.is_empty() {
+            rendered
+        } else {
+            format!("{}\n{rendered}", comments.join("\n"))
+        }
+    }))
 }
 
 pub(crate) fn build_restored_zcode_config(
@@ -2341,7 +2373,7 @@ pub(crate) fn agent_config_semantically_equal(
             toml::from_str::<toml::Value>(actual).ok()
                 == toml::from_str::<toml::Value>(expected).ok()
         }
-        AgentClient::OpenClaw => {
+        AgentClient::OpenCode | AgentClient::OpenClaw => {
             json5::from_str::<serde_json::Value>(actual).ok()
                 == json5::from_str::<serde_json::Value>(expected).ok()
         }
@@ -2717,7 +2749,7 @@ pub(crate) fn build_opencode_agent_config(
     model: &str,
     available_models: &[AgentModelOption],
 ) -> Result<String, String> {
-    let mut root = parse_agent_json_object(existing, "OpenCode opencode.json")?;
+    let mut root = parse_agent_json5_object(existing, "OpenCode opencode.json")?;
     root.entry("$schema".to_string())
         .or_insert_with(|| serde_json::json!("https://opencode.ai/config.json"));
     let providers = ensure_json_object_entry(&mut root, "provider");
@@ -2742,7 +2774,13 @@ pub(crate) fn build_opencode_agent_config(
         "model".to_string(),
         serde_json::json!(format!("{MANAGED_AGENT_PROVIDER_ID}/{model}")),
     );
-    render_agent_json(root, "OpenCode 配置")
+    let rendered = render_agent_json(root, "OpenCode 配置")?;
+    let comments = existing.map(extract_json5_comments).unwrap_or_default();
+    if comments.is_empty() {
+        Ok(rendered)
+    } else {
+        Ok(format!("{}\n{rendered}", comments.join("\n")))
+    }
 }
 
 pub(crate) fn build_zcode_agent_config(

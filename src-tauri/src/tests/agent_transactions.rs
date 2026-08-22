@@ -214,6 +214,34 @@ fn agent_modification_removes_files_that_did_not_exist_before_enable() {
 }
 
 #[test]
+fn opencode_jsonc_configuration_can_be_applied_and_restored() {
+    let home = agent_test_home("opencode-jsonc-transaction");
+    let path = home.join(".config/opencode/opencode.jsonc");
+    let original = b"{\n  // Keep this comment.\n  \"theme\": \"dark\",\n}\n";
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, original).unwrap();
+
+    enable_agent_modification(
+        AgentClient::OpenCode,
+        &home,
+        8317,
+        "gpt-test",
+        &test_agent_models(&["gpt-test"]),
+        None,
+    )
+    .unwrap();
+    let applied: serde_json::Value = json5::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(applied["model"], "cpa-gui/gpt-test");
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .contains("// Keep this comment."));
+
+    disable_agent_modification(AgentClient::OpenCode, &home, 8317, false).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn agent_enable_discards_backup_when_state_cannot_be_written() {
     let home = agent_test_home("state-write-failure");
     let path = home.join(".codex/config.toml");

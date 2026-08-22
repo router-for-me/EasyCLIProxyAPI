@@ -642,6 +642,72 @@ fn opencode_agent_config_preserves_other_providers() {
 }
 
 #[test]
+fn opencode_config_path_supports_jsonc_and_custom_config() {
+    let home = agent_test_home("opencode-config-paths");
+    let default_path = home.join(".config/opencode/opencode.json");
+    let jsonc_path = home.join(".config/opencode/opencode.jsonc");
+
+    assert_eq!(
+        opencode_config_path_from_environment(&home, None, None),
+        default_path
+    );
+
+    fs::create_dir_all(jsonc_path.parent().unwrap()).unwrap();
+    fs::write(&jsonc_path, "{}\n").unwrap();
+    assert_eq!(
+        opencode_config_path_from_environment(&home, None, None),
+        jsonc_path
+    );
+
+    let custom_path = home.join("custom/opencode.jsonc");
+    assert_eq!(
+        opencode_config_path_from_environment(&home, Some(&custom_path), None),
+        custom_path
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn opencode_agent_config_accepts_jsonc_and_preserves_comments() {
+    let home = agent_test_home("opencode-jsonc");
+    let path = home.join(".config/opencode/opencode.jsonc");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let existing = r#"{
+        // Keep this comment when CPA updates the file.
+        "provider": {
+            "cpa-gui": {
+                "options": {
+                    "timeout": 30,
+                },
+            },
+        },
+    }"#;
+    fs::write(&path, existing).unwrap();
+
+    let rendered = build_opencode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-test",
+        &test_agent_models(&["gpt-test"]),
+    )
+    .unwrap();
+    assert!(rendered.contains("// Keep this comment"));
+    let value: serde_json::Value = json5::from_str(&rendered).unwrap();
+    assert_eq!(
+        value["provider"][MANAGED_AGENT_PROVIDER_ID]["options"]["timeout"],
+        30
+    );
+
+    fs::write(&path, &rendered).unwrap();
+    assert_eq!(
+        inspect_opencode_agent_config(&path, 8317, DEFAULT_API_KEY).unwrap(),
+        (true, Some("gpt-test".to_string()))
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn zcode_agent_config_preserves_other_providers_and_uses_anthropic_messages() {
     let home = agent_test_home("zcode-agent-config");
     let path = home.join(".zcode/v2/config.json");

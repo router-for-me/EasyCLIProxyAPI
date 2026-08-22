@@ -25,7 +25,7 @@ pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBu
         }
         AgentClient::ClaudeDesktop => claude_desktop_config_paths(home),
         AgentClient::Codex => vec![codex_configuration_directory(home).join("config.toml")],
-        AgentClient::OpenCode => vec![home.join(".config/opencode/opencode.json")],
+        AgentClient::OpenCode => vec![opencode_config_path(home)],
         AgentClient::OpenClaw => vec![home.join(".openclaw/openclaw.json")],
         AgentClient::Hermes => vec![hermes_agent_config_path(home)],
         AgentClient::DeepSeekHarness => {
@@ -42,6 +42,50 @@ pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBu
         AgentClient::KimiCode => vec![kimi_code_home(home).join(KIMI_CODE_CONFIG_FILE)],
         AgentClient::GrokBuild => vec![grok_build_home(home).join(GROK_BUILD_CONFIG_FILE)],
     }
+}
+
+pub(crate) fn opencode_config_path(home: &Path) -> PathBuf {
+    #[cfg(test)]
+    let (custom_config, xdg_config_home): (Option<PathBuf>, Option<PathBuf>) = (None, None);
+    #[cfg(not(test))]
+    let custom_config = env::var_os("OPENCODE_CONFIG").map(PathBuf::from);
+    #[cfg(not(test))]
+    let xdg_config_home = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    opencode_config_path_from_environment(
+        home,
+        custom_config.as_deref(),
+        xdg_config_home.as_deref(),
+    )
+}
+
+pub(crate) fn opencode_config_path_from_environment(
+    home: &Path,
+    custom_config: Option<&Path>,
+    xdg_config_home: Option<&Path>,
+) -> PathBuf {
+    if let Some(path) = custom_config.filter(|path| !path.as_os_str().is_empty()) {
+        return path.to_path_buf();
+    }
+
+    let config_directory = xdg_config_home
+        .filter(|path| path.is_absolute())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home.join(".config"))
+        .join("opencode");
+    let json = config_directory.join("opencode.json");
+    let jsonc = config_directory.join("opencode.jsonc");
+    let candidates = [json.clone(), jsonc];
+
+    candidates
+        .iter()
+        .find(|path| {
+            agent_state_path(std::slice::from_ref(*path))
+                .map(|state| state.exists())
+                .unwrap_or(false)
+        })
+        .or_else(|| candidates.iter().find(|path| path.is_file()))
+        .cloned()
+        .unwrap_or(json)
 }
 
 pub(crate) fn kimi_code_home(home: &Path) -> PathBuf {
@@ -1156,7 +1200,7 @@ pub(crate) fn agent_has_managed_marker(
             if !paths[0].is_file() {
                 return Ok(false);
             }
-            let root = read_agent_json_or_empty(&paths[0], "OpenCode 配置")?;
+            let root = read_agent_json5_or_empty(&paths[0], "OpenCode 配置")?;
             let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
             let provider_exists = root
                 .get("provider")
@@ -1881,7 +1925,34 @@ pub(crate) fn find_agent_executable(client: AgentClient, home: &Path) -> Option<
     if client == AgentClient::GrokBuild {
         return find_grok_build_executable(home);
     }
+    if client == AgentClient::OpenCode {
+        return find_opencode_executable(home);
+    }
     find_named_agent_executable(home, client.executable_names())
+}
+
+pub(crate) fn find_opencode_executable(home: &Path) -> Option<PathBuf> {
+    find_named_agent_executable(home, &["opencode"])
+        .or_else(|| find_opencode_managed_executable(home))
+        .or_else(|| find_named_agent_executable(home, &["opencode-cli"]))
+}
+
+pub(crate) fn find_opencode_managed_executable(home: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        [
+            home.join(".opencode/bin/opencode"),
+            PathBuf::from("/Applications/OpenCode.app/Contents/MacOS/opencode-cli"),
+            home.join("Applications/OpenCode.app/Contents/MacOS/opencode-cli"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let path = home.join(".opencode/bin/opencode");
+        path.is_file().then_some(path)
+    }
 }
 
 pub(crate) fn find_kimi_code_executable(home: &Path) -> Option<PathBuf> {
@@ -2566,6 +2637,26 @@ pub(crate) fn read_agent_json_or_empty(
     Ok(value)
 }
 
+pub(crate) fn read_agent_json5_or_empty(
+    path: &Path,
+    label: &str,
+) -> Result<serde_json::Value, String> {
+    if !path.is_file() {
+        return Ok(serde_json::json!({}));
+    }
+    let content =
+        fs::read_to_string(path).map_err(|error| format!("读取 {label} 失败: {error}"))?;
+    if content.trim().is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    let value: serde_json::Value =
+        json5::from_str(&content).map_err(|error| format!("解析 {label} 失败: {error}"))?;
+    if !value.is_object() {
+        return Err(format!("{label} 根节点必须是对象"));
+    }
+    Ok(value)
+}
+
 pub(crate) fn inspect_codex_agent_config(
     path: &Path,
     port: u16,
@@ -2640,10 +2731,7 @@ pub(crate) fn inspect_opencode_agent_config(
     if !path.is_file() {
         return Ok((false, None));
     }
-    let root: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(path).map_err(|error| format!("读取 OpenCode 配置失败: {error}"))?,
-    )
-    .map_err(|error| format!("解析 OpenCode 配置失败: {error}"))?;
+    let root = read_agent_json5_or_empty(path, "OpenCode 配置")?;
     let provider = root
         .get("provider")
         .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID));
