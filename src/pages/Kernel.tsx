@@ -588,6 +588,20 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const busy = checkingLatest || installing || coreProcessBusy;
   const installDisabled = busy || Boolean(coreStatus?.running);
   const offlineInstallDisabled = installing || coreProcessBusy || coreRunning;
+
+  const stopAndInstallLatest = async () => {
+    if (!latestVersion) return;
+
+    if (coreRunning) {
+      const stopped = await runCoreProcessCommand('stop_core_process', {
+        success: t('kernel.notice.stopped'),
+      });
+      if (!stopped) return;
+    }
+
+    await installVersion(latestVersion);
+  };
+
   const computedPercent =
     progress?.percent ??
     (progress?.total && progress.total > 0 ? (progress.downloaded / progress.total) * 100 : null);
@@ -916,9 +930,9 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
             <button
               type="button"
               className="secondary-button"
-              title={latestVersion ? t('kernel.versions.installVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
-              disabled={!latestVersion || installDisabled}
-              onClick={() => installVersion(latestVersion)}
+              title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
+              disabled={!latestVersion || busy}
+              onClick={() => void stopAndInstallLatest()}
             >
               {t('kernel.versions.installLatest')}
             </button>
