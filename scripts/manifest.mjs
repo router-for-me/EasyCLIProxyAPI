@@ -9,10 +9,18 @@ export function portableUpdateManifestName(platform) {
   if (!['windows', 'linux', 'darwin'].includes(normalizedPlatform)) {
     throw new Error(`Unsupported update platform: ${platform}`);
   }
-  // Keep the broken legacy macOS updater on a manifest URL that is no longer published.
+  // New macOS builds use a separate channel because the signed-bundle updater
+  // requires the newer update flow.
   return normalizedPlatform === 'darwin'
     ? 'portable-update-darwin-v2.json'
     : `portable-update-${normalizedPlatform}.json`;
+}
+
+export function portableUpdateManifestNames(platform) {
+  const primaryName = portableUpdateManifestName(platform);
+  return primaryName === 'portable-update-darwin-v2.json'
+    ? [primaryName, 'portable-update-darwin.json']
+    : [primaryName];
 }
 
 export async function generatePortableUpdateManifest({
@@ -113,18 +121,22 @@ async function main() {
   }
   const directory = resolve(args.get('--directory') ?? 'artifacts');
   const platform = args.get('--platform') ?? 'windows';
-  const output = resolve(
-    args.get('--output') ?? join(directory, portableUpdateManifestName(platform)),
-  );
-  const manifest = await generatePortableUpdateManifest({
-    directory,
-    output,
-    platform,
-    repository: args.get('--repository'),
-    gitcodeRepository: args.get('--gitcode-repository'),
-    tag: args.get('--tag'),
-  });
-  console.log(`Generated ${basename(output)} for v${manifest.version}`);
+  const requestedOutput = args.get('--output');
+  const outputs = requestedOutput
+    ? [resolve(requestedOutput)]
+    : portableUpdateManifestNames(platform).map((name) => join(directory, name));
+  let manifest;
+  for (const output of outputs) {
+    manifest = await generatePortableUpdateManifest({
+      directory,
+      output,
+      platform,
+      repository: args.get('--repository'),
+      gitcodeRepository: args.get('--gitcode-repository'),
+      tag: args.get('--tag'),
+    });
+  }
+  console.log(`Generated ${outputs.map(basename).join(', ')} for v${manifest.version}`);
 }
 
 const entryPoint = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';

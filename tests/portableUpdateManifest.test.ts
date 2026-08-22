@@ -6,12 +6,18 @@ import { describe, expect, test } from 'bun:test';
 import {
   generatePortableUpdateManifest,
   portableUpdateManifestName,
+  portableUpdateManifestNames,
 } from '../scripts/manifest.mjs';
 
-test('macOS uses a new update manifest channel', () => {
+test('macOS uses a new primary channel and keeps the legacy manifest alias', () => {
   expect(portableUpdateManifestName('windows')).toBe('portable-update-windows.json');
   expect(portableUpdateManifestName('linux')).toBe('portable-update-linux.json');
   expect(portableUpdateManifestName('darwin')).toBe('portable-update-darwin-v2.json');
+  expect(portableUpdateManifestNames('darwin')).toEqual([
+    'portable-update-darwin-v2.json',
+    'portable-update-darwin.json',
+  ]);
+  expect(portableUpdateManifestNames('linux')).toEqual(['portable-update-linux.json']);
 });
 
 describe('Windows 便携更新清单', () => {
