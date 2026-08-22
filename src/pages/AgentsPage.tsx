@@ -52,6 +52,13 @@ import {
   sameAgentModelMappings,
 } from '../services/agentConfigurationDraft';
 import {
+  claudeDesktopEgressContainsWildcard,
+  DEFAULT_CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS,
+  formatClaudeDesktopEgressAllowedHosts,
+  parseClaudeDesktopEgressAllowedHosts,
+  sameClaudeDesktopEgressAllowedHosts,
+} from '../services/claudeDesktopEgress';
+import {
   parseAgentLaunchDirectoryHistory,
   rememberAgentLaunchDirectory,
   type AgentLaunchDirectoryHistory,
@@ -99,6 +106,7 @@ type AgentConfigStatus = {
   appliedModel: string | null;
   claudeCodeModelMappings: ClaudeModelMappings | null;
   claudeDesktopModelMappings: ClaudeModelMappings | null;
+  claudeDesktopEgressAllowedHosts: string[] | null;
   warnings: string[];
   error: string | null;
 };
@@ -169,6 +177,11 @@ const createClaudeBooleanByClient = (): Record<ClaudeModelMappingClientId, boole
 let claudeModelMappingsDraftCache = createClaudeModelMappingsByClient();
 let claudeCustomMappingCache = createClaudeBooleanByClient();
 const claudeModelMappingsDirtyCache = createClaudeBooleanByClient();
+const defaultClaudeDesktopEgressDraft = formatClaudeDesktopEgressAllowedHosts(
+  DEFAULT_CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS,
+);
+let claudeDesktopEgressDraftCache = defaultClaudeDesktopEgressDraft;
+let claudeDesktopEgressDirtyCache = false;
 
 const claudeMappingRoles = [
   {
@@ -647,6 +660,9 @@ export function AgentsPage() {
   const [claudeCustomMappingByClient, setClaudeCustomMappingByClientState] = useState(
     () => ({ ...claudeCustomMappingCache }),
   );
+  const [claudeDesktopEgressDraft, setClaudeDesktopEgressDraftState] = useState(
+    () => claudeDesktopEgressDraftCache,
+  );
   const [loading, setLoading] = useState(true);
   const [modelLoading, setModelLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<
@@ -676,6 +692,7 @@ export function AgentsPage() {
   const modelRequestRef = useRef(0);
   const piUpdateRequestRef = useRef(0);
   const claudeModelMappingsDirtyRef = useRef(claudeModelMappingsDirtyCache);
+  const claudeDesktopEgressDirtyRef = useRef(claudeDesktopEgressDirtyCache);
 
   const setClaudeModelMappingsDraftByClient = useCallback((
     update: (
@@ -699,6 +716,11 @@ export function AgentsPage() {
       claudeCustomMappingCache = next;
       return next;
     });
+  }, []);
+
+  const setClaudeDesktopEgressDraft = useCallback((value: string) => {
+    claudeDesktopEgressDraftCache = value;
+    setClaudeDesktopEgressDraftState(value);
   }, []);
 
   const loadStatuses = useCallback(async (forceRefresh = false) => {
@@ -905,6 +927,19 @@ export function AgentsPage() {
     selectedModel,
   ]);
 
+  useEffect(() => {
+    if (selected !== 'claude-desktop' || claudeDesktopEgressDirtyRef.current) return;
+    const next = formatClaudeDesktopEgressAllowedHosts(
+      activeStatus?.claudeDesktopEgressAllowedHosts
+        ?? DEFAULT_CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS,
+    );
+    if (next !== claudeDesktopEgressDraftCache) setClaudeDesktopEgressDraft(next);
+  }, [
+    activeStatus?.claudeDesktopEgressAllowedHosts,
+    selected,
+    setClaudeDesktopEgressDraft,
+  ]);
+
   const appliedModel = activeStatus?.appliedModel ?? activeStatus?.currentModel ?? '';
   const modelDraftChanged = !isClaudeModelMappingClient && Boolean(
     selectedModel.trim()
@@ -915,6 +950,23 @@ export function AgentsPage() {
     ? activeStatus?.claudeCodeModelMappings
     : activeStatus?.claudeDesktopModelMappings)
     ?? createClaudeModelMappings(appliedModel);
+  const claudeDesktopEgressResult = useMemo(
+    () => parseClaudeDesktopEgressAllowedHosts(claudeDesktopEgressDraft),
+    [claudeDesktopEgressDraft],
+  );
+  const claudeDesktopEgressAllowedHosts = claudeDesktopEgressResult.valid
+    ? claudeDesktopEgressResult.hosts
+    : [];
+  const appliedClaudeDesktopEgressAllowedHosts =
+    activeStatus?.claudeDesktopEgressAllowedHosts ?? [];
+  const claudeDesktopEgressReady = selected !== 'claude-desktop'
+    || claudeDesktopEgressResult.valid;
+  const claudeDesktopEgressDraftChanged = selected === 'claude-desktop'
+    && activeStatus?.modificationState === 'applied'
+    && (!claudeDesktopEgressResult.valid || !sameClaudeDesktopEgressAllowedHosts(
+      claudeDesktopEgressAllowedHosts,
+      appliedClaudeDesktopEgressAllowedHosts,
+    ));
   const claudeMappingsReady = !isClaudeModelMappingClient
     || claudeMappingRoles.every((role) =>
       Boolean(findAgentModel(models, claudeModelMappingsDraft[role.key])),
@@ -933,7 +985,10 @@ export function AgentsPage() {
     );
   const oauthConfigurationChanged = selected === 'codex'
     && oauthConfiguration !== Boolean(activeStatus?.oauthConfiguration);
-  const draftChanged = modelDraftChanged || claudeMappingDraftChanged || oauthConfigurationChanged;
+  const draftChanged = modelDraftChanged
+    || claudeMappingDraftChanged
+    || claudeDesktopEgressDraftChanged
+    || oauthConfigurationChanged;
   const configurationAction = resolveAgentConfigurationAction({
     client: selected,
     modificationState: activeStatus?.modificationState ?? 'unconfigured',
@@ -944,13 +999,15 @@ export function AgentsPage() {
     appliedOauthConfiguration: Boolean(activeStatus?.oauthConfiguration),
     modelMappings: claudeModelMappingsDraft,
     appliedModelMappings: appliedClaudeModelMappings,
+    egressAllowedHosts: claudeDesktopEgressAllowedHosts,
+    appliedEgressAllowedHosts: appliedClaudeDesktopEgressAllowedHosts,
   });
   const canEnable = Boolean(
     activeStatus?.supportedPlatform
       && activeStatus.installed
       && !modelLoading
       && (isClaudeModelMappingClient
-        ? claudeMappingsReady && claudeCodeRuntimeSettingsReady
+        ? claudeMappingsReady && claudeCodeRuntimeSettingsReady && claudeDesktopEgressReady
         : selectedModelOption),
   );
   const activeLaunchTargets = activeStatus?.launchTargets ?? [];
@@ -977,6 +1034,8 @@ export function AgentsPage() {
     : selected === 'zcode'
       ? t('agents.modify.zcodeRestart')
       : '';
+  const claudeDesktopEgressWildcard = claudeDesktopEgressResult.valid
+    && claudeDesktopEgressContainsWildcard(claudeDesktopEgressResult.hosts);
   const refreshModels = () => {
     void loadModels(selected);
   };
@@ -1081,6 +1140,16 @@ export function AgentsPage() {
     });
   };
 
+  const changeClaudeDesktopEgressDraft = (value: string) => {
+    claudeDesktopEgressDirtyRef.current = true;
+    claudeDesktopEgressDirtyCache = true;
+    setClaudeDesktopEgressDraft(value);
+  };
+
+  const resetClaudeDesktopEgressDraft = () => {
+    changeClaudeDesktopEgressDraft(defaultClaudeDesktopEgressDraft);
+  };
+
   const requireSelectedModel = () => {
     if (modelLoading) {
       setModelSelectionError(t('agents.error.modelsLoading'));
@@ -1155,6 +1224,7 @@ export function AgentsPage() {
     setConfigurationError('');
     const claudeModelMappings = requireClaudeModelMappings();
     if (isClaudeModelMappingClient && !claudeModelMappings) return;
+    if (selected === 'claude-desktop' && !claudeDesktopEgressResult.valid) return;
     const model = isClaudeModelMappingClient
       ? claudeModelMappings?.sonnet ?? null
       : requireSelectedModel();
@@ -1167,9 +1237,16 @@ export function AgentsPage() {
         oauthConfiguration,
         claudeCodeModelMappings: selected === 'claude-code' ? claudeModelMappings : null,
         claudeDesktopModelMappings: selected === 'claude-desktop' ? claudeModelMappings : null,
+        claudeDesktopEgressAllowedHosts: selected === 'claude-desktop'
+          ? claudeDesktopEgressAllowedHosts
+          : null,
       });
       if (isClaudeModelMappingClient) {
         claudeModelMappingsDirtyRef.current[selected] = false;
+      }
+      if (selected === 'claude-desktop') {
+        claudeDesktopEgressDirtyRef.current = false;
+        claudeDesktopEgressDirtyCache = false;
       }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
@@ -1251,6 +1328,10 @@ export function AgentsPage() {
       if (isClaudeModelMappingClient) {
         claudeModelMappingsDirtyRef.current[selected] = false;
       }
+      if (selected === 'claude-desktop') {
+        claudeDesktopEgressDirtyRef.current = false;
+        claudeDesktopEgressDirtyCache = false;
+      }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
     } catch (requestError) {
@@ -1263,6 +1344,7 @@ export function AgentsPage() {
   const resetConfigurationToDefault = async () => {
     const claudeModelMappings = requireClaudeModelMappings();
     if (isClaudeModelMappingClient && !claudeModelMappings) return;
+    if (selected === 'claude-desktop' && !claudeDesktopEgressResult.valid) return;
     const model = isClaudeModelMappingClient
       ? claudeModelMappings?.sonnet ?? null
       : requireSelectedModel();
@@ -1276,10 +1358,17 @@ export function AgentsPage() {
         oauthConfiguration,
         claudeCodeModelMappings: selected === 'claude-code' ? claudeModelMappings : null,
         claudeDesktopModelMappings: selected === 'claude-desktop' ? claudeModelMappings : null,
+        claudeDesktopEgressAllowedHosts: selected === 'claude-desktop'
+          ? claudeDesktopEgressAllowedHosts
+          : null,
       });
       setDefaultConfirmOpen(false);
       if (isClaudeModelMappingClient) {
         claudeModelMappingsDirtyRef.current[selected] = false;
+      }
+      if (selected === 'claude-desktop') {
+        claudeDesktopEgressDirtyRef.current = false;
+        claudeDesktopEgressDirtyCache = false;
       }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
@@ -1732,6 +1821,56 @@ export function AgentsPage() {
                       </div>
                     ))}
                   </div>
+                </section>
+              ) : null}
+
+              {selected === 'claude-desktop' ? (
+                <section className="agent-core-setting-section agent-claude-desktop-egress">
+                  <div className="agent-section-heading">
+                    <div>
+                      <strong>{t('agents.claudeDesktopEgress.title')}</strong>
+                      <span>{t('agents.claudeDesktopEgress.description')}</span>
+                    </div>
+                    <div className="agent-section-heading-actions">
+                      <button
+                        type="button"
+                        className="secondary-button compact-button"
+                        onClick={resetClaudeDesktopEgressDraft}
+                        disabled={busy}
+                      >
+                        {t('agents.claudeDesktopEgress.useRecommended')}
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    className="agent-claude-desktop-egress-input"
+                    rows={8}
+                    value={claudeDesktopEgressDraft}
+                    onChange={(event) => changeClaudeDesktopEgressDraft(event.currentTarget.value)}
+                    disabled={busy}
+                    spellCheck={false}
+                    aria-label={t('agents.claudeDesktopEgress.title')}
+                    aria-describedby="claude-desktop-egress-hint"
+                    aria-invalid={!claudeDesktopEgressResult.valid}
+                  />
+                  <small id="claude-desktop-egress-hint" className="agent-claude-desktop-egress-hint">
+                    {t('agents.claudeDesktopEgress.hint')}
+                  </small>
+                  {!claudeDesktopEgressResult.valid ? (
+                    <span className="agent-inline-message error" role="alert" aria-live="polite">
+                      {claudeDesktopEgressResult.reason === 'empty'
+                        ? t('agents.error.egressHostsEmpty')
+                        : t('agents.error.egressHostInvalid', {
+                          host: claudeDesktopEgressResult.invalidEntry ?? '',
+                        })}
+                    </span>
+                  ) : null}
+                  {claudeDesktopEgressWildcard ? (
+                    <span className="agent-inline-message warning agent-claude-desktop-egress-warning">
+                      <AlertTriangle size={15} aria-hidden="true" />
+                      {t('agents.claudeDesktopEgress.wildcardWarning')}
+                    </span>
+                  ) : null}
                 </section>
               ) : null}
 

@@ -431,6 +431,7 @@ pub(crate) fn inspect_pi_provider_status(
         applied_model: current_model,
         claude_code_model_mappings: None,
         claude_desktop_model_mappings: None,
+        claude_desktop_egress_allowed_hosts: None,
         warnings,
         error,
     }
@@ -919,6 +920,21 @@ pub(crate) fn inspect_agent_config(
     if let Some(message) = error.as_ref() {
         warnings.push(message.clone());
     }
+    let claude_desktop_egress_allowed_hosts = if client == AgentClient::ClaudeDesktop {
+        match paths
+            .get(2)
+            .ok_or_else(|| "Claude Desktop 网关配置路径不可用".to_string())
+            .and_then(|path| inspect_claude_desktop_egress_allowed_hosts(path))
+        {
+            Ok(hosts) => hosts,
+            Err(error) => {
+                warnings.push(error);
+                None
+            }
+        }
+    } else {
+        None
+    };
     let modification = inspect_agent_application(client, home);
     let configuration_synchronized = agent_configuration_is_synchronized(client, home, configured);
     warnings.extend(modification.warnings.iter().cloned());
@@ -949,6 +965,7 @@ pub(crate) fn inspect_agent_config(
             .then(|| inspect_claude_code_model_mappings(&paths[0]).ok().flatten())
             .flatten(),
         claude_desktop_model_mappings: modification.claude_desktop_model_mappings,
+        claude_desktop_egress_allowed_hosts,
         warnings,
         error,
     }
@@ -2615,6 +2632,16 @@ pub(crate) fn inspect_claude_desktop_agent_config(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
     Ok((configured, model))
+}
+
+pub(crate) fn inspect_claude_desktop_egress_allowed_hosts(
+    profile_path: &Path,
+) -> Result<Option<Vec<String>>, String> {
+    let profile = read_agent_json_or_empty(profile_path, "Claude Desktop 网关配置")?;
+    let root = profile
+        .as_object()
+        .ok_or_else(|| "Claude Desktop 网关配置根节点必须是对象".to_string())?;
+    claude_desktop_egress_allowed_hosts_from_root(root)
 }
 
 pub(crate) fn read_agent_json_or_empty(

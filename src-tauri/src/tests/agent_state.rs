@@ -519,6 +519,47 @@ fn kimi_and_grok_legacy_states_require_context_catalog_resynchronization() {
 }
 
 #[test]
+fn claude_desktop_reapply_preserves_current_egress_hosts() {
+    let home = agent_test_home("claude-desktop-egress-reapply");
+    let models = test_agent_models(&["gpt-test"]);
+    apply_agent_configuration(
+        AgentClient::ClaudeDesktop,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-test",
+        &models,
+        None,
+    )
+    .unwrap();
+
+    let paths = agent_config_paths(AgentClient::ClaudeDesktop, &home);
+    let mut profile: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&paths[2]).unwrap()).unwrap();
+    profile[CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY] =
+        serde_json::json!(["localhost", "github.com", "registry-1.docker.io"]);
+    fs::write(&paths[2], serde_json::to_string_pretty(&profile).unwrap()).unwrap();
+
+    apply_agent_configuration(
+        AgentClient::ClaudeDesktop,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-test",
+        &models,
+        None,
+    )
+    .unwrap();
+    let profile: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&paths[2]).unwrap()).unwrap();
+    assert_eq!(
+        profile[CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY],
+        serde_json::json!(["localhost", "github.com", "registry-1.docker.io"])
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn session_merge_preserves_runtime_fields_for_other_agent_formats() {
     let claude_original = r#"{"env":{"KEEP_ENV":"original","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"0"},"keep":"claude"}"#;
     let claude_managed = build_claude_agent_config(
@@ -559,6 +600,7 @@ fn session_merge_preserves_runtime_fields_for_other_agent_formats() {
         DEFAULT_API_KEY,
         "gpt-test",
         &[],
+        None,
         None,
     )
     .unwrap();

@@ -358,6 +358,7 @@ fn codex_api_and_oauth_modes_write_the_same_catalog() {
                 oauth_configuration,
                 claude_code_model_mappings: None,
                 claude_desktop_model_mappings: None,
+                claude_desktop_egress_allowed_hosts: None,
             },
         )
         .unwrap()
@@ -452,6 +453,7 @@ fn claude_desktop_config_builds_gateway_profile_and_index() {
         "claude-sonnet-test",
         &[],
         None,
+        None,
     )
     .unwrap();
     let meta = build_claude_desktop_meta(Some(
@@ -464,7 +466,10 @@ fn claude_desktop_config_builds_gateway_profile_and_index() {
     let meta: serde_json::Value = serde_json::from_str(&meta).unwrap();
 
     assert_eq!(profile["keep"], true);
-    assert!(profile.get("coworkEgressAllowedHosts").is_none());
+    assert_eq!(
+        profile[CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY],
+        serde_json::json!(["*"])
+    );
     assert_eq!(profile["inferenceGatewayApiKey"], DEFAULT_API_KEY);
     assert_eq!(profile["inferenceGatewayBaseUrl"], "http://127.0.0.1:8317");
     assert_eq!(
@@ -484,6 +489,107 @@ fn claude_desktop_config_builds_gateway_profile_and_index() {
         .find(|entry| entry["id"] == CLAUDE_DESKTOP_PROFILE_ID)
         .unwrap();
     assert_eq!(managed_entry["custom"], true);
+}
+
+#[test]
+fn claude_desktop_profile_uses_safe_defaults_and_normalizes_explicit_hosts() {
+    let profile = build_claude_desktop_profile(
+        None,
+        "http://127.0.0.1:8317",
+        DEFAULT_API_KEY,
+        "claude-sonnet-test",
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    let profile: serde_json::Value = serde_json::from_str(&profile).unwrap();
+    assert_eq!(
+        profile[CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY],
+        serde_json::json!(DEFAULT_CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS)
+    );
+    assert!(!profile[CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("*")));
+
+    let explicit = vec![
+        " GitHub.com ".to_string(),
+        "*.GitHub.com:443".to_string(),
+        "github.com".to_string(),
+        "127.0.0.1:8317".to_string(),
+    ];
+    let profile = build_claude_desktop_profile(
+        Some(r#"{"coworkEgressAllowedHosts":["*"]}"#),
+        "http://127.0.0.1:8317",
+        DEFAULT_API_KEY,
+        "claude-sonnet-test",
+        &[],
+        None,
+        Some(&explicit),
+    )
+    .unwrap();
+    let profile: serde_json::Value = serde_json::from_str(&profile).unwrap();
+    assert_eq!(
+        profile[CLAUDE_DESKTOP_EGRESS_ALLOWED_HOSTS_KEY],
+        serde_json::json!(["github.com", "*.github.com:443", "127.0.0.1:8317"])
+    );
+}
+
+#[test]
+fn claude_desktop_egress_hosts_reject_invalid_entries() {
+    for invalid in [
+        "",
+        "https://github.com",
+        "github.com/path",
+        "github.com:0",
+        "github.com:65536",
+        "github.com:abc",
+        "*:443",
+        "*.127.0.0.1",
+        "*.localhost",
+        "2001:db8::1",
+        "bad_host.example.com",
+    ] {
+        let hosts = vec![invalid.to_string()];
+        assert!(
+            normalize_claude_desktop_egress_allowed_hosts(&hosts).is_err(),
+            "accepted invalid egress host: {invalid}"
+        );
+    }
+    for valid in [
+        "*",
+        "localhost",
+        "localhost:8317",
+        "api.github.com",
+        "*.corp.example.com",
+        "*.corp.example.com:8443",
+        "127.0.0.1",
+    ] {
+        let hosts = vec![valid.to_string()];
+        assert_eq!(
+            normalize_claude_desktop_egress_allowed_hosts(&hosts).unwrap(),
+            hosts,
+            "rejected valid egress host: {valid}"
+        );
+    }
+}
+
+#[test]
+fn claude_desktop_profile_inspection_reads_current_egress_hosts() {
+    let home = agent_test_home("claude-desktop-egress-inspection");
+    let path = home.join("profile.json");
+    fs::write(
+        &path,
+        r#"{"coworkEgressAllowedHosts":["GitHub.com","*.github.com"]}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        inspect_claude_desktop_egress_allowed_hosts(&path).unwrap(),
+        Some(vec!["github.com".to_string(), "*.github.com".to_string()])
+    );
+    fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
@@ -524,6 +630,7 @@ fn claude_desktop_profile_keeps_non_claude_models_internal() {
         "gpt-5.6-sol",
         &models,
         Some(&mappings),
+        None,
     )
     .unwrap();
     let profile: serde_json::Value = serde_json::from_str(&profile).unwrap();
@@ -1714,6 +1821,7 @@ fn claude_desktop_uses_selected_alias_directly_with_original_context() {
         "gpt-high",
         &models,
         Some(&mappings),
+        None,
     )
     .unwrap();
     let profile: serde_json::Value = serde_json::from_str(&profile).unwrap();
