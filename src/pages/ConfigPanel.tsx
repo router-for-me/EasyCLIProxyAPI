@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCoreRuntime, type CoreStatus } from '../coreRuntime';
+import { AppSelect } from '../components/AppSelect';
 import { useI18n } from '../i18n';
 import { webUiManagementUrl } from '../services/clientAccess';
 import { ThinkingAliasesPage } from './ThinkingAliasesPage';
@@ -1345,19 +1346,20 @@ export function ConfigPanelPage() {
                   </div>
                   <label className="config-software-select">
                     <span className="sr-only">{t('config.software.closeBehavior')}</span>
-                    <select
-                      className="config-network-input"
+                    <AppSelect
                       value={softwareCloseBehaviorDraft}
                       disabled={softwareSettingsLoading || softwareSettings === null || busyAction !== null}
-                      onChange={(event) => {
+                      ariaLabel={t('config.software.closeBehavior')}
+                      onChange={(value) => {
                         setSoftwareSavedStatusVisible(false);
-                        setSoftwareCloseBehaviorDraft(event.currentTarget.value as CloseBehavior);
+                        setSoftwareCloseBehaviorDraft(value as CloseBehavior);
                       }}
-                    >
-                      <option value="ask">{t('config.software.behavior.ask')}</option>
-                      <option value="minimize-to-tray">{t('config.software.behavior.minimize')}</option>
-                      <option value="exit">{t('config.software.behavior.exit')}</option>
-                    </select>
+                      options={[
+                        { value: 'ask', label: t('config.software.behavior.ask') },
+                        { value: 'minimize-to-tray', label: t('config.software.behavior.minimize') },
+                        { value: 'exit', label: t('config.software.behavior.exit') },
+                      ]}
+                    />
                   </label>
                 </div>
               </div>

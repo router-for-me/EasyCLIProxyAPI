@@ -42,6 +42,7 @@ import codexIcon from '../assets/icons/codex.svg';
 import deepseekIcon from '../assets/icons/deepseek.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import openaiIcon from '../assets/icons/openai-light.svg';
+import { AppSelect } from '../components/AppSelect';
 import {
   isRecord,
   managementApi,
@@ -1925,12 +1926,17 @@ function ApiProviderDialog({
               <div className="provider-cloak-settings">
                 <label>
                   <span>{t('apiAccess.cloak.mode')}</span>
-                  <select value={draft.cloakMode ?? ''} onChange={(event) => updateTextField('cloakMode', event.currentTarget.value)}>
-                    <option value="">{t('apiAccess.cloak.default')}</option>
-                    <option value="auto">Auto</option>
-                    <option value="always">Always</option>
-                    <option value="never">Never</option>
-                  </select>
+                  <AppSelect
+                    value={draft.cloakMode ?? ''}
+                    onChange={(value) => updateTextField('cloakMode', value)}
+                    ariaLabel={t('apiAccess.cloak.mode')}
+                    options={[
+                      { value: '', label: t('apiAccess.cloak.default') },
+                      { value: 'auto', label: 'Auto' },
+                      { value: 'always', label: 'Always' },
+                      { value: 'never', label: 'Never' },
+                    ]}
+                  />
                 </label>
                 <label className="multiline-field">
                   <span>{t('apiAccess.cloak.words')}</span>
