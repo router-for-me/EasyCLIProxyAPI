@@ -374,6 +374,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_codex_oauth_in_yaml(
     render_updated_core_yaml(&mut document, updated)
 }
 
+#[cfg(test)]
 pub(crate) fn remove_managed_claude_model_aliases_in_yaml(content: &str) -> Result<String, String> {
     let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
@@ -773,6 +774,7 @@ pub(crate) async fn fetch_oauth_model_definitions(
     definitions
 }
 
+#[cfg(test)]
 pub(crate) fn resolved_thinking_alias_sources(
     content: &str,
     definitions: &[CodexModelDefinition],
@@ -787,6 +789,7 @@ pub(crate) fn resolved_thinking_alias_sources(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn resolved_speed_alias_sources(
     content: &str,
     definitions: &[CodexModelDefinition],
@@ -801,6 +804,7 @@ pub(crate) fn resolved_speed_alias_sources(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn resolved_alias_sources(
     content: &str,
     definitions: &[CodexModelDefinition],
@@ -820,6 +824,7 @@ pub(crate) fn resolved_alias_sources(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn codex_oauth_definition_set(
     definitions: &[CodexModelDefinition],
 ) -> Vec<OAuthModelDefinitions> {
@@ -1758,6 +1763,7 @@ pub(crate) fn append_config_speed_alias(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn remove_thinking_alias_from_yaml(
     content: &str,
     alias: &str,
@@ -1789,6 +1795,7 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
     render_updated_core_yaml(&mut document, updated)
 }
 
+#[cfg(test)]
 pub(crate) fn remove_speed_alias_from_yaml(content: &str, alias: &str) -> Result<String, String> {
     remove_speed_alias_from_yaml_for_channel(content, alias, None)
 }

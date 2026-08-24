@@ -11,5 +11,22 @@ export default defineConfig({
   build: {
     target: 'es2020',
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replaceAll('\\', '/');
+          if (!normalizedId.includes('/node_modules/')) return undefined;
+          if (normalizedId.includes('/node_modules/@tauri-apps/')) return 'tauri-vendor';
+          if (normalizedId.includes('/node_modules/@dnd-kit/')) return 'dnd-vendor';
+          if (normalizedId.includes('/node_modules/lucide-react/')) return 'icons-vendor';
+          if (
+            normalizedId.includes('/node_modules/react/')
+            || normalizedId.includes('/node_modules/react-dom/')
+            || normalizedId.includes('/node_modules/scheduler/')
+          ) return 'react-vendor';
+          return 'vendor';
+        },
+      },
+    },
   },
 });
