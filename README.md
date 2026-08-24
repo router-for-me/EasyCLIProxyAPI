@@ -47,7 +47,8 @@ The Home page provides a quick overview of the local proxy runtime and ready-to-
 - Check local connectivity and the application/core version at a glance.
 
 Core installation, version comparison, and offline installation are available from the
-**Version Management** page.
+**Version Management** page. Users in mainland China can manually enable the GitCode
+download source there so application and core updates prefer the mirror.
 
 ### OAuth account authorization
 

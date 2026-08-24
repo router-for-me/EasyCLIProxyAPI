@@ -202,6 +202,26 @@ fn portable_update_asset_accepts_only_the_configured_gitcode_fallback() {
 }
 
 #[test]
+fn portable_update_download_order_respects_gitcode_preference() {
+    let mut asset = portable_update_test_asset("1.2.3", "amd64");
+    let (_, display, suffix) = portable_update_asset_platform().unwrap();
+    let filename = format!("EasyCLIProxyAPI-v1.2.3-{display}-amd64.{suffix}");
+    asset.fallback_urls = vec![gitcode_release_attachment_url(
+        "mirror-owner/EasyCLIProxyAPI",
+        "v1.2.3",
+        &filename,
+    )];
+
+    let github_first = portable_update_download_urls(&asset, false);
+    assert_eq!(update_download_source_name(github_first[0]), "GitHub");
+    assert_eq!(update_download_source_name(github_first[1]), "GitCode");
+
+    let gitcode_first = portable_update_download_urls(&asset, true);
+    assert_eq!(update_download_source_name(gitcode_first[0]), "GitCode");
+    assert_eq!(update_download_source_name(gitcode_first[1]), "GitHub");
+}
+
+#[test]
 fn portable_update_state_supports_cancellation_and_snapshot_recovery() {
     let state = AppUpdateState::default();
     let pending = PendingAppUpdate {
@@ -608,7 +628,10 @@ fn gitcode_discovered_core_release_downloads_from_gitcode_first() {
             asset.browser_download_url,
             "https://api.gitcode.com/api/v5/repos/lzt404/CLIProxyAPI/releases/v7.2.80/attach_files/CLIProxyAPI_7.2.80_linux_aarch64.tar.gz/download"
         );
-    assert!(asset.fallback_download_urls.is_empty());
+    assert_eq!(
+        asset.fallback_download_urls,
+        ["https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.80/CLIProxyAPI_7.2.80_linux_aarch64.tar.gz"]
+    );
 }
 
 #[test]

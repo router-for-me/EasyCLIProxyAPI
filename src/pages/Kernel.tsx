@@ -61,6 +61,11 @@ type GuiSettings = {
   runOnStartup: boolean;
 };
 
+type VersionSourceSettings = {
+  preferGitcodeDownloads: boolean;
+  gitcodeAvailable: boolean;
+};
+
 type CoreConfigSummary = {
   apiKeys: Array<{ apiKey: string }>;
 };
@@ -77,33 +82,42 @@ let latestAutoCheckStarted = false;
 let cachedLatest: CoreLatest | null = null;
 let cachedLatestError = '';
 let latestCheckPromise: Promise<CoreLatest> | null = null;
+let latestRequestEpoch = 0;
 
 function displayAppVersion(version: string) {
   const resolvedVersion = version.trim();
   return resolvedVersion.startsWith('v') ? resolvedVersion : `v${resolvedVersion}`;
 }
 
-function requestLatestCore() {
-  if (latestCheckPromise) {
+function requestLatestCore(force = false) {
+  if (!force && latestCheckPromise) {
     return latestCheckPromise;
   }
 
-  latestCheckPromise = invoke<CoreLatest>('check_latest_core')
+  const requestEpoch = ++latestRequestEpoch;
+  const request = invoke<CoreLatest>('check_latest_core')
     .then((result) => {
-      cachedLatest = result;
-      cachedLatestError = '';
+      if (requestEpoch === latestRequestEpoch) {
+        cachedLatest = result;
+        cachedLatestError = '';
+      }
       return result;
     })
     .catch((error) => {
-      cachedLatest = null;
-      cachedLatestError = String(error);
+      if (requestEpoch === latestRequestEpoch) {
+        cachedLatest = null;
+        cachedLatestError = String(error);
+      }
       throw error;
     })
     .finally(() => {
-      latestCheckPromise = null;
+      if (latestCheckPromise === request) {
+        latestCheckPromise = null;
+      }
     });
+  latestCheckPromise = request;
 
-  return latestCheckPromise;
+  return request;
 }
 
 export type KernelView = 'home' | 'versions';
@@ -153,7 +167,11 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const [homeApiKeyError, setHomeApiKeyError] = useState(false);
   const [showHomeApiKey, setShowHomeApiKey] = useState(false);
   const [tlsEnabled, setTlsEnabled] = useState(false);
+  const [versionSource, setVersionSource] = useState<VersionSourceSettings | null>(null);
+  const [versionSourceSaving, setVersionSourceSaving] = useState(false);
+  const [versionSourceError, setVersionSourceError] = useState('');
   const installDialogRef = useRef<HTMLDivElement>(null);
+  const latestCheckEpochRef = useRef(0);
   const savedPortRef = useRef(8317);
   const processNoticeTimerRef = useRef<number | null>(null);
   const copiedApiTimerRef = useRef<number | null>(null);
@@ -230,6 +248,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
       void loadGuiSettings();
       void loadTlsSettings();
       void refreshStatus();
+      if (view === 'versions') void loadVersionSourceSettings();
       if (view === 'home') void loadHomeApiKey();
     }).then((stop) => {
       if (disposed) stop();
@@ -240,6 +259,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     loadBundledCore();
     loadInstallTask();
     loadGuiSettings();
+    if (view === 'versions') void loadVersionSourceSettings();
     void loadTlsSettings();
     void getVersion()
       .then((version) => {
@@ -334,6 +354,16 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     } catch {}
   };
 
+  const loadVersionSourceSettings = async () => {
+    try {
+      const settings = await invoke<VersionSourceSettings>('get_version_source_settings');
+      setVersionSource(settings);
+      setVersionSourceError('');
+    } catch (error) {
+      setVersionSourceError(String(error));
+    }
+  };
+
   const loadHomeApiKey = async () => {
     try {
       const settings = await invoke<CoreConfigSummary>('get_core_config_settings');
@@ -376,20 +406,41 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     }
   };
 
-  const checkLatest = async () => {
+  const checkLatest = async (force = false) => {
+    const checkEpoch = ++latestCheckEpochRef.current;
     setCheckingLatest(true);
     setLatestError('');
     setMessage('');
     setMessageType('info');
 
     try {
-      const result = await requestLatestCore();
-      setLatest(result);
+      const result = await requestLatestCore(force);
+      if (checkEpoch === latestCheckEpochRef.current) setLatest(result);
     } catch (error) {
-      setLatest(null);
-      setLatestError(String(error));
+      if (checkEpoch === latestCheckEpochRef.current) {
+        setLatest(null);
+        setLatestError(String(error));
+      }
     } finally {
-      setCheckingLatest(false);
+      if (checkEpoch === latestCheckEpochRef.current) setCheckingLatest(false);
+    }
+  };
+
+  const updateVersionSource = async (enabled: boolean) => {
+    setVersionSourceSaving(true);
+    setVersionSourceError('');
+    try {
+      const settings = await invoke<VersionSourceSettings>('set_prefer_gitcode_downloads', { enabled });
+      setVersionSource(settings);
+      cachedLatest = null;
+      cachedLatestError = '';
+      setLatest(null);
+      await Promise.all([checkAppUpdate(), checkLatest(true)]);
+    } catch (error) {
+      await loadVersionSourceSettings();
+      setVersionSourceError(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }));
+    } finally {
+      setVersionSourceSaving(false);
     }
   };
 
@@ -771,6 +822,39 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         ) : null}
 
         {view === 'versions' ? (
+          <div className="panel version-source-panel">
+            <div className="version-source-copy">
+              <Info size={18} aria-hidden="true" />
+              <div>
+                <strong>{t('kernel.versions.gitcodeSource')}</strong>
+                <span>
+                  {versionSource?.gitcodeAvailable === false
+                    ? t('kernel.versions.gitcodeUnavailable')
+                    : t('kernel.versions.gitcodeSourceHint')}
+                </span>
+              </div>
+            </div>
+            <label className="switch-control" title={t('kernel.versions.gitcodeSource')}>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={versionSource?.preferGitcodeDownloads ?? false}
+                disabled={
+                  (!versionSource?.gitcodeAvailable && !versionSource?.preferGitcodeDownloads)
+                  || versionSourceSaving
+                  || appUpdateTask.running
+                  || installing
+                }
+                aria-label={t('kernel.versions.gitcodeSource')}
+                onChange={(event) => void updateVersionSource(event.currentTarget.checked)}
+              />
+              <span className="switch-track" />
+            </label>
+            {versionSourceError ? <p className="error version-source-error" role="alert">{versionSourceError}</p> : null}
+          </div>
+        ) : null}
+
+        {view === 'versions' ? (
           <div className="panel software-update-panel">
             <div className="panel-heading">
               <div>
@@ -909,7 +993,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               type="button"
               className="secondary-button"
               disabled={busy}
-              onClick={checkLatest}
+              onClick={() => void checkLatest()}
             >
               {checkingLatest ? t('kernel.update.checking') : t('kernel.versions.check')}
             </button>

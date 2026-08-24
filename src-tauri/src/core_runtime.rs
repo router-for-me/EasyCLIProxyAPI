@@ -5,9 +5,10 @@ pub(crate) async fn check_latest_core(
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreLatest, String> {
     let platform = current_core_platform()?;
-    let proxy_url = gui_config_state.snapshot()?.proxy_url;
+    let config = gui_config_state.snapshot()?;
+    let proxy_url = config.proxy_url;
     let client = http_client(&proxy_url)?;
-    let release = fetch_release(&client, None).await?;
+    let release = fetch_release(&client, None, config.prefer_gitcode_downloads).await?;
     let asset = select_release_asset(&release, &platform)?;
 
     Ok(CoreLatest {
@@ -82,11 +83,19 @@ pub(crate) async fn install_core_version(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     version: Option<String>,
 ) -> Result<CoreInstallResult, String> {
-    let proxy_url = gui_config_state.snapshot()?.proxy_url;
+    let config = gui_config_state.snapshot()?;
+    let proxy_url = config.proxy_url;
     let token = CancellationToken::new();
     state.start(token.clone(), version.clone())?;
-    let result =
-        install_core_version_inner(&window, state.inner(), token, version, &proxy_url).await;
+    let result = install_core_version_inner(
+        &window,
+        state.inner(),
+        token,
+        version,
+        &proxy_url,
+        config.prefer_gitcode_downloads,
+    )
+    .await;
     if result.is_err() {
         let _ = cleanup_core_work_dirs();
     }
@@ -170,11 +179,13 @@ pub(crate) async fn install_core_version_inner(
     token: CancellationToken,
     version: Option<String>,
     proxy_url: &str,
+    prefer_gitcode: bool,
 ) -> Result<CoreInstallResult, String> {
     let platform = current_core_platform()?;
     let client = http_client(proxy_url)?;
     state.progress(window, "检查版本", 0, None, true);
-    let release = fetch_release_cancelable(&client, version.as_deref(), &token).await?;
+    let release =
+        fetch_release_cancelable(&client, version.as_deref(), &token, prefer_gitcode).await?;
     let asset = select_release_asset(&release, &platform)?;
 
     let install_dir = core_install_dir()?;
@@ -305,17 +316,30 @@ pub(crate) fn install_bundled_core_inner(
 pub(crate) async fn fetch_release(
     client: &reqwest::Client,
     version: Option<&str>,
+    prefer_gitcode: bool,
 ) -> Result<GithubRelease, String> {
     if let Some(version) = version {
-        return Ok(release_from_tag(version));
+        return Ok(release_from_tag_for_repositories(
+            version,
+            configured_gitcode_core_repository(),
+            prefer_gitcode,
+        ));
     }
-    let atom_result = fetch_release_from_atom(client).await;
-    let github_result = match atom_result {
-        Ok(release) => Ok(release),
-        Err(atom_error) => fetch_release_from_page(client).await.map_err(|page_error| {
-            format!("GitHub 发布源请求失败: {atom_error}；release 页面请求失败: {page_error}")
-        }),
-    };
+    if prefer_gitcode {
+        if let Some(repository) = configured_gitcode_core_repository() {
+            return match fetch_release_from_gitcode(client, repository).await {
+                Ok(release) => Ok(release),
+                Err(gitcode_error) => fetch_release_from_github(client)
+                    .await
+                    .map_err(|github_error| {
+                        format!(
+                            "GitCode 内核发布源失败: {gitcode_error}；GitHub 回退源失败: {github_error}"
+                        )
+                    }),
+            };
+        }
+    }
+    let github_result = fetch_release_from_github(client).await;
     match github_result {
         Ok(release) => Ok(release),
         Err(github_error) => {
@@ -330,6 +354,18 @@ pub(crate) async fn fetch_release(
                     )
                 })
         }
+    }
+}
+
+pub(crate) async fn fetch_release_from_github(
+    client: &reqwest::Client,
+) -> Result<GithubRelease, String> {
+    let atom_result = fetch_release_from_atom(client).await;
+    match atom_result {
+        Ok(release) => Ok(release),
+        Err(atom_error) => fetch_release_from_page(client).await.map_err(|page_error| {
+            format!("GitHub 发布源请求失败: {atom_error}；release 页面请求失败: {page_error}")
+        }),
     }
 }
 
@@ -456,10 +492,10 @@ pub(crate) fn release_from_tag_for_repositories(
         let gitcode_url = gitcode_repository
             .map(|repository| gitcode_release_attachment_url(repository, &tag, &name));
         let (browser_download_url, fallback_download_urls) = if prefer_gitcode {
-            (
-                gitcode_url.unwrap_or_else(|| github_url.clone()),
-                Vec::new(),
-            )
+            match gitcode_url {
+                Some(gitcode_url) => (gitcode_url, vec![github_url]),
+                None => (github_url, Vec::new()),
+            }
         } else {
             (github_url, gitcode_url.into_iter().collect())
         };
@@ -569,9 +605,10 @@ pub(crate) async fn fetch_release_cancelable(
     client: &reqwest::Client,
     version: Option<&str>,
     token: &CancellationToken,
+    prefer_gitcode: bool,
 ) -> Result<GithubRelease, String> {
     tokio::select! {
-        result = fetch_release(client, version) => result,
+        result = fetch_release(client, version, prefer_gitcode) => result,
         _ = token.cancelled() => Err("已取消下载".to_string()),
     }
 }
@@ -658,7 +695,7 @@ pub(crate) async fn download_asset(
         if index > 0 {
             state.progress(
                 window,
-                "GitHub 下载失败，正在切换到 GitCode",
+                &format!("下载失败，正在切换到 {}", core_download_source_name(url)),
                 0,
                 asset.size,
                 true,
@@ -692,6 +729,15 @@ pub(crate) async fn download_asset(
         return Err("内核发行版没有可用的下载地址".to_string());
     }
     Err(format!("所有内核下载源均失败: {}", failures.join("；")))
+}
+
+pub(crate) fn core_download_source_name(url: &str) -> &'static str {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .filter(|host| host == "api.gitcode.com" || host.ends_with(".gitcode.com"))
+        .map(|_| "GitCode")
+        .unwrap_or("GitHub")
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -1025,6 +1025,51 @@ textarea:focus-visible {
   grid-column: auto;
 }
 
+.version-source-panel {
+  display: flex;
+  min-height: 68px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-block: 14px;
+}
+
+.version-source-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.version-source-copy > svg {
+  flex: none;
+  color: var(--ui-accent);
+}
+
+.version-source-copy > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.version-source-copy strong {
+  color: var(--theme-39352f);
+  font-size: var(--font-size-body);
+}
+
+.version-source-copy span {
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+}
+
+.version-source-error {
+  width: 100%;
+  margin: 0;
+  font-size: var(--font-size-meta);
+}
+
 .version-heading-inline {
   display: flex;
   min-width: 0;
@@ -1457,8 +1502,13 @@ textarea:focus-visible {
 
   .version-management-layout {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
     align-items: stretch;
+  }
+
+  .version-management-layout > .version-source-panel {
+    grid-column: 1 / -1;
+    grid-row: 1;
   }
 
   .version-management-layout > .panel {
@@ -1466,6 +1516,17 @@ textarea:focus-visible {
     align-self: stretch;
     grid-template-rows: auto minmax(0, 1fr) auto;
     row-gap: clamp(12px, 2vh, 22px);
+  }
+
+  .version-management-layout > .version-source-panel {
+    height: auto;
+    grid-template-rows: none;
+    row-gap: 8px;
+  }
+
+  .version-management-layout > .software-update-panel,
+  .version-management-layout > .version-panel {
+    grid-row: 2;
   }
 
   .home-page > .home-layout > .control-panel > .panel-detail-grid,

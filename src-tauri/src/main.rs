@@ -582,6 +582,7 @@ struct GuiConfigFile {
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
+    prefer_gitcode_downloads: bool,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
     request_retry: u32,
@@ -694,6 +695,7 @@ impl Default for GuiConfigFile {
             plugins_enabled: false,
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
+            prefer_gitcode_downloads: false,
             routing_session_affinity: false,
             routing_session_affinity_ttl: String::new(),
             request_retry: DEFAULT_REQUEST_RETRY,
@@ -722,6 +724,7 @@ struct GuiConfigPresence {
     plugins_enabled: Option<bool>,
     routing_strategy: Option<String>,
     proxy_url: Option<String>,
+    prefer_gitcode_downloads: Option<bool>,
     routing_session_affinity: Option<bool>,
     routing_session_affinity_ttl: Option<String>,
     request_retry: Option<u32>,
@@ -738,6 +741,13 @@ struct GuiSettings {
     allow_lan: bool,
     run_on_startup: bool,
     close_behavior: WindowsCloseBehavior,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VersionSourceSettings {
+    prefer_gitcode_downloads: bool,
+    gitcode_available: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -1661,6 +1671,16 @@ impl GuiConfigState {
         })
     }
 
+    fn set_prefer_gitcode_downloads(
+        &self,
+        prefer_gitcode_downloads: bool,
+    ) -> Result<GuiConfigFile, String> {
+        self.update(|config| {
+            config.prefer_gitcode_downloads = prefer_gitcode_downloads;
+            Ok(())
+        })
+    }
+
     fn set_window_size(&self, size: SavedWindowSize) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.window_width = Some(size.width);
@@ -2090,6 +2110,8 @@ fn main() {
             list_oauth_browsers,
             open_oauth_url,
             open_external_url,
+            get_version_source_settings,
+            set_prefer_gitcode_downloads,
             check_app_update,
             get_app_update_task,
             start_app_update,
