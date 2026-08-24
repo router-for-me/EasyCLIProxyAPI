@@ -423,51 +423,36 @@ export function VersionManagementPage() {
   const latestAppVersion = appUpdate?.latestVersion ? displayAppVersion(appUpdate.latestVersion) : '';
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
-  const appVersionStatusTone = appUpdateError
-    ? 'error'
-    : appUpdateTask.running
-      ? 'update'
-      : appHasUpdate
-        ? 'update'
-        : appUpdate
-          ? 'success'
-          : '';
-
-  const appVersionStatusLabel = appUpdateTask.running
+  const appVersionStatusLabel: string | null = appUpdateTask.running
     ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
     : appUpdateError
       ? t('kernel.update.failed')
       : appHasUpdate
         ? t('appUpdate.available', { version: latestAppVersion })
-        : appUpdate
-          ? t('appUpdate.upToDate')
-          : t('appUpdate.phase.checking');
+        : checkingAppUpdate || !appUpdate
+          ? t('appUpdate.phase.checking')
+          : null;
+  const appVersionStatusTone = appUpdateError ? 'error' : 'update';
 
   const coreHasUpdate = Boolean(latestVersion && currentVersion && currentVersion !== latestVersion);
 
   const coreVersionStatusTone = installing || progress?.running
     ? 'info'
-    : coreRunning
-      ? 'success'
-      : latestError
-        ? 'error'
-        : coreHasUpdate
-          ? 'update'
-          : coreInstalled
-            ? 'success'
-            : 'neutral';
+    : latestError
+      ? 'error'
+      : coreHasUpdate
+        ? 'update'
+        : 'neutral';
 
-  const coreVersionStatusLabel = installing || progress?.running
+  const coreVersionStatusLabel: string | null = installing || progress?.running
     ? (cancellingInstall ? t('kernel.install.cancelling') : progress?.phase ? localizeInstallPhase(progress.phase, t) : t('kernel.install.inProgress'))
-    : coreRunning
-      ? `${t('kernel.status.running')}${coreStatus?.processId ? ` (PID: ${coreStatus.processId})` : ''}`
-      : latestError
-        ? t('kernel.update.failed')
-        : coreHasUpdate
-          ? t('kernel.update.available')
-          : coreInstalled
-            ? t('kernel.status.stopped')
-            : t('kernel.status.notInstalled');
+    : latestError
+      ? t('kernel.update.failed')
+      : coreHasUpdate
+        ? t('kernel.update.available')
+        : !coreInstalled
+          ? t('kernel.status.notInstalled')
+          : null;
 
   // Install dialog calculations
   const computedPercent = progress?.percent ?? (progress?.total && progress.total > 0 ? (progress.downloaded / progress.total) * 100 : null);
@@ -583,9 +568,11 @@ export function VersionManagementPage() {
                 <small className="version-card-subtitle">{t('appUpdate.title')}</small>
               </div>
             </div>
-            <span className={`state-pill ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
-              {appVersionStatusLabel}
-            </span>
+            {appVersionStatusLabel ? (
+              <span className={`state-pill ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
+                {appVersionStatusLabel}
+              </span>
+            ) : null}
           </div>
 
           <div className="version-metrics-comparison">
@@ -602,11 +589,11 @@ export function VersionManagementPage() {
             <div className={`version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
               <span className="version-metric-label">{t('appUpdate.latest')}</span>
               <strong className="version-metric-value">
-                {appUpdate ? (latestAppVersion || t('appUpdate.upToDate')) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+                {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
               </strong>
-              <span className={`version-metric-chip ${appHasUpdate ? 'update' : 'latest'}`}>
-                {appHasUpdate ? t('kernel.update.available') : t('kernel.update.latest')}
-              </span>
+              {appHasUpdate ? (
+                <span className="version-metric-chip update">{t('kernel.update.available')}</span>
+              ) : null}
             </div>
           </div>
 
@@ -673,9 +660,11 @@ export function VersionManagementPage() {
                 <small className="version-card-subtitle">{t('kernel.versions.title')}</small>
               </div>
             </div>
-            <span className={`state-pill ${coreVersionStatusTone}`} title={coreVersionStatusLabel}>
-              {coreVersionStatusLabel}
-            </span>
+            {coreVersionStatusLabel ? (
+              <span className={`state-pill ${coreVersionStatusTone}`} title={coreVersionStatusLabel}>
+                {coreVersionStatusLabel}
+              </span>
+            ) : null}
           </div>
 
           <div className="version-metrics-comparison">
@@ -763,13 +752,11 @@ export function VersionManagementPage() {
                 <small className="version-card-subtitle">{t('appUpdate.catalog.label')}</small>
               </div>
             </div>
-            <span className={`state-pill ${catalogUpdateError ? 'error' : catalogUpdating ? 'update' : 'success'}`}>
-              {catalogUpdating
-                ? t('appUpdate.catalog.updating')
-                : catalogUpdateError
-                  ? t('kernel.update.failed')
-                  : t('appUpdate.catalog.unchanged')}
-            </span>
+            {catalogUpdating || catalogUpdateError ? (
+              <span className={`state-pill ${catalogUpdateError ? 'error' : 'update'}`}>
+                {catalogUpdating ? t('appUpdate.catalog.updating') : t('kernel.update.failed')}
+              </span>
+            ) : null}
           </div>
 
           <div className="version-catalog-body">
