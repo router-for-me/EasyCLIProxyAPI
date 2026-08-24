@@ -8,27 +8,17 @@ import {
   ArrowRight,
   Box,
   Check,
-  Cpu,
   Database,
   Download,
   ExternalLink,
   Info,
   RefreshCw,
   RotateCcw,
-  Sparkles,
   Zap,
 } from 'lucide-react';
 import { useCoreRuntime } from '../coreRuntime';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
-
-export type CorePlatform = {
-  os: string;
-  arch: string;
-  assetOs: string;
-  assetArch: string;
-  archiveKind: 'tar.gz' | 'zip';
-};
 
 export type CoreLatest = {
   version: string;
@@ -125,8 +115,6 @@ export function VersionManagementPage() {
   } = useCoreRuntime();
 
   const [installedAppVersion, setInstalledAppVersion] = useState('');
-  const [platform, setPlatform] = useState<CorePlatform | null>(null);
-  const [platformError, setPlatformError] = useState('');
   const [latest, setLatest] = useState<CoreLatest | null>(cachedLatest);
   const [latestError, setLatestError] = useState(cachedLatestError);
   const [checkingLatest, setCheckingLatest] = useState(Boolean(latestCheckPromise));
@@ -192,17 +180,6 @@ export function VersionManagementPage() {
 
     if (task.message && !task.running) {
       showToast(task.message, task.phase === '安装失败' ? 'error' : 'info');
-    }
-  };
-
-  const loadPlatform = async () => {
-    try {
-      const result = await invoke<CorePlatform>('detect_core_platform');
-      setPlatform(result);
-      setPlatformError('');
-    } catch (error) {
-      setPlatform(null);
-      setPlatformError(String(error));
     }
   };
 
@@ -386,7 +363,6 @@ export function VersionManagementPage() {
       else unlistenConfig = stop;
     });
 
-    loadPlatform();
     loadInstallTask();
     loadVersionSourceSettings();
 
@@ -492,9 +468,6 @@ export function VersionManagementPage() {
           : coreInstalled
             ? t('kernel.status.stopped')
             : t('kernel.status.notInstalled');
-
-  const platformOsLabel = platform?.os || (platformError ? t('common.detectionFailed') : t('common.detecting'));
-  const platformArchLabel = platform?.arch || (platformError ? t('common.detectionFailed') : t('common.detecting'));
 
   // Install dialog calculations
   const computedPercent = progress?.percent ?? (progress?.total && progress.total > 0 ? (progress.downloaded / progress.total) * 100 : null);
@@ -637,15 +610,6 @@ export function VersionManagementPage() {
             </div>
           </div>
 
-          <div className="version-meta-bar">
-            <Sparkles size={16} aria-hidden="true" />
-            <span>
-              {appUpdate?.autoUpdateSupported
-                ? t('kernel.versions.autoUpdateSupported')
-                : t('kernel.versions.autoUpdateManual')}
-            </span>
-          </div>
-
           {appUpdateError ? (
             <div className="version-alert-banner error" role="alert">
               <AlertCircle size={16} />
@@ -737,17 +701,6 @@ export function VersionManagementPage() {
               <span className={`version-metric-chip ${coreHasUpdate ? 'update' : 'latest'}`}>
                 {coreHasUpdate ? t('kernel.update.available') : t('kernel.versions.latestCloud')}
               </span>
-            </div>
-          </div>
-
-          <div className="version-runtime-chips">
-            <div className="version-runtime-chip platform">
-              <Cpu size={15} aria-hidden="true" />
-              <span><strong>{t('kernel.versions.platform')}:</strong> {platformOsLabel} / {platformArchLabel}</span>
-            </div>
-            <div className={`version-runtime-chip status ${coreRunning ? 'running' : 'stopped'}`}>
-              <span className="status-dot" aria-hidden="true" />
-              <span>{coreRunning ? t('kernel.status.running') : t('kernel.control.notRunning')}</span>
             </div>
           </div>
 

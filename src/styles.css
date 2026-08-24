@@ -1283,69 +1283,12 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--theme-554075) 12%, transparent);
 }
 
-/* Feature & Meta bars */
-.version-meta-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--theme-faf8f2);
-  border: 1px solid var(--theme-e8e4dc);
-  color: var(--theme-5f5a53);
-  font-size: 13px;
-}
-
-.version-meta-bar > svg {
-  flex: none;
-  color: var(--ui-accent);
-}
-
-.version-runtime-chips {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.version-runtime-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  background: var(--theme-faf8f2);
-  border: 1px solid var(--theme-e8e4dc);
-  font-size: 12px;
-  color: var(--theme-5f5a53);
-}
-
-.version-runtime-chip.status.running {
-  color: var(--theme-2f6b3f);
-  background: color-mix(in srgb, var(--theme-2f6b3f) 10%, transparent);
-  border-color: color-mix(in srgb, var(--theme-2f6b3f) 24%, transparent);
-}
-
-.version-runtime-chip.status.stopped {
-  color: var(--theme-7a746c);
-}
-
 .status-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: currentColor;
   flex: none;
-}
-
-.version-runtime-chip.status.running .status-dot {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-2f6b3f) 30%, transparent);
-  animation: pulse-dot 2s infinite ease-in-out;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.6; transform: scale(0.85); }
 }
 
 /* Alert / Notification Banners */
