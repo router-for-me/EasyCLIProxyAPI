@@ -4,9 +4,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   AlertCircle,
-  AppWindow,
-  ArrowRight,
-  Box,
   Check,
   Database,
   Download,
@@ -14,7 +11,6 @@ import {
   Info,
   RefreshCw,
   RotateCcw,
-  Zap,
 } from 'lucide-react';
 import { useCoreRuntime } from '../coreRuntime';
 import { useI18n } from '../i18n';
@@ -413,7 +409,6 @@ export function VersionManagementPage() {
   const latestVersion = latest?.version ?? '';
   const currentVersion = coreStatus?.currentVersion ?? '';
   const coreInstalled = Boolean(coreStatus?.installed);
-  const coreRunning = Boolean(coreStatus?.running);
   const coreProcessBusy = Boolean(coreStatus?.starting);
   const busy = checkingLatest || installing || coreProcessBusy;
   const installDisabled = busy || installing;
@@ -432,7 +427,11 @@ export function VersionManagementPage() {
         : checkingAppUpdate || !appUpdate
           ? t('appUpdate.phase.checking')
           : null;
-  const appVersionStatusTone = appUpdateError ? 'error' : 'update';
+  const appVersionStatusTone = appUpdateError
+    ? 'error'
+    : appUpdateTask.running || checkingAppUpdate || !appUpdate
+      ? 'info'
+      : 'update';
 
   const coreHasUpdate = Boolean(latestVersion && currentVersion && currentVersion !== latestVersion);
 
@@ -504,115 +503,75 @@ export function VersionManagementPage() {
 
   return (
     <section className="page management-page version-management-page">
-      {/* Network Download Mirror Banner */}
-      <section className="version-mirror-card" aria-label={t('kernel.versions.gitcodeSource')}>
-        <div className="version-mirror-content">
-          <div className="version-mirror-icon-box">
-            <Zap size={22} aria-hidden="true" />
-          </div>
-          <div className="version-mirror-info">
-            <div className="version-mirror-headline">
-              <strong>{t('kernel.versions.gitcodeSource')}</strong>
-              {isGitcodeActive ? (
-                <span className="version-mirror-pill active">
-                  {t('kernel.versions.gitcodeEnabled')}
-                </span>
-              ) : null}
-            </div>
-            <p>
+      <section className="panel version-list">
+        <div className="version-source-row" aria-label={t('kernel.versions.gitcodeSource')}>
+          <div className="version-source-copy">
+            <strong>{t('kernel.versions.gitcodeSource')}</strong>
+            <span>
               {versionSource?.gitcodeAvailable === false
                 ? t('kernel.versions.gitcodeUnavailable')
                 : t('kernel.versions.gitcodeSourceHint')}
-            </p>
-          </div>
-        </div>
-
-        <div className="version-mirror-toggle">
-          <label className="switch-control" title={t('kernel.versions.gitcodeSource')}>
-            <input
-              type="checkbox"
-              role="switch"
-              checked={isGitcodeActive}
-              disabled={
-                (!versionSource?.gitcodeAvailable && !versionSource?.preferGitcodeDownloads)
-                || versionSourceSaving
-                || appUpdateTask.running
-                || installing
-              }
-              aria-label={t('kernel.versions.gitcodeSource')}
-              onChange={(event) => void updateVersionSource(event.currentTarget.checked)}
-            />
-            <span className="switch-track" />
-          </label>
-        </div>
-
-        {versionSourceError ? (
-          <div className="version-mirror-error" role="alert">
-            <AlertCircle size={15} />
-            <span>{versionSourceError}</span>
-          </div>
-        ) : null}
-      </section>
-
-      {/* Main Version Management Cards Grid */}
-      <div className="version-grid">
-        {/* Card 1: 桌面客户端 (Desktop Application) */}
-        <article className="panel version-module-card app-module-card">
-          <div className="version-card-top">
-            <div className="version-card-title-group">
-              <span className="version-card-icon app-icon" aria-hidden="true">
-                <AppWindow size={22} />
-              </span>
-              <div>
-                <h2>{t('kernel.versions.appCardTitle')}</h2>
-                <small className="version-card-subtitle">{t('appUpdate.title')}</small>
-              </div>
-            </div>
-            {appVersionStatusLabel ? (
-              <span className={`state-pill ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
-                {appVersionStatusLabel}
-              </span>
+            </span>
+            {versionSourceError ? (
+              <span className="version-source-error" role="alert">{versionSourceError}</span>
             ) : null}
           </div>
+          <div className="version-source-control">
+            <label className="switch-control" title={t('kernel.versions.gitcodeSource')}>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={isGitcodeActive}
+                disabled={
+                  (!versionSource?.gitcodeAvailable && !versionSource?.preferGitcodeDownloads)
+                  || versionSourceSaving
+                  || appUpdateTask.running
+                  || installing
+                }
+                aria-label={t('kernel.versions.gitcodeSource')}
+                onChange={(event) => void updateVersionSource(event.currentTarget.checked)}
+              />
+              <span className="switch-track" />
+            </label>
+          </div>
+        </div>
 
-          <div className="version-metrics-comparison">
-            <div className="version-metric-tile">
-              <span className="version-metric-label">{t('appUpdate.current')}</span>
-              <strong className="version-metric-value">{currentAppVersion}</strong>
-              <span className="version-metric-chip current">{t('kernel.versions.currentRunning')}</span>
-            </div>
-
-            <div className="version-comparison-divider" aria-hidden="true">
-              <ArrowRight size={18} />
-            </div>
-
-            <div className={`version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
-              <span className="version-metric-label">{t('appUpdate.latest')}</span>
-              <strong className="version-metric-value">
-                {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
-              </strong>
-              {appHasUpdate ? (
-                <span className="version-metric-chip update">{t('kernel.update.available')}</span>
+        <article className="version-list-item app-module-card">
+          <div className="version-item-content">
+            <div className="version-card-top">
+              <h2>{t('kernel.versions.appCardTitle')}</h2>
+              {appVersionStatusLabel ? (
+                <span className={`version-row-status ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
+                  {appVersionStatusLabel}
+                </span>
               ) : null}
             </div>
-          </div>
 
-          {appUpdateError ? (
-            <div className="version-alert-banner error" role="alert">
-              <AlertCircle size={16} />
-              <span>{appUpdateError}</span>
-            </div>
-          ) : !appUpdate?.autoUpdateSupported ? (
-            <div className="version-alert-banner neutral">
-              <Info size={16} />
-              <span>{t('appUpdate.manualFallback')}</span>
-            </div>
-          ) : appHasUpdate ? (
-            <div className="version-alert-banner update">
-              <Download size={16} />
-              <span>{t('appUpdate.badgeAvailable', { version: latestAppVersion })}</span>
-            </div>
-          ) : null}
+            <dl className="version-metrics-comparison">
+              <div className="version-metric-tile">
+                <dt className="version-metric-label">{t('appUpdate.current')}</dt>
+                <dd className="version-metric-value">{currentAppVersion}</dd>
+              </div>
+              <div className={`version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
+                <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
+                <dd className="version-metric-value">
+                  {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+                </dd>
+              </div>
+            </dl>
+
+            {appUpdateError ? (
+              <div className="version-alert-banner error" role="alert">
+                <AlertCircle size={14} />
+                <span>{appUpdateError}</span>
+              </div>
+            ) : !appUpdate?.autoUpdateSupported ? (
+              <div className="version-alert-banner neutral">
+                <Info size={14} />
+                <span>{t('appUpdate.manualFallback')}</span>
+              </div>
+            ) : null}
+          </div>
 
           <div className="version-card-actions">
             <button
@@ -628,7 +587,7 @@ export function VersionManagementPage() {
             {appHasUpdate && appUpdate?.autoUpdateSupported ? (
               <button
                 type="button"
-                className="primary-button version-action-highlight"
+                className="primary-button"
                 disabled={appUpdateTask.running}
                 onClick={requestAppUpdate}
               >
@@ -648,62 +607,39 @@ export function VersionManagementPage() {
           </div>
         </article>
 
-        {/* Card 2: 代理内核 (Proxy Core Kernel) */}
-        <article className="panel version-module-card core-module-card">
-          <div className="version-card-top">
-            <div className="version-card-title-group">
-              <span className="version-card-icon core-icon" aria-hidden="true">
-                <Box size={22} />
-              </span>
-              <div>
-                <h2>{t('kernel.versions.coreCardTitle')}</h2>
-                <small className="version-card-subtitle">{t('kernel.versions.title')}</small>
-              </div>
+        <article className="version-list-item core-module-card">
+          <div className="version-item-content">
+            <div className="version-card-top">
+              <h2>{t('kernel.versions.coreCardTitle')}</h2>
+              {coreVersionStatusLabel ? (
+                <span className={`version-row-status ${coreVersionStatusTone}`} title={coreVersionStatusLabel}>
+                  {coreVersionStatusLabel}
+                </span>
+              ) : null}
             </div>
-            {coreVersionStatusLabel ? (
-              <span className={`state-pill ${coreVersionStatusTone}`} title={coreVersionStatusLabel}>
-                {coreVersionStatusLabel}
-              </span>
+
+            <dl className="version-metrics-comparison">
+              <div className="version-metric-tile">
+                <dt className="version-metric-label">{t('kernel.versions.current')}</dt>
+                <dd className="version-metric-value" title={currentVersion || t('kernel.status.notInstalled')}>
+                  {currentVersion || t('kernel.status.notInstalled')}
+                </dd>
+              </div>
+              <div className={`version-metric-tile ${coreHasUpdate ? 'has-update' : ''}`}>
+                <dt className="version-metric-label">{t('kernel.versions.latest')}</dt>
+                <dd className="version-metric-value" title={latestVersion || latestError || t('kernel.update.notChecked')}>
+                  {checkingLatest ? t('kernel.update.checking') : (latestVersion || (latestError ? t('common.detectionFailed') : t('kernel.update.notChecked')))}
+                </dd>
+              </div>
+            </dl>
+
+            {latestError ? (
+              <div className="version-alert-banner error" role="alert">
+                <AlertCircle size={14} />
+                <span>{latestError}</span>
+              </div>
             ) : null}
           </div>
-
-          <div className="version-metrics-comparison">
-            <div className="version-metric-tile">
-              <span className="version-metric-label">{t('kernel.versions.current')}</span>
-              <strong className="version-metric-value" title={currentVersion || t('kernel.status.notInstalled')}>
-                {currentVersion || t('kernel.status.notInstalled')}
-              </strong>
-              <span className={`version-metric-chip ${coreInstalled ? 'current' : 'warning'}`}>
-                {coreInstalled ? t('kernel.versions.currentInstalled') : t('kernel.status.notInstalled')}
-              </span>
-            </div>
-
-            <div className="version-comparison-divider" aria-hidden="true">
-              <ArrowRight size={18} />
-            </div>
-
-            <div className={`version-metric-tile ${coreHasUpdate ? 'has-update' : ''}`}>
-              <span className="version-metric-label">{t('kernel.versions.latest')}</span>
-              <strong className="version-metric-value" title={latestVersion || latestError || t('kernel.update.notChecked')}>
-                {checkingLatest ? t('kernel.update.checking') : (latestVersion || (latestError ? t('common.detectionFailed') : t('kernel.update.notChecked')))}
-              </strong>
-              <span className={`version-metric-chip ${coreHasUpdate ? 'update' : 'latest'}`}>
-                {coreHasUpdate ? t('kernel.update.available') : t('kernel.versions.latestCloud')}
-              </span>
-            </div>
-          </div>
-
-          {latestError ? (
-            <div className="version-alert-banner error" role="alert">
-              <AlertCircle size={16} />
-              <span>{latestError}</span>
-            </div>
-          ) : coreRunning ? (
-            <div className="version-alert-banner info">
-              <Info size={16} />
-              <span>{t('kernel.versions.coreRunningNotice')}</span>
-            </div>
-          ) : null}
 
           <div className="version-card-actions core-actions">
             <button
@@ -718,7 +654,7 @@ export function VersionManagementPage() {
 
             <button
               type="button"
-              className={latestVersion && (!coreInstalled || currentVersion !== latestVersion) ? 'primary-button version-action-highlight' : 'secondary-button'}
+              className={latestVersion && (!coreInstalled || currentVersion !== latestVersion) ? 'primary-button' : 'secondary-button'}
               title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
               disabled={!latestVersion || busy}
               onClick={() => void installVersion(latestVersion)}
@@ -740,41 +676,29 @@ export function VersionManagementPage() {
           </div>
         </article>
 
-        {/* Card 3: Codex 模型目录 (Model Catalog) */}
-        <article className="panel version-module-card catalog-module-card">
-          <div className="version-card-top">
-            <div className="version-card-title-group">
-              <span className="version-card-icon catalog-icon" aria-hidden="true">
-                <Database size={22} />
-              </span>
-              <div>
-                <h2>{t('kernel.versions.catalogCardTitle')}</h2>
-                <small className="version-card-subtitle">{t('appUpdate.catalog.label')}</small>
-              </div>
+        <article className="version-list-item catalog-module-card">
+          <div className="version-item-content">
+            <div className="version-card-top">
+              <h2>{t('kernel.versions.catalogCardTitle')}</h2>
+              {catalogUpdating || catalogUpdateError ? (
+                <span className={`version-row-status ${catalogUpdateError ? 'error' : 'info'}`}>
+                  {catalogUpdating ? t('appUpdate.catalog.updating') : t('kernel.update.failed')}
+                </span>
+              ) : null}
             </div>
-            {catalogUpdating || catalogUpdateError ? (
-              <span className={`state-pill ${catalogUpdateError ? 'error' : 'update'}`}>
-                {catalogUpdating ? t('appUpdate.catalog.updating') : t('kernel.update.failed')}
-              </span>
-            ) : null}
-          </div>
 
-          <div className="version-catalog-body">
             <p className="version-catalog-description">
               {t('appUpdate.catalog.description')}
-            </p>
-            <p className="version-catalog-hint">
-              {t('appUpdate.catalog.updateHint')}
             </p>
 
             {catalogUpdateError ? (
               <div className="version-alert-banner error" role="alert">
-                <AlertCircle size={16} />
+                <AlertCircle size={14} />
                 <span>{catalogUpdateError}</span>
               </div>
             ) : catalogUpdateNotice ? (
               <div className="version-alert-banner success">
-                <Check size={16} />
+                <Check size={14} />
                 <span>{catalogUpdateNotice}</span>
               </div>
             ) : null}
@@ -783,7 +707,7 @@ export function VersionManagementPage() {
           <div className="version-card-actions">
             <button
               type="button"
-              className="primary-button"
+              className="secondary-button"
               disabled={catalogUpdating || appUpdateTask.running || busy}
               onClick={() => void syncModelCatalog()}
               title={t('appUpdate.catalog.updateHint')}
@@ -797,7 +721,7 @@ export function VersionManagementPage() {
             </button>
           </div>
         </article>
-      </div>
+      </section>
 
       {/* Installation Progress Modal Dialog */}
       {installDialogOpen && progress ? (
