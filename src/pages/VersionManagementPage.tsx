@@ -5,7 +5,6 @@ import { listen } from '@tauri-apps/api/event';
 import {
   AlertCircle,
   Check,
-  Database,
   Download,
   ExternalLink,
   Info,
@@ -37,10 +36,6 @@ export type CoreInstallTask = {
   percent: number | null;
   message: string | null;
   result: CoreInstallResult | null;
-};
-
-export type CodexModelCatalogUpdateResult = {
-  outcome: 'updated' | 'unchanged';
 };
 
 export type VersionSourceSettings = {
@@ -123,10 +118,6 @@ export function VersionManagementPage() {
   const [versionSource, setVersionSource] = useState<VersionSourceSettings | null>(null);
   const [versionSourceSaving, setVersionSourceSaving] = useState(false);
   const [versionSourceError, setVersionSourceError] = useState('');
-
-  const [catalogUpdating, setCatalogUpdating] = useState(false);
-  const [catalogUpdateError, setCatalogUpdateError] = useState('');
-  const [catalogUpdateNotice, setCatalogUpdateNotice] = useState('');
 
   const [toastNotice, setToastNotice] = useState<{
     message: string;
@@ -313,26 +304,6 @@ export function VersionManagementPage() {
       await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
     } catch (error) {
       showToast(t('kernel.error.openUpdate', { error: String(error) }), 'error');
-    }
-  };
-
-  const syncModelCatalog = async () => {
-    setCatalogUpdating(true);
-    setCatalogUpdateError('');
-    setCatalogUpdateNotice('');
-    try {
-      const result = await invoke<CodexModelCatalogUpdateResult>('update_codex_model_catalog');
-      const notice = result.outcome === 'updated'
-        ? t('appUpdate.catalog.updated')
-        : t('appUpdate.catalog.unchanged');
-      setCatalogUpdateNotice(notice);
-      showToast(notice, 'success');
-    } catch (error) {
-      const err = String(error);
-      setCatalogUpdateError(err);
-      showToast(err, 'error');
-    } finally {
-      setCatalogUpdating(false);
     }
   };
 
@@ -677,51 +648,6 @@ export function VersionManagementPage() {
           </div>
         </article>
 
-        <article className="version-list-item catalog-module-card">
-          <div className="version-item-content">
-            <div className="version-card-top">
-              <h2>{t('kernel.versions.catalogCardTitle')}</h2>
-              {catalogUpdating || catalogUpdateError ? (
-                <span className={`version-row-status ${catalogUpdateError ? 'error' : 'info'}`}>
-                  {catalogUpdating ? t('appUpdate.catalog.updating') : t('kernel.update.failed')}
-                </span>
-              ) : null}
-            </div>
-
-            <p className="version-catalog-description">
-              {t('appUpdate.catalog.description')}
-            </p>
-
-            {catalogUpdateError ? (
-              <div className="version-alert-banner error" role="alert">
-                <AlertCircle size={14} />
-                <span>{catalogUpdateError}</span>
-              </div>
-            ) : catalogUpdateNotice ? (
-              <div className="version-alert-banner success">
-                <Check size={14} />
-                <span>{catalogUpdateNotice}</span>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="version-card-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={catalogUpdating || appUpdateTask.running || busy}
-              onClick={() => void syncModelCatalog()}
-              title={t('appUpdate.catalog.updateHint')}
-            >
-              <Database size={15} className={catalogUpdating ? 'spin' : ''} aria-hidden="true" />
-              <span>
-                {catalogUpdating
-                  ? t('appUpdate.catalog.updating')
-                  : t('appUpdate.catalog.update')}
-              </span>
-            </button>
-          </div>
-        </article>
         </div>
       </section>
 
