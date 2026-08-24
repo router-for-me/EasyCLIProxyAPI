@@ -7,6 +7,7 @@ mod app_settings;
 mod app_update;
 mod core_config;
 mod core_runtime;
+mod instance_lock;
 mod model_aliases;
 mod platform;
 mod provider_health;

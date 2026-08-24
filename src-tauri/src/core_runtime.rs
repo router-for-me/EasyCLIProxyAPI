@@ -1003,7 +1003,11 @@ pub(crate) fn start_core_process_inner(
     let binary_path = find_core_binary(&install_dir)
         .ok_or_else(|| "未安装 CPA 内核，请先安装最新版".to_string())?;
 
-    if process_state.managed_pid().is_some() || is_core_running(&binary_path) {
+    let existing_process_ids = find_core_process_ids(&binary_path);
+    if process_state.managed_pid().is_some() || !existing_process_ids.is_empty() {
+        if !existing_process_ids.is_empty() {
+            process_state.adopt_process_ids(&binary_path, existing_process_ids)?;
+        }
         return Err("CPA 内核已经在运行".to_string());
     }
     let management_address = core_management_address(&gui_config.host, gui_config.port)?;
@@ -1124,26 +1128,52 @@ pub(crate) fn configure_networked_command(command: &mut Command, proxy_url: &str
 }
 
 pub(crate) fn stop_core_process_inner(process_state: &CoreProcessState) -> Result<(), String> {
+    let mut stopped_any = false;
+    let mut errors = Vec::new();
+
     if let Some(mut child) = process_state.take_child() {
-        terminate_child(&mut child)?;
+        stopped_any = true;
+        if let Err(error) = terminate_child(&mut child) {
+            errors.push(error);
+        }
         process_state.clear_lifetime_guard();
-        return Ok(());
     }
 
-    let install_dir = core_install_dir()?;
-    let binary_path = find_core_binary(&install_dir)
-        .ok_or_else(|| "未安装 CPA 内核，请先安装最新版".to_string())?;
-    let process_ids = find_core_process_ids(&binary_path);
-
-    if process_ids.is_empty() {
-        return Err("CPA 内核当前未运行".to_string());
+    let mut process_ids = process_state
+        .take_adopted_processes()
+        .into_iter()
+        .filter(|process| {
+            process_executable_path(process.process_id)
+                .as_deref()
+                .is_some_and(|path| executable_paths_match(&process.binary_path, path))
+        })
+        .map(|process| process.process_id)
+        .collect::<Vec<_>>();
+    if let Ok(install_dir) = core_install_dir() {
+        if let Some(binary_path) = find_core_binary(&install_dir) {
+            process_ids.extend(find_core_process_ids(&binary_path));
+        }
     }
+    process_ids.sort_unstable();
+    process_ids.dedup();
 
     for process_id in process_ids {
-        terminate_process_id(process_id)?;
+        if !is_process_alive(process_id) {
+            continue;
+        }
+        stopped_any = true;
+        if let Err(error) = terminate_process_id(process_id) {
+            errors.push(error);
+        }
     }
 
-    Ok(())
+    if !errors.is_empty() {
+        Err(errors.join("；"))
+    } else if stopped_any {
+        Ok(())
+    } else {
+        Err("CPA 内核当前未运行".to_string())
+    }
 }
 
 pub(crate) fn core_install_dir() -> Result<PathBuf, String> {
@@ -1545,75 +1575,76 @@ pub(crate) fn is_core_running(binary_path: &Path) -> bool {
 }
 
 pub(crate) fn find_core_process_ids(binary_path: &Path) -> Vec<u32> {
-    #[cfg(target_os = "linux")]
-    {
-        find_core_process_ids_linux(binary_path)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = binary_path;
-        find_core_process_ids_by_name()
-    }
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn find_core_process_ids_linux(binary_path: &Path) -> Vec<u32> {
-    let Ok(expected) = fs::canonicalize(binary_path) else {
-        return Vec::new();
-    };
-    let output = Command::new("pgrep")
-        .args(["-x", core_binary_name()])
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.trim().parse::<u32>().ok())
-        .filter(|pid| {
-            fs::read_link(format!("/proc/{pid}/exe"))
-                .ok()
-                .and_then(|path| fs::canonicalize(path).ok())
-                .map(|path| path == expected)
-                .unwrap_or(false)
+    find_candidate_core_process_ids()
+        .into_iter()
+        .filter(|process_id| {
+            process_executable_path(*process_id)
+                .as_deref()
+                .is_some_and(|path| executable_paths_match(binary_path, path))
         })
         .collect()
+}
+
+pub(crate) fn executable_paths_match(expected: &Path, actual: &Path) -> bool {
+    let expected = fs::canonicalize(expected).unwrap_or_else(|_| expected.to_path_buf());
+    let actual = fs::canonicalize(actual).unwrap_or_else(|_| actual.to_path_buf());
+
+    #[cfg(windows)]
+    {
+        path_to_string(&expected).eq_ignore_ascii_case(&path_to_string(&actual))
+    }
+
+    #[cfg(not(windows))]
+    {
+        expected == actual
+    }
 }
 
 #[cfg(all(not(target_os = "linux"), target_os = "windows"))]
-pub(crate) fn find_core_process_ids_by_name() -> Vec<u32> {
-    let image_name = core_binary_name();
-    let filter = format!("IMAGENAME eq {image_name}");
-    let mut command = Command::new("tasklist");
-    command.args(["/FI", &filter, "/FO", "CSV", "/NH"]);
-    configure_background_command(&mut command);
-    let output = command.output();
-    let Ok(output) = output else {
-        return Vec::new();
+pub(crate) fn find_candidate_core_process_ids() -> Vec<u32> {
+    use std::{ffi::OsString, mem, os::windows::ffi::OsStringExt};
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        },
     };
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let columns = line
-                .trim()
-                .trim_matches('"')
-                .split("\",\"")
-                .collect::<Vec<_>>();
-            let name = columns.first()?;
-            let pid = columns.get(1)?;
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
 
-            name.eq_ignore_ascii_case(image_name)
-                .then(|| pid.parse::<u32>().ok())
-                .flatten()
-        })
-        .collect()
+    let mut entry = unsafe { mem::zeroed::<PROCESSENTRY32W>() };
+    entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut process_ids = Vec::new();
+    if unsafe { Process32FirstW(snapshot, &mut entry) } != 0 {
+        loop {
+            let name_length = entry
+                .szExeFile
+                .iter()
+                .position(|character| *character == 0)
+                .unwrap_or(entry.szExeFile.len());
+            let image_name = OsString::from_wide(&entry.szExeFile[..name_length]);
+            if entry.th32ProcessID != 0
+                && image_name
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(core_binary_name())
+            {
+                process_ids.push(entry.th32ProcessID);
+            }
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                break;
+            }
+        }
+    }
+    unsafe { CloseHandle(snapshot) };
+    process_ids
 }
 
 #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
-pub(crate) fn find_core_process_ids_by_name() -> Vec<u32> {
+pub(crate) fn find_candidate_core_process_ids() -> Vec<u32> {
     Command::new("pgrep")
         .args(["-x", core_binary_name()])
         .output()
@@ -1627,17 +1658,99 @@ pub(crate) fn find_core_process_ids_by_name() -> Vec<u32> {
         .unwrap_or_default()
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn find_candidate_core_process_ids() -> Vec<u32> {
+    Command::new("pgrep")
+        .args(["-x", core_binary_name()])
+        .output()
+        .ok()
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.trim().parse::<u32>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn process_executable_path(process_id: u32) -> Option<PathBuf> {
+    fs::read_link(format!("/proc/{process_id}/exe")).ok()
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn process_executable_path(process_id: u32) -> Option<PathBuf> {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut std::ffi::c_void, buffer_size: u32) -> i32;
+    }
+
+    let mut buffer = vec![0_u8; 4096];
+    let length = unsafe {
+        proc_pidpath(
+            process_id.try_into().ok()?,
+            buffer.as_mut_ptr().cast(),
+            buffer.len() as u32,
+        )
+    };
+    if length <= 0 {
+        return None;
+    }
+    buffer.truncate(length as usize);
+    Some(PathBuf::from(OsString::from_vec(buffer)))
+}
+
+#[cfg(windows)]
+pub(crate) fn process_executable_path(process_id: u32) -> Option<PathBuf> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        },
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if handle.is_null() {
+        return None;
+    }
+    let mut buffer = vec![0_u16; 32_768];
+    let mut length = buffer.len() as u32;
+    let success =
+        unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length) };
+    unsafe { CloseHandle(handle as HANDLE) };
+    if success == 0 {
+        return None;
+    }
+    buffer.truncate(length as usize);
+    Some(PathBuf::from(OsString::from_wide(&buffer)))
+}
+
+pub(crate) fn adopt_existing_core_processes(
+    process_state: &CoreProcessState,
+) -> Result<Vec<u32>, String> {
+    let install_dir = core_install_dir()?;
+    let Some(binary_path) = find_core_binary(&install_dir) else {
+        process_state.clear_adopted_processes()?;
+        return Ok(Vec::new());
+    };
+    let process_ids = find_core_process_ids(&binary_path);
+    process_state.adopt_process_ids(&binary_path, process_ids.clone())?;
+    Ok(process_ids)
+}
+
 pub(crate) fn shutdown_managed_core(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) {
-    let was_running = process_state.managed_pid().is_some();
+    let was_running = process_state.managed_pid().is_some()
+        || core_install_dir()
+            .ok()
+            .and_then(|install_dir| find_core_binary(&install_dir))
+            .is_some_and(|binary_path| is_core_running(&binary_path));
     let _ = gui_config_state.set_run_on_startup(was_running);
-
-    if let Some(mut child) = process_state.take_child() {
-        let _ = terminate_child(&mut child);
-    }
-    process_state.clear_lifetime_guard();
+    let _ = stop_core_process_inner(process_state);
 }
 
 #[cfg(windows)]
@@ -1780,6 +1893,23 @@ pub(crate) fn send_process_signal(process_id: u32, signal: &str) -> Result<(), S
     } else {
         Err(format!("发送进程信号失败: PID {process_id}"))
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn is_process_alive(process_id: u32) -> bool {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, WAIT_TIMEOUT},
+        System::Threading::{OpenProcess, WaitForSingleObject},
+    };
+
+    const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
+    let handle = unsafe { OpenProcess(SYNCHRONIZE_ACCESS, 0, process_id) };
+    if handle.is_null() {
+        return false;
+    }
+    let result = unsafe { WaitForSingleObject(handle, 0) };
+    unsafe { CloseHandle(handle) };
+    result == WAIT_TIMEOUT
 }
 
 #[cfg(not(windows))]

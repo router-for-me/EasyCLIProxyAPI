@@ -9,6 +9,7 @@ mod codex_sessions;
 mod configuration_watcher;
 mod core_config;
 mod core_runtime;
+mod instance_lock;
 mod management_api;
 mod oauth_browser;
 mod provider_health;
@@ -36,6 +37,7 @@ use core_config::*;
 use core_runtime::*;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
+use instance_lock::*;
 #[cfg(target_os = "macos")]
 use objc2::MainThreadMarker;
 #[cfg(target_os = "macos")]
@@ -290,9 +292,16 @@ struct AppUpdateInner {
 #[derive(Default)]
 struct CoreProcessState {
     child: Mutex<Option<Child>>,
+    adopted_processes: Mutex<Vec<AdoptedCoreProcess>>,
     starting: AtomicBool,
     #[cfg(windows)]
     job: Mutex<Option<isize>>,
+}
+
+#[derive(Clone)]
+struct AdoptedCoreProcess {
+    process_id: u32,
+    binary_path: PathBuf,
 }
 
 struct GuiConfigState {
@@ -1441,6 +1450,7 @@ impl CoreProcessState {
     fn new(starting: bool) -> Self {
         Self {
             child: Mutex::new(None),
+            adopted_processes: Mutex::new(Vec::new()),
             starting: AtomicBool::new(starting),
             #[cfg(windows)]
             job: Mutex::new(None),
@@ -1456,21 +1466,29 @@ impl CoreProcessState {
     }
 
     fn managed_pid(&self) -> Option<u32> {
-        let Ok(mut child) = self.child.lock() else {
-            return None;
-        };
+        if let Ok(mut child) = self.child.lock() {
+            if let Some(process) = child.as_mut() {
+                if let Ok(None) = process.try_wait() {
+                    return Some(process.id());
+                }
 
-        let process = child.as_mut()?;
-
-        if let Ok(None) = process.try_wait() {
-            return Some(process.id());
+                *child = None;
+                drop(child);
+                self.clear_lifetime_guard();
+            }
         }
 
-        *child = None;
-        drop(child);
-        self.clear_lifetime_guard();
-
-        None
+        self.adopted_processes
+            .lock()
+            .ok()
+            .and_then(|mut processes| {
+                processes.retain(|process| {
+                    process_executable_path(process.process_id)
+                        .as_deref()
+                        .is_some_and(|path| executable_paths_match(&process.binary_path, path))
+                });
+                processes.first().map(|process| process.process_id)
+            })
     }
 
     fn clear_lifetime_guard(&self) {
@@ -1486,12 +1504,57 @@ impl CoreProcessState {
         self.child.lock().ok().and_then(|mut child| child.take())
     }
 
+    fn adopt_process_ids(&self, binary_path: &Path, process_ids: Vec<u32>) -> Result<(), String> {
+        let mut adopted = self
+            .adopted_processes
+            .lock()
+            .map_err(|_| "接管的内核进程状态锁已损坏".to_string())?;
+        *adopted = process_ids
+            .into_iter()
+            .filter(|process_id| is_process_alive(*process_id))
+            .map(|process_id| AdoptedCoreProcess {
+                process_id,
+                binary_path: binary_path.to_path_buf(),
+            })
+            .collect();
+        adopted.sort_unstable_by_key(|process| process.process_id);
+        adopted.dedup_by_key(|process| process.process_id);
+        Ok(())
+    }
+
+    fn clear_adopted_processes(&self) -> Result<(), String> {
+        self.adopted_processes
+            .lock()
+            .map(|mut processes| processes.clear())
+            .map_err(|_| "接管的内核进程状态锁已损坏".to_string())
+    }
+
+    fn take_adopted_processes(&self) -> Vec<AdoptedCoreProcess> {
+        self.adopted_processes
+            .lock()
+            .map(|mut processes| std::mem::take(&mut *processes))
+            .unwrap_or_default()
+    }
+
     fn store_child(&self, child: Child) -> Result<u32, String> {
         let pid = child.id();
+        self.clear_adopted_processes()?;
 
         #[cfg(windows)]
         {
-            let job = attach_child_to_windows_job(&child)?;
+            let job = match attach_child_to_windows_job(&child) {
+                Ok(job) => job,
+                Err(error) => {
+                    let mut child = child;
+                    let cleanup_error = terminate_child(&mut child).err();
+                    return Err(match cleanup_error {
+                        Some(cleanup_error) => {
+                            format!("{error}；清理未托管的内核进程也失败: {cleanup_error}")
+                        }
+                        None => error,
+                    });
+                }
+            };
             let Ok(mut managed_child) = self.child.lock() else {
                 close_windows_handle(job);
                 return Err("内核进程状态锁已损坏".to_string());
@@ -1506,10 +1569,19 @@ impl CoreProcessState {
 
         #[cfg(not(windows))]
         {
-            let mut managed_child = self
-                .child
-                .lock()
-                .map_err(|_| "内核进程状态锁已损坏".to_string())?;
+            let mut managed_child = match self.child.lock() {
+                Ok(managed_child) => managed_child,
+                Err(_) => {
+                    let mut child = child;
+                    let cleanup_error = terminate_child(&mut child).err();
+                    return Err(match cleanup_error {
+                        Some(cleanup_error) => format!(
+                            "内核进程状态锁已损坏；清理未托管的内核进程也失败: {cleanup_error}"
+                        ),
+                        None => "内核进程状态锁已损坏".to_string(),
+                    });
+                }
+            };
             *managed_child = Some(child);
         }
 
@@ -1852,6 +1924,14 @@ fn main() {
         }
     }
 
+    let _instance_guard = match acquire_app_instance_guard() {
+        Ok(guard) => guard,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
+
     let portable_update_ack = portable_update_ack_argument();
     let gui_config = match load_or_create_gui_config() {
         Ok(config) => config,
@@ -2020,7 +2100,24 @@ fn main() {
                     Err(error) => eprintln!("自动安装 CPA 离线内核失败: {error}"),
                 }
 
-                if should_start_core_on_launch(&config) {
+                let adopted_process_ids = match adopt_existing_core_processes(process_state.inner())
+                {
+                    Ok(process_ids) => process_ids,
+                    Err(error) => {
+                        eprintln!("扫描并接管当前目录的 CPA 内核失败: {error}");
+                        Vec::new()
+                    }
+                };
+                if !adopted_process_ids.is_empty() {
+                    eprintln!(
+                        "已接管当前目录中运行的 CPA 内核: PID {}",
+                        adopted_process_ids
+                            .iter()
+                            .map(u32::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                } else if should_start_core_on_launch(&config) {
                     if let Err(error) = start_core_process_inner(process_state.inner(), &config) {
                         eprintln!("自动启动 CPA 内核失败: {error}");
                     }

@@ -10,6 +10,122 @@ fn core_process_starting_state_tracks_automatic_launch() {
 }
 
 #[test]
+fn executable_path_matching_keeps_core_instances_directory_scoped() {
+    let root = agent_test_home("core-process-path-scope");
+    let first_dir = root.join("first").join("cpa-core");
+    let second_dir = root.join("second").join("cpa-core");
+    fs::create_dir_all(&first_dir).unwrap();
+    fs::create_dir_all(&second_dir).unwrap();
+    let first_binary = first_dir.join(core_binary_name());
+    let second_binary = second_dir.join(core_binary_name());
+    fs::write(&first_binary, b"first").unwrap();
+    fs::write(&second_binary, b"second").unwrap();
+
+    assert!(executable_paths_match(&first_binary, &first_binary));
+    assert!(!executable_paths_match(&first_binary, &second_binary));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn core_process_discovery_sleep_helper() {
+    if env::var_os("EASYCLIPROXYAPI_PROCESS_DISCOVERY_TEST_HELPER").is_some() {
+        thread::sleep(Duration::from_secs(10));
+    }
+}
+
+#[test]
+fn running_core_process_discovery_ignores_the_same_binary_name_in_another_directory() {
+    let root = agent_test_home("running-core-process-scope");
+    let first_dir = root.join("first").join("cpa-core");
+    let second_dir = root.join("second").join("cpa-core");
+    fs::create_dir_all(&first_dir).unwrap();
+    fs::create_dir_all(&second_dir).unwrap();
+    let first_binary = first_dir.join(core_binary_name());
+    let second_binary = second_dir.join(core_binary_name());
+
+    let source_binary = env::current_exe().unwrap();
+    fs::copy(&source_binary, &first_binary).unwrap();
+    fs::copy(&source_binary, &second_binary).unwrap();
+    let arguments = [
+        "--exact",
+        "tests::core_runtime::core_process_discovery_sleep_helper",
+        "--nocapture",
+    ];
+    let mut first = Command::new(&first_binary)
+        .args(&arguments)
+        .env("EASYCLIPROXYAPI_PROCESS_DISCOVERY_TEST_HELPER", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut second = Command::new(&second_binary)
+        .args(&arguments)
+        .env("EASYCLIPROXYAPI_PROCESS_DISCOVERY_TEST_HELPER", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    thread::sleep(Duration::from_millis(200));
+
+    let first_running = first.try_wait().unwrap().is_none();
+    let second_running = second.try_wait().unwrap().is_none();
+    let candidate_process_ids = find_candidate_core_process_ids();
+    let first_actual_path = process_executable_path(first.id());
+    let second_actual_path = process_executable_path(second.id());
+    let first_matches = find_core_process_ids(&first_binary);
+    let second_matches = find_core_process_ids(&second_binary);
+
+    let _ = first.kill();
+    let _ = second.kill();
+    let _ = first.wait();
+    let _ = second.wait();
+    assert_eq!(
+        first_matches,
+        vec![first.id()],
+        "running={first_running}, candidate={}, actual={first_actual_path:?}, expected={first_binary:?}",
+        candidate_process_ids.contains(&first.id())
+    );
+    assert_eq!(
+        second_matches,
+        vec![second.id()],
+        "running={second_running}, candidate={}, actual={second_actual_path:?}, expected={second_binary:?}",
+        candidate_process_ids.contains(&second.id())
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn current_process_executable_path_can_be_resolved() {
+    let expected = env::current_exe().unwrap();
+    let actual = process_executable_path(std::process::id()).unwrap();
+    assert!(executable_paths_match(&expected, &actual));
+}
+
+#[test]
+fn core_process_state_tracks_and_releases_adopted_processes() {
+    let state = CoreProcessState::new(false);
+    let binary_path = env::current_exe().unwrap();
+    state
+        .adopt_process_ids(&binary_path, vec![std::process::id(), std::process::id()])
+        .unwrap();
+
+    assert_eq!(state.managed_pid(), Some(std::process::id()));
+    assert_eq!(
+        state
+            .take_adopted_processes()
+            .into_iter()
+            .map(|process| process.process_id)
+            .collect::<Vec<_>>(),
+        vec![std::process::id()]
+    );
+    assert_eq!(state.managed_pid(), None);
+}
+
+#[test]
 fn successful_core_install_remains_successful_when_restart_succeeds() {
     let result = combine_install_and_restart_results(Ok("installed"), Ok(()));
     assert_eq!(result.unwrap(), "installed");
