@@ -24,14 +24,22 @@ pub(crate) fn detect_bundled_core() -> Result<Option<BundledCoreInfo>, String> {
 
 #[tauri::command]
 pub(crate) fn install_bundled_core(
+    app: tauri::AppHandle,
     window: tauri::Window,
     state: tauri::State<'_, CoreDownloadState>,
+    process_state: tauri::State<'_, CoreProcessState>,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreInstallResult, String> {
     let (info, archive_path) = bundled_core_archive()?
         .ok_or_else(|| "当前发行包没有匹配此系统架构的内置内核".to_string())?;
     let token = CancellationToken::new();
     state.start(token, Some(info.version.clone()))?;
-    let result = install_bundled_core_inner(&window, state.inner(), &info, &archive_path);
+    let result = install_core_with_runtime_restore(
+        &app,
+        process_state.inner(),
+        gui_config_state.inner(),
+        || install_bundled_core_inner(&window, state.inner(), &info, &archive_path),
+    );
     if result.is_err() {
         let _ = cleanup_core_work_dirs();
     }
@@ -78,30 +86,112 @@ pub(crate) fn get_core_install_task(state: tauri::State<'_, CoreDownloadState>) 
 
 #[tauri::command]
 pub(crate) async fn install_core_version(
+    app: tauri::AppHandle,
     window: tauri::Window,
     state: tauri::State<'_, CoreDownloadState>,
+    process_state: tauri::State<'_, CoreProcessState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     version: Option<String>,
 ) -> Result<CoreInstallResult, String> {
     let config = gui_config_state.snapshot()?;
-    let proxy_url = config.proxy_url;
+    let proxy_url = config.proxy_url.clone();
     let token = CancellationToken::new();
     state.start(token.clone(), version.clone())?;
-    let result = install_core_version_inner(
-        &window,
-        state.inner(),
-        token,
-        version,
-        &proxy_url,
-        config.prefer_gitcode_downloads,
-    )
-    .await;
+    let (was_running, install_result) =
+        match pause_core_for_install(&app, process_state.inner(), &config) {
+            Ok(was_running) => (
+                was_running,
+                install_core_version_inner(
+                    &window,
+                    state.inner(),
+                    token,
+                    version,
+                    &proxy_url,
+                    config.prefer_gitcode_downloads,
+                )
+                .await,
+            ),
+            Err(error) => (false, Err(error)),
+        };
+    let result = restore_core_after_install(
+        &app,
+        process_state.inner(),
+        &config,
+        was_running,
+        install_result,
+    );
     if result.is_err() {
         let _ = cleanup_core_work_dirs();
     }
     state.finish(&window, result.clone());
 
     result
+}
+
+fn install_core_with_runtime_restore<F>(
+    app: &tauri::AppHandle,
+    process_state: &CoreProcessState,
+    gui_config_state: &GuiConfigState,
+    install: F,
+) -> Result<CoreInstallResult, String>
+where
+    F: FnOnce() -> Result<CoreInstallResult, String>,
+{
+    let config = gui_config_state.snapshot()?;
+    let was_running = pause_core_for_install(app, process_state, &config)?;
+    let result = install();
+    restore_core_after_install(app, process_state, &config, was_running, result)
+}
+
+fn pause_core_for_install(
+    app: &tauri::AppHandle,
+    process_state: &CoreProcessState,
+    config: &GuiConfigFile,
+) -> Result<bool, String> {
+    let was_running = current_core_status(Some(process_state), Some(config.port))?.running;
+    if was_running {
+        stop_core_process_inner(process_state)?;
+        emit_current_core_status(app, process_state, config.port);
+    }
+    Ok(was_running)
+}
+
+fn restore_core_after_install<T>(
+    app: &tauri::AppHandle,
+    process_state: &CoreProcessState,
+    config: &GuiConfigFile,
+    was_running: bool,
+    install_result: Result<T, String>,
+) -> Result<T, String> {
+    let restart_result = if was_running {
+        start_core_process_inner(process_state, config)
+    } else {
+        Ok(())
+    };
+    emit_current_core_status(app, process_state, config.port);
+    combine_install_and_restart_results(install_result, restart_result)
+}
+
+pub(crate) fn combine_install_and_restart_results<T>(
+    install_result: Result<T, String>,
+    restart_result: Result<(), String>,
+) -> Result<T, String> {
+    match (install_result, restart_result) {
+        (Ok(result), Ok(())) => Ok(result),
+        (Ok(_), Err(restart_error)) => {
+            Err(format!("内核已安装，但自动恢复运行失败: {restart_error}"))
+        }
+        (Err(install_error), Ok(())) => Err(install_error),
+        (Err(install_error), Err(restart_error)) => Err(format!(
+            "{install_error}；自动恢复原内核运行状态也失败: {restart_error}"
+        )),
+    }
+}
+
+fn emit_current_core_status(app: &tauri::AppHandle, process_state: &CoreProcessState, port: u16) {
+    if let Ok(status) = current_core_status(Some(process_state), Some(port)) {
+        emit_core_status(app, &status);
+    }
 }
 
 #[tauri::command]

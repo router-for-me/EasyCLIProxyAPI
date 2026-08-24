@@ -22,6 +22,7 @@ import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
 import { ConfigPanelPage } from './pages/ConfigPanel';
 import { ApiAccessPage } from './pages/ApiAccessPage';
 import { KernelPage } from './pages/Kernel';
+import { VersionManagementPage } from './pages/VersionManagementPage';
 import { OAuthManagementPage } from './pages/ManagementPages';
 import { AgentsPage } from './pages/AgentsPage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
@@ -44,7 +45,7 @@ const pages = [
     id: 'versions',
     labelKey: 'app.nav.versions',
     icon: PackageOpen,
-    component: VersionManagementPage,
+    component: VersionManagementPageWrapper,
   },
   {
     id: 'config',
@@ -96,8 +97,8 @@ function HomePage() {
   return <KernelPage view="home" />;
 }
 
-function VersionManagementPage() {
-  return <KernelPage view="versions" />;
+function VersionManagementPageWrapper() {
+  return <VersionManagementPage />;
 }
 
 function App() {

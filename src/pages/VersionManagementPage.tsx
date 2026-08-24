@@ -1,0 +1,975 @@
+import { useEffect, useRef, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import {
+  AlertCircle,
+  AppWindow,
+  ArrowRight,
+  Box,
+  Check,
+  Cpu,
+  Database,
+  Download,
+  ExternalLink,
+  Info,
+  RefreshCw,
+  RotateCcw,
+  Sparkles,
+  Zap,
+} from 'lucide-react';
+import { useCoreRuntime } from '../coreRuntime';
+import { useI18n } from '../i18n';
+import { useAppUpdate } from '../appUpdate';
+
+export type CorePlatform = {
+  os: string;
+  arch: string;
+  assetOs: string;
+  assetArch: string;
+  archiveKind: 'tar.gz' | 'zip';
+};
+
+export type CoreLatest = {
+  version: string;
+  assetName: string;
+};
+
+export type CoreInstallResult = {
+  version: string;
+  assetName: string;
+  installDir: string;
+  binaryPath: string | null;
+};
+
+export type CoreInstallTask = {
+  running: boolean;
+  cancellable: boolean;
+  phase: string;
+  downloaded: number;
+  total: number | null;
+  percent: number | null;
+  message: string | null;
+  result: CoreInstallResult | null;
+};
+
+export type CodexModelCatalogUpdateResult = {
+  outcome: 'updated' | 'unchanged';
+};
+
+export type VersionSourceSettings = {
+  preferGitcodeDownloads: boolean;
+  gitcodeAvailable: boolean;
+};
+
+export type MessageType = 'info' | 'success' | 'error';
+const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+
+let latestAutoCheckStarted = false;
+let cachedLatest: CoreLatest | null = null;
+let cachedLatestError = '';
+let latestCheckPromise: Promise<CoreLatest> | null = null;
+let latestRequestEpoch = 0;
+
+export function displayAppVersion(version: string) {
+  const resolvedVersion = version.trim();
+  return resolvedVersion.startsWith('v') ? resolvedVersion : `v${resolvedVersion}`;
+}
+
+export function requestLatestCore(force = false) {
+  if (!force && latestCheckPromise) {
+    return latestCheckPromise;
+  }
+
+  const requestEpoch = ++latestRequestEpoch;
+  const request = invoke<CoreLatest>('check_latest_core')
+    .then((result) => {
+      if (requestEpoch === latestRequestEpoch) {
+        cachedLatest = result;
+        cachedLatestError = '';
+      }
+      return result;
+    })
+    .catch((error) => {
+      if (requestEpoch === latestRequestEpoch) {
+        cachedLatest = null;
+        cachedLatestError = String(error);
+      }
+      throw error;
+    })
+    .finally(() => {
+      if (latestCheckPromise === request) {
+        latestCheckPromise = null;
+      }
+    });
+  latestCheckPromise = request;
+
+  return request;
+}
+
+export function VersionManagementPage() {
+  const { t } = useI18n();
+  const {
+    info: appUpdate,
+    error: appUpdateError,
+    checking: checkingAppUpdate,
+    task: appUpdateTask,
+    check: checkAppUpdate,
+    requestInstall: requestAppUpdate,
+  } = useAppUpdate();
+
+  const {
+    status: coreStatus,
+    statusError,
+    refreshStatus,
+  } = useCoreRuntime();
+
+  const [installedAppVersion, setInstalledAppVersion] = useState('');
+  const [platform, setPlatform] = useState<CorePlatform | null>(null);
+  const [platformError, setPlatformError] = useState('');
+  const [latest, setLatest] = useState<CoreLatest | null>(cachedLatest);
+  const [latestError, setLatestError] = useState(cachedLatestError);
+  const [checkingLatest, setCheckingLatest] = useState(Boolean(latestCheckPromise));
+
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState<CoreInstallTask | null>(null);
+  const [installDialogOpen, setInstallDialogOpen] = useState(false);
+  const [cancellingInstall, setCancellingInstall] = useState(false);
+
+  const [versionSource, setVersionSource] = useState<VersionSourceSettings | null>(null);
+  const [versionSourceSaving, setVersionSourceSaving] = useState(false);
+  const [versionSourceError, setVersionSourceError] = useState('');
+
+  const [catalogUpdating, setCatalogUpdating] = useState(false);
+  const [catalogUpdateError, setCatalogUpdateError] = useState('');
+  const [catalogUpdateNotice, setCatalogUpdateNotice] = useState('');
+
+  const [toastNotice, setToastNotice] = useState<{
+    message: string;
+    tone: MessageType;
+  } | null>(null);
+
+  const installDialogRef = useRef<HTMLDivElement>(null);
+  const latestCheckEpochRef = useRef(0);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = (message: string, tone: MessageType = 'info') => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    setToastNotice({ message, tone });
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastNotice(null);
+      toastTimerRef.current = null;
+    }, 4000);
+  };
+
+  const applyInstallTask = (task: CoreInstallTask, showFinishedDialog = true) => {
+    if (!task.running && !task.message && !task.result) {
+      setProgress(null);
+      setInstalling(false);
+      setCancellingInstall(false);
+      return;
+    }
+
+    setInstalling(task.running);
+    if (!task.running) {
+      setCancellingInstall(false);
+    }
+
+    if (task.running || showFinishedDialog) {
+      setProgress(task);
+      setInstallDialogOpen(true);
+    } else {
+      setProgress(null);
+    }
+
+    if (task.result) {
+      showToast(task.message || t('kernel.install.completed', { version: task.result.version }), 'success');
+      void refreshStatus();
+      return;
+    }
+
+    if (task.message && !task.running) {
+      showToast(task.message, task.phase === '安装失败' ? 'error' : 'info');
+    }
+  };
+
+  const loadPlatform = async () => {
+    try {
+      const result = await invoke<CorePlatform>('detect_core_platform');
+      setPlatform(result);
+      setPlatformError('');
+    } catch (error) {
+      setPlatform(null);
+      setPlatformError(String(error));
+    }
+  };
+
+  const loadVersionSourceSettings = async () => {
+    try {
+      const settings = await invoke<VersionSourceSettings>('get_version_source_settings');
+      setVersionSource(settings);
+      setVersionSourceError('');
+    } catch (error) {
+      setVersionSourceError(String(error));
+    }
+  };
+
+  const loadInstallTask = async () => {
+    try {
+      const task = await invoke<CoreInstallTask>('get_core_install_task');
+      applyInstallTask(task, false);
+    } catch {}
+  };
+
+  const checkLatest = async (force = false) => {
+    const checkEpoch = ++latestCheckEpochRef.current;
+    setCheckingLatest(true);
+    setLatestError('');
+
+    try {
+      const result = await requestLatestCore(force);
+      if (checkEpoch === latestCheckEpochRef.current) {
+        setLatest(result);
+      }
+    } catch (error) {
+      if (checkEpoch === latestCheckEpochRef.current) {
+        setLatest(null);
+        setLatestError(String(error));
+      }
+    } finally {
+      if (checkEpoch === latestCheckEpochRef.current) {
+        setCheckingLatest(false);
+      }
+    }
+  };
+
+  const updateVersionSource = async (enabled: boolean) => {
+    setVersionSourceSaving(true);
+    setVersionSourceError('');
+    try {
+      const settings = await invoke<VersionSourceSettings>('set_prefer_gitcode_downloads', { enabled });
+      setVersionSource(settings);
+      cachedLatest = null;
+      cachedLatestError = '';
+      setLatest(null);
+      showToast(t('kernel.versions.gitcodeSwitchSuccess'), 'success');
+      await Promise.allSettled([checkAppUpdate(), checkLatest(true)]);
+    } catch (error) {
+      await loadVersionSourceSettings();
+      setVersionSourceError(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }));
+      showToast(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }), 'error');
+    } finally {
+      setVersionSourceSaving(false);
+    }
+  };
+
+  const installVersion = async (version: string) => {
+    setInstalling(true);
+    setCancellingInstall(false);
+    setInstallDialogOpen(true);
+    setProgress({
+      running: true,
+      cancellable: true,
+      phase: '准备下载',
+      downloaded: 0,
+      total: null,
+      percent: null,
+      message: null,
+      result: null,
+    });
+
+    try {
+      const result = await invoke<CoreInstallResult>('install_core_version', { version });
+      showToast(t('kernel.install.completed', { version: result.version }), 'success');
+      setProgress({
+        running: false,
+        cancellable: false,
+        phase: '安装完成',
+        downloaded: 1,
+        total: 1,
+        percent: 100,
+        message: t('kernel.install.completed', { version: result.version }),
+        result,
+      });
+      await refreshStatus();
+    } catch (error) {
+      const errorMessage = String(error);
+      showToast(errorMessage, errorMessage.includes('取消') ? 'info' : 'error');
+      setProgress((current) => ({
+        running: false,
+        cancellable: false,
+        phase: errorMessage.includes('取消') ? '已取消' : '安装失败',
+        downloaded: current?.downloaded ?? 0,
+        total: current?.total ?? null,
+        percent: current?.percent ?? null,
+        message: errorMessage,
+        result: null,
+      }));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const cancelInstall = async () => {
+    if (cancellingInstall || !progress?.running || !progress.cancellable) {
+      return;
+    }
+
+    setCancellingInstall(true);
+    try {
+      await invoke('cancel_core_install');
+    } catch (error) {
+      setCancellingInstall(false);
+      showToast(String(error), 'error');
+    }
+  };
+
+  const closeInstallDialog = () => {
+    if (installing || progress?.running) {
+      return;
+    }
+    setInstallDialogOpen(false);
+    setProgress(null);
+    setCancellingInstall(false);
+  };
+
+  const openAppRelease = async () => {
+    try {
+      await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
+    } catch (error) {
+      showToast(t('kernel.error.openUpdate', { error: String(error) }), 'error');
+    }
+  };
+
+  const syncModelCatalog = async () => {
+    setCatalogUpdating(true);
+    setCatalogUpdateError('');
+    setCatalogUpdateNotice('');
+    try {
+      const result = await invoke<CodexModelCatalogUpdateResult>('update_codex_model_catalog');
+      const notice = result.outcome === 'updated'
+        ? t('appUpdate.catalog.updated')
+        : t('appUpdate.catalog.unchanged');
+      setCatalogUpdateNotice(notice);
+      showToast(notice, 'success');
+    } catch (error) {
+      const err = String(error);
+      setCatalogUpdateError(err);
+      showToast(err, 'error');
+    } finally {
+      setCatalogUpdating(false);
+    }
+  };
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    let unlistenConfig: (() => void) | null = null;
+
+    listen<CoreInstallTask>('core-install-progress', (event) => {
+      applyInstallTask(event.payload);
+    })
+      .then((unlistenProgress) => {
+        if (disposed) unlistenProgress();
+        else unlisten = unlistenProgress;
+      })
+      .catch(() => undefined);
+
+    void listen('config-files-changed', () => {
+      if (disposed) return;
+      void loadVersionSourceSettings();
+      void refreshStatus();
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlistenConfig = stop;
+    });
+
+    loadPlatform();
+    loadInstallTask();
+    loadVersionSourceSettings();
+
+    void getVersion()
+      .then((version) => {
+        if (!disposed) setInstalledAppVersion(version);
+      })
+      .catch(() => undefined);
+
+    if (!latestAutoCheckStarted) {
+      latestAutoCheckStarted = true;
+      void checkLatest();
+    } else if (latestCheckPromise) {
+      void checkLatest();
+    }
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+      unlistenConfig?.();
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!installDialogOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    installDialogRef.current?.focus();
+
+    const preventEscapeClose = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+      }
+    };
+
+    document.addEventListener('keydown', preventEscapeClose);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', preventEscapeClose);
+    };
+  }, [installDialogOpen]);
+
+  // Derived state calculations
+  const latestVersion = latest?.version ?? '';
+  const currentVersion = coreStatus?.currentVersion ?? '';
+  const coreInstalled = Boolean(coreStatus?.installed);
+  const coreRunning = Boolean(coreStatus?.running);
+  const coreProcessBusy = Boolean(coreStatus?.starting);
+  const busy = checkingLatest || installing || coreProcessBusy;
+  const installDisabled = busy || installing;
+
+  const resolvedAppVersion = appUpdate?.currentVersion || installedAppVersion;
+  const currentAppVersion = resolvedAppVersion ? displayAppVersion(resolvedAppVersion) : t('common.detecting');
+  const latestAppVersion = appUpdate?.latestVersion ? displayAppVersion(appUpdate.latestVersion) : '';
+
+  const appHasUpdate = Boolean(appUpdate?.updateAvailable);
+  const appVersionStatusTone = appUpdateError
+    ? 'error'
+    : appUpdateTask.running
+      ? 'update'
+      : appHasUpdate
+        ? 'update'
+        : appUpdate
+          ? 'success'
+          : '';
+
+  const appVersionStatusLabel = appUpdateTask.running
+    ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
+    : appUpdateError
+      ? t('kernel.update.failed')
+      : appHasUpdate
+        ? t('appUpdate.available', { version: latestAppVersion })
+        : appUpdate
+          ? t('appUpdate.upToDate')
+          : t('appUpdate.phase.checking');
+
+  const coreHasUpdate = Boolean(latestVersion && currentVersion && currentVersion !== latestVersion);
+
+  const coreVersionStatusTone = installing || progress?.running
+    ? 'info'
+    : coreRunning
+      ? 'success'
+      : latestError
+        ? 'error'
+        : coreHasUpdate
+          ? 'update'
+          : coreInstalled
+            ? 'success'
+            : 'neutral';
+
+  const coreVersionStatusLabel = installing || progress?.running
+    ? (cancellingInstall ? t('kernel.install.cancelling') : progress?.phase ? localizeInstallPhase(progress.phase, t) : t('kernel.install.inProgress'))
+    : coreRunning
+      ? `${t('kernel.status.running')}${coreStatus?.processId ? ` (PID: ${coreStatus.processId})` : ''}`
+      : latestError
+        ? t('kernel.update.failed')
+        : coreHasUpdate
+          ? t('kernel.update.available')
+          : coreInstalled
+            ? t('kernel.status.stopped')
+            : t('kernel.status.notInstalled');
+
+  const platformOsLabel = platform?.os || (platformError ? t('common.detectionFailed') : t('common.detecting'));
+  const platformArchLabel = platform?.arch || (platformError ? t('common.detectionFailed') : t('common.detecting'));
+
+  // Install dialog calculations
+  const computedPercent = progress?.percent ?? (progress?.total && progress.total > 0 ? (progress.downloaded / progress.total) * 100 : null);
+  const progressKnown = computedPercent !== null;
+  const progressPercent = clampPercent(computedPercent ?? 0);
+  const progressText = progress
+    ? progress.phase === '安装完成'
+      ? t('kernel.progress.completed')
+      : progress.phase === '解压中'
+        ? t('kernel.progress.extracting')
+        : progress.total
+          ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
+          : progress.downloaded > 0
+            ? formatBytes(progress.downloaded)
+            : t('kernel.progress.waiting')
+    : '';
+
+  const installDialogTone: MessageType = progress?.result
+    ? 'success'
+    : progress?.phase === '安装失败'
+      ? 'error'
+      : 'info';
+
+  const installDialogTitle = progress?.running || installing
+    ? cancellingInstall
+      ? t('kernel.install.titleCancelling')
+      : t('kernel.install.titleInstalling')
+    : progress?.result
+      ? t('kernel.install.titleCompleted')
+      : progress?.phase === '已取消'
+        ? t('kernel.install.titleCancelled')
+        : t('kernel.install.titleFailed');
+
+  const installDialogMessage = cancellingInstall
+    ? t('kernel.install.waitingStop')
+    : progress?.message || (installing ? t('kernel.install.taskRunning') : '');
+
+  const installDialogAction = installing || progress?.running
+    ? cancellingInstall
+      ? t('kernel.install.cancellingShort')
+      : progress?.cancellable
+        ? t('kernel.install.cancel')
+        : t('common.processing')
+    : t('common.close');
+
+  const installDialogActionDisabled = (installing || progress?.running) && (cancellingInstall || !progress?.cancellable);
+
+  const isGitcodeActive = Boolean(versionSource?.preferGitcodeDownloads);
+
+  return (
+    <section className="page management-page version-management-page">
+      {/* Network Download Mirror Banner */}
+      <section className="version-mirror-card" aria-label={t('kernel.versions.gitcodeSource')}>
+        <div className="version-mirror-content">
+          <div className="version-mirror-icon-box">
+            <Zap size={22} aria-hidden="true" />
+          </div>
+          <div className="version-mirror-info">
+            <div className="version-mirror-headline">
+              <strong>{t('kernel.versions.gitcodeSource')}</strong>
+              {isGitcodeActive ? (
+                <span className="version-mirror-pill active">
+                  {t('kernel.versions.gitcodeEnabled')}
+                </span>
+              ) : null}
+            </div>
+            <p>
+              {versionSource?.gitcodeAvailable === false
+                ? t('kernel.versions.gitcodeUnavailable')
+                : t('kernel.versions.gitcodeSourceHint')}
+            </p>
+          </div>
+        </div>
+
+        <div className="version-mirror-toggle">
+          <label className="switch-control" title={t('kernel.versions.gitcodeSource')}>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={isGitcodeActive}
+              disabled={
+                (!versionSource?.gitcodeAvailable && !versionSource?.preferGitcodeDownloads)
+                || versionSourceSaving
+                || appUpdateTask.running
+                || installing
+              }
+              aria-label={t('kernel.versions.gitcodeSource')}
+              onChange={(event) => void updateVersionSource(event.currentTarget.checked)}
+            />
+            <span className="switch-track" />
+          </label>
+        </div>
+
+        {versionSourceError ? (
+          <div className="version-mirror-error" role="alert">
+            <AlertCircle size={15} />
+            <span>{versionSourceError}</span>
+          </div>
+        ) : null}
+      </section>
+
+      {/* Main Version Management Cards Grid */}
+      <div className="version-grid">
+        {/* Card 1: 桌面客户端 (Desktop Application) */}
+        <article className="panel version-module-card app-module-card">
+          <div className="version-card-top">
+            <div className="version-card-title-group">
+              <span className="version-card-icon app-icon" aria-hidden="true">
+                <AppWindow size={22} />
+              </span>
+              <div>
+                <h2>{t('kernel.versions.appCardTitle')}</h2>
+                <small className="version-card-subtitle">{t('appUpdate.title')}</small>
+              </div>
+            </div>
+            <span className={`state-pill ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
+              {appVersionStatusLabel}
+            </span>
+          </div>
+
+          <div className="version-metrics-comparison">
+            <div className="version-metric-tile">
+              <span className="version-metric-label">{t('appUpdate.current')}</span>
+              <strong className="version-metric-value">{currentAppVersion}</strong>
+              <span className="version-metric-chip current">{t('kernel.versions.currentRunning')}</span>
+            </div>
+
+            <div className="version-comparison-divider" aria-hidden="true">
+              <ArrowRight size={18} />
+            </div>
+
+            <div className={`version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
+              <span className="version-metric-label">{t('appUpdate.latest')}</span>
+              <strong className="version-metric-value">
+                {appUpdate ? (latestAppVersion || t('appUpdate.upToDate')) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+              </strong>
+              <span className={`version-metric-chip ${appHasUpdate ? 'update' : 'latest'}`}>
+                {appHasUpdate ? t('kernel.update.available') : t('kernel.update.latest')}
+              </span>
+            </div>
+          </div>
+
+          <div className="version-meta-bar">
+            <Sparkles size={16} aria-hidden="true" />
+            <span>
+              {appUpdate?.autoUpdateSupported
+                ? t('kernel.versions.autoUpdateSupported')
+                : t('kernel.versions.autoUpdateManual')}
+            </span>
+          </div>
+
+          {appUpdateError ? (
+            <div className="version-alert-banner error" role="alert">
+              <AlertCircle size={16} />
+              <span>{appUpdateError}</span>
+            </div>
+          ) : !appUpdate?.autoUpdateSupported ? (
+            <div className="version-alert-banner neutral">
+              <Info size={16} />
+              <span>{t('appUpdate.manualFallback')}</span>
+            </div>
+          ) : appHasUpdate ? (
+            <div className="version-alert-banner update">
+              <Download size={16} />
+              <span>{t('appUpdate.badgeAvailable', { version: latestAppVersion })}</span>
+            </div>
+          ) : null}
+
+          <div className="version-card-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={checkingAppUpdate || appUpdateTask.running}
+              onClick={() => void checkAppUpdate()}
+            >
+              <RefreshCw size={15} className={checkingAppUpdate ? 'spin' : ''} aria-hidden="true" />
+              <span>{checkingAppUpdate ? t('appUpdate.checking') : t('appUpdate.check')}</span>
+            </button>
+
+            {appHasUpdate && appUpdate?.autoUpdateSupported ? (
+              <button
+                type="button"
+                className="primary-button version-action-highlight"
+                disabled={appUpdateTask.running}
+                onClick={requestAppUpdate}
+              >
+                <Download size={15} aria-hidden="true" />
+                <span>{t('appUpdate.installNow')}</span>
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              className={appHasUpdate && !appUpdate?.autoUpdateSupported ? 'primary-button' : 'secondary-button'}
+              onClick={() => void openAppRelease()}
+            >
+              <ExternalLink size={15} aria-hidden="true" />
+              <span>{t('appUpdate.openRelease')}</span>
+            </button>
+          </div>
+        </article>
+
+        {/* Card 2: 代理内核 (Proxy Core Kernel) */}
+        <article className="panel version-module-card core-module-card">
+          <div className="version-card-top">
+            <div className="version-card-title-group">
+              <span className="version-card-icon core-icon" aria-hidden="true">
+                <Box size={22} />
+              </span>
+              <div>
+                <h2>{t('kernel.versions.coreCardTitle')}</h2>
+                <small className="version-card-subtitle">{t('kernel.versions.title')}</small>
+              </div>
+            </div>
+            <span className={`state-pill ${coreVersionStatusTone}`} title={coreVersionStatusLabel}>
+              {coreVersionStatusLabel}
+            </span>
+          </div>
+
+          <div className="version-metrics-comparison">
+            <div className="version-metric-tile">
+              <span className="version-metric-label">{t('kernel.versions.current')}</span>
+              <strong className="version-metric-value" title={currentVersion || t('kernel.status.notInstalled')}>
+                {currentVersion || t('kernel.status.notInstalled')}
+              </strong>
+              <span className={`version-metric-chip ${coreInstalled ? 'current' : 'warning'}`}>
+                {coreInstalled ? t('kernel.versions.currentInstalled') : t('kernel.status.notInstalled')}
+              </span>
+            </div>
+
+            <div className="version-comparison-divider" aria-hidden="true">
+              <ArrowRight size={18} />
+            </div>
+
+            <div className={`version-metric-tile ${coreHasUpdate ? 'has-update' : ''}`}>
+              <span className="version-metric-label">{t('kernel.versions.latest')}</span>
+              <strong className="version-metric-value" title={latestVersion || latestError || t('kernel.update.notChecked')}>
+                {checkingLatest ? t('kernel.update.checking') : (latestVersion || (latestError ? t('common.detectionFailed') : t('kernel.update.notChecked')))}
+              </strong>
+              <span className={`version-metric-chip ${coreHasUpdate ? 'update' : 'latest'}`}>
+                {coreHasUpdate ? t('kernel.update.available') : t('kernel.versions.latestCloud')}
+              </span>
+            </div>
+          </div>
+
+          <div className="version-runtime-chips">
+            <div className="version-runtime-chip platform">
+              <Cpu size={15} aria-hidden="true" />
+              <span><strong>{t('kernel.versions.platform')}:</strong> {platformOsLabel} / {platformArchLabel}</span>
+            </div>
+            <div className={`version-runtime-chip status ${coreRunning ? 'running' : 'stopped'}`}>
+              <span className="status-dot" aria-hidden="true" />
+              <span>{coreRunning ? t('kernel.status.running') : t('kernel.control.notRunning')}</span>
+            </div>
+          </div>
+
+          {latestError ? (
+            <div className="version-alert-banner error" role="alert">
+              <AlertCircle size={16} />
+              <span>{latestError}</span>
+            </div>
+          ) : coreRunning ? (
+            <div className="version-alert-banner info">
+              <Info size={16} />
+              <span>{t('kernel.versions.coreRunningNotice')}</span>
+            </div>
+          ) : null}
+
+          <div className="version-card-actions core-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => void checkLatest(true)}
+            >
+              <RefreshCw size={15} className={checkingLatest ? 'spin' : ''} aria-hidden="true" />
+              <span>{checkingLatest ? t('kernel.update.checking') : t('kernel.versions.check')}</span>
+            </button>
+
+            <button
+              type="button"
+              className={latestVersion && (!coreInstalled || currentVersion !== latestVersion) ? 'primary-button version-action-highlight' : 'secondary-button'}
+              title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
+              disabled={!latestVersion || busy}
+              onClick={() => void installVersion(latestVersion)}
+            >
+              <Download size={15} aria-hidden="true" />
+              <span>{!coreInstalled ? t('kernel.versions.installLatestMissing') : t('kernel.versions.installLatest')}</span>
+            </button>
+
+            <button
+              type="button"
+              className="secondary-button"
+              title={t('kernel.versions.reinstallTitle')}
+              disabled={!currentVersion || installDisabled}
+              onClick={() => void installVersion(currentVersion)}
+            >
+              <RotateCcw size={15} aria-hidden="true" />
+              <span>{t('kernel.versions.reinstall')}</span>
+            </button>
+          </div>
+        </article>
+
+        {/* Card 3: Codex 模型目录 (Model Catalog) */}
+        <article className="panel version-module-card catalog-module-card">
+          <div className="version-card-top">
+            <div className="version-card-title-group">
+              <span className="version-card-icon catalog-icon" aria-hidden="true">
+                <Database size={22} />
+              </span>
+              <div>
+                <h2>{t('kernel.versions.catalogCardTitle')}</h2>
+                <small className="version-card-subtitle">{t('appUpdate.catalog.label')}</small>
+              </div>
+            </div>
+            <span className={`state-pill ${catalogUpdateError ? 'error' : catalogUpdating ? 'update' : 'success'}`}>
+              {catalogUpdating
+                ? t('appUpdate.catalog.updating')
+                : catalogUpdateError
+                  ? t('kernel.update.failed')
+                  : t('appUpdate.catalog.unchanged')}
+            </span>
+          </div>
+
+          <div className="version-catalog-body">
+            <p className="version-catalog-description">
+              {t('appUpdate.catalog.description')}
+            </p>
+            <p className="version-catalog-hint">
+              {t('appUpdate.catalog.updateHint')}
+            </p>
+
+            {catalogUpdateError ? (
+              <div className="version-alert-banner error" role="alert">
+                <AlertCircle size={16} />
+                <span>{catalogUpdateError}</span>
+              </div>
+            ) : catalogUpdateNotice ? (
+              <div className="version-alert-banner success">
+                <Check size={16} />
+                <span>{catalogUpdateNotice}</span>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="version-card-actions">
+            <button
+              type="button"
+              className="primary-button"
+              disabled={catalogUpdating || appUpdateTask.running || busy}
+              onClick={() => void syncModelCatalog()}
+              title={t('appUpdate.catalog.updateHint')}
+            >
+              <Database size={15} className={catalogUpdating ? 'spin' : ''} aria-hidden="true" />
+              <span>
+                {catalogUpdating
+                  ? t('appUpdate.catalog.updating')
+                  : t('appUpdate.catalog.update')}
+              </span>
+            </button>
+          </div>
+        </article>
+      </div>
+
+      {/* Installation Progress Modal Dialog */}
+      {installDialogOpen && progress ? (
+        <div className="install-dialog-backdrop">
+          <div
+            ref={installDialogRef}
+            className={`install-dialog ${installDialogTone}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="install-dialog-title"
+            aria-describedby="install-dialog-message"
+            aria-busy={installing || progress?.running}
+            tabIndex={-1}
+          >
+            <div className="install-dialog-heading">
+              <span className="install-dialog-eyebrow">{t('kernel.dialog.install')}</span>
+              <h2 id="install-dialog-title">{installDialogTitle}</h2>
+            </div>
+
+            <div className="install-dialog-phase">
+              <span>{t('kernel.dialog.phase')}</span>
+              <strong className="phase-badge">
+                {cancellingInstall ? t('kernel.install.cancellingShort') : localizeInstallPhase(progress.phase, t)}
+              </strong>
+            </div>
+
+            <div
+              className={`install-progress-track ${
+                progressKnown ? '' : (installing || progress?.running) ? 'unknown is-running' : 'unknown'
+              }`}
+            >
+              <span
+                className="install-progress-fill"
+                style={progressKnown ? { width: `${progressPercent}%` } : undefined}
+              />
+            </div>
+
+            <div className="install-progress-meta">
+              <strong>{progressKnown ? `${progressPercent.toFixed(1)}%` : t('kernel.dialog.unknownProgress')}</strong>
+              <span>{progressText}</span>
+            </div>
+
+            <div
+              id="install-dialog-message"
+              className={`install-dialog-message ${installDialogTone}`}
+              aria-live="polite"
+            >
+              {installDialogMessage || ' '}
+            </div>
+
+            <div className="install-dialog-actions">
+              <button
+                type="button"
+                className={(installing || progress?.running) ? 'danger-button' : 'primary-button'}
+                disabled={installDialogActionDisabled}
+                onClick={(installing || progress?.running) ? cancelInstall : closeInstallDialog}
+              >
+                {installDialogAction}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Floating Notice Toast */}
+      {toastNotice ? (
+        <div
+          className={`config-toast ${toastNotice.tone}`}
+          role="status"
+          title={toastNotice.message}
+        >
+          {toastNotice.tone === 'success' ? (
+            <Check size={18} aria-hidden="true" />
+          ) : toastNotice.tone === 'error' ? (
+            <AlertCircle size={18} aria-hidden="true" />
+          ) : (
+            <Info size={18} aria-hidden="true" />
+          )}
+          <span>{toastNotice.message}</span>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function localizeInstallPhase(
+  phase: string,
+  t: ReturnType<typeof useI18n>['t'],
+) {
+  const keys = {
+    '准备下载': 'kernel.phase.preparingDownload',
+    '下载中': 'kernel.phase.downloading',
+    '解压中': 'kernel.phase.extracting',
+    '准备内置内核': 'kernel.phase.preparingBundled',
+    '安装完成': 'kernel.phase.completed',
+    '安装失败': 'kernel.phase.failed',
+    '已取消': 'kernel.phase.cancelled',
+  } as const;
+  const key = keys[phase as keyof typeof keys];
+  return key ? t(key) : phase;
+}
+
+function clampPercent(percent: number) {
+  return Math.min(100, Math.max(0, percent));
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}

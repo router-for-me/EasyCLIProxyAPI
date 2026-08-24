@@ -10,6 +10,40 @@ fn core_process_starting_state_tracks_automatic_launch() {
 }
 
 #[test]
+fn successful_core_install_remains_successful_when_restart_succeeds() {
+    let result = combine_install_and_restart_results(Ok("installed"), Ok(()));
+    assert_eq!(result.unwrap(), "installed");
+}
+
+#[test]
+fn successful_core_install_reports_automatic_restart_failure() {
+    let result = combine_install_and_restart_results(Ok("installed"), Err("port busy".into()));
+    assert_eq!(
+        result.unwrap_err(),
+        "内核已安装，但自动恢复运行失败: port busy"
+    );
+}
+
+#[test]
+fn failed_core_install_keeps_the_install_error_after_runtime_is_restored() {
+    let result =
+        combine_install_and_restart_results::<()>(Err("download cancelled".into()), Ok(()));
+    assert_eq!(result.unwrap_err(), "download cancelled");
+}
+
+#[test]
+fn failed_core_install_reports_restart_failure_too() {
+    let result = combine_install_and_restart_results::<()>(
+        Err("checksum mismatch".into()),
+        Err("port busy".into()),
+    );
+    assert_eq!(
+        result.unwrap_err(),
+        "checksum mismatch；自动恢复原内核运行状态也失败: port busy"
+    );
+}
+
+#[test]
 fn replacing_a_core_preserves_only_regular_bundled_assets() {
     let root = agent_test_home("bundled-assets");
     let source = root.join("source");
