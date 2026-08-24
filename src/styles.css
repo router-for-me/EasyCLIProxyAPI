@@ -1024,14 +1024,20 @@ textarea:focus-visible {
 }
 
 .version-list {
-  overflow: hidden;
+  display: grid;
+  gap: 14px;
   padding: 0;
+  border: 0;
+  background: transparent;
   box-shadow: none;
 }
 
 .version-source-row,
 .version-list-item {
-  border-bottom: 1px solid var(--theme-e3e1db);
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 12px;
+  background: var(--theme-fffdf8);
+  box-shadow: var(--ui-panel-shadow);
 }
 
 .version-source-row {
@@ -1040,7 +1046,7 @@ textarea:focus-visible {
   min-height: 72px;
   align-items: center;
   gap: 16px;
-  padding: 14px 20px;
+  padding: 16px 20px;
 }
 
 .version-source-copy {
@@ -1067,17 +1073,20 @@ textarea:focus-visible {
   color: var(--theme-9f2d20);
 }
 
-.version-list-item:last-child {
-  border-bottom: 0;
+.version-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(270px, 100%), 1fr));
+  align-items: stretch;
+  gap: 14px;
 }
 
 .version-list-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 106px;
-  align-items: center;
-  gap: 24px;
-  padding: 18px 20px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 210px;
+  align-items: stretch;
+  gap: 18px;
+  padding: 20px;
 }
 
 .version-item-content {
@@ -1133,24 +1142,20 @@ textarea:focus-visible {
 }
 
 .version-metrics-comparison {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   min-width: 0;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px 14px;
-  margin: 7px 0 0;
+  gap: 8px;
+  margin: 12px 0 0;
 }
 
 .version-metric-tile {
-  display: inline-flex;
+  display: grid;
   min-width: 0;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.version-metric-tile + .version-metric-tile {
-  padding-left: 14px;
-  border-left: 1px solid var(--theme-e3e1db);
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--theme-faf9f5);
 }
 
 .version-metric-label {
@@ -1219,8 +1224,8 @@ textarea:focus-visible {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
-  align-self: center;
+  justify-content: flex-start;
+  align-self: end;
   gap: 8px;
 }
 
@@ -1229,6 +1234,7 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  flex: 1 1 calc(50% - 4px);
   min-height: 33px;
   padding: 5px 10px;
   font-weight: 600;
@@ -1619,7 +1625,7 @@ textarea:focus-visible {
 
 @container workspace (max-width: 760px) {
   .version-list-item {
-    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
   }
 
   .version-card-actions,

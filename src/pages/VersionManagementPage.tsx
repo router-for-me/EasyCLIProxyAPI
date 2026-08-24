@@ -536,6 +536,7 @@ export function VersionManagementPage() {
           </div>
         </div>
 
+        <div className="version-card-grid">
         <article className="version-list-item app-module-card">
           <div className="version-item-content">
             <div className="version-card-top">
@@ -721,6 +722,7 @@ export function VersionManagementPage() {
             </button>
           </div>
         </article>
+        </div>
       </section>
 
       {/* Installation Progress Modal Dialog */}
