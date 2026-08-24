@@ -2,7 +2,23 @@ import { useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AlertCircle, Check, Copy, ExternalLink, Eye, EyeOff, Info } from 'lucide-react';
+import {
+  AlertCircle,
+  AppWindow,
+  ArrowRight,
+  Box,
+  Check,
+  Copy,
+  Database,
+  Download,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Info,
+  PackageOpen,
+  RefreshCw,
+  RotateCcw,
+} from 'lucide-react';
 import { type CoreStatus, useCoreRuntime } from '../coreRuntime';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import claudeIcon from '../assets/icons/claude.svg';
@@ -668,6 +684,22 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const currentAppVersion = resolvedAppVersion
     ? displayAppVersion(resolvedAppVersion)
     : t('common.detecting');
+  const appVersionStatusLabel = appUpdateTask.running
+    ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
+    : appUpdateError
+      ? t('kernel.update.failed')
+      : appUpdate?.updateAvailable
+        ? t('appUpdate.available', { version: displayAppVersion(appUpdate.latestVersion) })
+        : appUpdate
+          ? t('appUpdate.upToDate')
+          : t('appUpdate.phase.checking');
+  const appVersionStatusTone = appUpdateError
+    ? 'error'
+    : appUpdate?.updateAvailable
+      ? 'update'
+      : appUpdate
+        ? 'success'
+        : '';
   const latestLabel = checkingLatest
     ? t('kernel.update.checking')
     : latestVersion || (latestError ? t('kernel.update.failed') : t('kernel.update.notChecked'));
@@ -746,6 +778,51 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
 
   return (
     <section className={`page kernel-page ${view === 'home' ? 'home-page' : 'version-management-page'}`}>
+      {view === 'versions' ? (
+        <header className="version-page-header">
+          <div className="version-page-title">
+            <span className="version-page-title-icon" aria-hidden="true">
+              <PackageOpen size={22} />
+            </span>
+            <div>
+              <h1>{t('app.nav.versions')}</h1>
+              <p>{t('kernel.versions.offlineHint')}</p>
+            </div>
+          </div>
+
+          <div className="version-source-control">
+            <div className="version-source-copy">
+              <Info size={17} aria-hidden="true" />
+              <div>
+                <strong>{t('kernel.versions.gitcodeSource')}</strong>
+                <span>
+                  {versionSource?.gitcodeAvailable === false
+                    ? t('kernel.versions.gitcodeUnavailable')
+                    : t('kernel.versions.gitcodeSourceHint')}
+                </span>
+              </div>
+            </div>
+            <label className="switch-control" title={t('kernel.versions.gitcodeSource')}>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={versionSource?.preferGitcodeDownloads ?? false}
+                disabled={
+                  (!versionSource?.gitcodeAvailable && !versionSource?.preferGitcodeDownloads)
+                  || versionSourceSaving
+                  || appUpdateTask.running
+                  || installing
+                }
+                aria-label={t('kernel.versions.gitcodeSource')}
+                onChange={(event) => void updateVersionSource(event.currentTarget.checked)}
+              />
+              <span className="switch-track" />
+            </label>
+            {versionSourceError ? <p className="error version-source-error" role="alert">{versionSourceError}</p> : null}
+          </div>
+        </header>
+      ) : null}
+
       <div className={view === 'home' ? 'kernel-layout home-layout' : 'kernel-layout version-management-layout'}>
         {view === 'home' ? (
         <div className="panel control-panel">
@@ -822,85 +899,36 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         ) : null}
 
         {view === 'versions' ? (
-          <div className="panel version-source-panel">
-            <div className="version-source-copy">
-              <Info size={18} aria-hidden="true" />
-              <div>
-                <strong>{t('kernel.versions.gitcodeSource')}</strong>
-                <span>
-                  {versionSource?.gitcodeAvailable === false
-                    ? t('kernel.versions.gitcodeUnavailable')
-                    : t('kernel.versions.gitcodeSourceHint')}
+          <article className="panel version-product-card software-update-panel">
+            <div className="version-product-heading">
+              <div className="version-product-identity">
+                <span className="version-product-icon software" aria-hidden="true">
+                  <AppWindow size={21} />
                 </span>
-              </div>
-            </div>
-            <label className="switch-control" title={t('kernel.versions.gitcodeSource')}>
-              <input
-                type="checkbox"
-                role="switch"
-                checked={versionSource?.preferGitcodeDownloads ?? false}
-                disabled={
-                  (!versionSource?.gitcodeAvailable && !versionSource?.preferGitcodeDownloads)
-                  || versionSourceSaving
-                  || appUpdateTask.running
-                  || installing
-                }
-                aria-label={t('kernel.versions.gitcodeSource')}
-                onChange={(event) => void updateVersionSource(event.currentTarget.checked)}
-              />
-              <span className="switch-track" />
-            </label>
-            {versionSourceError ? <p className="error version-source-error" role="alert">{versionSourceError}</p> : null}
-          </div>
-        ) : null}
-
-        {view === 'versions' ? (
-          <div className="panel software-update-panel">
-            <div className="panel-heading">
-              <div>
                 <h2>{t('appUpdate.title')}</h2>
-                <p className={appUpdateError ? 'error' : appUpdate?.updateAvailable ? 'success' : ''}>
-                  {appUpdateError
-                    || (appUpdate?.updateAvailable
-                      ? t('appUpdate.available', { version: displayAppVersion(appUpdate.latestVersion) })
-                      : appUpdate
-                        ? t('appUpdate.upToDate')
-                        : t('appUpdate.phase.checking'))}
-                </p>
               </div>
-              {!appUpdate?.autoUpdateSupported && (
-                <span className={`state-pill ${appUpdateError ? 'error' : 'success'}`}>
-                  {t('appUpdate.manualFallback')}
-                </span>
-              )}
+              <span className={`state-pill ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
+                {appVersionStatusLabel}
+              </span>
             </div>
 
-            <dl className="panel-detail-grid software-update-details">
-              <div className="panel-detail-row">
-                <dt>{t('appUpdate.current')}</dt>
-                <dd>{currentAppVersion}</dd>
+            <div className="version-comparison" aria-label={t('appUpdate.title')}>
+              <div className="version-value-block current">
+                <span>{t('appUpdate.current')}</span>
+                <strong>{currentAppVersion}</strong>
               </div>
-              <div className="panel-detail-row">
-                <dt>{t('appUpdate.latest')}</dt>
-                <dd>{appUpdate ? displayAppVersion(appUpdate.latestVersion) : t('common.detecting')}</dd>
+              <ArrowRight className="version-comparison-arrow" size={20} aria-hidden="true" />
+              <div className="version-value-block latest">
+                <span>{t('appUpdate.latest')}</span>
+                <strong>{appUpdate ? displayAppVersion(appUpdate.latestVersion) : t('common.detecting')}</strong>
               </div>
-              <div className="panel-detail-row">
-                <dt>{t('appUpdate.status')}</dt>
-                <dd className={appUpdateError ? 'error' : appUpdate?.updateAvailable ? 'success' : ''}>
-                  {appUpdateTask.running
-                    ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
-                    : appUpdateError
-                      ? t('kernel.update.failed')
-                      : appUpdate?.updateAvailable
-                        ? t('appUpdate.available', { version: displayAppVersion(appUpdate.latestVersion) })
-                        : appUpdate
-                          ? t('appUpdate.upToDate')
-                          : t('appUpdate.phase.checking')}
-                </dd>
-              </div>
-              <div className="panel-detail-row">
-                <dt>{t('appUpdate.catalog.label')}</dt>
-                <dd
+            </div>
+
+            <div className="version-card-support">
+              <Database size={17} aria-hidden="true" />
+              <div>
+                <strong>{t('appUpdate.catalog.label')}</strong>
+                <span
                   className={catalogUpdateError ? 'error' : catalogUpdateNotice ? 'success' : ''}
                   role={catalogUpdateError ? 'alert' : undefined}
                   aria-live="polite"
@@ -908,9 +936,17 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                   {catalogUpdateError
                     || catalogUpdateNotice
                     || t('appUpdate.catalog.description')}
-                </dd>
+                </span>
               </div>
-            </dl>
+            </div>
+
+            <div className="version-card-note-slot">
+              {appUpdateError ? (
+                <p className="version-card-note error" role="alert">{appUpdateError}</p>
+              ) : !appUpdate?.autoUpdateSupported ? (
+                <p className="version-card-note">{t('appUpdate.manualFallback')}</p>
+              ) : null}
+            </div>
 
             <div className="button-row panel-action-row software-update-actions">
               <button
@@ -919,6 +955,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                 disabled={checkingAppUpdate || appUpdateTask.running}
                 onClick={() => void checkAppUpdate()}
               >
+                <RefreshCw size={15} aria-hidden="true" />
                 {checkingAppUpdate ? t('appUpdate.checking') : t('appUpdate.check')}
               </button>
               {appUpdate?.updateAvailable && appUpdate.autoUpdateSupported ? (
@@ -928,10 +965,15 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                   disabled={appUpdateTask.running}
                   onClick={requestAppUpdate}
                 >
+                  <Download size={15} aria-hidden="true" />
                   {t('appUpdate.installNow')}
                 </button>
               ) : (
-                <button type="button" className="secondary-button" onClick={() => void openAppRelease()}>
+                <button
+                  type="button"
+                  className={appUpdate?.updateAvailable ? 'primary-button' : 'secondary-button'}
+                  onClick={() => void openAppRelease()}
+                >
                   {t('appUpdate.openRelease')} <ExternalLink size={14} aria-hidden="true" />
                 </button>
               )}
@@ -942,51 +984,55 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                 onClick={() => void updateCodexModelCatalog()}
                 title={t('appUpdate.catalog.updateHint')}
               >
+                <Database size={15} aria-hidden="true" />
                 {catalogUpdating
                   ? t('appUpdate.catalog.updating')
                   : t('appUpdate.catalog.update')}
               </button>
             </div>
-          </div>
+          </article>
         ) : null}
 
         {view === 'versions' ? (
-        <div className="panel version-panel">
-          <div className="panel-heading">
-            <div className="version-heading-inline">
-              <h2>{t('kernel.versions.title')}</h2>
-              <span className="version-offline-hint">
-                {t('kernel.versions.offlineHint')}
+        <article className="panel version-product-card version-panel">
+          <div className="version-product-heading">
+            <div className="version-product-identity">
+              <span className="version-product-icon core" aria-hidden="true">
+                <Box size={21} />
               </span>
+              <h2>{t('kernel.versions.title')}</h2>
+            </div>
+            <span className={`state-pill ${versionStatusTone}`} title={versionStatusLabel}>
+              {versionStatusLabel}
+            </span>
+          </div>
+
+          <div className="version-core-values">
+            <div className="version-value-block current">
+              <span>{t('kernel.versions.current')}</span>
+              <strong>{currentVersion || t('kernel.status.notInstalled')}</strong>
+            </div>
+            <div className="version-value-block latest">
+              <span>{t('kernel.versions.latest')}</span>
+              <strong>{latestLabel}</strong>
+            </div>
+            <div className="version-value-block bundled">
+              <span>{t('kernel.versions.bundled')}</span>
+              <strong title={bundledCoreError || bundledCore?.assetName}>
+                {bundledCore?.version ?? (bundledCoreError ? t('common.detectionFailed') : t('kernel.versions.notIncluded'))}
+              </strong>
             </div>
           </div>
 
-          <dl className="panel-detail-grid">
-            <div className="panel-detail-row">
-              <dt>{t('kernel.versions.current')}</dt>
-              <dd>{currentVersion || t('kernel.status.notInstalled')}</dd>
+          <div className="version-card-support core-platform-line">
+            <Box size={17} aria-hidden="true" />
+            <div>
+              <strong>{t('kernel.versions.platform')}</strong>
+              <span title={platformError || undefined}>{platformOsLabel} / {platformArchLabel}</span>
             </div>
-            <div className="panel-detail-row">
-              <dt>{t('kernel.versions.latest')}</dt>
-              <dd>{latestLabel}</dd>
-            </div>
-            <div className="panel-detail-row">
-              <dt>{t('kernel.versions.bundled')}</dt>
-              <dd title={bundledCoreError || bundledCore?.assetName}>
-                {bundledCore?.version ?? (bundledCoreError ? t('common.detectionFailed') : t('kernel.versions.notIncluded'))}
-              </dd>
-            </div>
-            <div className="panel-detail-row">
-              <dt>{t('kernel.versions.platform')}</dt>
-              <dd title={platformError || undefined}>{platformOsLabel} / {platformArchLabel}</dd>
-            </div>
-            <div className="panel-detail-row">
-              <dt>{t('kernel.versions.updateStatus')}</dt>
-              <dd className={versionStatusTone} title={versionStatusLabel}>
-                {versionStatusLabel}
-              </dd>
-            </div>
-          </dl>
+          </div>
+
+          <div className="version-card-note-slot" aria-hidden="true" />
 
           <div className="button-row panel-action-row version-action-row">
             <button
@@ -995,15 +1041,17 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               disabled={busy}
               onClick={() => void checkLatest()}
             >
+              <RefreshCw size={15} aria-hidden="true" />
               {checkingLatest ? t('kernel.update.checking') : t('kernel.versions.check')}
             </button>
             <button
               type="button"
-              className="secondary-button"
+              className={latestVersion && currentVersion !== latestVersion ? 'primary-button' : 'secondary-button'}
               title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
               disabled={!latestVersion || busy}
               onClick={() => void stopAndInstallLatest()}
             >
+              <Download size={15} aria-hidden="true" />
               {t('kernel.versions.installLatest')}
             </button>
             <button
@@ -1013,20 +1061,22 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               disabled={!currentVersion || installDisabled}
               onClick={() => installVersion(currentVersion)}
             >
+              <RotateCcw size={15} aria-hidden="true" />
               {t('kernel.versions.reinstall')}
             </button>
             <button
               type="button"
-              className="primary-button"
+              className={offlineInstallRequired ? 'primary-button' : 'secondary-button'}
               title={(bundledCore?.assetName ?? bundledCoreError) || t('kernel.versions.noBundled')}
               disabled={!bundledCore || offlineInstallDisabled}
               onClick={() => void installBundledCore()}
             >
+              <PackageOpen size={15} aria-hidden="true" />
               {t('kernel.versions.offlineInstall')}
             </button>
           </div>
 
-        </div>
+        </article>
         ) : null}
       </div>
 
