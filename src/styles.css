@@ -1019,13 +1019,13 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 980px;
+  max-width: 1160px;
   margin: 0 auto;
 }
 
 .version-list {
   display: grid;
-  gap: 14px;
+  gap: 20px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1035,7 +1035,7 @@ textarea:focus-visible {
 .version-source-row,
 .version-list-item {
   border: 1px solid var(--theme-e3e1db);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--theme-fffdf8);
   box-shadow: var(--ui-panel-shadow);
 }
@@ -1043,22 +1043,22 @@ textarea:focus-visible {
 .version-source-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 72px;
+  min-height: 84px;
   align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
+  gap: 24px;
+  padding: 20px 26px;
 }
 
 .version-source-copy {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 5px;
 }
 
 .version-source-copy strong,
 .version-card-top h2 {
   color: var(--theme-2d2a26);
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-panel-title);
   font-weight: 700;
   line-height: var(--line-height-body);
 }
@@ -1077,16 +1077,16 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
-  gap: 14px;
+  gap: 20px;
 }
 
 .version-list-item {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  min-height: 220px;
+  min-height: 280px;
   align-items: stretch;
-  gap: 18px;
-  padding: 20px;
+  gap: 26px;
+  padding: 26px;
 }
 
 .version-item-content {
@@ -1098,7 +1098,7 @@ textarea:focus-visible {
   min-width: 0;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 6px 14px;
 }
 
 .version-card-top h2 {
@@ -1145,17 +1145,17 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   min-width: 0;
-  gap: 8px;
-  margin: 12px 0 0;
+  gap: 12px;
+  margin: 20px 0 0;
 }
 
 .version-metric-tile {
   display: grid;
   min-width: 0;
-  gap: 2px;
-  padding: 10px 12px;
+  gap: 5px;
+  padding: 15px 16px;
   border: 1px solid var(--theme-e8e5dc);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--theme-faf9f5);
 }
 
@@ -1170,7 +1170,7 @@ textarea:focus-visible {
   margin: 0;
   overflow: hidden;
   color: var(--theme-2d2a26);
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-panel-title);
   font-weight: 600;
   font-family: var(--font-family-mono, monospace);
   line-height: var(--line-height-body);
@@ -1187,7 +1187,7 @@ textarea:focus-visible {
   min-width: 0;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 12px;
   color: var(--theme-7a746c);
   font-size: var(--font-size-meta);
   line-height: var(--line-height-body);
@@ -1227,19 +1227,19 @@ textarea:focus-visible {
   align-items: center;
   justify-content: flex-start;
   align-self: end;
-  gap: 8px;
+  gap: 10px;
 }
 
 .version-card-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  flex: 1 1 112px;
-  min-height: 33px;
-  padding: 5px 10px;
+  gap: 7px;
+  flex: 1 1 120px;
+  min-height: 40px;
+  padding: 8px 14px;
   font-weight: 600;
-  border-radius: 7px;
+  border-radius: 9px;
   white-space: nowrap;
 }
 
@@ -1623,6 +1623,8 @@ textarea:focus-visible {
 
   .version-list-item {
     min-height: 0;
+    gap: 20px;
+    padding: 22px;
   }
 
   .version-card-actions,
