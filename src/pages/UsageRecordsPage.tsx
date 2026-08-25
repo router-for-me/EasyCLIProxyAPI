@@ -1002,23 +1002,39 @@ type EventColumnDef = {
 const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'time', labelKey: 'usage.column.time', defaultWidth: 150, minWidth: 110, align: 'left' },
   { key: 'model', labelKey: 'usage.column.model', defaultWidth: 190, minWidth: 120, align: 'left' },
-  { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 120, minWidth: 80, align: 'left' },
-  { key: 'source', labelKey: 'usage.column.source', defaultWidth: 120, minWidth: 80, align: 'left' },
-  { key: 'key', labelKey: 'usage.column.key', defaultWidth: 145, minWidth: 95, align: 'left' },
   { key: 'input', labelKey: 'usage.column.input', defaultWidth: 84, minWidth: 60, align: 'right' },
   { key: 'output', labelKey: 'usage.column.output', defaultWidth: 84, minWidth: 60, align: 'right' },
-  { key: 'reasoning', labelKey: 'usage.column.reasoning', defaultWidth: 84, minWidth: 60, align: 'right' },
   { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 84, minWidth: 60, align: 'right' },
   { key: 'cacheRate', labelKey: 'usage.column.cacheRate', defaultWidth: 92, minWidth: 70, align: 'right' },
   { key: 'total', labelKey: 'usage.column.total', defaultWidth: 90, minWidth: 65, align: 'right' },
-  { key: 'result', labelKey: 'usage.column.result', defaultWidth: 150, minWidth: 100, align: 'left' },
-  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 100, minWidth: 75, align: 'right' },
-  { key: 'ttft', labelKey: 'usage.column.ttft', defaultWidth: 100, minWidth: 75, align: 'right' },
   { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 104, minWidth: 80, align: 'right' },
+  { key: 'ttft', labelKey: 'usage.column.ttft', defaultWidth: 100, minWidth: 75, align: 'right' },
+  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 100, minWidth: 75, align: 'right' },
+  { key: 'result', labelKey: 'usage.column.result', defaultWidth: 150, minWidth: 100, align: 'left' },
+  { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 120, minWidth: 80, align: 'left' },
+  { key: 'source', labelKey: 'usage.column.source', defaultWidth: 120, minWidth: 80, align: 'left' },
+  { key: 'key', labelKey: 'usage.column.key', defaultWidth: 145, minWidth: 95, align: 'left' },
+  { key: 'reasoning', labelKey: 'usage.column.reasoning', defaultWidth: 84, minWidth: 60, align: 'right' },
 ] as const;
 
+const DEFAULT_EVENT_VISIBLE_COLUMNS: readonly EventColumnKey[] = [
+  'time',
+  'model',
+  'input',
+  'output',
+  'cache',
+  'cacheRate',
+  'total',
+  'speed',
+  'ttft',
+  'latency',
+  'result',
+  'provider',
+  'source',
+];
+
 const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v1';
-const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v1';
+const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v2';
 
 const getAllEventColumnKeys = () => EVENT_COLUMNS.map((column) => column.key);
 
@@ -1041,9 +1057,9 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
       }
     }
   } catch {
-    // fallback to all columns
+    // fallback to defaults
   }
-  return getAllEventColumnKeys();
+  return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
 };
 
 const getInitialColumnWidths = (): Record<EventColumnKey, number> => {

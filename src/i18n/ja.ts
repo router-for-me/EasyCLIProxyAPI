@@ -194,7 +194,7 @@ export const jaOverrides = {
   'usage.events.resetColumns': '列幅をリセット',
   'usage.events.resizeHint': 'ドラッグで列幅を調整、ダブルクリックでリセット',
   'usage.events.dragHint': 'ヘッダーの境界をドラッグして列幅を調整',
-  'usage.events.columnSettings': '列設定',
+  'usage.events.columnSettings': '表示設定',
   'usage.events.columnSettingsDescription': 'リクエスト詳細に表示する列を選択します。',
   'usage.events.columnsSelected': '{total} 列中 {selected} 列を選択',
   'usage.events.selectAllColumns': 'すべて選択',

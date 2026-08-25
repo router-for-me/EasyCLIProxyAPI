@@ -194,7 +194,7 @@ export const en: Record<MessageKey, string> = {
   'usage.events.resetColumns': 'Reset Widths',
   'usage.events.resizeHint': 'Drag to resize, double-click to reset',
   'usage.events.dragHint': 'Drag column header borders to resize',
-  'usage.events.columnSettings': 'Column Settings',
+  'usage.events.columnSettings': 'Display Settings',
   'usage.events.columnSettingsDescription': 'Choose which columns appear in request details.',
   'usage.events.columnsSelected': '{selected} of {total} columns selected',
   'usage.events.selectAllColumns': 'Select All',

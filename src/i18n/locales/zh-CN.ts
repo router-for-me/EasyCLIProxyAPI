@@ -192,7 +192,7 @@ export const zhCN = {
   'usage.events.resetColumns': '重置列宽',
   'usage.events.resizeHint': '拖动调整列宽，双击重置本列',
   'usage.events.dragHint': '可拖动表头边线调整每列宽度',
-  'usage.events.columnSettings': '显示列',
+  'usage.events.columnSettings': '显示设置',
   'usage.events.columnSettingsDescription': '选择请求明细中需要显示的列。',
   'usage.events.columnsSelected': '已选择 {selected} / {total} 列',
   'usage.events.selectAllColumns': '选择全部',
