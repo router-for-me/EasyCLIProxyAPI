@@ -9,6 +9,8 @@ mod codex_sessions;
 mod configuration_watcher;
 mod core_config;
 mod core_runtime;
+#[cfg(target_os = "linux")]
+mod linux_desktop;
 mod management_api;
 mod oauth_browser;
 mod provider_health;
@@ -1945,6 +1947,13 @@ fn main() {
             setup_macos_tray(app)?;
             #[cfg(target_os = "windows")]
             setup_windows_tray(app)?;
+            // Portable Linux tarballs are run in-place; refresh the user .desktop
+            // entry on startup so the menu/desktop icon is the real app icon
+            // without requiring a separate install script.
+            #[cfg(target_os = "linux")]
+            if let Err(error) = linux_desktop::ensure_linux_desktop_integration() {
+                eprintln!("同步 Linux 桌面图标失败: {error}");
+            }
 
             if let Err(error) = configure_initial_main_window(app.handle(), start_hidden) {
                 eprintln!("配置启动窗口状态失败: {error}");
