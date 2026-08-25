@@ -1245,6 +1245,11 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         };
         changed = true;
     }
+    if presence.custom_download_mirrors.is_none()
+        || presence.active_custom_download_mirror.is_none()
+    {
+        changed = true;
+    }
     if presence.prefer_gitcode_downloads.is_none() {
         changed = true;
     }
@@ -1538,6 +1543,42 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
         config.proxy_url = proxy_url;
         changed = true;
     }
+    let original_custom_mirrors = config.custom_download_mirrors.clone();
+    config.custom_download_mirrors = config
+        .custom_download_mirrors
+        .iter()
+        .filter_map(|url| normalize_custom_download_mirror_url(url).ok())
+        .fold(Vec::new(), |mut mirrors, url| {
+            if !mirrors.contains(&url) {
+                mirrors.push(url);
+            }
+            mirrors
+        });
+    if config.custom_download_mirrors != original_custom_mirrors {
+        changed = true;
+    }
+    if !config.active_custom_download_mirror.is_empty() {
+        match normalize_custom_download_mirror_url(&config.active_custom_download_mirror) {
+            Ok(normalized) if normalized != config.active_custom_download_mirror => {
+                config.active_custom_download_mirror = normalized;
+                changed = true;
+            }
+            Err(_) => {
+                config.active_custom_download_mirror.clear();
+                changed = true;
+            }
+            _ => {}
+        }
+    }
+    if config.download_source == VersionDownloadSource::Custom
+        && !config
+            .custom_download_mirrors
+            .contains(&config.active_custom_download_mirror)
+    {
+        config.download_source = VersionDownloadSource::Github;
+        config.active_custom_download_mirror.clear();
+        changed = true;
+    }
     let routing_session_affinity_ttl = config.routing_session_affinity_ttl.trim().to_string();
     if config.routing_session_affinity_ttl != routing_session_affinity_ttl {
         config.routing_session_affinity_ttl = routing_session_affinity_ttl;
@@ -1656,6 +1697,20 @@ pub(crate) fn write_gui_config_to_path(
         api_keys.push(Value::InlineTable(table));
     }
     set_codex_table_item(root, "api-keys", Item::Value(Value::Array(api_keys)));
+    let mut custom_download_mirrors = Array::new();
+    for url in &config.custom_download_mirrors {
+        custom_download_mirrors.push(url.as_str());
+    }
+    set_codex_table_item(
+        root,
+        "custom-download-mirrors",
+        Item::Value(Value::Array(custom_download_mirrors)),
+    );
+    set_codex_table_item(
+        root,
+        "active-custom-download-mirror",
+        value(config.active_custom_download_mirror.as_str()),
+    );
     let mut api_access_remarks = Array::new();
     for entry in &config.api_access_remarks {
         let mut table = InlineTable::new();
@@ -1719,6 +1774,18 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
     validate_routing_strategy(config.routing_strategy.trim())?;
     if config.proxy_url.chars().any(char::is_control) {
         return Err("代理 URL 不能包含控制字符".to_string());
+    }
+    for url in &config.custom_download_mirrors {
+        if normalize_custom_download_mirror_url(url).as_deref() != Ok(url.as_str()) {
+            return Err(format!("自定义下载镜像地址无效: {url}"));
+        }
+    }
+    if config.download_source == VersionDownloadSource::Custom
+        && !config
+            .custom_download_mirrors
+            .contains(&config.active_custom_download_mirror)
+    {
+        return Err("当前选择的自定义下载镜像不存在".to_string());
     }
     if config
         .routing_session_affinity_ttl

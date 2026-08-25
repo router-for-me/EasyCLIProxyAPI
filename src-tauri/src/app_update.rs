@@ -8,10 +8,15 @@ pub(crate) fn get_version_source_settings(
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<VersionSourceSettings, String> {
     let config = gui_config_state.snapshot()?;
-    Ok(VersionSourceSettings {
-        source: config.download_source,
+    Ok(version_source_settings(&config))
+}
+
+fn version_source_settings(config: &GuiConfigFile) -> VersionSourceSettings {
+    VersionSourceSettings {
+        source: config.selected_download_candidate().key(),
         gitcode_available: gitcode_version_source_available(),
-    })
+        custom_mirrors: config.custom_download_mirrors.clone(),
+    }
 }
 
 #[tauri::command]
@@ -19,16 +24,60 @@ pub(crate) fn set_download_source(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     source: String,
 ) -> Result<VersionSourceSettings, String> {
-    let source =
-        VersionDownloadSource::from_str(&source).ok_or_else(|| "不支持的下载源".to_string())?;
-    if source == VersionDownloadSource::Gitcode && !gitcode_version_source_available() {
+    let candidate = if let Some(url) = source.strip_prefix("custom:") {
+        VersionDownloadCandidate::custom(&normalize_custom_download_mirror_url(url)?)
+    } else {
+        VersionDownloadCandidate::builtin(
+            VersionDownloadSource::from_str(&source)
+                .filter(|source| *source != VersionDownloadSource::Custom)
+                .ok_or_else(|| "不支持的下载源".to_string())?,
+        )
+    };
+    if candidate.source == VersionDownloadSource::Gitcode && !gitcode_version_source_available() {
         return Err("当前构建未配置完整的 GitCode 软件与内核镜像源".to_string());
     }
-    let config = gui_config_state.set_download_source(source)?;
-    Ok(VersionSourceSettings {
-        source: config.download_source,
-        gitcode_available: gitcode_version_source_available(),
-    })
+    let config = gui_config_state.set_download_candidate(candidate)?;
+    Ok(version_source_settings(&config))
+}
+
+#[tauri::command]
+pub(crate) fn add_custom_download_mirror(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    url: String,
+) -> Result<VersionSourceSettings, String> {
+    let url = normalize_custom_download_mirror_url(&url)?;
+    let config = gui_config_state.update(|config| {
+        if !config.custom_download_mirrors.contains(&url) {
+            if config.custom_download_mirrors.len() >= 12 {
+                return Err("最多可添加 12 个自定义镜像".to_string());
+            }
+            config.custom_download_mirrors.push(url.clone());
+        }
+        config.download_source = VersionDownloadSource::Custom;
+        config.active_custom_download_mirror = url.clone();
+        config.prefer_gitcode_downloads = false;
+        Ok(())
+    })?;
+    Ok(version_source_settings(&config))
+}
+
+#[tauri::command]
+pub(crate) fn remove_custom_download_mirror(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    url: String,
+) -> Result<VersionSourceSettings, String> {
+    let url = normalize_custom_download_mirror_url(&url)?;
+    let config = gui_config_state.update(|config| {
+        config.custom_download_mirrors.retain(|item| item != &url);
+        if config.download_source == VersionDownloadSource::Custom
+            && config.active_custom_download_mirror == url
+        {
+            config.download_source = VersionDownloadSource::Github;
+            config.active_custom_download_mirror.clear();
+        }
+        Ok(())
+    })?;
+    Ok(version_source_settings(&config))
 }
 
 #[tauri::command]
@@ -45,10 +94,7 @@ pub(crate) fn set_prefer_gitcode_downloads(
         return Err("当前构建未配置完整的 GitCode 软件与内核镜像源".to_string());
     }
     let config = gui_config_state.set_download_source(source)?;
-    Ok(VersionSourceSettings {
-        source: config.download_source,
-        gitcode_available: gitcode_version_source_available(),
-    })
+    Ok(version_source_settings(&config))
 }
 
 pub(crate) fn gitcode_version_source_available() -> bool {
@@ -58,8 +104,8 @@ pub(crate) fn gitcode_version_source_available() -> bool {
 pub(crate) fn persist_automatic_download_source_switch(
     app: &tauri::AppHandle,
     gui_config_state: &GuiConfigState,
-    requested_source: VersionDownloadSource,
-    resolved_source: VersionDownloadSource,
+    requested_source: &VersionDownloadCandidate,
+    resolved_source: &VersionDownloadCandidate,
 ) -> Result<(), String> {
     let Some(config) =
         gui_config_state.switch_download_source_after_failure(requested_source, resolved_source)?
@@ -68,10 +114,7 @@ pub(crate) fn persist_automatic_download_source_switch(
     };
     app.emit(
         VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT,
-        VersionSourceSettings {
-            source: config.download_source,
-            gitcode_available: gitcode_version_source_available(),
-        },
+        version_source_settings(&config),
     )
     .map_err(|error| format!("通知下载源自动切换失败: {error}"))
 }
@@ -88,23 +131,30 @@ pub(crate) async fn check_app_update(
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<AppUpdateInfo, String> {
     let config = gui_config_state.snapshot()?;
-    let proxy_url = config.proxy_url;
+    let proxy_url = config.proxy_url.clone();
     let client = build_http_client_with_proxy(
         reqwest::Client::builder()
-            .redirect(release_https_redirect_policy())
+            .redirect(release_https_redirect_policy_with_mirrors(
+                &config.custom_download_mirrors,
+            ))
             .connect_timeout(Duration::from_secs(8))
             .read_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(20)),
         &proxy_url,
         "创建版本检查客户端失败",
     )?;
-    let (manifest, resolved_source) =
-        fetch_portable_update_manifest(&client, config.download_source).await?;
+    let requested_source = config.selected_download_candidate();
+    let (manifest, resolved_source) = fetch_portable_update_manifest(
+        &client,
+        requested_source.clone(),
+        &config.custom_download_mirrors,
+    )
+    .await?;
     persist_automatic_download_source_switch(
         &app,
         gui_config_state.inner(),
-        config.download_source,
-        resolved_source,
+        &requested_source,
+        &resolved_source,
     )?;
     let latest_version = normalize_version(&manifest.version);
     let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
@@ -161,12 +211,15 @@ pub(crate) async fn check_app_update(
 
 pub(crate) async fn fetch_portable_update_manifest(
     client: &reqwest::Client,
-    source: VersionDownloadSource,
-) -> Result<(PortableUpdateManifest, VersionDownloadSource), String> {
+    source: VersionDownloadCandidate,
+    custom_mirrors: &[String],
+) -> Result<(PortableUpdateManifest, VersionDownloadCandidate), String> {
     let gitcode_repository = configured_gitcode_gui_repository();
     let mut failures = Vec::new();
-    for candidate in version_download_source_candidates(source, gitcode_repository.is_some()) {
-        let result = match candidate {
+    for candidate in
+        version_download_source_candidates(source, gitcode_repository.is_some(), custom_mirrors)
+    {
+        let result = match candidate.source {
             VersionDownloadSource::Gitcode => {
                 fetch_portable_update_manifest_from_gitcode(
                     client,
@@ -177,7 +230,11 @@ pub(crate) async fn fetch_portable_update_manifest(
             VersionDownloadSource::Github
             | VersionDownloadSource::GhProxy
             | VersionDownloadSource::GhFast => {
-                let url = version_source_url(candidate, APP_UPDATE_MANIFEST_URL);
+                let url = version_source_url(&candidate, APP_UPDATE_MANIFEST_URL);
+                fetch_portable_update_manifest_url(client, &url).await
+            }
+            VersionDownloadSource::Custom => {
+                let url = version_source_url(&candidate, APP_UPDATE_MANIFEST_URL);
                 fetch_portable_update_manifest_url(client, &url).await
             }
         };
@@ -275,8 +332,15 @@ pub(crate) fn gitcode_release_attachment_url(
     )
 }
 
-pub(crate) fn release_https_redirect_policy() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
+pub(crate) fn release_https_redirect_policy_with_mirrors(
+    custom_mirrors: &[String],
+) -> reqwest::redirect::Policy {
+    let custom_hosts = custom_mirrors
+        .iter()
+        .filter_map(|value| reqwest::Url::parse(value).ok())
+        .filter_map(|url| url.host_str().map(str::to_string))
+        .collect::<HashSet<_>>();
+    reqwest::redirect::Policy::custom(move |attempt| {
         let url = attempt.url();
         let trusted_host = matches!(
             url.host_str(),
@@ -290,7 +354,9 @@ pub(crate) fn release_https_redirect_policy() -> reqwest::redirect::Policy {
                     | "gh-proxy.com"
                     | "ghfast.top"
             )
-        );
+        ) || url
+            .host_str()
+            .is_some_and(|host| custom_hosts.contains(host));
         if url.scheme() == "https"
             && url.port().is_none()
             && url.username().is_empty()
@@ -566,8 +632,8 @@ pub(crate) async fn start_app_update(
         return Err("当前平台不支持应用内自动升级".to_string());
     }
     let config = gui_config_state.snapshot()?;
-    let proxy_url = config.proxy_url;
-    let download_source = config.download_source;
+    let proxy_url = config.proxy_url.clone();
+    let download_source = config.selected_download_candidate();
     let token = CancellationToken::new();
     let pending = state.start(token.clone())?;
     let task = state.snapshot();
@@ -604,7 +670,7 @@ pub(crate) async fn download_and_stage_portable_app_update(
     pending: &PendingAppUpdate,
     token: &CancellationToken,
     proxy_url: &str,
-    download_source: VersionDownloadSource,
+    download_source: VersionDownloadCandidate,
 ) -> Result<(), String> {
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
@@ -634,7 +700,7 @@ pub(crate) async fn download_and_stage_portable_app_update(
                 token,
                 &archive_path,
                 proxy_url,
-                download_source,
+                &download_source,
             )
             .await?;
             if token.is_cancelled() {
@@ -720,7 +786,7 @@ pub(crate) async fn download_and_stage_portable_app_update(
                 token,
                 &archive_path,
                 proxy_url,
-                download_source,
+                &download_source,
             )
             .await?;
             ensure_portable_update_download(token, &archive_path, pending)?;
@@ -792,7 +858,7 @@ pub(crate) async fn download_and_stage_portable_app_update(
                 token,
                 &archive_path,
                 proxy_url,
-                download_source,
+                &download_source,
             )
             .await?;
             ensure_portable_update_download(token, &archive_path, pending)?;
@@ -967,11 +1033,17 @@ pub(crate) async fn download_portable_update_archive(
     token: &CancellationToken,
     destination: &Path,
     proxy_url: &str,
-    download_source: VersionDownloadSource,
+    download_source: &VersionDownloadCandidate,
 ) -> Result<(), String> {
     let client = build_http_client_with_proxy(
         reqwest::Client::builder()
-            .redirect(release_https_redirect_policy())
+            .redirect(release_https_redirect_policy_with_mirrors(
+                &download_source
+                    .custom_url
+                    .clone()
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            ))
             .connect_timeout(Duration::from_secs(15))
             .read_timeout(Duration::from_secs(30))
             .timeout(Duration::from_secs(15 * 60)),
@@ -1004,15 +1076,15 @@ pub(crate) async fn download_portable_update_archive(
 
 pub(crate) fn portable_update_download_urls(
     asset: &PortableUpdateAsset,
-    source: VersionDownloadSource,
+    source: &VersionDownloadCandidate,
 ) -> Vec<String> {
     let mut urls = std::iter::once(asset.url.as_str())
         .chain(asset.fallback_urls.iter().map(String::as_str))
         .map(str::to_string)
         .collect::<Vec<_>>();
-    if source == VersionDownloadSource::Gitcode {
+    if source.source == VersionDownloadSource::Gitcode {
         urls.sort_by_key(|url| update_download_source_name(url) != "GitCode");
-    } else if source.github_proxy_prefix().is_some() {
+    } else if source.proxy_prefix().is_some() {
         if let Some(github_url) = urls
             .iter()
             .find(|url| update_download_source_name(url) == "GitHub")
@@ -1025,15 +1097,21 @@ pub(crate) fn portable_update_download_urls(
     urls
 }
 
-pub(crate) fn update_download_source_name(url: &str) -> &'static str {
+pub(crate) fn update_download_source_name(url: &str) -> String {
     let host = reqwest::Url::parse(url)
         .ok()
         .and_then(|url| url.host_str().map(str::to_string));
     match host.as_deref() {
-        Some("gh-proxy.com") => "gh-proxy.com",
-        Some("ghfast.top") => "ghfast.top",
-        Some(host) if host == "api.gitcode.com" || host.ends_with(".gitcode.com") => "GitCode",
-        _ => "GitHub",
+        Some("gh-proxy.com") => "gh-proxy.com".to_string(),
+        Some("ghfast.top") => "ghfast.top".to_string(),
+        Some(host) if host == "api.gitcode.com" || host.ends_with(".gitcode.com") => {
+            "GitCode".to_string()
+        }
+        Some(
+            "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com",
+        ) => "GitHub".to_string(),
+        Some(host) => host.to_string(),
+        None => "GitHub".to_string(),
     }
 }
 

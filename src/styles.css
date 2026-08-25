@@ -1073,9 +1073,16 @@ textarea:focus-visible {
   color: var(--theme-9f2d20);
 }
 
-.version-source-control,
 .version-source-control label {
   display: grid;
+}
+
+.version-source-control {
+  display: grid;
+  grid-template-columns: minmax(0, 250px) auto;
+  width: max-content;
+  max-width: 100%;
+  gap: 8px;
 }
 
 .version-source-control select {
@@ -1096,6 +1103,29 @@ textarea:focus-visible {
 }
 
 .version-source-control select:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.version-source-add-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--theme-d5d2cb);
+  border-radius: 8px;
+  background: var(--theme-fffdf8);
+  color: var(--theme-4b4742);
+}
+
+.version-source-add-button:hover:not(:disabled) {
+  border-color: var(--theme-9b958c);
+  background: var(--theme-faf8f2);
+}
+
+.version-source-add-button:disabled {
   cursor: not-allowed;
   opacity: 0.58;
 }
@@ -1673,6 +1703,15 @@ textarea:focus-visible {
 
   .version-source-control select {
     width: 100%;
+  }
+
+  .version-source-control {
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+  }
+
+  .version-source-add-button {
+    grid-column: 1 / -1;
   }
 }
 
@@ -8299,6 +8338,81 @@ body.table-col-resizing * {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.custom-mirror-dialog {
+  width: min(500px, 100%);
+}
+
+.custom-mirror-dialog-description {
+  margin: 0;
+  color: var(--theme-6f6961);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-relaxed);
+}
+
+.custom-mirror-dialog > input {
+  width: 100%;
+  height: 44px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--theme-d5d2cb);
+  border-radius: 8px;
+  background: var(--theme-fffdf8);
+  color: var(--theme-2d2a26);
+}
+
+.custom-mirror-dialog-error {
+  color: var(--theme-9f2d20);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+}
+
+.custom-mirror-dialog-list {
+  display: grid;
+  max-height: 150px;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.custom-mirror-dialog-list > span {
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
+}
+
+.custom-mirror-dialog-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 7px;
+  background: var(--theme-faf8f2);
+}
+
+.custom-mirror-dialog-list > div > span {
+  overflow: hidden;
+  color: var(--theme-4b4742);
+  font-size: var(--font-size-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-mirror-dialog-list button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--theme-9f2d20);
+}
+
+.custom-mirror-dialog-list button:hover:not(:disabled) {
+  background: rgba(159, 45, 32, 0.08);
 }
 
 .app-update-dialog .install-dialog-message {

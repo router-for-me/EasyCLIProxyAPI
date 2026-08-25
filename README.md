@@ -48,7 +48,8 @@ The Home page provides a quick overview of the local proxy runtime and ready-to-
 
 Core installation, version comparison, and offline installation are available from the
 **Version Management** page. You can switch between official GitHub, GitCode, and GitHub
-mirror proxies; application and core updates prefer the selected channel and fall back automatically.
+mirror proxies or add custom HTTPS mirror prefixes; application and core updates prefer the selected
+channel and fall back automatically.
 
 ### OAuth account authorization
 

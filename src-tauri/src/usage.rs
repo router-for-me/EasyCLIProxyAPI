@@ -3328,6 +3328,8 @@ mod tests {
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
             download_source: VersionDownloadSource::Github,
+            custom_download_mirrors: Vec::new(),
+            active_custom_download_mirror: String::new(),
             prefer_gitcode_downloads: false,
             routing_session_affinity: false,
             routing_session_affinity_ttl: String::new(),

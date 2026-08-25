@@ -593,6 +593,8 @@ struct GuiConfigFile {
     routing_strategy: String,
     proxy_url: String,
     download_source: VersionDownloadSource,
+    custom_download_mirrors: Vec<String>,
+    active_custom_download_mirror: String,
     // Kept for migration compatibility with configurations written before
     // multi-source downloads were introduced.
     prefer_gitcode_downloads: bool,
@@ -612,6 +614,7 @@ enum VersionDownloadSource {
     Gitcode,
     GhProxy,
     GhFast,
+    Custom,
 }
 
 impl VersionDownloadSource {
@@ -621,6 +624,7 @@ impl VersionDownloadSource {
             Self::Gitcode => "gitcode",
             Self::GhProxy => "gh-proxy",
             Self::GhFast => "gh-fast",
+            Self::Custom => "custom",
         }
     }
 
@@ -630,6 +634,7 @@ impl VersionDownloadSource {
             "gitcode" => Some(Self::Gitcode),
             "gh-proxy" => Some(Self::GhProxy),
             "gh-fast" => Some(Self::GhFast),
+            "custom" => Some(Self::Custom),
             _ => None,
         }
     }
@@ -640,6 +645,7 @@ impl VersionDownloadSource {
             Self::Gitcode => "GitCode",
             Self::GhProxy => "gh-proxy.com",
             Self::GhFast => "ghfast.top",
+            Self::Custom => "自定义镜像",
         }
     }
 
@@ -647,37 +653,124 @@ impl VersionDownloadSource {
         match self {
             Self::GhProxy => Some("https://gh-proxy.com/"),
             Self::GhFast => Some("https://ghfast.top/"),
+            Self::Custom => None,
             _ => None,
         }
     }
 }
 
-fn version_source_url(source: VersionDownloadSource, github_url: &str) -> String {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VersionDownloadCandidate {
+    source: VersionDownloadSource,
+    custom_url: Option<String>,
+}
+
+impl VersionDownloadCandidate {
+    fn builtin(source: VersionDownloadSource) -> Self {
+        Self {
+            source,
+            custom_url: None,
+        }
+    }
+
+    fn custom(url: &str) -> Self {
+        Self {
+            source: VersionDownloadSource::Custom,
+            custom_url: Some(url.to_string()),
+        }
+    }
+
+    fn key(&self) -> String {
+        self.custom_url
+            .as_ref()
+            .map(|url| format!("custom:{url}"))
+            .unwrap_or_else(|| self.source.as_str().to_string())
+    }
+
+    fn display_name(&self) -> String {
+        self.custom_url
+            .as_ref()
+            .and_then(|url| reqwest::Url::parse(url).ok())
+            .and_then(|url| url.host_str().map(str::to_string))
+            .unwrap_or_else(|| self.source.display_name().to_string())
+    }
+
+    fn proxy_prefix(&self) -> Option<&str> {
+        self.custom_url
+            .as_deref()
+            .or_else(|| self.source.github_proxy_prefix())
+    }
+}
+
+fn version_source_url(source: &VersionDownloadCandidate, github_url: &str) -> String {
     source
-        .github_proxy_prefix()
+        .proxy_prefix()
         .map(|prefix| format!("{prefix}{github_url}"))
         .unwrap_or_else(|| github_url.to_string())
 }
 
 fn version_download_source_candidates(
-    preferred: VersionDownloadSource,
+    preferred: VersionDownloadCandidate,
     gitcode_available: bool,
-) -> Vec<VersionDownloadSource> {
-    [
+    custom_mirrors: &[String],
+) -> Vec<VersionDownloadCandidate> {
+    let mut candidates = vec![
         preferred,
-        VersionDownloadSource::Github,
-        VersionDownloadSource::Gitcode,
-        VersionDownloadSource::GhProxy,
-        VersionDownloadSource::GhFast,
-    ]
-    .into_iter()
-    .filter(|source| gitcode_available || *source != VersionDownloadSource::Gitcode)
-    .fold(Vec::new(), |mut sources, source| {
-        if !sources.contains(&source) {
-            sources.push(source);
+        VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+        VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+    ];
+    candidates.retain(|candidate| {
+        gitcode_available || candidate.source != VersionDownloadSource::Gitcode
+    });
+    candidates.extend(
+        custom_mirrors
+            .iter()
+            .map(|url| VersionDownloadCandidate::custom(url)),
+    );
+    candidates
+        .into_iter()
+        .fold(Vec::new(), |mut sources, source| {
+            if !sources.contains(&source) {
+                sources.push(source);
+            }
+            sources
+        })
+}
+
+fn normalize_custom_download_mirror_url(value: &str) -> Result<String, String> {
+    let mut url =
+        reqwest::Url::parse(value.trim()).map_err(|error| format!("镜像地址无效: {error}"))?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("镜像地址必须是无认证、端口、查询参数和片段的 HTTPS 地址".to_string());
+    }
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    Ok(url.to_string())
+}
+
+impl GuiConfigFile {
+    fn selected_download_candidate(&self) -> VersionDownloadCandidate {
+        if self.download_source == VersionDownloadSource::Custom
+            && self
+                .custom_download_mirrors
+                .contains(&self.active_custom_download_mirror)
+        {
+            VersionDownloadCandidate::custom(&self.active_custom_download_mirror)
+        } else {
+            VersionDownloadCandidate::builtin(self.download_source)
         }
-        sources
-    })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -785,6 +878,8 @@ impl Default for GuiConfigFile {
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
             download_source: VersionDownloadSource::Github,
+            custom_download_mirrors: Vec::new(),
+            active_custom_download_mirror: String::new(),
             prefer_gitcode_downloads: false,
             routing_session_affinity: false,
             routing_session_affinity_ttl: String::new(),
@@ -815,6 +910,8 @@ struct GuiConfigPresence {
     routing_strategy: Option<String>,
     proxy_url: Option<String>,
     download_source: Option<VersionDownloadSource>,
+    custom_download_mirrors: Option<Vec<String>>,
+    active_custom_download_mirror: Option<String>,
     prefer_gitcode_downloads: Option<bool>,
     routing_session_affinity: Option<bool>,
     routing_session_affinity_ttl: Option<String>,
@@ -837,8 +934,9 @@ struct GuiSettings {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VersionSourceSettings {
-    source: VersionDownloadSource,
+    source: String,
     gitcode_available: bool,
+    custom_mirrors: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1829,29 +1927,47 @@ impl GuiConfigState {
         &self,
         download_source: VersionDownloadSource,
     ) -> Result<GuiConfigFile, String> {
+        self.set_download_candidate(VersionDownloadCandidate::builtin(download_source))
+    }
+
+    fn set_download_candidate(
+        &self,
+        candidate: VersionDownloadCandidate,
+    ) -> Result<GuiConfigFile, String> {
         self.update(|config| {
-            config.download_source = download_source;
-            config.prefer_gitcode_downloads = download_source == VersionDownloadSource::Gitcode;
+            if let Some(url) = &candidate.custom_url {
+                if !config.custom_download_mirrors.contains(url) {
+                    return Err("自定义镜像不存在".to_string());
+                }
+                config.active_custom_download_mirror = url.clone();
+            }
+            config.download_source = candidate.source;
+            config.prefer_gitcode_downloads = candidate.source == VersionDownloadSource::Gitcode;
             Ok(())
         })
     }
 
     fn switch_download_source_after_failure(
         &self,
-        expected_source: VersionDownloadSource,
-        fallback_source: VersionDownloadSource,
+        expected_source: &VersionDownloadCandidate,
+        fallback_source: &VersionDownloadCandidate,
     ) -> Result<Option<GuiConfigFile>, String> {
         let mut current = self
             .inner
             .lock()
             .map_err(|_| "GUI 配置状态锁已损坏".to_string())?;
-        if current.download_source != expected_source || expected_source == fallback_source {
+        if current.selected_download_candidate() != *expected_source
+            || expected_source == fallback_source
+        {
             return Ok(None);
         }
 
         let mut config = current.clone();
-        config.download_source = fallback_source;
-        config.prefer_gitcode_downloads = fallback_source == VersionDownloadSource::Gitcode;
+        config.download_source = fallback_source.source;
+        if let Some(url) = &fallback_source.custom_url {
+            config.active_custom_download_mirror = url.clone();
+        }
+        config.prefer_gitcode_downloads = fallback_source.source == VersionDownloadSource::Gitcode;
         sanitize_gui_config(&mut config)?;
         write_gui_config(&config)?;
         *current = config.clone();
@@ -2314,6 +2430,8 @@ fn main() {
             open_external_url,
             get_version_source_settings,
             set_download_source,
+            add_custom_download_mirror,
+            remove_custom_download_mirror,
             set_prefer_gitcode_downloads,
             check_app_update,
             get_app_update_task,

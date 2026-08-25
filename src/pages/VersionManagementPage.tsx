@@ -10,6 +10,7 @@ import {
   Info,
   RefreshCw,
   RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import { useCoreRuntime } from '../coreRuntime';
 import { useI18n } from '../i18n';
@@ -41,18 +42,27 @@ export type CoreInstallTask = {
 export type VersionSourceSettings = {
   source: VersionDownloadSource;
   gitcodeAvailable: boolean;
+  customMirrors: string[];
 };
 
-export type VersionDownloadSource = 'github' | 'gitcode' | 'gh-proxy' | 'gh-fast';
+export type VersionDownloadSource = string;
 
 function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof useI18n>['t']) {
-  const keys = {
+  const keys: Record<string, Parameters<typeof t>[0]> = {
     github: 'kernel.versions.source.github',
     gitcode: 'kernel.versions.source.gitcode',
     'gh-proxy': 'kernel.versions.source.ghProxy',
     'gh-fast': 'kernel.versions.source.ghFast',
-  } as const;
-  return t(keys[source]);
+  };
+  if (source.startsWith('custom:')) {
+    const url = source.slice('custom:'.length);
+    try {
+      return `${t('kernel.versions.source.custom')} · ${new URL(url).host}`;
+    } catch {
+      return t('kernel.versions.source.custom');
+    }
+  }
+  return t(keys[source] ?? 'kernel.versions.source.github');
 }
 
 export type MessageType = 'info' | 'success' | 'error';
@@ -131,6 +141,8 @@ export function VersionManagementPage() {
   const [versionSource, setVersionSource] = useState<VersionSourceSettings | null>(null);
   const [versionSourceSaving, setVersionSourceSaving] = useState(false);
   const [versionSourceError, setVersionSourceError] = useState('');
+  const [customMirrorDraft, setCustomMirrorDraft] = useState('');
+  const [customMirrorDialogOpen, setCustomMirrorDialogOpen] = useState(false);
 
   const [toastNotice, setToastNotice] = useState<{
     message: string;
@@ -138,6 +150,7 @@ export function VersionManagementPage() {
   } | null>(null);
 
   const installDialogRef = useRef<HTMLDivElement>(null);
+  const customMirrorInputRef = useRef<HTMLInputElement>(null);
   const latestCheckEpochRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -237,6 +250,52 @@ export function VersionManagementPage() {
       await loadVersionSourceSettings();
       setVersionSourceError(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }));
       showToast(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }), 'error');
+    } finally {
+      setVersionSourceSaving(false);
+    }
+  };
+
+  const addCustomMirror = async () => {
+    const url = customMirrorDraft.trim();
+    if (!url) return;
+    setVersionSourceSaving(true);
+    setVersionSourceError('');
+    try {
+      const settings = await invoke<VersionSourceSettings>('add_custom_download_mirror', { url });
+      setVersionSource(settings);
+      setCustomMirrorDraft('');
+      setCustomMirrorDialogOpen(false);
+      cachedLatest = null;
+      cachedLatestError = '';
+      setLatest(null);
+      showToast(t('kernel.versions.customMirrorAdded'), 'success');
+      await Promise.allSettled([checkAppUpdate(), checkLatest(true)]);
+    } catch (error) {
+      const message = t('kernel.versions.customMirrorAddFailed', { error: String(error) });
+      setVersionSourceError(message);
+      showToast(message, 'error');
+    } finally {
+      setVersionSourceSaving(false);
+    }
+  };
+
+  const removeCustomMirror = async (url: string) => {
+    const wasSelected = versionSource?.source === `custom:${url}`;
+    setVersionSourceSaving(true);
+    setVersionSourceError('');
+    try {
+      const settings = await invoke<VersionSourceSettings>('remove_custom_download_mirror', {
+        url,
+      });
+      setVersionSource(settings);
+      showToast(t('kernel.versions.customMirrorRemoved'), 'success');
+      if (wasSelected) {
+        await Promise.allSettled([checkAppUpdate(), checkLatest(true)]);
+      }
+    } catch (error) {
+      const message = t('kernel.versions.customMirrorRemoveFailed', { error: String(error) });
+      setVersionSourceError(message);
+      showToast(message, 'error');
     } finally {
       setVersionSourceSaving(false);
     }
@@ -403,6 +462,25 @@ export function VersionManagementPage() {
     };
   }, [installDialogOpen]);
 
+  useEffect(() => {
+    if (!customMirrorDialogOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.setTimeout(() => customMirrorInputRef.current?.focus(), 0);
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !versionSourceSaving) {
+        setCustomMirrorDialogOpen(false);
+      }
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [customMirrorDialogOpen, versionSourceSaving]);
+
   // Derived state calculations
   const latestVersion = latest?.version ?? '';
   const currentVersion = coreStatus?.currentVersion ?? '';
@@ -531,8 +609,24 @@ export function VersionManagementPage() {
                 </option>
                 <option value="gh-proxy">{t('kernel.versions.source.ghProxy')}</option>
                 <option value="gh-fast">{t('kernel.versions.source.ghFast')}</option>
+                {versionSource?.customMirrors.map((url) => (
+                  <option key={url} value={`custom:${url}`}>
+                    {downloadSourceLabel(`custom:${url}`, t)}
+                  </option>
+                ))}
               </select>
             </label>
+            <button
+              type="button"
+              className="version-source-add-button"
+              disabled={versionSourceSaving || appUpdateTask.running || installing}
+              onClick={() => {
+                setVersionSourceError('');
+                setCustomMirrorDialogOpen(true);
+              }}
+            >
+              <span>{t('kernel.versions.customMirrorAdd')}</span>
+            </button>
           </div>
         </div>
 
@@ -679,6 +773,81 @@ export function VersionManagementPage() {
 
         </div>
       </section>
+
+      {customMirrorDialogOpen ? (
+        <div className="install-dialog-backdrop custom-mirror-dialog-backdrop">
+          <form
+            className="install-dialog app-update-dialog custom-mirror-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="custom-mirror-dialog-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void addCustomMirror();
+            }}
+          >
+            <div className="install-dialog-heading">
+              <span>{t('kernel.versions.downloadSource')}</span>
+              <h2 id="custom-mirror-dialog-title">{t('kernel.versions.customMirrorDialogTitle')}</h2>
+            </div>
+            <p className="custom-mirror-dialog-description">
+              {t('kernel.versions.customMirrorDialogDescription')}
+            </p>
+            <input
+              ref={customMirrorInputRef}
+              type="url"
+              value={customMirrorDraft}
+              disabled={versionSourceSaving}
+              placeholder={t('kernel.versions.customMirrorPlaceholder')}
+              aria-label={t('kernel.versions.customMirrorPlaceholder')}
+              onChange={(event) => setCustomMirrorDraft(event.currentTarget.value)}
+            />
+            {versionSourceError ? (
+              <span className="custom-mirror-dialog-error" role="alert">{versionSourceError}</span>
+            ) : null}
+            {versionSource?.customMirrors.length ? (
+              <div className="custom-mirror-dialog-list">
+                <span>{t('kernel.versions.customMirrorSaved')}</span>
+                {versionSource.customMirrors.map((url) => (
+                  <div key={url}>
+                    <span title={url}>{url}</span>
+                    <button
+                      type="button"
+                      disabled={versionSourceSaving}
+                      title={t('kernel.versions.customMirrorRemove')}
+                      aria-label={t('kernel.versions.customMirrorRemove')}
+                      onClick={() => void removeCustomMirror(url)}
+                    >
+                      <Trash2 size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="app-update-dialog-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={versionSourceSaving}
+                onClick={() => {
+                  setCustomMirrorDialogOpen(false);
+                  setCustomMirrorDraft('');
+                  setVersionSourceError('');
+                }}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="submit"
+                className="secondary-button"
+                disabled={!customMirrorDraft.trim() || versionSourceSaving}
+              >
+                <span>{t('kernel.versions.customMirrorConfirm')}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       {/* Core Update Confirmation Dialog */}
       {confirmUpdateOpen ? (

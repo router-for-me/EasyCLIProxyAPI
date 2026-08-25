@@ -212,15 +212,24 @@ fn portable_update_download_order_respects_gitcode_preference() {
         &filename,
     )];
 
-    let github_first = portable_update_download_urls(&asset, VersionDownloadSource::Github);
+    let github_first = portable_update_download_urls(
+        &asset,
+        &VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+    );
     assert_eq!(update_download_source_name(&github_first[0]), "GitHub");
     assert_eq!(update_download_source_name(&github_first[1]), "GitCode");
 
-    let gitcode_first = portable_update_download_urls(&asset, VersionDownloadSource::Gitcode);
+    let gitcode_first = portable_update_download_urls(
+        &asset,
+        &VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+    );
     assert_eq!(update_download_source_name(&gitcode_first[0]), "GitCode");
     assert_eq!(update_download_source_name(&gitcode_first[1]), "GitHub");
 
-    let mirror_first = portable_update_download_urls(&asset, VersionDownloadSource::GhProxy);
+    let mirror_first = portable_update_download_urls(
+        &asset,
+        &VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+    );
     assert_eq!(
         update_download_source_name(&mirror_first[0]),
         "gh-proxy.com"
@@ -232,22 +241,72 @@ fn portable_update_download_order_respects_gitcode_preference() {
 #[test]
 fn version_detection_candidates_try_every_available_source_once() {
     assert_eq!(
-        version_download_source_candidates(VersionDownloadSource::GhFast, true),
+        version_download_source_candidates(
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+            true,
+            &[],
+        ),
         [
-            VersionDownloadSource::GhFast,
-            VersionDownloadSource::Github,
-            VersionDownloadSource::Gitcode,
-            VersionDownloadSource::GhProxy,
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
         ]
     );
     assert_eq!(
-        version_download_source_candidates(VersionDownloadSource::Gitcode, false),
+        version_download_source_candidates(
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+            false,
+            &[],
+        ),
         [
-            VersionDownloadSource::Github,
-            VersionDownloadSource::GhProxy,
-            VersionDownloadSource::GhFast,
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
         ]
     );
+}
+
+#[test]
+fn custom_mirror_urls_are_normalized_and_join_the_fallback_chain() {
+    assert_eq!(
+        normalize_custom_download_mirror_url(" https://mirror.example.com/base ").unwrap(),
+        "https://mirror.example.com/base/"
+    );
+    assert!(normalize_custom_download_mirror_url("http://mirror.example.com/").is_err());
+    assert!(normalize_custom_download_mirror_url("https://mirror.example.com/?token=x").is_err());
+
+    let mirrors = vec![
+        "https://first.example.com/".to_string(),
+        "https://second.example.com/".to_string(),
+    ];
+    let candidates = version_download_source_candidates(
+        VersionDownloadCandidate::custom(&mirrors[1]),
+        true,
+        &mirrors,
+    );
+    assert_eq!(candidates[0], VersionDownloadCandidate::custom(&mirrors[1]));
+    assert_eq!(
+        candidates.last(),
+        Some(&VersionDownloadCandidate::custom(&mirrors[0]))
+    );
+    assert_eq!(
+        candidates
+            .iter()
+            .filter(|candidate| candidate.custom_url.is_some())
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn custom_mirror_is_used_for_portable_update_downloads() {
+    let asset = portable_update_test_asset("1.2.3", "amd64");
+    let source = VersionDownloadCandidate::custom("https://mirror.example.com/");
+    let urls = portable_update_download_urls(&asset, &source);
+    assert!(urls[0].starts_with("https://mirror.example.com/https://github.com/"));
+    assert_eq!(update_download_source_name(&urls[0]), "mirror.example.com");
+    assert_eq!(update_download_source_name(&urls[1]), "GitHub");
 }
 
 #[test]
@@ -624,7 +683,7 @@ fn synthetic_core_release_uses_gitcode_as_download_fallback() {
     let release = release_from_tag_for_repositories(
         "7.2.80",
         Some(repository),
-        VersionDownloadSource::Github,
+        &VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
     );
     let platform = CorePlatform {
         os: "windows".to_string(),
@@ -672,7 +731,7 @@ fn github_proxy_core_release_uses_proxy_then_official_and_gitcode() {
     let release = release_from_tag_for_repositories(
         "v7.2.80",
         Some("lzt404/CLIProxyAPI"),
-        VersionDownloadSource::GhFast,
+        &VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
     );
     let platform = CorePlatform {
         os: "windows".to_string(),
