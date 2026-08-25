@@ -2,6 +2,8 @@ mod resp;
 
 #[cfg(target_os = "macos")]
 use super::executable_dir;
+#[cfg(test)]
+use super::VersionDownloadSource;
 use super::{
     apply_configured_proxy, core_base_dir, current_core_status, management_authorization,
     management_endpoint, management_http_client, CoreProcessState, GuiConfigFile, GuiConfigState,
@@ -3325,6 +3327,7 @@ mod tests {
             plugins_enabled: false,
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
+            download_source: VersionDownloadSource::Github,
             prefer_gitcode_downloads: false,
             routing_session_affinity: false,
             routing_session_affinity_ttl: String::new(),

@@ -1073,6 +1073,33 @@ textarea:focus-visible {
   color: var(--theme-9f2d20);
 }
 
+.version-source-control,
+.version-source-control label {
+  display: grid;
+}
+
+.version-source-control select {
+  width: 250px;
+  max-width: 100%;
+  height: 42px;
+  padding: 0 36px 0 12px;
+  border: 1px solid var(--theme-d5d2cb);
+  border-radius: 8px;
+  background: var(--theme-fffdf8);
+  color: var(--theme-2d2a26);
+  cursor: pointer;
+  font-size: var(--font-size-body);
+}
+
+.version-source-control select:hover:not(:disabled) {
+  border-color: var(--theme-9b958c);
+}
+
+.version-source-control select:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .version-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1636,6 +1663,16 @@ textarea:focus-visible {
 
   .version-source-row {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+@container workspace (max-width: 560px) {
+  .version-source-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .version-source-control select {
+    width: 100%;
   }
 }
 

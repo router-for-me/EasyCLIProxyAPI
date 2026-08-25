@@ -39,9 +39,21 @@ export type CoreInstallTask = {
 };
 
 export type VersionSourceSettings = {
-  preferGitcodeDownloads: boolean;
+  source: VersionDownloadSource;
   gitcodeAvailable: boolean;
 };
+
+export type VersionDownloadSource = 'github' | 'gitcode' | 'gh-proxy' | 'gh-fast';
+
+function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof useI18n>['t']) {
+  const keys = {
+    github: 'kernel.versions.source.github',
+    gitcode: 'kernel.versions.source.gitcode',
+    'gh-proxy': 'kernel.versions.source.ghProxy',
+    'gh-fast': 'kernel.versions.source.ghFast',
+  } as const;
+  return t(keys[source]);
+}
 
 export type MessageType = 'info' | 'success' | 'error';
 const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
@@ -210,11 +222,11 @@ export function VersionManagementPage() {
     }
   };
 
-  const updateVersionSource = async (enabled: boolean) => {
+  const updateVersionSource = async (source: VersionDownloadSource) => {
     setVersionSourceSaving(true);
     setVersionSourceError('');
     try {
-      const settings = await invoke<VersionSourceSettings>('set_prefer_gitcode_downloads', { enabled });
+      const settings = await invoke<VersionSourceSettings>('set_download_source', { source });
       setVersionSource(settings);
       cachedLatest = null;
       cachedLatestError = '';
@@ -312,6 +324,7 @@ export function VersionManagementPage() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     let unlistenConfig: (() => void) | null = null;
+    let unlistenVersionSource: (() => void) | null = null;
 
     listen<CoreInstallTask>('core-install-progress', (event) => {
       applyInstallTask(event.payload);
@@ -329,6 +342,18 @@ export function VersionManagementPage() {
     }).then((stop) => {
       if (disposed) stop();
       else unlistenConfig = stop;
+    });
+
+    void listen<VersionSourceSettings>('version-download-source-changed', (event) => {
+      if (disposed) return;
+      setVersionSource(event.payload);
+      setVersionSourceError('');
+      showToast(t('kernel.versions.sourceAutoSwitched', {
+        source: downloadSourceLabel(event.payload.source, t),
+      }), 'info');
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlistenVersionSource = stop;
     });
 
     loadInstallTask();
@@ -351,6 +376,7 @@ export function VersionManagementPage() {
       disposed = true;
       unlisten?.();
       unlistenConfig?.();
+      unlistenVersionSource?.();
       if (toastTimerRef.current !== null) {
         window.clearTimeout(toastTimerRef.current);
       }
@@ -471,39 +497,41 @@ export function VersionManagementPage() {
 
   const installDialogActionDisabled = (installing || progress?.running) && (cancellingInstall || !progress?.cancellable);
 
-  const isGitcodeActive = Boolean(versionSource?.preferGitcodeDownloads);
-
   return (
     <section className="page management-page version-management-page">
       <section className="panel version-list">
-        <div className="version-source-row" aria-label={t('kernel.versions.gitcodeSource')}>
+        <div className="version-source-row" aria-label={t('kernel.versions.downloadSource')}>
           <div className="version-source-copy">
-            <strong>{t('kernel.versions.gitcodeSource')}</strong>
-            <span>
-              {versionSource?.gitcodeAvailable === false
-                ? t('kernel.versions.gitcodeUnavailable')
-                : t('kernel.versions.gitcodeSourceHint')}
-            </span>
+            <strong>{t('kernel.versions.downloadSource')}</strong>
+            <span>{t('kernel.versions.downloadSourceHint')}</span>
+            {versionSource?.gitcodeAvailable === false ? (
+              <span>{t('kernel.versions.gitcodeUnavailable')}</span>
+            ) : null}
             {versionSourceError ? (
               <span className="version-source-error" role="alert">{versionSourceError}</span>
             ) : null}
           </div>
           <div className="version-source-control">
-            <label className="switch-control" title={t('kernel.versions.gitcodeSource')}>
-              <input
-                type="checkbox"
-                role="switch"
-                checked={isGitcodeActive}
+            <label>
+              <span className="sr-only">{t('kernel.versions.downloadSource')}</span>
+              <select
+                value={versionSource?.source ?? 'github'}
                 disabled={
-                  (!versionSource?.gitcodeAvailable && !versionSource?.preferGitcodeDownloads)
+                  !versionSource
                   || versionSourceSaving
                   || appUpdateTask.running
                   || installing
                 }
-                aria-label={t('kernel.versions.gitcodeSource')}
-                onChange={(event) => void updateVersionSource(event.currentTarget.checked)}
-              />
-              <span className="switch-track" />
+                aria-label={t('kernel.versions.downloadSource')}
+                onChange={(event) => void updateVersionSource(event.currentTarget.value as VersionDownloadSource)}
+              >
+                <option value="github">{t('kernel.versions.source.github')}</option>
+                <option value="gitcode" disabled={!versionSource?.gitcodeAvailable}>
+                  {t('kernel.versions.source.gitcode')}
+                </option>
+                <option value="gh-proxy">{t('kernel.versions.source.ghProxy')}</option>
+                <option value="gh-fast">{t('kernel.versions.source.ghFast')}</option>
+              </select>
             </label>
           </div>
         </div>

@@ -1237,9 +1237,18 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     if presence.silent_start.is_none() {
         changed = true;
     }
+    if presence.download_source.is_none() {
+        config.download_source = if config.prefer_gitcode_downloads {
+            VersionDownloadSource::Gitcode
+        } else {
+            VersionDownloadSource::Github
+        };
+        changed = true;
+    }
     if presence.prefer_gitcode_downloads.is_none() {
         changed = true;
     }
+    config.prefer_gitcode_downloads = config.download_source == VersionDownloadSource::Gitcode;
     let management_secret_rotated = ensure_strong_management_secret(&mut config)?;
     changed |= management_secret_rotated;
     changed |= sanitize_gui_config(&mut config)?;
@@ -1593,6 +1602,7 @@ pub(crate) fn write_gui_config_to_path(
         ("plugins-enabled", value(config.plugins_enabled)),
         ("routing-strategy", value(config.routing_strategy.as_str())),
         ("proxy-url", value(config.proxy_url.as_str())),
+        ("download-source", value(config.download_source.as_str())),
         (
             "prefer-gitcode-downloads",
             value(config.prefer_gitcode_downloads),

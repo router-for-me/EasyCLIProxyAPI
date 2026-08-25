@@ -110,6 +110,7 @@ const PORTABLE_APP_BINARY: &str = "EasyCLIProxyAPI";
 const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
 const CORE_STATUS_EVENT: &str = "core-status-changed";
 const CONFIG_FILES_CHANGED_EVENT: &str = "config-files-changed";
+const VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT: &str = "version-download-source-changed";
 #[cfg(target_os = "windows")]
 const WINDOWS_CLOSE_REQUEST_EVENT: &str = "windows-close-requested";
 const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";
@@ -591,6 +592,9 @@ struct GuiConfigFile {
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
+    download_source: VersionDownloadSource,
+    // Kept for migration compatibility with configurations written before
+    // multi-source downloads were introduced.
     prefer_gitcode_downloads: bool,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
@@ -598,6 +602,82 @@ struct GuiConfigFile {
     max_retry_credentials: u32,
     max_retry_interval: u32,
     streaming_bootstrap_retries: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum VersionDownloadSource {
+    #[default]
+    Github,
+    Gitcode,
+    GhProxy,
+    GhFast,
+}
+
+impl VersionDownloadSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Github => "github",
+            Self::Gitcode => "gitcode",
+            Self::GhProxy => "gh-proxy",
+            Self::GhFast => "gh-fast",
+        }
+    }
+
+    fn from_str(value: &str) -> Option<Self> {
+        match value.trim() {
+            "github" => Some(Self::Github),
+            "gitcode" => Some(Self::Gitcode),
+            "gh-proxy" => Some(Self::GhProxy),
+            "gh-fast" => Some(Self::GhFast),
+            _ => None,
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Github => "GitHub",
+            Self::Gitcode => "GitCode",
+            Self::GhProxy => "gh-proxy.com",
+            Self::GhFast => "ghfast.top",
+        }
+    }
+
+    fn github_proxy_prefix(self) -> Option<&'static str> {
+        match self {
+            Self::GhProxy => Some("https://gh-proxy.com/"),
+            Self::GhFast => Some("https://ghfast.top/"),
+            _ => None,
+        }
+    }
+}
+
+fn version_source_url(source: VersionDownloadSource, github_url: &str) -> String {
+    source
+        .github_proxy_prefix()
+        .map(|prefix| format!("{prefix}{github_url}"))
+        .unwrap_or_else(|| github_url.to_string())
+}
+
+fn version_download_source_candidates(
+    preferred: VersionDownloadSource,
+    gitcode_available: bool,
+) -> Vec<VersionDownloadSource> {
+    [
+        preferred,
+        VersionDownloadSource::Github,
+        VersionDownloadSource::Gitcode,
+        VersionDownloadSource::GhProxy,
+        VersionDownloadSource::GhFast,
+    ]
+    .into_iter()
+    .filter(|source| gitcode_available || *source != VersionDownloadSource::Gitcode)
+    .fold(Vec::new(), |mut sources, source| {
+        if !sources.contains(&source) {
+            sources.push(source);
+        }
+        sources
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -704,6 +784,7 @@ impl Default for GuiConfigFile {
             plugins_enabled: false,
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
+            download_source: VersionDownloadSource::Github,
             prefer_gitcode_downloads: false,
             routing_session_affinity: false,
             routing_session_affinity_ttl: String::new(),
@@ -733,6 +814,7 @@ struct GuiConfigPresence {
     plugins_enabled: Option<bool>,
     routing_strategy: Option<String>,
     proxy_url: Option<String>,
+    download_source: Option<VersionDownloadSource>,
     prefer_gitcode_downloads: Option<bool>,
     routing_session_affinity: Option<bool>,
     routing_session_affinity_ttl: Option<String>,
@@ -755,7 +837,7 @@ struct GuiSettings {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VersionSourceSettings {
-    prefer_gitcode_downloads: bool,
+    source: VersionDownloadSource,
     gitcode_available: bool,
 }
 
@@ -1743,14 +1825,37 @@ impl GuiConfigState {
         })
     }
 
-    fn set_prefer_gitcode_downloads(
+    fn set_download_source(
         &self,
-        prefer_gitcode_downloads: bool,
+        download_source: VersionDownloadSource,
     ) -> Result<GuiConfigFile, String> {
         self.update(|config| {
-            config.prefer_gitcode_downloads = prefer_gitcode_downloads;
+            config.download_source = download_source;
+            config.prefer_gitcode_downloads = download_source == VersionDownloadSource::Gitcode;
             Ok(())
         })
+    }
+
+    fn switch_download_source_after_failure(
+        &self,
+        expected_source: VersionDownloadSource,
+        fallback_source: VersionDownloadSource,
+    ) -> Result<Option<GuiConfigFile>, String> {
+        let mut current = self
+            .inner
+            .lock()
+            .map_err(|_| "GUI 配置状态锁已损坏".to_string())?;
+        if current.download_source != expected_source || expected_source == fallback_source {
+            return Ok(None);
+        }
+
+        let mut config = current.clone();
+        config.download_source = fallback_source;
+        config.prefer_gitcode_downloads = fallback_source == VersionDownloadSource::Gitcode;
+        sanitize_gui_config(&mut config)?;
+        write_gui_config(&config)?;
+        *current = config.clone();
+        Ok(Some(config))
     }
 
     fn set_window_size(&self, size: SavedWindowSize) -> Result<GuiConfigFile, String> {
@@ -2208,6 +2313,7 @@ fn main() {
             open_oauth_url,
             open_external_url,
             get_version_source_settings,
+            set_download_source,
             set_prefer_gitcode_downloads,
             check_app_update,
             get_app_update_task,

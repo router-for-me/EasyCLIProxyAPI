@@ -2,13 +2,20 @@ use super::*;
 
 #[tauri::command]
 pub(crate) async fn check_latest_core(
+    app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreLatest, String> {
     let platform = current_core_platform()?;
     let config = gui_config_state.snapshot()?;
     let proxy_url = config.proxy_url;
     let client = http_client(&proxy_url)?;
-    let release = fetch_release(&client, None, config.prefer_gitcode_downloads).await?;
+    let (release, resolved_source) = fetch_release(&client, None, config.download_source).await?;
+    persist_automatic_download_source_switch(
+        &app,
+        gui_config_state.inner(),
+        config.download_source,
+        resolved_source,
+    )?;
     let asset = select_release_asset(&release, &platform)?;
 
     Ok(CoreLatest {
@@ -107,7 +114,7 @@ pub(crate) async fn install_core_version(
                     token,
                     version,
                     &proxy_url,
-                    config.prefer_gitcode_downloads,
+                    config.download_source,
                 )
                 .await,
             ),
@@ -269,13 +276,13 @@ pub(crate) async fn install_core_version_inner(
     token: CancellationToken,
     version: Option<String>,
     proxy_url: &str,
-    prefer_gitcode: bool,
+    download_source: VersionDownloadSource,
 ) -> Result<CoreInstallResult, String> {
     let platform = current_core_platform()?;
     let client = http_client(proxy_url)?;
     state.progress(window, "检查版本", 0, None, true);
-    let release =
-        fetch_release_cancelable(&client, version.as_deref(), &token, prefer_gitcode).await?;
+    let (release, _) =
+        fetch_release_cancelable(&client, version.as_deref(), &token, download_source).await?;
     let asset = select_release_asset(&release, &platform)?;
 
     let install_dir = core_install_dir()?;
@@ -406,56 +413,53 @@ pub(crate) fn install_bundled_core_inner(
 pub(crate) async fn fetch_release(
     client: &reqwest::Client,
     version: Option<&str>,
-    prefer_gitcode: bool,
-) -> Result<GithubRelease, String> {
+    source: VersionDownloadSource,
+) -> Result<(GithubRelease, VersionDownloadSource), String> {
     if let Some(version) = version {
-        return Ok(release_from_tag_for_repositories(
-            version,
-            configured_gitcode_core_repository(),
-            prefer_gitcode,
+        return Ok((
+            release_from_tag_for_repositories(
+                version,
+                configured_gitcode_core_repository(),
+                source,
+            ),
+            source,
         ));
     }
-    if prefer_gitcode {
-        if let Some(repository) = configured_gitcode_core_repository() {
-            return match fetch_release_from_gitcode(client, repository).await {
-                Ok(release) => Ok(release),
-                Err(gitcode_error) => fetch_release_from_github(client)
-                    .await
-                    .map_err(|github_error| {
-                        format!(
-                            "GitCode 内核发布源失败: {gitcode_error}；GitHub 回退源失败: {github_error}"
-                        )
-                    }),
-            };
-        }
-    }
-    let github_result = fetch_release_from_github(client).await;
-    match github_result {
-        Ok(release) => Ok(release),
-        Err(github_error) => {
-            let Some(repository) = configured_gitcode_core_repository() else {
-                return Err(github_error);
-            };
-            fetch_release_from_gitcode(client, repository)
+    let gitcode_repository = configured_gitcode_core_repository();
+    let mut failures = Vec::new();
+    for candidate in version_download_source_candidates(source, gitcode_repository.is_some()) {
+        let result = match candidate {
+            VersionDownloadSource::Gitcode => {
+                fetch_release_from_gitcode(
+                    client,
+                    gitcode_repository.expect("GitCode candidate requires a configured repository"),
+                )
                 .await
-                .map_err(|gitcode_error| {
-                    format!(
-                        "GitHub 内核发布源失败: {github_error}；GitCode 回退源失败: {gitcode_error}"
-                    )
-                })
+            }
+            VersionDownloadSource::Github
+            | VersionDownloadSource::GhProxy
+            | VersionDownloadSource::GhFast => fetch_release_from_github(client, candidate).await,
+        };
+        match result {
+            Ok(release) => return Ok((release, candidate)),
+            Err(error) => failures.push(format!("{}: {error}", candidate.display_name())),
         }
     }
+    Err(format!("所有内核版本检测源均失败: {}", failures.join("；")))
 }
 
 pub(crate) async fn fetch_release_from_github(
     client: &reqwest::Client,
+    source: VersionDownloadSource,
 ) -> Result<GithubRelease, String> {
-    let atom_result = fetch_release_from_atom(client).await;
+    let atom_result = fetch_release_from_atom(client, source).await;
     match atom_result {
         Ok(release) => Ok(release),
-        Err(atom_error) => fetch_release_from_page(client).await.map_err(|page_error| {
-            format!("GitHub 发布源请求失败: {atom_error}；release 页面请求失败: {page_error}")
-        }),
+        Err(atom_error) => fetch_release_from_page(client, source)
+            .await
+            .map_err(|page_error| {
+                format!("GitHub 发布源请求失败: {atom_error}；release 页面请求失败: {page_error}")
+            }),
     }
 }
 
@@ -482,9 +486,11 @@ pub(crate) async fn fetch_release_from_gitcode(
 
 pub(crate) async fn fetch_release_from_page(
     client: &reqwest::Client,
+    source: VersionDownloadSource,
 ) -> Result<GithubRelease, String> {
+    let release_page_url = version_source_url(source, RELEASE_PAGE_URL);
     let response = client
-        .get(RELEASE_PAGE_URL)
+        .get(release_page_url)
         .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
         .header(reqwest::header::USER_AGENT, USER_AGENT)
         .send()
@@ -502,14 +508,20 @@ pub(crate) async fn fetch_release_from_page(
 
     let tag = release_tag_from_url(&final_url)
         .ok_or_else(|| "GitHub release 页面没有返回版本标签".to_string())?;
-    Ok(release_from_tag(&tag))
+    Ok(release_from_tag_for_repositories(
+        &tag,
+        configured_gitcode_core_repository(),
+        source,
+    ))
 }
 
 pub(crate) async fn fetch_release_from_atom(
     client: &reqwest::Client,
+    source: VersionDownloadSource,
 ) -> Result<GithubRelease, String> {
+    let release_atom_url = version_source_url(source, RELEASE_ATOM_URL);
     let response = client
-        .get(RELEASE_ATOM_URL)
+        .get(release_atom_url)
         .header(
             reqwest::header::ACCEPT,
             "application/atom+xml,application/xml,text/xml",
@@ -528,7 +540,11 @@ pub(crate) async fn fetch_release_from_atom(
     }
     let tag = release_tag_from_atom(&body)
         .ok_or_else(|| "GitHub Atom feed 没有返回版本标签".to_string())?;
-    Ok(release_from_tag(&tag))
+    Ok(release_from_tag_for_repositories(
+        &tag,
+        configured_gitcode_core_repository(),
+        source,
+    ))
 }
 
 pub(crate) fn release_tag_from_atom(xml: &str) -> Option<String> {
@@ -553,17 +569,21 @@ pub(crate) fn release_tag_from_atom(xml: &str) -> Option<String> {
 }
 
 pub(crate) fn release_from_tag(tag: &str) -> GithubRelease {
-    release_from_tag_for_repositories(tag, configured_gitcode_core_repository(), false)
+    release_from_tag_for_repositories(
+        tag,
+        configured_gitcode_core_repository(),
+        VersionDownloadSource::Github,
+    )
 }
 
 pub(crate) fn release_from_gitcode_tag(tag: &str, repository: &str) -> GithubRelease {
-    release_from_tag_for_repositories(tag, Some(repository), true)
+    release_from_tag_for_repositories(tag, Some(repository), VersionDownloadSource::Gitcode)
 }
 
 pub(crate) fn release_from_tag_for_repositories(
     tag: &str,
     gitcode_repository: Option<&str>,
-    prefer_gitcode: bool,
+    source: VersionDownloadSource,
 ) -> GithubRelease {
     let tag = normalize_version(tag);
     let version = tag.trim_start_matches('v');
@@ -581,13 +601,18 @@ pub(crate) fn release_from_tag_for_repositories(
         let github_url = format!("{RELEASE_DOWNLOAD_PREFIX}{tag}/{name}");
         let gitcode_url = gitcode_repository
             .map(|repository| gitcode_release_attachment_url(repository, &tag, &name));
-        let (browser_download_url, fallback_download_urls) = if prefer_gitcode {
-            match gitcode_url {
+        let (browser_download_url, fallback_download_urls) = match source {
+            VersionDownloadSource::Gitcode => match gitcode_url {
                 Some(gitcode_url) => (gitcode_url, vec![github_url]),
                 None => (github_url, Vec::new()),
+            },
+            VersionDownloadSource::GhProxy | VersionDownloadSource::GhFast => {
+                let mirror_url = version_source_url(source, &github_url);
+                let mut fallbacks = vec![github_url];
+                fallbacks.extend(gitcode_url);
+                (mirror_url, fallbacks)
             }
-        } else {
-            (github_url, gitcode_url.into_iter().collect())
+            VersionDownloadSource::Github => (github_url, gitcode_url.into_iter().collect()),
         };
         GithubAsset {
             browser_download_url,
@@ -695,10 +720,10 @@ pub(crate) async fn fetch_release_cancelable(
     client: &reqwest::Client,
     version: Option<&str>,
     token: &CancellationToken,
-    prefer_gitcode: bool,
-) -> Result<GithubRelease, String> {
+    source: VersionDownloadSource,
+) -> Result<(GithubRelease, VersionDownloadSource), String> {
     tokio::select! {
-        result = fetch_release(client, version, prefer_gitcode) => result,
+        result = fetch_release(client, version, source) => result,
         _ = token.cancelled() => Err("已取消下载".to_string()),
     }
 }
@@ -822,12 +847,15 @@ pub(crate) async fn download_asset(
 }
 
 pub(crate) fn core_download_source_name(url: &str) -> &'static str {
-    reqwest::Url::parse(url)
+    let host = reqwest::Url::parse(url)
         .ok()
-        .and_then(|url| url.host_str().map(str::to_string))
-        .filter(|host| host == "api.gitcode.com" || host.ends_with(".gitcode.com"))
-        .map(|_| "GitCode")
-        .unwrap_or("GitHub")
+        .and_then(|url| url.host_str().map(str::to_string));
+    match host.as_deref() {
+        Some("gh-proxy.com") => "gh-proxy.com",
+        Some("ghfast.top") => "ghfast.top",
+        Some(host) if host == "api.gitcode.com" || host.ends_with(".gitcode.com") => "GitCode",
+        _ => "GitHub",
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

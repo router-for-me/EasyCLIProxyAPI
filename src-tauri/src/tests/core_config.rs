@@ -1039,6 +1039,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         plugins_enabled: true,
         routing_strategy: "fill-first".to_string(),
         proxy_url: "socks5://127.0.0.1:7890".to_string(),
+        download_source: VersionDownloadSource::Github,
         prefer_gitcode_downloads: false,
         routing_session_affinity: true,
         routing_session_affinity_ttl: "1h".to_string(),

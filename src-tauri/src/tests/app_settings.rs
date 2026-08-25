@@ -18,6 +18,7 @@ fn gui_field_edit_preserves_comments_and_unknown_configuration() {
         auth_dir: path_to_string(&home.join("custom-auth")),
         management_secret_key: "custom-secret".to_string(),
         usage_statistics_enabled: false,
+        download_source: VersionDownloadSource::Gitcode,
         prefer_gitcode_downloads: true,
         ..GuiConfigFile::default()
     };
@@ -32,6 +33,7 @@ fn gui_field_edit_preserves_comments_and_unknown_configuration() {
     assert!(content.contains("silent-start = true"));
     assert!(content.contains("management-secret-key = \"custom-secret\""));
     assert!(content.contains("usage-statistics-enabled = false"));
+    assert!(content.contains("download-source = \"gitcode\""));
     assert!(content.contains("prefer-gitcode-downloads = true"));
     assert!(!content.contains("codex-session-repair-on-launch"));
     assert!(!content.contains("claude-code-working-directory"));
@@ -91,6 +93,7 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("management-secret-key = \"\""));
     assert!(content.contains("plugins-enabled = false"));
     assert!(content.contains("routing-strategy = \"round-robin\""));
+    assert!(content.contains("download-source = \"github\""));
     assert!(content.contains("prefer-gitcode-downloads = false"));
     assert!(content.contains("request-retry = 3"));
     assert!(content.contains("max-retry-credentials = 0"));
