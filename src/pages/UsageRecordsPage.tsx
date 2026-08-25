@@ -1556,7 +1556,10 @@ function EventsView({
 
       {events.items.length ? (
         <div ref={tableWrapRef} className="usage-table-wrap">
-          <table className="usage-events-table" style={{ width: `${totalTableWidth}px` }}>
+          <table
+            className="usage-events-table"
+            style={{ width: `max(100%, ${totalTableWidth}px)` }}
+          >
             <colgroup>
               {visibleColumns.map((col) => (
                 <col key={col.key} style={{ width: `${widths[col.key]}px` }} />

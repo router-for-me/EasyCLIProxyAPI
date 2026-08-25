@@ -6617,8 +6617,12 @@ textarea:focus-visible {
 
 .usage-records-page {
   display: grid;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   gap: 12px;
   align-content: start;
+  justify-items: stretch;
 }
 
 .usage-topbar {
@@ -7199,6 +7203,8 @@ textarea:focus-visible {
 /* Events Tab (请求明细) */
 .usage-events-panel {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
   padding: 0;
   flex-direction: column;

@@ -1584,7 +1584,18 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
         config.routing_session_affinity_ttl = routing_session_affinity_ttl;
         changed = true;
     }
-    let window_size = configured_window_size(config);
+    let window_size = configured_window_size(config).map(|size| {
+        if size.width == LEGACY_DEFAULT_MAIN_WINDOW_WIDTH
+            && size.height == LEGACY_DEFAULT_MAIN_WINDOW_HEIGHT
+        {
+            SavedWindowSize {
+                width: DEFAULT_MAIN_WINDOW_WIDTH,
+                height: DEFAULT_MAIN_WINDOW_HEIGHT,
+            }
+        } else {
+            size
+        }
+    });
     let normalized_width = window_size.map(|size| size.width);
     let normalized_height = window_size.map(|size| size.height);
     if config.window_width != normalized_width || config.window_height != normalized_height {

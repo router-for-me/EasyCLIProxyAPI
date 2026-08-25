@@ -84,8 +84,8 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("start-core-on-launch = true"));
     assert!(content.contains("silent-start = false"));
     assert!(content.contains("close-behavior = \"ask\""));
-    assert!(content.contains("window-width = 1531"));
-    assert!(content.contains("window-height = 891"));
+    assert!(content.contains("window-width = 1280"));
+    assert!(content.contains("window-height = 800"));
     assert!(content.contains("auth-dir = \"../oauth\""));
     assert!(content.contains("[[api-keys]]"));
     assert!(content.contains("key = \"123456\""));
@@ -168,6 +168,19 @@ fn gui_window_size_is_clamped_and_requires_both_dimensions() {
     assert!(sanitize_gui_config(&mut config).unwrap());
     assert_eq!(config.window_width, None);
     assert_eq!(config.window_height, None);
+}
+
+#[test]
+fn legacy_default_window_size_migrates_to_current_default() {
+    let mut config = GuiConfigFile {
+        window_width: Some(LEGACY_DEFAULT_MAIN_WINDOW_WIDTH),
+        window_height: Some(LEGACY_DEFAULT_MAIN_WINDOW_HEIGHT),
+        ..GuiConfigFile::default()
+    };
+
+    assert!(sanitize_gui_config(&mut config).unwrap());
+    assert_eq!(config.window_width, Some(DEFAULT_MAIN_WINDOW_WIDTH));
+    assert_eq!(config.window_height, Some(DEFAULT_MAIN_WINDOW_HEIGHT));
 }
 
 #[test]
