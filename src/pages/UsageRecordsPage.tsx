@@ -23,7 +23,6 @@ import {
   Trash2,
   TriangleAlert,
   X,
-  Zap,
 } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
@@ -686,8 +685,6 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
   const { t } = useI18n();
   const cards = [
     {
-      icon: Activity,
-      tone: 'tone-blue',
       label: t('usage.stat.requests'),
       value: compactNumber(overview.totalRequests),
       meta: t('usage.stat.requestMeta', {
@@ -697,8 +694,6 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
       }),
     },
     {
-      icon: Sparkles,
-      tone: 'tone-purple',
       label: t('usage.stat.tokens'),
       value: compactNumber(overview.totalTokens),
       meta: t('usage.stat.tokenMeta', {
@@ -707,15 +702,11 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
       }),
     },
     {
-      icon: ShieldCheck,
-      tone: 'tone-green',
       label: t('usage.stat.successRate'),
       value: `${overview.successRate.toFixed(1)}%`,
       meta: t('usage.stat.reasoningMeta', { tokens: compactNumber(overview.reasoningTokens) }),
     },
     {
-      icon: Zap,
-      tone: 'tone-orange',
       label: t('usage.stat.tps'),
       value: `${overview.tps.toFixed(1)} TPS`,
       meta: t('usage.stat.performanceMeta', {
@@ -724,8 +715,6 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
       }),
     },
     {
-      icon: Database,
-      tone: 'tone-teal',
       label: t('usage.stat.cacheHitRate'),
       value: `${(overview.cacheHitRate * 100).toFixed(1)}%`,
       meta: t('usage.stat.cacheHitMeta', {
@@ -734,8 +723,6 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
       }),
     },
     {
-      icon: CircleDollarSign,
-      tone: 'tone-amber',
       label: t('usage.stat.estimatedCost'),
       value: formatUsd(overview.estimatedCost),
       meta: t('usage.stat.costMeta', {
@@ -748,14 +735,9 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
   return (
     <div className="usage-overview-layout">
       <div className="usage-stat-grid">
-        {cards.map(({ icon: Icon, tone, label, value, meta }) => (
-          <article className={`panel usage-stat-card ${tone}`} key={label}>
-            <div className="usage-stat-card-top">
-              <span className="usage-stat-card-label">{label}</span>
-              <div className="usage-stat-card-icon">
-                <Icon size={16} />
-              </div>
-            </div>
+        {cards.map(({ label, value, meta }) => (
+          <article className="panel usage-stat-card" key={label}>
+            <span className="usage-stat-card-label">{label}</span>
             <strong className="usage-stat-card-value">{value}</strong>
             <small className="usage-stat-card-meta" title={meta}>
               {meta}

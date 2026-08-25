@@ -6907,56 +6907,10 @@ textarea:focus-visible {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
-.usage-stat-card-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 .usage-stat-card-label {
   color: var(--theme-7a746c);
   font-size: var(--font-size-caption);
   font-weight: 600;
-}
-
-.usage-stat-card-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-}
-
-.usage-stat-card.tone-blue .usage-stat-card-icon {
-  background: rgba(59, 130, 246, 0.12);
-  color: #2563eb;
-}
-
-.usage-stat-card.tone-purple .usage-stat-card-icon {
-  background: rgba(139, 92, 246, 0.12);
-  color: #7c3aed;
-}
-
-.usage-stat-card.tone-green .usage-stat-card-icon {
-  background: rgba(16, 185, 129, 0.12);
-  color: #059669;
-}
-
-.usage-stat-card.tone-orange .usage-stat-card-icon {
-  background: rgba(249, 115, 22, 0.12);
-  color: #ea580c;
-}
-
-.usage-stat-card.tone-teal .usage-stat-card-icon {
-  background: rgba(20, 184, 166, 0.12);
-  color: #0d9488;
-}
-
-.usage-stat-card.tone-amber .usage-stat-card-icon {
-  background: rgba(245, 158, 11, 0.12);
-  color: #d97706;
 }
 
 .usage-stat-card-value {
