@@ -2935,9 +2935,9 @@ textarea:focus-visible {
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 9px;
-  width: min(360px, calc(100vw - 48px));
-  height: 46px;
-  padding: 0 14px;
+  width: min(440px, calc(100vw - 48px));
+  min-height: 46px;
+  padding: 11px 14px;
   border: 1px solid var(--theme-b6d3bd);
   border-radius: 7px;
   background: var(--theme-eef7f0);
@@ -2959,11 +2959,11 @@ textarea:focus-visible {
 
 .config-toast span {
   min-width: 0;
-  overflow: hidden;
   font-size: var(--font-size-body);
   font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .management-header {
