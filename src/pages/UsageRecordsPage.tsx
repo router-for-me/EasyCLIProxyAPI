@@ -1412,12 +1412,52 @@ function EventsView({
           <span className="usage-events-count-badge">
             {t('usage.events.total', { count: compactNumber(events.total) })}
           </span>
-          <span className="usage-events-page-indicator">
-            {t('usage.events.page', { page: events.page, total: events.totalPages })}
+          <span className="usage-pagination-summary">
+            {t('usage.events.rangeSummary', {
+              start: startRecordNum,
+              end: endRecordNum,
+              total: compactNumber(events.total),
+            })}
           </span>
         </div>
 
         <div className="usage-events-summary-right">
+          <select
+            className="usage-page-size-select"
+            value={pageSize}
+            onChange={(e) => onPageSizeChange(Number(e.currentTarget.value))}
+            aria-label={t('usage.events.pageSize', { size: pageSize })}
+          >
+            <option value="20">{t('usage.events.pageSize', { size: 20 })}</option>
+            <option value="50">{t('usage.events.pageSize', { size: 50 })}</option>
+            <option value="100">{t('usage.events.pageSize', { size: 100 })}</option>
+            <option value="200">{t('usage.events.pageSize', { size: 200 })}</option>
+          </select>
+
+          <div className="usage-pagination-right usage-pagination-top">
+            <button
+              type="button"
+              className="usage-page-nav-btn"
+              disabled={events.page <= 1}
+              onClick={() => onPage(events.page - 1)}
+            >
+              <ChevronLeft size={14} />
+              <span>{t('usage.previous')}</span>
+            </button>
+            <span className="usage-pagination-info">
+              {events.page} / {events.totalPages}
+            </span>
+            <button
+              type="button"
+              className="usage-page-nav-btn"
+              disabled={events.page >= events.totalPages}
+              onClick={() => onPage(events.page + 1)}
+            >
+              <span>{t('usage.next')}</span>
+              <ChevronRight size={14} />
+            </button>
+          </div>
+
           <button
             type="button"
             className="usage-col-settings-btn"
@@ -1496,58 +1536,6 @@ function EventsView({
       ) : (
         <UsageEmpty />
       )}
-
-      <div className="usage-pagination">
-        <div className="usage-pagination-left">
-          <span className="usage-pagination-summary">
-            {t('usage.events.rangeSummary', {
-              start: startRecordNum,
-              end: endRecordNum,
-              total: compactNumber(events.total),
-            })}
-          </span>
-
-          <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <select
-              className="usage-page-size-select"
-              value={pageSize}
-              onChange={(e) => onPageSizeChange(Number(e.currentTarget.value))}
-              aria-label={t('usage.events.pageSize', { size: pageSize })}
-            >
-              <option value="20">{t('usage.events.pageSize', { size: 20 })}</option>
-              <option value="50">{t('usage.events.pageSize', { size: 50 })}</option>
-              <option value="100">{t('usage.events.pageSize', { size: 100 })}</option>
-              <option value="200">{t('usage.events.pageSize', { size: 200 })}</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="usage-pagination-right">
-          <button
-            type="button"
-            className="usage-page-nav-btn"
-            disabled={events.page <= 1}
-            onClick={() => onPage(events.page - 1)}
-          >
-            <ChevronLeft size={14} />
-            <span>{t('usage.previous')}</span>
-          </button>
-
-          <span className="usage-pagination-info">
-            {events.page} / {events.totalPages}
-          </span>
-
-          <button
-            type="button"
-            className="usage-page-nav-btn"
-            disabled={events.page >= events.totalPages}
-            onClick={() => onPage(events.page + 1)}
-          >
-            <span>{t('usage.next')}</span>
-            <ChevronRight size={14} />
-          </button>
-        </div>
-      </div>
 
       {columnSettingsOpen ? (
         <div
