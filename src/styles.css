@@ -7556,10 +7556,13 @@ textarea:focus-visible {
 }
 
 /* Hide horizontal scrollbar on the table wrap so only the top scrollbar is shown */
+.usage-table-wrap::-webkit-scrollbar {
+  height: 0;
+}
+
 .usage-table-wrap::-webkit-scrollbar:horizontal {
   display: none;
   height: 0;
-  width: 0;
 }
 
 .usage-events-table {
@@ -7767,7 +7770,7 @@ body.table-col-resizing * {
 
 .usage-events-table .usage-result-cell {
   overflow: hidden;
-  text-align: left;
+  text-align: center;
 }
 
 .usage-result-cell > small {
