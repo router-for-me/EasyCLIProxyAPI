@@ -1092,12 +1092,15 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
 function TableTopScrollbar({
   tableWrapRef,
   totalWidth,
+  visibleColumnKeys,
 }: {
   tableWrapRef: React.RefObject<HTMLDivElement | null>;
   totalWidth: number;
+  visibleColumnKeys: EventColumnKey[];
 }) {
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
   const [hasOverflow, setHasOverflow] = useState(false);
+  const [scrollWidth, setScrollWidth] = useState(totalWidth);
 
   useEffect(() => {
     const scrollbar = scrollbarRef.current;
@@ -1105,6 +1108,7 @@ function TableTopScrollbar({
     if (!scrollbar || !tableWrap) return;
 
     let syncing = false;
+
     const syncTable = () => {
       if (syncing) return;
       syncing = true;
@@ -1113,6 +1117,7 @@ function TableTopScrollbar({
         syncing = false;
       });
     };
+
     const syncScrollbar = () => {
       if (syncing) return;
       syncing = true;
@@ -1121,22 +1126,50 @@ function TableTopScrollbar({
         syncing = false;
       });
     };
-    const updateOverflow = () => {
-      setHasOverflow(tableWrap.scrollWidth > tableWrap.clientWidth + 1);
-      scrollbar.scrollLeft = tableWrap.scrollLeft;
+
+    const updateLayout = () => {
+      const clientWidth = tableWrap.clientWidth;
+      const wrapScrollWidth = tableWrap.scrollWidth;
+      const maxScroll = Math.max(0, wrapScrollWidth - clientWidth);
+      const isOverflowing = maxScroll > 1;
+
+      setHasOverflow(isOverflowing);
+
+      if (isOverflowing) {
+        const scrollbarClientWidth = scrollbar.clientWidth || clientWidth;
+        const targetInnerWidth = scrollbarClientWidth + maxScroll;
+        setScrollWidth(targetInnerWidth);
+
+        if (tableWrap.scrollLeft > maxScroll) {
+          tableWrap.scrollLeft = maxScroll;
+        }
+        scrollbar.scrollLeft = tableWrap.scrollLeft;
+      } else {
+        tableWrap.scrollLeft = 0;
+        scrollbar.scrollLeft = 0;
+        setScrollWidth(clientWidth);
+      }
     };
 
-    updateOverflow();
+    updateLayout();
+    const frameId = window.requestAnimationFrame(updateLayout);
+
     scrollbar.addEventListener('scroll', syncTable, { passive: true });
     tableWrap.addEventListener('scroll', syncScrollbar, { passive: true });
-    const resizeObserver = new ResizeObserver(updateOverflow);
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateLayout();
+    });
     resizeObserver.observe(tableWrap);
+    resizeObserver.observe(scrollbar);
+
     return () => {
+      window.cancelAnimationFrame(frameId);
       scrollbar.removeEventListener('scroll', syncTable);
       tableWrap.removeEventListener('scroll', syncScrollbar);
       resizeObserver.disconnect();
     };
-  }, [tableWrapRef, totalWidth]);
+  }, [tableWrapRef, totalWidth, visibleColumnKeys]);
 
   return (
     <div
@@ -1144,7 +1177,7 @@ function TableTopScrollbar({
       className={`usage-table-top-scrollbar ${hasOverflow ? '' : 'is-hidden'}`}
       aria-hidden="true"
     >
-      <div style={{ width: `${totalWidth}px`, height: '1px' }} />
+      <div style={{ width: `${scrollWidth}px`, height: '1px' }} />
     </div>
   );
 }
@@ -1354,8 +1387,7 @@ function EventsView({
   };
 
   const resetVisibleColumns = () => {
-    const allColumns = getAllEventColumnKeys();
-    setDraftVisibleColumnKeys(allColumns);
+    setDraftVisibleColumnKeys(getAllEventColumnKeys());
   };
 
   const resetSingleColumn = (key: EventColumnKey, e: React.MouseEvent) => {
@@ -1498,12 +1530,16 @@ function EventsView({
       </div>
 
       {events.items.length > 0 ? (
-        <TableTopScrollbar tableWrapRef={tableWrapRef} totalWidth={totalTableWidth} />
+        <TableTopScrollbar
+          tableWrapRef={tableWrapRef}
+          totalWidth={totalTableWidth}
+          visibleColumnKeys={visibleColumnKeys}
+        />
       ) : null}
 
       {events.items.length ? (
         <div ref={tableWrapRef} className="usage-table-wrap">
-          <table className="usage-events-table" style={{ width: `${totalTableWidth}px`, minWidth: '100%' }}>
+          <table className="usage-events-table" style={{ width: `${totalTableWidth}px` }}>
             <colgroup>
               {visibleColumns.map((col) => (
                 <col key={col.key} style={{ width: `${widths[col.key]}px` }} />
