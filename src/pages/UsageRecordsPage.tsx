@@ -4,6 +4,8 @@ import { listen } from '@tauri-apps/api/event';
 import {
   Activity,
   BarChart3,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Clock3,
   Columns3Cog,
@@ -270,6 +272,7 @@ export function UsageRecordsPage() {
   const [apiKeyHash, setApiKeyHash] = useState('');
   const [result, setResult] = useState('all');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [status, setStatus] = useState<CollectorStatus | null>(null);
   const [overview, setOverview] = useState<UsageOverview | null>(null);
   const [analysis, setAnalysis] = useState<UsageAnalysis>(emptyAnalysis);
@@ -347,7 +350,7 @@ export function UsageRecordsPage() {
             statusRequest,
             optionsRequest,
             invoke<UsageEventPage>('get_usage_events', {
-              query: { ...query, page, page_size: 50 },
+              query: { ...query, page, page_size: pageSize },
             }),
           ]);
           if (requestId !== requestIdRef.current) return;
@@ -372,7 +375,7 @@ export function UsageRecordsPage() {
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [activeTab, buildQueries, page]
+    [activeTab, buildQueries, page, pageSize]
   );
 
   useEffect(() => {
@@ -437,24 +440,55 @@ export function UsageRecordsPage() {
 
   return (
     <section className="page management-page usage-records-page">
-      <header className="management-header usage-records-header">
-        <div className="usage-header-left">
-          <span className="usage-header-tag">Local Usage</span>
-          <h1>{t('usage.title')}</h1>
+      {error ? <div className="management-alert error">{error}</div> : null}
+
+      <div className="usage-topbar">
+        <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
+          <button
+            type="button"
+            className={activeTab === 'overview' ? 'active' : ''}
+            onClick={() => setActiveTab('overview')}
+          >
+            <BarChart3 size={15} />
+            <span>{t('usage.tab.overview')}</span>
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'analysis' ? 'active' : ''}
+            onClick={() => setActiveTab('analysis')}
+          >
+            <Activity size={15} />
+            <span>{t('usage.tab.analysis')}</span>
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'events' ? 'active' : ''}
+            onClick={() => setActiveTab('events')}
+          >
+            <List size={15} />
+            <span>{t('usage.tab.events')}</span>
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'pricing' ? 'active' : ''}
+            onClick={() => setActiveTab('pricing')}
+          >
+            <CircleDollarSign size={15} />
+            <span>{t('usage.tab.pricing')}</span>
+          </button>
         </div>
-        <div className="usage-header-right">
+
+        <div className="usage-topbar-actions">
           <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
             <span className="status-dot" />
-            <div>
-              <strong>
-                {status?.state === 'collecting'
-                  ? t('usage.collector.collecting')
-                  : status?.state === 'error'
-                  ? t('usage.collector.error')
-                  : t('usage.collector.waiting')}
-              </strong>
-              <span>{t('usage.longTermRecords', { count: compactNumber(status?.totalRecords ?? 0) })}</span>
-            </div>
+            <strong>
+              {status?.state === 'collecting'
+                ? t('usage.collector.collecting')
+                : status?.state === 'error'
+                ? t('usage.collector.error')
+                : t('usage.collector.waiting')}
+            </strong>
+            <span>{t('usage.longTermRecords', { count: compactNumber(status?.totalRecords ?? 0) })}</span>
           </div>
           <button
             type="button"
@@ -467,43 +501,6 @@ export function UsageRecordsPage() {
             <RefreshCw size={15} className={loading ? 'spin' : ''} />
           </button>
         </div>
-      </header>
-
-      {error ? <div className="management-alert error">{error}</div> : null}
-
-      <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
-        <button
-          type="button"
-          className={activeTab === 'overview' ? 'active' : ''}
-          onClick={() => setActiveTab('overview')}
-        >
-          <BarChart3 size={15} />
-          <span>{t('usage.tab.overview')}</span>
-        </button>
-        <button
-          type="button"
-          className={activeTab === 'analysis' ? 'active' : ''}
-          onClick={() => setActiveTab('analysis')}
-        >
-          <Activity size={15} />
-          <span>{t('usage.tab.analysis')}</span>
-        </button>
-        <button
-          type="button"
-          className={activeTab === 'events' ? 'active' : ''}
-          onClick={() => setActiveTab('events')}
-        >
-          <List size={15} />
-          <span>{t('usage.tab.events')}</span>
-        </button>
-        <button
-          type="button"
-          className={activeTab === 'pricing' ? 'active' : ''}
-          onClick={() => setActiveTab('pricing')}
-        >
-          <CircleDollarSign size={15} />
-          <span>{t('usage.tab.pricing')}</span>
-        </button>
       </div>
 
       <section className="panel usage-filter-panel">
@@ -667,7 +664,17 @@ export function UsageRecordsPage() {
 
       {activeTab === 'overview' && overview ? <OverviewView overview={overview} /> : null}
       {activeTab === 'analysis' ? <AnalysisView analysis={analysis} overview={overview} /> : null}
-      {activeTab === 'events' && events ? <EventsView events={events} onPage={setPage} /> : null}
+      {activeTab === 'events' && events ? (
+        <EventsView
+          events={events}
+          pageSize={pageSize}
+          onPage={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(1);
+          }}
+        />
+      ) : null}
       {activeTab === 'pricing' && pricing ? (
         <PricingView pricing={pricing} query={buildQueries().query} onChanged={() => loadData(true)} />
       ) : null}
@@ -1066,6 +1073,66 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
   return initial;
 };
 
+function TableTopScrollbar({
+  tableWrapRef,
+  totalWidth,
+}: {
+  tableWrapRef: React.RefObject<HTMLDivElement | null>;
+  totalWidth: number;
+}) {
+  const scrollbarRef = useRef<HTMLDivElement | null>(null);
+  const [hasOverflow, setHasOverflow] = useState(false);
+
+  useEffect(() => {
+    const scrollbar = scrollbarRef.current;
+    const tableWrap = tableWrapRef.current;
+    if (!scrollbar || !tableWrap) return;
+
+    let syncing = false;
+    const syncTable = () => {
+      if (syncing) return;
+      syncing = true;
+      tableWrap.scrollLeft = scrollbar.scrollLeft;
+      window.requestAnimationFrame(() => {
+        syncing = false;
+      });
+    };
+    const syncScrollbar = () => {
+      if (syncing) return;
+      syncing = true;
+      scrollbar.scrollLeft = tableWrap.scrollLeft;
+      window.requestAnimationFrame(() => {
+        syncing = false;
+      });
+    };
+    const updateOverflow = () => {
+      setHasOverflow(tableWrap.scrollWidth > tableWrap.clientWidth + 1);
+      scrollbar.scrollLeft = tableWrap.scrollLeft;
+    };
+
+    updateOverflow();
+    scrollbar.addEventListener('scroll', syncTable, { passive: true });
+    tableWrap.addEventListener('scroll', syncScrollbar, { passive: true });
+    const resizeObserver = new ResizeObserver(updateOverflow);
+    resizeObserver.observe(tableWrap);
+    return () => {
+      scrollbar.removeEventListener('scroll', syncTable);
+      tableWrap.removeEventListener('scroll', syncScrollbar);
+      resizeObserver.disconnect();
+    };
+  }, [tableWrapRef, totalWidth]);
+
+  return (
+    <div
+      ref={scrollbarRef}
+      className={`usage-table-top-scrollbar ${hasOverflow ? '' : 'is-hidden'}`}
+      aria-hidden="true"
+    >
+      <div style={{ width: `${totalWidth}px`, height: '1px' }} />
+    </div>
+  );
+}
+
 function UsageResultCell({ record }: { record: UsageRecord }) {
   const { t } = useI18n();
   const state = record.canceled ? 'canceled' : record.failed ? 'failed' : 'success';
@@ -1203,14 +1270,26 @@ function UsageEventCell({
   }
 }
 
-function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page: number) => void }) {
+function EventsView({
+  events,
+  pageSize,
+  onPage,
+  onPageSizeChange,
+}: {
+  events: UsageEventPage;
+  pageSize: number;
+  onPage: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}) {
   const { t } = useI18n();
   const [widths, setWidths] = useState<Record<EventColumnKey, number>>(getInitialColumnWidths);
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<EventColumnKey[]>(getInitialVisibleColumns);
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
+
   const columnDialogRef = useRef<HTMLElement | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
 
   const visibleColumnKeySet = new Set(visibleColumnKeys);
   const visibleColumns = EVENT_COLUMNS.filter((column) => visibleColumnKeySet.has(column.key));
@@ -1242,12 +1321,15 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
       if (current.includes(key)) {
         return current.length > 1 ? current.filter((columnKey) => columnKey !== key) : current;
       }
-      return EVENT_COLUMNS.filter((column) => current.includes(column.key) || column.key === key).map((column) => column.key);
+      return EVENT_COLUMNS.filter(
+        (column) => current.includes(column.key) || column.key === key
+      ).map((column) => column.key);
     });
   };
 
   const applyColumnSettings = () => {
-    const next = draftVisibleColumnKeys.length > 0 ? draftVisibleColumnKeys : getAllEventColumnKeys();
+    const next =
+      draftVisibleColumnKeys.length > 0 ? draftVisibleColumnKeys : getAllEventColumnKeys();
     setVisibleColumnKeys(next);
     try {
       localStorage.setItem(EVENT_VISIBLE_COLS_STORAGE_KEY, JSON.stringify(next));
@@ -1279,7 +1361,8 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
     e.stopPropagation();
 
     const startX = e.clientX;
-    const startWidth = widths[key] ?? EVENT_COLUMNS.find((c) => c.key === key)?.defaultWidth ?? 100;
+    const startWidth =
+      widths[key] ?? EVENT_COLUMNS.find((c) => c.key === key)?.defaultWidth ?? 100;
     const colDef = EVENT_COLUMNS.find((c) => c.key === key);
     const minWidth = colDef?.minWidth ?? 50;
 
@@ -1314,7 +1397,13 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
     window.addEventListener('pointerup', onPointerUp);
   };
 
-  const totalTableWidth = visibleColumns.reduce((sum, col) => sum + (widths[col.key] ?? col.defaultWidth), 0);
+  const totalTableWidth = visibleColumns.reduce(
+    (sum, col) => sum + (widths[col.key] ?? col.defaultWidth),
+    0
+  );
+
+  const startRecordNum = events.total > 0 ? (events.page - 1) * pageSize + 1 : 0;
+  const endRecordNum = Math.min(events.page * pageSize, events.total);
 
   return (
     <section className="panel usage-events-panel">
@@ -1323,10 +1412,11 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
           <span className="usage-events-count-badge">
             {t('usage.events.total', { count: compactNumber(events.total) })}
           </span>
-          <span className="usage-col-hint" title={t('usage.events.resizeHint')}>
-            {t('usage.events.dragHint')}
+          <span className="usage-events-page-indicator">
+            {t('usage.events.page', { page: events.page, total: events.totalPages })}
           </span>
         </div>
+
         <div className="usage-events-summary-right">
           <button
             type="button"
@@ -1334,25 +1424,29 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
             onClick={openColumnSettings}
             title={t('usage.events.columnSettings')}
           >
-            <Columns3Cog size={13} />
+            <Columns3Cog size={14} />
             <span>{t('usage.events.columnSettings')}</span>
           </button>
           {isCustomized ? (
             <button
               type="button"
-              className="usage-col-reset-btn"
+              className="usage-col-reset-btn icon-only"
               onClick={resetAllWidths}
-              title={t('usage.events.resizeHint')}
+              title={t('usage.events.resetColumns')}
+              aria-label={t('usage.events.resetColumns')}
             >
-              <RotateCcw size={12} />
-              <span>{t('usage.events.resetColumns')}</span>
+              <RotateCcw size={13} />
             </button>
           ) : null}
         </div>
       </div>
 
+      {events.items.length > 0 ? (
+        <TableTopScrollbar tableWrapRef={tableWrapRef} totalWidth={totalTableWidth} />
+      ) : null}
+
       {events.items.length ? (
-        <div className="usage-table-wrap">
+        <div ref={tableWrapRef} className="usage-table-wrap">
           <table className="usage-events-table" style={{ width: `${totalTableWidth}px`, minWidth: '100%' }}>
             <colgroup>
               {visibleColumns.map((col) => (
@@ -1404,31 +1498,63 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
       )}
 
       <div className="usage-pagination">
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={events.page <= 1}
-          onClick={() => onPage(events.page - 1)}
-        >
-          {t('usage.previous')}
-        </button>
-        <span className="usage-pagination-info">
-          {events.page} / {events.totalPages}
-        </span>
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={events.page >= events.totalPages}
-          onClick={() => onPage(events.page + 1)}
-        >
-          {t('usage.next')}
-        </button>
+        <div className="usage-pagination-left">
+          <span className="usage-pagination-summary">
+            {t('usage.events.rangeSummary', {
+              start: startRecordNum,
+              end: endRecordNum,
+              total: compactNumber(events.total),
+            })}
+          </span>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <select
+              className="usage-page-size-select"
+              value={pageSize}
+              onChange={(e) => onPageSizeChange(Number(e.currentTarget.value))}
+              aria-label={t('usage.events.pageSize', { size: pageSize })}
+            >
+              <option value="20">{t('usage.events.pageSize', { size: 20 })}</option>
+              <option value="50">{t('usage.events.pageSize', { size: 50 })}</option>
+              <option value="100">{t('usage.events.pageSize', { size: 100 })}</option>
+              <option value="200">{t('usage.events.pageSize', { size: 200 })}</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="usage-pagination-right">
+          <button
+            type="button"
+            className="usage-page-nav-btn"
+            disabled={events.page <= 1}
+            onClick={() => onPage(events.page - 1)}
+          >
+            <ChevronLeft size={14} />
+            <span>{t('usage.previous')}</span>
+          </button>
+
+          <span className="usage-pagination-info">
+            {events.page} / {events.totalPages}
+          </span>
+
+          <button
+            type="button"
+            className="usage-page-nav-btn"
+            disabled={events.page >= events.totalPages}
+            onClick={() => onPage(events.page + 1)}
+          >
+            <span>{t('usage.next')}</span>
+            <ChevronRight size={14} />
+          </button>
+        </div>
       </div>
 
       {columnSettingsOpen ? (
         <div
           className="config-dialog-backdrop"
-          onMouseDown={(event) => event.currentTarget === event.target && setColumnSettingsOpen(false)}
+          onMouseDown={(event) =>
+            event.currentTarget === event.target && setColumnSettingsOpen(false)
+          }
         >
           <section
             ref={columnDialogRef}
@@ -1455,7 +1581,9 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
                 <X size={17} />
               </button>
             </div>
-            <p className="usage-column-dialog-description">{t('usage.events.columnSettingsDescription')}</p>
+            <p className="usage-column-dialog-description">
+              {t('usage.events.columnSettingsDescription')}
+            </p>
             <div className="usage-column-options">
               {EVENT_COLUMNS.map((column) => {
                 const checked = draftVisibleColumnKeys.includes(column.key);
@@ -1480,15 +1608,27 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
                     total: EVENT_COLUMNS.length,
                   })}
                 </span>
-                <button type="button" className="usage-column-select-all" onClick={resetVisibleColumns}>
+                <button
+                  type="button"
+                  className="usage-column-select-all"
+                  onClick={resetVisibleColumns}
+                >
                   {t('usage.events.selectAllColumns')}
                 </button>
               </div>
               <div className="usage-column-dialog-actions">
-                <button type="button" className="secondary-button" onClick={() => setColumnSettingsOpen(false)}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setColumnSettingsOpen(false)}
+                >
                   {t('common.cancel')}
                 </button>
-                <button type="button" className="primary-button" onClick={applyColumnSettings}>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={applyColumnSettings}
+                >
                   {t('usage.events.applyColumns')}
                 </button>
               </div>

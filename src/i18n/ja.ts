@@ -199,6 +199,8 @@ export const jaOverrides = {
   'usage.events.columnsSelected': '{total} 列中 {selected} 列を選択',
   'usage.events.selectAllColumns': 'すべて選択',
   'usage.events.applyColumns': '適用',
+  'usage.events.pageSize': '{size} 件/ページ',
+  'usage.events.rangeSummary': '{total} 件中 {start} - {end} 件を表示',
   'usage.column.time': '日時',
   'usage.column.model': 'モデル',
   'usage.column.provider': 'Provider',

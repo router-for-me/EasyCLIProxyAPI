@@ -199,6 +199,8 @@ export const en: Record<MessageKey, string> = {
   'usage.events.columnsSelected': '{selected} of {total} columns selected',
   'usage.events.selectAllColumns': 'Select All',
   'usage.events.applyColumns': 'Apply',
+  'usage.events.pageSize': '{size} / page',
+  'usage.events.rangeSummary': 'Showing {start} - {end} of {total}',
   'usage.column.time': 'Time',
   'usage.column.model': 'Model',
   'usage.column.provider': 'Provider',
