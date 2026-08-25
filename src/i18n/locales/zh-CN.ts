@@ -964,6 +964,8 @@ export const zhCN = {
   'kernel.versions.check': '检查更新',
   'kernel.versions.installVersion': '安装 {version}',
   'kernel.versions.installLatest': '停止并更新',
+  'kernel.versions.confirmUpdateTitle': '停止并更新内核',
+  'kernel.versions.stopAndConfirmDescription': '更新内核将停止正在运行的内核进程，并下载安装版本 {version}。更新完成后需重新启动内核，是否继续？',
   'kernel.versions.stopAndUpdateVersion': '停止并更新至 {version}',
   'kernel.versions.reinstallTitle': '重新安装当前版本',
   'kernel.versions.reinstall': '重新安装',

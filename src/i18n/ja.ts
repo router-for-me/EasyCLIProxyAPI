@@ -966,6 +966,8 @@ export const jaOverrides = {
   'kernel.versions.check': '更新を確認',
   'kernel.versions.installVersion': '{version} をインストール',
   'kernel.versions.installLatest': '停止して更新',
+  'kernel.versions.confirmUpdateTitle': 'コアを停止して更新',
+  'kernel.versions.stopAndConfirmDescription': 'コアを更新すると実行中のコアプロセスが停止し、バージョン {version} がインストールされます。更新後にコアを再起動できます。続行しますか？',
   'kernel.versions.stopAndUpdateVersion': '{version} に停止して更新',
   'kernel.versions.reinstallTitle': '現在のバージョンを再インストール',
   'kernel.versions.reinstall': '再インストール',

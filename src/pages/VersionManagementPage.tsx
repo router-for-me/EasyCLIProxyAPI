@@ -113,6 +113,7 @@ export function VersionManagementPage() {
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<CoreInstallTask | null>(null);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
+  const [confirmUpdateOpen, setConfirmUpdateOpen] = useState(false);
   const [cancellingInstall, setCancellingInstall] = useState(false);
 
   const [versionSource, setVersionSource] = useState<VersionSourceSettings | null>(null);
@@ -629,7 +630,7 @@ export function VersionManagementPage() {
               className={latestVersion && (!coreInstalled || currentVersion !== latestVersion) ? 'primary-button' : 'secondary-button'}
               title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
               disabled={!latestVersion || busy}
-              onClick={() => void installVersion(latestVersion)}
+              onClick={() => setConfirmUpdateOpen(true)}
             >
               <Download size={15} aria-hidden="true" />
               <span>{!coreInstalled ? t('kernel.versions.installLatestMissing') : t('kernel.versions.installLatest')}</span>
@@ -650,6 +651,50 @@ export function VersionManagementPage() {
 
         </div>
       </section>
+
+      {/* Core Update Confirmation Dialog */}
+      {confirmUpdateOpen ? (
+        <div className="install-dialog-backdrop app-update-dialog-backdrop">
+          <section
+            className="install-dialog app-update-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="core-update-confirm-title"
+          >
+            <div className="install-dialog-heading">
+              <span className="install-dialog-eyebrow">{t('kernel.dialog.install')}</span>
+              <h2 id="core-update-confirm-title">
+                {t('kernel.versions.confirmUpdateTitle')}
+              </h2>
+            </div>
+
+            <p className="app-update-confirm-copy">
+              {t('kernel.versions.stopAndConfirmDescription', { version: latestVersion })}
+            </p>
+
+            <div className="app-update-dialog-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setConfirmUpdateOpen(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setConfirmUpdateOpen(false);
+                  void installVersion(latestVersion);
+                }}
+              >
+                <Download size={15} aria-hidden="true" />
+                <span>{t('kernel.versions.installLatest')}</span>
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {/* Installation Progress Modal Dialog */}
       {installDialogOpen && progress ? (

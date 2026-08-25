@@ -966,6 +966,8 @@ export const en: Record<MessageKey, string> = {
   'kernel.versions.check': 'Check for Updates',
   'kernel.versions.installVersion': 'Install {version}',
   'kernel.versions.installLatest': 'Stop and Update',
+  'kernel.versions.confirmUpdateTitle': 'Stop and Update Core',
+  'kernel.versions.stopAndConfirmDescription': 'Updating the core will stop the currently running core process and install version {version}. You can restart the core after the update. Do you want to continue?',
   'kernel.versions.stopAndUpdateVersion': 'Stop and update to {version}',
   'kernel.versions.reinstallTitle': 'Reinstall the current version',
   'kernel.versions.reinstall': 'Reinstall',
