@@ -692,6 +692,12 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
         failed: compactNumber(overview.failureCount),
         canceled: compactNumber(overview.canceledCount),
       }),
+      metaTitle: t('usage.stat.requestMetaTitle', {
+        total: compactNumber(overview.totalRequests),
+        success: compactNumber(overview.successCount),
+        failed: compactNumber(overview.failureCount),
+        canceled: compactNumber(overview.canceledCount),
+      }),
     },
     {
       label: t('usage.stat.tokens'),
@@ -700,16 +706,35 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
         input: compactNumber(overview.inputTokens),
         output: compactNumber(overview.outputTokens),
       }),
+      metaTitle: t('usage.stat.tokenMetaTitle', {
+        input: compactNumber(overview.inputTokens),
+        output: compactNumber(overview.outputTokens),
+        reasoning: compactNumber(overview.reasoningTokens),
+        cache: compactNumber(overview.cacheReadTokens),
+      }),
     },
     {
       label: t('usage.stat.successRate'),
       value: `${overview.successRate.toFixed(1)}%`,
-      meta: t('usage.stat.reasoningMeta', { tokens: compactNumber(overview.reasoningTokens) }),
+      meta: t('usage.stat.successMeta', {
+        success: compactNumber(overview.successCount),
+        failed: compactNumber(overview.failureCount),
+      }),
+      metaTitle: t('usage.stat.successMetaTitle', {
+        success: compactNumber(overview.successCount),
+        failed: compactNumber(overview.failureCount),
+        canceled: compactNumber(overview.canceledCount),
+      }),
     },
     {
       label: t('usage.stat.tps'),
       value: `${overview.tps.toFixed(1)} TPS`,
       meta: t('usage.stat.performanceMeta', {
+        rpm: overview.rpm.toFixed(2),
+        latency: Math.round(overview.averageLatencyMs),
+      }),
+      metaTitle: t('usage.stat.performanceMetaTitle', {
+        tps: overview.tps.toFixed(1),
         rpm: overview.rpm.toFixed(2),
         latency: Math.round(overview.averageLatencyMs),
       }),
@@ -721,6 +746,11 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
         hit: compactNumber(overview.cacheReadTokens),
         input: compactNumber(overview.inputTokens),
       }),
+      metaTitle: t('usage.stat.cacheHitMetaTitle', {
+        rate: (overview.cacheHitRate * 100).toFixed(1),
+        hit: compactNumber(overview.cacheReadTokens),
+        input: compactNumber(overview.inputTokens),
+      }),
     },
     {
       label: t('usage.stat.estimatedCost'),
@@ -729,17 +759,22 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
         priced: compactNumber(overview.pricedRequests),
         total: compactNumber(overview.totalRequests),
       }),
+      metaTitle: t('usage.stat.costMetaTitle', {
+        priced: compactNumber(overview.pricedRequests),
+        total: compactNumber(overview.totalRequests),
+        unpriced: compactNumber(Math.max(overview.totalRequests - overview.pricedRequests, 0)),
+      }),
     },
   ];
 
   return (
     <div className="usage-overview-layout">
       <div className="usage-stat-grid">
-        {cards.map(({ label, value, meta }) => (
+        {cards.map(({ label, value, meta, metaTitle }) => (
           <article className="panel usage-stat-card" key={label}>
             <span className="usage-stat-card-label">{label}</span>
             <strong className="usage-stat-card-value">{value}</strong>
-            <small className="usage-stat-card-meta" title={meta}>
+            <small className="usage-stat-card-meta" title={metaTitle ?? meta}>
               {meta}
             </small>
           </article>
