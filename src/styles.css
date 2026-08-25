@@ -7254,11 +7254,23 @@ textarea:focus-visible {
 }
 
 /* Events Tab (请求明细) */
+.usage-events-panel {
+  display: flex;
+  min-height: 0;
+  padding: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .usage-events-summary {
   display: flex;
+  min-height: 58px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--theme-e3e1db);
+  background: var(--theme-fffdf8);
   color: var(--theme-8a847c);
   font-size: var(--font-size-caption);
   flex-wrap: wrap;
@@ -7275,7 +7287,8 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   padding: 3px 8px;
-  border-radius: 6px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 999px;
   background: var(--theme-f4f1ea);
   color: var(--theme-2d2a26);
   font-weight: 600;
@@ -7457,15 +7470,18 @@ textarea:focus-visible {
 
 .usage-table-wrap {
   overflow: auto;
-  min-height: 380px;
-  max-height: 620px;
-  border: 1px solid var(--theme-e3e1db);
-  border-radius: 8px;
+  height: clamp(480px, 62vh, 700px);
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
   background: var(--theme-fffdf8);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .usage-events-table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   table-layout: fixed;
   font-size: var(--font-size-caption);
   width: 100%;
@@ -7473,18 +7489,17 @@ textarea:focus-visible {
 
 .usage-events-table th,
 .usage-events-table td {
-  height: 42px;
-  padding: 6px 10px;
+  height: 46px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--theme-eeeae2);
   color: var(--theme-5f5a53);
   white-space: nowrap;
   vertical-align: middle;
   box-sizing: border-box;
-  text-align: center;
 }
 
 .usage-events-table tr:nth-child(even) td {
-  background-color: var(--theme-faf8f4);
+  background-color: transparent;
 }
 
 .usage-events-table tr:hover td {
@@ -7495,20 +7510,20 @@ textarea:focus-visible {
   position: sticky;
   z-index: 2;
   top: 0;
-  background: var(--theme-f4f1ea);
+  background: var(--theme-f8f6f1);
   color: var(--theme-7a746c);
   font-weight: 700;
   padding: 0;
   user-select: none;
   border-bottom: 1px solid var(--theme-e3e1db);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 1px 0 rgba(45, 42, 38, 0.04);
 }
 
 .usage-th-content {
   display: flex;
   align-items: center;
-  height: 42px;
-  padding: 6px 10px;
+  height: 44px;
+  padding: 8px 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7684,7 +7699,7 @@ body.table-col-resizing * {
 
 .usage-events-table .usage-result-cell {
   overflow: hidden;
-  text-align: center;
+  text-align: left;
 }
 
 .usage-result-cell > small {
@@ -7698,9 +7713,13 @@ body.table-col-resizing * {
 
 .usage-pagination {
   display: flex;
+  min-height: 52px;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  padding: 0 16px;
+  border-top: 1px solid var(--theme-e3e1db);
+  background: var(--theme-fffdf8);
   color: var(--theme-8a847c);
   font-size: var(--font-size-caption);
 }
@@ -7718,6 +7737,16 @@ body.table-col-resizing * {
   padding: 0 10px;
   border-radius: 6px;
   font-size: var(--font-size-caption);
+}
+
+.usage-events-panel > .usage-empty {
+  min-height: 480px;
+}
+
+@media (max-height: 760px) {
+  .usage-table-wrap {
+    height: 440px;
+  }
 }
 
 /* Pricing Tab */

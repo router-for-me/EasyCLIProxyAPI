@@ -993,21 +993,21 @@ type EventColumnDef = {
 };
 
 const EVENT_COLUMNS: readonly EventColumnDef[] = [
-  { key: 'time', labelKey: 'usage.column.time', defaultWidth: 135, minWidth: 90, align: 'center' },
-  { key: 'model', labelKey: 'usage.column.model', defaultWidth: 175, minWidth: 110, align: 'center' },
-  { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 110, minWidth: 70, align: 'center' },
-  { key: 'source', labelKey: 'usage.column.source', defaultWidth: 110, minWidth: 70, align: 'center' },
-  { key: 'key', labelKey: 'usage.column.key', defaultWidth: 130, minWidth: 80, align: 'center' },
-  { key: 'input', labelKey: 'usage.column.input', defaultWidth: 76, minWidth: 50, align: 'center' },
-  { key: 'output', labelKey: 'usage.column.output', defaultWidth: 76, minWidth: 50, align: 'center' },
-  { key: 'reasoning', labelKey: 'usage.column.reasoning', defaultWidth: 76, minWidth: 50, align: 'center' },
-  { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 76, minWidth: 50, align: 'center' },
-  { key: 'cacheRate', labelKey: 'usage.column.cacheRate', defaultWidth: 88, minWidth: 65, align: 'center' },
-  { key: 'total', labelKey: 'usage.column.total', defaultWidth: 84, minWidth: 60, align: 'center' },
-  { key: 'result', labelKey: 'usage.column.result', defaultWidth: 160, minWidth: 90, align: 'center' },
-  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 88, minWidth: 65, align: 'center' },
-  { key: 'ttft', labelKey: 'usage.column.ttft', defaultWidth: 88, minWidth: 65, align: 'center' },
-  { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 92, minWidth: 70, align: 'center' },
+  { key: 'time', labelKey: 'usage.column.time', defaultWidth: 150, minWidth: 110, align: 'left' },
+  { key: 'model', labelKey: 'usage.column.model', defaultWidth: 190, minWidth: 120, align: 'left' },
+  { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 120, minWidth: 80, align: 'left' },
+  { key: 'source', labelKey: 'usage.column.source', defaultWidth: 120, minWidth: 80, align: 'left' },
+  { key: 'key', labelKey: 'usage.column.key', defaultWidth: 145, minWidth: 95, align: 'left' },
+  { key: 'input', labelKey: 'usage.column.input', defaultWidth: 84, minWidth: 60, align: 'right' },
+  { key: 'output', labelKey: 'usage.column.output', defaultWidth: 84, minWidth: 60, align: 'right' },
+  { key: 'reasoning', labelKey: 'usage.column.reasoning', defaultWidth: 84, minWidth: 60, align: 'right' },
+  { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 84, minWidth: 60, align: 'right' },
+  { key: 'cacheRate', labelKey: 'usage.column.cacheRate', defaultWidth: 92, minWidth: 70, align: 'right' },
+  { key: 'total', labelKey: 'usage.column.total', defaultWidth: 90, minWidth: 65, align: 'right' },
+  { key: 'result', labelKey: 'usage.column.result', defaultWidth: 150, minWidth: 100, align: 'left' },
+  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 100, minWidth: 75, align: 'right' },
+  { key: 'ttft', labelKey: 'usage.column.ttft', defaultWidth: 100, minWidth: 75, align: 'right' },
+  { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 104, minWidth: 80, align: 'right' },
 ] as const;
 
 const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v1';
@@ -1076,7 +1076,7 @@ function UsageResultCell({ record }: { record: UsageRecord }) {
     .filter(Boolean)
     .join(' · ');
   return (
-    <td className="usage-result-cell align-center" title={detail || t(`usage.result.${state}`)}>
+    <td className="usage-result-cell align-left" title={detail || t(`usage.result.${state}`)}>
       <span className={`usage-result ${state}`}>
         <span className="usage-result-dot" />
         {t(`usage.result.${state}`)}
@@ -1098,13 +1098,13 @@ function UsageEventCell({
   switch (columnKey) {
     case 'time':
       return (
-        <td className="usage-td-time align-center" title={new Date(record.timestamp).toLocaleString()}>
+        <td className="usage-td-time align-left" title={new Date(record.timestamp).toLocaleString()}>
           {formatTime(record.timestamp)}
         </td>
       );
     case 'model':
       return (
-        <td className="usage-stacked-cell align-center">
+        <td className="usage-stacked-cell align-left">
           <strong title={record.alias || record.model}>{record.alias || record.model}</strong>
           {record.alias || record.reasoning_effort ? (
             <small title={record.model}>
@@ -1117,45 +1117,45 @@ function UsageEventCell({
       );
     case 'provider':
       return (
-        <td className="usage-td-provider align-center" title={record.provider || undefined}>
+        <td className="usage-td-provider align-left" title={record.provider || undefined}>
           <span className="usage-tag-pill">{record.provider || '—'}</span>
         </td>
       );
     case 'source':
       return (
-        <td className="usage-td-source align-center" title={record.source_display || record.source || undefined}>
+        <td className="usage-td-source align-left" title={record.source_display || record.source || undefined}>
           <span className="usage-tag-pill">{record.source_display || record.source || '—'}</span>
         </td>
       );
     case 'key':
       return (
-        <td className="usage-stacked-cell align-center">
+        <td className="usage-stacked-cell align-left">
           <strong title={record.api_key_remark}>{record.api_key_remark || noRemarkLabel}</strong>
           <small title={record.api_key_display || undefined}>{record.api_key_display || '—'}</small>
         </td>
       );
     case 'input':
       return (
-        <td className="usage-td-token align-center" title={`${record.tokens.input_tokens.toLocaleString()} tokens`}>
+        <td className="usage-td-token align-right" title={`${record.tokens.input_tokens.toLocaleString()} tokens`}>
           {compactNumber(record.tokens.input_tokens)}
         </td>
       );
     case 'output':
       return (
-        <td className="usage-td-token align-center" title={`${record.tokens.output_tokens.toLocaleString()} tokens`}>
+        <td className="usage-td-token align-right" title={`${record.tokens.output_tokens.toLocaleString()} tokens`}>
           {compactNumber(record.tokens.output_tokens)}
         </td>
       );
     case 'reasoning':
       return (
-        <td className="usage-td-token align-center" title={`${record.tokens.reasoning_tokens.toLocaleString()} tokens`}>
+        <td className="usage-td-token align-right" title={`${record.tokens.reasoning_tokens.toLocaleString()} tokens`}>
           {compactNumber(record.tokens.reasoning_tokens)}
         </td>
       );
     case 'cache':
       return (
         <td
-          className="usage-td-token align-center"
+          className="usage-td-token align-right"
           title={`Read: ${record.tokens.cache_read_tokens.toLocaleString()} tokens${
             record.tokens.cache_creation_tokens > 0
               ? ` / Creation: ${record.tokens.cache_creation_tokens.toLocaleString()} tokens`
@@ -1170,11 +1170,11 @@ function UsageEventCell({
         inputTokens: record.tokens.input_tokens,
         cacheReadTokens: record.tokens.cache_read_tokens,
       });
-      return <td className="usage-td-cache-rate align-center" title={value === '—' ? undefined : value}>{value}</td>;
+      return <td className="usage-td-cache-rate align-right" title={value === '—' ? undefined : value}>{value}</td>;
     }
     case 'total':
       return (
-        <td className="usage-td-token align-center" title={`${record.tokens.total_tokens.toLocaleString()} tokens`}>
+        <td className="usage-td-token align-right" title={`${record.tokens.total_tokens.toLocaleString()} tokens`}>
           <strong>{compactNumber(record.tokens.total_tokens)}</strong>
         </td>
       );
@@ -1182,13 +1182,13 @@ function UsageEventCell({
       return <UsageResultCell record={record} />;
     case 'latency':
       return (
-        <td className="usage-td-latency align-center" title={`${record.latency_ms} ms`}>
+        <td className="usage-td-latency align-right" title={`${record.latency_ms} ms`}>
           {compactNumber(record.latency_ms)} ms
         </td>
       );
     case 'ttft':
       return (
-        <td className="usage-td-ttft align-center" title={record.ttft_ms == null ? undefined : `${record.ttft_ms} ms`}>
+        <td className="usage-td-ttft align-right" title={record.ttft_ms == null ? undefined : `${record.ttft_ms} ms`}>
           {record.ttft_ms == null ? '—' : `${compactNumber(record.ttft_ms)} ms`}
         </td>
       );
@@ -1198,7 +1198,7 @@ function UsageEventCell({
         latencyMs: record.latency_ms,
         ttftMs: record.ttft_ms,
       });
-      return <td className="usage-td-speed align-center" title={value === '—' ? undefined : value}>{value}</td>;
+      return <td className="usage-td-speed align-right" title={value === '—' ? undefined : value}>{value}</td>;
     }
   }
 }
@@ -1348,9 +1348,6 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
               <span>{t('usage.events.resetColumns')}</span>
             </button>
           ) : null}
-          <span className="usage-events-page-indicator">
-            {t('usage.events.page', { page: events.page, total: events.totalPages })}
-          </span>
         </div>
       </div>
 
