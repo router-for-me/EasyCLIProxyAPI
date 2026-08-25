@@ -1804,7 +1804,7 @@ function PricingView({
     setSyncing(true);
     setLocalError('');
     try {
-      const result = await invoke<ModelPriceSyncResult>('sync_usage_model_prices');
+      const result = await invoke<ModelPriceSyncResult>('sync_usage_model_prices', { query });
       setMessage(
         t('usage.pricing.syncResult', {
           imported: result.imported,
