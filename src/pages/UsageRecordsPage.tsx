@@ -6,6 +6,7 @@ import {
   BarChart3,
   CircleDollarSign,
   Clock3,
+  Columns3Cog,
   Database,
   FilterX,
   Key,
@@ -24,6 +25,7 @@ import {
 } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
+import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing';
@@ -978,7 +980,9 @@ type EventColumnKey =
   | 'total'
   | 'result'
   | 'latency'
-  | 'ttft';
+  | 'ttft'
+  | 'speed'
+  | 'cacheRate';
 
 type EventColumnDef = {
   key: EventColumnKey;
@@ -998,13 +1002,42 @@ const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'output', labelKey: 'usage.column.output', defaultWidth: 76, minWidth: 50, align: 'center' },
   { key: 'reasoning', labelKey: 'usage.column.reasoning', defaultWidth: 76, minWidth: 50, align: 'center' },
   { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 76, minWidth: 50, align: 'center' },
+  { key: 'cacheRate', labelKey: 'usage.column.cacheRate', defaultWidth: 88, minWidth: 65, align: 'center' },
   { key: 'total', labelKey: 'usage.column.total', defaultWidth: 84, minWidth: 60, align: 'center' },
   { key: 'result', labelKey: 'usage.column.result', defaultWidth: 160, minWidth: 90, align: 'center' },
   { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 88, minWidth: 65, align: 'center' },
   { key: 'ttft', labelKey: 'usage.column.ttft', defaultWidth: 88, minWidth: 65, align: 'center' },
+  { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 92, minWidth: 70, align: 'center' },
 ] as const;
 
 const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v1';
+const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v1';
+
+const getAllEventColumnKeys = () => EVENT_COLUMNS.map((column) => column.key);
+
+const getInitialVisibleColumns = (): EventColumnKey[] => {
+  try {
+    const raw = localStorage.getItem(EVENT_VISIBLE_COLS_STORAGE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const knownKeys = new Set<EventColumnKey>(getAllEventColumnKeys());
+        const seen = new Set<EventColumnKey>();
+        const savedKeys = parsed.filter((key): key is EventColumnKey => {
+          if (typeof key !== 'string' || !knownKeys.has(key as EventColumnKey) || seen.has(key as EventColumnKey)) {
+            return false;
+          }
+          seen.add(key as EventColumnKey);
+          return true;
+        });
+        if (savedKeys.length > 0) return savedKeys;
+      }
+    }
+  } catch {
+    // fallback to all columns
+  }
+  return getAllEventColumnKeys();
+};
 
 const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
   const initial: Record<EventColumnKey, number> = {} as any;
@@ -1053,12 +1086,140 @@ function UsageResultCell({ record }: { record: UsageRecord }) {
   );
 }
 
+function UsageEventCell({
+  record,
+  columnKey,
+  noRemarkLabel,
+}: {
+  record: UsageRecord;
+  columnKey: EventColumnKey;
+  noRemarkLabel: string;
+}) {
+  switch (columnKey) {
+    case 'time':
+      return (
+        <td className="usage-td-time align-center" title={new Date(record.timestamp).toLocaleString()}>
+          {formatTime(record.timestamp)}
+        </td>
+      );
+    case 'model':
+      return (
+        <td className="usage-stacked-cell align-center">
+          <strong title={record.alias || record.model}>{record.alias || record.model}</strong>
+          {record.alias || record.reasoning_effort ? (
+            <small title={record.model}>
+              {record.alias ? record.model : ''}
+              {record.alias && record.reasoning_effort ? ' · ' : ''}
+              {record.reasoning_effort}
+            </small>
+          ) : null}
+        </td>
+      );
+    case 'provider':
+      return (
+        <td className="usage-td-provider align-center" title={record.provider || undefined}>
+          <span className="usage-tag-pill">{record.provider || '—'}</span>
+        </td>
+      );
+    case 'source':
+      return (
+        <td className="usage-td-source align-center" title={record.source_display || record.source || undefined}>
+          <span className="usage-tag-pill">{record.source_display || record.source || '—'}</span>
+        </td>
+      );
+    case 'key':
+      return (
+        <td className="usage-stacked-cell align-center">
+          <strong title={record.api_key_remark}>{record.api_key_remark || noRemarkLabel}</strong>
+          <small title={record.api_key_display || undefined}>{record.api_key_display || '—'}</small>
+        </td>
+      );
+    case 'input':
+      return (
+        <td className="usage-td-token align-center" title={`${record.tokens.input_tokens.toLocaleString()} tokens`}>
+          {compactNumber(record.tokens.input_tokens)}
+        </td>
+      );
+    case 'output':
+      return (
+        <td className="usage-td-token align-center" title={`${record.tokens.output_tokens.toLocaleString()} tokens`}>
+          {compactNumber(record.tokens.output_tokens)}
+        </td>
+      );
+    case 'reasoning':
+      return (
+        <td className="usage-td-token align-center" title={`${record.tokens.reasoning_tokens.toLocaleString()} tokens`}>
+          {compactNumber(record.tokens.reasoning_tokens)}
+        </td>
+      );
+    case 'cache':
+      return (
+        <td
+          className="usage-td-token align-center"
+          title={`Read: ${record.tokens.cache_read_tokens.toLocaleString()} tokens${
+            record.tokens.cache_creation_tokens > 0
+              ? ` / Creation: ${record.tokens.cache_creation_tokens.toLocaleString()} tokens`
+              : ''
+          }`}
+        >
+          {compactNumber(record.tokens.cache_read_tokens)}
+        </td>
+      );
+    case 'cacheRate': {
+      const value = formatCacheReadRate({
+        inputTokens: record.tokens.input_tokens,
+        cacheReadTokens: record.tokens.cache_read_tokens,
+      });
+      return <td className="usage-td-cache-rate align-center" title={value === '—' ? undefined : value}>{value}</td>;
+    }
+    case 'total':
+      return (
+        <td className="usage-td-token align-center" title={`${record.tokens.total_tokens.toLocaleString()} tokens`}>
+          <strong>{compactNumber(record.tokens.total_tokens)}</strong>
+        </td>
+      );
+    case 'result':
+      return <UsageResultCell record={record} />;
+    case 'latency':
+      return (
+        <td className="usage-td-latency align-center" title={`${record.latency_ms} ms`}>
+          {compactNumber(record.latency_ms)} ms
+        </td>
+      );
+    case 'ttft':
+      return (
+        <td className="usage-td-ttft align-center" title={record.ttft_ms == null ? undefined : `${record.ttft_ms} ms`}>
+          {record.ttft_ms == null ? '—' : `${compactNumber(record.ttft_ms)} ms`}
+        </td>
+      );
+    case 'speed': {
+      const value = formatGenerationSpeed({
+        outputTokens: record.tokens.output_tokens,
+        latencyMs: record.latency_ms,
+        ttftMs: record.ttft_ms,
+      });
+      return <td className="usage-td-speed align-center" title={value === '—' ? undefined : value}>{value}</td>;
+    }
+  }
+}
+
 function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page: number) => void }) {
   const { t } = useI18n();
   const [widths, setWidths] = useState<Record<EventColumnKey, number>>(getInitialColumnWidths);
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<EventColumnKey[]>(getInitialVisibleColumns);
+  const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
+  const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
+  const columnDialogRef = useRef<HTMLElement | null>(null);
 
+  const visibleColumnKeySet = new Set(visibleColumnKeys);
+  const visibleColumns = EVENT_COLUMNS.filter((column) => visibleColumnKeySet.has(column.key));
   const isCustomized = EVENT_COLUMNS.some((col) => widths[col.key] !== col.defaultWidth);
+  const noRemarkLabel = t('usage.key.noRemark');
+
+  useEffect(() => {
+    if (columnSettingsOpen) columnDialogRef.current?.focus();
+  }, [columnSettingsOpen]);
 
   const resetAllWidths = () => {
     const defaults: Record<EventColumnKey, number> = {} as any;
@@ -1069,6 +1230,34 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
     try {
       localStorage.removeItem(EVENT_COL_WIDTHS_STORAGE_KEY);
     } catch {}
+  };
+
+  const openColumnSettings = () => {
+    setDraftVisibleColumnKeys(visibleColumnKeys);
+    setColumnSettingsOpen(true);
+  };
+
+  const toggleDraftColumn = (key: EventColumnKey) => {
+    setDraftVisibleColumnKeys((current) => {
+      if (current.includes(key)) {
+        return current.length > 1 ? current.filter((columnKey) => columnKey !== key) : current;
+      }
+      return EVENT_COLUMNS.filter((column) => current.includes(column.key) || column.key === key).map((column) => column.key);
+    });
+  };
+
+  const applyColumnSettings = () => {
+    const next = draftVisibleColumnKeys.length > 0 ? draftVisibleColumnKeys : getAllEventColumnKeys();
+    setVisibleColumnKeys(next);
+    try {
+      localStorage.setItem(EVENT_VISIBLE_COLS_STORAGE_KEY, JSON.stringify(next));
+    } catch {}
+    setColumnSettingsOpen(false);
+  };
+
+  const resetVisibleColumns = () => {
+    const allColumns = getAllEventColumnKeys();
+    setDraftVisibleColumnKeys(allColumns);
   };
 
   const resetSingleColumn = (key: EventColumnKey, e: React.MouseEvent) => {
@@ -1125,7 +1314,7 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
     window.addEventListener('pointerup', onPointerUp);
   };
 
-  const totalTableWidth = EVENT_COLUMNS.reduce((sum, col) => sum + (widths[col.key] ?? col.defaultWidth), 0);
+  const totalTableWidth = visibleColumns.reduce((sum, col) => sum + (widths[col.key] ?? col.defaultWidth), 0);
 
   return (
     <section className="panel usage-events-panel">
@@ -1139,6 +1328,15 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
           </span>
         </div>
         <div className="usage-events-summary-right">
+          <button
+            type="button"
+            className="usage-col-settings-btn"
+            onClick={openColumnSettings}
+            title={t('usage.events.columnSettings')}
+          >
+            <Columns3Cog size={13} />
+            <span>{t('usage.events.columnSettings')}</span>
+          </button>
           {isCustomized ? (
             <button
               type="button"
@@ -1160,13 +1358,13 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
         <div className="usage-table-wrap">
           <table className="usage-events-table" style={{ width: `${totalTableWidth}px`, minWidth: '100%' }}>
             <colgroup>
-              {EVENT_COLUMNS.map((col) => (
+              {visibleColumns.map((col) => (
                 <col key={col.key} style={{ width: `${widths[col.key]}px` }} />
               ))}
             </colgroup>
             <thead>
               <tr>
-                {EVENT_COLUMNS.map((col) => {
+                {visibleColumns.map((col) => {
                   const label = t(col.labelKey);
                   return (
                     <th
@@ -1191,83 +1389,14 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
             <tbody>
               {events.items.map((record) => (
                 <tr key={record.id}>
-                  {/* time */}
-                  <td className="usage-td-time align-center" title={new Date(record.timestamp).toLocaleString()}>
-                    {formatTime(record.timestamp)}
-                  </td>
-
-                  {/* model */}
-                  <td className="usage-stacked-cell align-center">
-                    <strong title={record.alias || record.model}>{record.alias || record.model}</strong>
-                    {record.alias || record.reasoning_effort ? (
-                      <small title={record.model}>
-                        {record.alias ? record.model : ''}
-                        {record.alias && record.reasoning_effort ? ' · ' : ''}
-                        {record.reasoning_effort}
-                      </small>
-                    ) : null}
-                  </td>
-
-                  {/* provider */}
-                  <td className="usage-td-provider align-center" title={record.provider || undefined}>
-                    <span className="usage-tag-pill">{record.provider || '—'}</span>
-                  </td>
-
-                  {/* source */}
-                  <td className="usage-td-source align-center" title={record.source_display || record.source || undefined}>
-                    <span className="usage-tag-pill">{record.source_display || record.source || '—'}</span>
-                  </td>
-
-                  {/* key */}
-                  <td className="usage-stacked-cell align-center">
-                    <strong title={record.api_key_remark}>{record.api_key_remark || t('usage.key.noRemark')}</strong>
-                    <small title={record.api_key_display || undefined}>{record.api_key_display || '—'}</small>
-                  </td>
-
-                  {/* input tokens */}
-                  <td className="usage-td-token align-center" title={`${record.tokens.input_tokens.toLocaleString()} tokens`}>
-                    {compactNumber(record.tokens.input_tokens)}
-                  </td>
-
-                  {/* output tokens */}
-                  <td className="usage-td-token align-center" title={`${record.tokens.output_tokens.toLocaleString()} tokens`}>
-                    {compactNumber(record.tokens.output_tokens)}
-                  </td>
-
-                  {/* reasoning tokens */}
-                  <td className="usage-td-token align-center" title={`${record.tokens.reasoning_tokens.toLocaleString()} tokens`}>
-                    {compactNumber(record.tokens.reasoning_tokens)}
-                  </td>
-
-                  {/* cache tokens */}
-                  <td
-                    className="usage-td-token align-center"
-                    title={`Read: ${record.tokens.cache_read_tokens.toLocaleString()} tokens${
-                      record.tokens.cache_creation_tokens > 0
-                        ? ` / Creation: ${record.tokens.cache_creation_tokens.toLocaleString()} tokens`
-                        : ''
-                    }`}
-                  >
-                    {compactNumber(record.tokens.cache_read_tokens)}
-                  </td>
-
-                  {/* total tokens */}
-                  <td className="usage-td-token align-center" title={`${record.tokens.total_tokens.toLocaleString()} tokens`}>
-                    <strong>{compactNumber(record.tokens.total_tokens)}</strong>
-                  </td>
-
-                  {/* result */}
-                  <UsageResultCell record={record} />
-
-                  {/* latency */}
-                  <td className="usage-td-latency align-center" title={`${record.latency_ms} ms`}>
-                    {compactNumber(record.latency_ms)} ms
-                  </td>
-
-                  {/* ttft */}
-                  <td className="usage-td-ttft align-center" title={record.ttft_ms == null ? undefined : `${record.ttft_ms} ms`}>
-                    {record.ttft_ms == null ? '—' : `${compactNumber(record.ttft_ms)} ms`}
-                  </td>
+                  {visibleColumns.map((column) => (
+                    <UsageEventCell
+                      key={column.key}
+                      record={record}
+                      columnKey={column.key}
+                      noRemarkLabel={noRemarkLabel}
+                    />
+                  ))}
                 </tr>
               ))}
             </tbody>
@@ -1298,6 +1427,78 @@ function EventsView({ events, onPage }: { events: UsageEventPage; onPage: (page:
           {t('usage.next')}
         </button>
       </div>
+
+      {columnSettingsOpen ? (
+        <div
+          className="config-dialog-backdrop"
+          onMouseDown={(event) => event.currentTarget === event.target && setColumnSettingsOpen(false)}
+        >
+          <section
+            ref={columnDialogRef}
+            className="config-dialog usage-column-dialog"
+            role="dialog"
+            tabIndex={-1}
+            aria-modal="true"
+            aria-labelledby="usage-column-dialog-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setColumnSettingsOpen(false);
+            }}
+          >
+            <div className="usage-column-dialog-heading">
+              <div>
+                <Columns3Cog size={19} aria-hidden="true" />
+                <h2 id="usage-column-dialog-title">{t('usage.events.columnSettings')}</h2>
+              </div>
+              <button
+                type="button"
+                className="icon-button quiet"
+                onClick={() => setColumnSettingsOpen(false)}
+                title={t('common.close')}
+              >
+                <X size={17} />
+              </button>
+            </div>
+            <p className="usage-column-dialog-description">{t('usage.events.columnSettingsDescription')}</p>
+            <div className="usage-column-options">
+              {EVENT_COLUMNS.map((column) => {
+                const checked = draftVisibleColumnKeys.includes(column.key);
+                return (
+                  <label key={column.key} className="usage-column-option">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={checked && draftVisibleColumnKeys.length === 1}
+                      onChange={() => toggleDraftColumn(column.key)}
+                    />
+                    <span>{t(column.labelKey)}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="usage-column-dialog-footer">
+              <div className="usage-column-dialog-meta">
+                <span>
+                  {t('usage.events.columnsSelected', {
+                    selected: draftVisibleColumnKeys.length,
+                    total: EVENT_COLUMNS.length,
+                  })}
+                </span>
+                <button type="button" className="usage-column-select-all" onClick={resetVisibleColumns}>
+                  {t('usage.events.selectAllColumns')}
+                </button>
+              </div>
+              <div className="usage-column-dialog-actions">
+                <button type="button" className="secondary-button" onClick={() => setColumnSettingsOpen(false)}>
+                  {t('common.cancel')}
+                </button>
+                <button type="button" className="primary-button" onClick={applyColumnSettings}>
+                  {t('usage.events.applyColumns')}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
