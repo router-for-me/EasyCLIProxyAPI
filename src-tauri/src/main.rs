@@ -1118,6 +1118,7 @@ struct ThinkingAliasSource {
     provider: String,
     kind: String,
     protocol: String,
+    reasoning_levels: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

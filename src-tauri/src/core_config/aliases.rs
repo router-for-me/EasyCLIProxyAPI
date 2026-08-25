@@ -17,7 +17,7 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
         provider: "Vertex OAuth",
         kind: "vertex-oauth",
         protocol: "gemini",
-        supports_reasoning: false,
+        supports_reasoning: true,
         supports_fast: false,
         force_mapping: false,
     },
@@ -26,7 +26,7 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
         provider: "AI Studio OAuth",
         kind: "aistudio-oauth",
         protocol: "gemini",
-        supports_reasoning: false,
+        supports_reasoning: true,
         supports_fast: false,
         force_mapping: false,
     },
@@ -35,7 +35,7 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
         provider: "Antigravity OAuth",
         kind: "antigravity-oauth",
         protocol: "antigravity",
-        supports_reasoning: false,
+        supports_reasoning: true,
         supports_fast: false,
         force_mapping: true,
     },
@@ -44,7 +44,7 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
         provider: "Claude OAuth",
         kind: "claude-oauth",
         protocol: "claude",
-        supports_reasoning: false,
+        supports_reasoning: true,
         supports_fast: false,
         force_mapping: false,
     },
@@ -62,7 +62,7 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
         provider: "Kimi OAuth",
         kind: "kimi-oauth",
         protocol: "openai",
-        supports_reasoning: false,
+        supports_reasoning: true,
         supports_fast: false,
         force_mapping: false,
     },
@@ -70,8 +70,8 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
         key: "xai",
         provider: "xAI OAuth",
         kind: "xai-oauth",
-        protocol: "openai",
-        supports_reasoning: false,
+        protocol: "codex",
+        supports_reasoning: true,
         supports_fast: false,
         force_mapping: false,
     },
@@ -873,8 +873,32 @@ pub(crate) fn resolved_oauth_alias_sources(
         available_models,
         &mut sources,
     )?;
-    if capability == AliasSourceCapability::Fast {
-        sources.retain(|source| model_supports_fast(&source.source.model));
+    collect_config_thinking_alias_sources(
+        root,
+        "claude-api-key",
+        "Claude API",
+        "claude-api",
+        "claude",
+        available_models,
+        &mut sources,
+    )?;
+    collect_config_thinking_alias_sources(
+        root,
+        "gemini-api-key",
+        "Gemini API",
+        "gemini-api",
+        "gemini",
+        available_models,
+        &mut sources,
+    )?;
+    match capability {
+        AliasSourceCapability::Reasoning => {
+            sources.retain(|source| !source.source.reasoning_levels.is_empty())
+        }
+        AliasSourceCapability::Fast => {
+            sources.retain(|source| model_supports_fast(&source.source.model))
+        }
+        AliasSourceCapability::Base => {}
     }
     let configured_codex_api_models = sources
         .iter()
@@ -913,6 +937,7 @@ pub(crate) fn resolved_oauth_alias_sources(
                         provider: channel.provider.to_string(),
                         kind: channel.kind.to_string(),
                         protocol: channel.protocol.to_string(),
+                        reasoning_levels: definition.reasoning_levels.clone(),
                     },
                     location: ThinkingAliasSourceLocation::Oauth {
                         channel: channel.key,
@@ -995,6 +1020,7 @@ pub(crate) fn collect_config_thinking_alias_sources(
             {
                 continue;
             }
+            let reasoning_levels = configured_model_reasoning_levels(model, protocol);
             sources.push(ResolvedThinkingAliasSource {
                 source: ThinkingAliasSource {
                     id: format!("{section}:{provider_index}:{model_index}"),
@@ -1003,6 +1029,7 @@ pub(crate) fn collect_config_thinking_alias_sources(
                     provider: provider_name.clone(),
                     kind: kind.to_string(),
                     protocol: protocol.to_string(),
+                    reasoning_levels,
                 },
                 location: ThinkingAliasSourceLocation::ConfigModel {
                     section,
@@ -1013,6 +1040,37 @@ pub(crate) fn collect_config_thinking_alias_sources(
         }
     }
     Ok(())
+}
+
+pub(crate) fn configured_model_reasoning_levels(
+    model: &serde_norway::Value,
+    protocol: &str,
+) -> Vec<String> {
+    let mut levels = model
+        .as_mapping()
+        .and_then(|model| yaml_mapping_value(model, "thinking"))
+        .and_then(serde_norway::Value::as_mapping)
+        .and_then(|thinking| yaml_mapping_value(thinking, "levels"))
+        .and_then(serde_norway::Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_norway::Value::as_str)
+        .map(str::trim)
+        .filter(|level| !level.is_empty())
+        .map(str::to_ascii_lowercase)
+        .fold(Vec::new(), |mut result, level| {
+            if !result.contains(&level) {
+                result.push(level);
+            }
+            result
+        });
+    if levels.is_empty() && matches!(protocol, "codex" | "openai") {
+        levels = ["low", "medium", "high", "xhigh", "max"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+    }
+    levels
 }
 
 pub(crate) fn thinking_alias_provider_name(
@@ -1127,6 +1185,22 @@ pub(crate) fn thinking_aliases_from_value(
         "OpenAI 兼容",
         "openai-compatible",
         "openai",
+        &mut entries,
+    )?;
+    collect_config_thinking_alias_entries(
+        root,
+        "claude-api-key",
+        "Claude API",
+        "claude-api",
+        "claude",
+        &mut entries,
+    )?;
+    collect_config_thinking_alias_entries(
+        root,
+        "gemini-api-key",
+        "Gemini API",
+        "gemini-api",
+        "gemini",
         &mut entries,
     )?;
     entries.sort_by(|left, right| {
@@ -1339,15 +1413,34 @@ pub(crate) fn find_thinking_alias_effort(
         let effort = yaml_mapping_value(rule, "params")
             .and_then(serde_norway::Value::as_mapping)
             .and_then(|params| {
-                if protocol.eq_ignore_ascii_case("openai") {
-                    yaml_mapping_value(params, "reasoning_effort")
-                        .or_else(|| yaml_mapping_value(params, "reasoning.effort"))
-                } else {
-                    yaml_mapping_value(params, "reasoning.effort")
-                }
+                let explicit = [
+                    "reasoning.effort",
+                    "reasoning_effort",
+                    "output_config.effort",
+                    "generationConfig.thinkingConfig.thinkingLevel",
+                    "thinking.effort",
+                ]
+                .into_iter()
+                .find_map(|key| yaml_mapping_value(params, key))
+                .and_then(serde_norway::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_ascii_lowercase);
+                explicit.or_else(|| {
+                    let thinking_type = yaml_mapping_value(params, "thinking.type")
+                        .and_then(serde_norway::Value::as_str)
+                        .map(str::trim)?;
+                    if thinking_type.eq_ignore_ascii_case("disabled") {
+                        Some("none".to_string())
+                    } else if protocol.eq_ignore_ascii_case("claude")
+                        && thinking_type.eq_ignore_ascii_case("adaptive")
+                    {
+                        Some("auto".to_string())
+                    } else {
+                        None
+                    }
+                })
             })
-            .and_then(serde_norway::Value::as_str)
-            .map(str::trim)
             .filter(|value| !value.is_empty());
         let Some(effort) = effort else {
             continue;
@@ -1361,7 +1454,7 @@ pub(crate) fn find_thinking_alias_effort(
             .iter()
             .any(|model| thinking_payload_model_matches(model, alias, protocol))
         {
-            return Some(effort.to_ascii_lowercase());
+            return Some(effort);
         }
     }
     None
@@ -1418,18 +1511,103 @@ pub(crate) fn thinking_payload_model_matches(
     name_matches && protocol_matches
 }
 
+pub(crate) fn thinking_payload_model_name_matches(
+    model: &serde_norway::Value,
+    alias: &str,
+) -> bool {
+    model
+        .as_mapping()
+        .and_then(|model| yaml_mapping_value(model, "name"))
+        .and_then(serde_norway::Value::as_str)
+        .is_some_and(|name| name.trim().eq_ignore_ascii_case(alias))
+}
+
+pub(crate) fn insert_thinking_effort_params(
+    params: &mut serde_norway::Mapping,
+    source: &ThinkingAliasSource,
+    effort: &str,
+) -> Result<(), String> {
+    let insert = |params: &mut serde_norway::Mapping, key: &str, value: &str| {
+        params.insert(
+            yaml_key(key),
+            serde_norway::Value::String(value.to_string()),
+        );
+    };
+    match source.kind.as_str() {
+        "claude-oauth" | "claude-api" => {
+            if effort.eq_ignore_ascii_case("none") {
+                insert(params, "thinking.type", "disabled");
+            } else {
+                insert(params, "thinking.type", "adaptive");
+                if !effort.eq_ignore_ascii_case("auto") {
+                    insert(params, "output_config.effort", effort);
+                }
+            }
+        }
+        "aistudio-oauth" | "vertex-oauth" | "gemini-api" => {
+            insert(
+                params,
+                "generationConfig.thinkingConfig.thinkingLevel",
+                effort,
+            );
+        }
+        "antigravity-oauth" => {
+            // Antigravity applies payload rules relative to its `request` object.
+            insert(
+                params,
+                "generationConfig.thinkingConfig.thinkingLevel",
+                effort,
+            );
+        }
+        "kimi-oauth" => {
+            if effort.eq_ignore_ascii_case("none") {
+                insert(params, "thinking.type", "disabled");
+            } else {
+                insert(params, "thinking.type", "enabled");
+                insert(params, "thinking.effort", effort);
+            }
+        }
+        "codex-oauth" | "codex-api" | "xai-oauth" => {
+            insert(params, "reasoning.effort", effort);
+        }
+        "openai-compatible" => {
+            insert(params, "reasoning_effort", effort);
+            if source.model.to_ascii_lowercase().starts_with("deepseek") {
+                insert(params, "thinking.type", "enabled");
+            }
+        }
+        _ => match source.protocol.as_str() {
+            "codex" => insert(params, "reasoning.effort", effort),
+            "openai" => insert(params, "reasoning_effort", effort),
+            "claude" => {
+                if effort.eq_ignore_ascii_case("none") {
+                    insert(params, "thinking.type", "disabled");
+                } else {
+                    insert(params, "thinking.type", "adaptive");
+                    if !effort.eq_ignore_ascii_case("auto") {
+                        insert(params, "output_config.effort", effort);
+                    }
+                }
+            }
+            "gemini" | "antigravity" => insert(
+                params,
+                "generationConfig.thinkingConfig.thinkingLevel",
+                effort,
+            ),
+            protocol => {
+                return Err(format!("暂不支持为 {protocol} 来源强制覆写思考强度"));
+            }
+        },
+    }
+    Ok(())
+}
+
 pub(crate) fn add_model_alias_to_yaml(
     content: &str,
     source: &ResolvedThinkingAliasSource,
     alias: &str,
     effort: &str,
-    fast: bool,
 ) -> Result<String, String> {
-    if fast && !alias_source_supports_fast(source) {
-        return Err(
-            "Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 的 GPT 系列模型".to_string(),
-        );
-    }
     let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
     let mut updated = document.get().clone();
@@ -1462,7 +1640,7 @@ pub(crate) fn add_model_alias_to_yaml(
     }
 
     remove_thinking_payload_model(root, alias)?;
-    if effort.is_empty() && !fast {
+    if effort.is_empty() {
         return render_updated_core_yaml(&mut document, updated);
     }
     let payload = root
@@ -1487,33 +1665,7 @@ pub(crate) fn add_model_alias_to_yaml(
     );
     let mut params_mapping = serde_norway::Mapping::new();
     if !effort.is_empty() {
-        params_mapping.insert(
-            yaml_key(if source.source.protocol == "openai" {
-                "reasoning_effort"
-            } else {
-                "reasoning.effort"
-            }),
-            serde_norway::Value::String(effort.to_string()),
-        );
-    }
-    if fast {
-        params_mapping.insert(
-            yaml_key("service_tier"),
-            serde_norway::Value::String("priority".to_string()),
-        );
-    }
-    if !effort.is_empty()
-        && source.source.protocol == "openai"
-        && source
-            .source
-            .model
-            .to_ascii_lowercase()
-            .starts_with("deepseek")
-    {
-        params_mapping.insert(
-            yaml_key("thinking.type"),
-            serde_norway::Value::String("enabled".to_string()),
-        );
+        insert_thinking_effort_params(&mut params_mapping, &source.source, effort)?;
     }
     let mut rule_mapping = serde_norway::Mapping::new();
     rule_mapping.insert(
@@ -1695,15 +1847,6 @@ pub(crate) fn append_config_thinking_alias(
                 serde_norway::Value::String(format!("{display_name} ({effort})")),
             );
         }
-        let thinking = alias_model
-            .entry(yaml_key("thinking"))
-            .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
-            .as_mapping_mut()
-            .ok_or_else(|| "模型 thinking 必须是映射".to_string())?;
-        thinking.insert(
-            yaml_key("levels"),
-            serde_norway::Value::Sequence(vec![serde_norway::Value::String(effort.to_string())]),
-        );
     }
     models.push(serde_norway::Value::Mapping(alias_model));
     Ok(())
@@ -1786,6 +1929,8 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
     if oauth_channel.is_none() {
         removed |= remove_config_thinking_alias(root, "codex-api-key", "codex", alias)?;
         removed |= remove_config_thinking_alias(root, "openai-compatibility", "openai", alias)?;
+        removed |= remove_config_thinking_alias(root, "claude-api-key", "claude", alias)?;
+        removed |= remove_config_thinking_alias(root, "gemini-api-key", "gemini", alias)?;
     }
     if !removed {
         return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
@@ -1884,7 +2029,7 @@ pub(crate) fn configured_model_alias_exists(root: &serde_norway::Mapping, alias:
             })
         });
     oauth_exists
-        || ["codex-api-key", "openai-compatibility"]
+        || MODEL_ALIAS_CONFIG_SECTIONS
             .into_iter()
             .filter_map(|section| yaml_mapping_value(root, section))
             .filter_map(serde_norway::Value::as_sequence)
@@ -1996,8 +2141,16 @@ pub(crate) fn remove_thinking_payload_model(
                     let has_effort = yaml_mapping_value(rule_mapping, "params")
                         .and_then(serde_norway::Value::as_mapping)
                         .is_some_and(|params| {
-                            yaml_mapping_value(params, "reasoning.effort").is_some()
-                                || yaml_mapping_value(params, "reasoning_effort").is_some()
+                            [
+                                "reasoning.effort",
+                                "reasoning_effort",
+                                "output_config.effort",
+                                "generationConfig.thinkingConfig.thinkingLevel",
+                                "thinking.effort",
+                            ]
+                            .into_iter()
+                            .any(|key| yaml_mapping_value(params, key).is_some())
+                                || yaml_mapping_value(params, "thinking.type").is_some()
                         });
                     if has_effort {
                         if let Some(models) = yaml_mapping_value_mut(rule_mapping, "models") {
@@ -2005,10 +2158,8 @@ pub(crate) fn remove_thinking_payload_model(
                                 .as_sequence_mut()
                                 .ok_or_else(|| "payload.override.models 必须是数组".to_string())?;
                             let before = models.len();
-                            models.retain(|model| {
-                                !thinking_payload_model_matches(model, alias, "codex")
-                                    && !thinking_payload_model_matches(model, alias, "openai")
-                            });
+                            models
+                                .retain(|model| !thinking_payload_model_name_matches(model, alias));
                             removed_from_rule = models.len() != before;
                             models_empty = models.is_empty();
                         }

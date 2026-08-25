@@ -4744,120 +4744,9 @@ textarea:focus-visible {
   color: var(--theme-554075);
 }
 
-.thinking-effort-options button.custom {
-  overflow: hidden;
-  border-style: dashed;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thinking-effort-options button.custom.active {
-  border-style: solid;
-}
-
 .thinking-effort-options button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
-}
-
-.thinking-fast-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  min-height: 48px;
-  padding: 8px 10px;
-  border: 1px solid var(--theme-d5d2cb);
-  border-radius: 7px;
-  background: var(--theme-fff);
-  color: var(--theme-7a746c);
-  cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
-}
-
-.thinking-fast-option:hover {
-  border-color: var(--theme-d7a447);
-}
-
-.thinking-fast-option.active {
-  border-color: var(--theme-d7a447);
-  background: var(--theme-fff8eb);
-  color: var(--theme-805a24);
-}
-
-.thinking-fast-option-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.thinking-fast-option-copy > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--font-size-section);
-  font-weight: 800;
-}
-
-.thinking-fast-option-copy small {
-  color: var(--theme-9a938a);
-  font-size: var(--font-size-label);
-}
-
-.thinking-fast-option.active .thinking-fast-option-copy small {
-  color: var(--theme-805a24);
-}
-
-.thinking-fast-option:has(input:disabled) {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.thinking-fast-switch {
-  width: 42px;
-  height: 23px;
-}
-
-.thinking-fast-switch input:checked + .switch-track {
-  border-color: var(--theme-d7a447);
-  background: var(--theme-d7a447);
-}
-
-.thinking-effort-custom {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
-  align-items: center;
-  gap: 3px;
-}
-
-.thinking-effort-custom input {
-  width: 100%;
-  height: 34px;
-  padding: 0 9px;
-  border: 1px solid var(--theme-d5d2cb);
-  border-radius: 6px;
-  outline: 0;
-  background: var(--theme-fff);
-  color: var(--theme-2d2a26);
-  font-size: var(--font-size-section);
-}
-
-.thinking-effort-custom input:focus {
-  border-color: var(--theme-9d8abd);
-  box-shadow: 0 0 0 2px rgba(128, 105, 173, 0.12);
-}
-
-.thinking-effort-custom .icon-button {
-  width: 30px;
-  height: 30px;
-}
-
-.thinking-effort-custom small {
-  grid-column: 1 / -1;
-  color: var(--theme-918a81);
-  font-size: var(--font-size-label);
-  line-height: var(--line-height-body);
 }
 
 .thinking-alias-input {
@@ -5055,12 +4944,6 @@ textarea:focus-visible {
   background: var(--theme-fff8eb);
   color: var(--theme-805a24);
   text-transform: none;
-}
-
-.thinking-effort-badge.fast {
-  border-color: var(--theme-d7a447);
-  background: var(--theme-fff8eb);
-  color: var(--theme-805a24);
 }
 
 @media (min-width: 1081px) {

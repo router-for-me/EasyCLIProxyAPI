@@ -2055,7 +2055,7 @@ fn thinking_alias_prefers_codex_api_key_model_over_same_named_oauth_definition()
     ));
 
     let rendered =
-        add_model_alias_to_yaml(input, &sources[0], "gpt-5.6-luna-xhigh", "xhigh", false).unwrap();
+        add_model_alias_to_yaml(input, &sources[0], "gpt-5.6-luna-xhigh", "xhigh").unwrap();
     assert!(rendered.contains("alias: gpt-5.6-luna-xhigh"), "{rendered}");
     assert!(!rendered.contains("oauth-model-alias"), "{rendered}");
 }
