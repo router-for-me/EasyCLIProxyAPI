@@ -244,7 +244,9 @@ export function VersionManagementPage() {
       cachedLatest = null;
       cachedLatestError = '';
       setLatest(null);
-      showToast(t('kernel.versions.gitcodeSwitchSuccess'), 'success');
+      showToast(t('kernel.versions.sourceSwitched', {
+        source: downloadSourceLabel(settings.source, t),
+      }), 'info');
       setVersionSourceSaving(false);
       await checkAppUpdate();
       await checkLatest(true);

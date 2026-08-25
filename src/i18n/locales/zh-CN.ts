@@ -941,7 +941,7 @@ export const zhCN = {
   'kernel.versions.appCardTitle': '桌面客户端',
   'kernel.versions.coreCardTitle': '代理内核',
   'kernel.versions.catalogCardTitle': 'Codex 模型目录',
-  'kernel.versions.gitcodeSwitchSuccess': '已切换下载源并重新检测版本',
+  'kernel.versions.sourceSwitched': '已切换至 {source}，正在重新检测版本',
   'kernel.versions.sourceAutoSwitched': '当前下载源检测失败，已自动切换至 {source}',
   'kernel.versions.bundledPackage': '内置离线安装包',
   'kernel.versions.offlineRecommend': '网络连接受限？可直接一键安装内置离线内核，无需联网。',

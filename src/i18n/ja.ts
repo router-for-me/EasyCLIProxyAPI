@@ -943,7 +943,7 @@ export const jaOverrides = {
   'kernel.versions.appCardTitle': 'デスクトップアプリ',
   'kernel.versions.coreCardTitle': 'プロキシコア',
   'kernel.versions.catalogCardTitle': 'Codex モデルカタログ',
-  'kernel.versions.gitcodeSwitchSuccess': 'ダウンロード元を変更しバージョンを再確認しました',
+  'kernel.versions.sourceSwitched': '{source} に切り替えました。バージョンを再確認しています',
   'kernel.versions.sourceAutoSwitched': '現在のダウンロード元で確認できなかったため、{source} に自動切り替えしました',
   'kernel.versions.bundledPackage': '内蔵オフラインパッケージ',
   'kernel.versions.offlineRecommend': 'ネットワーク制限がありますか？インターネット接続なしで内蔵オフラインコアを直接インストールできます。',
