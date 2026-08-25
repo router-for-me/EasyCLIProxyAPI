@@ -245,7 +245,9 @@ export function VersionManagementPage() {
       cachedLatestError = '';
       setLatest(null);
       showToast(t('kernel.versions.gitcodeSwitchSuccess'), 'success');
-      await Promise.allSettled([checkAppUpdate(), checkLatest(true)]);
+      setVersionSourceSaving(false);
+      await checkAppUpdate();
+      await checkLatest(true);
     } catch (error) {
       await loadVersionSourceSettings();
       setVersionSourceError(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }));
@@ -269,7 +271,9 @@ export function VersionManagementPage() {
       cachedLatestError = '';
       setLatest(null);
       showToast(t('kernel.versions.customMirrorAdded'), 'success');
-      await Promise.allSettled([checkAppUpdate(), checkLatest(true)]);
+      setVersionSourceSaving(false);
+      await checkAppUpdate();
+      await checkLatest(true);
     } catch (error) {
       const message = t('kernel.versions.customMirrorAddFailed', { error: String(error) });
       setVersionSourceError(message);
@@ -289,8 +293,10 @@ export function VersionManagementPage() {
       });
       setVersionSource(settings);
       showToast(t('kernel.versions.customMirrorRemoved'), 'success');
+      setVersionSourceSaving(false);
       if (wasSelected) {
-        await Promise.allSettled([checkAppUpdate(), checkLatest(true)]);
+        await checkAppUpdate();
+        await checkLatest(true);
       }
     } catch (error) {
       const message = t('kernel.versions.customMirrorRemoveFailed', { error: String(error) });
@@ -618,7 +624,7 @@ export function VersionManagementPage() {
             </label>
             <button
               type="button"
-              className="version-source-add-button"
+              className="primary-button version-source-add-button"
               disabled={versionSourceSaving || appUpdateTask.running || installing}
               onClick={() => {
                 setVersionSourceError('');

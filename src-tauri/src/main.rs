@@ -111,6 +111,7 @@ const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
 const CORE_STATUS_EVENT: &str = "core-status-changed";
 const CONFIG_FILES_CHANGED_EVENT: &str = "config-files-changed";
 const VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT: &str = "version-download-source-changed";
+static VERSION_SOURCE_DETECTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[cfg(target_os = "windows")]
 const WINDOWS_CLOSE_REQUEST_EVENT: &str = "windows-close-requested";
 const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";

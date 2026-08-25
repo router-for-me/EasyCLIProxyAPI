@@ -1079,14 +1079,14 @@ textarea:focus-visible {
 
 .version-source-control {
   display: grid;
-  grid-template-columns: minmax(0, 250px) auto;
+  grid-template-columns: minmax(0, 220px) auto;
   width: max-content;
   max-width: 100%;
   gap: 8px;
 }
 
 .version-source-control select {
-  width: 250px;
+  width: 220px;
   max-width: 100%;
   height: 42px;
   padding: 0 36px 0 12px;
@@ -1114,15 +1114,6 @@ textarea:focus-visible {
   justify-content: center;
   gap: 6px;
   padding: 0 12px;
-  border: 1px solid var(--theme-d5d2cb);
-  border-radius: 8px;
-  background: var(--theme-fffdf8);
-  color: var(--theme-4b4742);
-}
-
-.version-source-add-button:hover:not(:disabled) {
-  border-color: var(--theme-9b958c);
-  background: var(--theme-faf8f2);
 }
 
 .version-source-add-button:disabled {

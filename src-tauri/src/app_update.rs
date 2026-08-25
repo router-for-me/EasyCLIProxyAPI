@@ -130,6 +130,7 @@ pub(crate) async fn check_app_update(
     state: tauri::State<'_, AppUpdateState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<AppUpdateInfo, String> {
+    let _detection_guard = VERSION_SOURCE_DETECTION_LOCK.lock().await;
     let config = gui_config_state.snapshot()?;
     let proxy_url = config.proxy_url.clone();
     let client = build_http_client_with_proxy(

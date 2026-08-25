@@ -5,6 +5,7 @@ pub(crate) async fn check_latest_core(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreLatest, String> {
+    let _detection_guard = VERSION_SOURCE_DETECTION_LOCK.lock().await;
     let platform = current_core_platform()?;
     let config = gui_config_state.snapshot()?;
     let proxy_url = config.proxy_url.clone();
