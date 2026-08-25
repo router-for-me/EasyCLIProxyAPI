@@ -7304,17 +7304,26 @@ textarea:focus-visible {
 .usage-col-settings-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  font-size: 11px;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 11px;
+  font-size: var(--font-size-caption);
   font-weight: 600;
   background: var(--theme-f4f1ea);
   border: 1px solid var(--theme-e3e1db);
   border-radius: 5px;
   color: var(--theme-7a746c);
   cursor: pointer;
-  line-height: 1;
+  line-height: 1.2;
   transition: all 0.15s ease;
+}
+
+.usage-col-reset-btn svg,
+.usage-col-settings-btn svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
 }
 
 .usage-col-reset-btn:hover,
@@ -7540,15 +7549,19 @@ textarea:focus-visible {
 .usage-col-resizer::after {
   content: '';
   display: block;
-  width: 2px;
-  height: 45%;
+  width: 1px;
+  height: 62%;
   border-radius: 1px;
-  background-color: transparent;
-  transition: background-color 0.15s ease, height 0.15s ease;
+  background-color: var(--theme-bdb5a9);
+  opacity: 0.9;
+  transition: background-color 0.15s ease, height 0.15s ease, width 0.15s ease, opacity 0.15s ease;
 }
 
 .usage-events-table th:hover .usage-col-resizer::after {
-  background-color: var(--theme-d5d2cb);
+  width: 2px;
+  height: 78%;
+  background-color: var(--theme-8a847c);
+  opacity: 1;
 }
 
 .usage-col-resizer:hover::after,
@@ -7556,6 +7569,7 @@ textarea:focus-visible {
   background-color: var(--theme-3f6f98) !important;
   width: 2px;
   height: 100%;
+  opacity: 1;
 }
 
 body.table-col-resizing,
