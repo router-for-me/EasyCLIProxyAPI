@@ -817,7 +817,7 @@ mod tests {
             assert_eq!(model["context_window"], 1_000_000);
             assert_eq!(model["max_context_window"], 1_000_000);
             assert_eq!(model["default_reasoning_level"], "high");
-            assert_eq!(reasoning_efforts(model), ["high", "xhigh"]);
+            assert_eq!(reasoning_efforts(model), ["low", "high", "max"]);
             assert_eq!(model["input_modalities"], serde_json::json!(["text"]));
             assert_eq!(model["supports_parallel_tool_calls"], false);
             assert_eq!(model["supports_search_tool"], false);

@@ -79,7 +79,7 @@ export type ProviderCategory = ProviderSection | 'deepseek';
 
 export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 export const OPENAI_THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
-export const DEEPSEEK_THINKING_LEVELS = OPENAI_THINKING_LEVELS;
+export const DEEPSEEK_THINKING_LEVELS = ['low', 'high', 'max'] as const;
 
 type ProviderDefinition = {
   id: ProviderCategory;

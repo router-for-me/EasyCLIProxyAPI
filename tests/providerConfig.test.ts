@@ -52,6 +52,7 @@ describe('API 接入配置合并', () => {
   });
 
   it('DeepSeek 新增预设默认发现全部模型并应用内置思考等级', () => {
+    expect(DEEPSEEK_THINKING_LEVELS).toEqual(['low', 'high', 'max']);
     const draft = createProviderDraft('deepseek');
     const discovered = [
       { name: 'deepseek-chat' },

@@ -924,11 +924,15 @@
       "default_reasoning_level": "high",
       "supported_reasoning_levels": [
         {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
           "effort": "high",
           "description": "DeepSeek thinking mode"
         },
         {
-          "effort": "xhigh",
+          "effort": "max",
           "description": "Maximum reasoning for complex agent tasks"
         }
       ],
@@ -986,11 +990,15 @@
       "default_reasoning_level": "high",
       "supported_reasoning_levels": [
         {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
           "effort": "high",
           "description": "DeepSeek thinking mode"
         },
         {
-          "effort": "xhigh",
+          "effort": "max",
           "description": "Maximum reasoning for complex agent tasks"
         }
       ],
