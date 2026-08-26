@@ -1239,13 +1239,7 @@ function UsageEventCell({
       return (
         <td className="usage-stacked-cell align-center">
           <strong title={record.alias || record.model}>{record.alias || record.model}</strong>
-          {record.alias || record.reasoning_effort ? (
-            <small title={record.model}>
-              {record.alias ? record.model : ''}
-              {record.alias && record.reasoning_effort ? ' · ' : ''}
-              {record.reasoning_effort}
-            </small>
-          ) : null}
+          <small title={record.reasoning_effort || 'auto'}>{record.reasoning_effort || 'auto'}</small>
         </td>
       );
     case 'provider':
