@@ -558,7 +558,11 @@ pub(crate) fn uninstall_pi_provider_inner(
         Vec::new(),
     ))
 }
-
+pub(crate) fn configure_agent_command_environment(command: &mut Command, home: &Path) {
+  if let Ok(joined_path) = env::join_paths(agent_executable_directories(home)) {
+      command.env("PATH", joined_path);
+  }
+}
 pub(crate) fn install_pi_package(
     executable: &Path,
     home: &Path,
@@ -576,6 +580,7 @@ pub(crate) fn install_pi_package(
         .stdin(Stdio::null());
     configure_background_command(&mut command);
     configure_networked_command(&mut command, proxy_url);
+    configure_agent_command_environment(&mut command, home);
     let output = command
         .output()
         .map_err(|error| format!("执行 Pi 插件安装失败: {error}"))?;
@@ -613,6 +618,7 @@ pub(crate) fn update_pi_package(
         .stdin(Stdio::null());
     configure_background_command(&mut command);
     configure_networked_command(&mut command, proxy_url);
+    configure_agent_command_environment(&mut command, home);
     let output = command
         .output()
         .map_err(|error| format!("执行 Pi 插件更新失败: {error}"))?;
@@ -644,6 +650,7 @@ pub(crate) fn remove_pi_package(executable: &Path, home: &Path) -> Result<(), St
         .current_dir(home)
         .stdin(Stdio::null());
     configure_background_command(&mut command);
+    configure_agent_command_environment(&mut command, home);
     let output = command
         .output()
         .map_err(|error| format!("鎵ц Pi 鎻掍欢鍗歌浇澶辫触: {error}"))?;
