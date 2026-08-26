@@ -396,7 +396,9 @@ pub(crate) fn inspect_pi_provider_status(
         "unconfigured"
     };
     let error = errors.into_iter().next();
-    let cli_version = executable.as_deref().and_then(read_agent_version);
+    let cli_version = executable
+        .as_deref()
+        .and_then(|path| read_agent_version(path, home));
     let plugin_version = read_pi_provider_version(home).ok().flatten();
     AgentConfigStatus {
         id: PI_AGENT_ID.to_string(),
@@ -559,6 +561,31 @@ pub(crate) fn uninstall_pi_provider_inner(
     ))
 }
 
+pub(crate) fn agent_command_path(
+    home: &Path,
+    executable: &Path,
+) -> Result<std::ffi::OsString, String> {
+    let mut directories = agent_executable_directories(home);
+    if let Some(executable_directory) = executable
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        directories.retain(|directory| directory != executable_directory);
+        directories.insert(0, executable_directory.to_path_buf());
+    }
+
+    env::join_paths(directories).map_err(|error| format!("构造智能体命令 PATH 失败: {error}"))
+}
+
+pub(crate) fn configure_agent_command_environment(
+    command: &mut Command,
+    home: &Path,
+    executable: &Path,
+) -> Result<(), String> {
+    command.env("PATH", agent_command_path(home, executable)?);
+    Ok(())
+}
+
 pub(crate) fn install_pi_package(
     executable: &Path,
     home: &Path,
@@ -576,6 +603,7 @@ pub(crate) fn install_pi_package(
         .stdin(Stdio::null());
     configure_background_command(&mut command);
     configure_networked_command(&mut command, proxy_url);
+    configure_agent_command_environment(&mut command, home, executable)?;
     let output = command
         .output()
         .map_err(|error| format!("执行 Pi 插件安装失败: {error}"))?;
@@ -613,6 +641,7 @@ pub(crate) fn update_pi_package(
         .stdin(Stdio::null());
     configure_background_command(&mut command);
     configure_networked_command(&mut command, proxy_url);
+    configure_agent_command_environment(&mut command, home, executable)?;
     let output = command
         .output()
         .map_err(|error| format!("执行 Pi 插件更新失败: {error}"))?;
@@ -644,6 +673,7 @@ pub(crate) fn remove_pi_package(executable: &Path, home: &Path) -> Result<(), St
         .current_dir(home)
         .stdin(Stdio::null());
     configure_background_command(&mut command);
+    configure_agent_command_environment(&mut command, home, executable)?;
     let output = command
         .output()
         .map_err(|error| format!("鎵ц Pi 鎻掍欢鍗歌浇澶辫触: {error}"))?;
@@ -899,9 +929,11 @@ pub(crate) fn inspect_agent_config(
         find_named_agent_executable(home, &["zcode"])
             .filter(|path| executable.as_ref() != Some(path))
             .as_deref()
-            .and_then(read_agent_version)
+            .and_then(|path| read_agent_version(path, home))
     } else if should_probe_primary_agent_executable_version(client) {
-        executable.as_deref().and_then(read_agent_version)
+        executable
+            .as_deref()
+            .and_then(|path| read_agent_version(path, home))
     } else {
         None
     };
@@ -915,7 +947,7 @@ pub(crate) fn inspect_agent_config(
         AgentClient::ClaudeDesktop => read_claude_desktop_version(home),
         AgentClient::Codex => codex_app_installation
             .as_ref()
-            .and_then(read_codex_app_installation_version),
+            .and_then(|installation| read_codex_app_installation_version(installation, home)),
         AgentClient::OpenCode => opencode_desktop_application
             .as_deref()
             .and_then(read_opencode_desktop_version),
@@ -1950,7 +1982,10 @@ pub(crate) fn read_claude_desktop_version(home: &Path) -> Option<String> {
     }
 }
 
-pub(crate) fn read_codex_app_installation_version(installation: &CodexAppTarget) -> Option<String> {
+pub(crate) fn read_codex_app_installation_version(
+    installation: &CodexAppTarget,
+    _home: &Path,
+) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         match installation {
@@ -1959,7 +1994,7 @@ pub(crate) fn read_codex_app_installation_version(installation: &CodexAppTarget)
                 read_windows_codex_store_version()
             }
             CodexAppTarget::Application(path) => {
-                read_windows_executable_version(path).or_else(|| read_agent_version(path))
+                read_windows_executable_version(path).or_else(|| read_agent_version(path, _home))
             }
         }
     }
@@ -1979,7 +2014,7 @@ pub(crate) fn read_zcode_app_version(home: &Path) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         find_zcode_desktop_executable(home).and_then(|path| {
-            read_windows_executable_version(&path).or_else(|| read_agent_version(&path))
+            read_windows_executable_version(&path).or_else(|| read_agent_version(&path, home))
         })
     }
     #[cfg(target_os = "macos")]
@@ -1992,7 +2027,8 @@ pub(crate) fn read_zcode_app_version(home: &Path) -> Option<String> {
         .find(|path| path.is_dir())
         .and_then(|path| read_macos_app_version(&path))
         .or_else(|| {
-            find_named_agent_executable(home, &["zcode"]).and_then(|path| read_agent_version(&path))
+            find_named_agent_executable(home, &["zcode"])
+                .and_then(|path| read_agent_version(&path, home))
         })
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -2748,7 +2784,7 @@ fn terminate_agent_probe_process(child: &mut Child) {
     let _ = child.wait();
 }
 
-pub(crate) fn read_agent_version(path: &Path) -> Option<String> {
+pub(crate) fn read_agent_version(path: &Path, home: &Path) -> Option<String> {
     #[cfg(target_os = "windows")]
     let mut command = windows_command_for_executable(path, false);
 
@@ -2757,6 +2793,7 @@ pub(crate) fn read_agent_version(path: &Path) -> Option<String> {
 
     command.arg("--version");
     configure_background_command(&mut command);
+    configure_agent_command_environment(&mut command, home, path).ok()?;
     let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
     if !output.status.success() {
         return None;

@@ -1920,6 +1920,67 @@ fn detected_agent_version_requires_a_real_version_value() {
 }
 
 #[test]
+fn agent_command_path_prioritizes_the_executable_and_preserves_discovered_paths() {
+    let home = agent_test_home("command-path");
+    let executable_directory = home.join("node-runtime/bin");
+    let executable = executable_directory.join("pi");
+    fs::create_dir_all(&executable_directory).unwrap();
+
+    let path = agent_command_path(&home, &executable).unwrap();
+    let directories = env::split_paths(&path).collect::<Vec<_>>();
+
+    assert_eq!(directories.first(), Some(&executable_directory));
+    assert!(directories.contains(&home.join(".local/bin")));
+    if let Some(inherited_path) = env::var_os("PATH") {
+        for inherited_directory in env::split_paths(&inherited_path) {
+            assert!(directories.contains(&inherited_directory));
+        }
+    }
+
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn agent_version_probe_exposes_the_executable_directory_to_child_commands() {
+    let home = agent_test_home("version-path");
+    let executable_directory = home.join("node-runtime/bin");
+    fs::create_dir_all(&executable_directory).unwrap();
+
+    #[cfg(target_os = "windows")]
+    let (executable, helper) = (
+        executable_directory.join("pi.cmd"),
+        executable_directory.join("agent-version-helper.cmd"),
+    );
+    #[cfg(not(target_os = "windows"))]
+    let (executable, helper) = (
+        executable_directory.join("pi"),
+        executable_directory.join("agent-version-helper"),
+    );
+
+    #[cfg(target_os = "windows")]
+    {
+        fs::write(&executable, "@echo off\r\nagent-version-helper.cmd\r\n").unwrap();
+        fs::write(&helper, "@echo off\r\necho pi 1.2.3\r\n").unwrap();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::write(&executable, "#!/usr/bin/env sh\nagent-version-helper\n").unwrap();
+        fs::write(&helper, "#!/usr/bin/env sh\nprintf 'pi 1.2.3\\n'\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    assert_eq!(
+        read_agent_version(&executable, &home).as_deref(),
+        Some("pi 1.2.3")
+    );
+
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn agent_probe_command_captures_output_before_timeout() {
     #[cfg(target_os = "windows")]
     let mut command = {
