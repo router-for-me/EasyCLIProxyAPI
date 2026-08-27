@@ -190,6 +190,7 @@ export const zhCN = {
   'usage.dataManagement.scanned': '扫描记录',
   'usage.dataManagement.repaired': '修复记录',
   'usage.dataManagement.backup': '备份文件',
+  'usage.dataManagement.success': '历史缓存数据处理完成，已修复 {repaired} 条记录。',
   'usage.trend.title': '请求与 Token 趋势',
   'usage.trend.description': '按系统本地小时聚合',
   'usage.token.title': 'Token 构成',

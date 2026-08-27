@@ -749,18 +749,23 @@ function UsageDataManagementView() {
           <span>{t('usage.dataManagement.actionDescription')}</span>
         </div>
         <button type="button" className="primary-button" onClick={() => void repair()} disabled={running}>
-          <Wrench size={15} />
           {running ? t('usage.dataManagement.running') : t('usage.dataManagement.run')}
         </button>
       </div>
 
       {error ? <div className="management-alert error">{error}</div> : null}
       {result ? (
-        <div className="usage-data-management-result">
+        <>
+          <div className="management-alert success">
+            <ShieldCheck size={16} aria-hidden="true" />
+            <span>{t('usage.dataManagement.success', { repaired: result.repaired })}</span>
+          </div>
+          <div className="usage-data-management-result">
           <div><span>{t('usage.dataManagement.scanned')}</span><strong>{result.scanned.toLocaleString()}</strong></div>
           <div><span>{t('usage.dataManagement.repaired')}</span><strong>{result.repaired.toLocaleString()}</strong></div>
           <div><span>{t('usage.dataManagement.backup')}</span><strong title={result.backupPath ?? undefined}>{result.backupPath ?? '—'}</strong></div>
-        </div>
+          </div>
+        </>
       ) : null}
     </section>
   );

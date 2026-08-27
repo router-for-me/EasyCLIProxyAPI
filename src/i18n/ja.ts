@@ -192,6 +192,7 @@ export const jaOverrides = {
   'usage.dataManagement.scanned': 'スキャン件数',
   'usage.dataManagement.repaired': '修復件数',
   'usage.dataManagement.backup': 'バックアップ',
+  'usage.dataManagement.success': '履歴キャッシュデータの処理が完了しました。{repaired} 件を修復しました。',
   'usage.trend.title': 'リクエストと Token の推移',
   'usage.trend.description': 'システムのローカル時刻ごとに集計',
   'usage.token.title': 'Token の内訳',

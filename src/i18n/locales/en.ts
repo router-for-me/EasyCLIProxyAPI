@@ -192,6 +192,7 @@ export const en: Record<MessageKey, string> = {
   'usage.dataManagement.scanned': 'Scanned',
   'usage.dataManagement.repaired': 'Repaired',
   'usage.dataManagement.backup': 'Backup file',
+  'usage.dataManagement.success': 'Historical cache data processing completed. {repaired} records repaired.',
   'usage.trend.title': 'Request and Token Trend',
   'usage.trend.description': 'Grouped by local system hour',
   'usage.token.title': 'Token Breakdown',
