@@ -7780,6 +7780,10 @@ body.table-col-resizing * {
 
 .usage-data-management-result {
   align-items: stretch;
+  margin-top: 26px;
+}
+
+.usage-data-management-panel .management-alert.success {
   margin-top: 18px;
 }
 
