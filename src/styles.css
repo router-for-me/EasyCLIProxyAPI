@@ -7718,6 +7718,95 @@ body.table-col-resizing * {
   background: var(--theme-fffdf8);
 }
 
+.usage-data-management-panel {
+  padding: 24px;
+}
+
+.usage-data-management-heading,
+.usage-data-management-action,
+.usage-data-management-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.usage-data-management-heading > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.usage-data-management-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.usage-data-management-heading p,
+.usage-data-management-action span {
+  display: block;
+  margin: 6px 0 0;
+  color: var(--theme-716b61);
+  font-size: 13px;
+}
+
+.usage-data-management-badge {
+  padding: 5px 9px;
+  border: 1px solid var(--theme-d8d4cc);
+  border-radius: 999px;
+  color: var(--theme-716b61);
+  font-size: 12px;
+}
+
+.usage-data-management-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 22px 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--theme-c77b30) 28%, var(--theme-d8d4cc));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--theme-c77b30) 8%, transparent);
+  color: var(--theme-716b61);
+  font-size: 13px;
+}
+
+.usage-data-management-action {
+  padding: 16px;
+  border: 1px solid var(--theme-d8d4cc);
+  border-radius: 12px;
+  background: var(--theme-f8f5ee);
+}
+
+.usage-data-management-result {
+  align-items: stretch;
+  margin-top: 18px;
+}
+
+.usage-data-management-result > div {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--theme-d8d4cc);
+  border-radius: 10px;
+}
+
+.usage-data-management-result span {
+  color: var(--theme-716b61);
+  font-size: 12px;
+}
+
+.usage-data-management-result strong {
+  overflow: hidden;
+  color: var(--theme-2d2a26);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .usage-pricing-toolbar {
   display: flex;
   align-items: center;
@@ -9010,6 +9099,17 @@ body.table-col-resizing * {
 }
 
 @media (max-width: 520px) {
+  .usage-data-management-heading,
+  .usage-data-management-action,
+  .usage-data-management-result {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-data-management-action .primary-button {
+    width: 100%;
+  }
+
   .panel-heading {
     flex-direction: column;
   }

@@ -2452,6 +2452,7 @@ fn main() {
             usage::get_usage_analysis,
             usage::get_usage_events,
             usage::get_usage_pricing,
+            usage::repair_usage_cache_records,
             usage::save_usage_model_price,
             usage::delete_usage_model_price,
             usage::sync_usage_model_prices,

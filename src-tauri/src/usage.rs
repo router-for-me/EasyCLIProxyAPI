@@ -35,7 +35,6 @@ const LEGACY_USAGE_EVENTS_DIR: &str = "events";
 const LEGACY_USAGE_INBOX_DIR: &str = "inbox";
 const LEGACY_JSON_MIGRATION_KEY: &str = "legacy_json_v1";
 const USAGE_DATABASE_MIGRATION_KEY: &str = "keeper_v3";
-const CLAUDE_INPUT_MIGRATION_KEY: &str = "claude_input_inclusive_v1";
 const USAGE_FAILURE_MIGRATION_KEY: &str = "failure_details_v4";
 const USAGE_UPDATED_EVENT: &str = "usage-records-updated";
 const USAGE_SCHEMA_VERSION: u8 = 1;
@@ -264,6 +263,14 @@ pub(crate) struct UsageOverview {
     estimated_cost: f64,
     priced_requests: u64,
     timeline: Vec<UsageTimelinePoint>,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsageRepairResult {
+    scanned: u64,
+    repaired: u64,
+    backup_path: Option<String>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -529,24 +536,18 @@ fn initialize_usage_storage_at(root: &Path) -> Result<(), String> {
         .pragma_update(None, "journal_mode", "WAL")
         .map_err(|error| format!("启用 SQLite WAL 失败: {error}"))?;
     migrate_usage_database(&mut connection, root)?;
-    migrate_claude_input_tokens(&mut connection, root)?;
     migrate_legacy_json_storage(&mut connection, root)?;
     cleanup_usage_inbox(&connection, Local::now())
 }
 
-fn migrate_claude_input_tokens(connection: &mut Connection, root: &Path) -> Result<(), String> {
-    let already_done: Option<String> = connection
-        .query_row(
-            "SELECT value FROM usage_metadata WHERE key = ?1",
-            params![CLAUDE_INPUT_MIGRATION_KEY],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| format!("检查 Claude 使用记录迁移状态失败: {error}"))?;
-    if already_done.is_some() {
-        return Ok(());
-    }
+#[tauri::command]
+pub(crate) fn repair_usage_cache_records() -> Result<UsageRepairResult, String> {
+    let root = usage_root_dir()?;
+    repair_usage_cache_records_at(&root)
+}
 
+fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, String> {
+    let mut connection = open_usage_database_at(root)?;
     let candidate_count: i64 = connection
         .query_row(
             r#"SELECT COUNT(*) FROM usage_events
@@ -560,7 +561,11 @@ fn migrate_claude_input_tokens(connection: &mut Connection, root: &Path) -> Resu
         )
         .map_err(|error| format!("检查 Claude 使用记录异常行失败: {error}"))?;
 
-    if candidate_count > 0 {
+    if candidate_count <= 0 {
+        return Ok(UsageRepairResult::default());
+    }
+
+    let backup_path = {
         let backup_dir = root.join(USAGE_BACKUP_DIR_NAME);
         fs::create_dir_all(&backup_dir)
             .map_err(|error| format!("创建 Claude 使用记录迁移备份目录失败: {error}"))?;
@@ -574,7 +579,8 @@ fn migrate_claude_input_tokens(connection: &mut Connection, root: &Path) -> Resu
                 params![backup_path.to_string_lossy().to_string()],
             )
             .map_err(|error| format!("备份 Claude 使用记录失败: {error}"))?;
-    }
+        backup_path.to_string_lossy().to_string()
+    };
 
     let transaction = connection
         .transaction()
@@ -599,20 +605,13 @@ fn migrate_claude_input_tokens(connection: &mut Connection, root: &Path) -> Resu
         )
         .map_err(|error| format!("迁移 Claude 使用记录失败: {error}"))?;
     transaction
-        .execute(
-            "INSERT INTO usage_metadata (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![CLAUDE_INPUT_MIGRATION_KEY, Local::now().to_rfc3339()],
-        )
-        .map_err(|error| format!("写入 Claude 使用记录迁移标记失败: {error}"))?;
-    transaction
         .commit()
         .map_err(|error| format!("提交 Claude 使用记录迁移失败: {error}"))?;
-
-    if migrated > 0 {
-        eprintln!("migrated {migrated} Claude usage rows to inclusive input token semantics");
-    }
-    Ok(())
+    Ok(UsageRepairResult {
+        scanned: candidate_count.max(0) as u64,
+        repaired: migrated as u64,
+        backup_path: Some(backup_path),
+    })
 }
 
 fn migrate_usage_database(connection: &mut Connection, root: &Path) -> Result<(), String> {
@@ -3301,7 +3300,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_legacy_claude_input_tokens_once() {
+    fn repairs_legacy_claude_input_tokens_on_demand() {
         let root = test_root("claude-input-migration");
         let connection = open_test_database(&root);
         connection
@@ -3316,15 +3315,12 @@ mod tests {
                 [],
             )
             .unwrap();
-        connection
-            .execute(
-                "DELETE FROM usage_metadata WHERE key = ?1",
-                params![CLAUDE_INPUT_MIGRATION_KEY],
-            )
-            .unwrap();
         drop(connection);
 
-        initialize_usage_storage_at(&root).unwrap();
+        let result = repair_usage_cache_records_at(&root).unwrap();
+        assert_eq!(result.scanned, 1);
+        assert_eq!(result.repaired, 1);
+        assert!(result.backup_path.is_some());
         let connection = open_usage_database_at(&root).unwrap();
         let row: (i64, i64, i64) = connection
             .query_row(
@@ -3336,7 +3332,9 @@ mod tests {
         assert_eq!(row, (720, 740, 620));
         drop(connection);
 
-        initialize_usage_storage_at(&root).unwrap();
+        let second = repair_usage_cache_records_at(&root).unwrap();
+        assert_eq!(second.scanned, 0);
+        assert_eq!(second.repaired, 0);
         let rerun_connection = open_usage_database_at(&root).unwrap();
         let rerun_input: i64 = rerun_connection
             .query_row(

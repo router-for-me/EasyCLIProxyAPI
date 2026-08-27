@@ -22,6 +22,7 @@ import {
   Terminal,
   Trash2,
   TriangleAlert,
+  Wrench,
   X,
 } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
@@ -29,7 +30,7 @@ import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
 
-type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing';
+type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
 
 type CollectorStatus = {
@@ -158,6 +159,12 @@ type UsagePricing = {
   savedPrices: number;
 };
 
+type UsageRepairResult = {
+  scanned: number;
+  repaired: number;
+  backupPath: string | null;
+};
+
 type ModelPriceSyncResult = {
   imported: number;
   skipped: number;
@@ -185,7 +192,9 @@ const emptyAnalysis: UsageAnalysis = { models: [], providers: [], sources: [], a
 const loadTab = (): UsageTab => {
   try {
     const saved = localStorage.getItem(TAB_KEY);
-    return saved === 'analysis' || saved === 'events' || saved === 'pricing' ? saved : 'overview';
+    return saved === 'analysis' || saved === 'events' || saved === 'pricing' || saved === 'data-management'
+      ? saved
+      : 'overview';
   } catch {
     return 'overview';
   }
@@ -356,7 +365,7 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           setOptionsAnalysis(nextOptions);
           setEvents(nextEvents);
-        } else {
+        } else if (activeTab === 'pricing') {
           const [nextStatus, nextOptions, nextPricing] = await Promise.all([
             statusRequest,
             optionsRequest,
@@ -366,6 +375,11 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           setOptionsAnalysis(nextOptions);
           setPricing(nextPricing);
+        } else {
+          const [nextStatus, nextOptions] = await Promise.all([statusRequest, optionsRequest]);
+          if (requestId !== requestIdRef.current) return;
+          setStatus(nextStatus);
+          setOptionsAnalysis(nextOptions);
         }
         setError('');
       } catch (requestError) {
@@ -474,6 +488,14 @@ export function UsageRecordsPage() {
           >
             <CircleDollarSign size={15} />
             <span>{t('usage.tab.pricing')}</span>
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'data-management' ? 'active' : ''}
+            onClick={() => setActiveTab('data-management')}
+          >
+            <Wrench size={15} />
+            <span>{t('usage.tab.dataManagement')}</span>
           </button>
         </div>
 
@@ -676,6 +698,69 @@ export function UsageRecordsPage() {
       ) : null}
       {activeTab === 'pricing' && pricing ? (
         <PricingView pricing={pricing} query={buildQueries().query} onChanged={() => loadData(true)} />
+      ) : null}
+      {activeTab === 'data-management' ? <UsageDataManagementView /> : null}
+    </section>
+  );
+}
+
+function UsageDataManagementView() {
+  const { t } = useI18n();
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<UsageRepairResult | null>(null);
+  const [error, setError] = useState('');
+
+  const repair = async () => {
+    if (!window.confirm(t('usage.dataManagement.confirm'))) return;
+    setRunning(true);
+    setError('');
+    setResult(null);
+    try {
+      const next = await invoke<UsageRepairResult>('repair_usage_cache_records');
+      setResult(next);
+    } catch (requestError) {
+      setError(String(requestError));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <section className="panel usage-data-management-panel">
+      <div className="usage-data-management-heading">
+        <div>
+          <Wrench size={20} aria-hidden="true" />
+          <div>
+            <h2>{t('usage.dataManagement.title')}</h2>
+            <p>{t('usage.dataManagement.description')}</p>
+          </div>
+        </div>
+        <span className="usage-data-management-badge">{t('usage.dataManagement.manualBadge')}</span>
+      </div>
+
+      <div className="usage-data-management-notice">
+        <TriangleAlert size={17} aria-hidden="true" />
+        <span>{t('usage.dataManagement.notice')}</span>
+      </div>
+
+      <div className="usage-data-management-action">
+        <div>
+          <strong>{t('usage.dataManagement.actionTitle')}</strong>
+          <span>{t('usage.dataManagement.actionDescription')}</span>
+        </div>
+        <button type="button" className="primary-button" onClick={() => void repair()} disabled={running}>
+          <Wrench size={15} />
+          {running ? t('usage.dataManagement.running') : t('usage.dataManagement.run')}
+        </button>
+      </div>
+
+      {error ? <div className="management-alert error">{error}</div> : null}
+      {result ? (
+        <div className="usage-data-management-result">
+          <div><span>{t('usage.dataManagement.scanned')}</span><strong>{result.scanned.toLocaleString()}</strong></div>
+          <div><span>{t('usage.dataManagement.repaired')}</span><strong>{result.repaired.toLocaleString()}</strong></div>
+          <div><span>{t('usage.dataManagement.backup')}</span><strong title={result.backupPath ?? undefined}>{result.backupPath ?? '—'}</strong></div>
+        </div>
       ) : null}
     </section>
   );
