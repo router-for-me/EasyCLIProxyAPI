@@ -32,10 +32,10 @@ describe('cache read rate', () => {
     expect(formatCacheReadRate(input)).toBe('25.00%');
   });
 
-  test('does not clamp values over 100 percent', () => {
+  test('clamps inconsistent values to 100 percent', () => {
     const input = { inputTokens: 400, cacheReadTokens: 600 };
-    expect(calculateCacheReadRate(input)).toBe(150);
-    expect(formatCacheReadRate(input)).toBe('150.00%');
+    expect(calculateCacheReadRate(input)).toBe(100);
+    expect(formatCacheReadRate(input)).toBe('100.00%');
   });
 
   test.each([0, -1])('returns an em dash when input tokens are %s', (inputTokens) => {

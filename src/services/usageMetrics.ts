@@ -43,7 +43,8 @@ export const calculateCacheReadRate = ({
     return null;
   }
 
-  return (cacheReadTokens / inputTokens) * 100;
+  const normalizedCacheReadTokens = Math.max(cacheReadTokens, 0);
+  return (Math.min(normalizedCacheReadTokens, inputTokens) / inputTokens) * 100;
 };
 
 export const formatCacheReadRate = (input: CacheReadRateInput): string => {

@@ -35,6 +35,7 @@ const LEGACY_USAGE_EVENTS_DIR: &str = "events";
 const LEGACY_USAGE_INBOX_DIR: &str = "inbox";
 const LEGACY_JSON_MIGRATION_KEY: &str = "legacy_json_v1";
 const USAGE_DATABASE_MIGRATION_KEY: &str = "keeper_v3";
+const CLAUDE_INPUT_MIGRATION_KEY: &str = "claude_input_inclusive_v1";
 const USAGE_FAILURE_MIGRATION_KEY: &str = "failure_details_v4";
 const USAGE_UPDATED_EVENT: &str = "usage-records-updated";
 const USAGE_SCHEMA_VERSION: u8 = 1;
@@ -528,8 +529,90 @@ fn initialize_usage_storage_at(root: &Path) -> Result<(), String> {
         .pragma_update(None, "journal_mode", "WAL")
         .map_err(|error| format!("启用 SQLite WAL 失败: {error}"))?;
     migrate_usage_database(&mut connection, root)?;
+    migrate_claude_input_tokens(&mut connection, root)?;
     migrate_legacy_json_storage(&mut connection, root)?;
     cleanup_usage_inbox(&connection, Local::now())
+}
+
+fn migrate_claude_input_tokens(connection: &mut Connection, root: &Path) -> Result<(), String> {
+    let already_done: Option<String> = connection
+        .query_row(
+            "SELECT value FROM usage_metadata WHERE key = ?1",
+            params![CLAUDE_INPUT_MIGRATION_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("检查 Claude 使用记录迁移状态失败: {error}"))?;
+    if already_done.is_some() {
+        return Ok(());
+    }
+
+    let candidate_count: i64 = connection
+        .query_row(
+            r#"SELECT COUNT(*) FROM usage_events
+               WHERE input_tokens > 0
+                 AND cache_read_tokens + cache_creation_tokens > input_tokens
+                 AND (lower(executor_type) = 'claudeexecutor'
+                      OR lower(provider) = 'claude'
+                      OR lower(provider) LIKE '%anthropic%')"#,
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("检查 Claude 使用记录异常行失败: {error}"))?;
+
+    if candidate_count > 0 {
+        let backup_dir = root.join(USAGE_BACKUP_DIR_NAME);
+        fs::create_dir_all(&backup_dir)
+            .map_err(|error| format!("创建 Claude 使用记录迁移备份目录失败: {error}"))?;
+        let backup_path = backup_dir.join(format!(
+            "usage-before-claude-input-v1-{}.db",
+            unique_file_stamp()
+        ));
+        connection
+            .execute(
+                "VACUUM INTO ?1",
+                params![backup_path.to_string_lossy().to_string()],
+            )
+            .map_err(|error| format!("备份 Claude 使用记录失败: {error}"))?;
+    }
+
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("开始 Claude 使用记录迁移事务失败: {error}"))?;
+    let migrated = transaction
+        .execute(
+            r#"UPDATE usage_events
+               SET input_tokens = input_tokens + cache_read_tokens + cache_creation_tokens,
+                   total_tokens = CASE
+                       WHEN total_tokens = 0
+                            OR total_tokens = input_tokens + output_tokens
+                       THEN input_tokens + cache_read_tokens + cache_creation_tokens + output_tokens
+                       ELSE total_tokens
+                   END,
+                   cached_tokens = MAX(cached_tokens, cache_read_tokens + cache_creation_tokens)
+               WHERE input_tokens > 0
+                 AND cache_read_tokens + cache_creation_tokens > input_tokens
+                 AND (lower(executor_type) = 'claudeexecutor'
+                      OR lower(provider) = 'claude'
+                      OR lower(provider) LIKE '%anthropic%')"#,
+            [],
+        )
+        .map_err(|error| format!("迁移 Claude 使用记录失败: {error}"))?;
+    transaction
+        .execute(
+            "INSERT INTO usage_metadata (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![CLAUDE_INPUT_MIGRATION_KEY, Local::now().to_rfc3339()],
+        )
+        .map_err(|error| format!("写入 Claude 使用记录迁移标记失败: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("提交 Claude 使用记录迁移失败: {error}"))?;
+
+    if migrated > 0 {
+        eprintln!("migrated {migrated} Claude usage rows to inclusive input token semantics");
+    }
+    Ok(())
 }
 
 fn migrate_usage_database(connection: &mut Connection, root: &Path) -> Result<(), String> {
@@ -1684,12 +1767,25 @@ fn insert_usage_records_in_transaction(
         } else {
             "unknown"
         };
-        let cached_tokens = record.cached_tokens.max(
-            record
-                .tokens
-                .cache_read_tokens
-                .saturating_add(record.tokens.cache_creation_tokens),
-        );
+        let cache_components = record
+            .tokens
+            .cache_read_tokens
+            .saturating_add(record.tokens.cache_creation_tokens);
+        let input_before_invariant = record.tokens.input_tokens;
+        let input_tokens = if cache_components > input_before_invariant {
+            input_before_invariant.saturating_add(cache_components)
+        } else {
+            input_before_invariant
+        };
+        let total_tokens = if record.tokens.total_tokens == 0
+            || record.tokens.total_tokens
+                == input_before_invariant.saturating_add(record.tokens.output_tokens)
+        {
+            input_tokens.saturating_add(record.tokens.output_tokens)
+        } else {
+            record.tokens.total_tokens
+        };
+        let cached_tokens = record.cached_tokens.max(cache_components);
         let collector_source = if record.collector_source.trim().is_empty() {
             "legacy_json"
         } else {
@@ -1732,12 +1828,12 @@ fn insert_usage_records_in_transaction(
                     record.generate,
                     to_sql_i64(cached_tokens),
                     collector_source,
-                    to_sql_i64(record.tokens.input_tokens),
+                    to_sql_i64(input_tokens),
                     to_sql_i64(record.tokens.output_tokens),
                     to_sql_i64(record.tokens.reasoning_tokens),
                     to_sql_i64(record.tokens.cache_read_tokens),
                     to_sql_i64(record.tokens.cache_creation_tokens),
-                    to_sql_i64(record.tokens.total_tokens),
+                    to_sql_i64(total_tokens),
                     record.canceled,
                     i64::from(record.failure_status),
                     record.failure_body,
@@ -1765,22 +1861,60 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
         .find(|entry| entry.key == api_key)
         .map(|entry| entry.remark.clone())
         .unwrap_or_default();
+    let provider = string_field(object, "provider").unwrap_or_default();
+    let executor_type = string_field(object, "executor_type").unwrap_or_default();
     let tokens_object = object.get("tokens").and_then(Value::as_object);
+    let cache_read_present = tokens_object
+        .and_then(|tokens| tokens.get("cache_read_tokens"))
+        .is_some();
     let raw_cache_read_tokens = token_u64(tokens_object, "cache_read_tokens");
     let cache_creation_tokens = token_u64(tokens_object, "cache_creation_tokens");
     let raw_cached_tokens =
         token_u64(tokens_object, "cached_tokens").max(token_u64(tokens_object, "cache_tokens"));
-    let compatible_cached_tokens = raw_cached_tokens
-        .saturating_sub(raw_cache_read_tokens.saturating_add(cache_creation_tokens));
+    let normalized_cache_read_tokens = if cache_read_present {
+        raw_cache_read_tokens
+    } else {
+        raw_cached_tokens
+    };
+    let raw_input_tokens = token_u64(tokens_object, "input_tokens");
     let mut tokens = UsageTokenStats {
-        input_tokens: token_u64(tokens_object, "input_tokens"),
+        input_tokens: raw_input_tokens,
         output_tokens: token_u64(tokens_object, "output_tokens"),
         reasoning_tokens: token_u64(tokens_object, "reasoning_tokens"),
-        cache_read_tokens: raw_cache_read_tokens.saturating_add(compatible_cached_tokens),
+        cache_read_tokens: normalized_cache_read_tokens,
         cache_creation_tokens,
         total_tokens: token_u64(tokens_object, "total_tokens"),
     };
-    if tokens.total_tokens == 0 {
+
+    let provider_lower = provider.to_ascii_lowercase();
+    let is_claude_executor = executor_type.eq_ignore_ascii_case("ClaudeExecutor")
+        || provider_lower == "claude"
+        || provider_lower.contains("anthropic");
+    let cache_components = tokens
+        .cache_read_tokens
+        .saturating_add(tokens.cache_creation_tokens);
+    let raw_total_without_cache = raw_input_tokens.saturating_add(tokens.output_tokens);
+    let raw_total_with_cache = raw_total_without_cache.saturating_add(cache_components);
+    let claude_excludes_cache = is_claude_executor
+        && cache_components > 0
+        && (raw_input_tokens < cache_components || tokens.total_tokens == raw_total_with_cache);
+    if claude_excludes_cache {
+        tokens.input_tokens = raw_input_tokens
+            .saturating_add(tokens.cache_read_tokens)
+            .saturating_add(tokens.cache_creation_tokens);
+    }
+    let input_before_invariant = tokens.input_tokens;
+    if cache_components > input_before_invariant {
+        tokens.input_tokens = input_before_invariant.saturating_add(cache_components);
+        if tokens.total_tokens == 0
+            || tokens.total_tokens == input_before_invariant.saturating_add(tokens.output_tokens)
+        {
+            tokens.total_tokens = tokens.input_tokens.saturating_add(tokens.output_tokens);
+        }
+    }
+    if tokens.total_tokens == 0
+        || (claude_excludes_cache && tokens.total_tokens == raw_total_without_cache)
+    {
         tokens.total_tokens = tokens.input_tokens.saturating_add(tokens.output_tokens);
     }
     let mut canonical = object.clone();
@@ -1791,9 +1925,7 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
     } else {
         request_id.clone()
     };
-    let provider = string_field(object, "provider").unwrap_or_default();
     let endpoint = string_field(object, "endpoint").unwrap_or_default();
-    let executor_type = string_field(object, "executor_type").unwrap_or_default();
     let failed = object
         .get("failed")
         .and_then(Value::as_bool)
@@ -3168,6 +3300,56 @@ mod tests {
         open_usage_database_at(root).unwrap()
     }
 
+    #[test]
+    fn migrates_legacy_claude_input_tokens_once() {
+        let root = test_root("claude-input-migration");
+        let connection = open_test_database(&root);
+        connection
+            .execute(
+                r#"INSERT INTO usage_events (
+                    event_key, timestamp, timestamp_ms, local_hour, provider,
+                    executor_type, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, total_tokens, created_at
+                ) VALUES ('legacy-claude', '2026-08-27T00:00:00Z', 1,
+                          '2026-08-27T00', 'claude', 'ClaudeExecutor',
+                          100, 20, 600, 20, 740, '2026-08-27T00:00:00Z')"#,
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM usage_metadata WHERE key = ?1",
+                params![CLAUDE_INPUT_MIGRATION_KEY],
+            )
+            .unwrap();
+        drop(connection);
+
+        initialize_usage_storage_at(&root).unwrap();
+        let connection = open_usage_database_at(&root).unwrap();
+        let row: (i64, i64, i64) = connection
+            .query_row(
+                "SELECT input_tokens, total_tokens, cached_tokens FROM usage_events WHERE event_key = 'legacy-claude'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (720, 740, 620));
+        drop(connection);
+
+        initialize_usage_storage_at(&root).unwrap();
+        let rerun_connection = open_usage_database_at(&root).unwrap();
+        let rerun_input: i64 = rerun_connection
+            .query_row(
+                "SELECT input_tokens FROM usage_events WHERE event_key = 'legacy-claude'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(rerun_connection);
+        assert_eq!(rerun_input, 720);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn create_legacy_v2_database(root: &Path) -> Connection {
         fs::create_dir_all(root).unwrap();
         let connection = Connection::open(root.join(USAGE_DATABASE_FILE)).unwrap();
@@ -3363,6 +3545,107 @@ mod tests {
         assert_eq!(record.tokens.total_tokens, 30);
         assert_eq!(record.tokens.cache_read_tokens, 5);
         assert!(!record.api_key_hash.is_empty());
+    }
+
+    #[test]
+    fn preserves_explicit_cache_read_and_only_backfills_missing_alias() {
+        let config = GuiConfigFile::default();
+        let explicit = normalize_usage_record(
+            serde_json::json!({
+                "request_id": "explicit-cache-read",
+                "tokens": {
+                    "input_tokens": 100,
+                    "cached_tokens": 10,
+                    "cache_read_tokens": 5,
+                    "cache_creation_tokens": 2,
+                    "total_tokens": 100
+                }
+            }),
+            &config,
+        )
+        .unwrap();
+        assert_eq!(explicit.tokens.cache_read_tokens, 5);
+
+        let legacy = normalize_usage_record(
+            serde_json::json!({
+                "request_id": "legacy-cache-alias",
+                "tokens": {
+                    "input_tokens": 100,
+                    "cached_tokens": 10,
+                    "cache_creation_tokens": 2,
+                    "total_tokens": 100
+                }
+            }),
+            &config,
+        )
+        .unwrap();
+        assert_eq!(legacy.tokens.cache_read_tokens, 10);
+    }
+
+    #[test]
+    fn normalizes_claude_input_to_include_cache_tokens() {
+        let record = normalize_usage_record(
+            serde_json::json!({
+                "executor_type": "ClaudeExecutor",
+                "provider": "anthropic",
+                "request_id": "claude-cache-rate",
+                "tokens": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "cache_read_tokens": 600,
+                    "cache_creation_tokens": 20,
+                    "total_tokens": 120
+                }
+            }),
+            &GuiConfigFile::default(),
+        )
+        .unwrap();
+
+        assert_eq!(record.tokens.input_tokens, 720);
+        assert_eq!(record.tokens.total_tokens, 740);
+        assert_eq!(record.tokens.cache_read_tokens, 600);
+    }
+
+    #[test]
+    fn keeps_already_inclusive_claude_input_unchanged() {
+        let record = normalize_usage_record(
+            serde_json::json!({
+                "provider": "anthropic",
+                "request_id": "claude-inclusive",
+                "tokens": {
+                    "input_tokens": 720,
+                    "output_tokens": 20,
+                    "cache_read_tokens": 600,
+                    "cache_creation_tokens": 20,
+                    "total_tokens": 740
+                }
+            }),
+            &GuiConfigFile::default(),
+        )
+        .unwrap();
+        assert_eq!(record.tokens.input_tokens, 720);
+        assert_eq!(record.tokens.total_tokens, 740);
+    }
+
+    #[test]
+    fn enforces_cache_input_invariant_for_unknown_producers() {
+        let record = normalize_usage_record(
+            serde_json::json!({
+                "provider": "custom",
+                "request_id": "unknown-cache-shape",
+                "tokens": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "cache_read_tokens": 600,
+                    "total_tokens": 120
+                }
+            }),
+            &GuiConfigFile::default(),
+        )
+        .unwrap();
+        assert_eq!(record.tokens.input_tokens, 700);
+        assert_eq!(record.tokens.total_tokens, 720);
+        assert!(record.tokens.cache_read_tokens <= record.tokens.input_tokens);
     }
 
     #[test]
