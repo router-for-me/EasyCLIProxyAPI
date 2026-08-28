@@ -64,6 +64,7 @@ type UsageOverview = {
   rpm: number;
   tpm: number;
   tps: number;
+  tpsSampleCount: number;
   averageLatencyMs: number;
   cacheHitRate: number;
   estimatedCost: number;
@@ -818,13 +819,15 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
     },
     {
       label: t('usage.stat.tps'),
-      value: `${overview.tps.toFixed(1)} TPS`,
+      value: overview.tpsSampleCount > 0 ? `${overview.tps.toFixed(1)} TPS` : '—',
       meta: t('usage.stat.performanceMeta', {
+        samples: compactNumber(overview.tpsSampleCount),
         rpm: overview.rpm.toFixed(2),
         latency: Math.round(overview.averageLatencyMs),
       }),
       metaTitle: t('usage.stat.performanceMetaTitle', {
-        tps: overview.tps.toFixed(1),
+        tps: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
+        samples: compactNumber(overview.tpsSampleCount),
         rpm: overview.rpm.toFixed(2),
         latency: Math.round(overview.averageLatencyMs),
       }),

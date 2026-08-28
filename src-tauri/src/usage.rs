@@ -258,6 +258,7 @@ pub(crate) struct UsageOverview {
     rpm: f64,
     tpm: f64,
     tps: f64,
+    tps_sample_count: u64,
     average_latency_ms: f64,
     cache_hit_rate: f64,
     estimated_cost: f64,
@@ -2129,10 +2130,42 @@ fn load_usage_overview(
             COALESCE(SUM(cache_creation_tokens), 0),
             COALESCE(SUM(total_tokens), 0),
             COALESCE(SUM(latency_ms), 0),
-            COALESCE(AVG(CASE
-                WHEN output_tokens > 0 AND latency_ms > 0
-                THEN CAST(output_tokens AS REAL) * 1000.0 / latency_ms
-            END), 0.0),
+            COALESCE(
+                SUM(CASE
+                    WHEN generate != 0
+                     AND failed = 0
+                     AND canceled = 0
+                     AND output_tokens > 0
+                     AND ttft_ms IS NOT NULL
+                     AND ttft_ms > 0
+                     AND latency_ms > ttft_ms
+                    THEN output_tokens
+                    ELSE 0
+                END) * 1000.0
+                / NULLIF(SUM(CASE
+                    WHEN generate != 0
+                     AND failed = 0
+                     AND canceled = 0
+                     AND output_tokens > 0
+                     AND ttft_ms IS NOT NULL
+                     AND ttft_ms > 0
+                     AND latency_ms > ttft_ms
+                    THEN latency_ms - ttft_ms
+                    ELSE 0
+                END), 0),
+                0.0
+            ),
+            COALESCE(SUM(CASE
+                WHEN generate != 0
+                 AND failed = 0
+                 AND canceled = 0
+                 AND output_tokens > 0
+                 AND ttft_ms IS NOT NULL
+                 AND ttft_ms > 0
+                 AND latency_ms > ttft_ms
+                THEN 1
+                ELSE 0
+            END), 0),
             MIN(timestamp_ms),
             MAX(timestamp_ms)
         FROM usage_events{}
@@ -2157,8 +2190,9 @@ fn load_usage_overview(
                     row.get::<_, i64>(9)?,
                     row.get::<_, i64>(10)?,
                     row.get::<_, f64>(11)?,
-                    row.get::<_, Option<i64>>(12)?,
+                    row.get::<_, i64>(12)?,
                     row.get::<_, Option<i64>>(13)?,
+                    row.get::<_, Option<i64>>(14)?,
                 ))
             },
         )
@@ -2226,11 +2260,12 @@ fn load_usage_overview(
         overview.average_latency_ms =
             from_sql_i64(summary.10) as f64 / overview.total_requests as f64;
         overview.tps = summary.11;
+        overview.tps_sample_count = from_sql_i64(summary.12);
         if overview.input_tokens > 0 {
             overview.cache_hit_rate =
                 (overview.cache_read_tokens as f64 / overview.input_tokens as f64).min(1.0);
         }
-        let minutes = query_window_minutes(query, summary.12, summary.13);
+        let minutes = query_window_minutes(query, summary.13, summary.14);
         overview.rpm = overview.total_requests as f64 / minutes;
         overview.tpm = overview.total_tokens as f64 / minutes;
     }
@@ -4174,13 +4209,73 @@ mod tests {
 
         assert_eq!(overview.total_requests, 1);
         assert_eq!(overview.failure_count, 1);
-        assert_eq!(overview.tps, 200.0);
+        assert_eq!(overview.tps, 0.0);
+        assert_eq!(overview.tps_sample_count, 0);
         assert_eq!(overview.cache_hit_rate, 0.2);
         assert!((overview.estimated_cost - 0.0003205).abs() < 0.0000001);
         assert_eq!(overview.priced_requests, 1);
         assert_eq!(analysis.models[0].key, "gpt-5.6-terra");
         assert_eq!(events.total, 1);
         assert_eq!(events.items[0].id, "request-2");
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn overview_tps_uses_weighted_generation_time_and_ignores_invalid_records() {
+        let root = test_root("tps-overview");
+        let mut connection = open_test_database(&root);
+
+        let mut first = sample_record("tps-1", "2026-07-17T20:30:00+08:00", "gpt-a");
+        first.latency_ms = 1_000;
+        first.ttft_ms = Some(200);
+        first.tokens.output_tokens = 80;
+
+        let mut second = sample_record("tps-2", "2026-07-17T20:31:00+08:00", "gpt-a");
+        second.latency_ms = 2_000;
+        second.ttft_ms = Some(1_000);
+        second.tokens.output_tokens = 20;
+
+        let mut missing_ttft = sample_record("tps-3", "2026-07-17T20:32:00+08:00", "gpt-a");
+        missing_ttft.latency_ms = 500;
+        missing_ttft.ttft_ms = None;
+        missing_ttft.tokens.output_tokens = 100;
+
+        let mut equal_latency = sample_record("tps-4", "2026-07-17T20:33:00+08:00", "gpt-a");
+        equal_latency.latency_ms = 500;
+        equal_latency.ttft_ms = Some(500);
+        equal_latency.tokens.output_tokens = 100;
+
+        let mut failed = sample_record("tps-5", "2026-07-17T20:34:00+08:00", "gpt-a");
+        failed.failed = true;
+        failed.tokens.output_tokens = 100;
+
+        let mut canceled = sample_record("tps-6", "2026-07-17T20:35:00+08:00", "gpt-a");
+        canceled.canceled = true;
+        canceled.tokens.output_tokens = 100;
+
+        let mut non_generation = sample_record("tps-7", "2026-07-17T20:36:00+08:00", "gpt-a");
+        non_generation.generate = false;
+        non_generation.tokens.output_tokens = 100;
+
+        insert_usage_records(
+            &mut connection,
+            &[
+                first,
+                second,
+                missing_ttft,
+                equal_latency,
+                failed,
+                canceled,
+                non_generation,
+            ],
+        )
+        .unwrap();
+
+        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+
+        assert!((overview.tps - (100.0 * 1_000.0 / 1_800.0)).abs() < f64::EPSILON);
+        assert_eq!(overview.tps_sample_count, 2);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
