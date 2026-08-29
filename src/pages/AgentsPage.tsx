@@ -93,6 +93,7 @@ type AgentConfigStatus = {
   configurationSynchronized: boolean;
   currentModel: string | null;
   oauthConfiguration: boolean;
+  remoteCompaction: boolean;
   modificationEnabled: boolean;
   modificationState: AgentModificationState;
   backupAvailable: boolean;
@@ -672,6 +673,7 @@ export function AgentsPage() {
   );
   const [oauthLoginRequiredAction, setOauthLoginRequiredAction] = useState<OAuthLoginRequiredAction | null>(null);
   const [oauthConfigurationDraft, setOauthConfigurationDraft] = useState<boolean | null>(null);
+  const [remoteCompactionDraft, setRemoteCompactionDraft] = useState<boolean | null>(null);
   const [piProviderUpdateStatus, setPiProviderUpdateStatus] = useState<PiProviderUpdateStatus | null>(null);
   const modelRequestRef = useRef(0);
   const piUpdateRequestRef = useRef(0);
@@ -799,6 +801,7 @@ export function AgentsPage() {
     setLaunchDirectoryError('');
     setOauthLoginRequiredAction(null);
     setOauthConfigurationDraft(null);
+    setRemoteCompactionDraft(null);
     // Preserve each Claude client's unsaved draft while navigating between clients.
     // Its dirty flag is cleared only after a successful apply, close, or reset action.
   }, [selected]);
@@ -808,6 +811,9 @@ export function AgentsPage() {
   const activeStatus = statuses.find((status) => status.id === selected) ?? null;
   const oauthConfiguration = oauthConfigurationDraft
     ?? activeStatus?.oauthConfiguration
+    ?? false;
+  const remoteCompaction = remoteCompactionDraft
+    ?? activeStatus?.remoteCompaction
     ?? false;
   const savedSelectedModel = modelByClient[selected] ?? '';
   const selectedModelOption = findAgentModel(models, savedSelectedModel);
@@ -934,7 +940,12 @@ export function AgentsPage() {
     );
   const oauthConfigurationChanged = selected === 'codex'
     && oauthConfiguration !== Boolean(activeStatus?.oauthConfiguration);
-  const draftChanged = modelDraftChanged || claudeMappingDraftChanged || oauthConfigurationChanged;
+  const remoteCompactionChanged = selected === 'codex'
+    && remoteCompaction !== Boolean(activeStatus?.remoteCompaction);
+  const draftChanged = modelDraftChanged
+    || claudeMappingDraftChanged
+    || oauthConfigurationChanged
+    || remoteCompactionChanged;
   const configurationAction = resolveAgentConfigurationAction({
     client: selected,
     modificationState: activeStatus?.modificationState ?? 'unconfigured',
@@ -943,6 +954,8 @@ export function AgentsPage() {
     appliedModel,
     oauthConfiguration,
     appliedOauthConfiguration: Boolean(activeStatus?.oauthConfiguration),
+    remoteCompaction,
+    appliedRemoteCompaction: Boolean(activeStatus?.remoteCompaction),
     modelMappings: claudeModelMappingsDraft,
     appliedModelMappings: appliedClaudeModelMappings,
   });
@@ -1166,6 +1179,7 @@ export function AgentsPage() {
         client: selected,
         model,
         oauthConfiguration,
+        remoteCompaction,
         claudeCodeModelMappings: selected === 'claude-code' ? claudeModelMappings : null,
         claudeDesktopModelMappings: selected === 'claude-desktop' ? claudeModelMappings : null,
       });
@@ -1174,6 +1188,7 @@ export function AgentsPage() {
       }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
+      setRemoteCompactionDraft(null);
     } catch (requestError) {
       if (!handleOAuthLoginError(requestError, 'apply')) {
         setConfigurationError(String(requestError));
@@ -1246,6 +1261,7 @@ export function AgentsPage() {
 
   const closeConfigurationChanges = async () => {
     const retainedOauthConfiguration = selected === 'codex' ? oauthConfiguration : null;
+    const retainedRemoteCompaction = selected === 'codex' ? remoteCompaction : null;
     setConfigurationError('');
     setBusyAction('close-config');
     try {
@@ -1255,6 +1271,7 @@ export function AgentsPage() {
       }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(retainedOauthConfiguration);
+      setRemoteCompactionDraft(retainedRemoteCompaction);
     } catch (requestError) {
       setConfigurationError(String(requestError));
     } finally {
@@ -1276,6 +1293,7 @@ export function AgentsPage() {
         client: selected,
         model,
         oauthConfiguration,
+        remoteCompaction,
         claudeCodeModelMappings: selected === 'claude-code' ? claudeModelMappings : null,
         claudeDesktopModelMappings: selected === 'claude-desktop' ? claudeModelMappings : null,
       });
@@ -1285,6 +1303,7 @@ export function AgentsPage() {
       }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
+      setRemoteCompactionDraft(null);
     } catch (requestError) {
       if (!handleOAuthLoginError(requestError, 'apply')) {
         setDefaultError(String(requestError));
@@ -1304,6 +1323,7 @@ export function AgentsPage() {
       setClearNotice(t('agents.clear.success'));
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
+      setRemoteCompactionDraft(null);
     } catch (requestError) {
       setClearError(String(requestError));
     } finally {
@@ -1799,7 +1819,7 @@ export function AgentsPage() {
                   {selected === 'codex' ? (
                     <div className="agent-codex-options">
                       <label
-                        className="agent-oauth-configuration"
+                        className="agent-codex-option"
                         title={t('agents.modify.oauthConfiguration')}
                       >
                         <span>{t('agents.modify.oauthConfiguration')}</span>
@@ -1811,6 +1831,23 @@ export function AgentsPage() {
                             onChange={(event) => void changeOauthConfiguration(event.currentTarget.checked)}
                             disabled={busy}
                             aria-label={t('agents.modify.oauthConfiguration')}
+                          />
+                          <span className="switch-track" />
+                        </span>
+                      </label>
+                      <label
+                        className="agent-codex-option"
+                        title={t('agents.modify.remoteCompactionHint')}
+                      >
+                        <span>{t('agents.modify.remoteCompaction')}</span>
+                        <span className="switch-control">
+                          <input
+                            type="checkbox"
+                            role="switch"
+                            checked={remoteCompaction}
+                            onChange={(event) => setRemoteCompactionDraft(event.currentTarget.checked)}
+                            disabled={busy}
+                            aria-label={t('agents.modify.remoteCompaction')}
                           />
                           <span className="switch-track" />
                         </span>

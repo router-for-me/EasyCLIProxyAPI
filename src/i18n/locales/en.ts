@@ -673,6 +673,8 @@ export const en: Record<MessageKey, string> = {
   'agents.model.firstSelection': '{count} models available; the first is selected by default',
   'agents.modify.title': 'Configuration Changes',
   'agents.modify.oauthConfiguration': 'OAuth sign-in configuration mode',
+  'agents.modify.remoteCompaction': 'Enable remote compaction (experimental)',
+  'agents.modify.remoteCompactionHint': 'Enable only when the current CPA upstream supports Codex Remote Compaction V2. Incompatible routes may fail when compaction runs.',
   'agents.oauthLoginRequired.title': 'Codex sign-in required',
   'agents.oauthLoginRequired.enableDescription': 'No valid Codex sign-in credentials were found, so OAuth configuration mode cannot be enabled. Sign in to your ChatGPT account in the Codex app. If the Codex app cannot trigger sign-in, use',
   'agents.oauthLoginRequired.enableClearConfiguration': 'Clear Configuration',

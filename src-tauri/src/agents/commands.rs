@@ -850,6 +850,7 @@ pub(crate) async fn apply_agent_config(
     client: String,
     model: String,
     oauth_configuration: bool,
+    remote_compaction: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
 ) -> Result<AgentConfigActionResult, String> {
@@ -894,6 +895,7 @@ pub(crate) async fn apply_agent_config(
             models: &prepared.models,
             codex_catalog: prepared.codex_catalog.as_deref(),
             oauth_configuration,
+            remote_compaction,
             claude_code_model_mappings: claude_code_model_mappings.as_ref(),
             claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
         },
@@ -924,6 +926,7 @@ pub(crate) async fn reset_agent_config_to_default(
     client: String,
     model: String,
     oauth_configuration: bool,
+    remote_compaction: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
 ) -> Result<AgentConfigActionResult, String> {
@@ -967,6 +970,7 @@ pub(crate) async fn reset_agent_config_to_default(
         models: &prepared.models,
         codex_catalog: prepared.codex_catalog.as_deref(),
         oauth_configuration,
+        remote_compaction,
         claude_code_model_mappings: claude_code_model_mappings.as_ref(),
         claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
     })
@@ -1038,6 +1042,7 @@ pub(crate) async fn set_agent_config_enabled(
                 models: &prepared.models,
                 codex_catalog: prepared.codex_catalog.as_deref(),
                 oauth_configuration: false,
+                remote_compaction: false,
                 claude_code_model_mappings: claude_code_model_mappings.as_ref(),
                 claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
             },
@@ -1098,6 +1103,7 @@ pub(crate) async fn update_agent_config(
             models: &prepared.models,
             codex_catalog: prepared.codex_catalog.as_deref(),
             oauth_configuration: false,
+            remote_compaction: false,
             claude_code_model_mappings: claude_code_model_mappings.as_ref(),
             claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
         },

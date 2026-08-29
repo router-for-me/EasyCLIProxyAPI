@@ -68,7 +68,7 @@ custom_option = "keep-original"
     provider["custom_option"] = toml_edit::value("keep-updated");
     fs::write(&path, externally_edited.to_string()).unwrap();
 
-    let (configured, current_model, _) =
+    let (configured, current_model, _, _) =
         inspect_codex_agent_config(&path, 8317, DEFAULT_API_KEY).unwrap();
     let inspection = inspect_agent_modification(
         AgentClient::Codex,
