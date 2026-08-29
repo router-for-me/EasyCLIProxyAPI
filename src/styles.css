@@ -7025,6 +7025,58 @@ textarea:focus-visible {
 }
 
 /* Analysis Tab */
+.usage-analysis-layout {
+  display: grid;
+  gap: 14px;
+}
+
+.usage-analysis-toolbar {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.usage-analysis-toolbar > span {
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+.usage-analysis-metric-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--theme-d5d2cb);
+  border-radius: 7px;
+  background: var(--theme-f0eee8);
+}
+
+.usage-analysis-metric-switch button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--theme-6d6760);
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.usage-analysis-metric-switch button:hover:not(.active) {
+  background: var(--theme-e8e5dc);
+  color: var(--theme-2d2a26);
+}
+
+.usage-analysis-metric-switch button.active {
+  background: var(--theme-fffdf8);
+  color: var(--theme-2d2a26);
+  box-shadow: 0 1px 2px rgba(45, 42, 38, 0.12);
+}
+
 .usage-analysis-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -7101,6 +7153,11 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
+.usage-category-failures.has-failures {
+  color: var(--theme-9f2d20);
+  font-weight: 600;
+}
+
 .usage-category-meta strong {
   color: var(--theme-5f5a53);
   font-weight: 600;
@@ -7119,6 +7176,10 @@ textarea:focus-visible {
   background: var(--theme-3f6f98);
   border-radius: 999px;
   transition: width 0.3s ease;
+}
+
+.usage-category-fill.failure-rate {
+  background: var(--theme-9f2d20);
 }
 
 /* Events Tab (请求明细) */
@@ -9137,6 +9198,25 @@ body.table-col-resizing * {
 @media (max-width: 620px) {
   .agent-modification-buttons.codex {
     grid-template-columns: 1fr;
+  }
+
+  .usage-analysis-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-analysis-metric-switch {
+    width: 100%;
+  }
+
+  .usage-category-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .usage-category-meta {
+    width: 100%;
+    flex-wrap: wrap;
   }
 }
 
