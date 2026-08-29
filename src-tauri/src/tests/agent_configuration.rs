@@ -295,6 +295,10 @@ fn codex_agent_config_uses_managed_provider_without_losing_comments() {
         Some("http://127.0.0.1:8317/v1")
     );
     assert_eq!(
+        value["model_providers"][MANAGED_AGENT_PROVIDER_ID]["name"].as_str(),
+        Some(CODEX_MANAGED_PROVIDER_NAME)
+    );
+    assert_eq!(
         value["model_providers"][MANAGED_AGENT_PROVIDER_ID]["experimental_bearer_token"].as_str(),
         Some(DEFAULT_API_KEY)
     );
@@ -337,6 +341,18 @@ fn codex_oauth_configuration_uses_openai_auth_with_bearer_token() {
         r#"{"tokens":{"access_token":"oauth-access-token"}}"#,
     )
     .unwrap();
+    let (configured, model, oauth_configuration) =
+        inspect_codex_agent_config(&path, 8317, DEFAULT_API_KEY).unwrap();
+    assert!(configured);
+    assert_eq!(model.as_deref(), Some("gpt-test"));
+    assert!(oauth_configuration);
+
+    let legacy = rendered.replace(
+        &format!("name = \"{CODEX_MANAGED_PROVIDER_NAME}\""),
+        &format!("name = \"{LEGACY_CODEX_MANAGED_PROVIDER_NAME}\""),
+    );
+    assert_ne!(legacy, rendered);
+    fs::write(&path, legacy).unwrap();
     let (configured, model, oauth_configuration) =
         inspect_codex_agent_config(&path, 8317, DEFAULT_API_KEY).unwrap();
     assert!(configured);

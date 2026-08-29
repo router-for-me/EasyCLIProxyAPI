@@ -2510,7 +2510,10 @@ pub(crate) fn build_codex_agent_config_with_oauth(
         .get_mut(MANAGED_AGENT_PROVIDER_ID)
         .and_then(Item::as_table_mut)
         .ok_or_else(|| "Codex cpa-gui provider 必须是 TOML 表".to_string())?;
-    set_codex_table_item(provider, "name", value("EasyCLIProxyAPI"));
+    // Codex currently uses the exact provider name `OpenAI` as its capability
+    // marker for Responses features such as remote compaction. CLIProxyAPI
+    // implements the compatible `/responses/compact` endpoint.
+    set_codex_table_item(provider, "name", value(CODEX_MANAGED_PROVIDER_NAME));
     set_codex_table_item(provider, "base_url", value(base_url));
     set_codex_table_item(provider, "wire_api", value("responses"));
     set_codex_table_item(provider, "experimental_bearer_token", value(api_key));

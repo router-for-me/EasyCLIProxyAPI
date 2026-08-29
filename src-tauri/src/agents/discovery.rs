@@ -3279,7 +3279,10 @@ pub(crate) fn inspect_codex_agent_config(
         && provider
             .and_then(|provider| provider.get("name"))
             .and_then(toml::Value::as_str)
-            == Some("EasyCLIProxyAPI")
+            .is_some_and(|name| {
+                name == CODEX_MANAGED_PROVIDER_NAME
+                    || name == LEGACY_CODEX_MANAGED_PROVIDER_NAME
+            })
         && provider
             .and_then(|provider| provider.get("base_url"))
             .and_then(toml::Value::as_str)
