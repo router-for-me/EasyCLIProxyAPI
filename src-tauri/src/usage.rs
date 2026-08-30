@@ -36,9 +36,10 @@ const LEGACY_USAGE_INBOX_DIR: &str = "inbox";
 const LEGACY_JSON_MIGRATION_KEY: &str = "legacy_json_v1";
 const USAGE_DATABASE_MIGRATION_KEY: &str = "keeper_v3";
 const USAGE_FAILURE_MIGRATION_KEY: &str = "failure_details_v4";
+const USAGE_EVENT_KEY_MIGRATION_KEY: &str = "event_key_v5";
 const USAGE_UPDATED_EVENT: &str = "usage-records-updated";
 const USAGE_SCHEMA_VERSION: u8 = 1;
-const USAGE_DATABASE_SCHEMA_VERSION: i64 = 4;
+const USAGE_DATABASE_SCHEMA_VERSION: i64 = 5;
 const MAX_USAGE_FAILURE_BODY_CHARS: usize = 2_000;
 const USAGE_QUEUE_BATCH_SIZE: usize = 500;
 const USAGE_INBOX_PROCESS_LIMIT: usize = 500;
@@ -618,7 +619,10 @@ fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, Strin
 fn migrate_usage_database(connection: &mut Connection, root: &Path) -> Result<(), String> {
     match detect_usage_database_layout(connection)? {
         UsageDatabaseLayout::Empty => initialize_usage_schema(connection),
-        UsageDatabaseLayout::CurrentV3 => initialize_usage_schema(connection),
+        UsageDatabaseLayout::CurrentV3 => {
+            initialize_usage_schema(connection)?;
+            migrate_usage_event_key_uniqueness(connection)
+        }
         UsageDatabaseLayout::LegacyV2 => {
             let backup_path = create_usage_migration_backup(connection, root)?;
             if let Err(error) = migrate_legacy_v2_usage_schema(connection) {
@@ -700,6 +704,224 @@ fn usage_table_columns(connection: &Connection, table: &str) -> Result<HashSet<S
     Ok(columns)
 }
 
+fn migrate_usage_event_key_uniqueness(connection: &mut Connection) -> Result<(), String> {
+    let migrated = connection
+        .query_row(
+            "SELECT value FROM usage_metadata WHERE key = ?1",
+            params![USAGE_EVENT_KEY_MIGRATION_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("read usage event key migration state failed: {error}"))?;
+    if migrated.is_some() {
+        return Ok(());
+    }
+
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("begin usage event key migration failed: {error}"))?;
+    ensure_usage_event_key_non_unique_in_transaction(&transaction)?;
+    transaction
+        .execute(
+            "INSERT INTO usage_metadata (key, value) VALUES (?1, ?2)",
+            params![USAGE_EVENT_KEY_MIGRATION_KEY, Local::now().to_rfc3339()],
+        )
+        .map_err(|error| format!("record usage event key migration state failed: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("commit usage event key migration failed: {error}"))
+}
+
+fn ensure_usage_event_key_non_unique_in_transaction(connection: &Connection) -> Result<(), String> {
+    if !usage_table_exists(connection, "usage_events")? {
+        return Ok(());
+    }
+
+    let unique_indexes = usage_event_key_unique_indexes(connection)?;
+    if unique_indexes.is_empty() {
+        create_usage_event_key_index(connection)?;
+        return Ok(());
+    }
+
+    if unique_indexes
+        .iter()
+        .all(|(_, is_auto_index)| !is_auto_index)
+    {
+        for (index_name, _) in unique_indexes {
+            connection
+                .execute(
+                    &format!(
+                        "DROP INDEX IF EXISTS {}",
+                        quote_sqlite_identifier(&index_name)
+                    ),
+                    [],
+                )
+                .map_err(|error| {
+                    format!("drop unique usage event key index {index_name} failed: {error}")
+                })?;
+        }
+        create_usage_event_key_index(connection)?;
+        return Ok(());
+    }
+
+    rebuild_usage_events_without_event_key_unique(connection, &unique_indexes)
+}
+
+fn usage_event_key_unique_indexes(connection: &Connection) -> Result<Vec<(String, bool)>, String> {
+    let index_names = {
+        let mut statement = connection
+            .prepare("SELECT name FROM pragma_index_list(?1) WHERE \"unique\" != 0 ORDER BY seq")
+            .map_err(|error| format!("prepare usage event key index query failed: {error}"))?;
+        let index_names = statement
+            .query_map(params!["usage_events"], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("query usage event key indexes failed: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("read usage event key indexes failed: {error}"))?;
+        index_names
+    };
+
+    let mut matches = Vec::new();
+    for index_name in index_names {
+        let mut statement = connection
+            .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")
+            .map_err(|error| format!("prepare usage event key index columns failed: {error}"))?;
+        let columns = statement
+            .query_map(params![index_name.as_str()], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("query usage event key index columns failed: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("read usage event key index columns failed: {error}"))?;
+        if columns.len() == 1 && columns[0] == "event_key" {
+            matches.push((
+                index_name.clone(),
+                index_name.starts_with("sqlite_autoindex_"),
+            ));
+        }
+    }
+    Ok(matches)
+}
+
+fn rebuild_usage_events_without_event_key_unique(
+    connection: &Connection,
+    unique_indexes: &[(String, bool)],
+) -> Result<(), String> {
+    let table_sql = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params!["usage_events"],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| format!("read usage events table schema failed: {error}"))?;
+    let temporary_table = format!("usage_events_rebuild_{}", unique_file_stamp());
+    let create_table_sql = replace_sql_fragment_case_insensitive(
+        &table_sql,
+        "create table usage_events",
+        &format!("CREATE TABLE {temporary_table}"),
+    )
+    .or_else(|| {
+        replace_sql_fragment_case_insensitive(
+            &table_sql,
+            "create table if not exists usage_events",
+            &format!("CREATE TABLE {temporary_table}"),
+        )
+    })
+    .ok_or_else(|| "usage events table schema has an unsupported CREATE TABLE form".to_string())?;
+    let create_table_sql = replace_sql_fragment_case_insensitive(
+        &create_table_sql,
+        "event_key text not null unique",
+        "event_key TEXT NOT NULL",
+    )
+    .ok_or_else(|| {
+        "usage events table schema does not contain the expected unique event_key constraint"
+            .to_string()
+    })?;
+
+    let unique_index_names = unique_indexes
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<HashSet<_>>();
+    let index_sqls = {
+        let mut statement = connection
+            .prepare(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ?1 AND sql IS NOT NULL ORDER BY name",
+            )
+            .map_err(|error| format!("prepare usage event index schema query failed: {error}"))?;
+        let index_sqls = statement
+            .query_map(params!["usage_events"], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| format!("query usage event index schemas failed: {error}"))?
+            .filter_map(|row| match row {
+                Ok((name, sql)) if !unique_index_names.contains(name.as_str()) => Some(Ok(sql)),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("read usage event index schemas failed: {error}"))?;
+        index_sqls
+    };
+
+    connection
+        .execute_batch(&create_table_sql)
+        .map_err(|error| format!("create rebuilt usage events table failed: {error}"))?;
+    connection
+        .execute(
+            &format!(
+                "INSERT INTO {} SELECT * FROM usage_events",
+                quote_sqlite_identifier(&temporary_table)
+            ),
+            [],
+        )
+        .map_err(|error| format!("copy usage events during event key migration failed: {error}"))?;
+    connection
+        .execute("DROP TABLE usage_events", [])
+        .map_err(|error| format!("drop old usage events table failed: {error}"))?;
+    connection
+        .execute(
+            &format!(
+                "ALTER TABLE {} RENAME TO usage_events",
+                quote_sqlite_identifier(&temporary_table)
+            ),
+            [],
+        )
+        .map_err(|error| format!("rename rebuilt usage events table failed: {error}"))?;
+
+    for index_sql in index_sqls {
+        connection
+            .execute_batch(&index_sql)
+            .map_err(|error| format!("restore usage event index failed: {error}"))?;
+    }
+    create_usage_event_key_index(connection)
+}
+
+fn create_usage_event_key_index(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_usage_events_event_key ON usage_events(event_key)",
+            [],
+        )
+        .map(|_| ())
+        .map_err(|error| format!("create usage event key index failed: {error}"))
+}
+
+fn quote_sqlite_identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn replace_sql_fragment_case_insensitive(
+    value: &str,
+    needle: &str,
+    replacement: &str,
+) -> Option<String> {
+    let value_lower = value.to_ascii_lowercase();
+    let needle_lower = needle.to_ascii_lowercase();
+    let start = value_lower.find(&needle_lower)?;
+    let mut result = String::with_capacity(value.len() + replacement.len());
+    result.push_str(&value[..start]);
+    result.push_str(replacement);
+    result.push_str(&value[start + needle.len()..]);
+    Some(result)
+}
+
 fn create_usage_migration_backup(connection: &Connection, root: &Path) -> Result<PathBuf, String> {
     let backup_dir = root.join(USAGE_BACKUP_DIR_NAME);
     fs::create_dir_all(&backup_dir)
@@ -762,6 +984,13 @@ fn migrate_legacy_v2_usage_schema(connection: &mut Connection) -> Result<(), Str
         ));
     }
     initialize_usage_schema(&transaction)?;
+    ensure_usage_event_key_non_unique_in_transaction(&transaction)?;
+    transaction
+        .execute(
+            "INSERT INTO usage_metadata (key, value) VALUES (?1, ?2)",
+            params![USAGE_EVENT_KEY_MIGRATION_KEY, Local::now().to_rfc3339()],
+        )
+        .map_err(|error| format!("record usage event key migration state failed: {error}"))?;
     transaction
         .execute(
             "INSERT INTO usage_metadata (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -824,7 +1053,7 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
 
             CREATE TABLE IF NOT EXISTS usage_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_key TEXT NOT NULL UNIQUE,
+                event_key TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 timestamp_ms INTEGER NOT NULL,
                 local_hour TEXT NOT NULL,
@@ -868,6 +1097,8 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_usage_events_timestamp
                 ON usage_events(timestamp_ms DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_usage_events_event_key
+                ON usage_events(event_key);
             CREATE INDEX IF NOT EXISTS idx_usage_events_local_hour
                 ON usage_events(local_hour, timestamp_ms DESC);
             CREATE INDEX IF NOT EXISTS idx_usage_events_model_timestamp
@@ -1734,7 +1965,7 @@ fn insert_usage_records_in_transaction(
     let mut statement = transaction
         .prepare(
             r#"
-            INSERT OR IGNORE INTO usage_events (
+            INSERT INTO usage_events (
                 event_key, timestamp, timestamp_ms, local_hour, latency_ms, ttft_ms,
                 source, auth_index, failed, provider, model, alias, reasoning_effort,
                 service_tier, response_service_tier, executor_type, endpoint, auth_type,
@@ -3922,6 +4153,29 @@ mod tests {
         assert_eq!(migrated.5, "legacy_migration");
         assert!(!marker.is_empty());
         assert_eq!(backups.len(), 1);
+
+        let duplicate_inserted = connection
+            .execute(
+                r#"
+                INSERT INTO usage_events (
+                    event_key, timestamp, timestamp_ms, local_hour, created_at
+                ) VALUES (
+                    'request-1', '2026-07-17T20:31:00+08:00', 1784291460000,
+                    '2026-07-17-20', '2026-07-17T20:31:01+08:00'
+                )
+                "#,
+                [],
+            )
+            .unwrap();
+        assert_eq!(duplicate_inserted, 1);
+        let duplicate_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM usage_events WHERE event_key = 'request-1'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(duplicate_count, 2);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
@@ -4058,6 +4312,76 @@ mod tests {
     }
 
     #[test]
+    fn durable_inbox_preserves_multiple_events_with_same_request_id() {
+        let root = test_root("durable-inbox-duplicate-request-id");
+        initialize_usage_storage_at(&root).unwrap();
+        let mut connection = open_usage_database_at(&root).unwrap();
+        enqueue_usage_queue_items(
+            &mut connection,
+            "redis_subscribe:usage",
+            vec![
+                serde_json::json!({
+                    "timestamp": "2026-07-17T20:30:00+08:00",
+                    "request_id": "persistent-connection",
+                    "model": "gpt-first",
+                    "tokens": { "input_tokens": 10, "output_tokens": 20, "total_tokens": 30 }
+                }),
+                serde_json::json!({
+                    "timestamp": "2026-07-17T20:31:00+08:00",
+                    "request_id": "persistent-connection",
+                    "model": "gpt-second",
+                    "tokens": { "input_tokens": 30, "output_tokens": 40, "total_tokens": 70 }
+                }),
+            ],
+        )
+        .unwrap();
+
+        let inserted = process_usage_inbox(&mut connection, &GuiConfigFile::default()).unwrap();
+        assert_eq!(inserted, 2);
+        let event_count = connection
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(event_count, 2);
+
+        let rows = {
+            let mut statement = connection
+                .prepare("SELECT event_key, model, total_tokens FROM usage_events ORDER BY id")
+                .unwrap();
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "persistent-connection".to_string(),
+                    "gpt-first".to_string(),
+                    30
+                ),
+                (
+                    "persistent-connection".to_string(),
+                    "gpt-second".to_string(),
+                    70
+                ),
+            ]
+        );
+
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn inbox_cleanup_preserves_pending_and_recent_failure_rows() {
         let root = test_root("inbox-cleanup");
         let connection = open_test_database(&root);
@@ -4114,23 +4438,99 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_storage_deduplicates_event_keys_transactionally() {
-        let root = test_root("sqlite-deduplicate");
+    fn sqlite_storage_preserves_duplicate_event_keys_transactionally() {
+        let root = test_root("sqlite-duplicate-event-keys");
         let mut connection = open_test_database(&root);
-        let record = sample_record("request-1", "2026-07-17T20:30:00+08:00", "gpt-test");
+        let first = sample_record("request-1", "2026-07-17T20:30:00+08:00", "gpt-test");
+        let second = sample_record("request-1", "2026-07-17T20:31:00+08:00", "gpt-test-updated");
 
         assert_eq!(
-            insert_usage_records(&mut connection, std::slice::from_ref(&record)).unwrap(),
+            insert_usage_records(&mut connection, std::slice::from_ref(&first)).unwrap(),
             1
         );
-        assert_eq!(insert_usage_records(&mut connection, &[record]).unwrap(), 0);
+        assert_eq!(insert_usage_records(&mut connection, &[second]).unwrap(), 1);
         let count = connection
             .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
                 row.get::<_, i64>(0)
             })
             .unwrap();
 
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn current_v3_database_migrates_unique_event_key_without_losing_rows() {
+        let root = test_root("event-key-v5-migration");
+        let mut connection = open_test_database(&root);
+        let table_sql = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'usage_events'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        let indexes = {
+            let mut statement = connection
+                .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'usage_events'")
+                .unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        for index in indexes {
+            connection
+                .execute(
+                    &format!("DROP INDEX {}", quote_sqlite_identifier(&index)),
+                    [],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "ALTER TABLE usage_events RENAME TO usage_events_previous",
+                [],
+            )
+            .unwrap();
+        let unique_table_sql = replace_sql_fragment_case_insensitive(
+            &table_sql,
+            "event_key TEXT NOT NULL,",
+            "event_key TEXT NOT NULL UNIQUE,",
+        )
+        .unwrap();
+        connection.execute_batch(&unique_table_sql).unwrap();
+        connection
+            .execute("DROP TABLE usage_events_previous", [])
+            .unwrap();
+
+        migrate_usage_database(&mut connection, &root).unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_events (event_key, timestamp, timestamp_ms, local_hour, created_at) VALUES ('persistent', '2026-07-17T20:30:00+08:00', 1, '2026-07-17-20', '2026-07-17T20:30:00+08:00'), ('persistent', '2026-07-17T20:31:00+08:00', 2, '2026-07-17-20', '2026-07-17T20:31:00+08:00')",
+                [],
+            )
+            .unwrap();
+        let count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM usage_events WHERE event_key = 'persistent'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM usage_metadata WHERE key = ?1",
+                    params![USAGE_EVENT_KEY_MIGRATION_KEY],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
