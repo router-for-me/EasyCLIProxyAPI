@@ -26,7 +26,7 @@ import { KernelPage } from './pages/Kernel';
 import { VersionManagementPage } from './pages/VersionManagementPage';
 import { OAuthManagementPage } from './pages/ManagementPages';
 import { AgentsPage } from './pages/AgentsPage';
-import { EasyModePage, type EasyModeDestination } from './pages/EasyModePage';
+import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
 import { languageOptions, useI18n } from './i18n';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
@@ -228,10 +228,6 @@ function AppContent() {
     setActive(pageId);
   };
 
-  const openPage = (pageId: EasyModeDestination) => {
-    setActive(pageId);
-  };
-
   const openContact = async () => {
     try {
       await invoke('open_external_url', { url: CONTACT_URL });
@@ -423,7 +419,7 @@ function AppContent() {
           <main className="content">
             {isAlwaysAvailablePage(activePage.id) || coreRunning ? (
               activePage.id === 'easy' ? (
-                <EasyModePage onOpenPage={openPage} />
+                <EasyModePage />
               ) : (
                 <ActivePage />
               )
