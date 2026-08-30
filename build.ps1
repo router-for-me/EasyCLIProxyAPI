@@ -12,9 +12,7 @@ $ErrorActionPreference = 'Stop'
 
 $RootDir = $PSScriptRoot
 $AppBin = Join-Path $RootDir 'src-tauri\target\release\cpa-gui.exe'
-$BinDir = Join-Path $RootDir 'bin-work'
-$BinOut = Join-Path $BinDir 'EasyCLIProxyAPI.exe'
-$PortableScript = Join-Path $RootDir 'scripts\portable.mjs'
+$CopyScript = Join-Path $RootDir 'copy.ps1'
 
 Set-Location -LiteralPath $RootDir
 
@@ -86,24 +84,5 @@ if (-not (Test-Path -LiteralPath $AppBin -PathType Leaf)) {
     throw "Build finished, but executable not found: $AppBin"
 }
 
-& bun $PortableScript --binary $AppBin --output $BinDir --download true --preserve-runtime-config true
-if ($LASTEXITCODE -ne 0) {
-    throw "Portable preparation failed with exit code $LASTEXITCODE."
-}
-
-if (-not (Test-Path -LiteralPath $BinOut -PathType Leaf)) {
-    throw "Portable preparation finished, but executable not found: $BinOut"
-}
-
-$CoreOut = Join-Path $BinDir 'cpa-core'
-$CoreArchives = @(
-    Get-ChildItem -LiteralPath $CoreOut -File |
-        Where-Object { $_.Name -match '^CLIProxyAPI_.+_windows_.+\.zip$' }
-)
-if ($CoreArchives.Count -ne 1) {
-    throw "Portable core output must contain exactly one Windows core archive: $CoreOut"
-}
-
 Write-Host "Built: $AppBin"
-Write-Host "Copied: $BinOut"
-Write-Host "Bundled core archive: $($CoreArchives[0].FullName)"
+& $CopyScript
