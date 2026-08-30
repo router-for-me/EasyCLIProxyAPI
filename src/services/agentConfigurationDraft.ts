@@ -37,6 +37,8 @@ type ResolveAgentConfigurationActionOptions = {
   appliedModel: string;
   oauthConfiguration: boolean;
   appliedOauthConfiguration: boolean;
+  remoteCompaction: boolean;
+  appliedRemoteCompaction: boolean;
   modelMappings: AgentModelMappings;
   appliedModelMappings: AgentModelMappings;
 };
@@ -88,6 +90,8 @@ export function resolveAgentConfigurationAction({
   appliedModel,
   oauthConfiguration,
   appliedOauthConfiguration,
+  remoteCompaction,
+  appliedRemoteCompaction,
   modelMappings,
   appliedModelMappings,
 }: ResolveAgentConfigurationActionOptions): AgentConfigurationAction {
@@ -107,6 +111,8 @@ export function resolveAgentConfigurationAction({
     );
   const oauthChanged = client === 'codex'
     && oauthConfiguration !== appliedOauthConfiguration;
+  const remoteCompactionChanged = client === 'codex'
+    && remoteCompaction !== appliedRemoteCompaction;
 
-  return modelChanged || oauthChanged ? 'update' : 'close';
+  return modelChanged || oauthChanged || remoteCompactionChanged ? 'update' : 'close';
 }

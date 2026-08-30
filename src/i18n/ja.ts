@@ -682,6 +682,8 @@ export const jaOverrides = {
   'agents.model.firstSelection': '利用可能なモデル {count} 件。初回は先頭を選択します',
   'agents.modify.title': '設定変更',
   'agents.modify.oauthConfiguration': 'OAuth ログイン設定方式',
+  'agents.modify.remoteCompaction': 'リモート圧縮を有効化（実験的）',
+  'agents.modify.remoteCompactionHint': '現在の CPA アップストリームが Codex Remote Compaction V2 に対応している場合のみ有効にしてください。非対応の経路では圧縮時に失敗する可能性があります。',
   'agents.claudeDesktopMapping.title': 'Claude Desktop モデル → 上流モデル',
   'agents.claudeDesktopMapping.description': '役割ごとに上流モデルとコンテキスト機能を選択します。対応モデルでのみ 1M を有効にしてください。',
   'agents.claudeCodeMapping.title': 'Claude Code モデル → 上流モデル',

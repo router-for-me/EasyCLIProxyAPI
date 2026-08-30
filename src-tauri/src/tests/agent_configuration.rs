@@ -295,6 +295,10 @@ fn codex_agent_config_uses_managed_provider_without_losing_comments() {
         Some("http://127.0.0.1:8317/v1")
     );
     assert_eq!(
+        value["model_providers"][MANAGED_AGENT_PROVIDER_ID]["name"].as_str(),
+        Some(CODEX_MANAGED_PROVIDER_NAME)
+    );
+    assert_eq!(
         value["model_providers"][MANAGED_AGENT_PROVIDER_ID]["experimental_bearer_token"].as_str(),
         Some(DEFAULT_API_KEY)
     );
@@ -310,6 +314,7 @@ fn codex_oauth_configuration_uses_openai_auth_with_bearer_token() {
         DEFAULT_API_KEY,
         "gpt-test",
         true,
+        false,
     )
     .unwrap();
     let value = toml::from_str::<toml::Value>(&rendered).unwrap();
@@ -337,11 +342,33 @@ fn codex_oauth_configuration_uses_openai_auth_with_bearer_token() {
         r#"{"tokens":{"access_token":"oauth-access-token"}}"#,
     )
     .unwrap();
-    let (configured, model, oauth_configuration) =
+    let (configured, model, oauth_configuration, remote_compaction) =
         inspect_codex_agent_config(&path, 8317, DEFAULT_API_KEY).unwrap();
     assert!(configured);
     assert_eq!(model.as_deref(), Some("gpt-test"));
     assert!(oauth_configuration);
+    assert!(!remote_compaction);
+
+    let remote = build_codex_agent_config_with_oauth(
+        Some(&rendered),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-test",
+        true,
+        true,
+    )
+    .unwrap();
+    assert_ne!(remote, rendered);
+    assert!(remote.contains(&format!(
+        "name = \"{CODEX_REMOTE_COMPACTION_PROVIDER_NAME}\""
+    )));
+    fs::write(&path, remote).unwrap();
+    let (configured, model, oauth_configuration, remote_compaction) =
+        inspect_codex_agent_config(&path, 8317, DEFAULT_API_KEY).unwrap();
+    assert!(configured);
+    assert_eq!(model.as_deref(), Some("gpt-test"));
+    assert!(oauth_configuration);
+    assert!(remote_compaction);
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -367,6 +394,7 @@ fn codex_api_and_oauth_modes_write_the_same_catalog() {
                 models: &models,
                 codex_catalog: Some(&catalog),
                 oauth_configuration,
+                remote_compaction: false,
                 claude_code_model_mappings: None,
                 claude_desktop_model_mappings: None,
             },
@@ -958,7 +986,7 @@ fn zcode_cli_config_sets_main_model_and_both_configs_must_match() {
     fs::write(&paths[1], &cli_config).unwrap();
     assert_eq!(
         inspect_agent_managed_config(AgentClient::ZCode, &paths, 8317, DEFAULT_API_KEY).unwrap(),
-        (true, Some("gpt-test".to_string()), false)
+        (true, Some("gpt-test".to_string()), false, false)
     );
 
     let mut mismatched = cli_value;
@@ -970,7 +998,7 @@ fn zcode_cli_config_sets_main_model_and_both_configs_must_match() {
     .unwrap();
     assert_eq!(
         inspect_agent_managed_config(AgentClient::ZCode, &paths, 8317, DEFAULT_API_KEY).unwrap(),
-        (false, Some("deepseek-test".to_string()), false)
+        (false, Some("deepseek-test".to_string()), false, false)
     );
     fs::remove_dir_all(home).unwrap();
 }

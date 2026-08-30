@@ -669,6 +669,7 @@ pub(crate) fn fresh_agent_contents(
             models: &models,
             codex_catalog: None,
             oauth_configuration: false,
+            remote_compaction: false,
             claude_code_model_mappings: None,
             claude_desktop_model_mappings: None,
         },
@@ -685,6 +686,7 @@ pub(crate) fn fresh_agent_contents_with_oauth(
     let AgentConfigurationOptions {
         models,
         oauth_configuration,
+        remote_compaction,
         claude_code_model_mappings,
         claude_desktop_model_mappings,
         ..
@@ -719,6 +721,7 @@ pub(crate) fn fresh_agent_contents_with_oauth(
             api_key,
             model,
             oauth_configuration,
+            remote_compaction,
         )?]),
         AgentClient::OpenCode => Ok(vec![build_opencode_agent_config(
             None,
@@ -1537,6 +1540,7 @@ pub(crate) fn apply_agent_configuration(
             models,
             codex_catalog,
             oauth_configuration: false,
+            remote_compaction: false,
             claude_code_model_mappings: None,
             claude_desktop_model_mappings: None,
         },
@@ -1586,6 +1590,7 @@ pub(crate) fn reset_agent_configuration_to_default(
         }],
         codex_catalog,
         oauth_configuration: false,
+        remote_compaction: false,
         claude_code_model_mappings: None,
         claude_desktop_model_mappings: None,
     })
@@ -1600,6 +1605,7 @@ pub(crate) struct AgentDefaultConfiguration<'a> {
     pub(crate) models: &'a [AgentModelOption],
     pub(crate) codex_catalog: Option<&'a str>,
     pub(crate) oauth_configuration: bool,
+    pub(crate) remote_compaction: bool,
     pub(crate) claude_code_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
     pub(crate) claude_desktop_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
 }
@@ -1616,6 +1622,7 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
         models,
         codex_catalog,
         oauth_configuration,
+        remote_compaction,
         claude_code_model_mappings,
         claude_desktop_model_mappings,
     } = request;
@@ -1630,6 +1637,7 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
                 models,
                 codex_catalog,
                 oauth_configuration,
+                remote_compaction,
                 claude_code_model_mappings,
                 claude_desktop_model_mappings,
             },
@@ -1653,6 +1661,7 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
             models,
             codex_catalog,
             oauth_configuration,
+            remote_compaction,
             claude_code_model_mappings,
             claude_desktop_model_mappings,
         },
@@ -1824,7 +1833,7 @@ pub(crate) fn enable_agent_modification(
             Vec::new(),
         ));
     }
-    let (_, current_model, _) =
+    let (_, current_model, _, _) =
         inspect_agent_managed_config(client, &paths, port, DEFAULT_API_KEY)?;
     if agent_has_managed_marker(client, &paths)? {
         if let Some(current_model) = current_model.as_deref() {
@@ -1903,7 +1912,7 @@ pub(crate) fn disable_agent_modification(
     let mut record = match load_agent_record(client, &paths)? {
         Some(record) => record,
         None => {
-            let (_, model, _) =
+            let (_, model, _, _) =
                 inspect_agent_managed_config(client, &paths, port, DEFAULT_API_KEY)?;
             if !agent_has_managed_marker(client, &paths)? {
                 return Ok(action_result(
@@ -1989,7 +1998,7 @@ pub(crate) fn update_agent_modification(
     let record = match load_agent_record(client, &paths)? {
         Some(record) => record,
         None => {
-            let (_, current_model, _) =
+            let (_, current_model, _, _) =
                 inspect_agent_managed_config(client, &paths, port, DEFAULT_API_KEY)?;
             if !agent_has_managed_marker(client, &paths)? {
                 return Err("请先应用配置修改".to_string());

@@ -812,6 +812,12 @@ mod tests {
         let gpt_message_prompt = gpt_messages["instructions_template"].as_str().unwrap();
         let gpt_message_prompt_body = gpt_message_prompt.split_once("\n\n").unwrap().1;
 
+        for slug in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            let model = &sources.templates[slug].value;
+            assert_eq!(model["context_window"], 272_000);
+            assert_eq!(model["max_context_window"], 872_000);
+        }
+
         for slug in ["deepseek-v4-flash", "deepseek-v4-pro"] {
             let model = &sources.templates[slug].value;
             assert_eq!(model["context_window"], 1_000_000);

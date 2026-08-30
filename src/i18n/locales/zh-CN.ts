@@ -698,6 +698,8 @@ export const zhCN = {
   'agents.model.firstSelection': '{count} 个可用模型，首次默认选择第一项',
   'agents.modify.title': '配置修改',
   'agents.modify.oauthConfiguration': 'OAuth登录配置方式',
+  'agents.modify.remoteCompaction': '启用远程压缩（实验性）',
+  'agents.modify.remoteCompactionHint': '仅当当前 CPA 上游兼容 Codex Remote Compaction V2 时开启；不兼容可能在压缩时导致请求失败。',
   'agents.oauthLoginRequired.title': '需要登录 Codex',
   'agents.oauthLoginRequired.enableDescription': '未检测到有效的 Codex 登录凭据，无法开启 OAuth 配置模式。请先在 Codex 应用中登录 ChatGPT 账号，如果 Codex 应用无法触发登录，请先使用',
   'agents.oauthLoginRequired.enableClearConfiguration': '清空配置',

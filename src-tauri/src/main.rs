@@ -138,6 +138,8 @@ const DEFAULT_MAX_RETRY_INTERVAL: u32 = 30;
 const DEFAULT_STREAMING_BOOTSTRAP_RETRIES: u32 = 0;
 const LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY: &str = "123456";
 const MANAGED_AGENT_PROVIDER_ID: &str = "cpa-gui";
+const CODEX_MANAGED_PROVIDER_NAME: &str = "EasyCLIProxyAPI";
+const CODEX_REMOTE_COMPACTION_PROVIDER_NAME: &str = "OpenAI";
 const ZCODE_CONFIG_FILE: &str = "config.json";
 const KIMI_CODE_CONFIG_FILE: &str = "config.toml";
 const GROK_BUILD_CONFIG_FILE: &str = "config.toml";
@@ -980,6 +982,7 @@ struct AgentConfigStatus {
     configuration_synchronized: bool,
     current_model: Option<String>,
     oauth_configuration: bool,
+    remote_compaction: bool,
     modification_enabled: bool,
     modification_state: String,
     backup_available: bool,
@@ -1295,6 +1298,7 @@ struct AgentConfigurationOptions<'a> {
     models: &'a [AgentModelOption],
     codex_catalog: Option<&'a str>,
     oauth_configuration: bool,
+    remote_compaction: bool,
     claude_code_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
 }

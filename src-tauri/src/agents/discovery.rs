@@ -427,6 +427,7 @@ pub(crate) fn inspect_pi_provider_status(
         configuration_synchronized: configured,
         current_model: current_model.clone(),
         oauth_configuration: false,
+        remote_compaction: false,
         modification_enabled: configured,
         modification_state: modification_state.to_string(),
         backup_available: false,
@@ -905,21 +906,28 @@ pub(crate) fn inspect_agent_config(
     let paths = agent_config_paths(client, home);
     let config_exists = paths.iter().any(|path| path.is_file());
     let result = inspect_agent_managed_config(client, &paths, port, api_key).and_then(
-        |(configured, model, oauth_configuration)| {
+        |(configured, model, oauth_configuration, remote_compaction)| {
             if client == AgentClient::Codex && configured {
                 let model = model
                     .as_deref()
                     .ok_or_else(|| "Codex 配置缺少默认模型".to_string())?;
                 validate_codex_catalog_file(&paths[0], model)?;
             }
-            Ok((configured, model, oauth_configuration))
+            Ok((configured, model, oauth_configuration, remote_compaction))
         },
     );
-    let (configured, current_model, oauth_configuration, config_valid, error) = match result {
-        Ok((configured, model, oauth_configuration)) => {
-            (configured, model, oauth_configuration, true, None)
+    let (
+        configured,
+        current_model,
+        oauth_configuration,
+        remote_compaction,
+        config_valid,
+        error,
+    ) = match result {
+        Ok((configured, model, oauth_configuration, remote_compaction)) => {
+            (configured, model, oauth_configuration, remote_compaction, true, None)
         }
-        Err(error) => (false, None, false, false, Some(error)),
+        Err(error) => (false, None, false, false, false, Some(error)),
     };
     let executable = find_agent_executable(client, home);
     // Desktop application executables are not CLIs. Invoking them with
@@ -1000,6 +1008,7 @@ pub(crate) fn inspect_agent_config(
         configuration_synchronized,
         current_model,
         oauth_configuration,
+        remote_compaction,
         modification_enabled: modification.enabled,
         modification_state: modification.state,
         backup_available: modification.backup_available,
@@ -1197,24 +1206,24 @@ pub(crate) fn inspect_agent_managed_config(
     paths: &[PathBuf],
     port: u16,
     api_key: &str,
-) -> Result<(bool, Option<String>, bool), String> {
+) -> Result<(bool, Option<String>, bool, bool), String> {
     match client {
         AgentClient::ClaudeCode => inspect_claude_agent_config(&paths[0], port, api_key)
-            .map(|(configured, model)| (configured, model, false)),
+            .map(|(configured, model)| (configured, model, false, false)),
         AgentClient::ClaudeDesktop if client.supported_platform() => {
             inspect_claude_desktop_agent_config(paths, port, api_key)
-                .map(|(configured, model)| (configured, model, false))
+                .map(|(configured, model)| (configured, model, false, false))
         }
-        AgentClient::ClaudeDesktop => Ok((false, None, false)),
+        AgentClient::ClaudeDesktop => Ok((false, None, false, false)),
         AgentClient::Codex => inspect_codex_agent_config(&paths[0], port, api_key),
         AgentClient::OpenCode => inspect_opencode_agent_config(&paths[0], port, api_key)
-            .map(|(configured, model)| (configured, model, false)),
+            .map(|(configured, model)| (configured, model, false, false)),
         AgentClient::OpenClaw => inspect_openclaw_agent_config(&paths[0], port, api_key)
-            .map(|(configured, model)| (configured, model, false)),
+            .map(|(configured, model)| (configured, model, false, false)),
         AgentClient::Hermes => inspect_hermes_agent_config(&paths[0], port, api_key)
-            .map(|(configured, model)| (configured, model, false)),
+            .map(|(configured, model)| (configured, model, false, false)),
         AgentClient::DeepSeekHarness => inspect_deepseek_harness_config(paths, port, api_key)
-            .map(|(configured, model)| (configured, model, false)),
+            .map(|(configured, model)| (configured, model, false, false)),
         AgentClient::ZCode => {
             if paths.len() != 2 {
                 return Err("ZCode 配置路径数量无效".to_string());
@@ -1226,12 +1235,13 @@ pub(crate) fn inspect_agent_managed_config(
                 app_configured && cli_configured && models_match,
                 cli_model.or(app_model),
                 false,
+                false,
             ))
         }
         AgentClient::KimiCode => inspect_kimi_code_agent_config(&paths[0], port, api_key)
-            .map(|(configured, model)| (configured, model, false)),
+            .map(|(configured, model)| (configured, model, false, false)),
         AgentClient::GrokBuild => inspect_grok_build_agent_config(&paths[0], port, api_key)
-            .map(|(configured, model)| (configured, model, false)),
+            .map(|(configured, model)| (configured, model, false, false)),
     }
 }
 
@@ -3244,9 +3254,9 @@ pub(crate) fn inspect_codex_agent_config(
     path: &Path,
     port: u16,
     api_key: &str,
-) -> Result<(bool, Option<String>, bool), String> {
+) -> Result<(bool, Option<String>, bool, bool), String> {
     if !path.is_file() {
-        return Ok((false, None, false));
+        return Ok((false, None, false, false));
     }
     let root: toml::Value = toml::from_str(
         &fs::read_to_string(path).map_err(|error| format!("读取 Codex 配置失败: {error}"))?,
@@ -3266,6 +3276,10 @@ pub(crate) fn inspect_codex_agent_config(
         .and_then(|provider| provider.get("requires_openai_auth"))
         .and_then(toml::Value::as_bool)
         == Some(true);
+    let remote_compaction = provider
+        .and_then(|provider| provider.get("name"))
+        .and_then(toml::Value::as_str)
+        == Some(CODEX_REMOTE_COMPACTION_PROVIDER_NAME);
     let auth_path = path.with_file_name("auth.json");
     let auth_configured = if oauth_configuration {
         codex_auth_file_has_oauth_tokens(&auth_path)
@@ -3279,7 +3293,10 @@ pub(crate) fn inspect_codex_agent_config(
         && provider
             .and_then(|provider| provider.get("name"))
             .and_then(toml::Value::as_str)
-            == Some("EasyCLIProxyAPI")
+            .is_some_and(|name| {
+                name == CODEX_MANAGED_PROVIDER_NAME
+                    || name == CODEX_REMOTE_COMPACTION_PROVIDER_NAME
+            })
         && provider
             .and_then(|provider| provider.get("base_url"))
             .and_then(toml::Value::as_str)
@@ -3296,7 +3313,7 @@ pub(crate) fn inspect_codex_agent_config(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    Ok((configured, model, oauth_configuration))
+    Ok((configured, model, oauth_configuration, remote_compaction))
 }
 
 pub(crate) fn validate_codex_catalog_file(config_path: &Path, model: &str) -> Result<(), String> {
