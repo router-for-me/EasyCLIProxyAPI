@@ -84,6 +84,8 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("start-core-on-launch = true"));
     assert!(content.contains("silent-start = false"));
     assert!(content.contains("close-behavior = \"ask\""));
+    assert!(content.contains("default-terminal = \"auto\""));
+    assert_eq!(config.default_terminal, DEFAULT_AGENT_TERMINAL);
     assert!(content.contains("window-width = 1280"));
     assert!(content.contains("window-height = 800"));
     assert!(content.contains("auth-dir = \"../oauth\""));

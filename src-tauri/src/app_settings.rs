@@ -180,6 +180,8 @@ pub(crate) fn software_settings(
         autostart_enabled: app_autostart_enabled(app)?,
         start_core_on_launch: config.start_core_on_launch,
         silent_start_enabled: config.silent_start,
+        default_terminal: normalize_agent_terminal(&config.default_terminal),
+        available_terminals: available_agent_terminals(),
     })
 }
 
@@ -201,6 +203,7 @@ pub(crate) fn save_software_settings(
     let previous_config = gui_config_state.snapshot()?;
     let previous_autostart_enabled = app_autostart_enabled(&app)?;
     let autostart_changed = previous_autostart_enabled != settings.autostart_enabled;
+    let default_terminal = normalize_agent_terminal(&settings.default_terminal);
 
     if autostart_changed {
         set_app_autostart_enabled(&app, settings.autostart_enabled)?;
@@ -209,6 +212,7 @@ pub(crate) fn save_software_settings(
     let config = if previous_config.close_behavior == settings.close_behavior
         && previous_config.start_core_on_launch == settings.start_core_on_launch
         && previous_config.silent_start == settings.silent_start_enabled
+        && previous_config.default_terminal == default_terminal
     {
         previous_config
     } else {
@@ -216,6 +220,7 @@ pub(crate) fn save_software_settings(
             settings.close_behavior,
             settings.start_core_on_launch,
             settings.silent_start_enabled,
+            default_terminal.clone(),
         ) {
             Ok(config) => config,
             Err(error) => {

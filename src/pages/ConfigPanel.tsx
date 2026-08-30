@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Sparkles,
   Power,
+  Terminal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -79,11 +80,18 @@ type DraftRefreshMode = 'replace' | 'preserve';
 
 type NetworkDraftDirty = Record<NetworkDraftField, boolean>;
 
+type AgentTerminalOption = {
+  id: string;
+  label: string;
+};
+
 type SoftwareSettings = {
   closeBehavior: CloseBehavior;
   autostartEnabled: boolean;
   startCoreOnLaunch: boolean;
   silentStartEnabled: boolean;
+  defaultTerminal: string;
+  availableTerminals: AgentTerminalOption[];
 };
 
 type CoreTlsSettings = {
@@ -119,6 +127,7 @@ export function ConfigPanelPage() {
   const [softwareAutostartDraft, setSoftwareAutostartDraft] = useState(false);
   const [softwareStartCoreDraft, setSoftwareStartCoreDraft] = useState(true);
   const [softwareSilentStartDraft, setSoftwareSilentStartDraft] = useState(false);
+  const [softwareDefaultTerminalDraft, setSoftwareDefaultTerminalDraft] = useState('auto');
   const [softwareSavedStatusVisible, setSoftwareSavedStatusVisible] = useState(false);
   const [tlsSettings, setTlsSettings] = useState<CoreTlsSettings | null>(null);
   const [tlsSettingsLoading, setTlsSettingsLoading] = useState(true);
@@ -264,6 +273,7 @@ export function ConfigPanelPage() {
       setSoftwareAutostartDraft(result.autostartEnabled);
       setSoftwareStartCoreDraft(result.startCoreOnLaunch);
       setSoftwareSilentStartDraft(result.silentStartEnabled);
+      setSoftwareDefaultTerminalDraft(result.defaultTerminal);
     } catch (error) {
       setSoftwareSettings(null);
       showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
@@ -690,6 +700,7 @@ export function ConfigPanelPage() {
       && softwareAutostartDraft === softwareSettings.autostartEnabled
       && softwareStartCoreDraft === softwareSettings.startCoreOnLaunch
       && softwareSilentStartDraft === softwareSettings.silentStartEnabled
+      && softwareDefaultTerminalDraft === softwareSettings.defaultTerminal
     ) return;
 
     setBusyAction('software');
@@ -700,6 +711,7 @@ export function ConfigPanelPage() {
           autostartEnabled: softwareAutostartDraft,
           startCoreOnLaunch: softwareStartCoreDraft,
           silentStartEnabled: softwareSilentStartDraft,
+          defaultTerminal: softwareDefaultTerminalDraft,
         },
       });
       setSoftwareSettings(result);
@@ -707,6 +719,7 @@ export function ConfigPanelPage() {
       setSoftwareAutostartDraft(result.autostartEnabled);
       setSoftwareStartCoreDraft(result.startCoreOnLaunch);
       setSoftwareSilentStartDraft(result.silentStartEnabled);
+      setSoftwareDefaultTerminalDraft(result.defaultTerminal);
       setSoftwareSavedStatusVisible(true);
       showNotice(t('config.notice.softwareUpdated'), 'success');
     } catch (error) {
@@ -714,6 +727,7 @@ export function ConfigPanelPage() {
       setSoftwareAutostartDraft(softwareSettings.autostartEnabled);
       setSoftwareStartCoreDraft(softwareSettings.startCoreOnLaunch);
       setSoftwareSilentStartDraft(softwareSettings.silentStartEnabled);
+      setSoftwareDefaultTerminalDraft(softwareSettings.defaultTerminal);
       setSoftwareSavedStatusVisible(false);
       showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
       void loadSoftwareSettings();
@@ -746,10 +760,13 @@ export function ConfigPanelPage() {
     && softwareSilentStartDraft !== softwareSettings.silentStartEnabled;
   const softwareStartCoreDirty = softwareSettings !== null
     && softwareStartCoreDraft !== softwareSettings.startCoreOnLaunch;
+  const softwareDefaultTerminalDirty = softwareSettings !== null
+    && softwareDefaultTerminalDraft !== softwareSettings.defaultTerminal;
   const softwareSettingsDirty = softwareCloseBehaviorDirty
     || softwareAutostartDirty
     || softwareStartCoreDirty
-    || softwareSilentStartDirty;
+    || softwareSilentStartDirty
+    || softwareDefaultTerminalDirty;
   const softwareStatusLabel = softwareSettingsLoading
     ? t('common.loading')
     : softwareSettings === null
@@ -1658,6 +1675,35 @@ export function ConfigPanelPage() {
                       }}
                     />
                     <span className="switch-track" />
+                  </label>
+                </div>
+                <div className="config-software-setting-row config-software-close-row">
+                  <div className="config-software-setting-copy">
+                    <span className="config-software-setting-icon" aria-hidden="true">
+                      <Terminal size={18} />
+                    </span>
+                    <div>
+                      <strong>{t('config.software.defaultTerminal')}</strong>
+                      <small>{t('config.software.defaultTerminalDescription')}</small>
+                    </div>
+                  </div>
+                  <label className="config-software-select">
+                    <span className="sr-only">{t('config.software.defaultTerminal')}</span>
+                    <select
+                      className="config-network-input"
+                      value={softwareDefaultTerminalDraft}
+                      disabled={softwareSettingsLoading || softwareSettings === null || busyAction !== null}
+                      onChange={(event) => {
+                        setSoftwareSavedStatusVisible(false);
+                        setSoftwareDefaultTerminalDraft(event.currentTarget.value);
+                      }}
+                    >
+                      {(softwareSettings?.availableTerminals ?? []).map((terminal) => (
+                        <option value={terminal.id} key={terminal.id}>
+                          {terminal.id === 'auto' ? t('config.software.terminal.auto') : terminal.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
                 <div className="config-software-setting-row config-software-close-row">

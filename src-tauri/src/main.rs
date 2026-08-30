@@ -131,6 +131,7 @@ const LEGACY_DEFAULT_MAIN_WINDOW_HEIGHT: u32 = 891;
 const OAUTH_DIR_NAME: &str = "oauth";
 const DEFAULT_AUTH_DIR: &str = "../oauth";
 const DEFAULT_API_KEY: &str = "123456";
+const DEFAULT_AGENT_TERMINAL: &str = "auto";
 const DEFAULT_API_KEY_INITIAL_REMARK: &str = "默认密钥";
 const DEFAULT_REQUEST_RETRY: u32 = 3;
 const DEFAULT_MAX_RETRY_CREDENTIALS: u32 = 0;
@@ -584,6 +585,7 @@ struct GuiConfigFile {
     start_core_on_launch: bool,
     silent_start: bool,
     close_behavior: WindowsCloseBehavior,
+    default_terminal: String,
     window_width: Option<u32>,
     window_height: Option<u32>,
     auth_dir: String,
@@ -868,6 +870,7 @@ impl Default for GuiConfigFile {
             start_core_on_launch: true,
             silent_start: false,
             close_behavior: WindowsCloseBehavior::Ask,
+            default_terminal: DEFAULT_AGENT_TERMINAL.to_string(),
             window_width: Some(DEFAULT_MAIN_WINDOW_WIDTH),
             window_height: Some(DEFAULT_MAIN_WINDOW_HEIGHT),
             auth_dir: DEFAULT_AUTH_DIR.to_string(),
@@ -906,6 +909,7 @@ struct GuiConfigPresence {
     api_access_remarks: Option<Vec<GuiApiAccessRemark>>,
     management_secret_key: Option<String>,
     close_behavior: Option<WindowsCloseBehavior>,
+    default_terminal: Option<String>,
     start_core_on_launch: Option<bool>,
     silent_start: Option<bool>,
     usage_statistics_enabled: Option<bool>,
@@ -949,6 +953,8 @@ struct SoftwareSettings {
     autostart_enabled: bool,
     start_core_on_launch: bool,
     silent_start_enabled: bool,
+    default_terminal: String,
+    available_terminals: Vec<AgentTerminalOption>,
 }
 
 #[derive(Deserialize)]
@@ -958,6 +964,7 @@ struct SoftwareSettingsInput {
     autostart_enabled: bool,
     start_core_on_launch: bool,
     silent_start_enabled: bool,
+    default_terminal: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -1911,11 +1918,13 @@ impl GuiConfigState {
         close_behavior: WindowsCloseBehavior,
         start_core_on_launch: bool,
         silent_start: bool,
+        default_terminal: String,
     ) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.close_behavior = close_behavior;
             config.start_core_on_launch = start_core_on_launch;
             config.silent_start = silent_start;
+            config.default_terminal = normalize_agent_terminal(&default_terminal);
             Ok(())
         })
     }

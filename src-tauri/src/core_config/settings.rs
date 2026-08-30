@@ -1237,6 +1237,9 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     if presence.silent_start.is_none() {
         changed = true;
     }
+    if presence.default_terminal.is_none() {
+        changed = true;
+    }
     if presence.download_source.is_none() {
         config.download_source = if config.prefer_gitcode_downloads {
             VersionDownloadSource::Gitcode
@@ -1493,6 +1496,11 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
         config.locale = normalized_locale.to_string();
         changed = true;
     }
+    let default_terminal = normalize_agent_terminal(&config.default_terminal);
+    if config.default_terminal != default_terminal {
+        config.default_terminal = default_terminal;
+        changed = true;
+    }
     let host = config.host.trim();
     let host = if host.is_empty() {
         if config.allow_lan {
@@ -1642,6 +1650,7 @@ pub(crate) fn write_gui_config_to_path(
         ("start-core-on-launch", value(config.start_core_on_launch)),
         ("silent-start", value(config.silent_start)),
         ("close-behavior", value(config.close_behavior.as_str())),
+        ("default-terminal", value(config.default_terminal.as_str())),
         ("auth-dir", value(config.auth_dir.as_str())),
         (
             "management-secret-key",
