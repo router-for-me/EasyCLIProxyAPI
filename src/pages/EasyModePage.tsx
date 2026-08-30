@@ -5,25 +5,45 @@ import { AgentsPage } from './AgentsPage';
 import { OAuthLoginPage } from './ManagementPages';
 
 type AuthMethod = 'oauth' | 'api';
-type SetupStep = 1 | 2 | 3;
-type SetupView = SetupStep | 'oauth' | 'api' | 'agents';
+type SetupStep = 1 | 2;
+type SetupView = 1 | 'oauth' | 'api' | 'agents';
 
 const EASY_MODE_STATE_KEY = 'easy-cli-proxy-api.easy-mode.state';
 
-function readSavedAuthMethod(): AuthMethod {
+type SavedEasyModeState = {
+  authMethod: AuthMethod;
+  providerReturnView: 1 | AuthMethod | null;
+};
+
+const defaultEasyModeState: SavedEasyModeState = {
+  authMethod: 'oauth',
+  providerReturnView: null,
+};
+
+function readSavedState(): SavedEasyModeState {
   try {
     const raw = window.localStorage.getItem(EASY_MODE_STATE_KEY);
-    if (!raw) return 'oauth';
-    const parsed = JSON.parse(raw) as { authMethod?: unknown };
-    return parsed.authMethod === 'api' ? 'api' : 'oauth';
+    if (!raw) return defaultEasyModeState;
+    const parsed = JSON.parse(raw) as {
+      authMethod?: unknown;
+      providerReturnView?: unknown;
+    };
+    return {
+      authMethod: parsed.authMethod === 'api' ? 'api' : 'oauth',
+      providerReturnView: parsed.providerReturnView === 1
+        || parsed.providerReturnView === 'oauth'
+        || parsed.providerReturnView === 'api'
+        ? parsed.providerReturnView
+        : null,
+    };
   } catch {
-    return 'oauth';
+    return defaultEasyModeState;
   }
 }
 
-function saveAuthMethod(authMethod: AuthMethod) {
+function saveState(state: SavedEasyModeState) {
   try {
-    window.localStorage.setItem(EASY_MODE_STATE_KEY, JSON.stringify({ authMethod }));
+    window.localStorage.setItem(EASY_MODE_STATE_KEY, JSON.stringify(state));
   } catch {
     // Keep the selection in memory when persistent storage is unavailable.
   }
@@ -31,44 +51,50 @@ function saveAuthMethod(authMethod: AuthMethod) {
 
 export function EasyModePage() {
   const { t } = useI18n();
-  const [authMethod, setAuthMethod] = useState<AuthMethod>(readSavedAuthMethod);
+  const initialState = readSavedState();
+  const [authMethod, setAuthMethod] = useState<AuthMethod>(initialState.authMethod);
+  const [providerReturnView, setProviderReturnView] = useState<SavedEasyModeState['providerReturnView']>(
+    initialState.providerReturnView,
+  );
   const [view, setView] = useState<SetupView>(1);
 
   const chooseAuthMethod = (method: AuthMethod) => {
     setAuthMethod(method);
-    saveAuthMethod(method);
+    saveState({ authMethod: method, providerReturnView });
   };
 
   const openSelectedProvider = () => {
     setView(authMethod);
   };
 
-  const openAgentSummary = () => {
-    setView(3);
-  };
-
-  const openAgentConfiguration = () => {
+  const leaveProviderForAgents = () => {
+    const currentProviderView: 1 | AuthMethod = view === 1 || view === 'oauth' || view === 'api'
+      ? view
+      : providerReturnView ?? 1;
+    setProviderReturnView(currentProviderView);
+    saveState({ authMethod, providerReturnView: currentProviderView });
     setView('agents');
   };
 
-  const previousView: SetupView | null = view === 2
+  const previousView: SetupView | null = view === 'oauth' || view === 'api'
     ? 1
-    : view === 'oauth' || view === 'api'
-      ? 2
-      : view === 3
-        ? authMethod
-        : view === 'agents'
-          ? 3
-          : null;
+    : view === 'agents'
+      ? providerReturnView ?? 1
+      : null;
   const continueSetup = () => {
-    if (view === 1) setView(2);
-    else if (view === 2) openSelectedProvider();
-    else if (view === 'oauth' || view === 'api') openAgentSummary();
-    else if (view === 3) openAgentConfiguration();
+    if (view === 1) setView(authMethod);
+    else if (view === 'oauth' || view === 'api') leaveProviderForAgents();
+  };
+
+  const openProgressStep = (step: SetupStep) => {
+    if (step === 1) {
+      setView(view === 'agents' ? providerReturnView ?? 1 : view === 'oauth' || view === 'api' ? view : 1);
+    } else {
+      leaveProviderForAgents();
+    }
   };
 
   const stepTitles = [
-    t('easyMode.overview.coreTitle'),
     t('easyMode.overview.providerTitle'),
     t('easyMode.overview.agentTitle'),
   ];
@@ -79,17 +105,15 @@ export function EasyModePage() {
         {stepTitles.map((title, index) => {
           const step = (index + 1) as SetupStep;
           const active = step === 1
-            ? view === 1
-            : step === 2
-              ? view === 2 || view === 'oauth' || view === 'api'
-              : view === 3 || view === 'agents';
+            ? view === 1 || view === 'oauth' || view === 'api'
+            : view === 'agents';
           return (
             <button
               type="button"
               key={title}
               className={`simple-mode-progress-item${active ? ' active' : ''}`}
               aria-current={active ? 'step' : undefined}
-              onClick={() => setView(step)}
+              onClick={() => openProgressStep(step)}
             >
               <span>
                 <strong>{title}</strong>
@@ -120,33 +144,20 @@ export function EasyModePage() {
         ) : null}
       </div>
 
+      {view === 'oauth' || view === 'api' ? (
+        <div className="simple-mode-provider-hint" role="note">
+          {t(view === 'oauth' ? 'easyMode.oauth.nextHint' : 'easyMode.api.nextHint')}
+        </div>
+      ) : null}
+
       {view === 1 ? (
         <section className="panel simple-mode-task">
           <div className="simple-mode-task-heading">
             <div>
-              <h2>{t('easyMode.guide.title')}</h2>
-              <p>{t('easyMode.guide.description')}</p>
+              <h2>{t('easyMode.overview.providerTitle')}</h2>
+              <p>{t('easyMode.setup.providerDescription')}</p>
             </div>
           </div>
-          <div className="simple-mode-guide-grid" aria-label={t('easyMode.steps.label')}>
-            <article className="simple-mode-guide-card">
-              <strong>{t('easyMode.guide.step1Title')}</strong>
-              <p>{t('easyMode.guide.step1Description')}</p>
-            </article>
-            <article className="simple-mode-guide-card">
-              <strong>{t('easyMode.guide.step2Title')}</strong>
-              <p>{t('easyMode.guide.step2Description')}</p>
-            </article>
-            <article className="simple-mode-guide-card">
-              <strong>{t('easyMode.guide.step3Title')}</strong>
-              <p>{t('easyMode.guide.step3Description')}</p>
-            </article>
-          </div>
-        </section>
-      ) : null}
-
-      {view === 2 ? (
-        <section className="panel simple-mode-task">
           <div className="simple-mode-choice-grid">
             <button
               type="button"
@@ -156,7 +167,6 @@ export function EasyModePage() {
             >
               <strong>{t('easyMode.oauth.title')}</strong>
               <span>{t('easyMode.oauth.description')}</span>
-              <small>{t('easyMode.provider.oauthFit')}</small>
             </button>
             <button
               type="button"
@@ -166,7 +176,6 @@ export function EasyModePage() {
             >
               <strong>{t('easyMode.api.title')}</strong>
               <span>{t('easyMode.api.description')}</span>
-              <small>{t('easyMode.provider.apiFit')}</small>
             </button>
           </div>
         </section>
@@ -177,23 +186,6 @@ export function EasyModePage() {
           <div className="simple-mode-embedded-content">
             {view === 'oauth' ? <OAuthLoginPage /> : <ApiAccessPage />}
           </div>
-        </section>
-      ) : null}
-
-      {view === 3 ? (
-        <section className="panel simple-mode-task">
-          <div className="simple-mode-action-card simple-mode-agent-card">
-            <div>
-              <strong>{t('easyMode.step3.cardTitle')}</strong>
-              <p>{t('easyMode.step3.cardDescription')}</p>
-            </div>
-          </div>
-
-          <ol className="simple-mode-checklist">
-            <li><span>1</span><p>{t('easyMode.step3.step1')}</p></li>
-            <li><span>2</span><p>{t('easyMode.step3.step2')}</p></li>
-            <li><span>3</span><p>{t('easyMode.step3.step3')}</p></li>
-          </ol>
         </section>
       ) : null}
 
