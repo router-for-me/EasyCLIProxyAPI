@@ -1023,6 +1023,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         start_core_on_launch: true,
         silent_start: false,
         close_behavior: WindowsCloseBehavior::Ask,
+        default_terminal: DEFAULT_AGENT_TERMINAL.to_string(),
         window_width: None,
         window_height: None,
         auth_dir: path_to_string(&fixed_oauth_dir().unwrap()),

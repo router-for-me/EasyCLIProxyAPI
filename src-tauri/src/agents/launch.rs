@@ -1,5 +1,111 @@
 use super::*;
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTerminalOption {
+    pub(crate) id: String,
+    pub(crate) label: String,
+}
+
+fn terminal_option(id: &str, label: &str) -> AgentTerminalOption {
+    AgentTerminalOption {
+        id: id.to_string(),
+        label: label.to_string(),
+    }
+}
+
+fn program_on_path(program: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path).find_map(|directory| {
+        let candidate = directory.join(program);
+        candidate.is_file().then_some(candidate)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_iterm2_installed() -> bool {
+    Path::new("/Applications/iTerm.app").is_dir()
+        || env::var_os("HOME")
+            .map(PathBuf::from)
+            .is_some_and(|home| home.join("Applications/iTerm.app").is_dir())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_terminal_definitions() -> &'static [(
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static str,
+)] {
+    &[
+        (
+            "x-terminal-emulator",
+            "x-terminal-emulator",
+            &["-e"],
+            "System terminal",
+        ),
+        (
+            "gnome-terminal",
+            "gnome-terminal",
+            &["--"],
+            "GNOME Terminal",
+        ),
+        ("konsole", "konsole", &["-e"], "Konsole"),
+        ("xfce4-terminal", "xfce4-terminal", &["-e"], "Xfce Terminal"),
+        ("mate-terminal", "mate-terminal", &["--"], "MATE Terminal"),
+        ("kitty", "kitty", &["-e"], "Kitty"),
+        ("alacritty", "alacritty", &["-e"], "Alacritty"),
+        ("ghostty", "ghostty", &["-e"], "Ghostty"),
+        ("xterm", "xterm", &["-e"], "XTerm"),
+    ]
+}
+
+pub(crate) fn available_agent_terminals() -> Vec<AgentTerminalOption> {
+    let mut options = vec![terminal_option("auto", "Automatic")];
+    #[cfg(target_os = "macos")]
+    {
+        options.push(terminal_option("terminal", "Terminal"));
+        if macos_iterm2_installed() {
+            options.push(terminal_option("iterm2", "iTerm2"));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if program_on_path("wt.exe").is_some() {
+            options.push(terminal_option("windows-terminal", "Windows Terminal"));
+        }
+        let powershell = windows_powershell_executable();
+        if powershell.is_file() {
+            options.push(terminal_option("powershell", "PowerShell"));
+        }
+        let command_prompt = windows_command_processor();
+        if command_prompt.is_file() {
+            options.push(terminal_option("cmd", "Command Prompt"));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for (id, program, _, label) in linux_terminal_definitions() {
+            if program_on_path(program).is_some() {
+                options.push(terminal_option(id, label));
+            }
+        }
+    }
+    options
+}
+
+pub(crate) fn normalize_agent_terminal(value: &str) -> String {
+    let value = value.trim();
+    if available_agent_terminals()
+        .iter()
+        .any(|option| option.id == value)
+    {
+        value.to_string()
+    } else {
+        DEFAULT_AGENT_TERMINAL.to_string()
+    }
+}
+
 #[tauri::command]
 pub(crate) fn launch_agent(
     app: tauri::AppHandle,
@@ -13,6 +119,7 @@ pub(crate) fn launch_agent(
         .home_dir()
         .map_err(|error| format!("无法获取用户目录: {error}"))?;
     let config = gui_config_state.snapshot()?;
+    let terminal = normalize_agent_terminal(&config.default_terminal);
     let requested_target = target
         .as_deref()
         .map(str::trim)
@@ -30,7 +137,13 @@ pub(crate) fn launch_agent(
         let executable =
             find_pi_executable(&home).ok_or_else(|| "未找到 Pi CLI 可执行文件".to_string())?;
         let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
-        return launch_cli_agent(&executable, PI_AGENT_NAME, &launch_directory, &[]);
+        return launch_cli_agent(
+            &executable,
+            PI_AGENT_NAME,
+            &launch_directory,
+            &[],
+            &terminal,
+        );
     }
 
     let client = AgentClient::parse(&client)?;
@@ -73,6 +186,7 @@ pub(crate) fn launch_agent(
                 client.name(),
                 &launch_directory,
                 environment_to_remove,
+                &terminal,
             )
         }
         (_, "app") => Err(format!("{} 不支持桌面 App 启动方式", client.name())),
@@ -602,6 +716,7 @@ fn launch_cli_agent(
     label: &str,
     working_directory: &Path,
     environment_to_remove: &[&str],
+    terminal: &str,
 ) -> Result<(), String> {
     let removals = environment_to_remove
         .iter()
@@ -614,10 +729,19 @@ fn launch_cli_agent(
         removals,
         shell_single_quote(&path_to_string(executable)),
     );
-    let script = format!(
-        "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
-        command_line.replace('\\', "\\\\").replace('"', "\\\"")
-    );
+    let script = if terminal == "iterm2" {
+        format!(
+            "tell application \"iTerm2\"\nactivate\nset newWindow to (create window with default profile)\ntell current session of newWindow\nwrite text \"{}\"\nend tell\nend tell",
+            command_line.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    } else if matches!(terminal, "auto" | "terminal") {
+        format!(
+            "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
+            command_line.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    } else {
+        return Err(format!("启动 {label} 失败：不支持所选终端"));
+    };
     let output = Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -637,27 +761,21 @@ fn launch_cli_agent(
     label: &str,
     working_directory: &Path,
     environment_to_remove: &[&str],
+    terminal: &str,
 ) -> Result<(), String> {
-    let terminals: &[(&str, &[&str])] = &[
-        ("x-terminal-emulator", &["-e"]),
-        ("gnome-terminal", &["--"]),
-        ("konsole", &["-e"]),
-        ("xfce4-terminal", &["-e"]),
-        ("mate-terminal", &["--"]),
-        ("kitty", &["-e"]),
-        ("alacritty", &["-e"]),
-        ("ghostty", &["-e"]),
-        ("xterm", &["-e"]),
-    ];
-    let path = env::var_os("PATH").unwrap_or_default();
+    let definitions = linux_terminal_definitions();
     let mut last_error = None;
-    for (terminal, arguments) in terminals {
-        if !env::split_paths(&path).any(|directory| directory.join(terminal).is_file()) {
+    for definition in definitions {
+        let (id, program, arguments, _) = *definition;
+        if terminal != "auto" && id != terminal {
             continue;
         }
-        let mut command = Command::new(terminal);
+        if program_on_path(program).is_none() {
+            continue;
+        }
+        let mut command = Command::new(program);
         command
-            .args(*arguments)
+            .args(arguments)
             .arg(executable)
             .current_dir(working_directory)
             .stdin(Stdio::null())
@@ -671,6 +789,9 @@ fn launch_cli_agent(
             Err(error) => last_error = Some(error.to_string()),
         }
     }
+    if terminal != "auto" && last_error.is_none() {
+        return Err(format!("启动 {label} 失败：未找到所选终端"));
+    }
     Err(match last_error {
         Some(error) => format!("启动 {label} 失败: {error}"),
         None => format!("启动 {label} 失败：未找到可用的终端程序"),
@@ -683,14 +804,66 @@ fn launch_cli_agent(
     label: &str,
     working_directory: &Path,
     environment_to_remove: &[&str],
+    terminal: &str,
 ) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-    let mut command = windows_command_for_executable(executable, true);
-    command
-        .current_dir(working_directory)
-        .creation_flags(CREATE_NEW_CONSOLE);
+    let is_batch_script = executable
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        });
+
+    let mut command = match terminal {
+        "auto" => {
+            let mut command = windows_command_for_executable(executable, true);
+            command
+                .current_dir(working_directory)
+                .creation_flags(CREATE_NEW_CONSOLE);
+            command
+        }
+        "windows-terminal" => {
+            let terminal_executable = program_on_path("wt.exe")
+                .ok_or_else(|| format!("启动 {label} 失败：未找到 Windows Terminal"))?;
+            let directory = path_to_string(working_directory);
+            let mut command = Command::new(terminal_executable);
+            command.args(["-d", &directory, "--"]);
+            if is_batch_script {
+                command
+                    .arg(windows_command_processor())
+                    .args(["/D", "/K", "call"])
+                    .arg(windows_batch_executable_argument(executable));
+            } else {
+                command.arg(executable);
+            }
+            command
+        }
+        "powershell" => {
+            let mut command = Command::new(windows_powershell_executable());
+            let script = format!(
+                "Set-Location -LiteralPath {}; & {}",
+                windows_powershell_single_quoted_literal(&path_to_string(working_directory)),
+                windows_powershell_single_quoted_literal(&path_to_string(executable)),
+            );
+            command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &script]);
+            command.creation_flags(CREATE_NEW_CONSOLE);
+            command
+        }
+        "cmd" => {
+            let mut command = Command::new(windows_command_processor());
+            let command_line = format!(
+                "cd /d \"{}\" && call \"{}\"",
+                path_to_string(working_directory).replace('"', "\"\""),
+                path_to_string(executable).replace('"', "\"\"")
+            );
+            command.args(["/D", "/K", &command_line]);
+            command.creation_flags(CREATE_NEW_CONSOLE);
+            command
+        }
+        _ => return Err(format!("启动 {label} 失败：不支持所选终端")),
+    };
     for key in environment_to_remove {
         command.env_remove(key);
     }
@@ -706,6 +879,7 @@ fn launch_cli_agent(
     label: &str,
     _working_directory: &Path,
     _environment_to_remove: &[&str],
+    _terminal: &str,
 ) -> Result<(), String> {
     Err(format!("当前平台不支持启动 {label}"))
 }
@@ -713,6 +887,15 @@ fn launch_cli_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_terminal_defaults_to_automatic() {
+        assert_eq!(
+            normalize_agent_terminal("missing-terminal"),
+            DEFAULT_AGENT_TERMINAL
+        );
+        assert_eq!(normalize_agent_terminal(" auto "), "auto");
+    }
 
     #[test]
     fn relative_launch_directory_is_rejected() {
