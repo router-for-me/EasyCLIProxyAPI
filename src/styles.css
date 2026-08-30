@@ -610,7 +610,7 @@ textarea:focus-visible {
   border-radius: 8px;
   background: var(--theme-fffdf8);
   color: var(--theme-4f4a43);
-  text-align: left;
+  text-align: center;
   transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
 }
 
@@ -10073,7 +10073,7 @@ body.table-col-resizing * {
 
 .simple-mode-progress {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -10421,6 +10421,17 @@ body.table-col-resizing * {
   background: var(--theme-faf9f5);
   container-type: inline-size;
   container-name: workspace;
+}
+
+.simple-mode-provider-hint {
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 30%, var(--theme-e3e1db));
+  border-radius: 8px;
+  background: var(--ui-accent-soft);
+  color: var(--theme-2d2a26);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-body);
+  white-space: pre-line;
 }
 
 .simple-mode-embedded-content > .page {
