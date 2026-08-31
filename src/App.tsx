@@ -41,7 +41,6 @@ const pages = [
     id: 'easy',
     labelKey: 'app.nav.easy',
     icon: Sparkles,
-    // The easy page is rendered separately so it can receive navigation callbacks.
     component: HomePage,
   },
   {
@@ -419,7 +418,7 @@ function AppContent() {
           <main className="content">
             {isAlwaysAvailablePage(activePage.id) || coreRunning ? (
               activePage.id === 'easy' ? (
-                <EasyModePage />
+                <EasyModePage onExit={() => select('home')} />
               ) : (
                 <ActivePage />
               )
