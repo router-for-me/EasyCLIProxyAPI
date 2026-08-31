@@ -986,6 +986,16 @@ export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
     void loadModels(selected);
   };
 
+  const runEmbeddedPrimaryAction = () => {
+    if (isPiClient) {
+      void (activeStatus?.pluginInstalled ? repairPiProvider() : installPiProvider());
+      return;
+    }
+    void (configurationAction === 'close'
+      ? closeConfigurationChanges()
+      : applyConfigurationChanges());
+  };
+
   const reloadStatusesAfterAction = async () => {
     setDetectionError('');
     try {
@@ -1004,6 +1014,24 @@ export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
       writeAgentModelSelections(next);
       return next;
     });
+  };
+
+  const selectEmbeddedModel = (value: string) => {
+    const model = findAgentModel(models, value);
+    if (!model) return;
+    if (isClaudeModelMappingClient) {
+      claudeModelMappingsDirtyRef.current[selected] = true;
+      setClaudeModelMappingsDraftByClient((current) => ({
+        ...current,
+        [selected]: {
+          ...current[selected],
+          opus: model.name,
+          sonnet: model.name,
+          haiku: model.name,
+        },
+      }));
+    }
+    selectModel(model.name);
   };
 
   const selectClaudeModelMapping = (
@@ -1448,9 +1476,18 @@ export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
   return (
     <section className={`page management-page agents-page${embedded ? ' agents-page-embedded' : ''}`}>
       <header className="management-header">
-        <div>
-          <span>Agent Clients</span>
-          <h1>{t('agents.title')}</h1>
+        <div className={embedded ? 'agent-embedded-header-copy' : undefined}>
+          {embedded ? (
+            <>
+              <h1>{t('agents.embedded.title')}</h1>
+              <p>{t('agents.embedded.subtitle')}</p>
+            </>
+          ) : (
+            <>
+              <span>Agent Clients</span>
+              <h1>{t('agents.title')}</h1>
+            </>
+          )}
         </div>
         <div className="agent-header-actions">
           {detectionError ? (
@@ -1500,6 +1537,82 @@ export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
         </aside>
 
         <section className="panel agent-config-panel">
+          {embedded ? (
+            <div className="agent-minimal-config">
+              <div className="agent-minimal-client-summary">
+                <span className="agent-minimal-client-icon"><AgentMark definition={activeDefinition} size={24} /></span>
+                <div>
+                  <strong>{activeDefinition.name}</strong>
+                  <span>{activeStatus?.installed ? t('agents.clientDetected') : t('agents.clientNotDetected')}</span>
+                </div>
+                <span className="agent-minimal-version" title={activeStatus?.version ?? undefined}>
+                  {activeStatus?.version ?? activeStatus?.appVersion ?? activeStatus?.cliVersion ?? t('agents.notFetched')}
+                </span>
+              </div>
+
+              {activeStatus?.error || activeStatus?.warnings.length ? (
+                <div className="agent-minimal-message" aria-live="polite">
+                  {activeStatus.error ? (
+                    <span className="agent-inline-message error" role="alert">{activeStatus.error}</span>
+                  ) : (
+                    <span className="agent-inline-message warning">{activeStatus.warnings.join('；')}</span>
+                  )}
+                </div>
+              ) : null}
+
+              <div className="agent-minimal-field">
+                <label htmlFor="embedded-agent-model">{t('agents.useModel')}</label>
+                <AgentModelPicker
+                  models={isClaudeModelMappingClient ? claudeMappingModels : models}
+                  value={isClaudeModelMappingClient ? claudeModelMappingsDraft.sonnet : selectedModel}
+                  loading={modelLoading}
+                  error={modelError}
+                  disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform}
+                  onChange={selectEmbeddedModel}
+                  onRefresh={refreshModels}
+                />
+              </div>
+
+              <div className="agent-minimal-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={runEmbeddedPrimaryAction}
+                  disabled={busy || (isPiClient ? !canEnable : configurationAction !== 'close' && !canEnable)}
+                >
+                  {busyAction ? <LoaderCircle size={16} className="spin" /> : null}
+                  {isPiClient
+                    ? activeStatus?.pluginInstalled ? t('agents.pi.repair') : t('agents.pi.install')
+                    : configurationAction === 'update'
+                      ? t('agents.modify.update')
+                      : configurationAction === 'close'
+                        ? t('agents.modify.close')
+                        : t('agents.modify.apply')}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void launchAgent(defaultLaunchTarget)}
+                  disabled={busy || !canLaunchTarget(defaultLaunchTarget)}
+                  title={defaultLaunchTarget?.detail ?? t('agents.launch.unavailable')}
+                >
+                  {busyAction === 'launch' || busyAction === 'launch-cli'
+                    ? <LoaderCircle size={16} className="spin" />
+                    : <Play size={16} />}
+                  {busyAction === 'launch' || busyAction === 'launch-cli'
+                    ? t('agents.launch.starting')
+                    : t('agents.launch.start', { target: defaultLaunchTarget?.label ?? activeDefinition.name })}
+                </button>
+              </div>
+
+              {configurationError || modelSelectionError || launchError ? (
+                <div className="agent-minimal-message" aria-live="polite">
+                  {configurationError || modelSelectionError || launchError}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+          <>
           <div className="agent-subpage-tabs" role="tablist" aria-label={t('agents.tabs.label')}>
             {availableSubpages.map((subpage) => (
               <button
@@ -1969,6 +2082,8 @@ export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
               <CodexSessionsPanel />
             </div>
           ) : null}
+          </>
+          )}
         </section>
       </div>
 

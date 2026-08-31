@@ -644,6 +644,8 @@ export const en: Record<MessageKey, string> = {
   'agents.status.applied': 'Applied',
   'agents.status.unconfigured': 'Not Configured',
   'agents.title': 'Agent Configuration',
+  'agents.embedded.title': 'Select a client and model, then start',
+  'agents.embedded.subtitle': 'Install it first if it is not available',
   'agents.redetect': 'Detect Again',
   'agents.tabs.label': 'Agent configuration sections',
   'agents.tabs.core': 'Core Configuration',
