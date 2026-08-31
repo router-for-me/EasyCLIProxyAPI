@@ -629,7 +629,11 @@ function AgentModelPicker({
   );
 }
 
-export function AgentsPage() {
+type AgentsPageProps = {
+  embedded?: boolean;
+};
+
+export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
   const [activeSubpage, setActiveSubpage] = useState<AgentSubpageId>(DEFAULT_AGENT_SUBPAGE);
@@ -1442,7 +1446,7 @@ export function AgentsPage() {
   ) : oauthLoginRequiredAction ? t(`agents.oauthLoginRequired.${oauthLoginRequiredAction}Description`) : '';
 
   return (
-    <section className="page management-page agents-page">
+    <section className={`page management-page agents-page${embedded ? ' agents-page-embedded' : ''}`}>
       <header className="management-header">
         <div>
           <span>Agent Clients</span>
