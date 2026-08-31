@@ -1,5 +1,6 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeftRight,
   Check,
   Copy,
   FileDown,
@@ -33,6 +34,7 @@ import {
   loadQuota,
   providerForFile as quotaProviderForFile,
   quotaKey,
+  type QuotaProvider,
   type QuotaState,
 } from '../services/quotaService';
 import {
@@ -50,6 +52,13 @@ import {
   parseAuthFilePriority,
 } from '../services/authFiles';
 import {
+  accountQuotaScore,
+  currentPreferredAccountId,
+  nextAccountSwitchPriority,
+  preferredQuotaAccountId,
+  type AccountRoutingCandidate,
+} from '../services/accountRouting';
+import {
   exclusionsForOpenOAuthModels,
   oauthExcludedRulesFromPayload,
   oauthModelsFromPayload,
@@ -64,6 +73,21 @@ type PriorityEditor = {
   fileName: string;
   originalPriority: number;
   value: string;
+  error: string;
+};
+
+type AccountSwitchGroup = {
+  provider: QuotaProvider;
+  label: string;
+  files: AuthFile[];
+};
+
+type AccountSwitchDialog = {
+  provider: QuotaProvider;
+  selectedName: string;
+  recommendedName: string;
+  refreshing: boolean;
+  saving: boolean;
   error: string;
 };
 
@@ -93,6 +117,15 @@ const providerKey = (file: AuthFile) => {
 const fileName = authFileName;
 
 const isRuntimeOnly = isRuntimeOnlyAuthFile;
+
+const accountRoutingCandidates = (
+  files: AuthFile[],
+  quotas: Record<string, QuotaState>,
+): AccountRoutingCandidate[] => files.map((file) => ({
+  id: fileName(file),
+  priority: parseAuthFilePriority(file.priority) ?? 0,
+  quota: quotas[quotaKey(file)] ?? idleQuota(),
+}));
 
 const statusText = (file: AuthFile) => {
   if (readBoolean(file, 'disabled')) return translate(getCurrentLocale(), 'authFiles.status.disabled');
@@ -155,6 +188,7 @@ export function AuthFileManagementPage() {
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState('');
   const [priorityEditor, setPriorityEditor] = useState<PriorityEditor | null>(null);
+  const [accountSwitch, setAccountSwitch] = useState<AccountSwitchDialog | null>(null);
   const [oauthModelProvider, setOauthModelProvider] = useState('');
   const [oauthModelProviderLabel, setOauthModelProviderLabel] = useState('');
   const [oauthModels, setOauthModels] = useState<OAuthModelDefinition[]>([]);
@@ -167,6 +201,7 @@ export function AuthFileManagementPage() {
   const quotas = useQuotaCache();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const oauthModelRequestRef = useRef(0);
+  const accountSwitchRequestRef = useRef(0);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -306,6 +341,153 @@ export function AuthFileManagementPage() {
     () => Array.from(new Set(files.map(providerName))).sort((left, right) => left.localeCompare(right)),
     [files],
   );
+
+  const accountSwitchGroups = useMemo(() => {
+    const grouped = new Map<QuotaProvider, AuthFile[]>();
+    files.forEach((file) => {
+      if (readBoolean(file, 'disabled') || readBoolean(file, 'unavailable')) return;
+      const provider = quotaProviderForFile(file);
+      if (!provider) return;
+      const entries = grouped.get(provider) ?? [];
+      entries.push(file);
+      grouped.set(provider, entries);
+    });
+    return Array.from(grouped, ([provider, entries]): AccountSwitchGroup => ({
+      provider,
+      label: providerName(entries[0]),
+      files: entries.sort((left, right) => fileName(left).localeCompare(fileName(right))),
+    }))
+      .filter((group) => group.files.length > 1)
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [files]);
+
+  const refreshAccountSwitchQuotas = async (
+    provider: QuotaProvider,
+    preservedSelection = '',
+  ) => {
+    const group = accountSwitchGroups.find((entry) => entry.provider === provider);
+    if (!group) return;
+    const requestId = accountSwitchRequestRef.current + 1;
+    accountSwitchRequestRef.current = requestId;
+    const cacheGeneration = captureQuotaCacheGeneration();
+    setAccountSwitch((current) => current && current.provider === provider
+      ? { ...current, refreshing: true, error: '' }
+      : current);
+    updateQuotaCache((current) => {
+      const next = { ...current };
+      group.files.forEach((file) => {
+        next[quotaKey(file)] = { status: 'loading', rows: [] };
+      });
+      return next;
+    });
+
+    const results = await Promise.all(group.files.map(async (file) => ({
+      file,
+      quota: await loadQuota(file),
+    })));
+    const nextQuotas = Object.fromEntries(
+      results.map(({ file, quota }) => [quotaKey(file), quota]),
+    );
+    const committed = commitQuotaCacheIfCurrent(cacheGeneration, () => {
+      updateQuotaCache((current) => ({ ...current, ...nextQuotas }));
+    });
+    if (!committed || accountSwitchRequestRef.current !== requestId) return;
+
+    const candidateQuotas = { ...quotas, ...nextQuotas };
+    const candidates = accountRoutingCandidates(group.files, candidateQuotas);
+    const recommendedName = preferredQuotaAccountId(candidates) ?? '';
+    const currentPriorityName = currentPreferredAccountId(candidates) ?? '';
+    const selectedName = group.files.some((file) => fileName(file) === preservedSelection)
+      ? preservedSelection
+      : recommendedName || currentPriorityName;
+    setAccountSwitch((current) => current && current.provider === provider
+      ? {
+        ...current,
+        selectedName,
+        recommendedName,
+        refreshing: false,
+        error: recommendedName ? '' : t('authFiles.accountSwitch.noQuota'),
+      }
+      : current);
+  };
+
+  const openAccountSwitch = () => {
+    const group = accountSwitchGroups.find((entry) => entry.label === providerFilter)
+      ?? accountSwitchGroups[0];
+    if (!group) return;
+    setAccountSwitch({
+      provider: group.provider,
+      selectedName: '',
+      recommendedName: '',
+      refreshing: true,
+      saving: false,
+      error: '',
+    });
+    void refreshAccountSwitchQuotas(group.provider);
+  };
+
+  const closeAccountSwitch = () => {
+    if (accountSwitch?.saving) return;
+    accountSwitchRequestRef.current += 1;
+    setAccountSwitch(null);
+  };
+
+  const applyAccountSwitch = async () => {
+    if (!accountSwitch || accountSwitch.refreshing || accountSwitch.saving) return;
+    const group = accountSwitchGroups.find((entry) => entry.provider === accountSwitch.provider);
+    const target = group?.files.find((file) => fileName(file) === accountSwitch.selectedName);
+    if (!group || !target) {
+      setAccountSwitch((current) => current
+        ? { ...current, error: t('authFiles.accountSwitch.selectRequired') }
+        : current);
+      return;
+    }
+    const candidates = accountRoutingCandidates(group.files, quotas);
+    const nextPriority = nextAccountSwitchPriority(candidates);
+    if (nextPriority === null) {
+      setAccountSwitch((current) => current
+        ? { ...current, error: t('authFiles.accountSwitch.priorityOverflow') }
+        : current);
+      return;
+    }
+
+    setError('');
+    setNotice('');
+    setAccountSwitch((current) => current ? { ...current, saving: true, error: '' } : current);
+    try {
+      await managementApi.patch('/auth-files/fields', {
+        name: fileName(target),
+        priority: nextPriority,
+      });
+      const resetFailures: string[] = [];
+      for (const file of group.files) {
+        if (fileName(file) === fileName(target) || (parseAuthFilePriority(file.priority) ?? 0) === 0) {
+          continue;
+        }
+        try {
+          await managementApi.patch('/auth-files/fields', { name: fileName(file), priority: 0 });
+        } catch {
+          resetFailures.push(fileName(file));
+        }
+      }
+      await loadFiles();
+      setAccountSwitch(null);
+      setNotice(t('authFiles.accountSwitch.switched', {
+        provider: group.label,
+        name: fileName(target),
+      }));
+      if (resetFailures.length > 0) {
+        setError(t('authFiles.accountSwitch.partial', {
+          count: resetFailures.length,
+          names: resetFailures.join(', '),
+        }));
+      }
+    } catch (requestError) {
+      setAccountSwitch((current) => current
+        ? { ...current, saving: false, error: String(requestError) }
+        : current);
+    }
+  };
 
   const visibleFiles = useMemo(() => {
     const query = filter.trim().toLowerCase();
@@ -461,6 +643,16 @@ export function AuthFileManagementPage() {
 
   const disabledCount = files.filter((file) => readBoolean(file, 'disabled')).length;
   const runtimeCount = files.filter(isRuntimeOnly).length;
+  const activeAccountSwitchGroup = accountSwitch
+    ? accountSwitchGroups.find((group) => group.provider === accountSwitch.provider) ?? null
+    : null;
+  const activeAccountSwitchCandidates = activeAccountSwitchGroup
+    ? accountRoutingCandidates(activeAccountSwitchGroup.files, quotas)
+    : [];
+  const activeAccountSwitchPriority = activeAccountSwitchCandidates.reduce(
+    (current, candidate) => Math.max(current, candidate.priority),
+    0,
+  );
 
   return (
     <section className="page management-page auth-files-page">
@@ -476,6 +668,15 @@ export function AuthFileManagementPage() {
           </button>
           <button type="button" className="secondary-button compact-button" onClick={() => void openAuthFilesDirectory()} disabled={busy}>
             <FolderOpen size={16} />{t('authFiles.openDirectory')}
+          </button>
+          <button
+            type="button"
+            className="secondary-button compact-button"
+            onClick={openAccountSwitch}
+            disabled={loading || busy || accountSwitchGroups.length === 0}
+            title={accountSwitchGroups.length === 0 ? t('authFiles.accountSwitch.unavailable') : t('authFiles.accountSwitch.open')}
+          >
+            <ArrowLeftRight size={16} />{t('authFiles.accountSwitch.button')}
           </button>
           <button type="button" className="primary-button compact-button" onClick={() => fileInputRef.current?.click()} disabled={busy}>
             <Import size={16} />{t('authFiles.import')}
@@ -542,6 +743,117 @@ export function AuthFileManagementPage() {
         )}
       </section>
       {runtimeCount > 0 ? <p className="page-footnote">{t('authFiles.runtimeFootnote', { count: runtimeCount })}</p> : null}
+
+      {accountSwitch && activeAccountSwitchGroup ? (
+        <div className="config-dialog-backdrop" onMouseDown={(event) => event.currentTarget === event.target && closeAccountSwitch()}>
+          <section
+            className="config-dialog account-switch-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-switch-title"
+          >
+            <div className="config-dialog-heading">
+              <div><ArrowLeftRight size={19} /><h2 id="account-switch-title">{t('authFiles.accountSwitch.title')}</h2></div>
+              <button type="button" className="icon-button quiet" onClick={closeAccountSwitch} disabled={accountSwitch.saving} title={t('common.close')}><X size={18} /></button>
+            </div>
+
+            <div className="account-switch-toolbar">
+              <label htmlFor="account-switch-provider">
+                <span>{t('authFiles.accountSwitch.provider')}</span>
+                <select
+                  id="account-switch-provider"
+                  value={accountSwitch.provider}
+                  disabled={accountSwitch.refreshing || accountSwitch.saving}
+                  onChange={(event) => {
+                    const provider = event.currentTarget.value as QuotaProvider;
+                    setAccountSwitch((current) => current
+                      ? {
+                        ...current,
+                        provider,
+                        selectedName: '',
+                        recommendedName: '',
+                        refreshing: true,
+                        error: '',
+                      }
+                      : current);
+                    void refreshAccountSwitchQuotas(provider);
+                  }}
+                >
+                  {accountSwitchGroups.map((group) => (
+                    <option value={group.provider} key={group.provider}>{group.label}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="secondary-button compact-button"
+                onClick={() => void refreshAccountSwitchQuotas(accountSwitch.provider, accountSwitch.selectedName)}
+                disabled={accountSwitch.refreshing || accountSwitch.saving}
+              >
+                <RefreshCw size={16} className={accountSwitch.refreshing ? 'spin' : ''} />
+                {t('authFiles.accountSwitch.refresh')}
+              </button>
+            </div>
+
+            <p className="account-switch-hint">{t('authFiles.accountSwitch.hint')}</p>
+
+            <div className="account-switch-list" role="radiogroup" aria-label={t('authFiles.accountSwitch.accounts')}>
+              {activeAccountSwitchGroup.files.map((file) => {
+                const name = fileName(file);
+                const quota = quotas[quotaKey(file)] ?? idleQuota();
+                const score = accountQuotaScore(quota);
+                const priority = parseAuthFilePriority(file.priority) ?? 0;
+                const selected = accountSwitch.selectedName === name;
+                return (
+                  <label className={`account-switch-option ${selected ? 'selected' : ''}`} key={name}>
+                    <input
+                      type="radio"
+                      name="account-switch-target"
+                      value={name}
+                      checked={selected}
+                      disabled={accountSwitch.refreshing || accountSwitch.saving}
+                      onChange={() => setAccountSwitch((current) => current
+                        ? { ...current, selectedName: name, error: '' }
+                        : current)}
+                    />
+                    <img src={providerIcons[providerKey(file)] ?? geminiIcon} alt="" className="provider-logo" />
+                    <span className="account-switch-account">
+                      <strong title={name}>{name}</strong>
+                      <small>{readString(file, 'email', 'account', 'label') || activeAccountSwitchGroup.label}</small>
+                    </span>
+                    <span className="account-switch-badges">
+                      {accountSwitch.recommendedName === name ? <span className="state-pill success">{t('authFiles.accountSwitch.recommended')}</span> : null}
+                      {priority === activeAccountSwitchPriority && activeAccountSwitchPriority > 0 ? <span className="state-pill">{t('authFiles.accountSwitch.current')}</span> : null}
+                      <span className="account-switch-score">
+                        {score
+                          ? t('authFiles.accountSwitch.score', { percent: Math.round(score.bottleneckRemaining) })
+                          : t(`authFiles.accountSwitch.quota.${quota.status}`)}
+                      </span>
+                    </span>
+                    <AuthFileQuotaSummary quota={quota} />
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className={`config-form-message ${accountSwitch.error ? 'error' : ''}`} role={accountSwitch.error ? 'alert' : undefined}>
+              {accountSwitch.error || ' '}
+            </div>
+            <div className="config-dialog-actions two-actions">
+              <button type="button" className="secondary-button" onClick={closeAccountSwitch} disabled={accountSwitch.saving}>{t('common.cancel')}</button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void applyAccountSwitch()}
+                disabled={accountSwitch.refreshing || accountSwitch.saving || !accountSwitch.selectedName}
+              >
+                {accountSwitch.saving ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}
+                {accountSwitch.saving ? t('common.saving') : t('authFiles.accountSwitch.confirm')}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {priorityEditor ? (
         <div className="config-dialog-backdrop" onMouseDown={(event) => event.currentTarget === event.target && closePriorityEditor()}>
