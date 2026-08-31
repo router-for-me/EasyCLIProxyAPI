@@ -390,8 +390,45 @@ export function EasyModePage({
     ];
   }, [apiSelectedModels, apiTestedModels]);
 
+  const setupStepStatus = t("easyMode.steps.current", {
+    current: activeStep,
+    total: 2,
+  });
+
   return (
     <section className="page simple-mode-page">
+      <nav className="simple-mode-step-status" aria-label={t("easyMode.steps.label")}>
+        <div className="simple-mode-step-status-heading">
+          <span>{t("easyMode.steps.label")}</span>
+          <strong>{setupStepStatus}</strong>
+        </div>
+        <div className="simple-mode-step-status-track">
+          <div
+            className={`simple-mode-step-status-item${activeStep === 1 ? " active" : " complete"}`}
+            aria-current={activeStep === 1 ? "step" : undefined}
+          >
+            <span className="simple-mode-step-status-number">
+              {activeStep > 1 ? <Check size={14} aria-hidden="true" /> : "1"}
+            </span>
+            <span className="simple-mode-step-status-copy">
+              <strong>{t("easyMode.overview.providerTitle")}</strong>
+              <small>{t("easyMode.steps.step1Description")}</small>
+            </span>
+          </div>
+          <span className={`simple-mode-step-status-connector${activeStep > 1 ? " complete" : ""}`} aria-hidden="true" />
+          <div
+            className={`simple-mode-step-status-item${activeStep === 2 ? " active" : ""}`}
+            aria-current={activeStep === 2 ? "step" : undefined}
+          >
+            <span className="simple-mode-step-status-number">2</span>
+            <span className="simple-mode-step-status-copy">
+              <strong>{t("easyMode.overview.agentTitle")}</strong>
+              <small>{t("easyMode.steps.step2Description")}</small>
+            </span>
+          </div>
+        </div>
+      </nav>
+
       {/* 第一步：接入模型 */}
       {activeStep === 1 ? (
         <section className="panel simple-mode-task">
