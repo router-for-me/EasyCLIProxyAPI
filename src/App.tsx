@@ -271,8 +271,9 @@ function AppContent() {
 
   return (
     <>
-      <div className="app-shell">
-        <aside className="sidebar">
+      <div className={`app-shell${active === "easy" ? " app-shell-easy-mode" : ""}`}>
+        {active !== "easy" ? (
+          <aside className="sidebar">
           <div className="sidebar-brand" title="CLI Proxy API GUI">
             <img src={appLogo} alt="" className="brand-mark brand-logo" />
             <div>
@@ -323,8 +324,7 @@ function AppContent() {
           <div className="sidebar-bottom">
             <button
               type="button"
-              className={`sidebar-easy-entry${active === 'easy' ? ' active' : ''}`}
-              aria-current={active === 'easy' ? 'page' : undefined}
+              className="sidebar-easy-entry"
               onClick={() => select('easy')}
             >
               <span>{t('app.nav.easy')}</span>
@@ -412,13 +412,20 @@ function AppContent() {
               <ExternalLink size={13} aria-hidden="true" />
             </button>
           </div>
-        </aside>
+          </aside>
+        ) : null}
 
         <div className="workspace">
           <main className="content">
             {isAlwaysAvailablePage(activePage.id) || coreRunning ? (
               activePage.id === 'easy' ? (
-                <EasyModePage onExit={() => select('home')} />
+                <EasyModePage
+                  onExit={() => select('home')}
+                  theme={theme}
+                  setTheme={setTheme}
+                  locale={locale}
+                  setLocale={setLocale}
+                />
               ) : (
                 <ActivePage />
               )
