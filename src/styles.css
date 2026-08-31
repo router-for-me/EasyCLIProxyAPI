@@ -10870,37 +10870,58 @@ body.table-col-resizing * {
   padding-top: 2px;
 }
 
-.simple-mode-api-model-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 7px;
+.simple-mode-api-model-fetch {
+  display: flex;
+  justify-content: flex-start;
 }
 
-.simple-mode-api-model-toolbar .text-input {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--theme-d5d2cb);
-  border-radius: 8px;
-  background: var(--theme-faf9f5);
-  color: var(--theme-2d2a26);
-  font-size: var(--font-size-body);
-}
-
-.simple-mode-api-model-toolbar .text-input:focus {
-  outline: none;
-  border-color: var(--ui-accent);
-  background: var(--theme-fffdf8);
-  box-shadow: 0 0 0 3px var(--ui-accent-shadow);
-}
-
-.simple-mode-api-model-toolbar .secondary-button {
-  min-height: 40px;
-  gap: 7px;
-  padding-inline: 12px;
+.simple-mode-api-fetch-button {
+  min-height: 36px;
+  padding-inline: 14px;
   white-space: nowrap;
+}
+
+.simple-mode-api-model-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.simple-mode-api-model-heading strong {
+  color: var(--theme-2d2a26);
+  font-size: var(--font-size-label);
+  font-weight: 700;
+}
+
+.simple-mode-api-model-heading .secondary-button {
+  min-height: 36px;
+  flex: none;
+  padding-inline: 11px;
+  white-space: nowrap;
+}
+
+.simple-mode-api-model-selection {
+  display: grid;
+  gap: 8px;
+}
+
+.simple-mode-api-model-selection-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.simple-mode-api-model-selection-heading strong {
+  color: var(--theme-2d2a26);
+  font-size: var(--font-size-label);
+}
+
+.simple-mode-api-model-selection-heading span {
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-caption);
 }
 
 .simple-mode-api-model-options {
@@ -11659,11 +11680,11 @@ body.table-col-resizing * {
 }
 
 @media (max-width: 680px) {
-  .simple-mode-api-model-toolbar {
-    grid-template-columns: 1fr;
+  .simple-mode-api-model-heading {
+    align-items: flex-start;
   }
 
-  .simple-mode-api-model-toolbar .secondary-button {
+  .simple-mode-api-model-heading .secondary-button {
     width: 100%;
   }
 

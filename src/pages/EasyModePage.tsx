@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -13,8 +12,6 @@ import {
   Check,
   CheckCircle2,
   LoaderCircle,
-  Plus,
-  RefreshCw,
 } from "lucide-react";
 import { useI18n } from "../i18n";
 import {
@@ -122,7 +119,6 @@ export function EasyModePage({
   const [apiTesting, setApiTesting] = useState(false);
   const [apiTestedModels, setApiTestedModels] = useState<ModelOption[]>([]);
   const [apiSelectedModels, setApiSelectedModels] = useState<ModelOption[]>([]);
-  const [apiCustomModelId, setApiCustomModelId] = useState("");
   const [apiTestError, setApiTestError] = useState("");
   const [apiSaving, setApiSaving] = useState(false);
   const [apiSaveNotice, setApiSaveNotice] = useState<string | null>(null);
@@ -195,6 +191,14 @@ export function EasyModePage({
     return () => window.clearTimeout(timer);
   }, [oauthNotice]);
 
+  useEffect(() => {
+    if (!apiSaveNotice) return undefined;
+    const timer = window.setTimeout(() => {
+      setApiSaveNotice(null);
+    }, 4500);
+    return () => window.clearTimeout(timer);
+  }, [apiSaveNotice]);
+
   const handleStartOAuth = async (provider: OAuthProviderId) => {
     if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
     setOauthLoggingIn(provider);
@@ -260,7 +264,6 @@ export function EasyModePage({
     if (opt) setApiBaseUrl(opt.defaultBaseUrl);
     setApiTestedModels([]);
     setApiSelectedModels([]);
-    setApiCustomModelId("");
     setApiTestError("");
     setApiSaveNotice(null);
   };
@@ -288,11 +291,7 @@ export function EasyModePage({
       );
       if (models.length > 0) {
         setApiTestedModels(models);
-        setApiSelectedModels((current) => {
-          const fetchedKeys = new Set(models.map((model) => model.name.trim().toLowerCase()));
-          const customModels = current.filter((model) => !fetchedKeys.has(model.name.trim().toLowerCase()));
-          return [...models, ...customModels];
-        });
+        setApiSelectedModels(models);
       } else {
         setApiTestError("未获取到任何模型，请检查 API URL 和 API 密钥");
       }
@@ -312,19 +311,6 @@ export function EasyModePage({
         ? current.filter((item) => item.name.trim().toLowerCase() !== key)
         : [...current, model];
     });
-  };
-
-  const handleAddCustomModel = () => {
-    const name = apiCustomModelId.trim();
-    if (!name) return;
-    const key = name.toLowerCase();
-    setApiSelectedModels((current) => {
-      if (current.some((model) => model.name.trim().toLowerCase() === key)) return current;
-      const fetchedModel = apiTestedModels.find((model) => model.name.trim().toLowerCase() === key);
-      return [...current, fetchedModel ?? { name }];
-    });
-    setApiCustomModelId("");
-    setApiTestError("");
   };
 
   const handleSaveApi = async () => {
@@ -382,14 +368,6 @@ export function EasyModePage({
   const totalLoggedInOAuth = oauthProviders.filter((p) => isOAuthLoggedIn(p.id)).length;
   const totalApiProviders = Object.values(apiCounts).reduce((a, b) => a + b, 0);
   const hasConnectedSource = totalLoggedInOAuth > 0 || totalApiProviders > 0;
-  const displayedApiModels = useMemo(() => {
-    const fetchedKeys = new Set(apiTestedModels.map((model) => model.name.trim().toLowerCase()));
-    return [
-      ...apiTestedModels,
-      ...apiSelectedModels.filter((model) => !fetchedKeys.has(model.name.trim().toLowerCase())),
-    ];
-  }, [apiSelectedModels, apiTestedModels]);
-
   const setupStepStatus = t("easyMode.steps.current", {
     current: activeStep,
     total: 2,
@@ -554,10 +532,7 @@ export function EasyModePage({
           {authMethod === "api" ? (
             <div className="simple-mode-embedded-box">
               {apiSaveNotice ? (
-                <div
-                  className="config-toast success"
-                  style={{ position: "static", transform: "none", margin: 0 }}
-                >
+                <div className="config-toast success">
                   <CheckCircle2 size={16} />
                   <span>{apiSaveNotice}</span>
                 </div>
@@ -629,77 +604,62 @@ export function EasyModePage({
                 </div>
 
                 <div className="simple-mode-api-model-card">
-                  <div className="simple-mode-api-model-toolbar">
-                    <input
-                      type="text"
-                      className="text-input"
-                      value={apiCustomModelId}
-                      onChange={(e) => setApiCustomModelId(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          handleAddCustomModel();
-                        }
-                      }}
-                      placeholder={t("easyMode.api.customModelPlaceholder")}
-                      aria-label={t("easyMode.api.customModelId")}
-                    />
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={!apiCustomModelId.trim()}
-                      onClick={handleAddCustomModel}
-                    >
-                      <Plus size={14} />
-                      {t("easyMode.api.addModelId")}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={apiTesting || !apiBaseUrl.trim()}
-                      onClick={() => void handleTestApi()}
-                    >
-                      {apiTesting ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}
-                      {apiTesting ? t("easyMode.api.fetchingModels") : t("easyMode.api.fetchModels")}
-                    </button>
-                  </div>
-
-                  {displayedApiModels.length > 0 ? (
-                    <div className="simple-mode-api-model-options">
-                      {displayedApiModels.map((model) => {
-                        const key = model.name.trim().toLowerCase();
-                        const selected = apiSelectedModels.some(
-                          (item) => item.name.trim().toLowerCase() === key,
-                        );
-                        return (
-                          <label
-                            className={`simple-mode-api-model-option${selected ? " selected" : ""}`}
-                            key={model.name}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              onChange={() => handleToggleApiModel(model)}
-                            />
-                            <span title={model.name}>{model.name}</span>
-                          </label>
-                        );
-                      })}
+                  {apiTestedModels.length === 0 ? (
+                    <div className="simple-mode-api-model-fetch">
+                      <button
+                        type="button"
+                        className="secondary-button simple-mode-api-fetch-button"
+                        disabled={apiTesting || !apiBaseUrl.trim()}
+                        onClick={() => void handleTestApi()}
+                      >
+                        {apiTesting ? t("easyMode.api.fetchingModels") : t("easyMode.api.fetchModels")}
+                      </button>
                     </div>
-                  ) : null}
+                  ) : (
+                    <>
+                      <div className="simple-mode-api-model-heading">
+                        <strong>{t("easyMode.api.modelListTitle")}</strong>
+                      </div>
 
-                </div>
+                      <div className="simple-mode-api-model-selection">
+                        <div className="simple-mode-api-model-selection-heading">
+                          <span>{t("easyMode.api.modelListHint")}</span>
+                        </div>
+                        <div className="simple-mode-api-model-options">
+                          {apiTestedModels.map((model) => {
+                            const key = model.name.trim().toLowerCase();
+                            const selected = apiSelectedModels.some(
+                              (item) => item.name.trim().toLowerCase() === key,
+                            );
+                            return (
+                              <label
+                                className={`simple-mode-api-model-option${selected ? " selected" : ""}`}
+                                key={model.name}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={() => handleToggleApiModel(model)}
+                                />
+                                <span title={model.name}>{model.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
 
-                <div className="simple-mode-api-actions">
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={apiSaving || !apiBaseUrl.trim() || apiSelectedModels.length === 0}
-                    onClick={() => void handleSaveApi()}
-                  >
-                    {apiSaving ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
-                    保存并接入
-                  </button>
+                      <div className="simple-mode-api-actions">
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={apiSaving || !apiBaseUrl.trim() || apiSelectedModels.length === 0}
+                          onClick={() => void handleSaveApi()}
+                        >
+                          保存并接入
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
