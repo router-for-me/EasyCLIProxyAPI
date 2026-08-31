@@ -631,9 +631,10 @@ function AgentModelPicker({
 
 type AgentsPageProps = {
   embedded?: boolean;
+  onConfigurationApplied?: () => void;
 };
 
-export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
+export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsPageProps = {}) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
   const [activeSubpage, setActiveSubpage] = useState<AgentSubpageId>(DEFAULT_AGENT_SUBPAGE);
@@ -1206,6 +1207,7 @@ export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
       }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
+      onConfigurationApplied?.();
     } catch (requestError) {
       if (!handleOAuthLoginError(requestError, 'apply')) {
         setConfigurationError(String(requestError));
@@ -1223,6 +1225,7 @@ export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
     try {
       await invoke<AgentConfigActionResult>('install_pi_provider', { model });
       await reloadStatusesAfterAction();
+      onConfigurationApplied?.();
     } catch (requestError) {
       setConfigurationError(String(requestError));
     } finally {
@@ -1255,6 +1258,7 @@ export function AgentsPage({ embedded = false }: AgentsPageProps = {}) {
     try {
       await invoke<AgentConfigActionResult>('repair_pi_provider', { model });
       await reloadStatusesAfterAction();
+      onConfigurationApplied?.();
     } catch (requestError) {
       setConfigurationError(String(requestError));
     } finally {
