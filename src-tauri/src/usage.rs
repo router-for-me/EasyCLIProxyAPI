@@ -1773,8 +1773,15 @@ fn process_usage_inbox(
     let mut records = Vec::with_capacity(rows.len());
     for row in rows {
         let parsed = serde_json::from_str::<Value>(&row.raw_message)
-            .map_err(|error| format!("解析 inbox JSON 失败: {error}"))
-            .and_then(|value| normalize_usage_record(value, config));
+            .map_err(|error| format!("解析 inbox JSON 失败: {error}"));
+        let parsed = match parsed {
+            Ok(value) if is_usage_control_message(&row.source, &value) => {
+                mark_usage_inbox_control_processed(connection, row.id)?;
+                continue;
+            }
+            Ok(value) => normalize_usage_record(value, config),
+            Err(error) => Err(error),
+        };
         match parsed {
             Ok(mut record) => {
                 record.collector_source = row.source.clone();
@@ -1820,6 +1827,36 @@ fn process_usage_inbox(
             Err(error)
         }
     }
+}
+
+fn is_usage_control_message(source: &str, value: &Value) -> bool {
+    if source != "redis_subscribe:usage" {
+        return false;
+    }
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.len() == 1
+        && ["support_refresh", "refresh"]
+            .iter()
+            .any(|key| object.get(*key).and_then(Value::as_bool) == Some(true))
+}
+
+fn mark_usage_inbox_control_processed(connection: &Connection, id: i64) -> Result<(), String> {
+    let now = Local::now().to_rfc3339();
+    connection
+        .execute(
+            r#"
+            UPDATE usage_inbox
+            SET status = 'processed', attempt_count = attempt_count + 1,
+                last_error = '', usage_event_key = '',
+                processed_at = ?1, updated_at = ?1
+            WHERE id = ?2
+            "#,
+            params![now, id],
+        )
+        .map(|_| ())
+        .map_err(|error| format!("标记 SQLite usage 控制消息已处理失败: {error}"))
 }
 
 fn list_processable_usage_inbox(
@@ -4308,6 +4345,49 @@ mod tests {
         assert_eq!(event_count, 1);
         assert_eq!(processed_count, 1);
         assert_eq!(failed_count, 1);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn redis_usage_control_messages_are_filtered_without_dropping_events() {
+        let root = test_root("redis-usage-control-messages");
+        initialize_usage_storage_at(&root).unwrap();
+        let mut connection = open_usage_database_at(&root).unwrap();
+        enqueue_usage_queue_items(
+            &mut connection,
+            "redis_subscribe:usage",
+            vec![
+                serde_json::json!({ "support_refresh": true }),
+                serde_json::json!({ "refresh": true }),
+                serde_json::json!({
+                    "refresh": true,
+                    "request_id": "usage-with-refresh-field",
+                    "model": "gpt-test",
+                    "tokens": { "input_tokens": 10, "output_tokens": 20 }
+                }),
+            ],
+        )
+        .unwrap();
+
+        let inserted = process_usage_inbox(&mut connection, &GuiConfigFile::default()).unwrap();
+        let event_count = connection
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let processed_controls = connection
+            .query_row(
+                r#"SELECT COUNT(*) FROM usage_inbox
+                   WHERE status = 'processed' AND usage_event_key = ''"#,
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+
+        assert_eq!(inserted, 1);
+        assert_eq!(event_count, 1);
+        assert_eq!(processed_controls, 2);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
