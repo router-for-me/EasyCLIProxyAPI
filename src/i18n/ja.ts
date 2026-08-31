@@ -602,6 +602,8 @@ export const jaOverrides = {
   'agents.status.applied': '適用済み',
   'agents.status.unconfigured': '未設定',
   'agents.title': 'エージェント設定',
+  'agents.embedded.title': 'クライアントとモデルを選んで起動',
+  'agents.embedded.subtitle': 'ない場合は先にインストールしてください',
   'agents.redetect': '再検出',
   'agents.tabs.label': 'エージェント設定ページ',
   'agents.tabs.core': 'コア設定',

@@ -642,6 +642,8 @@ export const zhCN = {
   'agents.status.applied': '已应用',
   'agents.status.unconfigured': '尚未配置',
   'agents.title': '智能体配置',
+  'agents.embedded.title': '选择客户端和模型后启动',
+  'agents.embedded.subtitle': '如果没有客户端请自行安装',
   'agents.redetect': '重新检测',
   'agents.tabs.label': '智能体配置子页面',
   'agents.tabs.core': '核心配置',
