@@ -167,6 +167,16 @@ export function AuthFileManagementPage() {
   const quotas = useQuotaCache();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const oauthModelRequestRef = useRef(0);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  const showNotice = useCallback((message: string) => {
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    setNotice(message);
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice('');
+      noticeTimerRef.current = null;
+    }, 3600);
+  }, []);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -256,7 +266,7 @@ export function AuthFileManagementPage() {
           models: excludedModels,
         });
       }
-      setNotice(t('authFiles.models.updated', { provider: oauthModelProviderLabel }));
+      showNotice(t('authFiles.models.updated', { provider: oauthModelProviderLabel }));
       closeOauthModels();
     } catch (requestError) {
       setOauthModelError(String(requestError));
@@ -302,6 +312,10 @@ export function AuthFileManagementPage() {
     void loadFiles();
   }, [loadFiles]);
 
+  useEffect(() => () => {
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+  }, []);
+
   const providers = useMemo(
     () => Array.from(new Set(files.map(providerName))).sort((left, right) => left.localeCompare(right)),
     [files],
@@ -345,7 +359,7 @@ export function AuthFileManagementPage() {
     }
     try {
       await loadFiles();
-      if (uploaded > 0) setNotice(t('authFiles.uploaded', { count: uploaded }));
+      if (uploaded > 0) showNotice(t('authFiles.uploaded', { count: uploaded }));
       if (failures.length > 0) setError(t('authFiles.uploadFailed', { count: failures.length, errors: failures.join('; ') }));
     } catch (requestError) {
       setError(String(requestError));
@@ -363,7 +377,7 @@ export function AuthFileManagementPage() {
         name,
         disabled: !readBoolean(file, 'disabled'),
       });
-      setNotice(readBoolean(file, 'disabled') ? t('authFiles.notice.enabled') : t('authFiles.notice.disabled'));
+      showNotice(readBoolean(file, 'disabled') ? t('authFiles.notice.enabled') : t('authFiles.notice.disabled'));
       await loadFiles();
     } catch (requestError) {
       setError(String(requestError));
@@ -406,7 +420,7 @@ export function AuthFileManagementPage() {
     try {
       await managementApi.patch('/auth-files/fields', { name, priority });
       setPriorityEditor(null);
-      setNotice(t('authFiles.priority.updated', { name }));
+      showNotice(t('authFiles.priority.updated', { name }));
       await loadFiles();
     } catch (requestError) {
       setPriorityEditor((current) => current
@@ -428,7 +442,7 @@ export function AuthFileManagementPage() {
     setError('');
     try {
       await managementApi.delete('/auth-files', { query: { name } });
-      setNotice(t('authFiles.deleted'));
+      showNotice(t('authFiles.deleted'));
       await loadFiles();
     } catch (requestError) {
       setError(String(requestError));
@@ -485,7 +499,12 @@ export function AuthFileManagementPage() {
       </header>
 
       {error ? <div className="management-alert error">{error}</div> : null}
-      {notice ? <div className="management-alert success">{notice}</div> : null}
+      {notice ? (
+        <div className="config-toast success" role="status" title={notice}>
+          <Check size={17} aria-hidden="true" />
+          <span>{notice}</span>
+        </div>
+      ) : null}
 
       <section className="panel auth-files-panel real-auth-files-panel">
         <div className="management-toolbar auth-files-toolbar">
