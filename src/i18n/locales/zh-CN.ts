@@ -97,7 +97,6 @@ export const zhCN = {
   'easyMode.agent.launchClient': '🚀 启动客户端 / 打开终端',
   'easyMode.agent.launching': '正在启动...',
   'easyMode.complete.title': '配置就绪！',
-  'easyMode.complete.enterApp': '进入完整控制台',
   'easyMode.apiCopy.desc': '你也可以直接将本地代理地址填入任何支持 OpenAI / Claude / Gemini 协议的工具中。',
   'easyMode.apiCopy.copied': '已复制到剪贴板',
   'error.render.title': '页面渲染出现异常',

@@ -99,7 +99,6 @@ export const en: Record<MessageKey, string> = {
   'easyMode.agent.launchClient': '🚀 Launch Client / Open Terminal',
   'easyMode.agent.launching': 'Launching...',
   'easyMode.complete.title': 'Setup Complete!',
-  'easyMode.complete.enterApp': 'Enter Dashboard',
   'easyMode.apiCopy.desc': 'You can also use the local proxy URL in any OpenAI / Claude / Gemini compatible tool.',
   'easyMode.apiCopy.copied': 'Copied to clipboard',
   'error.render.title': 'Something went wrong while rendering this page',

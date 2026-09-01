@@ -141,11 +141,7 @@ export function EasyModePage({
   const [guideOAuthProvider, setGuideOAuthProvider] = useState<OAuthProviderId | null>(null);
   const [guideOAuthCompleted, setGuideOAuthCompleted] = useState(false);
   const [guideApiSaved, setGuideApiSaved] = useState(false);
-  const [guideApiFormatSelected, setGuideApiFormatSelected] = useState(false);
-  const [guideApiBaseEdited, setGuideApiBaseEdited] = useState(false);
-  const [guideApiKeyEdited, setGuideApiKeyEdited] = useState(false);
   const [guideApiModelsFetched, setGuideApiModelsFetched] = useState(false);
-  const [guideApiModelSelected, setGuideApiModelSelected] = useState(false);
   const [guideAgentConfigured, setGuideAgentConfigured] = useState(false);
 
   // 新手聚焦指导状态（默认关闭，点击开启）
@@ -314,11 +310,6 @@ export function EasyModePage({
 
   const handleApiSectionChange = (sec: ApiSection) => {
     setSelectedApiSection(sec);
-    if (guideActive && guideStep === 2) {
-      setGuideApiFormatSelected(true);
-      setGuideApiBaseEdited(false);
-      setGuideApiKeyEdited(false);
-    }
     const opt = apiSectionOptions.find((o) => o.id === sec);
     if (opt) setApiBaseUrl(opt.defaultBaseUrl);
     setApiTestedModels([]);
@@ -327,7 +318,6 @@ export function EasyModePage({
     setApiSaveNotice(null);
     setGuideApiSaved(false);
     setGuideApiModelsFetched(false);
-    setGuideApiModelSelected(false);
   };
 
   const handleTestApi = async () => {
@@ -345,7 +335,6 @@ export function EasyModePage({
     setApiSelectedModels([]);
     setGuideApiSaved(false);
     setGuideApiModelsFetched(false);
-    setGuideApiModelSelected(false);
 
     const opt = apiSectionOptions.find((o) => o.id === selectedApiSection);
     const providerType = opt ? opt.provider : "openai";
@@ -361,7 +350,7 @@ export function EasyModePage({
       );
       if (models.length > 0) {
         setApiTestedModels(models);
-        setApiSelectedModels([]);
+        setApiSelectedModels(models);
         setGuideApiModelsFetched(true);
       } else {
         setApiTestError("未获取到任何模型，请检查 API Base URL 与密钥");
@@ -375,7 +364,6 @@ export function EasyModePage({
 
   const handleToggleApiModel = (model: ModelOption) => {
     setGuideApiSaved(false);
-    setGuideApiModelSelected(true);
     const key = model.name.trim().toLowerCase();
     if (!key) return;
     setApiSelectedModels((current) => {
@@ -399,11 +387,9 @@ export function EasyModePage({
       setApiTestError(t("easyMode.api.modelRequired"));
       return;
     }
-    if (guideActive && guideStep === 2 && authMethod === "api") {
-      if (!guideApiFormatSelected || !guideApiBaseEdited || !guideApiKeyEdited || !guideApiModelsFetched || !guideApiModelSelected) {
-        setApiTestError("请按引导完成接口格式、地址、密钥和模型选择后再保存");
-        return;
-      }
+    if (guideActive && guideStep === 2 && authMethod === "api" && !guideApiModelsFetched) {
+      setApiTestError("请先获取模型列表");
+      return;
     }
     setApiSaving(true);
     setApiSaveNotice(null);
@@ -546,7 +532,7 @@ export function EasyModePage({
     : guideStep === 2
       ? authMethod === "oauth"
         ? guideOAuthProvider !== null && guideOAuthCompleted
-        : guideApiFormatSelected && guideApiBaseEdited && guideApiKeyEdited && guideApiModelsFetched && guideApiModelSelected && guideApiSaved
+        : guideApiSaved
       : guideStep === 3
         ? hasConnectedSource || guideOAuthCompleted || guideApiSaved
         : guideAgentConfigured;
@@ -586,11 +572,7 @@ export function EasyModePage({
     setGuideOAuthProvider(null);
     setGuideOAuthCompleted(false);
     setGuideApiSaved(false);
-    setGuideApiFormatSelected(false);
-    setGuideApiBaseEdited(false);
-    setGuideApiKeyEdited(false);
     setGuideApiModelsFetched(false);
-    setGuideApiModelSelected(false);
     setGuideAgentConfigured(false);
     setGuideActive(true);
   };
@@ -615,13 +597,10 @@ export function EasyModePage({
               <span className="simple-mode-brand-sub">极简智能体与模型接入向导</span>
             </div>
           </div>
-        </div>
-
-        <div className="simple-mode-topbar-right">
           {/* 新手聚焦指导开关 */}
           <button
             type="button"
-            className={`simple-mode-guide-toggle${guideActive ? " active" : ""}`}
+            className={`simple-mode-guide-toggle simple-mode-highlight-button${guideActive ? " active" : ""}`}
             title={guideActive ? "点击关闭操作指引" : "点击开启操作指引"}
             onClick={() => {
               handleGuideToggle();
@@ -629,7 +608,9 @@ export function EasyModePage({
           >
             <span>{guideActive ? "操作指引 (进行中)" : "操作指引"}</span>
           </button>
+        </div>
 
+        <div className="simple-mode-topbar-right">
           {/* 主题切换 */}
           {setTheme ? (
             <div className="simple-mode-theme-group">
@@ -688,7 +669,7 @@ export function EasyModePage({
           {/* 退出新手模式返回常规控制台 */}
           <button
             type="button"
-            className="secondary-button simple-mode-exit-btn"
+            className="secondary-button simple-mode-exit-btn simple-mode-highlight-button"
             title="返回常规控制台"
             onClick={() => onExit?.()}
           >
@@ -926,7 +907,7 @@ export function EasyModePage({
                       type="text"
                       className="text-input"
                       value={apiBaseUrl}
-                      onChange={(e) => { setApiBaseUrl(e.target.value); setGuideApiBaseEdited(true); setGuideApiSaved(false); }}
+                      onChange={(e) => { setApiBaseUrl(e.target.value); setGuideApiSaved(false); }}
                       placeholder="https://..."
                     />
                   </div>
@@ -936,7 +917,7 @@ export function EasyModePage({
                       type="password"
                       className="text-input"
                       value={apiKey}
-                      onChange={(e) => { setApiKey(e.target.value); setGuideApiKeyEdited(true); setGuideApiSaved(false); }}
+                      onChange={(e) => { setApiKey(e.target.value); setGuideApiSaved(false); }}
                       placeholder="sk-..."
                     />
                   </div>
@@ -1066,15 +1047,6 @@ export function EasyModePage({
               {t("easyMode.navigation.back")}
             </button>
 
-            <button
-              type="button"
-              className="primary-button"
-              style={{ minHeight: 42, padding: "0 22px", fontSize: "15px" }}
-              onClick={() => onExit?.()}
-            >
-              <CheckCircle2 size={16} style={{ marginRight: 6 }} />
-              {t("easyMode.complete.enterApp")}
-            </button>
           </div>
         </section>
       ) : null}
@@ -1145,23 +1117,21 @@ export function EasyModePage({
               <>
                 <h4>步骤 2：填写并保存 API 接入</h4>
                 <p>
-                  1. 选择接口格式。<br />
+                  1. 确认接口格式，可保持默认选项或选择其他格式。<br />
                   2. 填写 <strong>API Base URL</strong> 和 <strong>API Key</strong>。<br />
-                  3. 点击 <strong>『获取模型列表』</strong>，至少勾选一个模型，再点击 <strong>『保存并接入』</strong>。
+                  3. 点击 <strong>『获取模型列表』</strong>，返回结果后会默认全选模型；确认或调整选择后，点击 <strong>『保存并接入』</strong>。
                 </p>
                 <div className="guide-tooltip-tip">
                   {guideApiSaved ? (
                     <strong>API 接入已保存成功，请点击『下一步』。</strong>
-                  ) : !guideApiFormatSelected ? (
-                    "请先点击一个接口格式，再填写接入信息。"
-                  ) : !guideApiBaseEdited || !guideApiKeyEdited ? (
-                    "请重新填写 Base URL 和 API Key；填写完成后才能获取模型。"
+                  ) : !apiBaseUrl.trim() || !apiKey.trim() ? (
+                    "请填写 Base URL 和 API Key；填写完整后才能获取模型。"
                   ) : !guideApiModelsFetched || apiTestedModels.length === 0 ? (
                     "请点击『获取模型列表』并等待结果返回。"
-                  ) : !guideApiModelSelected || apiSelectedModels.length === 0 ? (
-                    "已获取模型，请至少勾选一个模型后保存。"
+                  ) : apiSelectedModels.length === 0 ? (
+                    "当前没有选中模型，请至少勾选一个模型后保存。"
                   ) : (
-                    <span>已完成填写并选中 {apiSelectedModels.length} 个模型，请点击『保存并接入』。</span>
+                    <span>已默认选择 {apiSelectedModels.length} 个模型；可调整选择，然后点击『保存并接入』。</span>
                   )}
                 </div>
               </>
@@ -1188,7 +1158,7 @@ export function EasyModePage({
                   非 Pi 客户端点击实际显示的 <strong>『应用配置』</strong> 或 <strong>『更新配置』</strong>；Pi 客户端点击 <strong>『安装提供方』</strong> 或 <strong>『修复提供方』</strong>。成功后才能完成指引。
                 </p>
                 <div className="guide-tooltip-tip">
-                  {guideAgentConfigured ? "配置已成功应用。你还可以点击『完成并进入控制台』返回控制台；启动客户端需要另行点击启动按钮。" : "请先选择已检测到的客户端和模型，再点击对应的配置按钮并等待成功结果。"}
+                  {guideAgentConfigured ? "配置已成功应用，可以关闭操作指引；启动客户端需要另行点击启动按钮。" : "请先选择已检测到的客户端和模型，再点击对应的配置按钮并等待成功结果。"}
                 </div>
               </>
             ) : null}
