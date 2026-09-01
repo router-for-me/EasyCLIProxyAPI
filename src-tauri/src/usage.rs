@@ -272,6 +272,7 @@ pub(crate) struct UsageOverview {
 pub(crate) struct UsageRepairResult {
     scanned: u64,
     repaired: u64,
+    deleted: u64,
     backup_path: Option<String>,
 }
 
@@ -553,15 +554,16 @@ fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, Strin
     let candidate_count: i64 = connection
         .query_row(
             r#"SELECT COUNT(*) FROM usage_events
-               WHERE input_tokens > 0
-                 AND cache_read_tokens + cache_creation_tokens > input_tokens
-                 AND (lower(executor_type) = 'claudeexecutor'
-                      OR lower(provider) = 'claude'
-                      OR lower(provider) LIKE '%anthropic%')"#,
+               WHERE lower(trim(model)) = 'unknown'
+                  OR (input_tokens > 0
+                      AND cache_read_tokens + cache_creation_tokens > input_tokens
+                      AND (lower(executor_type) = 'claudeexecutor'
+                           OR lower(provider) = 'claude'
+                           OR lower(provider) LIKE '%anthropic%'))"#,
             [],
             |row| row.get(0),
         )
-        .map_err(|error| format!("检查 Claude 使用记录异常行失败: {error}"))?;
+        .map_err(|error| format!("检查历史使用记录异常行失败: {error}"))?;
 
     if candidate_count <= 0 {
         return Ok(UsageRepairResult::default());
@@ -572,7 +574,7 @@ fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, Strin
         fs::create_dir_all(&backup_dir)
             .map_err(|error| format!("创建 Claude 使用记录迁移备份目录失败: {error}"))?;
         let backup_path = backup_dir.join(format!(
-            "usage-before-claude-input-v1-{}.db",
+            "usage-before-history-repair-v2-{}.db",
             unique_file_stamp()
         ));
         connection
@@ -600,18 +602,26 @@ fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, Strin
                    cached_tokens = MAX(cached_tokens, cache_read_tokens + cache_creation_tokens)
                WHERE input_tokens > 0
                  AND cache_read_tokens + cache_creation_tokens > input_tokens
+                 AND lower(trim(model)) <> 'unknown'
                  AND (lower(executor_type) = 'claudeexecutor'
                       OR lower(provider) = 'claude'
                       OR lower(provider) LIKE '%anthropic%')"#,
             [],
         )
         .map_err(|error| format!("迁移 Claude 使用记录失败: {error}"))?;
+    let deleted = transaction
+        .execute(
+            "DELETE FROM usage_events WHERE lower(trim(model)) = 'unknown'",
+            [],
+        )
+        .map_err(|error| format!("删除历史 unknown 记录失败: {error}"))?;
     transaction
         .commit()
         .map_err(|error| format!("提交 Claude 使用记录迁移失败: {error}"))?;
     Ok(UsageRepairResult {
         scanned: candidate_count.max(0) as u64,
         repaired: migrated as u64,
+        deleted: deleted as u64,
         backup_path: Some(backup_path),
     })
 }
@@ -1608,8 +1618,16 @@ fn publish_collected_records(app: &tauri::AppHandle, saved: usize, message: &str
 pub(crate) fn persist_local_usage_event(
     app: &tauri::AppHandle,
     collector_source: &str,
-    value: Value,
+    mut value: Value,
 ) -> Result<usize, String> {
+    if let Some(object) = value.as_object_mut() {
+        if string_field(object, "request_id").is_none() {
+            object.insert(
+                "request_id".to_string(),
+                Value::String(format!("{collector_source}-{}", unique_file_stamp())),
+            );
+        }
+    }
     let config = app.state::<GuiConfigState>().snapshot()?;
     let root = usage_root_dir()?;
     let saved = persist_queue_items_from_source(&root, collector_source, vec![value], &config)?;
@@ -1713,6 +1731,10 @@ fn enqueue_usage_raw_messages(
     source: &str,
     messages: Vec<String>,
 ) -> Result<usize, String> {
+    let messages = messages
+        .into_iter()
+        .filter(|message| !is_ignorable_usage_message(message))
+        .collect::<Vec<_>>();
     if messages.is_empty() {
         return Ok(0);
     }
@@ -1748,6 +1770,34 @@ fn enqueue_usage_raw_messages(
         .commit()
         .map_err(|error| format!("提交 SQLite 使用记录 inbox 失败: {error}"))?;
     Ok(inserted)
+}
+
+fn is_ignorable_usage_message(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return true;
+    }
+    if trimmed.contains("\"request_id\"") {
+        return false;
+    }
+
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return false;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object.len() != 1 {
+        return false;
+    }
+    object
+        .get("refresh")
+        .and_then(Value::as_bool)
+        .is_some_and(|enabled| enabled)
+        || object
+            .get("support_refresh")
+            .and_then(Value::as_bool)
+            .is_some_and(|enabled| enabled)
 }
 
 fn persist_raw_usage_message_from_source(
@@ -2083,7 +2133,8 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
     let timestamp = string_field(object, "timestamp")
         .filter(|value| DateTime::parse_from_rfc3339(value).is_ok())
         .unwrap_or_else(|| Local::now().to_rfc3339());
-    let request_id = string_field(object, "request_id").unwrap_or_default();
+    let request_id = string_field(object, "request_id")
+        .ok_or_else(|| "CPA 使用记录必须包含 request_id".to_string())?;
     let api_key = string_field(object, "api_key").unwrap_or_default();
     let api_key_hash = hash_text(&api_key);
     let api_key_remark = config
@@ -2148,14 +2199,7 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
     {
         tokens.total_tokens = tokens.input_tokens.saturating_add(tokens.output_tokens);
     }
-    let mut canonical = object.clone();
-    canonical.remove("response_headers");
-    canonical.remove("api_key");
-    let id = if request_id.is_empty() {
-        hash_text(&serde_json::to_string(&canonical).unwrap_or_default())
-    } else {
-        request_id.clone()
-    };
+    let id = request_id.clone();
     let endpoint = string_field(object, "endpoint").unwrap_or_default();
     let failed = object
         .get("failed")
@@ -3614,6 +3658,46 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn removes_historical_unknown_records_on_demand() {
+        let root = test_root("unknown-repair");
+        let connection = open_test_database(&root);
+        for (key, index) in ["refresh-control", "support-refresh-control"]
+            .iter()
+            .zip([1_i64, 2_i64])
+        {
+            connection
+                .execute(
+                    "INSERT INTO usage_events (event_key, timestamp, timestamp_ms, local_hour, provider, model, request_id, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, latency_ms, failed, canceled, generate, created_at) VALUES (?1, '2026-08-27T00:00:00Z', ?2, '2026-08-27T00', '', 'unknown', '', 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, '2026-08-27T00:00:00Z')",
+                    params![key, index],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO usage_events (event_key, timestamp, timestamp_ms, local_hour, provider, model, request_id, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, latency_ms, failed, canceled, generate, created_at) VALUES ('legitimate-unknown', '2026-08-27T00:00:00Z', 3, '2026-08-27T00', '', 'unknown', '', 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, '2026-08-27T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let result = repair_usage_cache_records_at(&root).unwrap();
+        assert_eq!(result.scanned, 3);
+        assert_eq!(result.repaired, 0);
+        assert_eq!(result.deleted, 3);
+        let connection = open_usage_database_at(&root).unwrap();
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM usage_events WHERE model = 'unknown'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn create_legacy_v2_database(root: &Path) -> Connection {
         fs::create_dir_all(root).unwrap();
         let connection = Connection::open(root.join(USAGE_DATABASE_FILE)).unwrap();
@@ -3911,6 +3995,88 @@ mod tests {
         assert_eq!(record.tokens.input_tokens, 700);
         assert_eq!(record.tokens.total_tokens, 720);
         assert!(record.tokens.cache_read_tokens <= record.tokens.input_tokens);
+    }
+
+    #[test]
+    fn filters_usage_control_messages_before_inbox() {
+        assert!(is_ignorable_usage_message(""));
+        assert!(is_ignorable_usage_message("  null\n"));
+        assert!(is_ignorable_usage_message(r#"{"refresh":true}"#));
+        assert!(is_ignorable_usage_message(
+            r#"{ "support_refresh" : true }"#
+        ));
+        assert!(!is_ignorable_usage_message(r#"{"refresh":false}"#));
+        assert!(!is_ignorable_usage_message(
+            r#"{"refresh":true,"request_id":"usage"}"#
+        ));
+        assert!(!is_ignorable_usage_message(r#"{"request_id":"usage"}"#));
+        assert!(!is_ignorable_usage_message("not-json"));
+
+        let root = test_root("usage-control-messages");
+        initialize_usage_storage_at(&root).unwrap();
+        let config = GuiConfigFile::default();
+        let inserted = persist_queue_items(
+            &root,
+            vec![
+                serde_json::json!({"refresh": true}),
+                serde_json::json!({"support_refresh": true}),
+                serde_json::json!({
+                    "request_id": "real-usage",
+                    "provider": "codex",
+                    "model": "gpt-test"
+                }),
+            ],
+            &config,
+        )
+        .unwrap();
+        assert_eq!(inserted, 1);
+        let connection = open_usage_database_at(&root).unwrap();
+        let inbox_count = connection
+            .query_row("SELECT COUNT(*) FROM usage_inbox", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let event_count = connection
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(inbox_count, 1);
+        assert_eq!(event_count, 1);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_usage_messages_without_request_id() {
+        let root = test_root("usage-missing-request-id");
+        initialize_usage_storage_at(&root).unwrap();
+        let mut connection = open_usage_database_at(&root).unwrap();
+        enqueue_usage_queue_items(
+            &mut connection,
+            "redis_subscribe:usage",
+            vec![serde_json::json!({
+                "provider": "codex",
+                "model": "gpt-test"
+            })],
+        )
+        .unwrap();
+        let inserted = process_usage_inbox(&mut connection, &GuiConfigFile::default()).unwrap();
+        let event_count = connection
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let status = connection
+            .query_row("SELECT status FROM usage_inbox", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap();
+        assert_eq!(inserted, 0);
+        assert_eq!(event_count, 0);
+        assert_eq!(status, "decode_failed");
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

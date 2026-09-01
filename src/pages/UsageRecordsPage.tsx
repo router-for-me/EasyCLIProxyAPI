@@ -163,6 +163,7 @@ type UsagePricing = {
 type UsageRepairResult = {
   scanned: number;
   repaired: number;
+  deleted: number;
   backupPath: string | null;
 };
 
@@ -759,11 +760,12 @@ function UsageDataManagementView() {
         <>
           <div className="management-alert success">
             <ShieldCheck size={16} aria-hidden="true" />
-            <span>{t('usage.dataManagement.success', { repaired: result.repaired })}</span>
+            <span>{t('usage.dataManagement.success', { repaired: result.repaired, deleted: result.deleted })}</span>
           </div>
           <div className="usage-data-management-result">
           <div><span>{t('usage.dataManagement.scanned')}</span><strong>{result.scanned.toLocaleString()}</strong></div>
           <div><span>{t('usage.dataManagement.repaired')}</span><strong>{result.repaired.toLocaleString()}</strong></div>
+          <div><span>{t('usage.dataManagement.deleted')}</span><strong>{result.deleted.toLocaleString()}</strong></div>
           <div><span>{t('usage.dataManagement.backup')}</span><strong title={result.backupPath ?? undefined}>{result.backupPath ?? '—'}</strong></div>
           </div>
         </>
