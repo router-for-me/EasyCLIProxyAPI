@@ -154,6 +154,7 @@ export function VersionManagementPage() {
   const latestCheckEpochRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
   const completedInstallKeyRef = useRef('');
+  const manualInstallInProgressRef = useRef(false);
 
   const showToast = (message: string, tone: MessageType = 'info') => {
     if (toastTimerRef.current !== null) {
@@ -173,7 +174,11 @@ export function VersionManagementPage() {
     showToast(message || t('kernel.install.completed', { version: result.version }), 'success');
   };
 
-  const applyInstallTask = (task: CoreInstallTask, showFinishedDialog = true) => {
+  const applyInstallTask = (
+    task: CoreInstallTask,
+    showFinishedDialog = true,
+    showCompletionToast = true,
+  ) => {
     if (!task.running && !task.message && !task.result) {
       setProgress(null);
       setInstalling(false);
@@ -186,15 +191,18 @@ export function VersionManagementPage() {
       setCancellingInstall(false);
     }
 
-    if (task.running || showFinishedDialog) {
+    if (showCompletionToast && (task.running || showFinishedDialog)) {
       setProgress(task);
       setInstallDialogOpen(true);
     } else {
       setProgress(null);
+      setInstallDialogOpen(false);
     }
 
     if (task.result) {
-      showInstallCompletedToast(task.result, task.message);
+      if (showCompletionToast) {
+        showInstallCompletedToast(task.result, task.message);
+      }
       setInstallDialogOpen(false);
       setProgress(null);
       setCancellingInstall(false);
@@ -220,7 +228,7 @@ export function VersionManagementPage() {
   const loadInstallTask = async () => {
     try {
       const task = await invoke<CoreInstallTask>('get_core_install_task');
-      applyInstallTask(task, false);
+      applyInstallTask(task, false, false);
     } catch {}
   };
 
@@ -322,6 +330,7 @@ export function VersionManagementPage() {
 
   const installVersion = async (version: string) => {
     completedInstallKeyRef.current = '';
+    manualInstallInProgressRef.current = true;
     setInstalling(true);
     setCancellingInstall(false);
     setInstallDialogOpen(true);
@@ -339,6 +348,7 @@ export function VersionManagementPage() {
     try {
       const result = await invoke<CoreInstallResult>('install_core_version', { version });
       showInstallCompletedToast(result, t('kernel.install.completed', { version: result.version }));
+      manualInstallInProgressRef.current = false;
       setProgress({
         running: false,
         cancellable: false,
@@ -354,6 +364,7 @@ export function VersionManagementPage() {
       setCancellingInstall(false);
       await refreshStatus();
     } catch (error) {
+      manualInstallInProgressRef.current = false;
       const errorMessage = String(error);
       showToast(errorMessage, errorMessage.includes('取消') ? 'info' : 'error');
       setProgress((current) => ({
@@ -409,7 +420,11 @@ export function VersionManagementPage() {
     let unlistenVersionSource: (() => void) | null = null;
 
     listen<CoreInstallTask>('core-install-progress', (event) => {
-      applyInstallTask(event.payload);
+      const showTaskUi = manualInstallInProgressRef.current;
+      applyInstallTask(event.payload, showTaskUi, showTaskUi);
+      if (!event.payload.running) {
+        manualInstallInProgressRef.current = false;
+      }
     })
       .then((unlistenProgress) => {
         if (disposed) unlistenProgress();

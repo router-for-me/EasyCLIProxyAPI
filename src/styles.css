@@ -845,7 +845,7 @@ textarea:focus-visible {
 
 .content {
   width: 100%;
-  padding: 32px 40px 48px;
+  padding: clamp(20px, 3vw, 32px) clamp(18px, 3.2vw, 40px) clamp(28px, 4vw, 48px);
   container-type: inline-size;
   container-name: workspace;
 }
@@ -4466,7 +4466,7 @@ textarea:focus-visible {
 
 .thinking-alias-workbench {
   display: grid;
-  grid-template-columns: minmax(480px, 1.4fr) minmax(320px, 0.6fr);
+  grid-template-columns: minmax(min(480px, 100%), 1.4fr) minmax(min(320px, 100%), 0.6fr);
   gap: 16px;
   align-items: stretch;
 }
@@ -7027,7 +7027,7 @@ textarea:focus-visible {
 /* Analysis Tab */
 .usage-analysis-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: 14px;
 }
 
@@ -7467,7 +7467,8 @@ textarea:focus-visible {
   position: relative;
   overflow-x: auto;
   overflow-y: auto;
-  height: clamp(480px, 60vh, 720px);
+  height: max(480px, calc(100vh - 300px));
+  height: max(480px, calc(100dvh - 300px));
   min-height: 0;
   border: 0;
   border-radius: 0;
@@ -7741,7 +7742,8 @@ body.table-col-resizing * {
 
 @media (max-height: 760px) {
   .usage-table-wrap {
-    height: 440px;
+    height: max(360px, calc(100vh - 300px));
+    height: max(360px, calc(100dvh - 300px));
   }
 }
 
@@ -12493,5 +12495,227 @@ body.table-col-resizing * {
   .simple-mode-topbar-right {
     justify-content: flex-end;
     flex-wrap: wrap;
+  }
+}
+
+/* Use the available content width as the responsive breakpoint. The app shell
+   can leave a narrow workspace even when the overall window is still wide. */
+@container workspace (max-width: 1080px) {
+  .provider-workbench,
+  .real-provider-workbench,
+  .kernel-layout,
+  .usage-overview-layout,
+  .config-management-content {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-category-panel {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    height: auto;
+  }
+
+  .provider-resource-panel {
+    height: 520px;
+  }
+
+  .real-provider-row {
+    grid-template-columns: 32px minmax(0, 1fr) max-content;
+  }
+
+  .provider-row-meta {
+    display: none;
+  }
+
+  .agent-workbench {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .usage-overview-layout {
+    gap: 12px;
+  }
+
+  .usage-stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+}
+
+@container workspace (max-width: 760px) {
+  .config-network-grid,
+  .config-tls-fields,
+  .config-management-form,
+  .client-api-grid,
+  .oauth-grid,
+  .quota-grid,
+  .quota-summary-grid,
+  .real-quota-grid,
+  .auth-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-topbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-tabs {
+    display: flex;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .usage-tabs button {
+    flex: 1 1 45%;
+    min-width: 0;
+    padding-inline: 7px;
+  }
+
+  .usage-topbar-actions {
+    width: 100%;
+  }
+
+  .usage-events-summary-left,
+  .usage-events-summary-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .usage-collector-state {
+    flex: 1;
+  }
+
+  .usage-overview-layout,
+  .usage-analysis-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-pricing-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-pricing-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .usage-pricing-actions input {
+    width: 100%;
+  }
+
+  .usage-price-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-files-toolbar {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .auth-files-toolbar select {
+    border-top: 1px solid var(--theme-e3e1db);
+    border-left: 0;
+  }
+
+  .auth-files-toolbar select:first-of-type,
+  .auth-files-toolbar select:last-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .auth-files-panel {
+    grid-template-rows: auto auto minmax(320px, 1fr);
+    height: auto;
+    min-height: 460px;
+  }
+
+  .real-provider-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+  }
+
+  .real-auth-file-row {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+  }
+
+  .provider-row-meta,
+  .auth-file-meta {
+    display: none;
+  }
+
+  .provider-category-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-workbench,
+  .thinking-alias-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .thinking-alias-editor-panel,
+  .thinking-alias-list-panel,
+  .agent-client-list,
+  .agent-config-panel {
+    height: auto;
+    min-height: 0;
+  }
+
+  .thinking-model-list {
+    max-height: 240px;
+  }
+
+  .thinking-alias-list {
+    max-height: 460px;
+  }
+
+  .management-header,
+  .management-panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .management-heading-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .management-heading-actions button {
+    flex: 1;
+  }
+
+  .muted-summary,
+  .compact-toolbar {
+    width: 100%;
+  }
+
+  .panel {
+    padding: 18px;
+  }
+}
+
+@container workspace (max-width: 540px) {
+  .usage-data-management-heading,
+  .usage-data-management-action,
+  .usage-data-management-result {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-data-management-action .primary-button {
+    width: 100%;
+  }
+
+  .usage-custom-range {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-column-options {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-column-dialog-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-column-dialog-actions button {
+    flex: 1;
   }
 }
