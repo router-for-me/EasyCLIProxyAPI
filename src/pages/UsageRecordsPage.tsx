@@ -27,6 +27,12 @@ import {
 } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
+import {
+  categoryMetricValue,
+  failureRatePercent,
+  sortCategoriesByMetric,
+  type UsageAnalysisMetric,
+} from '../services/usageAnalysis';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
 
@@ -1013,6 +1019,7 @@ function TokenMetric({
 
 function AnalysisView({ analysis, overview }: { analysis: UsageAnalysis; overview: UsageOverview | null }) {
   const { t } = useI18n();
+  const [metric, setMetric] = useState<UsageAnalysisMetric>('tokens');
   const hours = (overview?.timeline ?? [])
     .map((point) => ({
       key: point.hour,
@@ -1023,40 +1030,91 @@ function AnalysisView({ analysis, overview }: { analysis: UsageAnalysis; overvie
     }))
     .sort((left, right) => right.tokens - left.tokens);
   return (
-    <div className="usage-analysis-grid">
-      <CategoryPanel title={t('usage.analysis.models')} items={analysis.models} />
-      <CategoryPanel title="Provider" items={analysis.providers} />
-      <CategoryPanel title={t('usage.analysis.sources')} items={analysis.sources} compactLabels />
-      <CategoryPanel title={t('usage.analysis.keys')} items={analysis.apiKeys} />
-      <CategoryPanel title={t('usage.analysis.hours')} items={hours} />
+    <div className="usage-analysis-layout">
+      <div className="usage-analysis-toolbar">
+        <span>{t('usage.analysis.metricLabel')}</span>
+        <div
+          className="usage-analysis-metric-switch"
+          role="group"
+          aria-label={t('usage.analysis.metricLabel')}
+        >
+          {analysisMetricOptions.map((option) => (
+            <button
+              type="button"
+              className={metric === option.key ? 'active' : ''}
+              aria-pressed={metric === option.key}
+              onClick={() => setMetric(option.key)}
+              key={option.key}
+            >
+              {t(option.labelKey)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="usage-analysis-grid">
+        <CategoryPanel title={t('usage.analysis.models')} items={analysis.models} metric={metric} />
+        <CategoryPanel title="Provider" items={analysis.providers} metric={metric} />
+        <CategoryPanel
+          title={t('usage.analysis.sources')}
+          items={analysis.sources}
+          metric={metric}
+          compactLabels
+        />
+        <CategoryPanel title={t('usage.analysis.keys')} items={analysis.apiKeys} metric={metric} />
+        <CategoryPanel title={t('usage.analysis.hours')} items={hours} metric={metric} />
+      </div>
     </div>
   );
 }
 
+const analysisMetricOptions: Array<{ key: UsageAnalysisMetric; labelKey: MessageKey }> = [
+  { key: 'tokens', labelKey: 'usage.analysis.metric.tokens' },
+  { key: 'requests', labelKey: 'usage.analysis.metric.requests' },
+  { key: 'failureRate', labelKey: 'usage.analysis.metric.failureRate' },
+];
+
+const analysisMetricLabelKey = (metric: UsageAnalysisMetric): MessageKey => {
+  if (metric === 'requests') return 'usage.analysis.metric.requests';
+  if (metric === 'failureRate') return 'usage.analysis.metric.failureRate';
+  return 'usage.analysis.metric.tokens';
+};
+
 function CategoryPanel({
   title,
   items,
+  metric,
   compactLabels = false,
 }: {
   title: string;
   items: UsageCategory[];
+  metric: UsageAnalysisMetric;
   compactLabels?: boolean;
 }) {
   const { t } = useI18n();
-  const max = Math.max(...items.map((item) => item.tokens), 1);
-  const total = items.reduce((sum, item) => sum + item.tokens, 0);
+  const sortedItems = sortCategoriesByMetric(items, metric);
+  const max = Math.max(...sortedItems.map((item) => categoryMetricValue(item, metric)), 1);
+  const total = sortedItems.reduce((sum, item) => sum + categoryMetricValue(item, metric), 0);
+  const metricLabel = t(analysisMetricLabelKey(metric));
   return (
     <section className={`panel usage-category-panel${compactLabels ? ' compact-labels' : ''}`}>
       <div className="usage-section-heading">
         <div>
           <strong>{title}</strong>
-          <span>{t('usage.analysis.sortedByTokens')}</span>
+          <span>{t('usage.analysis.sortedByMetric', { metric: metricLabel })}</span>
         </div>
       </div>
-      {items.length ? (
+      {sortedItems.length ? (
         <div className="usage-category-list">
-          {items.slice(0, 10).map((item, idx) => {
-            const percent = total ? ((item.tokens * 100) / total).toFixed(1) : '0.0';
+          {sortedItems.slice(0, 10).map((item, idx) => {
+            const value = categoryMetricValue(item, metric);
+            const share = metric === 'failureRate' || total === 0 ? 0 : (value * 100) / total;
+            const failureRate = failureRatePercent(item);
+            const barWidth = metric === 'failureRate' ? failureRate : (value * 100) / max;
+            const valueLabel = metric === 'tokens'
+              ? t('usage.analysis.value.tokens', { value: compactNumber(item.tokens) })
+              : metric === 'requests'
+              ? t('usage.analysis.value.requests', { value: compactNumber(item.requests) })
+              : t('usage.analysis.value.failureRate', { value: failureRate.toFixed(1) });
             return (
               <div key={item.key} className="usage-category-row">
                 <div className="usage-category-header">
@@ -1067,13 +1125,23 @@ function CategoryPanel({
                     </strong>
                   </div>
                   <small className="usage-category-meta">
-                    <span>{compactNumber(item.requests)} requests</span>
-                    <span className="usage-category-pct">{percent}%</span>
-                    <strong>{compactNumber(item.tokens)} Token</strong>
+                    <span className={item.failures > 0 ? 'usage-category-failures has-failures' : 'usage-category-failures'}>
+                      {t('usage.analysis.failureSamples', {
+                        failures: compactNumber(item.failures),
+                        requests: compactNumber(item.requests),
+                      })}
+                    </span>
+                    {metric === 'failureRate' ? null : (
+                      <span className="usage-category-pct">{share.toFixed(1)}%</span>
+                    )}
+                    <strong>{valueLabel}</strong>
                   </small>
                 </div>
                 <div className="usage-category-track">
-                  <div className="usage-category-fill" style={{ width: `${(item.tokens * 100) / max}%` }} />
+                  <div
+                    className={`usage-category-fill${metric === 'failureRate' ? ' failure-rate' : ''}`}
+                    style={{ width: `${Math.min(Math.max(barWidth, 0), 100)}%` }}
+                  />
                 </div>
               </div>
             );
