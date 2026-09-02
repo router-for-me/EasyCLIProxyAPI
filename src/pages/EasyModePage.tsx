@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import appLogo from "../assets/logo.jpg";
-import { useI18n, languageOptions, type AppLocale } from "../i18n";
+import { useI18n, languageOptions, type AppLocale, type MessageKey } from "../i18n";
 import {
   managementApi,
   readString,
@@ -54,14 +54,15 @@ type OAuthProviderInfo = {
   name: string;
   icon: string;
   description: string;
+  descriptionKey: MessageKey;
 };
 
 const oauthProviders: OAuthProviderInfo[] = [
-  { id: "codex", name: "Codex OAuth", icon: codexIcon, description: "OpenAI / ChatGPT 账号授权登录" },
-  { id: "claude", name: "Claude OAuth", icon: claudeIcon, description: "Anthropic / Claude 账号授权登录" },
-  { id: "antigravity", name: "Antigravity OAuth", icon: antigravityIcon, description: "Antigravity 账号授权登录" },
-  { id: "kimi", name: "Kimi OAuth", icon: kimiIcon, description: "Moonshot / Kimi 账号授权登录" },
-  { id: "xai", name: "xAI OAuth", icon: grokIcon, description: "xAI / Grok 账号授权登录" },
+  { id: "codex", name: "Codex OAuth", icon: codexIcon, description: "OpenAI / ChatGPT account authorization", descriptionKey: "easyMode.oauth.descCodex" },
+  { id: "claude", name: "Claude OAuth", icon: claudeIcon, description: "Anthropic / Claude account authorization", descriptionKey: "easyMode.oauth.descClaude" },
+  { id: "antigravity", name: "Antigravity OAuth", icon: antigravityIcon, description: "Antigravity account authorization", descriptionKey: "easyMode.oauth.descAntigravity" },
+  { id: "kimi", name: "Kimi OAuth", icon: kimiIcon, description: "Moonshot / Kimi account authorization", descriptionKey: "easyMode.oauth.descKimi" },
+  { id: "xai", name: "xAI OAuth", icon: grokIcon, description: "xAI / Grok account authorization", descriptionKey: "easyMode.oauth.descXai" },
 ];
 
 type ApiSection = "openai-compatibility" | "deepseek" | "claude" | "gemini" | "codex";
@@ -71,16 +72,17 @@ type ApiSectionOption = {
   id: ApiSection;
   managementSection: ApiManagementSection;
   name: string;
+  nameKey?: MessageKey;
   provider: ModelProvider;
   defaultBaseUrl: string;
   icon: string;
 };
 
 const apiSectionOptions: ApiSectionOption[] = [
-  { id: "openai-compatibility", managementSection: "openai-compatibility", name: "OpenAI 格式", provider: "openai", defaultBaseUrl: "", icon: openaiIcon },
-  { id: "claude", managementSection: "claude-api-key", name: "Anthropic 格式", provider: "claude", defaultBaseUrl: "", icon: claudeIcon },
+  { id: "openai-compatibility", managementSection: "openai-compatibility", name: "OpenAI Format", nameKey: "easyMode.api.formatOpenAi", provider: "openai", defaultBaseUrl: "", icon: openaiIcon },
+  { id: "claude", managementSection: "claude-api-key", name: "Anthropic Format", nameKey: "easyMode.api.formatClaude", provider: "claude", defaultBaseUrl: "", icon: claudeIcon },
   { id: "codex", managementSection: "codex-api-key", name: "Codex API", provider: "codex", defaultBaseUrl: "", icon: codexIcon },
-  { id: "gemini", managementSection: "gemini-api-key", name: "Gemini 格式", provider: "gemini", defaultBaseUrl: "", icon: geminiIcon },
+  { id: "gemini", managementSection: "gemini-api-key", name: "Gemini Format", nameKey: "easyMode.api.formatGemini", provider: "gemini", defaultBaseUrl: "", icon: geminiIcon },
   { id: "deepseek", managementSection: "openai-compatibility", name: "DeepSeek", provider: "openai", defaultBaseUrl: "https://api.deepseek.com", icon: deepseekIcon },
 ];
 
@@ -144,7 +146,7 @@ export function EasyModePage({
   const [guideApiModelsFetched, setGuideApiModelsFetched] = useState(false);
   const [guideAgentConfigured, setGuideAgentConfigured] = useState(false);
 
-  // 新手聚焦指导状态（默认关闭，点击开启）
+  // Guided walkthrough state (off by default, click to enable)
   const [guideActive, setGuideActive] = useState(false);
   const [guideStep, setGuideStep] = useState<number>(1);
   const [spotlightRect, setSpotlightRect] = useState<{
@@ -266,7 +268,7 @@ export function EasyModePage({
       if (!result.state) {
         setOauthNotice({
           tone: "error",
-          message: "获取授权状态失败，请重试",
+          message: t("easyMode.oauth.errorGetStatus"),
         });
         setOauthLoggingIn(null);
         return;
@@ -285,7 +287,7 @@ export function EasyModePage({
             setOauthLoggingIn(null);
             setOauthNotice({
               tone: "success",
-              message: "登录成功！已成功授权并获取账号额度。",
+              message: t("easyMode.oauth.loginSuccess"),
             });
             setGuideOAuthCompleted(true);
             void refreshSourceStatus();
@@ -294,7 +296,7 @@ export function EasyModePage({
             setOauthLoggingIn(null);
             setOauthNotice({
               tone: "error",
-              message: pollRes.error ? `授权失败: ${pollRes.error}` : "授权失败，请重试",
+              message: pollRes.error ? t("easyMode.oauth.errorWithDetail", { error: pollRes.error }) : t("easyMode.oauth.errorRetry"),
             });
           }
         } catch {}
@@ -322,11 +324,11 @@ export function EasyModePage({
 
   const handleTestApi = async () => {
     if (!apiBaseUrl.trim()) {
-      setApiTestError("请先填写 API Base URL");
+      setApiTestError(t("easyMode.api.errorBaseUrl"));
       return;
     }
     if (!apiKey.trim()) {
-      setApiTestError("请先填写 API Key");
+      setApiTestError(t("easyMode.api.errorApiKey"));
       return;
     }
     setApiTesting(true);
@@ -353,7 +355,7 @@ export function EasyModePage({
         setApiSelectedModels(models);
         setGuideApiModelsFetched(true);
       } else {
-        setApiTestError("未获取到任何模型，请检查 API Base URL 与密钥");
+        setApiTestError(t("easyMode.api.errorNoModels"));
       }
     } catch (err) {
       setApiTestError(String(err));
@@ -376,11 +378,11 @@ export function EasyModePage({
 
   const handleSaveApi = async () => {
     if (!apiBaseUrl.trim()) {
-      setApiTestError("请先填写 API Base URL");
+      setApiTestError(t("easyMode.api.errorBaseUrl"));
       return;
     }
     if (!apiKey.trim()) {
-      setApiTestError("请先填写 API Key");
+      setApiTestError(t("easyMode.api.errorApiKey"));
       return;
     }
     if (apiSelectedModels.length === 0) {
@@ -388,7 +390,7 @@ export function EasyModePage({
       return;
     }
     if (guideActive && guideStep === 2 && authMethod === "api" && !guideApiModelsFetched) {
-      setApiTestError("请先获取模型列表");
+      setApiTestError(t("easyMode.api.errorFetchModelsFirst"));
       return;
     }
     setApiSaving(true);
@@ -418,7 +420,7 @@ export function EasyModePage({
         };
 
       await managementApi.put(`/${managementSection}`, [...list, newEntry]);
-      setApiSaveNotice("API 接入已保存成功！");
+      setApiSaveNotice(t("easyMode.api.savedNotice"));
       setGuideApiSaved(true);
       void refreshSourceStatus();
     } catch (err) {
@@ -428,7 +430,7 @@ export function EasyModePage({
     }
   };
 
-  // 获取当前聚焦点元素 ID (4 个稳定步骤)
+  // Current spotlight target element ID (4 stable steps)
   const currentTargetId = (() => {
     if (!guideActive) return null;
     if (activeStep === 1) {
@@ -441,7 +443,7 @@ export function EasyModePage({
     return null;
   })();
 
-  // 计算聚光灯位置
+  // Calculate spotlight position
   const updateSpotlightPosition = useCallback(() => {
     if (!guideActive || !currentTargetId) {
       setSpotlightRect(null);
@@ -537,7 +539,7 @@ export function EasyModePage({
         ? hasConnectedSource || guideOAuthCompleted || guideApiSaved
         : guideAgentConfigured;
 
-  // 指引步骤控制
+  // Guide step controls
   const handleNextGuideStep = () => {
     if (!guideCanAdvance) return;
     if (guideStep === 1) {
@@ -581,10 +583,10 @@ export function EasyModePage({
 
   return (
     <section className="page simple-mode-page simple-mode-expanded">
-      {/* 全灰色聚焦蒙层 (Dimmed Backdrop) */}
+      {/* Dimmed backdrop overlay */}
       {guideActive ? <div className="guide-dimmed-overlay" /> : null}
 
-      {/* 顶部全宽导航栏 */}
+      {/* Full-width top navigation bar */}
       <header className="simple-mode-topbar">
         <div className="simple-mode-topbar-left">
           <div className="simple-mode-brand">
@@ -592,32 +594,32 @@ export function EasyModePage({
             <div className="simple-mode-brand-text">
               <div className="simple-mode-brand-title">
                 <strong>EasyCLIProxyAPI</strong>
-                <span className="simple-mode-badge">新手模式</span>
+                <span className="simple-mode-badge">{t("app.nav.easy")}</span>
               </div>
-              <span className="simple-mode-brand-sub">极简智能体与模型接入向导</span>
+              <span className="simple-mode-brand-sub">{t("easyMode.subtitle")}</span>
             </div>
           </div>
-          {/* 新手聚焦指导开关 */}
+          {/* Guided setup toggle */}
           <button
             type="button"
             className={`simple-mode-guide-toggle simple-mode-highlight-button${guideActive ? " active" : ""}`}
-            title={guideActive ? "点击关闭操作指引" : "点击开启操作指引"}
+            title={guideActive ? t("easyMode.guide.tooltipClose") : t("easyMode.guide.tooltipOpen")}
             onClick={() => {
               handleGuideToggle();
             }}
           >
-            <span>{guideActive ? "操作指引 (进行中)" : "操作指引"}</span>
+            <span>{guideActive ? t("easyMode.guide.buttonActive") : t("easyMode.guide.button")}</span>
           </button>
         </div>
 
         <div className="simple-mode-topbar-right">
-          {/* 主题切换 */}
+          {/* Theme toggle */}
           {setTheme ? (
             <div className="simple-mode-theme-group">
               <button
                 type="button"
                 className={theme === "light" ? "active" : ""}
-                title="明亮主题"
+                title={t("app.theme.switchToLight")}
                 onClick={() => setTheme("light")}
               >
                 <Sun size={15} />
@@ -625,7 +627,7 @@ export function EasyModePage({
               <button
                 type="button"
                 className={theme === "dark" ? "active" : ""}
-                title="暗色主题"
+                title={t("app.theme.switchToDark")}
                 onClick={() => setTheme("dark")}
               >
                 <Moon size={15} />
@@ -633,13 +635,13 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          {/* 语言选择 */}
+          {/* Language selection */}
           <div className="simple-mode-lang-dropdown">
             <button
               type="button"
               className="simple-mode-lang-btn"
               onClick={() => setLangMenuOpen(!langMenuOpen)}
-              title="切换语言"
+              title={t("app.language")}
             >
               <Languages size={15} />
               <span>{currentActiveLang.nativeLabel}</span>
@@ -666,19 +668,19 @@ export function EasyModePage({
             ) : null}
           </div>
 
-          {/* 退出新手模式返回常规控制台 */}
+          {/* Exit beginner mode and return to standard dashboard */}
           <button
             type="button"
             className="secondary-button simple-mode-exit-btn simple-mode-highlight-button"
-            title="返回常规控制台"
+            title={t("easyMode.exit.tooltip")}
             onClick={() => onExit?.()}
           >
-            <span>退出新手模式</span>
+            <span>{t("easyMode.exit.button")}</span>
           </button>
         </div>
       </header>
 
-      {/* 步骤条进度指示器 */}
+      {/* Step status progress indicator */}
       <nav className="simple-mode-step-status" aria-label={t("easyMode.steps.label")}>
         <div className="simple-mode-step-status-heading">
           <span>{t("easyMode.steps.label")}</span>
@@ -722,7 +724,7 @@ export function EasyModePage({
         </div>
       </nav>
 
-      {/* 第一步：接入模型 */}
+      {/* Step 1: Connect models */}
       {activeStep === 1 ? (
         <section className="panel simple-mode-task">
           <div className="simple-mode-task-heading">
@@ -732,7 +734,7 @@ export function EasyModePage({
             </div>
           </div>
 
-          {/* 连接方式选择卡片 */}
+          {/* Connection method choice cards */}
           <div
             id="easy-guide-choice-grid"
             className={`simple-mode-choice-grid${guideActive && guideStep === 1 ? " guide-focus-highlight" : ""}`}
@@ -749,15 +751,15 @@ export function EasyModePage({
                   <strong>{t("easyMode.oauth.title")}</strong>
                   {totalLoggedInOAuth > 0 ? (
                     <span className="state-pill success" style={{ fontSize: "12px" }}>
-                      已登录 {totalLoggedInOAuth} 个账号
+                      {t("easyMode.oauth.loggedInCount", { count: totalLoggedInOAuth })}
                     </span>
                   ) : (
-                    <span className="state-pill neutral" style={{ fontSize: "12px" }}>推荐</span>
+                    <span className="state-pill neutral" style={{ fontSize: "12px" }}>{t("easyMode.oauth.recommended")}</span>
                   )}
                 </div>
               </div>
               <span>{t("easyMode.oauth.description")}</span>
-              <small>支持 Codex、Claude、Antigravity、Kimi、xAI</small>
+              <small>{t("easyMode.oauth.supportedProviders")}</small>
             </button>
 
             <button
@@ -772,17 +774,17 @@ export function EasyModePage({
                   <strong>{t("easyMode.api.title")}</strong>
                   {totalApiProviders > 0 ? (
                     <span className="state-pill success" style={{ fontSize: "12px" }}>
-                      已接入 {totalApiProviders} 个平台
+                      {t("easyMode.api.connectedCount", { count: totalApiProviders })}
                     </span>
                   ) : null}
                 </div>
               </div>
               <span>{t("easyMode.api.description")}</span>
-              <small>支持 OpenAI、Anthropic、Codex、Gemini、DeepSeek</small>
+              <small>{t("easyMode.api.supportedProviders")}</small>
             </button>
           </div>
 
-          {/* OAuth 平台列表 */}
+          {/* OAuth platform list */}
           {authMethod === "oauth" ? (
             <div
               id="easy-guide-oauth-box"
@@ -811,7 +813,7 @@ export function EasyModePage({
                         </div>
                         <div className="simple-mode-provider-copy">
                           <strong>{provider.name}</strong>
-                          <span>{provider.description}</span>
+                          <span>{provider.descriptionKey ? t(provider.descriptionKey) : provider.description}</span>
                         </div>
                       </div>
 
@@ -822,7 +824,7 @@ export function EasyModePage({
                             {t("easyMode.oauth.loggedIn")}
                           </span>
                         ) : (
-                          <span className="state-pill neutral" style={{ fontSize: "12px" }}>未登录</span>
+                          <span className="state-pill neutral" style={{ fontSize: "12px" }}>{t("easyMode.oauth.notLoggedIn")}</span>
                         )}
 
                         <button
@@ -839,7 +841,7 @@ export function EasyModePage({
                           ) : loggedIn ? (
                             t("easyMode.oauth.relogin")
                           ) : (
-                            "开始登录"
+                            t("easyMode.oauth.startLogin")
                           )}
                         </button>
                       </div>
@@ -850,7 +852,7 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          {/* API 接入表单 */}
+          {/* API connection form */}
           {authMethod === "api" ? (
             <div
               id="easy-guide-api-box"
@@ -874,7 +876,7 @@ export function EasyModePage({
               ) : null}
 
               <div className="simple-mode-api-form">
-                {/* 平台格式切换 */}
+                {/* Platform format toggle */}
                 <div className="simple-mode-api-platforms">
                   {apiSectionOptions.map((opt) => (
                     <button
@@ -884,7 +886,7 @@ export function EasyModePage({
                       onClick={() => handleApiSectionChange(opt.id)}
                     >
                       <img className="simple-mode-api-platform-icon" src={opt.icon} alt="" />
-                      {opt.name}
+                      {opt.nameKey ? t(opt.nameKey) : opt.name}
                     </button>
                   ))}
                 </div>
@@ -896,7 +898,7 @@ export function EasyModePage({
                     className="text-input"
                     value={apiRemark}
                     onChange={(e) => { setApiRemark(e.target.value); setGuideApiSaved(false); }}
-                    placeholder="例如：主力 DeepSeek V3、中转 API"
+                    placeholder={t("easyMode.api.remarkPlaceholder")}
                   />
                 </div>
 
@@ -923,7 +925,7 @@ export function EasyModePage({
                   </div>
                 </div>
 
-                {/* 模型拉取与选择 */}
+                {/* Model discovery and selection */}
                 <div className="simple-mode-api-model-card">
                   {apiTestedModels.length === 0 ? (
                     <div className="simple-mode-api-model-fetch">
@@ -983,7 +985,7 @@ export function EasyModePage({
                           disabled={apiSaving || !apiBaseUrl.trim() || !apiKey.trim() || apiSelectedModels.length === 0}
                           onClick={() => void handleSaveApi()}
                         >
-                          保存并接入
+                          {t("easyMode.api.saveAndConnect")}
                         </button>
                       </div>
                     </>
@@ -993,7 +995,7 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          {/* 第一步底部操作栏 */}
+          {/* Step 1 footer actions */}
           <div
             id="easy-guide-footer-action"
             className={`simple-mode-task-footer${guideActive && guideStep === 3 ? " guide-focus-highlight" : ""}`}
@@ -1019,14 +1021,14 @@ export function EasyModePage({
                 if (guideActive) setGuideStep(4);
               }}
             >
-              {t("easyMode.navigation.next")}: 配置智能体
+              {t("easyMode.navigation.next")}: {t("easyMode.steps.configureAgent")}
               <ArrowRight size={16} style={{ marginLeft: 6 }} />
             </button>
           </div>
         </section>
       ) : null}
 
-      {/* 第二步：接入智能体 */}
+      {/* Step 2: Connect agents */}
       {activeStep === 2 ? (
         <section
           id="easy-guide-agents-panel"
@@ -1051,7 +1053,7 @@ export function EasyModePage({
         </section>
       ) : null}
 
-      {/* 悬浮指导卡片 */}
+      {/* Floating interactive guide card */}
       {guideActive && spotlightRect ? (
         <aside
           ref={guideTooltipRef}
@@ -1065,17 +1067,17 @@ export function EasyModePage({
           <div className="guide-tooltip-header">
             <div className="guide-tooltip-badge">
               <span>
-                {guideStep === 1 && "步骤 1/4 · 选择连接方式"}
-                {guideStep === 2 && (authMethod === "oauth" ? "步骤 2/4 · 授权登录账号" : "步骤 2/4 · 填写 API 与接入")}
-                {guideStep === 3 && "步骤 3/4 · 确认接入来源并进入下一步"}
-                {guideStep === 4 && "步骤 4/4 · 选择客户端并应用配置"}
+                {guideStep === 1 && t("easyMode.guide.badgeStep1")}
+                {guideStep === 2 && (authMethod === "oauth" ? t("easyMode.guide.badgeStep2OAuth") : t("easyMode.guide.badgeStep2Api"))}
+                {guideStep === 3 && t("easyMode.guide.badgeStep3")}
+                {guideStep === 4 && t("easyMode.guide.badgeStep4")}
               </span>
             </div>
 
             <button
               type="button"
               className="guide-tooltip-close"
-              title="关闭指导"
+              title={t("easyMode.guide.closeTooltip")}
               onClick={() => setGuideActive(false)}
             >
               <X size={15} />
@@ -1085,29 +1087,29 @@ export function EasyModePage({
           <div className="guide-tooltip-body">
             {guideStep === 1 ? (
               <>
-                <h4>步骤 1：选择接入方式</h4>
+                <h4>{t("easyMode.guide.step1.heading")}</h4>
                 <p>
-                  <strong>OAuth 授权登录</strong>：适用于页面列出的 OAuth 平台。<br />
-                  <strong>API 密钥接入</strong>：适用于你已有 API Base URL 和 API Key 的服务或中转平台。
+                  <strong>{t("easyMode.oauth.title")}</strong>：{t("easyMode.guide.step1.oauthDesc")}<br />
+                  <strong>{t("easyMode.api.title")}</strong>：{t("easyMode.guide.step1.apiDesc")}
                 </p>
                 <div className="guide-tooltip-tip">
-                  {guideChoice ? "选择接入方式后，请点击『下一步』继续。" : "请点击上方任一接入方式；选择完成后才能继续。"}
+                  {guideChoice ? t("easyMode.guide.step1.tipSelected") : t("easyMode.guide.step1.tipUnselected")}
                 </div>
               </>
             ) : null}
 
             {guideStep === 2 && authMethod === "oauth" ? (
               <>
-                <h4>步骤 2：完成 OAuth 授权</h4>
+                <h4>{t("easyMode.guide.step2OAuth.heading")}</h4>
                 <p>
-                  请选择一个平台，点击它右侧的 <strong>『开始登录』</strong> 或 <strong>『重新登录』</strong>，并在浏览器中完成授权。<br />
-                  返回应用后，平台显示为 <strong>『已登录』</strong> 才算完成本步骤；未成功授权不能继续。
+                  {t("easyMode.guide.step2OAuth.desc1")}<br />
+                  {t("easyMode.guide.step2OAuth.desc2")}
                 </p>
                 <div className="guide-tooltip-tip">
                   {guideOAuthCompleted && guideOAuthProvider ? (
-                    <strong>{oauthProviders.find((provider) => provider.id === guideOAuthProvider)?.name} 已授权成功，请点击『下一步』。</strong>
+                    <strong>{t("easyMode.guide.step2OAuth.tipSuccess", { provider: oauthProviders.find((provider) => provider.id === guideOAuthProvider)?.name ?? "" })}</strong>
                   ) : (
-                    "请先点击一个平台的登录按钮，并等待授权结果返回。"
+                    t("easyMode.guide.step2OAuth.tipPending")
                   )}
                 </div>
               </>
@@ -1115,23 +1117,23 @@ export function EasyModePage({
 
             {guideStep === 2 && authMethod === "api" ? (
               <>
-                <h4>步骤 2：填写并保存 API 接入</h4>
+                <h4>{t("easyMode.guide.step2Api.heading")}</h4>
                 <p>
-                  1. 确认接口格式，可保持默认选项或选择其他格式。<br />
-                  2. 填写 <strong>API Base URL</strong> 和 <strong>API Key</strong>。<br />
-                  3. 点击 <strong>『获取模型列表』</strong>，返回结果后会默认全选模型；确认或调整选择后，点击 <strong>『保存并接入』</strong>。
+                  {t("easyMode.guide.step2Api.desc1")}<br />
+                  {t("easyMode.guide.step2Api.desc2")}<br />
+                  {t("easyMode.guide.step2Api.desc3")}
                 </p>
                 <div className="guide-tooltip-tip">
                   {guideApiSaved ? (
-                    <strong>API 接入已保存成功，请点击『下一步』。</strong>
+                    <strong>{t("easyMode.guide.step2Api.tipSaved")}</strong>
                   ) : !apiBaseUrl.trim() || !apiKey.trim() ? (
-                    "请填写 Base URL 和 API Key；填写完整后才能获取模型。"
+                    t("easyMode.guide.step2Api.tipEmpty")
                   ) : !guideApiModelsFetched || apiTestedModels.length === 0 ? (
-                    "请点击『获取模型列表』并等待结果返回。"
+                    t("easyMode.guide.step2Api.tipFetch")
                   ) : apiSelectedModels.length === 0 ? (
-                    "当前没有选中模型，请至少勾选一个模型后保存。"
+                    t("easyMode.guide.step2Api.tipNoSelected")
                   ) : (
-                    <span>已默认选择 {apiSelectedModels.length} 个模型；可调整选择，然后点击『保存并接入』。</span>
+                    <span>{t("easyMode.guide.step2Api.tipSelectedCount", { count: apiSelectedModels.length })}</span>
                   )}
                 </div>
               </>
@@ -1139,26 +1141,26 @@ export function EasyModePage({
 
             {guideStep === 3 ? (
               <>
-                <h4>步骤 3：确认接入来源</h4>
+                <h4>{t("easyMode.guide.step3.heading")}</h4>
                 <p>
-                  当前已确认 <strong>{guideConnectedSourceCount}</strong> 个接入来源。这里表示账号或 API 配置已接入，不代表客户端已经完成配置。<br />
-                  请点击下方高亮的 <strong>『下一步：配置智能体』</strong>，进入客户端选择和模型绑定。
+                  {t("easyMode.guide.step3.desc1", { count: guideConnectedSourceCount })}<br />
+                  {t("easyMode.guide.step3.desc2")}
                 </p>
                 <div className="guide-tooltip-tip">
-                  {guideCanAdvance ? "接入来源已确认，请点击『下一步：配置智能体』。" : "请先完成上一步的授权或 API 保存。"}
+                  {guideCanAdvance ? t("easyMode.guide.step3.tipReady") : t("easyMode.guide.step3.tipWaiting")}
                 </div>
               </>
             ) : null}
 
             {guideStep === 4 ? (
               <>
-                <h4>步骤 4：选择客户端并应用配置</h4>
+                <h4>{t("easyMode.guide.step4.heading")}</h4>
                 <p>
-                  左侧列表会显示客户端的检测状态。请选择一个显示为 <strong>『已检测到』</strong> 且支持当前系统的客户端，再在右侧 <strong>『使用模型』</strong> 中选择模型。<br />
-                  非 Pi 客户端点击实际显示的 <strong>『应用配置』</strong> 或 <strong>『更新配置』</strong>；Pi 客户端点击 <strong>『安装提供方』</strong> 或 <strong>『修复提供方』</strong>。成功后才能完成指引。
+                  {t("easyMode.guide.step4.desc1")}<br />
+                  {t("easyMode.guide.step4.desc2")}
                 </p>
                 <div className="guide-tooltip-tip">
-                  {guideAgentConfigured ? "配置已成功应用，可以关闭操作指引；启动客户端需要另行点击启动按钮。" : "请先选择已检测到的客户端和模型，再点击对应的配置按钮并等待成功结果。"}
+                  {guideAgentConfigured ? t("easyMode.guide.step4.tipSuccess") : t("easyMode.guide.step4.tipWaiting")}
                 </div>
               </>
             ) : null}
@@ -1182,7 +1184,7 @@ export function EasyModePage({
                   className="secondary-button guide-btn-sm"
                   onClick={handlePrevGuideStep}
                 >
-                  上一步
+                  {t("easyMode.navigation.back")}
                 </button>
               ) : null}
 
@@ -1192,7 +1194,7 @@ export function EasyModePage({
                 onClick={handleNextGuideStep}
                 disabled={!guideCanAdvance}
               >
-                {guideStep === 4 ? "完成指引" : "下一步"}
+                {guideStep === 4 ? t("easyMode.guide.finish") : t("easyMode.navigation.next")}
               </button>
             </div>
           </div>

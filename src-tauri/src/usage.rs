@@ -3179,7 +3179,7 @@ fn load_usage_analysis(
 ) -> Result<UsageAnalysis, String> {
     Ok(UsageAnalysis {
         models: load_simple_categories(connection, query, "model", "unknown")?,
-        providers: load_simple_categories(connection, query, "provider", "未知 Provider")?,
+        providers: load_simple_categories(connection, query, "provider", "Unknown Provider")?,
         sources: load_source_categories(connection, query, config)?,
         api_keys: load_api_key_categories(connection, query)?,
     })
@@ -3190,7 +3190,7 @@ fn load_source_categories(
     query: &UsageQuery,
     config: &GuiConfigFile,
 ) -> Result<Vec<UsageCategory>, String> {
-    let mut categories = load_simple_categories(connection, query, "source", "未知来源")?;
+    let mut categories = load_simple_categories(connection, query, "source", "Unknown Source")?;
     for category in &mut categories {
         category.label = usage_source_display(config, "", &category.key);
     }
@@ -3248,7 +3248,7 @@ fn load_api_key_categories(
     let sql = format!(
         r#"
         SELECT
-            COALESCE(NULLIF(TRIM(api_key_hash), ''), '未记录密钥'),
+            COALESCE(NULLIF(TRIM(api_key_hash), ''), 'Unrecorded Key'),
             MAX(TRIM(api_key_remark)),
             MAX(TRIM(api_key_display)),
             COUNT(*),
@@ -3529,14 +3529,14 @@ fn api_key_category_label(remark: String, display: String) -> String {
     } else if !display.is_empty() {
         mask_api_key(&display)
     } else {
-        "未记录密钥".to_string()
+        "Unrecorded Key".to_string()
     }
 }
 
 fn usage_source_display(config: &GuiConfigFile, provider: &str, source: &str) -> String {
     let source = source.trim();
     if source.is_empty() {
-        return "未知来源".to_string();
+        return "Unknown Source".to_string();
     }
     if let Some(remark) = config.api_access_remark_for_source(provider, source) {
         return remark.to_string();

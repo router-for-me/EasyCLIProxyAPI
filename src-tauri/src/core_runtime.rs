@@ -465,7 +465,7 @@ pub(crate) async fn fetch_release(
             Err(error) => failures.push(format!("{}: {error}", candidate.display_name())),
         }
     }
-    Err(format!("所有内核版本检测源均失败: {}", failures.join("；")))
+    Err(format!("All core version check sources failed: {}", failures.join("; ")))
 }
 
 pub(crate) async fn fetch_release_from_github(
@@ -878,7 +878,7 @@ pub(crate) async fn download_asset(
         let _ = fs::remove_file(archive_path);
         return Err("内核发行版没有可用的下载地址".to_string());
     }
-    Err(format!("所有内核下载源均失败: {}", failures.join("；")))
+    Err(format!("All core download sources failed: {}", failures.join("; ")))
 }
 
 pub(crate) fn core_download_source_name(url: &str) -> String {

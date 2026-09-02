@@ -90,7 +90,7 @@ export function CoreRuntimeProvider({ children }: { children: ReactNode }) {
 export function useCoreRuntime() {
   const context = useContext(CoreRuntimeContext);
   if (!context) {
-    throw new Error('useCoreRuntime 必须在 CoreRuntimeProvider 内使用');
+    throw new Error('useCoreRuntime must be used within a CoreRuntimeProvider');
   }
   return context;
 }
