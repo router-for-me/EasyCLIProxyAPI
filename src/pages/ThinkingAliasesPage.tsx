@@ -15,6 +15,7 @@ import {
   LoaderCircle,
   Search,
   Trash2,
+  Zap,
 } from 'lucide-react';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 
@@ -29,6 +30,19 @@ type ThinkingAliasEntry = {
   oauthChannel?: string | null;
 };
 
+type SpeedAliasEntry = {
+  sourceModel: string;
+  alias: string;
+  serviceTier: string;
+  provider: string;
+  kind: string;
+  oauthChannel?: string | null;
+};
+
+type AliasListEntry = ThinkingAliasEntry & {
+  serviceTier: string | null;
+};
+
 type ThinkingAliasSource = {
   id: string;
   model: string;
@@ -41,6 +55,7 @@ type ThinkingAliasSource = {
 
 type ModelAliasSource = ThinkingAliasSource & {
   supportsReasoning: boolean;
+  supportsFast: boolean;
 };
 
 const effortOptions = [
@@ -51,16 +66,49 @@ const effortOptions = [
   { value: 'max', label: 'Max', hintKey: 'aliases.effort.max' },
 ] as const satisfies ReadonlyArray<{ value: PresetThinkingEffort; label: string; hintKey: string }>;
 
+export const combineModelAliasEntries = (
+  thinkingEntries: ThinkingAliasEntry[],
+  speedEntries: SpeedAliasEntry[],
+): AliasListEntry[] => {
+  const entries = new Map<string, AliasListEntry>();
+  const entryKey = (
+    entry: Pick<ThinkingAliasEntry, 'kind' | 'provider' | 'sourceModel' | 'alias' | 'oauthChannel'>,
+  ) => (
+    [entry.oauthChannel ?? '', entry.kind, entry.provider, entry.sourceModel, entry.alias]
+      .map((value) => value.toLocaleLowerCase())
+      .join('\u0000')
+  );
+
+  thinkingEntries.forEach((entry) => {
+    entries.set(entryKey(entry), { ...entry, serviceTier: null });
+  });
+  speedEntries.forEach((entry) => {
+    const key = entryKey(entry);
+    const current = entries.get(key);
+    entries.set(key, current
+      ? { ...current, serviceTier: entry.serviceTier }
+      : { ...entry, effort: null });
+  });
+
+  return [...entries.values()].sort((left, right) => (
+    left.provider.localeCompare(right.provider)
+      || left.alias.localeCompare(right.alias)
+  ));
+};
+
 export const combineModelAliasSources = (
   baseSources: ThinkingAliasSource[],
   thinkingSources: ThinkingAliasSource[],
+  speedSources: ThinkingAliasSource[],
 ): ModelAliasSource[] => {
   const reasoningSourceIds = new Set(thinkingSources.map((source) => source.id));
+  const speedSourceIds = new Set(speedSources.map((source) => source.id));
   const sources = new Map<string, ModelAliasSource>();
-  [...baseSources, ...thinkingSources].forEach((source) => {
+  [...baseSources, ...speedSources, ...thinkingSources].forEach((source) => {
     sources.set(source.id, {
       ...source,
       supportsReasoning: reasoningSourceIds.has(source.id),
+      supportsFast: speedSourceIds.has(source.id),
     });
   });
   return [...sources.values()];
@@ -69,12 +117,13 @@ export const combineModelAliasSources = (
 export const defaultModelAlias = (
   model: string | null | undefined,
   effort: string,
+  fast: boolean,
 ) => {
   const normalizedModel = model?.trim() ?? '';
   const normalizedEffort = effort.trim().toLowerCase();
   if (!normalizedModel) return '';
-  if (!normalizedEffort) return `${normalizedModel}-alias`;
-  return `${normalizedModel}-${normalizedEffort}`;
+  if (!normalizedEffort && !fast) return `${normalizedModel}-alias`;
+  return `${normalizedModel}${normalizedEffort ? `-${normalizedEffort}` : ''}${fast ? '-fast' : ''}`;
 };
 
 export const uniqueModelAlias = (
@@ -127,10 +176,13 @@ const thinkingAliasSourceDetail = (source: ThinkingAliasSource) => (
 export function ThinkingAliasesPage() {
   const { t } = useI18n();
   const [thinkingEntries, setThinkingEntries] = useState<ThinkingAliasEntry[]>([]);
+  const [speedEntries, setSpeedEntries] = useState<SpeedAliasEntry[]>([]);
   const [baseSources, setBaseSources] = useState<ThinkingAliasSource[]>([]);
   const [thinkingSources, setThinkingSources] = useState<ThinkingAliasSource[]>([]);
+  const [speedSources, setSpeedSources] = useState<ThinkingAliasSource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [effort, setEffort] = useState('');
+  const [fastEnabled, setFastEnabled] = useState(false);
   const [alias, setAlias] = useState('');
   const [search, setSearch] = useState('');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -147,14 +199,24 @@ export function ThinkingAliasesPage() {
     setLoading(true);
     setError('');
     try {
-      const [nextThinkingEntries, nextBaseSources, nextThinkingSources] = await Promise.all([
+      const [
+        nextThinkingEntries,
+        nextBaseSources,
+        nextThinkingSources,
+        nextSpeedEntries,
+        nextSpeedSources,
+      ] = await Promise.all([
         invoke<ThinkingAliasEntry[]>('get_thinking_aliases'),
         invoke<ThinkingAliasSource[]>('get_model_alias_sources'),
         invoke<ThinkingAliasSource[]>('get_thinking_alias_sources'),
+        invoke<SpeedAliasEntry[]>('get_speed_aliases'),
+        invoke<ThinkingAliasSource[]>('get_speed_alias_sources'),
       ]);
       setThinkingEntries(nextThinkingEntries);
+      setSpeedEntries(nextSpeedEntries);
       setBaseSources(nextBaseSources);
       setThinkingSources(nextThinkingSources);
+      setSpeedSources(nextSpeedSources);
       setSelectedSourceId((current) => (
         nextBaseSources.some((source) => source.id === current)
           ? current
@@ -184,8 +246,12 @@ export function ThinkingAliasesPage() {
   }, [modelPickerOpen]);
 
   const sources = useMemo(
-    () => combineModelAliasSources(baseSources, thinkingSources),
-    [baseSources, thinkingSources],
+    () => combineModelAliasSources(baseSources, thinkingSources, speedSources),
+    [baseSources, speedSources, thinkingSources],
+  );
+  const entries = useMemo(
+    () => combineModelAliasEntries(thinkingEntries, speedEntries),
+    [speedEntries, thinkingEntries],
   );
 
   useEffect(() => {
@@ -198,6 +264,13 @@ export function ThinkingAliasesPage() {
     () => sources.find((source) => source.id === selectedSourceId) ?? null,
     [selectedSourceId, sources],
   );
+  const fastAvailable = Boolean(selectedSource?.supportsFast);
+
+  useEffect(() => {
+    if (!fastAvailable) {
+      setFastEnabled(false);
+    }
+  }, [fastAvailable]);
 
   const filteredSources = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -228,6 +301,7 @@ export function ThinkingAliasesPage() {
   const chooseSource = (source: ModelAliasSource) => {
     setSelectedSourceId(source.id);
     setEffort('');
+    setFastEnabled((current) => current && source.supportsFast);
     setAlias('');
     generatedAliasRef.current = '';
     setModelPickerOpen(false);
@@ -265,7 +339,7 @@ export function ThinkingAliasesPage() {
   };
 
   const normalizedEffort = effort.trim().toLowerCase();
-  const defaultAlias = defaultModelAlias(selectedSource?.model, normalizedEffort);
+  const defaultAlias = defaultModelAlias(selectedSource?.model, normalizedEffort, fastEnabled);
   const uniqueDefaultAlias = uniqueModelAlias(defaultAlias, sources.map((source) => source.model));
   const availableEfforts = selectedSource?.reasoningLevels ?? [];
   const visibleEffortOptions = availableEfforts.map((value) => {
@@ -295,6 +369,10 @@ export function ThinkingAliasesPage() {
       setError(t('aliases.error.emptyAlias'));
       return;
     }
+    if (fastEnabled && !selectedSource.supportsFast) {
+      setError(t('aliases.error.unsupportedFast'));
+      return;
+    }
     if (normalizedEffort && !selectedSource.supportsReasoning) {
       setError(t('aliases.error.unsupportedEffort'));
       return;
@@ -304,14 +382,32 @@ export function ThinkingAliasesPage() {
     setError('');
     setNotice('');
     try {
-      await invoke<ThinkingAliasEntry[]>('create_thinking_alias', {
-        sourceId: selectedSource.id,
-        alias: normalizedAlias,
-        effort: normalizedEffort,
-      });
-      setNotice(normalizedEffort
-        ? t('aliases.created', { alias: normalizedAlias, effort: normalizedEffort })
-        : t('aliases.createdPlain', { alias: normalizedAlias }));
+      if (normalizedEffort) {
+        await invoke<ThinkingAliasEntry[]>('create_thinking_alias', {
+          sourceId: selectedSource.id,
+          alias: normalizedAlias,
+          effort: normalizedEffort,
+          fast: fastEnabled,
+        });
+        setNotice(t(fastEnabled ? 'aliases.createdCombined' : 'aliases.created', {
+          alias: normalizedAlias,
+          effort: normalizedEffort,
+        }));
+      } else if (fastEnabled) {
+        await invoke<SpeedAliasEntry[]>('create_speed_alias', {
+          sourceId: selectedSource.id,
+          alias: normalizedAlias,
+        });
+        setNotice(t('speedAliases.created', { alias: normalizedAlias }));
+      } else {
+        await invoke<ThinkingAliasEntry[]>('create_thinking_alias', {
+          sourceId: selectedSource.id,
+          alias: normalizedAlias,
+          effort: '',
+          fast: false,
+        });
+        setNotice(t('aliases.createdPlain', { alias: normalizedAlias }));
+      }
       setAlias('');
       await load();
     } catch (requestError) {
@@ -322,7 +418,7 @@ export function ThinkingAliasesPage() {
     }
   };
 
-  const deleteAlias = async (entry: ThinkingAliasEntry) => {
+  const deleteAlias = async (entry: AliasListEntry) => {
     if (!window.confirm(
       t('aliases.deleteConfirm', { alias: entry.alias }),
     )) return;
@@ -331,10 +427,17 @@ export function ThinkingAliasesPage() {
     setError('');
     setNotice('');
     try {
-      await invoke<ThinkingAliasEntry[]>('delete_thinking_alias', {
-        alias: entry.alias,
-        oauthChannel: entry.oauthChannel,
-      });
+      if (entry.effort || !entry.serviceTier) {
+        await invoke<ThinkingAliasEntry[]>('delete_thinking_alias', {
+          alias: entry.alias,
+          oauthChannel: entry.oauthChannel,
+        });
+      } else {
+        await invoke<SpeedAliasEntry[]>('delete_speed_alias', {
+          alias: entry.alias,
+          oauthChannel: entry.oauthChannel,
+        });
+      }
       setNotice(t('aliases.deleted', { alias: entry.alias }));
       await load();
     } catch (requestError) {
@@ -392,6 +495,7 @@ export function ThinkingAliasesPage() {
                     ) {
                       setSelectedSourceId('');
                       setEffort('');
+                      setFastEnabled(false);
                       setAlias('');
                       generatedAliasRef.current = '';
                     }
@@ -503,6 +607,31 @@ export function ThinkingAliasesPage() {
             ) : null}
             </div>
 
+            <div className="thinking-alias-field">
+              <div className="thinking-field-heading">
+                <strong>{t('aliases.fast.title')}</strong>
+              </div>
+              <label className={`thinking-fast-option${fastEnabled ? ' active' : ''}`}>
+                <span className="thinking-fast-option-copy">
+                  <span><Zap size={15} /> Fast</span>
+                  <small>{fastEnabled ? t('aliases.fast.enabled') : t('aliases.fast.disabled')}</small>
+                </span>
+                <span className="switch-control thinking-fast-switch">
+                  <input
+                    type="checkbox"
+                    checked={fastEnabled}
+                    onChange={(event) => setFastEnabled(event.currentTarget.checked)}
+                    disabled={Boolean(busyAlias) || !fastAvailable}
+                    aria-label={t('aliases.fast.title')}
+                  />
+                  <span className="switch-track" />
+                </span>
+              </label>
+              {selectedSource && !selectedSource.supportsFast ? (
+                <small className="thinking-model-hint">{t('aliases.fast.unsupported')}</small>
+              ) : null}
+            </div>
+
             <div className="thinking-alias-section-divider" aria-hidden="true" />
 
             <div className="thinking-alias-field">
@@ -518,19 +647,18 @@ export function ThinkingAliasesPage() {
                 placeholder={selectedSource
                   ? normalizedEffort
                     ? t('aliases.aliasName.example', { model: selectedSource.model, effort: normalizedEffort })
-                    : t('aliases.aliasName.example', { model: selectedSource.model, effort: 'alias' })
+                    : fastEnabled
+                      ? t('speedAliases.aliasName.example', { model: selectedSource.model })
+                      : t('aliases.aliasName.example', { model: selectedSource.model, effort: 'alias' })
                   : t('aliases.aliasName.selectFirst')}
                 disabled={Boolean(busyAlias)}
               />
             </div>
 
             <div className="thinking-alias-preview">
-              <BrainCircuit size={18} />
+              {fastEnabled && !normalizedEffort ? <Zap size={18} /> : <BrainCircuit size={18} />}
               <div>
                 <span>{selectedSource?.model || t('aliases.notSelected')} <ArrowRight size={13} /> {alias || t('aliases.enterAlias')}</span>
-                <code>{normalizedEffort
-                  ? `${t('aliases.effort.title')} = ${normalizedEffort}`
-                  : t('aliases.notSet')}</code>
               </div>
             </div>
 
@@ -542,7 +670,7 @@ export function ThinkingAliasesPage() {
             >
               {busyAction === 'create'
                 ? <LoaderCircle size={16} className="spin" />
-                : <GitFork size={16} />}
+                : fastEnabled && !normalizedEffort ? <Zap size={16} /> : <GitFork size={16} />}
               {busyAction === 'create' ? t('aliases.creating') : t('aliases.create')}
             </button>
         </section>
@@ -553,19 +681,19 @@ export function ThinkingAliasesPage() {
               <h2>{t('aliases.createdList.title')}</h2>
               <span>{t('aliases.createdList.description')}</span>
             </div>
-            <strong>{thinkingEntries.length}</strong>
+            <strong>{entries.length}</strong>
           </div>
 
           <div className="thinking-alias-list">
             {loading ? (
               <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('aliases.loadingConfig')}</div>
-            ) : thinkingEntries.length === 0 ? (
+            ) : entries.length === 0 ? (
               <div className="management-empty">
                 <GitFork size={25} />
                 <strong>{t('aliases.empty.title')}</strong>
                 <span>{t('aliases.empty.description')}</span>
               </div>
-            ) : thinkingEntries.map((entry) => (
+            ) : entries.map((entry) => (
               <article className="thinking-alias-row" key={`${entry.kind}:${entry.provider}:${entry.alias}`}>
                 <div className="thinking-alias-route">
                   <div className="thinking-alias-route-source">
@@ -583,6 +711,9 @@ export function ThinkingAliasesPage() {
                 <div className="thinking-alias-badges">
                   {entry.effort ? (
                     <span className="thinking-effort-badge">{entry.effort}</span>
+                  ) : null}
+                  {entry.serviceTier ? (
+                    <span className="thinking-effort-badge fast">{t('speedAliases.fast.title')}</span>
                   ) : null}
                 </div>
                 <button
