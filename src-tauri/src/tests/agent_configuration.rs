@@ -1729,6 +1729,50 @@ fn claude_desktop_aliases_support_claude_oauth_models() {
 }
 
 #[test]
+fn claude_desktop_aliases_support_xai_oauth_models() {
+    let input = "port: 8317\n";
+    let mappings = ClaudeDesktopModelMappings::all("grok-4");
+    let available_models = test_agent_models(&["grok-4"]);
+    let definitions = vec![OAuthModelDefinitions {
+        channel: oauth_alias_channel("xai").unwrap(),
+        models: vec![CodexModelDefinition {
+            id: "grok-4".to_string(),
+            display_name: None,
+            description: None,
+            context_window: Some(131_072),
+            reasoning_levels: vec!["high".to_string()],
+            supports_tools: Some(true),
+        }],
+    }];
+
+    let rendered = ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
+        input,
+        &mappings,
+        &available_models,
+        &definitions,
+    )
+    .unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
+    let root = value.as_mapping().unwrap();
+    let aliases = yaml_mapping_value(root, "oauth-model-alias")
+        .and_then(serde_norway::Value::as_mapping)
+        .and_then(|channels| yaml_mapping_value(channels, "xai"))
+        .and_then(serde_norway::Value::as_sequence)
+        .unwrap();
+
+    assert_eq!(aliases.len(), 3);
+    assert!(aliases.iter().all(|entry| {
+        configured_model_identity(entry).is_some_and(|(source, _, _)| source == "grok-4")
+    }));
+    assert!(aliases.iter().all(|entry| {
+        entry
+            .as_mapping()
+            .and_then(|entry| yaml_mapping_value(entry, "fork"))
+            == Some(&serde_norway::Value::Bool(true))
+    }));
+}
+
+#[test]
 fn claude_oauth_alias_changes_use_the_runtime_refresh_endpoint() {
     let current = "port: 8317\nopenai-compatibility: []\n";
     let oauth_only = "port: 8317\nopenai-compatibility: []\noauth-model-alias:\n  codex:\n    - name: gpt-5.6-sol\n      alias: claude-opus-5\n      fork: true\n";
