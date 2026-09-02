@@ -5,8 +5,9 @@ use super::executable_dir;
 #[cfg(test)]
 use super::VersionDownloadSource;
 use super::{
-    apply_configured_proxy, core_base_dir, current_core_status, management_authorization,
-    management_endpoint, management_http_client, CoreProcessState, GuiConfigFile, GuiConfigState,
+    apply_configured_proxy, core_base_dir, current_core_status, format_management_request_error,
+    management_authorization, management_endpoint, management_http_client, CoreProcessState,
+    GuiConfigFile, GuiConfigState,
 };
 use chrono::{DateTime, Local};
 use rusqlite::{
@@ -1650,12 +1651,12 @@ async fn fetch_usage_queue(config: &GuiConfigFile) -> Result<Vec<Value>, String>
         .query(&[("count", USAGE_QUEUE_BATCH_SIZE)])
         .send()
         .await
-        .map_err(|error| format!("读取 CPA 使用记录队列失败: {error}"))?;
+        .map_err(|error| format_management_request_error("读取 CPA 使用记录队列失败", &error))?;
     let status = response.status();
     let text = response
         .text()
         .await
-        .map_err(|error| format!("读取 CPA 使用记录响应失败: {error}"))?;
+        .map_err(|error| format_management_request_error("读取 CPA 使用记录响应失败", &error))?;
     if !status.is_success() {
         return Err(format!(
             "CPA 使用记录队列返回 HTTP {}: {}",
@@ -3864,6 +3865,7 @@ mod tests {
             prefer_gitcode_downloads: false,
             routing_session_affinity: false,
             routing_session_affinity_ttl: String::new(),
+            disable_cooling: crate::DEFAULT_DISABLE_COOLING,
             request_retry: crate::DEFAULT_REQUEST_RETRY,
             max_retry_credentials: crate::DEFAULT_MAX_RETRY_CREDENTIALS,
             max_retry_interval: crate::DEFAULT_MAX_RETRY_INTERVAL,

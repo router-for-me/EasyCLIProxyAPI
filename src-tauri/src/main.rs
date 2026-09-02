@@ -20,8 +20,8 @@ mod usage;
 #[cfg(test)]
 use configuration_watcher::nearest_existing_watch_directory;
 use management_api::{
-    management_authorization, management_endpoint, management_http_client, read_management_text,
-    read_management_value,
+    format_management_request_error, management_authorization, management_endpoint,
+    management_http_client, read_management_text, read_management_value,
 };
 use oauth_browser::*;
 #[cfg(test)]
@@ -137,6 +137,7 @@ const DEFAULT_REQUEST_RETRY: u32 = 3;
 const DEFAULT_MAX_RETRY_CREDENTIALS: u32 = 0;
 const DEFAULT_MAX_RETRY_INTERVAL: u32 = 30;
 const DEFAULT_STREAMING_BOOTSTRAP_RETRIES: u32 = 0;
+const DEFAULT_DISABLE_COOLING: bool = false;
 const LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY: &str = "123456";
 const MANAGED_AGENT_PROVIDER_ID: &str = "cpa-gui";
 const ZCODE_CONFIG_FILE: &str = "config.json";
@@ -605,6 +606,7 @@ struct GuiConfigFile {
     prefer_gitcode_downloads: bool,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
+    disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
     max_retry_interval: u32,
@@ -889,6 +891,7 @@ impl Default for GuiConfigFile {
             prefer_gitcode_downloads: false,
             routing_session_affinity: false,
             routing_session_affinity_ttl: String::new(),
+            disable_cooling: DEFAULT_DISABLE_COOLING,
             request_retry: DEFAULT_REQUEST_RETRY,
             max_retry_credentials: DEFAULT_MAX_RETRY_CREDENTIALS,
             max_retry_interval: DEFAULT_MAX_RETRY_INTERVAL,
@@ -922,6 +925,7 @@ struct GuiConfigPresence {
     prefer_gitcode_downloads: Option<bool>,
     routing_session_affinity: Option<bool>,
     routing_session_affinity_ttl: Option<String>,
+    disable_cooling: Option<bool>,
     request_retry: Option<u32>,
     max_retry_credentials: Option<u32>,
     max_retry_interval: Option<u32>,
@@ -1330,6 +1334,8 @@ struct GuiNetworkRoutingSettings {
     proxy_url: String,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
+    #[serde(default)]
+    disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
     max_retry_interval: u32,
@@ -1347,6 +1353,8 @@ struct GuiNetworkEndpointSettings {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GuiRetrySettings {
+    #[serde(default)]
+    disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
     max_retry_interval: u32,
@@ -1386,6 +1394,7 @@ struct CoreConfigSettings {
     proxy_url: String,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
+    disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
     max_retry_interval: u32,
@@ -1416,6 +1425,7 @@ struct CoreConfigView {
     proxy_url: String,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
+    disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
     max_retry_interval: u32,
@@ -1860,6 +1870,7 @@ impl GuiConfigState {
             config.proxy_url = settings.proxy_url.clone();
             config.routing_session_affinity = settings.routing_session_affinity;
             config.routing_session_affinity_ttl = settings.routing_session_affinity_ttl.clone();
+            config.disable_cooling = settings.disable_cooling;
             config.request_retry = settings.request_retry;
             config.max_retry_credentials = settings.max_retry_credentials;
             config.max_retry_interval = settings.max_retry_interval;
@@ -1880,6 +1891,7 @@ impl GuiConfigState {
 
     fn update_retry_settings(&self, settings: &GuiConfigFile) -> Result<GuiConfigFile, String> {
         self.update(|config| {
+            config.disable_cooling = settings.disable_cooling;
             config.request_retry = settings.request_retry;
             config.max_retry_credentials = settings.max_retry_credentials;
             config.max_retry_interval = settings.max_retry_interval;
@@ -2035,6 +2047,7 @@ impl GuiConfigState {
             config.proxy_url = settings.proxy_url.clone();
             config.routing_session_affinity = settings.routing_session_affinity;
             config.routing_session_affinity_ttl = settings.routing_session_affinity_ttl.clone();
+            config.disable_cooling = settings.disable_cooling;
             config.request_retry = settings.request_retry;
             config.max_retry_credentials = settings.max_retry_credentials;
             config.max_retry_interval = settings.max_retry_interval;
@@ -2086,6 +2099,7 @@ impl From<&GuiConfigFile> for CoreConfigSettings {
             proxy_url: config.proxy_url.clone(),
             routing_session_affinity: config.routing_session_affinity,
             routing_session_affinity_ttl: config.routing_session_affinity_ttl.clone(),
+            disable_cooling: config.disable_cooling,
             request_retry: config.request_retry,
             max_retry_credentials: config.max_retry_credentials,
             max_retry_interval: config.max_retry_interval,
@@ -2115,6 +2129,7 @@ impl From<&GuiConfigFile> for CoreConfigView {
             proxy_url: config.proxy_url.clone(),
             routing_session_affinity: config.routing_session_affinity,
             routing_session_affinity_ttl: config.routing_session_affinity_ttl.clone(),
+            disable_cooling: config.disable_cooling,
             request_retry: config.request_retry,
             max_retry_credentials: config.max_retry_credentials,
             max_retry_interval: config.max_retry_interval,

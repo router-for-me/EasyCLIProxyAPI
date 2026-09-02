@@ -417,6 +417,11 @@ pub(crate) fn patch_core_network_routing_yaml(
         )?;
         set_core_yaml_top_level_value(
             document,
+            "disable-cooling",
+            serde_norway::Value::Bool(config.disable_cooling),
+        )?;
+        set_core_yaml_top_level_value(
+            document,
             "request-retry",
             serde_norway::to_value(config.request_retry)
                 .map_err(|err| format!("序列化请求重试次数失败: {err}"))?,
@@ -466,6 +471,11 @@ pub(crate) fn patch_core_retry_yaml(
 ) -> Result<Option<String>, String> {
     patch_core_yaml_document(content, |document| {
         let original = document.clone();
+        set_core_yaml_top_level_value(
+            document,
+            "disable-cooling",
+            serde_norway::Value::Bool(config.disable_cooling),
+        )?;
         set_core_yaml_top_level_value(
             document,
             "request-retry",
@@ -614,6 +624,11 @@ pub(crate) fn apply_gui_managed_settings(
             "routing",
             "session-affinity-ttl",
             serde_norway::Value::String(config.routing_session_affinity_ttl.clone()),
+        )?;
+        changed |= set_core_yaml_top_level_value(
+            document,
+            "disable-cooling",
+            serde_norway::Value::Bool(config.disable_cooling),
         )?;
         changed |= set_core_yaml_top_level_value(
             document,
@@ -1146,6 +1161,7 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         || presence.proxy_url.is_none()
         || presence.routing_session_affinity.is_none()
         || presence.routing_session_affinity_ttl.is_none()
+        || presence.disable_cooling.is_none()
         || presence.request_retry.is_none()
         || presence.max_retry_credentials.is_none()
         || presence.max_retry_interval.is_none()
@@ -1196,6 +1212,9 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
             }
             if presence.routing_session_affinity_ttl.is_none() {
                 config.routing_session_affinity_ttl = core_settings.routing_session_affinity_ttl;
+            }
+            if presence.disable_cooling.is_none() {
+                config.disable_cooling = core_settings.disable_cooling;
             }
             if presence.request_retry.is_none() {
                 config.request_retry = core_settings.request_retry;
@@ -1301,6 +1320,7 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.proxy_url = core_settings.proxy_url.clone();
     config.routing_session_affinity = core_settings.routing_session_affinity;
     config.routing_session_affinity_ttl = core_settings.routing_session_affinity_ttl.clone();
+    config.disable_cooling = core_settings.disable_cooling;
     config.request_retry = core_settings.request_retry;
     config.max_retry_credentials = core_settings.max_retry_credentials;
     config.max_retry_interval = core_settings.max_retry_interval;
@@ -1676,6 +1696,7 @@ pub(crate) fn write_gui_config_to_path(
             "routing-session-affinity-ttl",
             value(config.routing_session_affinity_ttl.as_str()),
         ),
+        ("disable-cooling", value(config.disable_cooling)),
         ("request-retry", value(i64::from(config.request_retry))),
         (
             "max-retry-credentials",

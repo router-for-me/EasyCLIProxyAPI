@@ -18,6 +18,7 @@ fn gui_field_edit_preserves_comments_and_unknown_configuration() {
         auth_dir: path_to_string(&home.join("custom-auth")),
         management_secret_key: "custom-secret".to_string(),
         usage_statistics_enabled: false,
+        disable_cooling: true,
         download_source: VersionDownloadSource::Gitcode,
         prefer_gitcode_downloads: true,
         ..GuiConfigFile::default()
@@ -33,6 +34,7 @@ fn gui_field_edit_preserves_comments_and_unknown_configuration() {
     assert!(content.contains("silent-start = true"));
     assert!(content.contains("management-secret-key = \"custom-secret\""));
     assert!(content.contains("usage-statistics-enabled = false"));
+    assert!(content.contains("disable-cooling = true"));
     assert!(content.contains("download-source = \"gitcode\""));
     assert!(content.contains("prefer-gitcode-downloads = true"));
     assert!(!content.contains("codex-session-repair-on-launch"));

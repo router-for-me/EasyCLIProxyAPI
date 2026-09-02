@@ -1914,6 +1914,11 @@ textarea:focus-visible {
   transform: translateX(20px);
 }
 
+.config-general-subpage {
+  display: grid;
+  gap: 18px;
+}
+
 .config-keys-panel {
   display: grid;
   min-height: 0;
