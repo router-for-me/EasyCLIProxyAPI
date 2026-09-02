@@ -922,9 +922,7 @@ pub(crate) fn resolved_oauth_alias_sources(
         AliasSourceCapability::Reasoning => {
             sources.retain(|source| !source.source.reasoning_levels.is_empty())
         }
-        AliasSourceCapability::Fast => {
-            sources.retain(|source| model_supports_fast(&source.source.model))
-        }
+        AliasSourceCapability::Fast => sources.retain(alias_source_supports_fast),
         AliasSourceCapability::Base => {}
     }
     let configured_codex_api_models = sources
@@ -949,8 +947,6 @@ pub(crate) fn resolved_oauth_alias_sources(
                 .filter(|definition| {
                     (capability != AliasSourceCapability::Reasoning
                         || !definition.reasoning_levels.is_empty())
-                        && (capability != AliasSourceCapability::Fast
-                            || model_supports_fast(&definition.id))
                         && thinking_alias_model_is_available(available_models, &definition.id)
                         && (channel.key != "codex"
                             || !configured_codex_api_models
@@ -985,19 +981,13 @@ pub(crate) fn thinking_alias_model_is_available(
         .any(|available| available.name.eq_ignore_ascii_case(model))
 }
 
-pub(crate) fn model_supports_fast(model: &str) -> bool {
-    let model = model.trim().to_ascii_lowercase();
-    model == "gpt" || model.starts_with("gpt-")
-}
-
 pub(crate) fn alias_source_supports_fast(source: &ResolvedThinkingAliasSource) -> bool {
-    model_supports_fast(&source.source.model)
-        && match &source.location {
-            ThinkingAliasSourceLocation::Oauth { channel, .. } => *channel == "codex",
-            ThinkingAliasSourceLocation::ConfigModel { section, .. } => {
-                matches!(*section, "codex-api-key" | "openai-compatibility")
-            }
+    match &source.location {
+        ThinkingAliasSourceLocation::Oauth { channel, .. } => *channel == "codex",
+        ThinkingAliasSourceLocation::ConfigModel { section, .. } => {
+            matches!(*section, "codex-api-key" | "openai-compatibility")
         }
+    }
 }
 
 pub(crate) fn collect_config_thinking_alias_sources(
@@ -1634,7 +1624,11 @@ pub(crate) fn add_model_alias_to_yaml(
     source: &ResolvedThinkingAliasSource,
     alias: &str,
     effort: &str,
+    fast: bool,
 ) -> Result<String, String> {
+    if fast && !alias_source_supports_fast(source) {
+        return Err("Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 模型源".to_string());
+    }
     let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
     let mut updated = document.get().clone();
@@ -1667,8 +1661,32 @@ pub(crate) fn add_model_alias_to_yaml(
     }
 
     remove_thinking_payload_model(root, alias)?;
-    if effort.is_empty() {
-        return render_updated_core_yaml(&mut document, updated);
+    remove_speed_payload_model(root, alias)?;
+    if !effort.is_empty() {
+        let mut params_mapping = serde_norway::Mapping::new();
+        insert_thinking_effort_params(&mut params_mapping, &source.source, effort)?;
+        append_alias_payload_override(root, alias, &source.source.protocol, params_mapping)?;
+    }
+    if fast {
+        let mut params_mapping = serde_norway::Mapping::new();
+        params_mapping.insert(
+            yaml_key("service_tier"),
+            serde_norway::Value::String("priority".to_string()),
+        );
+        append_alias_payload_override(root, alias, &source.source.protocol, params_mapping)?;
+    }
+
+    render_updated_core_yaml(&mut document, updated)
+}
+
+pub(crate) fn append_alias_payload_override(
+    root: &mut serde_norway::Mapping,
+    alias: &str,
+    protocol: &str,
+    params_mapping: serde_norway::Mapping,
+) -> Result<(), String> {
+    if params_mapping.is_empty() {
+        return Ok(());
     }
     let payload = root
         .entry(yaml_key("payload"))
@@ -1688,12 +1706,8 @@ pub(crate) fn add_model_alias_to_yaml(
     );
     model_mapping.insert(
         yaml_key("protocol"),
-        serde_norway::Value::String(source.source.protocol.clone()),
+        serde_norway::Value::String(protocol.to_string()),
     );
-    let mut params_mapping = serde_norway::Mapping::new();
-    if !effort.is_empty() {
-        insert_thinking_effort_params(&mut params_mapping, &source.source, effort)?;
-    }
     let mut rule_mapping = serde_norway::Mapping::new();
     rule_mapping.insert(
         yaml_key("models"),
@@ -1704,8 +1718,7 @@ pub(crate) fn add_model_alias_to_yaml(
         serde_norway::Value::Mapping(params_mapping),
     );
     override_rules.push(serde_norway::Value::Mapping(rule_mapping));
-
-    render_updated_core_yaml(&mut document, updated)
+    Ok(())
 }
 
 pub(crate) fn add_speed_alias_to_yaml(
@@ -1714,9 +1727,7 @@ pub(crate) fn add_speed_alias_to_yaml(
     alias: &str,
 ) -> Result<String, String> {
     if !alias_source_supports_fast(source) {
-        return Err(
-            "Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 的 GPT 系列模型".to_string(),
-        );
+        return Err("Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 模型源".to_string());
     }
     let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
@@ -1749,41 +1760,12 @@ pub(crate) fn add_speed_alias_to_yaml(
     }
 
     remove_speed_payload_model(root, alias)?;
-    let payload = root
-        .entry(yaml_key("payload"))
-        .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
-        .as_mapping_mut()
-        .ok_or_else(|| "payload 必须是 YAML 映射".to_string())?;
-    let override_rules = payload
-        .entry(yaml_key("override"))
-        .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
-        .as_sequence_mut()
-        .ok_or_else(|| "payload.override 必须是数组".to_string())?;
-
-    let mut model_mapping = serde_norway::Mapping::new();
-    model_mapping.insert(
-        yaml_key("name"),
-        serde_norway::Value::String(alias.to_string()),
-    );
-    model_mapping.insert(
-        yaml_key("protocol"),
-        serde_norway::Value::String(source.source.protocol.clone()),
-    );
     let mut params_mapping = serde_norway::Mapping::new();
     params_mapping.insert(
         yaml_key("service_tier"),
         serde_norway::Value::String("priority".to_string()),
     );
-    let mut rule_mapping = serde_norway::Mapping::new();
-    rule_mapping.insert(
-        yaml_key("models"),
-        serde_norway::Value::Sequence(vec![serde_norway::Value::Mapping(model_mapping)]),
-    );
-    rule_mapping.insert(
-        yaml_key("params"),
-        serde_norway::Value::Mapping(params_mapping),
-    );
-    override_rules.push(serde_norway::Value::Mapping(rule_mapping));
+    append_alias_payload_override(root, alias, &source.source.protocol, params_mapping)?;
 
     render_updated_core_yaml(&mut document, updated)
 }
