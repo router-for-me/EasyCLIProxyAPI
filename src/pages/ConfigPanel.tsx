@@ -880,7 +880,7 @@ export function ConfigPanelPage() {
 
       {activeSubpage === 'general' ? (
         <div
-          className="config-subpage-panel"
+          className="config-subpage-panel config-general-subpage"
           id="config-subpage-panel-general"
           role="tabpanel"
           aria-labelledby="config-subpage-tab-general"
