@@ -140,7 +140,7 @@ pub(crate) async fn fetch_active_oauth_alias_channels(
         .header(reqwest::header::ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| format!("读取 OAuth 凭据来源失败: {error}"))?;
+        .map_err(|error| format_management_request_error("读取 OAuth 凭据来源失败", &error))?;
     let payload = read_management_value(response).await?;
     let files = payload
         .get("files")
@@ -218,7 +218,7 @@ pub(crate) async fn fetch_management_config_yaml(config: &GuiConfigFile) -> Resu
         )
         .send()
         .await
-        .map_err(|error| format!("读取内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format_management_request_error("读取内核 YAML 配置失败", &error))?;
     read_management_text(response).await
 }
 
@@ -234,7 +234,7 @@ pub(crate) async fn put_management_config_yaml(
         .body(content.to_string())
         .send()
         .await
-        .map_err(|error| format!("保存内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format_management_request_error("保存内核 YAML 配置失败", &error))?;
     read_management_value(response).await.map(|_| ())
 }
 
@@ -249,7 +249,7 @@ pub(crate) async fn put_management_oauth_model_aliases(
         .json(aliases)
         .send()
         .await
-        .map_err(|error| format!("保存 OAuth 模型别名失败: {error}"))?;
+        .map_err(|error| format_management_request_error("保存 OAuth 模型别名失败", &error))?;
     read_management_value(response).await.map(|_| ())
 }
 
@@ -750,7 +750,9 @@ pub(crate) async fn fetch_oauth_channel_model_definitions(
         .header(reqwest::header::ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| format!("读取 {channel} OAuth 模型定义失败: {error}"))?;
+        .map_err(|error| {
+            format_management_request_error(&format!("读取 {channel} OAuth 模型定义失败"), &error)
+        })?;
     let payload = read_management_value(response).await?;
     parse_codex_model_definitions(&payload)
 }

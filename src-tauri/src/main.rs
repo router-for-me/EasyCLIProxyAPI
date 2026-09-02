@@ -20,8 +20,8 @@ mod usage;
 #[cfg(test)]
 use configuration_watcher::nearest_existing_watch_directory;
 use management_api::{
-    management_authorization, management_endpoint, management_http_client, read_management_text,
-    read_management_value,
+    format_management_request_error, management_authorization, management_endpoint,
+    management_http_client, read_management_text, read_management_value,
 };
 use oauth_browser::*;
 #[cfg(test)]

@@ -8,6 +8,7 @@ use super::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    error::Error,
     fs,
     path::Path,
     process::{Command, Stdio},
@@ -94,7 +95,7 @@ pub(crate) async fn management_request(
     let response = builder
         .send()
         .await
-        .map_err(|err| format!("请求管理 API 失败: {err}"))?;
+        .map_err(|err| format_management_request_error("请求管理 API 失败", &err))?;
     read_management_value(response).await
 }
 
@@ -121,7 +122,7 @@ pub(crate) async fn upload_auth_file(
         .body(data)
         .send()
         .await
-        .map_err(|err| format!("上传认证文件失败: {err}"))?;
+        .map_err(|err| format_management_request_error("上传认证文件失败", &err))?;
     read_management_value(response).await
 }
 
@@ -179,7 +180,7 @@ pub(crate) async fn start_oauth_login(
     let response = request
         .send()
         .await
-        .map_err(|err| format!("请求 OAuth 登录链接失败: {err}"))?;
+        .map_err(|err| format_management_request_error("请求 OAuth 登录链接失败", &err))?;
     let payload = read_management_json::<OAuthStartApiResponse>(response).await?;
     if let Some(error) = payload
         .error
@@ -228,7 +229,7 @@ pub(crate) async fn get_oauth_status(
         .query(&[("state", state)])
         .send()
         .await
-        .map_err(|err| format!("查询 OAuth 状态失败: {err}"))?;
+        .map_err(|err| format_management_request_error("查询 OAuth 状态失败", &err))?;
     let payload = read_management_json::<OAuthStatusApiResponse>(response).await?;
     let status = payload
         .status
@@ -268,12 +269,12 @@ pub(crate) async fn submit_oauth_callback(
         .json(&body)
         .send()
         .await
-        .map_err(|err| format!("提交 OAuth 回调失败: {err}"))?;
+        .map_err(|err| format_management_request_error("提交 OAuth 回调失败", &err))?;
     let status = response.status();
     let text = response
         .text()
         .await
-        .map_err(|err| format!("读取 OAuth 回调响应失败: {err}"))?;
+        .map_err(|err| format_management_request_error("读取 OAuth 回调响应失败", &err))?;
     if !status.is_success() {
         return Err(format_management_error(status.as_u16(), &text));
     }
@@ -282,13 +283,44 @@ pub(crate) async fn submit_oauth_callback(
 
 pub(crate) fn management_http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
+        // GUI-to-Core management traffic must always connect directly. Upstream
+        // traffic still uses Core's proxy-url, and other GUI HTTP clients keep
+        // their independently configured proxy behavior.
+        .no_proxy()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         // Management requests target the configured local listener. This keeps
         // self-signed/private-CA certificates usable without weakening upstream clients.
         .danger_accept_invalid_certs(true)
         .build()
-        .map_err(|err| format!("创建管理 API 客户端失败: {err}"))
+        .map_err(|err| format_management_request_error("创建管理 API 客户端失败", &err))
+}
+
+pub(crate) fn format_management_request_error(
+    action: &str,
+    error: &(dyn Error + 'static),
+) -> String {
+    let mut messages = Vec::new();
+    let mut current = Some(error);
+
+    while let Some(error) = current {
+        let message = error.to_string();
+        if !message.is_empty()
+            && messages
+                .last()
+                .map(|previous| previous != &message)
+                .unwrap_or(true)
+        {
+            messages.push(message);
+        }
+        current = error.source();
+    }
+
+    if messages.is_empty() {
+        action.to_string()
+    } else {
+        format!("{action}: {}", messages.join(": "))
+    }
 }
 
 pub(crate) fn management_authorization(config: &GuiConfigFile) -> Result<String, String> {
@@ -342,7 +374,7 @@ where
     let text = response
         .text()
         .await
-        .map_err(|err| format!("读取管理 API 响应失败: {err}"))?;
+        .map_err(|err| format_management_request_error("读取管理 API 响应失败", &err))?;
     if !status.is_success() {
         return Err(format_management_error(status.as_u16(), &text));
     }
@@ -364,7 +396,7 @@ pub(crate) async fn read_management_value(
     let text = response
         .text()
         .await
-        .map_err(|err| format!("读取管理 API 响应失败: {err}"))?;
+        .map_err(|err| format_management_request_error("读取管理 API 响应失败", &err))?;
     if !status.is_success() {
         return Err(format_management_error(status.as_u16(), &text));
     }
@@ -382,7 +414,7 @@ pub(crate) async fn read_management_text(response: reqwest::Response) -> Result<
     let text = response
         .text()
         .await
-        .map_err(|err| format!("读取管理 API 响应失败: {err}"))?;
+        .map_err(|err| format_management_request_error("读取管理 API 响应失败", &err))?;
     if !status.is_success() {
         return Err(format_management_error(status.as_u16(), &text));
     }
