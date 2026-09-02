@@ -1197,6 +1197,14 @@ pub(crate) fn core_config_settings_from_value(
             })
             .transpose()?
             .unwrap_or_default();
+    let disable_cooling = yaml_mapping_value(root, "disable-cooling")
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| "disable-cooling 必须是布尔值".to_string())
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_DISABLE_COOLING);
     let request_retry = yaml_mapping_value(root, "request-retry")
         .map(|value| {
             value
@@ -1248,6 +1256,7 @@ pub(crate) fn core_config_settings_from_value(
         proxy_url,
         routing_session_affinity,
         routing_session_affinity_ttl,
+        disable_cooling,
         request_retry,
         max_retry_credentials,
         max_retry_interval,

@@ -119,6 +119,7 @@ pub(crate) fn save_network_routing_settings(
     next.proxy_url = proxy_url.clone();
     next.routing_session_affinity = settings.routing_session_affinity;
     next.routing_session_affinity_ttl = routing_session_affinity_ttl.clone();
+    next.disable_cooling = settings.disable_cooling;
     next.request_retry = settings.request_retry;
     next.max_retry_credentials = settings.max_retry_credentials;
     next.max_retry_interval = settings.max_retry_interval;
@@ -187,6 +188,7 @@ pub(crate) fn save_retry_settings(
 ) -> Result<CoreConfigView, String> {
     let previous = gui_config_state.snapshot()?;
     let mut next = previous.clone();
+    next.disable_cooling = settings.disable_cooling;
     next.request_retry = settings.request_retry;
     next.max_retry_credentials = settings.max_retry_credentials;
     next.max_retry_interval = settings.max_retry_interval;

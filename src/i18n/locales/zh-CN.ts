@@ -476,6 +476,8 @@ export const zhCN = {
   'config.network.sessionAffinityHint': '同一会话优先复用已选择的凭据',
   'config.network.sessionTtl': '会话粘性 TTL',
   'config.network.sessionTtlHint': '例如 1h；留空使用内核默认值',
+  'config.network.disableCooling': '禁用冷却',
+  'config.network.disableCoolingHint': '全局禁用认证凭据和模型的冷却调度',
   'config.network.requestRetry': '请求重试次数',
   'config.network.requestRetryHint': '对 403、408、500、502、503、504 响应的重试次数；0 表示不重试',
   'config.network.maxRetryCredentials': '最大尝试凭据数',

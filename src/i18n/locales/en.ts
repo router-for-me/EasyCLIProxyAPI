@@ -478,6 +478,8 @@ export const en: Record<MessageKey, string> = {
   'config.network.sessionAffinityHint': 'Prefer the previously selected credential for the same session',
   'config.network.sessionTtl': 'Session Affinity TTL',
   'config.network.sessionTtlHint': 'For example, 1h; leave blank to use the core default',
+  'config.network.disableCooling': 'Disable Cooling',
+  'config.network.disableCoolingHint': 'Globally disables cooldown scheduling for credentials and models; provider or credential settings can override it',
   'config.network.requestRetry': 'Request Retries',
   'config.network.requestRetryHint': 'Retries responses with status 403, 408, 500, 502, 503, or 504; 0 disables retries',
   'config.network.maxRetryCredentials': 'Maximum Credentials Tried',

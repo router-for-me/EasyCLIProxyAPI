@@ -41,6 +41,7 @@ type CoreConfigSettings = {
   proxyUrl: string;
   routingSessionAffinity: boolean;
   routingSessionAffinityTtl: string;
+  disableCooling: boolean;
   requestRetry: number;
   maxRetryCredentials: number;
   maxRetryInterval: number;
@@ -72,6 +73,7 @@ type NetworkDraftField =
   | 'proxyUrl'
   | 'sessionAffinity'
   | 'sessionTtl'
+  | 'disableCooling'
   | 'requestRetry'
   | 'maxRetryCredentials'
   | 'maxRetryInterval'
@@ -106,6 +108,7 @@ const cleanNetworkDraft = (): NetworkDraftDirty => ({
   proxyUrl: false,
   sessionAffinity: false,
   sessionTtl: false,
+  disableCooling: false,
   requestRetry: false,
   maxRetryCredentials: false,
   maxRetryInterval: false,
@@ -159,6 +162,7 @@ export function ConfigPanelPage() {
   const [proxyUrlDraft, setProxyUrlDraft] = useState('');
   const [sessionAffinityDraft, setSessionAffinityDraft] = useState(false);
   const [sessionTtlDraft, setSessionTtlDraft] = useState('');
+  const [disableCoolingDraft, setDisableCoolingDraft] = useState(false);
   const [requestRetryDraft, setRequestRetryDraft] = useState('3');
   const [maxRetryCredentialsDraft, setMaxRetryCredentialsDraft] = useState('0');
   const [maxRetryIntervalDraft, setMaxRetryIntervalDraft] = useState('30');
@@ -218,6 +222,7 @@ export function ConfigPanelPage() {
       if (!dirty.proxyUrl) setProxyUrlDraft(result.proxyUrl);
       if (!dirty.sessionAffinity) setSessionAffinityDraft(result.routingSessionAffinity);
       if (!dirty.sessionTtl) setSessionTtlDraft(result.routingSessionAffinityTtl);
+      if (!dirty.disableCooling) setDisableCoolingDraft(result.disableCooling);
       if (!dirty.requestRetry) setRequestRetryDraft(String(result.requestRetry));
       if (!dirty.maxRetryCredentials) setMaxRetryCredentialsDraft(String(result.maxRetryCredentials));
       if (!dirty.maxRetryInterval) setMaxRetryIntervalDraft(String(result.maxRetryInterval));
@@ -232,6 +237,7 @@ export function ConfigPanelPage() {
     setProxyUrlDraft(result.proxyUrl);
     setSessionAffinityDraft(result.routingSessionAffinity);
     setSessionTtlDraft(result.routingSessionAffinityTtl);
+    setDisableCoolingDraft(result.disableCooling);
     setRequestRetryDraft(String(result.requestRetry));
     setMaxRetryCredentialsDraft(String(result.maxRetryCredentials));
     setMaxRetryIntervalDraft(String(result.maxRetryInterval));
@@ -648,12 +654,14 @@ export function ConfigPanelPage() {
     try {
       const result = await invoke<CoreConfigSettings>('save_retry_settings', {
         settings: {
+          disableCooling: disableCoolingDraft,
           requestRetry,
           maxRetryCredentials,
           maxRetryInterval,
           streamingBootstrapRetries,
         },
       });
+      clearDraftDirty('disableCooling');
       clearDraftDirty('requestRetry');
       clearDraftDirty('maxRetryCredentials');
       clearDraftDirty('maxRetryInterval');
@@ -747,7 +755,8 @@ export function ConfigPanelPage() {
     || sessionTtlDraft.trim() !== settings?.routingSessionAffinityTtl
   );
   const retrySettingsDirty = Boolean(settings) && (
-    requestRetryDraft !== String(settings?.requestRetry)
+    disableCoolingDraft !== settings?.disableCooling
+    || requestRetryDraft !== String(settings?.requestRetry)
     || maxRetryCredentialsDraft !== String(settings?.maxRetryCredentials)
     || maxRetryIntervalDraft !== String(settings?.maxRetryInterval)
     || streamingBootstrapRetriesDraft !== String(settings?.streamingBootstrapRetries)
@@ -1330,6 +1339,27 @@ export function ConfigPanelPage() {
               </button>
             </div>
             <div className="config-network-grid">
+              <div className="config-network-field config-network-toggle">
+                <div>
+                  <span>{t('config.network.disableCooling')}</span>
+                  <small>{t('config.network.disableCoolingHint')}</small>
+                </div>
+                <label className="switch-control" title={t('config.network.disableCooling')}>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label={t('config.network.disableCooling')}
+                    checked={disableCoolingDraft}
+                    disabled={controlsDisabled}
+                    onChange={(event) => {
+                      markDraftDirty('disableCooling');
+                      setDisableCoolingDraft(event.currentTarget.checked);
+                    }}
+                  />
+                  <span className="switch-track" />
+                </label>
+              </div>
+
               <label className="config-network-field">
                 <span>{t('config.network.requestRetry')}</span>
                 <input

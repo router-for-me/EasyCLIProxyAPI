@@ -3865,6 +3865,7 @@ mod tests {
             prefer_gitcode_downloads: false,
             routing_session_affinity: false,
             routing_session_affinity_ttl: String::new(),
+            disable_cooling: crate::DEFAULT_DISABLE_COOLING,
             request_retry: crate::DEFAULT_REQUEST_RETRY,
             max_retry_credentials: crate::DEFAULT_MAX_RETRY_CREDENTIALS,
             max_retry_interval: crate::DEFAULT_MAX_RETRY_INTERVAL,

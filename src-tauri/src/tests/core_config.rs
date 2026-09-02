@@ -341,6 +341,7 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
         proxy_url: "http://127.0.0.1:8080".to_string(),
         routing_session_affinity: true,
         routing_session_affinity_ttl: "45m".to_string(),
+        disable_cooling: true,
         request_retry: 1,
         max_retry_credentials: 2,
         max_retry_interval: 5,
@@ -358,6 +359,7 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
     assert_eq!(config.management_secret_key, "management-secret");
     assert_eq!(config.host, "0.0.0.0");
     assert_eq!(config.port, 9000);
+    assert!(config.disable_cooling);
     assert_eq!(config.auth_dir, "/tmp/external-auth");
     assert!(!config.usage_statistics_enabled);
     assert!(config.plugins_enabled);
@@ -479,6 +481,7 @@ fn confirmed_network_routing_patch_updates_all_fields_together() {
         proxy_url: "socks5://127.0.0.1:7890".to_string(),
         routing_session_affinity: true,
         routing_session_affinity_ttl: "2h".to_string(),
+        disable_cooling: true,
         request_retry: 1,
         max_retry_credentials: 2,
         max_retry_interval: 5,
@@ -496,6 +499,7 @@ fn confirmed_network_routing_patch_updates_all_fields_together() {
     assert_eq!(document["proxy-url"], "socks5://127.0.0.1:7890");
     assert_eq!(document["routing"]["session-affinity"], true);
     assert_eq!(document["routing"]["session-affinity-ttl"], "2h");
+    assert_eq!(document["disable-cooling"], true);
     assert_eq!(document["request-retry"], 1);
     assert_eq!(document["max-retry-credentials"], 2);
     assert_eq!(document["max-retry-interval"], 5);
@@ -515,13 +519,14 @@ fn independent_network_modules_only_patch_their_own_fields() {
         proxy_url: "socks5://127.0.0.1:7890".to_string(),
         routing_session_affinity: true,
         routing_session_affinity_ttl: "2h".to_string(),
+        disable_cooling: true,
         request_retry: 7,
         max_retry_credentials: 8,
         max_retry_interval: 9,
         streaming_bootstrap_retries: 10,
         ..GuiConfigFile::default()
     };
-    let input = "host: 127.0.0.1\nport: 8317\nproxy-url: \"\"\nrouting:\n  session-affinity: false\n  session-affinity-ttl: 1h\nrequest-retry: 1\nmax-retry-credentials: 2\nmax-retry-interval: 3\nstreaming:\n  bootstrap-retries: 4\n";
+    let input = "host: 127.0.0.1\nport: 8317\nproxy-url: \"\"\nrouting:\n  session-affinity: false\n  session-affinity-ttl: 1h\ndisable-cooling: false\nrequest-retry: 1\nmax-retry-credentials: 2\nmax-retry-interval: 3\nstreaming:\n  bootstrap-retries: 4\n";
 
     let network = patch_core_network_endpoint_yaml(input, &config)
         .unwrap()
@@ -530,6 +535,7 @@ fn independent_network_modules_only_patch_their_own_fields() {
     assert_eq!(network["host"], "192.168.1.20");
     assert_eq!(network["port"], 9527);
     assert_eq!(network["proxy-url"], "socks5://127.0.0.1:7890");
+    assert_eq!(network["disable-cooling"], false);
     assert_eq!(network["request-retry"], 1);
     assert_eq!(network["routing"]["session-affinity"], false);
 
@@ -537,6 +543,7 @@ fn independent_network_modules_only_patch_their_own_fields() {
         .unwrap()
         .expect("retry settings should change");
     let retry = serde_norway::from_str::<serde_norway::Value>(&retry).unwrap();
+    assert_eq!(retry["disable-cooling"], true);
     assert_eq!(retry["request-retry"], 7);
     assert_eq!(retry["max-retry-credentials"], 8);
     assert_eq!(retry["max-retry-interval"], 9);
@@ -826,17 +833,19 @@ fn core_config_reads_proxy_and_session_affinity_fields() {
 #[test]
 fn core_config_reads_retry_fields_and_uses_core_defaults() {
     let document = serde_norway::from_str::<serde_norway::Value>(
-        "request-retry: 1\nmax-retry-credentials: 2\nmax-retry-interval: 5\nstreaming:\n  bootstrap-retries: 4\n",
+        "disable-cooling: true\nrequest-retry: 1\nmax-retry-credentials: 2\nmax-retry-interval: 5\nstreaming:\n  bootstrap-retries: 4\n",
     )
     .unwrap();
     let settings = core_config_settings_from_value(&document).unwrap();
 
+    assert!(settings.disable_cooling);
     assert_eq!(settings.request_retry, 1);
     assert_eq!(settings.max_retry_credentials, 2);
     assert_eq!(settings.max_retry_interval, 5);
     assert_eq!(settings.streaming_bootstrap_retries, 4);
 
     let defaults = core_config_settings_from_value(&serde_norway::from_str("{}").unwrap()).unwrap();
+    assert_eq!(defaults.disable_cooling, DEFAULT_DISABLE_COOLING);
     assert_eq!(defaults.request_retry, DEFAULT_REQUEST_RETRY);
     assert_eq!(
         defaults.max_retry_credentials,
@@ -856,6 +865,7 @@ fn managed_session_settings_use_canonical_yaml_and_preserve_unrelated_content() 
         proxy_url: "http://127.0.0.1:8080".to_string(),
         routing_session_affinity: true,
         routing_session_affinity_ttl: "1h".to_string(),
+        disable_cooling: true,
         request_retry: 1,
         max_retry_credentials: 2,
         max_retry_interval: 5,
@@ -868,6 +878,7 @@ fn managed_session_settings_use_canonical_yaml_and_preserve_unrelated_content() 
     assert_eq!(document["proxy-url"], "http://127.0.0.1:8080");
     assert_eq!(document["routing"]["session-affinity"], true);
     assert_eq!(document["routing"]["session-affinity-ttl"], "1h");
+    assert_eq!(document["disable-cooling"], true);
     assert_eq!(document["request-retry"], 1);
     assert_eq!(document["max-retry-credentials"], 2);
     assert_eq!(document["max-retry-interval"], 5);
@@ -1046,6 +1057,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         prefer_gitcode_downloads: false,
         routing_session_affinity: true,
         routing_session_affinity_ttl: "1h".to_string(),
+        disable_cooling: true,
         request_retry: 1,
         max_retry_credentials: 2,
         max_retry_interval: 5,
@@ -1072,6 +1084,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
     assert_eq!(document["proxy-url"], "socks5://127.0.0.1:7890");
     assert_eq!(document["routing"]["session-affinity"], true);
     assert_eq!(document["routing"]["session-affinity-ttl"], "1h");
+    assert_eq!(document["disable-cooling"], true);
     assert_eq!(document["request-retry"], 1);
     assert_eq!(document["max-retry-credentials"], 2);
     assert_eq!(document["max-retry-interval"], 5);
