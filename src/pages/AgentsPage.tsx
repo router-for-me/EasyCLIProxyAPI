@@ -169,6 +169,7 @@ const createClaudeBooleanByClient = (): Record<ClaudeModelMappingClientId, boole
 let claudeModelMappingsDraftCache = createClaudeModelMappingsByClient();
 let claudeCustomMappingCache = createClaudeBooleanByClient();
 const claudeModelMappingsDirtyCache = createClaudeBooleanByClient();
+let codexOauthConfigurationDraftCache: boolean | null = null;
 
 const claudeMappingRoles = [
   {
@@ -676,7 +677,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     readAgentLaunchDirectoryHistory,
   );
   const [oauthLoginRequiredAction, setOauthLoginRequiredAction] = useState<OAuthLoginRequiredAction | null>(null);
-  const [oauthConfigurationDraft, setOauthConfigurationDraft] = useState<boolean | null>(null);
+  const [oauthConfigurationDraft, setOauthConfigurationDraftState] = useState<boolean | null>(
+    () => codexOauthConfigurationDraftCache,
+  );
   const [piProviderUpdateStatus, setPiProviderUpdateStatus] = useState<PiProviderUpdateStatus | null>(null);
   const modelRequestRef = useRef(0);
   const piUpdateRequestRef = useRef(0);
@@ -704,6 +707,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       claudeCustomMappingCache = next;
       return next;
     });
+  }, []);
+
+  const setOauthConfigurationDraft = useCallback((value: boolean | null) => {
+    codexOauthConfigurationDraftCache = value;
+    setOauthConfigurationDraftState(value);
   }, []);
 
   const loadStatuses = useCallback(async (forceRefresh = false) => {
@@ -803,9 +811,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setLaunchDirectoryTarget(null);
     setLaunchDirectoryError('');
     setOauthLoginRequiredAction(null);
-    setOauthConfigurationDraft(null);
-    // Preserve each Claude client's unsaved draft while navigating between clients.
-    // Its dirty flag is cleared only after a successful apply, close, or reset action.
+    // Preserve unsaved client-specific configuration while navigating between clients.
+    // Each configuration action decides whether its draft should be retained or cleared.
   }, [selected]);
 
   const activeDefinition = agentDefinitions.find((agent) => agent.id === selected)

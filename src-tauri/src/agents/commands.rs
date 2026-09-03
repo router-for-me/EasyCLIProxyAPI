@@ -1035,6 +1035,11 @@ pub(crate) async fn set_agent_config_enabled(
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
             .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+        let oauth_configuration = if client == AgentClient::Codex {
+            current_codex_oauth_configuration(&home)?
+        } else {
+            false
+        };
         apply_agent_configuration_with_oauth(
             client,
             &home,
@@ -1044,7 +1049,7 @@ pub(crate) async fn set_agent_config_enabled(
             AgentConfigurationOptions {
                 models: &prepared.models,
                 codex_catalog: prepared.codex_catalog.as_deref(),
-                oauth_configuration: false,
+                oauth_configuration,
                 claude_code_model_mappings: claude_code_model_mappings.as_ref(),
                 claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
             },
@@ -1095,6 +1100,11 @@ pub(crate) async fn update_agent_config(
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+    let oauth_configuration = if client == AgentClient::Codex {
+        current_codex_oauth_configuration(&home)?
+    } else {
+        false
+    };
     apply_agent_configuration_with_oauth(
         client,
         &home,
@@ -1104,7 +1114,7 @@ pub(crate) async fn update_agent_config(
         AgentConfigurationOptions {
             models: &prepared.models,
             codex_catalog: prepared.codex_catalog.as_deref(),
-            oauth_configuration: false,
+            oauth_configuration,
             claude_code_model_mappings: claude_code_model_mappings.as_ref(),
             claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
         },

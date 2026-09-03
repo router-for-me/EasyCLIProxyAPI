@@ -700,6 +700,25 @@ pub(crate) fn codex_configuration_directory(home: &Path) -> PathBuf {
         .unwrap_or_else(|| home.join(".codex"))
 }
 
+pub(crate) fn current_codex_oauth_configuration(home: &Path) -> Result<bool, String> {
+    let path = codex_configuration_directory(home).join("config.toml");
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let root: toml::Value = toml::from_str(
+        &fs::read_to_string(&path).map_err(|error| format!("读取 Codex 配置失败: {error}"))?,
+    )
+    .map_err(|error| format!("解析 Codex 配置失败: {error}"))?;
+    Ok(root
+        .get("model_providers")
+        .and_then(toml::Value::as_table)
+        .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID))
+        .and_then(toml::Value::as_table)
+        .and_then(|provider| provider.get("requires_openai_auth"))
+        .and_then(toml::Value::as_bool)
+        == Some(true))
+}
+
 pub(crate) fn codex_auth_file_has_oauth_tokens(path: &Path) -> bool {
     let Ok(content) = fs::read_to_string(path) else {
         return false;

@@ -346,6 +346,52 @@ fn codex_oauth_configuration_uses_openai_auth_with_bearer_token() {
 }
 
 #[test]
+fn codex_oauth_configuration_is_preserved_for_legacy_updates() {
+    let home = agent_test_home("codex-oauth-preserved-update");
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).unwrap();
+    fs::write(
+        codex_dir.join("config.toml"),
+        "[model_providers.cpa-gui]\nrequires_openai_auth = true\n",
+    )
+    .unwrap();
+    fs::write(
+        codex_dir.join("auth.json"),
+        r#"{"tokens":{"access_token":"oauth-access-token"}}"#,
+    )
+    .unwrap();
+
+    let oauth_configuration = current_codex_oauth_configuration(&home).unwrap();
+    assert!(oauth_configuration);
+
+    let models = test_agent_models(&["gpt-test"]);
+    let catalog = test_codex_models(&["gpt-test"]);
+    let updates = build_agent_updates_with_oauth(
+        AgentClient::Codex,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-test",
+        AgentConfigurationOptions {
+            models: &models,
+            codex_catalog: Some(&catalog),
+            oauth_configuration,
+            claude_code_model_mappings: None,
+            claude_desktop_model_mappings: None,
+        },
+    )
+    .unwrap();
+
+    assert!(updates[0].after.contains("requires_openai_auth = true"));
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&updates[2].after).unwrap()["tokens"]
+            ["access_token"]
+            .is_string()
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn codex_api_and_oauth_modes_write_the_same_catalog() {
     let home = agent_test_home("codex-auth-mode-catalog");
     fs::create_dir_all(home.join(".codex")).unwrap();
