@@ -590,6 +590,11 @@ pub(crate) fn apply_gui_managed_settings(
             "usage-statistics-enabled",
             serde_norway::Value::Bool(config.usage_statistics_enabled),
         )?;
+        changed |= set_core_yaml_top_level_value(
+            document,
+            "request-log",
+            serde_norway::Value::Bool(config.request_log),
+        )?;
         changed |= set_core_yaml_nested_value(
             document,
             "remote-management",
@@ -1156,6 +1161,7 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         || presence.api_keys.is_none()
         || presence.management_secret_key.is_none()
         || presence.usage_statistics_enabled.is_none()
+        || presence.request_log.is_none()
         || presence.plugins_enabled.is_none()
         || presence.routing_strategy.is_none()
         || presence.proxy_url.is_none()
@@ -1192,6 +1198,9 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
             }
             if presence.usage_statistics_enabled.is_none() {
                 config.usage_statistics_enabled = core_settings.usage_statistics_enabled;
+            }
+            if presence.request_log.is_none() {
+                config.request_log = core_settings.request_log;
             }
             if presence.management_secret_key.is_none() {
                 config.management_secret_key = core_settings
@@ -1315,6 +1324,7 @@ pub(crate) fn apply_core_settings_to_gui_config(
         config.management_secret_key = secret_key.to_string();
     }
     config.usage_statistics_enabled = core_settings.usage_statistics_enabled;
+    config.request_log = core_settings.request_log;
     config.plugins_enabled = core_settings.plugins_enabled;
     config.routing_strategy = core_settings.routing_strategy.clone();
     config.proxy_url = core_settings.proxy_url.clone();
@@ -1680,6 +1690,7 @@ pub(crate) fn write_gui_config_to_path(
             "usage-statistics-enabled",
             value(config.usage_statistics_enabled),
         ),
+        ("request-log", value(config.request_log)),
         ("plugins-enabled", value(config.plugins_enabled)),
         ("routing-strategy", value(config.routing_strategy.as_str())),
         ("proxy-url", value(config.proxy_url.as_str())),

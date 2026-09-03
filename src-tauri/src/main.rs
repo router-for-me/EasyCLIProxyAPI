@@ -595,6 +595,7 @@ struct GuiConfigFile {
     api_access_remarks: Vec<GuiApiAccessRemark>,
     management_secret_key: String,
     usage_statistics_enabled: bool,
+    request_log: bool,
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
@@ -882,6 +883,7 @@ impl Default for GuiConfigFile {
             // configuration. Core hashes the value written into config.yaml.
             management_secret_key: String::new(),
             usage_statistics_enabled: true,
+            request_log: false,
             plugins_enabled: false,
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
@@ -916,6 +918,7 @@ struct GuiConfigPresence {
     start_core_on_launch: Option<bool>,
     silent_start: Option<bool>,
     usage_statistics_enabled: Option<bool>,
+    request_log: Option<bool>,
     plugins_enabled: Option<bool>,
     routing_strategy: Option<String>,
     proxy_url: Option<String>,
@@ -1389,6 +1392,7 @@ struct CoreConfigSettings {
     management_secret_configured: bool,
     #[serde(skip_serializing)]
     usage_statistics_enabled: bool,
+    request_log: bool,
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
@@ -1420,6 +1424,7 @@ struct CoreConfigView {
     management_secret_configured: bool,
     port: u16,
     allow_lan: bool,
+    request_log: bool,
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
@@ -2034,6 +2039,7 @@ impl GuiConfigState {
             config.allow_lan = !is_loopback_host(&settings.host);
             config.auth_dir = settings.auth_dir.clone();
             config.usage_statistics_enabled = settings.usage_statistics_enabled;
+            config.request_log = settings.request_log;
             if let Some(secret_key) = settings
                 .management_secret_key
                 .as_deref()
@@ -2094,6 +2100,7 @@ impl From<&GuiConfigFile> for CoreConfigSettings {
             api_keys: gui_api_key_values(&config.api_keys),
             management_secret_configured: !config.management_secret_key.is_empty(),
             usage_statistics_enabled: config.usage_statistics_enabled,
+            request_log: config.request_log,
             plugins_enabled: config.plugins_enabled,
             routing_strategy: config.routing_strategy.clone(),
             proxy_url: config.proxy_url.clone(),
@@ -2124,6 +2131,7 @@ impl From<&GuiConfigFile> for CoreConfigView {
             management_secret_configured: !config.management_secret_key.is_empty(),
             port: config.port,
             allow_lan: config.allow_lan,
+            request_log: config.request_log,
             plugins_enabled: config.plugins_enabled,
             routing_strategy: config.routing_strategy.clone(),
             proxy_url: config.proxy_url.clone(),
@@ -2436,6 +2444,7 @@ fn main() {
             get_core_tls_settings,
             save_core_tls_settings,
             get_core_config_settings,
+            set_core_request_log,
             add_core_api_key,
             update_core_api_key,
             delete_core_api_key,

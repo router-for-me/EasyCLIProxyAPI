@@ -9,6 +9,7 @@ import {
   Clock3,
   Eye,
   EyeOff,
+  FileText,
   FolderOpen,
   KeyRound,
   Link2,
@@ -34,6 +35,7 @@ import { ThinkingAliasesPage } from './ThinkingAliasesPage';
 type CoreConfigSettings = {
   apiKeys: CoreApiKey[];
   managementSecretConfigured: boolean;
+  requestLog: boolean;
   host: string;
   port: number;
   allowLan: boolean;
@@ -58,6 +60,7 @@ type ConfigAction =
   | 'update-key'
   | 'delete-key'
   | 'management-secret'
+  | 'request-log'
   | 'routing'
   | 'network'
   | 'retry'
@@ -447,6 +450,18 @@ export function ConfigPanelPage() {
       setNewApiKey('');
       setNewApiKeyRemark('');
     }
+  };
+
+  const setRequestLogEnabled = async (enabled: boolean) => {
+    if (!settings || busyAction !== null) return;
+    await runMutation(
+      'request-log',
+      'set_core_request_log',
+      { enabled },
+      enabled
+        ? t('config.diagnostics.notice.enabled')
+        : t('config.diagnostics.notice.disabled'),
+    );
   };
 
   const confirmDelete = async () => {
@@ -1103,6 +1118,44 @@ export function ConfigPanelPage() {
                 </div>
               </div>
             </form>
+          </div>
+        </section>
+
+        <section className="panel config-diagnostics-panel">
+          <div className="config-panel-heading">
+            <div className="config-heading-title">
+              <FileText size={18} aria-hidden="true" />
+              <h2>{t('config.diagnostics.title')}</h2>
+            </div>
+            {!loading && settings ? (
+              <span className={`state-pill ${settings.requestLog ? 'warning' : ''}`}>
+                {settings.requestLog
+                  ? t('config.diagnostics.enabled')
+                  : t('config.diagnostics.disabled')}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="config-diagnostics-content">
+            <div className="config-diagnostics-copy">
+              <strong>{t('config.diagnostics.heading')}</strong>
+              <p>{t('config.diagnostics.description')}</p>
+              <small className="config-diagnostics-warning">
+                <AlertCircle size={15} aria-hidden="true" />
+                <span>{t('config.diagnostics.warning')}</span>
+              </small>
+            </div>
+            <label className="switch-control" title={t('config.diagnostics.title')}>
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label={t('config.diagnostics.title')}
+                checked={settings?.requestLog ?? false}
+                disabled={controlsDisabled}
+                onChange={(event) => void setRequestLogEnabled(event.currentTarget.checked)}
+              />
+              <span className="switch-track" />
+            </label>
           </div>
         </section>
         </div>

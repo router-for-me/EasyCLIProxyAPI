@@ -86,6 +86,7 @@ fn core_config_view_exposes_api_key_metadata_for_the_webview() {
     assert_eq!(view["apiKeys"][0]["remark"], DEFAULT_API_KEY_INITIAL_REMARK);
     assert!(view["apiKeys"][0].get("builtIn").is_none());
     assert_eq!(view["managementSecretConfigured"], true);
+    assert_eq!(view["requestLog"], false);
     assert!(view.get("managementSecretKey").is_none());
 }
 
@@ -336,6 +337,7 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
         api_keys: vec!["existing-key".to_string()],
         management_secret_configured: true,
         usage_statistics_enabled: false,
+        request_log: true,
         plugins_enabled: true,
         routing_strategy: "fill-first".to_string(),
         proxy_url: "http://127.0.0.1:8080".to_string(),
@@ -351,6 +353,7 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
 
     assert!(presence.api_keys.is_none());
     assert!(presence.management_secret_key.is_none());
+    assert!(presence.request_log.is_none());
     assert!(presence.plugins_enabled.is_none());
     assert!(presence.routing_strategy.is_none());
     apply_core_settings_to_gui_config(&mut config, &core_settings);
@@ -362,6 +365,7 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
     assert!(config.disable_cooling);
     assert_eq!(config.auth_dir, "/tmp/external-auth");
     assert!(!config.usage_statistics_enabled);
+    assert!(config.request_log);
     assert!(config.plugins_enabled);
     assert_eq!(config.routing_strategy, "fill-first");
     assert_eq!(config.proxy_url, "http://127.0.0.1:8080");
@@ -806,6 +810,16 @@ fn core_config_reads_legacy_api_key_entries() {
 }
 
 #[test]
+fn core_config_reads_request_log_and_defaults_to_disabled() {
+    let enabled = serde_norway::from_str::<serde_norway::Value>("request-log: true\n").unwrap();
+    let settings = core_config_settings_from_value(&enabled).unwrap();
+    assert!(settings.request_log);
+
+    let defaults = core_config_settings_from_value(&serde_norway::from_str("{}").unwrap()).unwrap();
+    assert!(!defaults.request_log);
+}
+
+#[test]
 fn core_config_reads_proxy_and_session_affinity_fields() {
     let canonical = serde_norway::from_str::<serde_norway::Value>(
             "proxy-url: socks5://127.0.0.1:7890\nrouting:\n  session-affinity: true\n  session-affinity-ttl: 2h\n",
@@ -1048,6 +1062,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         api_access_remarks: Vec::new(),
         management_secret_key: String::new(),
         usage_statistics_enabled: false,
+        request_log: true,
         plugins_enabled: true,
         routing_strategy: "fill-first".to_string(),
         proxy_url: "socks5://127.0.0.1:7890".to_string(),
@@ -1090,6 +1105,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
     assert_eq!(document["max-retry-interval"], 5);
     assert_eq!(document["streaming"]["bootstrap-retries"], 1);
     assert_eq!(document["usage-statistics-enabled"], false);
+    assert_eq!(document["request-log"], true);
     assert!(document.get("new-option").is_none());
     assert_eq!(document["nested"], current_document["nested"]);
     assert!(document["nested"].get("added").is_none());
@@ -1162,6 +1178,7 @@ fn startup_merge_without_current_config_uses_gui_defaults() {
     assert_eq!(document["plugins"]["enabled"], false);
     assert_eq!(document["routing"]["strategy"], "round-robin");
     assert_eq!(document["usage-statistics-enabled"], true);
+    assert_eq!(document["request-log"], false);
     assert_eq!(
         document["remote-management"]["secret-key"],
         config.management_secret_key

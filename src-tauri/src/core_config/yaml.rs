@@ -269,6 +269,12 @@ pub(crate) fn patch_core_plugins_enabled(enabled: bool) -> Result<(), String> {
     })
 }
 
+pub(crate) fn patch_core_request_log(enabled: bool) -> Result<(), String> {
+    patch_existing_core_config(|document| {
+        set_core_yaml_top_level_value(document, "request-log", serde_norway::Value::Bool(enabled))
+    })
+}
+
 pub(crate) fn patch_core_routing_strategy(strategy: &str) -> Result<(), String> {
     let strategy = strategy.to_string();
     patch_existing_core_config(move |document| {
@@ -1146,6 +1152,14 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(true);
+    let request_log = yaml_mapping_value(root, "request-log")
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| "request-log 必须是布尔值".to_string())
+        })
+        .transpose()?
+        .unwrap_or(false);
     let api_keys = extract_core_api_keys(root)?
         .into_iter()
         .filter(|api_key| !is_example_core_api_key(api_key))
@@ -1251,6 +1265,7 @@ pub(crate) fn core_config_settings_from_value(
             .as_deref()
             .is_some_and(|value| !value.is_empty()),
         usage_statistics_enabled,
+        request_log,
         plugins_enabled,
         routing_strategy,
         proxy_url,

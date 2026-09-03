@@ -837,6 +837,12 @@ textarea:focus-visible {
   color: var(--theme-9f2d20);
 }
 
+.state-pill.warning {
+  border-color: var(--theme-dfbf91);
+  background: var(--theme-fff7e9);
+  color: var(--theme-8b5b21);
+}
+
 .state-pill.update {
   border-color: var(--theme-dfbf91);
   background: var(--theme-fff7e9);
@@ -1935,6 +1941,54 @@ textarea:focus-visible {
   gap: 18px;
 }
 
+.config-diagnostics-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.config-diagnostics-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 8px;
+  background: var(--theme-faf8f2);
+}
+
+.config-diagnostics-copy {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.config-diagnostics-copy strong {
+  color: var(--theme-2d2a26);
+  font-size: var(--font-size-body);
+}
+
+.config-diagnostics-copy p {
+  margin: 0;
+  color: var(--theme-5f5a53);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-relaxed);
+}
+
+.config-diagnostics-warning {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--theme-9f6429);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-body);
+}
+
+.config-diagnostics-warning svg {
+  flex: none;
+  margin-top: 1px;
+}
+
 .config-management-content {
   display: grid;
   grid-template-columns: minmax(220px, 0.72fr) minmax(420px, 1.28fr);
@@ -2903,6 +2957,12 @@ textarea:focus-visible {
 }
 
 @media (max-width: 480px) {
+  .config-diagnostics-content {
+    align-items: flex-start;
+    gap: 16px;
+    padding: 14px;
+  }
+
   .config-software-setting-row {
     padding: 14px;
   }

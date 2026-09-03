@@ -395,6 +395,25 @@ pub(crate) fn set_core_plugins_enabled(
 }
 
 #[tauri::command]
+pub(crate) fn set_core_request_log(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    enabled: bool,
+) -> Result<CoreConfigView, String> {
+    let mut settings = current_core_config_settings(gui_config_state.inner())?;
+    let previous_enabled = settings.request_log;
+    settings.request_log = enabled;
+    patch_core_request_log(settings.request_log)?;
+    let config = match gui_config_state.sync_core_settings(&settings) {
+        Ok(config) => config,
+        Err(error) => {
+            let rollback_error = patch_core_request_log(previous_enabled).err();
+            return Err(config_update_error_with_rollback(error, rollback_error));
+        }
+    };
+    Ok(CoreConfigView::from(&config))
+}
+
+#[tauri::command]
 pub(crate) fn set_core_routing_strategy(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     strategy: String,
