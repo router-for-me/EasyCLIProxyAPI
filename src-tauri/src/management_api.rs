@@ -8,7 +8,6 @@ use super::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    env,
     error::Error,
     fs,
     path::{Path, PathBuf},
@@ -145,42 +144,15 @@ pub(crate) fn open_core_logs_directory(
 ) -> Result<(), String> {
     let config = gui_config_state.snapshot()?;
     let install_dir = core_install_dir()?;
-    let logs_dir = if let Some(writable_path) = writable_path_from_environment(&install_dir) {
-        let logs_dir = writable_path.join("logs");
-        fs::create_dir_all(&logs_dir)
-            .map_err(|error| format!("创建日志目录失败 {}: {error}", path_to_string(&logs_dir)))?;
-        logs_dir
-    } else {
-        let logs_dir = install_dir.join("logs");
-        match fs::create_dir_all(&logs_dir) {
-            Ok(()) => logs_dir,
-            Err(_) => {
-                let fallback = auth_dir_path_for_core(&config.auth_dir, &install_dir).join("logs");
-                fs::create_dir_all(&fallback).map_err(|error| {
-                    format!("创建日志目录失败 {}: {error}", path_to_string(&fallback))
-                })?;
-                fallback
-            }
-        }
-    };
+    let logs_dir = core_logs_dir_path(&config.auth_dir, &install_dir);
+    fs::create_dir_all(&logs_dir)
+        .map_err(|error| format!("创建日志目录失败 {}: {error}", path_to_string(&logs_dir)))?;
 
     open_directory_in_file_manager(&logs_dir)
 }
 
-fn writable_path_from_environment(install_dir: &Path) -> Option<PathBuf> {
-    ["WRITABLE_PATH", "writable_path"]
-        .into_iter()
-        .find_map(|key| env::var(key).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                install_dir.join(path)
-            }
-        })
+fn core_logs_dir_path(auth_dir: &str, install_dir: &Path) -> PathBuf {
+    auth_dir_path_for_core(auth_dir, install_dir).join("logs")
 }
 
 fn open_directory_in_file_manager(path: &Path) -> Result<(), String> {
@@ -484,5 +456,32 @@ fn format_management_error(status: u16, body: &str) -> String {
         format!("管理 API 错误 ({status})")
     } else {
         format!("管理 API 错误 ({status}): {}", truncate_for_error(body))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn core_logs_follow_the_default_auth_directory() {
+        let base_dir = PathBuf::from("test-base");
+        let install_dir = base_dir.join("cpa-core");
+
+        assert_eq!(
+            core_logs_dir_path("../oauth", &install_dir),
+            base_dir.join("oauth").join("logs")
+        );
+    }
+
+    #[test]
+    fn core_logs_follow_a_custom_auth_directory() {
+        let install_dir = PathBuf::from("test-base").join("cpa-core");
+        let auth_dir = PathBuf::from("custom-auth");
+
+        assert_eq!(
+            core_logs_dir_path(auth_dir.to_str().unwrap(), &install_dir),
+            install_dir.join(auth_dir).join("logs")
+        );
     }
 }
