@@ -67,7 +67,7 @@ import {
   type ProviderModelHealthResult,
 } from '../services/providerHealthCheck';
 import { modelMatchesRule } from '../services/oauthModels';
-import { getCurrentLocale, translate, useI18n } from '../i18n';
+import { getCurrentLocale, translate, useI18n, type MessageKey } from '../i18n';
 
 export type ProviderSection =
   | 'gemini-api-key'
@@ -86,8 +86,16 @@ type ProviderDefinition = {
   section: ProviderSection;
   responseKey: string;
   label: string;
+  labelKey?: MessageKey;
   icon: string;
   openAi: boolean;
+};
+
+const getProviderLabel = (definition: ProviderDefinition, tFn?: (key: MessageKey) => string): string => {
+  if (definition.labelKey) {
+    return tFn ? tFn(definition.labelKey) : translate(getCurrentLocale(), definition.labelKey);
+  }
+  return definition.label;
 };
 
 type ProviderRow = {
@@ -215,7 +223,8 @@ const providerDefinitions: ProviderDefinition[] = [
     id: 'openai-compatibility',
     section: 'openai-compatibility',
     responseKey: 'openai-compatibility',
-    label: 'OpenAI 兼容',
+    label: 'OpenAI Compatible',
+    labelKey: 'apiAccess.provider.openaiCompatibility',
     icon: openaiIcon,
     openAi: true,
   },
@@ -290,7 +299,7 @@ const rowFromRecord = (
     record,
     name: definitionFor(section).openAi
       ? readString(record, 'name') || translate(getCurrentLocale(), 'apiAccess.compatibleName', { number: index + 1 })
-      : definitionFor(section).label,
+      : getProviderLabel(definitionFor(section)),
     apiKey: entry ? readString(entry, 'api-key', 'apiKey') : singleApiKey,
     apiKeys: entry ? apiKeys : singleApiKey ? [singleApiKey] : [],
     baseUrl: readString(record, 'base-url', 'baseUrl'),
@@ -834,7 +843,7 @@ export function ApiAccessPage() {
           if (result.status === 'fulfilled') {
             next[result.value.section] = result.value.records;
           } else {
-            failures.push(`${definition.label}：${String(result.reason)}`);
+            failures.push(`${getProviderLabel(definition, t)}：${String(result.reason)}`);
           }
         });
         return next;
@@ -952,7 +961,7 @@ export function ApiAccessPage() {
     let providerHeaders: Record<string, string> = {};
     try {
       if (baseUrl) baseUrl = normalizeBaseUrl(baseUrl);
-      if (baseUrlRequired && !baseUrl) throw new Error(t('apiAccess.error.baseRequired', { provider: definition.label }));
+      if (baseUrlRequired && !baseUrl) throw new Error(t('apiAccess.error.baseRequired', { provider: getProviderLabel(definition, t) }));
       providerHeaders = parseProviderHeaders(preparedDraft.headersText ?? '');
     } catch (requestError) {
       return { saved: false, target: 'form', error: requestErrorMessage(requestError) };
@@ -1195,7 +1204,7 @@ export function ApiAccessPage() {
               disabled={busy}
             >
               <img src={definition.icon} alt="" className="provider-logo" />
-              <span title={definition.label}>{definition.label}</span>
+              <span title={getProviderLabel(definition, t)}>{getProviderLabel(definition, t)}</span>
               <strong>{countForDefinition(definition)}</strong>
             </button>
           ))}
@@ -1204,7 +1213,7 @@ export function ApiAccessPage() {
         <section className="panel provider-resource-panel">
           <div className="management-panel-heading">
             <div>
-              <h2 title={activeDefinition.label}>{activeDefinition.label}</h2>
+              <h2 title={getProviderLabel(activeDefinition, t)}>{getProviderLabel(activeDefinition, t)}</h2>
               <span>{t('apiAccess.matches', { count: rows.length })}</span>
             </div>
             <div className="management-toolbar compact-toolbar">
@@ -1975,7 +1984,7 @@ function ApiProviderDialog({
         <div className="model-discovery-backdrop" onMouseDown={(event) => event.currentTarget === event.target && setModelDiscoveryOpen(false)}>
           <section className="model-discovery-dialog" role="dialog" aria-modal="true" aria-labelledby="model-discovery-title">
             <div className="model-discovery-header">
-              <div><h2 id="model-discovery-title">{t('apiAccess.modelDialog.title')}</h2><span>{definition.label}</span></div>
+              <div><h2 id="model-discovery-title">{t('apiAccess.modelDialog.title')}</h2><span>{getProviderLabel(definition, t)}</span></div>
               <button type="button" className="icon-button quiet" onClick={() => setModelDiscoveryOpen(false)} title={t('common.close')}><X size={18} /></button>
             </div>
 

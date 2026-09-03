@@ -304,11 +304,12 @@ export function VersionManagementPage() {
     } catch (error) {
       manualInstallInProgressRef.current = false;
       const errorMessage = String(error);
-      showToast(errorMessage, errorMessage.includes('取消') ? 'info' : 'error');
+      const isCancelled = errorMessage.includes('取消') || /cancel/i.test(errorMessage);
+      showToast(errorMessage, isCancelled ? 'info' : 'error');
       setProgress((current) => ({
         running: false,
         cancellable: false,
-        phase: errorMessage.includes('取消') ? '已取消' : '安装失败',
+        phase: isCancelled ? '已取消' : '安装失败',
         downloaded: current?.downloaded ?? 0,
         total: current?.total ?? null,
         percent: current?.percent ?? null,

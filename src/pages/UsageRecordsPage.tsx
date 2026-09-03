@@ -30,6 +30,13 @@ import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
 
+function formatUsageCategoryLabel(label: string, t: (key: MessageKey) => string): string {
+  if (label === '未记录密钥' || label === 'Unrecorded Key') return t('usage.key.unrecorded');
+  if (label === '未知来源' || label === 'Unknown Source') return t('usage.source.unknown');
+  if (label === '未知 Provider' || label === 'Unknown Provider') return t('usage.provider.unknown');
+  return label;
+}
+
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
 
@@ -584,7 +591,7 @@ export function UsageRecordsPage() {
                 <option value="">{t('usage.filter.allProviders')}</option>
                 {filterOptions(optionsAnalysis.providers).map((item) => (
                   <option value={item.key} key={item.key}>
-                    {item.label}
+                    {formatUsageCategoryLabel(item.label, t)}
                   </option>
                 ))}
               </select>
@@ -603,7 +610,7 @@ export function UsageRecordsPage() {
                 <option value="">{t('usage.filter.allSources')}</option>
                 {filterOptions(optionsAnalysis.sources).map((item) => (
                   <option value={item.key} key={item.key}>
-                    {item.label}
+                    {formatUsageCategoryLabel(item.label, t)}
                   </option>
                 ))}
               </select>
@@ -622,7 +629,7 @@ export function UsageRecordsPage() {
                 <option value="">{t('usage.filter.allKeys')}</option>
                 {filterOptions(optionsAnalysis.apiKeys).map((item) => (
                   <option value={item.key} key={item.key}>
-                    {item.label}
+                    {formatUsageCategoryLabel(item.label, t)}
                   </option>
                 ))}
               </select>
@@ -1062,8 +1069,8 @@ function CategoryPanel({
                 <div className="usage-category-header">
                   <div className="usage-category-label-wrap">
                     <span className={`usage-rank-badge${idx < 3 ? ' top' : ''}`}>{idx + 1}</span>
-                    <strong className="usage-category-name" title={item.label}>
-                      {item.label}
+                    <strong className="usage-category-name" title={formatUsageCategoryLabel(item.label, t)}>
+                      {formatUsageCategoryLabel(item.label, t)}
                     </strong>
                   </div>
                   <small className="usage-category-meta">
