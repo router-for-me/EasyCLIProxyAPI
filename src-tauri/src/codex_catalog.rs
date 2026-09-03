@@ -4,6 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{OnceLock, RwLock};
 
 const MODEL_CATALOG_JSON: &str = include_str!("../resources/codex_models/model-catalog.json");
+const ALL_REASONING_LEVELS: [&str; 8] = [
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
 
 static CATALOG_STATE: OnceLock<Result<RwLock<CatalogState>, String>> = OnceLock::new();
 
@@ -15,7 +18,6 @@ pub(crate) struct CodexRuntimeModel {
     context_window: Option<u64>,
     max_context_window: Option<u64>,
     input_modalities: Option<Vec<String>>,
-    supported_reasoning_levels: Option<Vec<String>>,
     default_reasoning_level: Option<String>,
     hidden: bool,
 }
@@ -120,7 +122,6 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
         let max_context_window =
             positive_u64_field(value, &["max_context_window", "maxContextWindow"]);
         let input_modalities = parse_modalities(value);
-        let supported_reasoning_levels = parse_reasoning_levels(value);
         let default_reasoning_level =
             optional_string(value, &["default_reasoning_level", "defaultReasoningLevel"])
                 .map(|value| value.to_ascii_lowercase())
@@ -135,7 +136,6 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
             context_window,
             max_context_window,
             input_modalities: input_modalities.clone(),
-            supported_reasoning_levels: supported_reasoning_levels.clone(),
             default_reasoning_level: default_reasoning_level.clone(),
             hidden,
         };
@@ -347,13 +347,9 @@ fn prepare_catalog_with_sources(
             value.insert("slug".to_string(), Value::String(runtime.slug.clone()));
             value.insert(
                 "display_name".to_string(),
-                Value::String(
-                    runtime
-                        .display_name
-                        .clone()
-                        .unwrap_or_else(|| runtime.slug.clone()),
-                ),
+                Value::String(runtime.slug.clone()),
             );
+            open_all_reasoning_levels(&mut value, runtime);
             enable_fast_mode(&mut value);
             entries.push(CatalogEntry {
                 value,
@@ -435,12 +431,7 @@ fn apply_runtime_metadata(model: &mut Map<String, Value>, runtime: &CodexRuntime
     model.insert("slug".to_string(), Value::String(runtime.slug.clone()));
     model.insert(
         "display_name".to_string(),
-        Value::String(
-            runtime
-                .display_name
-                .clone()
-                .unwrap_or_else(|| runtime.slug.clone()),
-        ),
+        Value::String(runtime.slug.clone()),
     );
     model.insert("visibility".to_string(), Value::String("list".to_string()));
     if let Some(description) = runtime.description.as_ref() {
@@ -482,40 +473,27 @@ fn apply_runtime_metadata(model: &mut Map<String, Value>, runtime: &CodexRuntime
         );
     }
 
-    apply_runtime_reasoning(model, runtime);
+    open_all_reasoning_levels(model, runtime);
     if runtime.hidden {
         model.insert("visibility".to_string(), Value::String("hide".to_string()));
     }
 }
 
-fn apply_runtime_reasoning(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
-    let Some(levels) = runtime.supported_reasoning_levels.as_ref() else {
-        if let Some(default) = runtime.default_reasoning_level.as_ref() {
-            let fallback_levels = reasoning_efforts(model);
-            if fallback_levels.contains(default) {
-                model.insert(
-                    "default_reasoning_level".to_string(),
-                    Value::String(default.clone()),
-                );
-            }
-        }
-        return;
-    };
-    let fallback_default = optional_map_string(model, "default_reasoning_level")
-        .map(|value| value.to_ascii_lowercase());
+fn open_all_reasoning_levels(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
     let default = runtime
         .default_reasoning_level
         .as_ref()
-        .filter(|default| levels.contains(default))
         .cloned()
-        .or_else(|| fallback_default.filter(|default| levels.contains(default)));
-    let Some(default) = default else {
-        return;
-    };
+        .or_else(|| {
+            optional_map_string(model, "default_reasoning_level")
+                .map(|value| value.to_ascii_lowercase())
+                .filter(|value| is_allowed_reasoning_level(value))
+        })
+        .unwrap_or_else(|| "medium".to_string());
     model.insert(
         "supported_reasoning_levels".to_string(),
         Value::Array(
-            levels
+            ALL_REASONING_LEVELS
                 .iter()
                 .map(|effort| {
                     serde_json::json!({
@@ -576,33 +554,6 @@ fn parse_modalities(value: &Value) -> Option<Vec<String>> {
         .filter(|value| seen.insert(value.clone()))
         .collect::<Vec<_>>();
     (!modalities.is_empty()).then_some(modalities)
-}
-
-fn parse_reasoning_levels(value: &Value) -> Option<Vec<String>> {
-    let raw = value
-        .get("supported_reasoning_levels")
-        .or_else(|| value.get("supportedReasoningLevels"))
-        .and_then(Value::as_array)
-        .or_else(|| {
-            value
-                .get("thinking")
-                .and_then(|thinking| thinking.get("levels"))
-                .and_then(Value::as_array)
-        })?;
-    let mut seen = HashSet::new();
-    let levels = raw
-        .iter()
-        .filter_map(|level| {
-            level
-                .as_str()
-                .or_else(|| level.get("effort").and_then(Value::as_str))
-        })
-        .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .filter(|level| is_allowed_reasoning_level(level))
-        .filter(|level| seen.insert(level.clone()))
-        .collect::<Vec<_>>();
-    (!levels.is_empty()).then_some(levels)
 }
 
 fn reasoning_efforts(model: &Map<String, Value>) -> Vec<String> {
@@ -984,7 +935,7 @@ mod tests {
     }
 
     #[test]
-    fn known_template_is_preserved_except_for_runtime_identity() {
+    fn known_template_preserves_unrelated_capabilities() {
         let sources = test_sources();
         let runtime = runtime(serde_json::json!({"data":[{
             "id":"a",
@@ -998,13 +949,18 @@ mod tests {
         for (key, expected) in template {
             if !matches!(
                 key.as_str(),
-                "slug" | "display_name" | "service_tiers" | "additional_speed_tiers"
+                "slug"
+                    | "display_name"
+                    | "default_reasoning_level"
+                    | "supported_reasoning_levels"
+                    | "service_tiers"
+                    | "additional_speed_tiers"
             ) {
                 assert_eq!(model.get(key), Some(expected), "changed field {key}");
             }
         }
         assert_eq!(model["slug"], "a");
-        assert_eq!(model["display_name"], "Overwrite");
+        assert_eq!(model["display_name"], "a");
         assert_eq!(model["nested"]["unknown"], true);
         assert_eq!(
             model["service_tiers"],
@@ -1018,13 +974,44 @@ mod tests {
     }
 
     #[test]
-    fn known_template_uses_runtime_slug_when_display_name_is_missing() {
-        let runtime = runtime(serde_json::json!({"models":[{"id":"A"}]}));
+    fn known_template_uses_runtime_slug_as_display_name() {
+        let runtime = runtime(serde_json::json!({"models":[{
+            "id":"A",
+            "display_name":"Friendly A"
+        }]}));
         let catalog = prepare_catalog_with_sources(&runtime, &test_sources()).unwrap();
         let model = &output_models(&catalog)[0];
 
         assert_eq!(model["slug"], "A");
         assert_eq!(model["display_name"], "A");
+    }
+
+    #[test]
+    fn known_template_opens_all_reasoning_levels() {
+        let mut sources = test_sources();
+        let template = &mut sources.templates.get_mut("a").unwrap().value;
+        template.insert(
+            "default_reasoning_level".to_string(),
+            Value::String("medium".to_string()),
+        );
+        template.insert(
+            "supported_reasoning_levels".to_string(),
+            serde_json::json!([
+                {"effort":"low","description":"Low"},
+                {"effort":"medium","description":"Medium"},
+                {"effort":"max","description":"Max"}
+            ]),
+        );
+        let runtime = runtime(serde_json::json!({"models":[{
+            "id":"A",
+            "default_reasoning_level":"high",
+            "supported_reasoning_levels":["low", "high"]
+        }]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let model = &output_models(&catalog)[0];
+
+        assert_eq!(model["default_reasoning_level"], "high");
+        assert_eq!(reasoning_efforts(model), ALL_REASONING_LEVELS);
     }
 
     #[test]
@@ -1045,7 +1032,8 @@ mod tests {
         }]}));
         let catalog = prepare_catalog_with_sources(&runtime, &test_sources()).unwrap();
         let model = &output_models(&catalog)[0];
-        assert_eq!(model["display_name"], "Third Party");
+        assert_eq!(model["display_name"], "C");
+        assert_eq!(reasoning_efforts(model), ALL_REASONING_LEVELS);
         assert_eq!(model["context_window"], 200_000);
         assert_eq!(model["max_context_window"], 200_000);
         assert_eq!(model["input_modalities"], serde_json::json!(["image"]));
@@ -1068,7 +1056,22 @@ mod tests {
     }
 
     #[test]
-    fn invalid_reasoning_combination_keeps_fallback_and_missing_context_uses_128k() {
+    fn fallback_display_name_matches_requested_model_slug() {
+        let runtime = runtime(serde_json::json!({"models":[{
+            "id":"gpt-5.6-sol-fast",
+            "display_name":"gpt-5.6-sol"
+        }]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &test_sources()).unwrap();
+        let model = &output_models(&catalog)[0];
+
+        assert_eq!(model["slug"], "gpt-5.6-sol-fast");
+        assert_eq!(model["display_name"], "gpt-5.6-sol-fast");
+        assert_eq!(catalog.models[0].name, "gpt-5.6-sol-fast");
+        assert_eq!(catalog.models[0].alias, None);
+    }
+
+    #[test]
+    fn invalid_runtime_reasoning_does_not_reduce_open_levels() {
         let runtime = runtime(serde_json::json!({"models":[{
             "id":"C",
             "supported_reasoning_levels":["xhigh"],
@@ -1084,7 +1087,7 @@ mod tests {
         assert_eq!(model["availability_nux"], Value::Null);
         assert_eq!(model["upgrade"], Value::Null);
         assert_eq!(model["default_reasoning_level"], "medium");
-        assert_eq!(reasoning_efforts(model), ["low", "medium", "high"]);
+        assert_eq!(reasoning_efforts(model), ALL_REASONING_LEVELS);
     }
 
     #[test]
