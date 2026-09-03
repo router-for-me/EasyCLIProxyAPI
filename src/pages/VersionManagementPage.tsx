@@ -13,13 +13,9 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useCoreRuntime } from '../coreRuntime';
+import { useCoreUpdate } from '../coreUpdate';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
-
-export type CoreLatest = {
-  version: string;
-  assetName: string;
-};
 
 export type CoreInstallResult = {
   version: string;
@@ -68,46 +64,9 @@ function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof
 export type MessageType = 'info' | 'success' | 'error';
 const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
 
-let latestAutoCheckStarted = false;
-let cachedLatest: CoreLatest | null = null;
-let cachedLatestError = '';
-let latestCheckPromise: Promise<CoreLatest> | null = null;
-let latestRequestEpoch = 0;
-
 export function displayAppVersion(version: string) {
   const resolvedVersion = version.trim();
   return resolvedVersion.startsWith('v') ? resolvedVersion : `v${resolvedVersion}`;
-}
-
-export function requestLatestCore(force = false) {
-  if (!force && latestCheckPromise) {
-    return latestCheckPromise;
-  }
-
-  const requestEpoch = ++latestRequestEpoch;
-  const request = invoke<CoreLatest>('check_latest_core')
-    .then((result) => {
-      if (requestEpoch === latestRequestEpoch) {
-        cachedLatest = result;
-        cachedLatestError = '';
-      }
-      return result;
-    })
-    .catch((error) => {
-      if (requestEpoch === latestRequestEpoch) {
-        cachedLatest = null;
-        cachedLatestError = String(error);
-      }
-      throw error;
-    })
-    .finally(() => {
-      if (latestCheckPromise === request) {
-        latestCheckPromise = null;
-      }
-    });
-  latestCheckPromise = request;
-
-  return request;
 }
 
 export function VersionManagementPage() {
@@ -126,11 +85,16 @@ export function VersionManagementPage() {
     statusError,
     refreshStatus,
   } = useCoreRuntime();
+  const {
+    latest,
+    error: latestError,
+    checking: checkingLatest,
+    hasUpdate: coreHasUpdate,
+    check: checkLatest,
+    reset: resetLatest,
+  } = useCoreUpdate();
 
   const [installedAppVersion, setInstalledAppVersion] = useState('');
-  const [latest, setLatest] = useState<CoreLatest | null>(cachedLatest);
-  const [latestError, setLatestError] = useState(cachedLatestError);
-  const [checkingLatest, setCheckingLatest] = useState(Boolean(latestCheckPromise));
 
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<CoreInstallTask | null>(null);
@@ -151,7 +115,6 @@ export function VersionManagementPage() {
 
   const installDialogRef = useRef<HTMLDivElement>(null);
   const customMirrorInputRef = useRef<HTMLInputElement>(null);
-  const latestCheckEpochRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
   const completedInstallKeyRef = useRef('');
   const manualInstallInProgressRef = useRef(false);
@@ -232,37 +195,13 @@ export function VersionManagementPage() {
     } catch {}
   };
 
-  const checkLatest = async (force = false) => {
-    const checkEpoch = ++latestCheckEpochRef.current;
-    setCheckingLatest(true);
-    setLatestError('');
-
-    try {
-      const result = await requestLatestCore(force);
-      if (checkEpoch === latestCheckEpochRef.current) {
-        setLatest(result);
-      }
-    } catch (error) {
-      if (checkEpoch === latestCheckEpochRef.current) {
-        setLatest(null);
-        setLatestError(String(error));
-      }
-    } finally {
-      if (checkEpoch === latestCheckEpochRef.current) {
-        setCheckingLatest(false);
-      }
-    }
-  };
-
   const updateVersionSource = async (source: VersionDownloadSource) => {
     setVersionSourceSaving(true);
     setVersionSourceError('');
     try {
       const settings = await invoke<VersionSourceSettings>('set_download_source', { source });
       setVersionSource(settings);
-      cachedLatest = null;
-      cachedLatestError = '';
-      setLatest(null);
+      resetLatest();
       showToast(t('kernel.versions.sourceSwitched', {
         source: downloadSourceLabel(settings.source, t),
       }), 'info');
@@ -288,9 +227,7 @@ export function VersionManagementPage() {
       setVersionSource(settings);
       setCustomMirrorDraft('');
       setCustomMirrorDialogOpen(false);
-      cachedLatest = null;
-      cachedLatestError = '';
-      setLatest(null);
+      resetLatest();
       showToast(t('kernel.versions.customMirrorAdded'), 'success');
       setVersionSourceSaving(false);
       await checkAppUpdate();
@@ -462,13 +399,6 @@ export function VersionManagementPage() {
       })
       .catch(() => undefined);
 
-    if (!latestAutoCheckStarted) {
-      latestAutoCheckStarted = true;
-      void checkLatest();
-    } else if (latestCheckPromise) {
-      void checkLatest();
-    }
-
     return () => {
       disposed = true;
       unlisten?.();
@@ -546,8 +476,6 @@ export function VersionManagementPage() {
     : appUpdateTask.running || checkingAppUpdate || !appUpdate
       ? 'info'
       : 'update';
-
-  const coreHasUpdate = Boolean(latestVersion && currentVersion && currentVersion !== latestVersion);
 
   const coreVersionStatusTone = installing || progress?.running
     ? 'info'

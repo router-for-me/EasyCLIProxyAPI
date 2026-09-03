@@ -35,14 +35,16 @@ describe('OAuth 子页面导航', () => {
   });
 });
 
-describe('软件更新导航提示点', () => {
-  test('有新版显示橙点，处理中的蓝点优先', () => {
-    expect(appUpdateIndicatorState(true, false)).toBe('available');
-    expect(appUpdateIndicatorState(true, true)).toBe('processing');
-    expect(appUpdateIndicatorState(false, true)).toBe('processing');
+describe('软件与内核更新导航提示点', () => {
+  test('任一组件有新版都显示橙点，处理中的蓝点优先', () => {
+    expect(appUpdateIndicatorState(true, false, false)).toBe('available');
+    expect(appUpdateIndicatorState(false, true, false)).toBe('available');
+    expect(appUpdateIndicatorState(true, true, false)).toBe('available');
+    expect(appUpdateIndicatorState(true, false, true)).toBe('processing');
+    expect(appUpdateIndicatorState(false, true, true)).toBe('processing');
   });
 
   test('最新版或检查失败都不显示提示点', () => {
-    expect(appUpdateIndicatorState(false, false)).toBeNull();
+    expect(appUpdateIndicatorState(false, false, false)).toBeNull();
   });
 });

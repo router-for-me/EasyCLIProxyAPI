@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import appLogo from './assets/logo.jpg';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
+import { CoreUpdateProvider, useCoreUpdate } from './coreUpdate';
 import { ConfigPanelPage } from './pages/ConfigPanel';
 import { ApiAccessPage } from './pages/ApiAccessPage';
 import { KernelPage } from './pages/Kernel';
@@ -113,7 +114,9 @@ function App() {
   return (
     <AppUpdateProvider>
       <CoreRuntimeProvider>
-        <AppContent />
+        <CoreUpdateProvider>
+          <AppContent />
+        </CoreUpdateProvider>
       </CoreRuntimeProvider>
     </AppUpdateProvider>
   );
@@ -122,6 +125,7 @@ function App() {
 function AppContent() {
   const { locale, setLocale, t } = useI18n();
   const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
+  const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<PageId>('home');
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [theme, setTheme] = useState<AppTheme>(detectInitialTheme);
@@ -135,6 +139,14 @@ function AppContent() {
   const ActivePage = activePage.component;
   const selectedLanguage = languageOptions.find((option) => option.value === locale)
     ?? languageOptions[0];
+  const availableUpdateLabel = [
+    hasUpdate
+      ? t('appUpdate.badgeAvailable', { version: appUpdateInfo?.latestVersion ?? '' })
+      : '',
+    coreHasUpdate
+      ? `${t('kernel.versions.coreCardTitle')}: ${t('kernel.update.available')} ${coreLatest?.version ?? ''}`.trim()
+      : '',
+  ].filter(Boolean).join(' · ');
   useEffect(() => {
     saveTheme(theme);
   }, [theme]);
@@ -287,7 +299,7 @@ function AppContent() {
               const Icon = page.icon;
               const locked = !canOpenAppPage(page.id, coreRunning);
               const updateIndicator = page.id === 'versions'
-                ? appUpdateIndicatorState(hasUpdate, appUpdateProcessing)
+                ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
                 : null;
               return (
                 <button
@@ -310,10 +322,10 @@ function AppContent() {
                       className={`nav-update-indicator ${updateIndicator}`}
                       title={updateIndicator === 'processing'
                         ? t('appUpdate.progressTitle')
-                        : t('appUpdate.badgeAvailable', { version: appUpdateInfo?.latestVersion ?? '' })}
+                        : availableUpdateLabel}
                       aria-label={updateIndicator === 'processing'
                         ? t('appUpdate.progressTitle')
-                        : t('appUpdate.badgeAvailable', { version: appUpdateInfo?.latestVersion ?? '' })}
+                        : availableUpdateLabel}
                     />
                   ) : null}
                 </button>
