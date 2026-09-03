@@ -117,8 +117,10 @@ pub(crate) async fn install_core_version(
             Ok(was_running) => (
                 was_running,
                 install_core_version_inner(
+                    &app,
                     &window,
                     state.inner(),
+                    gui_config_state.inner(),
                     token,
                     version,
                     &proxy_url,
@@ -280,8 +282,10 @@ pub(crate) fn restart_core_process_with_state(
 }
 
 pub(crate) async fn install_core_version_inner(
+    app: &tauri::AppHandle,
     window: &tauri::Window,
     state: &CoreDownloadState,
+    gui_config_state: &GuiConfigState,
     token: CancellationToken,
     version: Option<String>,
     proxy_url: &str,
@@ -291,7 +295,8 @@ pub(crate) async fn install_core_version_inner(
     let platform = current_core_platform()?;
     let client = http_client(proxy_url, &custom_mirrors)?;
     state.progress(window, "检查版本", 0, None, true);
-    let (release, _) = fetch_release_cancelable(
+    let requested_source = download_source.clone();
+    let (release, resolved_source) = fetch_release_cancelable(
         &client,
         version.as_deref(),
         &token,
@@ -300,6 +305,13 @@ pub(crate) async fn install_core_version_inner(
     )
     .await?;
     let asset = select_release_asset(&release, &platform)?;
+    let download_candidates = core_download_candidates(
+        &release.tag_name,
+        asset,
+        resolved_source,
+        configured_gitcode_core_repository(),
+        &custom_mirrors,
+    );
 
     let install_dir = core_install_dir()?;
     let base_dir = core_base_dir()?;
@@ -319,8 +331,23 @@ pub(crate) async fn install_core_version_inner(
         .ok_or_else(|| format!("非法 asset 文件名: {}", asset.name))?;
     let archive_path = download_dir.join(archive_file_name);
 
-    let downloaded = download_asset(&client, asset, &archive_path, window, state, &token).await?;
+    let (downloaded, successful_source) = download_asset(
+        &client,
+        asset,
+        &download_candidates,
+        &archive_path,
+        window,
+        state,
+        &token,
+    )
+    .await?;
     validate_downloaded_asset(asset, &downloaded)?;
+    persist_automatic_download_source_switch(
+        app,
+        gui_config_state,
+        &requested_source,
+        &successful_source,
+    )?;
 
     ensure_not_cancelled(&token, Some(&archive_path))?;
     state.progress(
@@ -660,6 +687,46 @@ pub(crate) fn release_from_tag_for_repositories(
     }
 }
 
+pub(crate) fn core_download_candidates(
+    tag: &str,
+    asset: &GithubAsset,
+    preferred: VersionDownloadCandidate,
+    gitcode_repository: Option<&str>,
+    custom_mirrors: &[String],
+) -> Vec<(VersionDownloadCandidate, String)> {
+    let tag = normalize_version(tag);
+    let generated_github_url = format!("{RELEASE_DOWNLOAD_PREFIX}{tag}/{}", asset.name);
+    let provided_urls = std::iter::once(&asset.browser_download_url)
+        .chain(asset.fallback_download_urls.iter())
+        .collect::<Vec<_>>();
+    let github_url = provided_urls
+        .iter()
+        .find(|url| core_download_source_name(url) == "GitHub")
+        .map(|url| (*url).clone())
+        .unwrap_or(generated_github_url);
+    let gitcode_url = provided_urls
+        .iter()
+        .find(|url| core_download_source_name(url) == "GitCode")
+        .map(|url| (*url).clone())
+        .or_else(|| {
+            gitcode_repository
+                .map(|repository| gitcode_release_attachment_url(repository, &tag, &asset.name))
+        });
+    version_download_source_candidates(preferred, gitcode_url.is_some(), custom_mirrors)
+        .into_iter()
+        .filter_map(|candidate| {
+            let url = match candidate.source {
+                VersionDownloadSource::Github => github_url.clone(),
+                VersionDownloadSource::Gitcode => gitcode_url.clone()?,
+                VersionDownloadSource::GhProxy
+                | VersionDownloadSource::GhFast
+                | VersionDownloadSource::Custom => version_source_url(&candidate, &github_url),
+            };
+            Some((candidate, url))
+        })
+        .collect()
+}
+
 pub(crate) fn release_tag_from_url(url: &reqwest::Url) -> Option<String> {
     let mut segments = url.path_segments()?;
     let tag = segments.next_back()?.trim();
@@ -833,19 +900,18 @@ pub(crate) fn core_release_asset_name(version: &str, platform: &CorePlatform) ->
 pub(crate) async fn download_asset(
     client: &reqwest::Client,
     asset: &GithubAsset,
+    download_candidates: &[(VersionDownloadCandidate, String)],
     archive_path: &Path,
     window: &tauri::Window,
     state: &CoreDownloadState,
     token: &CancellationToken,
-) -> Result<DownloadedArchive, String> {
-    let urls =
-        std::iter::once(&asset.browser_download_url).chain(asset.fallback_download_urls.iter());
+) -> Result<(DownloadedArchive, VersionDownloadCandidate), String> {
     let mut failures = Vec::new();
-    for (index, url) in urls.enumerate() {
+    for (index, (candidate, url)) in download_candidates.iter().enumerate() {
         if index > 0 {
             state.progress(
                 window,
-                &format!("下载失败，正在切换到 {}", core_download_source_name(url)),
+                &format!("下载失败，正在切换到 {}", candidate.display_name()),
                 0,
                 asset.size,
                 true,
@@ -863,7 +929,7 @@ pub(crate) async fn download_asset(
         )
         .await;
         match result {
-            Ok(downloaded) => return Ok(downloaded),
+            Ok(downloaded) => return Ok((downloaded, candidate.clone())),
             Err(error) if token.is_cancelled() => {
                 let _ = fs::remove_file(archive_path);
                 return Err(error);

@@ -63,6 +63,7 @@ function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof
 
 export type MessageType = 'info' | 'success' | 'error';
 const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+export const DEFAULT_VERSION_DOWNLOAD_SOURCE = 'github';
 
 export function displayAppVersion(version: string) {
   const resolvedVersion = version.trim();
@@ -391,7 +392,33 @@ export function VersionManagementPage() {
     });
 
     loadInstallTask();
-    loadVersionSourceSettings();
+
+    const initializeDefaultVersionSource = async () => {
+      setVersionSourceSaving(true);
+      setVersionSourceError('');
+      try {
+        const settings = await invoke<VersionSourceSettings>('set_download_source', {
+          source: DEFAULT_VERSION_DOWNLOAD_SOURCE,
+        });
+        if (disposed) return;
+        setVersionSource(settings);
+        resetLatest();
+        await Promise.all([
+          checkAppUpdate(),
+          checkLatest(true),
+        ]);
+      } catch (error) {
+        if (!disposed) {
+          await loadVersionSourceSettings();
+          setVersionSourceError(String(error));
+        }
+      } finally {
+        if (!disposed) {
+          setVersionSourceSaving(false);
+        }
+      }
+    };
+    void initializeDefaultVersionSource();
 
     void getVersion()
       .then((version) => {
@@ -559,7 +586,7 @@ export function VersionManagementPage() {
             <label>
               <span className="sr-only">{t('kernel.versions.downloadSource')}</span>
               <select
-                value={versionSource?.source ?? 'github'}
+                value={versionSource?.source ?? DEFAULT_VERSION_DOWNLOAD_SOURCE}
                 disabled={
                   !versionSource
                   || versionSourceSaving

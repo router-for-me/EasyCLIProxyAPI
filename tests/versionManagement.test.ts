@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'bun:test';
-import { displayAppVersion } from '../src/pages/VersionManagementPage';
+import {
+  DEFAULT_VERSION_DOWNLOAD_SOURCE,
+  displayAppVersion,
+} from '../src/pages/VersionManagementPage';
 import { coreUpdateAvailable } from '../src/coreUpdate';
 import { appUpdateIndicatorState } from '../src/appUpdateModel';
 
 describe('VersionManagement helper functions', () => {
+  it('defaults every version management session to GitHub', () => {
+    expect(DEFAULT_VERSION_DOWNLOAD_SOURCE).toBe('github');
+  });
+
   it('formats app versions with v prefix properly', () => {
     expect(displayAppVersion('1.0.0')).toBe('v1.0.0');
     expect(displayAppVersion('v1.2.3')).toBe('v1.2.3');
