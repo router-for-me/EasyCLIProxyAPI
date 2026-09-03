@@ -8,9 +8,10 @@ use super::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    env,
     error::Error,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
 };
@@ -138,6 +139,50 @@ pub(crate) fn open_auth_files_directory(
     open_directory_in_file_manager(&auth_dir)
 }
 
+#[tauri::command]
+pub(crate) fn open_core_logs_directory(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<(), String> {
+    let config = gui_config_state.snapshot()?;
+    let install_dir = core_install_dir()?;
+    let logs_dir = if let Some(writable_path) = writable_path_from_environment(&install_dir) {
+        let logs_dir = writable_path.join("logs");
+        fs::create_dir_all(&logs_dir)
+            .map_err(|error| format!("创建日志目录失败 {}: {error}", path_to_string(&logs_dir)))?;
+        logs_dir
+    } else {
+        let logs_dir = install_dir.join("logs");
+        match fs::create_dir_all(&logs_dir) {
+            Ok(()) => logs_dir,
+            Err(_) => {
+                let fallback = auth_dir_path_for_core(&config.auth_dir, &install_dir).join("logs");
+                fs::create_dir_all(&fallback).map_err(|error| {
+                    format!("创建日志目录失败 {}: {error}", path_to_string(&fallback))
+                })?;
+                fallback
+            }
+        }
+    };
+
+    open_directory_in_file_manager(&logs_dir)
+}
+
+fn writable_path_from_environment(install_dir: &Path) -> Option<PathBuf> {
+    ["WRITABLE_PATH", "writable_path"]
+        .into_iter()
+        .find_map(|key| env::var(key).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                install_dir.join(path)
+            }
+        })
+}
+
 fn open_directory_in_file_manager(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = Command::new(windows_explorer_executable());
@@ -155,7 +200,7 @@ fn open_directory_in_file_manager(path: &Path) -> Result<(), String> {
     command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("打开凭证目录失败 {}: {error}", path_to_string(path)))
+        .map_err(|error| format!("打开目录失败 {}: {error}", path_to_string(path)))
 }
 
 #[tauri::command]

@@ -556,17 +556,6 @@ fn parse_modalities(value: &Value) -> Option<Vec<String>> {
     (!modalities.is_empty()).then_some(modalities)
 }
 
-fn reasoning_efforts(model: &Map<String, Value>) -> Vec<String> {
-    model
-        .get("supported_reasoning_levels")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|level| level.get("effort").and_then(Value::as_str))
-        .map(str::to_ascii_lowercase)
-        .collect()
-}
-
 fn optional_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str).map(str::trim))
@@ -641,6 +630,17 @@ fn reasoning_description(level: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reasoning_efforts(model: &Map<String, Value>) -> Vec<String> {
+        model
+            .get("supported_reasoning_levels")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|level| level.get("effort").and_then(Value::as_str))
+            .map(str::to_ascii_lowercase)
+            .collect()
+    }
 
     fn test_sources() -> CatalogSources {
         parse_sources(

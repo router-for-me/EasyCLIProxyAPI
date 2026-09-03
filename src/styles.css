@@ -1946,47 +1946,112 @@ textarea:focus-visible {
   gap: 16px;
 }
 
-.config-diagnostics-content {
-  display: flex;
+.config-diagnostics-intro {
+  margin: -4px 0 0;
+  color: var(--theme-6b655d);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-relaxed);
+}
+
+.config-diagnostics-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-diagnostics-setting {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 44px;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 16px;
+  gap: 12px;
+  min-width: 0;
+  padding: 15px;
   border: 1px solid var(--theme-e3e1db);
   border-radius: 8px;
   background: var(--theme-faf8f2);
 }
 
-.config-diagnostics-copy {
+.config-diagnostics-setting-icon {
   display: grid;
-  min-width: 0;
-  gap: 7px;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 8px;
+  background: var(--theme-fffdf8);
+  color: var(--theme-5f5a53);
 }
 
-.config-diagnostics-copy strong {
+.config-diagnostics-setting-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.config-diagnostics-setting-copy strong {
   color: var(--theme-2d2a26);
   font-size: var(--font-size-body);
 }
 
-.config-diagnostics-copy p {
+.config-diagnostics-setting-copy small,
+.config-diagnostics-field small {
   margin: 0;
   color: var(--theme-5f5a53);
   font-size: var(--font-size-label);
   line-height: var(--line-height-relaxed);
 }
 
-.config-diagnostics-warning {
-  display: inline-flex;
-  align-items: flex-start;
+.config-diagnostics-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-diagnostics-field {
+  display: grid;
+  min-width: 0;
   gap: 7px;
-  color: var(--theme-9f6429);
-  font-size: var(--font-size-caption);
+  padding: 14px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 8px;
+  background: var(--theme-fffdf8);
+}
+
+.config-diagnostics-field > span {
+  color: var(--theme-39352f);
+  font-size: var(--font-size-label);
+  font-weight: 700;
+}
+
+.config-diagnostics-commercial-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 13px;
+  border: 1px solid var(--theme-dfbf91);
+  border-radius: 7px;
+  background: var(--theme-fff7e9);
+  color: var(--theme-8b5b21);
+  font-size: var(--font-size-label);
   line-height: var(--line-height-body);
 }
 
-.config-diagnostics-warning svg {
+.config-diagnostics-commercial-note svg {
   flex: none;
   margin-top: 1px;
+}
+
+.config-diagnostics-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.config-diagnostics-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .config-management-content {
@@ -2957,10 +3022,25 @@ textarea:focus-visible {
 }
 
 @media (max-width: 480px) {
-  .config-diagnostics-content {
-    align-items: flex-start;
-    gap: 16px;
-    padding: 14px;
+  .config-diagnostics-toggle-grid,
+  .config-diagnostics-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .config-diagnostics-footer {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .config-diagnostics-actions,
+  .config-diagnostics-actions button {
+    width: 100%;
+  }
+
+  .config-diagnostics-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .config-software-setting-row {

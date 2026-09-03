@@ -275,6 +275,46 @@ pub(crate) fn patch_core_request_log(enabled: bool) -> Result<(), String> {
     })
 }
 
+pub(crate) fn patch_core_logging_settings(settings: &CoreConfigSettings) -> Result<(), String> {
+    let settings = settings.clone();
+    patch_existing_core_config(move |document| {
+        let mut changed = false;
+        for (key, value) in [
+            ("debug", serde_norway::Value::Bool(settings.debug)),
+            (
+                "commercial-mode",
+                serde_norway::Value::Bool(settings.commercial_mode),
+            ),
+            (
+                "logging-to-file",
+                serde_norway::Value::Bool(settings.logging_to_file),
+            ),
+            (
+                "logs-max-total-size-mb",
+                serde_norway::to_value(settings.logs_max_total_size_mb)
+                    .map_err(|err| format!("序列化日志容量限制失败: {err}"))?,
+            ),
+            (
+                "error-logs-max-files",
+                serde_norway::to_value(settings.error_logs_max_files)
+                    .map_err(|err| format!("序列化错误日志保留数失败: {err}"))?,
+            ),
+            (
+                "usage-statistics-enabled",
+                serde_norway::Value::Bool(settings.usage_statistics_enabled),
+            ),
+            (
+                "redis-usage-queue-retention-seconds",
+                serde_norway::to_value(settings.redis_usage_queue_retention_seconds)
+                    .map_err(|err| format!("序列化 Redis 用量队列保留时间失败: {err}"))?,
+            ),
+        ] {
+            changed |= set_core_yaml_top_level_value(document, key, value)?;
+        }
+        Ok(changed)
+    })
+}
+
 pub(crate) fn patch_core_routing_strategy(strategy: &str) -> Result<(), String> {
     let strategy = strategy.to_string();
     patch_existing_core_config(move |document| {
@@ -1144,6 +1184,48 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or_else(|| OAUTH_DIR_NAME.to_string());
+    let debug = yaml_mapping_value(root, "debug")
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| "debug 必须是布尔值".to_string())
+        })
+        .transpose()?
+        .unwrap_or(false);
+    let commercial_mode = yaml_mapping_value(root, "commercial-mode")
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| "commercial-mode 必须是布尔值".to_string())
+        })
+        .transpose()?
+        .unwrap_or(false);
+    let logging_to_file = yaml_mapping_value(root, "logging-to-file")
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| "logging-to-file 必须是布尔值".to_string())
+        })
+        .transpose()?
+        .unwrap_or(false);
+    let logs_max_total_size_mb = yaml_mapping_value(root, "logs-max-total-size-mb")
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| "logs-max-total-size-mb 必须是非负整数".to_string())
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_LOGS_MAX_TOTAL_SIZE_MB);
+    let error_logs_max_files = yaml_mapping_value(root, "error-logs-max-files")
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| "error-logs-max-files 必须是非负整数".to_string())
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_ERROR_LOGS_MAX_FILES);
     let usage_statistics_enabled = yaml_mapping_value(root, "usage-statistics-enabled")
         .map(|value| {
             value
@@ -1152,6 +1234,21 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(true);
+    let redis_usage_queue_retention_seconds =
+        yaml_mapping_value(root, "redis-usage-queue-retention-seconds")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or_else(|| "redis-usage-queue-retention-seconds 必须是非负整数".to_string())
+            })
+            .transpose()?
+            .unwrap_or(DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS);
+    let redis_usage_queue_retention_seconds = if redis_usage_queue_retention_seconds == 0 {
+        DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS
+    } else {
+        redis_usage_queue_retention_seconds.min(3600)
+    };
     let request_log = yaml_mapping_value(root, "request-log")
         .map(|value| {
             value
@@ -1264,7 +1361,13 @@ pub(crate) fn core_config_settings_from_value(
         management_secret_configured: management_secret_key
             .as_deref()
             .is_some_and(|value| !value.is_empty()),
+        debug,
+        commercial_mode,
+        logging_to_file,
+        logs_max_total_size_mb,
+        error_logs_max_files,
         usage_statistics_enabled,
+        redis_usage_queue_retention_seconds,
         request_log,
         plugins_enabled,
         routing_strategy,
