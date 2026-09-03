@@ -110,6 +110,13 @@ API 接入页面按照协议或 Provider 管理上游 API 凭证和服务地址�
 对于受支持的客户端，软件可以同步可用模型目录、选择默认模型、在应用托管配置前备份原始配置，
 以及恢复之前的配置。
 
+对于 Claude Desktop，智能体页面还会管理 `coworkEgressAllowedHosts`，它是 Cowork 任务和
+Claude Code 会话共同使用的工具网络白名单。推荐默认值为 `localhost`、`127.0.0.1`、
+`api.anthropic.com`、`github.com`、`*.github.com`、`*.githubusercontent.com`、
+`gitlab.com` 和 `*.gitlab.com`；重新应用集成时会保留现有的自定义条目。每行填写一个
+`localhost`、`host[:port]` 或 `*.host[:port]`。为兼容 Claude Desktop 也支持单独的 `*`，
+但它会允许访问所有主机并关闭网络沙箱限制，因此不会作为默认值。
+
 ## 其他功能
 
 - 管理内核配置、API Key、远程管理凭证和路由策略。

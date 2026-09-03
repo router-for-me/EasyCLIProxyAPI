@@ -796,6 +796,18 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
     }))
 }
 
+pub(crate) fn resolve_claude_desktop_egress_allowed_hosts(
+    client: AgentClient,
+    requested: Option<Vec<String>>,
+) -> Result<Option<Vec<String>>, String> {
+    if client != AgentClient::ClaudeDesktop {
+        return Ok(None);
+    }
+    requested
+        .map(|hosts| normalize_claude_desktop_egress_allowed_hosts(&hosts))
+        .transpose()
+}
+
 pub(crate) fn resolve_claude_code_model_mappings(
     client: AgentClient,
     models: &[AgentModelOption],
@@ -851,6 +863,7 @@ pub(crate) fn prepare_codex_agent_models(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_agent_config(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -859,6 +872,7 @@ pub(crate) async fn apply_agent_config(
     oauth_configuration: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    claude_desktop_egress_allowed_hosts: Option<Vec<String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let client = AgentClient::parse(&client)?;
     let home = app
@@ -885,6 +899,8 @@ pub(crate) async fn apply_agent_config(
         &model,
         claude_desktop_model_mappings,
     )?;
+    let claude_desktop_egress_allowed_hosts =
+        resolve_claude_desktop_egress_allowed_hosts(client, claude_desktop_egress_allowed_hosts)?;
     if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
         ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
     }
@@ -903,6 +919,7 @@ pub(crate) async fn apply_agent_config(
             oauth_configuration,
             claude_code_model_mappings: claude_code_model_mappings.as_ref(),
             claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+            claude_desktop_egress_allowed_hosts: claude_desktop_egress_allowed_hosts.as_deref(),
         },
     )
 }
@@ -925,6 +942,7 @@ pub(crate) fn close_agent_config_modification(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn reset_agent_config_to_default(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -933,6 +951,7 @@ pub(crate) async fn reset_agent_config_to_default(
     oauth_configuration: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    claude_desktop_egress_allowed_hosts: Option<Vec<String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let client = AgentClient::parse(&client)?;
     let home = app
@@ -959,6 +978,8 @@ pub(crate) async fn reset_agent_config_to_default(
         &model,
         claude_desktop_model_mappings,
     )?;
+    let claude_desktop_egress_allowed_hosts =
+        resolve_claude_desktop_egress_allowed_hosts(client, claude_desktop_egress_allowed_hosts)?;
     if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
         ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
     }
@@ -976,6 +997,7 @@ pub(crate) async fn reset_agent_config_to_default(
         oauth_configuration,
         claude_code_model_mappings: claude_code_model_mappings.as_ref(),
         claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+        claude_desktop_egress_allowed_hosts: claude_desktop_egress_allowed_hosts.as_deref(),
     })
 }
 
@@ -1002,6 +1024,7 @@ pub(crate) async fn set_agent_config_enabled(
     force_restore: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    claude_desktop_egress_allowed_hosts: Option<Vec<String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let client = AgentClient::parse(&client)?;
     let home = app
@@ -1029,6 +1052,10 @@ pub(crate) async fn set_agent_config_enabled(
             &model,
             claude_desktop_model_mappings,
         )?;
+        let claude_desktop_egress_allowed_hosts = resolve_claude_desktop_egress_allowed_hosts(
+            client,
+            claude_desktop_egress_allowed_hosts,
+        )?;
         if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
             ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
         }
@@ -1047,6 +1074,7 @@ pub(crate) async fn set_agent_config_enabled(
                 oauth_configuration: false,
                 claude_code_model_mappings: claude_code_model_mappings.as_ref(),
                 claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+                claude_desktop_egress_allowed_hosts: claude_desktop_egress_allowed_hosts.as_deref(),
             },
         )
     } else {
@@ -1066,6 +1094,7 @@ pub(crate) async fn update_agent_config(
     model: String,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    claude_desktop_egress_allowed_hosts: Option<Vec<String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let client = AgentClient::parse(&client)?;
     let home = app
@@ -1089,6 +1118,8 @@ pub(crate) async fn update_agent_config(
         &model,
         claude_desktop_model_mappings,
     )?;
+    let claude_desktop_egress_allowed_hosts =
+        resolve_claude_desktop_egress_allowed_hosts(client, claude_desktop_egress_allowed_hosts)?;
     if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
         ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
     }
@@ -1107,6 +1138,7 @@ pub(crate) async fn update_agent_config(
             oauth_configuration: false,
             claude_code_model_mappings: claude_code_model_mappings.as_ref(),
             claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+            claude_desktop_egress_allowed_hosts: claude_desktop_egress_allowed_hosts.as_deref(),
         },
     )
 }

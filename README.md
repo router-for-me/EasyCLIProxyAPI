@@ -117,6 +117,14 @@ For supported clients, the application can synchronize the available model catal
 default model, back up the original configuration before applying managed settings, and restore the
 previous configuration.
 
+For Claude Desktop, the Agents page also manages `coworkEgressAllowedHosts`, the tool-network
+allowlist used by both Cowork tasks and Claude Code sessions. The recommended defaults are
+`localhost`, `127.0.0.1`, `api.anthropic.com`, `github.com`, `*.github.com`,
+`*.githubusercontent.com`, `gitlab.com`, and `*.gitlab.com`; existing custom entries are preserved
+when the integration is reapplied. Add one entry per line using `localhost`, `host[:port]`, or
+`*.host[:port]`. A bare `*` is supported for compatibility, but it allows every host and disables the
+network sandbox restriction, so it is never used as the default.
+
 ## Additional Capabilities
 
 - Manage core settings, API keys, remote management credentials, and routing strategy.

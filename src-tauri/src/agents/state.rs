@@ -671,6 +671,7 @@ pub(crate) fn fresh_agent_contents(
             oauth_configuration: false,
             claude_code_model_mappings: None,
             claude_desktop_model_mappings: None,
+            claude_desktop_egress_allowed_hosts: None,
         },
     )
 }
@@ -687,6 +688,7 @@ pub(crate) fn fresh_agent_contents_with_oauth(
         oauth_configuration,
         claude_code_model_mappings,
         claude_desktop_model_mappings,
+        claude_desktop_egress_allowed_hosts,
         ..
     } = options;
     let root_base = managed_core_loopback_origin(port);
@@ -710,6 +712,7 @@ pub(crate) fn fresh_agent_contents_with_oauth(
                 model,
                 models,
                 claude_desktop_model_mappings,
+                claude_desktop_egress_allowed_hosts,
             )?,
             build_claude_desktop_meta(None)?,
         ]),
@@ -1539,6 +1542,7 @@ pub(crate) fn apply_agent_configuration(
             oauth_configuration: false,
             claude_code_model_mappings: None,
             claude_desktop_model_mappings: None,
+            claude_desktop_egress_allowed_hosts: None,
         },
     )
 }
@@ -1588,6 +1592,7 @@ pub(crate) fn reset_agent_configuration_to_default(
         oauth_configuration: false,
         claude_code_model_mappings: None,
         claude_desktop_model_mappings: None,
+        claude_desktop_egress_allowed_hosts: None,
     })
 }
 
@@ -1602,6 +1607,7 @@ pub(crate) struct AgentDefaultConfiguration<'a> {
     pub(crate) oauth_configuration: bool,
     pub(crate) claude_code_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
     pub(crate) claude_desktop_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
+    pub(crate) claude_desktop_egress_allowed_hosts: Option<&'a [String]>,
 }
 
 pub(crate) fn reset_agent_configuration_to_default_with_oauth(
@@ -1618,6 +1624,7 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
         oauth_configuration,
         claude_code_model_mappings,
         claude_desktop_model_mappings,
+        claude_desktop_egress_allowed_hosts,
     } = request;
     if client == AgentClient::DeepSeekHarness {
         let updates = build_agent_updates_with_oauth(
@@ -1632,6 +1639,7 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
                 oauth_configuration,
                 claude_code_model_mappings,
                 claude_desktop_model_mappings,
+                claude_desktop_egress_allowed_hosts,
             },
         )?;
         return commit_agent_configuration(
@@ -1655,6 +1663,7 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
             oauth_configuration,
             claude_code_model_mappings,
             claude_desktop_model_mappings,
+            claude_desktop_egress_allowed_hosts,
         },
     )?;
     if paths.len() != contents.len() {
