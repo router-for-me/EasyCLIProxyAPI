@@ -64,12 +64,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          # Build on the oldest supported Ubuntu release so the portable binary
+          # does not require a newer glibc than Ubuntu 22.04 provides.
+          - runner: ubuntu-22.04
             os: linux
             display_os: Linux
             arch: amd64
             suffix: tar.gz
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             os: linux
             display_os: Linux
             arch: aarch64
@@ -136,7 +138,17 @@ jobs:
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
       - name: Build GUI
         env:
           GITCODE_GUI_REPOSITORY: ${{ vars.GITCODE_GUI_REPOSITORY }}
