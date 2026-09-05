@@ -742,7 +742,7 @@ export function VersionManagementPage() {
 
             <button
               type="button"
-              className={latestVersion && (!coreInstalled || currentVersion !== latestVersion) ? 'primary-button' : 'secondary-button'}
+              className={latestVersion && (!coreInstalled || coreHasUpdate) ? 'primary-button' : 'secondary-button'}
               title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
               disabled={!latestVersion || busy}
               onClick={() => setConfirmUpdateOpen(true)}
