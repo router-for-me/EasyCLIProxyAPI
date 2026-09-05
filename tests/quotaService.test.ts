@@ -123,6 +123,30 @@ describe('quotaRowsFor', () => {
     expect(claude[0].remainingPercent).toBeCloseTo(99.56);
   });
 
+  it('显示 Claude 按模型限定的周窗口（如 Fable）', () => {
+    const rows = quotaRowsFor('claude', {
+      five_hour: { utilization: 15, resets_at: '2027-01-01T00:00:00Z' },
+      seven_day: { utilization: 18, resets_at: '2027-01-02T00:00:00Z' },
+      seven_day_opus: null,
+      limits: [
+        { kind: 'session', group: 'session', percent: 15, is_active: false },
+        { kind: 'weekly_all', group: 'weekly', percent: 18, is_active: false },
+        {
+          kind: 'weekly_scoped',
+          group: 'weekly',
+          scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+          percent: 36,
+          is_active: true,
+          resets_at: '2027-01-02T00:00:00Z',
+        },
+      ],
+    });
+
+    expect(rows.map((row) => row.label)).toEqual(['5 小时窗口', '7 天窗口', '7 天 Fable 窗口']);
+    expect(rows[2]).toMatchObject({ remainingPercent: 64, detail: '当前生效限制' });
+    expect(rows[2].reset).toBeTruthy();
+  });
+
   it('显示 Claude 已启用的额外用量', () => {
     const rows = quotaRowsFor('claude', {
       five_hour: { utilization: 20, resets_at: '2027-01-01T00:00:00Z' },

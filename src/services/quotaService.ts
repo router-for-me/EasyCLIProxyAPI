@@ -315,6 +315,31 @@ export const codexResetCreditDetailsFor = (
   };
 };
 
+const claudeScopedLimitRows = (value: Record<string, unknown>): QuotaRow[] => {
+  const limits = Array.isArray(value.limits) ? value.limits : [];
+  const windowKeyByKind: Record<string, Parameters<typeof translate>[1]> = {
+    weekly_scoped: 'quota.service.window.sevenDayScoped',
+    session_scoped: 'quota.service.window.fiveHourScoped',
+  };
+  return limits.flatMap((raw): QuotaRow[] => {
+    if (!isRecord(raw)) return [];
+    const windowKey = windowKeyByKind[readString(raw, 'kind')];
+    if (!windowKey) return [];
+    const scope = isRecord(raw.scope) ? raw.scope : null;
+    const model = isRecord(scope?.model) ? scope.model : null;
+    const name = readString(model, 'display_name', 'displayName', 'id') || readString(scope, 'surface');
+    if (!name) return [];
+    return [{
+      label: quotaText(windowKey, { model: name }),
+      remainingPercent: remainingFromUsedPercent(raw.percent ?? raw.utilization),
+      reset: absoluteResetLabel(raw.resets_at ?? raw.resetsAt),
+      detail: booleanValue(raw.is_active ?? raw.isActive) === true
+        ? quotaText('quota.service.activeLimit')
+        : undefined,
+    }];
+  });
+};
+
 export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRow[] => {
   const value = parseBody(payload);
   if (!isRecord(value)) return [];
@@ -342,6 +367,8 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
         };
       })
       .filter((row): row is QuotaRow => row !== null);
+    // Model-scoped limits (e.g. Fable) are reported only in `limits`, not as named windows.
+    rows.push(...claudeScopedLimitRows(value));
     const extraUsage = isRecord(value.extra_usage)
       ? value.extra_usage
       : isRecord(value.extraUsage)
