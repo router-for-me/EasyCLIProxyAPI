@@ -2185,7 +2185,11 @@ fn codex_model_list_is_empty_when_cpa_has_no_writable_models() {
     let prepared = prepare_codex_agent_models(&[]).unwrap();
 
     assert!(prepared.models.is_empty());
-    assert!(prepared.codex_catalog.is_none());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(prepared.codex_catalog.as_deref().unwrap())
+            .unwrap(),
+        serde_json::json!({"models": []})
+    );
 }
 
 #[test]

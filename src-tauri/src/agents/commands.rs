@@ -1,6 +1,7 @@
 use super::*;
 
 const AGENT_STATUS_DETECTION_CONCURRENCY: usize = 4;
+static CODEX_CATALOG_SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Clone, Copy)]
 enum AgentStatusDetectionTarget {
@@ -132,6 +133,7 @@ pub(crate) async fn refresh_agent_config_statuses(
 
 #[tauri::command]
 pub(crate) async fn get_agent_models(
+    app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
 ) -> Result<Vec<AgentModelOption>, String> {
@@ -140,8 +142,19 @@ pub(crate) async fn get_agent_models(
         return fetch_agent_models(config.port, effective_agent_api_key(&config)).await;
     }
     let client = AgentClient::parse(&client)?;
+    let _sync_guard = if client == AgentClient::Codex {
+        Some(CODEX_CATALOG_SYNC_LOCK.lock().await)
+    } else {
+        None
+    };
     let config = gui_config_state.snapshot()?;
-    Ok(fetch_prepared_agent_models(client, &config).await?.models)
+    let prepared = fetch_prepared_agent_models(client, &config).await?;
+    if client == AgentClient::Codex {
+        if let Err(error) = sync_prepared_codex_model_catalog(&app, &config, &prepared) {
+            eprintln!("自动刷新已应用的 Codex 模型目录失败: {error}");
+        }
+    }
+    Ok(prepared.models)
 }
 
 pub(crate) async fn resolve_pi_default_model(
@@ -764,6 +777,83 @@ pub(crate) async fn fetch_prepared_agent_models(
     }
 }
 
+fn sync_prepared_codex_model_catalog(
+    app: &tauri::AppHandle,
+    config: &GuiConfigFile,
+    prepared: &PreparedAgentModels,
+) -> Result<bool, String> {
+    let Some(catalog) = prepared.codex_catalog.as_deref() else {
+        return Ok(false);
+    };
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+    let changed = sync_codex_model_catalog_if_configured(
+        &home,
+        config.port,
+        effective_agent_api_key(config),
+        &prepared.models,
+        catalog,
+    )?;
+    if changed {
+        app.state::<AgentConfigStatusCache>().clear()?;
+        let _ = app.emit(
+            CONFIG_FILES_CHANGED_EVENT,
+            ConfigFilesChangedPayload {
+                paths: agent_managed_paths(AgentClient::Codex, &home)
+                    .iter()
+                    .map(|path| path_to_string(path))
+                    .collect(),
+                errors: Vec::new(),
+            },
+        );
+    }
+    Ok(changed)
+}
+
+pub(crate) async fn refresh_applied_codex_model_catalog(
+    app: &tauri::AppHandle,
+    config: &GuiConfigFile,
+) -> Result<bool, String> {
+    let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
+    let runtime_models =
+        fetch_codex_runtime_models(config.port, effective_agent_api_key(config)).await?;
+    let prepared = prepare_codex_agent_models(&runtime_models)?;
+    sync_prepared_codex_model_catalog(app, config, &prepared)
+}
+
+pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let Ok(home) = app.path().home_dir() else {
+            return;
+        };
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let Ok(config) = app.state::<GuiConfigState>().snapshot() else {
+                continue;
+            };
+            let paths = agent_config_paths(AgentClient::Codex, &home);
+            if !matches!(
+                inspect_agent_managed_config(
+                    AgentClient::Codex,
+                    &paths,
+                    config.port,
+                    effective_agent_api_key(&config),
+                ),
+                Ok((true, _, _))
+            ) {
+                continue;
+            }
+            if let Err(error) = refresh_applied_codex_model_catalog(&app, &config).await {
+                eprintln!("后台同步 Codex 模型目录失败，保留现有配置: {error}");
+            }
+        }
+    });
+}
+
 pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> bool {
     matches!(
         client,
@@ -843,7 +933,7 @@ pub(crate) fn prepare_codex_agent_models(
         Err(error) if error.contains("CPA 当前没有可写入 Codex 的模型") => {
             Ok(PreparedAgentModels {
                 models: Vec::new(),
-                codex_catalog: None,
+                codex_catalog: Some("{\n  \"models\": []\n}\n".to_string()),
             })
         }
         Err(error) => Err(error),
