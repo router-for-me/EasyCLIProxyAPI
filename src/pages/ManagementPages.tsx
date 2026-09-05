@@ -107,9 +107,17 @@ const cachedOAuthProviderStates = (): Partial<Record<OAuthProviderId, OAuthProvi
   )
 );
 
-export function OAuthManagementPage() {
+export type OAuthSubpageRequest = { subpage: OAuthSubpage; nonce: number };
+
+export function OAuthManagementPage({ requestedSubpage }: { requestedSubpage?: OAuthSubpageRequest | null }) {
   const { t } = useI18n();
-  const [activeSubpage, setActiveSubpage] = useState<OAuthSubpage>('login');
+  const [activeSubpage, setActiveSubpage] = useState<OAuthSubpage>(requestedSubpage?.subpage ?? 'login');
+
+  useEffect(() => {
+    if (requestedSubpage) {
+      setActiveSubpage(requestedSubpage.subpage);
+    }
+  }, [requestedSubpage]);
 
   return (
     <section className="page oauth-management-page">
