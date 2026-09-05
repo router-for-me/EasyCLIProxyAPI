@@ -3,6 +3,12 @@ use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{OnceLock, RwLock};
 
+mod customizations;
+pub(crate) use customizations::{
+    editor_snapshot, load_customizations, save_customizations, CatalogEditorRequest,
+    CatalogEditorSnapshot,
+};
+
 const MODEL_CATALOG_JSON: &str = include_str!("../resources/codex_models/model-catalog.json");
 const FALLBACK_MODEL_JSON: &str = include_str!("../resources/codex_models/fallback-model.json");
 
@@ -38,6 +44,7 @@ struct CatalogSources {
 struct CatalogState {
     sources: CatalogSources,
     json: String,
+    customizations: customizations::ModelCustomizations,
 }
 
 impl CatalogState {
@@ -195,7 +202,7 @@ pub(crate) fn prepare_catalog(
     let state = catalog_state()?
         .read()
         .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
-    prepare_catalog_with_sources(runtime_models, &state.sources)
+    prepare_catalog_with_customizations(runtime_models, &state.sources, &state.customizations)
 }
 
 fn catalog_state() -> Result<&'static RwLock<CatalogState>, String> {
@@ -205,6 +212,7 @@ fn catalog_state() -> Result<&'static RwLock<CatalogState>, String> {
                 RwLock::new(CatalogState {
                     sources,
                     json: MODEL_CATALOG_JSON.to_string(),
+                    customizations: Default::default(),
                 })
             })
         })
@@ -376,9 +384,18 @@ fn validate_required_codex_fields(model: &Map<String, Value>, label: &str) -> Re
     Ok(())
 }
 
+#[cfg(test)]
 fn prepare_catalog_with_sources(
     runtime_models: &[CodexRuntimeModel],
     sources: &CatalogSources,
+) -> Result<PreparedCodexCatalog, String> {
+    prepare_catalog_with_customizations(runtime_models, sources, &Default::default())
+}
+
+fn prepare_catalog_with_customizations(
+    runtime_models: &[CodexRuntimeModel],
+    sources: &CatalogSources,
+    customizations: &customizations::ModelCustomizations,
 ) -> Result<PreparedCodexCatalog, String> {
     if runtime_models.is_empty() {
         return Err("CPA 当前没有可写入 Codex 的模型".to_string());
@@ -416,6 +433,10 @@ fn prepare_catalog_with_sources(
     }
     if entries.is_empty() {
         return Err("CPA 当前没有有效的 Codex 模型 ID".to_string());
+    }
+
+    for entry in &mut entries {
+        customizations::apply_customizations(&mut entry.value, customizations)?;
     }
 
     for entry in &entries {
@@ -821,8 +842,11 @@ mod tests {
             sources.fallback["input_modalities"],
             serde_json::json!(["text", "image"])
         );
-        assert_eq!(sources.fallback["default_reasoning_level"], Value::Null);
-        assert!(reasoning_efforts(&sources.fallback).is_empty());
+        assert_eq!(sources.fallback["default_reasoning_level"], "medium");
+        assert_eq!(
+            reasoning_efforts(&sources.fallback),
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
         assert_eq!(sources.fallback["shell_type"], "unified_exec");
         assert_eq!(sources.fallback["visibility"], "none");
         assert_eq!(sources.fallback["default_reasoning_summary"], "auto");
@@ -897,6 +921,7 @@ mod tests {
         let mut state = CatalogState {
             sources: current,
             json: "revision-two".to_string(),
+            customizations: Default::default(),
         };
 
         let mut older = test_sources();
@@ -1230,7 +1255,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_fallback_uses_official_defaults_with_fast_available() {
+    fn generated_fallback_uses_official_defaults_with_reasoning_and_fast_available() {
         let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
         let runtime = runtime(serde_json::json!({"models":[{"id":"unknown-model"}]}));
         let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
@@ -1245,8 +1270,15 @@ mod tests {
             "auto_compact_token_limit": null,
             "comp_hash": null,
             "effective_context_window_percent": 95,
-            "default_reasoning_level": null,
-            "supported_reasoning_levels": [],
+            "default_reasoning_level": "medium",
+            "supported_reasoning_levels": [
+                {"effort": "low", "description": "Low reasoning effort"},
+                {"effort": "medium", "description": "Medium reasoning effort"},
+                {"effort": "high", "description": "High reasoning effort"},
+                {"effort": "xhigh", "description": "Extra high reasoning effort"},
+                {"effort": "max", "description": "Maximum reasoning effort"},
+                {"effort": "ultra", "description": "Ultra reasoning effort"}
+            ],
             "shell_type": "unified_exec",
             "input_modalities": ["text", "image"],
             "supports_image_detail_original": false,

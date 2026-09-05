@@ -399,6 +399,56 @@ pub(crate) fn load_codex_model_catalog_override(app: &tauri::AppHandle) -> Resul
     Ok(())
 }
 
+fn codex_model_customizations_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(codex_model_catalog_override_path(app)?.with_file_name("model-customizations.json"))
+}
+
+pub(crate) fn load_codex_model_customizations(app: &tauri::AppHandle) -> Result<(), String> {
+    codex_catalog::load_customizations(&codex_model_customizations_path(app)?)
+}
+
+#[tauri::command]
+pub(crate) async fn get_codex_model_catalog_editor(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<codex_catalog::CatalogEditorSnapshot, String> {
+    let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
+    let config = gui_config_state.snapshot()?;
+    let runtime_models =
+        fetch_codex_runtime_models(config.port, effective_agent_api_key(&config)).await?;
+    codex_catalog::editor_snapshot(&runtime_models)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexCatalogEditorSaveResult {
+    snapshot: codex_catalog::CatalogEditorSnapshot,
+    synchronization_error: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) async fn save_codex_model_catalog_editor(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    request: codex_catalog::CatalogEditorRequest,
+) -> Result<CodexCatalogEditorSaveResult, String> {
+    let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
+    let config = gui_config_state.snapshot()?;
+    let runtime_models =
+        fetch_codex_runtime_models(config.port, effective_agent_api_key(&config)).await?;
+    let snapshot = codex_catalog::save_customizations(
+        &codex_model_customizations_path(&app)?,
+        &runtime_models,
+        request,
+    )?;
+    let synchronization_error = prepare_codex_agent_models(&runtime_models)
+        .and_then(|prepared| sync_prepared_codex_model_catalog(&app, &config, &prepared))
+        .err();
+    Ok(CodexCatalogEditorSaveResult {
+        snapshot,
+        synchronization_error,
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn get_thinking_aliases(
     gui_config_state: tauri::State<'_, GuiConfigState>,

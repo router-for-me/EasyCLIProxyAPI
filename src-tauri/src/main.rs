@@ -2354,6 +2354,9 @@ fn main() {
                 eprintln!("加载 Codex 模型目录更新文件失败，将使用内置目录: {error}");
             }
             let catalog_update_app = app.handle().clone();
+            if let Err(error) = load_codex_model_customizations(app.handle()) {
+                eprintln!("加载 Codex 自定义模型配置失败: {error}");
+            }
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = update_codex_model_catalog_inner(&catalog_update_app).await {
                     eprintln!("后台更新 Codex 模型目录失败，继续使用当前目录: {error}");
@@ -2484,6 +2487,8 @@ fn main() {
             uninstall_pi_provider,
             check_codex_oauth_login,
             update_codex_model_catalog,
+            get_codex_model_catalog_editor,
+            save_codex_model_catalog_editor,
             get_thinking_aliases,
             get_model_alias_sources,
             get_thinking_alias_sources,

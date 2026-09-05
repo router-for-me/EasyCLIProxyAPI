@@ -22,6 +22,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Trash2,
   Terminal,
   Wrench,
@@ -59,6 +60,7 @@ import {
 import type { ModelOption } from '../services/modelService';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
+import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
 
 type AgentClientId =
   | 'claude-code'
@@ -670,6 +672,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [launchError, setLaunchError] = useState('');
   const [launchDirectoryDialogOpen, setLaunchDirectoryDialogOpen] = useState(false);
+  const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
   const [launchDirectory, setLaunchDirectory] = useState('');
   const [launchDirectoryTarget, setLaunchDirectoryTarget] = useState<AgentLaunchTarget | null>(null);
   const [launchDirectoryError, setLaunchDirectoryError] = useState('');
@@ -1944,6 +1947,15 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                           <span className="switch-track" />
                         </span>
                       </label>
+                      <button
+                        type="button"
+                        className="secondary-button agent-codex-catalog-button"
+                        onClick={() => setCodexCatalogDialogOpen(true)}
+                        disabled={busy}
+                      >
+                        <SlidersHorizontal size={16} />
+                        {t('agents.catalog.button')}
+                      </button>
                     </div>
                   ) : null}
                   <div className={`agent-modification-buttons ${selected === 'codex' ? 'codex' : ''}`}>
@@ -2098,6 +2110,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           )}
         </section>
       </div>
+
+      {codexCatalogDialogOpen ? (
+        <CodexModelCatalogDialog
+          onClose={() => setCodexCatalogDialogOpen(false)}
+          onSaved={() => loadModels('codex', selectedModel)}
+        />
+      ) : null}
 
       {launchDirectoryDialogOpen ? (
         <div className="config-dialog-backdrop" onMouseDown={(event) => {

@@ -38,8 +38,33 @@
   "supports_reasoning_summaries": true,
   "display_name": "Compatible Model",
   "description": null,
-  "default_reasoning_level": null,
-  "supported_reasoning_levels": [],
+  "default_reasoning_level": "medium",
+  "supported_reasoning_levels": [
+    {
+      "effort": "low",
+      "description": "Low reasoning effort"
+    },
+    {
+      "effort": "medium",
+      "description": "Medium reasoning effort"
+    },
+    {
+      "effort": "high",
+      "description": "High reasoning effort"
+    },
+    {
+      "effort": "xhigh",
+      "description": "Extra high reasoning effort"
+    },
+    {
+      "effort": "max",
+      "description": "Maximum reasoning effort"
+    },
+    {
+      "effort": "ultra",
+      "description": "Ultra reasoning effort"
+    }
+  ],
   "shell_type": "unified_exec",
   "visibility": "none",
   "supported_in_api": true,
