@@ -3,6 +3,7 @@ use super::*;
 const AGENT_STATUS_DETECTION_CONCURRENCY: usize = 4;
 static CODEX_CATALOG_SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static CODEX_CATALOG_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static CODEX_CATALOG_REFRESH: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 #[derive(Clone, Copy)]
 enum AgentStatusDetectionTarget {
@@ -877,6 +878,10 @@ pub(crate) async fn refresh_applied_codex_model_catalog(
     sync_prepared_codex_model_catalog(app, config, &prepared)
 }
 
+pub(crate) fn request_codex_model_catalog_refresh() {
+    CODEX_CATALOG_REFRESH.notify_one();
+}
+
 pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let Ok(home) = app.path().home_dir() else {
@@ -885,7 +890,12 @@ pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {},
+                _ = CODEX_CATALOG_REFRESH.notified() => {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                },
+            }
             let Ok(config) = app.state::<GuiConfigState>().snapshot() else {
                 continue;
             };

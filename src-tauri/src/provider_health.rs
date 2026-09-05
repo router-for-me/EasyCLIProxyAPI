@@ -10,6 +10,7 @@ use std::{
 };
 
 const MAX_PROVIDER_HEALTH_STREAM_BYTES: usize = 256 * 1024;
+static PROVIDER_HEALTH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -304,6 +305,10 @@ pub(crate) async fn provider_health_probe(
         return Err("健康检测请求体过大".to_string());
     }
 
+    let _permit = PROVIDER_HEALTH_SLOTS
+        .acquire()
+        .await
+        .map_err(|error| error.to_string())?;
     let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(15_000).clamp(1_000, 120_000));
     let config = gui_config_state.snapshot()?;
     let proxy_url = url

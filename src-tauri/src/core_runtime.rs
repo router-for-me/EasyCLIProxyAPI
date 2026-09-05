@@ -1,5 +1,26 @@
 use super::*;
 
+pub(crate) static CORE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
+
+async fn run_core_command(
+    app: tauri::AppHandle,
+    operation: fn(&CoreProcessState, &GuiConfigState) -> Result<CoreStatus, String>,
+) -> Result<CoreStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = CORE_OPERATION_LOCK
+            .try_lock()
+            .map_err(|_| "内核正在执行其他操作，请稍后重试".to_string())?;
+        let status = operation(
+            app.state::<CoreProcessState>().inner(),
+            app.state::<GuiConfigState>().inner(),
+        )?;
+        emit_core_status(&app, &status);
+        Ok(status)
+    })
+    .await
+    .map_err(|error| format!("内核后台任务失败: {error}"))?
+}
+
 #[tauri::command]
 pub(crate) async fn check_latest_core(
     app: tauri::AppHandle,
@@ -38,28 +59,35 @@ pub(crate) fn detect_bundled_core() -> Result<Option<BundledCoreInfo>, String> {
 }
 
 #[tauri::command]
-pub(crate) fn install_bundled_core(
+pub(crate) async fn install_bundled_core(
     app: tauri::AppHandle,
     window: tauri::Window,
-    state: tauri::State<'_, CoreDownloadState>,
-    process_state: tauri::State<'_, CoreProcessState>,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreInstallResult, String> {
-    let (info, archive_path) = bundled_core_archive()?
-        .ok_or_else(|| "当前发行包没有匹配此系统架构的内置内核".to_string())?;
-    let token = CancellationToken::new();
-    state.start(token, Some(info.version.clone()))?;
-    let result = install_core_with_runtime_restore(
-        &app,
-        process_state.inner(),
-        gui_config_state.inner(),
-        || install_bundled_core_inner(&window, state.inner(), &info, &archive_path),
-    );
-    if result.is_err() {
-        let _ = cleanup_core_work_dirs();
-    }
-    state.finish(&window, result.clone());
-    result
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = CORE_OPERATION_LOCK
+            .try_lock()
+            .map_err(|_| "内核正在执行其他操作，请稍后重试".to_string())?;
+        let state = app.state::<CoreDownloadState>();
+        let process_state = app.state::<CoreProcessState>();
+        let gui_config_state = app.state::<GuiConfigState>();
+        let (info, archive_path) = bundled_core_archive()?
+            .ok_or_else(|| "当前发行包没有匹配此系统架构的内置内核".to_string())?;
+        let token = CancellationToken::new();
+        state.start(token, Some(info.version.clone()))?;
+        let result = install_core_with_runtime_restore(
+            &app,
+            process_state.inner(),
+            gui_config_state.inner(),
+            || install_bundled_core_inner(&window, state.inner(), &info, &archive_path),
+        );
+        if result.is_err() {
+            let _ = cleanup_core_work_dirs();
+        }
+        state.finish(&window, result.clone());
+        result
+    })
+    .await
+    .map_err(|error| format!("离线内核安装后台任务失败: {error}"))?
 }
 
 pub(crate) fn core_needs_bundled_bootstrap(install_dir: &Path) -> bool {
@@ -103,47 +131,53 @@ pub(crate) fn get_core_install_task(state: tauri::State<'_, CoreDownloadState>) 
 pub(crate) async fn install_core_version(
     app: tauri::AppHandle,
     window: tauri::Window,
-    state: tauri::State<'_, CoreDownloadState>,
-    process_state: tauri::State<'_, CoreProcessState>,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
     version: Option<String>,
 ) -> Result<CoreInstallResult, String> {
-    let config = gui_config_state.snapshot()?;
-    let proxy_url = config.proxy_url.clone();
-    let token = CancellationToken::new();
-    state.start(token.clone(), version.clone())?;
-    let (was_running, install_result) =
-        match pause_core_for_install(&app, process_state.inner(), &config) {
-            Ok(was_running) => (
-                was_running,
-                install_core_version_inner(
-                    &app,
-                    &window,
-                    state.inner(),
-                    gui_config_state.inner(),
-                    token,
-                    version,
-                    &proxy_url,
-                    config.selected_download_candidate(),
-                    config.custom_download_mirrors.clone(),
-                )
-                .await,
-            ),
-            Err(error) => (false, Err(error)),
-        };
-    let result = restore_core_after_install(
-        &app,
-        process_state.inner(),
-        &config,
-        was_running,
-        install_result,
-    );
-    if result.is_err() {
-        let _ = cleanup_core_work_dirs();
-    }
-    state.finish(&window, result.clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = CORE_OPERATION_LOCK
+            .try_lock()
+            .map_err(|_| "内核正在执行其他操作，请稍后重试".to_string())?;
+        let state = app.state::<CoreDownloadState>();
+        let process_state = app.state::<CoreProcessState>();
+        let gui_config_state = app.state::<GuiConfigState>();
+        let config = gui_config_state.snapshot()?;
+        let proxy_url = config.proxy_url.clone();
+        let token = CancellationToken::new();
+        state.start(token.clone(), version.clone())?;
+        let (was_running, install_result) =
+            match pause_core_for_install(&app, process_state.inner(), &config) {
+                Ok(was_running) => (
+                    was_running,
+                    tauri::async_runtime::block_on(install_core_version_inner(
+                        &app,
+                        &window,
+                        state.inner(),
+                        gui_config_state.inner(),
+                        token,
+                        version,
+                        &proxy_url,
+                        config.selected_download_candidate(),
+                        config.custom_download_mirrors.clone(),
+                    )),
+                ),
+                Err(error) => (false, Err(error)),
+            };
+        let result = restore_core_after_install(
+            &app,
+            process_state.inner(),
+            &config,
+            was_running,
+            install_result,
+        );
+        if result.is_err() {
+            let _ = cleanup_core_work_dirs();
+        }
+        state.finish(&window, result.clone());
 
-    result
+        result
+    })
+    .await
+    .map_err(|error| format!("内核安装后台任务失败: {error}"))?
 }
 
 fn install_core_with_runtime_restore<F>(
@@ -213,14 +247,8 @@ fn emit_current_core_status(app: &tauri::AppHandle, process_state: &CoreProcessS
 }
 
 #[tauri::command]
-pub(crate) fn start_core_process(
-    app: tauri::AppHandle,
-    process_state: tauri::State<'_, CoreProcessState>,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
-) -> Result<CoreStatus, String> {
-    let status = start_core_process_with_state(process_state.inner(), gui_config_state.inner())?;
-    emit_core_status(&app, &status);
-    Ok(status)
+pub(crate) async fn start_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
+    run_core_command(app, start_core_process_with_state).await
 }
 
 pub(crate) fn start_core_process_with_state(
@@ -237,14 +265,8 @@ pub(crate) fn start_core_process_with_state(
 }
 
 #[tauri::command]
-pub(crate) fn stop_core_process(
-    app: tauri::AppHandle,
-    process_state: tauri::State<'_, CoreProcessState>,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
-) -> Result<CoreStatus, String> {
-    let status = stop_core_process_with_state(process_state.inner(), gui_config_state.inner())?;
-    emit_core_status(&app, &status);
-    Ok(status)
+pub(crate) async fn stop_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
+    run_core_command(app, stop_core_process_with_state).await
 }
 
 pub(crate) fn stop_core_process_with_state(
@@ -257,14 +279,8 @@ pub(crate) fn stop_core_process_with_state(
 }
 
 #[tauri::command]
-pub(crate) fn restart_core_process(
-    app: tauri::AppHandle,
-    process_state: tauri::State<'_, CoreProcessState>,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
-) -> Result<CoreStatus, String> {
-    let status = restart_core_process_with_state(process_state.inner(), gui_config_state.inner())?;
-    emit_core_status(&app, &status);
-    Ok(status)
+pub(crate) async fn restart_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
+    run_core_command(app, restart_core_process_with_state).await
 }
 
 pub(crate) fn restart_core_process_with_state(
@@ -995,6 +1011,7 @@ pub(crate) async fn download_asset_inner(
         File::create(archive_path).map_err(|err| format!("创建内核压缩包失败: {err}"))?;
     let mut downloaded = 0_u64;
     let mut hasher = Sha256::new();
+    let mut progress = crate::progress::ProgressThrottle::default();
 
     while let Some(chunk) = tokio::select! {
         chunk = stream.next() => chunk,
@@ -1007,9 +1024,12 @@ pub(crate) async fn download_asset_inner(
             .map_err(|err| format!("保存下载数据失败: {err}"))?;
         hasher.update(&chunk);
         downloaded += chunk.len() as u64;
-        state.progress(window, "下载中", downloaded, total, true);
+        if progress.ready(Instant::now(), total == Some(downloaded)) {
+            state.progress(window, "下载中", downloaded, total, true);
+        }
     }
 
+    state.progress(window, "下载中", downloaded, total, true);
     file.flush()
         .map_err(|err| format!("刷新内核压缩包失败: {err}"))?;
     ensure_not_cancelled(token, Some(archive_path))?;

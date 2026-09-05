@@ -125,6 +125,7 @@ export function EasyModePage({
     message: string;
   } | null>(null);
   const oauthPollTimer = useRef<number | null>(null);
+  const oauthGeneration = useRef(0);
 
   const [selectedApiSection, setSelectedApiSection] = useState<ApiSection>("openai-compatibility");
   const [apiBaseUrl, setApiBaseUrl] = useState("");
@@ -200,7 +201,8 @@ export function EasyModePage({
   useEffect(() => {
     void refreshSourceStatus();
     return () => {
-      if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
+      ++oauthGeneration.current;
+      if (oauthPollTimer.current !== null) window.clearTimeout(oauthPollTimer.current);
     };
   }, [refreshSourceStatus]);
 
@@ -248,7 +250,9 @@ export function EasyModePage({
       setGuideOAuthProvider(provider);
       setGuideOAuthCompleted(false);
     }
-    if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
+    const generation = ++oauthGeneration.current;
+    if (oauthPollTimer.current !== null) window.clearTimeout(oauthPollTimer.current);
+    oauthPollTimer.current = null;
     setOauthLoggingIn(provider);
     setOauthNotice(null);
 
@@ -263,6 +267,8 @@ export function EasyModePage({
         browser: "default",
       });
 
+      if (generation !== oauthGeneration.current) return;
+
       if (!result.state) {
         setOauthNotice({
           tone: "error",
@@ -273,15 +279,24 @@ export function EasyModePage({
       }
 
       const stateKey = result.state;
-      oauthPollTimer.current = window.setInterval(async () => {
+      const deadline = Date.now() + 10 * 60_000;
+      let failures = 0;
+      const poll = async () => {
+        if (generation !== oauthGeneration.current) return;
+        if (Date.now() >= deadline) {
+          setOauthLoggingIn(null);
+          setOauthNotice({ tone: "error", message: "授权等待超时，请重新发起登录" });
+          return;
+        }
         try {
           const pollRes = await invoke<{ status: string; error?: string }>(
             "get_oauth_status",
             { state: stateKey },
           );
+          if (generation !== oauthGeneration.current) return;
+          failures = 0;
           const status = (pollRes.status || "").toLowerCase();
           if (status === "ok") {
-            if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
             setOauthLoggingIn(null);
             setOauthNotice({
               tone: "success",
@@ -290,16 +305,29 @@ export function EasyModePage({
             setGuideOAuthCompleted(true);
             void refreshSourceStatus();
           } else if (status === "error") {
-            if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
             setOauthLoggingIn(null);
             setOauthNotice({
               tone: "error",
               message: pollRes.error ? `授权失败: ${pollRes.error}` : "授权失败，请重试",
             });
           }
-        } catch {}
-      }, 1500);
+          if (status === "ok" || status === "error") return;
+        } catch (error) {
+          if (generation !== oauthGeneration.current) return;
+          failures += 1;
+          if (failures >= 3) {
+            setOauthLoggingIn(null);
+            setOauthNotice({ tone: "error", message: String(error) });
+            return;
+          }
+        }
+        if (generation === oauthGeneration.current) {
+          oauthPollTimer.current = window.setTimeout(poll, Math.min(1500 * 2 ** failures, 10_000));
+        }
+      };
+      oauthPollTimer.current = window.setTimeout(poll, 1500);
     } catch (err) {
+      if (generation !== oauthGeneration.current) return;
       setOauthLoggingIn(null);
       setOauthNotice({
         tone: "error",
@@ -451,28 +479,41 @@ export function EasyModePage({
     const el = document.getElementById(currentTargetId);
     if (el) {
       const rect = el.getBoundingClientRect();
-      setSpotlightRect({
+      const next = {
         top: Math.max(0, rect.top),
         left: Math.max(0, rect.left),
         width: rect.width,
         height: rect.height,
-      });
-      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      };
+      setSpotlightRect((previous) => previous && previous.top === next.top && previous.left === next.left
+        && previous.width === next.width && previous.height === next.height ? previous : next);
     } else {
       setSpotlightRect(null);
     }
   }, [guideActive, currentTargetId]);
 
   useEffect(() => {
-    const timer = setTimeout(updateSpotlightPosition, 100);
-    window.addEventListener("resize", updateSpotlightPosition);
-    window.addEventListener("scroll", updateSpotlightPosition, true);
+    let frame: number | null = null;
+    const schedulePosition = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        updateSpotlightPosition();
+      });
+    };
+    const timer = setTimeout(() => {
+      if (currentTargetId) document.getElementById(currentTargetId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      schedulePosition();
+    }, 100);
+    window.addEventListener("resize", schedulePosition);
+    window.addEventListener("scroll", schedulePosition, { capture: true, passive: true });
     return () => {
       clearTimeout(timer);
-      window.removeEventListener("resize", updateSpotlightPosition);
-      window.removeEventListener("scroll", updateSpotlightPosition, true);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedulePosition);
+      window.removeEventListener("scroll", schedulePosition, true);
     };
-  }, [updateSpotlightPosition]);
+  }, [currentTargetId, updateSpotlightPosition]);
 
   useEffect(() => {
     setGuideCardPosition(null);

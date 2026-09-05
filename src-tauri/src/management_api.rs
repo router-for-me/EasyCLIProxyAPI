@@ -12,6 +12,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::LazyLock,
     time::Duration,
 };
 
@@ -299,18 +300,21 @@ pub(crate) async fn submit_oauth_callback(
 }
 
 pub(crate) fn management_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        // GUI-to-Core management traffic must always connect directly. Upstream
-        // traffic still uses Core's proxy-url, and other GUI HTTP clients keep
-        // their independently configured proxy behavior.
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
-        // Management requests target the configured local listener. This keeps
-        // self-signed/private-CA certificates usable without weakening upstream clients.
-        .danger_accept_invalid_certs(true)
-        .build()
-        .map_err(|err| format_management_request_error("创建管理 API 客户端失败", &err))
+    static CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            // GUI-to-Core management traffic must always connect directly. Upstream
+            // traffic still uses Core's proxy-url, and other GUI HTTP clients keep
+            // their independently configured proxy behavior.
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            // Management requests target the configured local listener. This keeps
+            // self-signed/private-CA certificates usable without weakening upstream clients.
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|err| format_management_request_error("创建管理 API 客户端失败", &err))
+    });
+    CLIENT.as_ref().cloned().map_err(Clone::clone)
 }
 
 pub(crate) fn format_management_request_error(

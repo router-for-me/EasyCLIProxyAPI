@@ -1138,6 +1138,7 @@ pub(crate) async fn download_portable_update_archive_url(
     let mut file =
         File::create(destination).map_err(|error| format!("创建应用更新临时文件失败: {error}"))?;
     let mut downloaded = 0_u64;
+    let mut progress = crate::progress::ProgressThrottle::default();
     while let Some(chunk) = stream.next().await {
         if token.is_cancelled() {
             return Err("应用更新下载已取消".to_string());
@@ -1149,16 +1150,18 @@ pub(crate) async fn download_portable_update_archive_url(
         if downloaded > pending.asset.size_bytes {
             return Err("应用更新包超过清单声明大小".to_string());
         }
-        update_app_task(app, |task| {
-            task.downloaded_bytes = downloaded;
-            task.total_bytes = Some(pending.asset.size_bytes);
-            task.percent = Some((downloaded as f64 / pending.asset.size_bytes as f64) * 100.0);
-            task.message = Some(format!(
-                "{} / {}",
-                format_byte_count(downloaded),
-                format_byte_count(pending.asset.size_bytes)
-            ));
-        });
+        if progress.ready(Instant::now(), downloaded == pending.asset.size_bytes) {
+            update_app_task(app, |task| {
+                task.downloaded_bytes = downloaded;
+                task.total_bytes = Some(pending.asset.size_bytes);
+                task.percent = Some((downloaded as f64 / pending.asset.size_bytes as f64) * 100.0);
+                task.message = Some(format!(
+                    "{} / {}",
+                    format_byte_count(downloaded),
+                    format_byte_count(pending.asset.size_bytes)
+                ));
+            });
+        }
     }
     file.flush()
         .map_err(|error| format!("保存应用更新临时文件失败: {error}"))?;
