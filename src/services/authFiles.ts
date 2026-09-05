@@ -3,12 +3,24 @@ import { getCurrentLocale, translate } from '../i18n';
 
 export type AuthFileRecord = Record<string, unknown>;
 export type AuthFileSnapshot = Map<string, string>;
+export type AuthFileBatchAction = 'enable' | 'disable' | 'delete';
 
 export const authFileName = (file: AuthFileRecord) =>
   readString(file, 'name') || translate(getCurrentLocale(), 'authFiles.unnamed');
 
 export const isRuntimeOnlyAuthFile = (file: AuthFileRecord) =>
   readBoolean(file, 'runtime_only', 'runtimeOnly');
+
+export const authFilesForBatchAction = (
+  files: AuthFileRecord[],
+  selectedNames: ReadonlySet<string>,
+  action: AuthFileBatchAction,
+) => files.filter((file) => {
+  if (!selectedNames.has(authFileName(file))) return false;
+  if (action === 'delete') return !isRuntimeOnlyAuthFile(file);
+  const disabled = readBoolean(file, 'disabled');
+  return action === 'enable' ? disabled : !disabled;
+});
 
 export const parseAuthFilePriority = (value: unknown): number | undefined => {
   if (typeof value === 'number') {
