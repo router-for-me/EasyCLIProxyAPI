@@ -4,9 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{OnceLock, RwLock};
 
 const MODEL_CATALOG_JSON: &str = include_str!("../resources/codex_models/model-catalog.json");
-const ALL_REASONING_LEVELS: [&str; 8] = [
-    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
-];
+const FALLBACK_MODEL_JSON: &str = include_str!("../resources/codex_models/fallback-model.json");
 
 static CATALOG_STATE: OnceLock<Result<RwLock<CatalogState>, String>> = OnceLock::new();
 
@@ -30,6 +28,7 @@ pub(crate) struct PreparedCodexCatalog {
 
 #[derive(Clone, Debug)]
 struct CatalogSources {
+    revision: u64,
     fallback: Map<String, Value>,
     templates: HashMap<String, Template>,
     max_template_priority: i64,
@@ -39,6 +38,17 @@ struct CatalogSources {
 struct CatalogState {
     sources: CatalogSources,
     json: String,
+}
+
+impl CatalogState {
+    fn activate(&mut self, catalog_json: &str, sources: CatalogSources) -> bool {
+        if sources.revision < self.sources.revision || self.json == catalog_json {
+            return false;
+        }
+        self.sources = sources;
+        self.json = catalog_json.to_string();
+        true
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -62,16 +72,18 @@ pub(crate) fn activate_catalog_json(catalog_json: &str) -> Result<bool, String> 
     let mut state = catalog_state()?
         .write()
         .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
-    if state.json == catalog_json {
-        return Ok(false);
-    }
-    state.sources = parsed;
-    state.json = catalog_json.to_string();
-    Ok(true)
+    Ok(state.activate(catalog_json, parsed))
 }
 
-pub(crate) fn validate_catalog_json(catalog_json: &str) -> Result<(), String> {
-    parse_sources(catalog_json).map(|_| ())
+pub(crate) fn validate_catalog_json(catalog_json: &str) -> Result<u64, String> {
+    parse_sources(catalog_json).map(|sources| sources.revision)
+}
+
+pub(crate) fn current_catalog_revision() -> Result<u64, String> {
+    let state = catalog_state()?
+        .read()
+        .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
+    Ok(state.sources.revision)
 }
 
 pub(crate) fn current_catalog_json() -> Result<String, String> {
@@ -201,18 +213,37 @@ fn catalog_state() -> Result<&'static RwLock<CatalogState>, String> {
 }
 
 fn parse_sources(catalog_json: &str) -> Result<CatalogSources, String> {
+    let fallback = parse_fallback_model(FALLBACK_MODEL_JSON)?;
+    parse_catalog_sources(catalog_json, fallback)
+}
+
+fn parse_fallback_model(fallback_json: &str) -> Result<Map<String, Value>, String> {
+    let fallback: Value = serde_json::from_str(fallback_json)
+        .map_err(|error| format!("解析内置 fallback-model.json 失败: {error}"))?;
+    let fallback = fallback
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "内置 fallback-model.json 根节点必须是对象".to_string())?;
+    validate_model(&fallback, "fallback-model.json", false)?;
+    Ok(fallback)
+}
+
+fn parse_catalog_sources(
+    catalog_json: &str,
+    fallback: Map<String, Value>,
+) -> Result<CatalogSources, String> {
     let root: Value = serde_json::from_str(catalog_json)
         .map_err(|error| format!("解析内置 model-catalog.json 失败: {error}"))?;
     let root = root
         .as_object()
         .ok_or_else(|| "内置 model-catalog.json 根节点必须是对象".to_string())?;
 
-    let fallback = root
-        .get("fallback_model")
-        .and_then(Value::as_object)
-        .cloned()
-        .ok_or_else(|| "内置 model-catalog.json 缺少 fallback_model 对象".to_string())?;
-    validate_model(&fallback, "fallback_model", false)?;
+    let revision = match root.get("catalog_revision") {
+        Some(value) => value
+            .as_u64()
+            .ok_or_else(|| "Codex 模型目录 catalog_revision 必须为非负整数".to_string())?,
+        None => 0,
+    };
 
     let values = root
         .get("models")
@@ -245,10 +276,24 @@ fn parse_sources(catalog_json: &str) -> Result<CatalogSources, String> {
     }
 
     Ok(CatalogSources {
+        revision,
         fallback,
         templates,
         max_template_priority,
     })
+}
+
+#[cfg(test)]
+fn parse_combined_sources_for_test(catalog_json: &str) -> Result<CatalogSources, String> {
+    let mut root: Value = serde_json::from_str(catalog_json)
+        .map_err(|error| format!("解析测试 model-catalog.json 失败: {error}"))?;
+    let fallback = root
+        .as_object_mut()
+        .and_then(|root| root.remove("fallback_model"))
+        .and_then(|fallback| fallback.as_object().cloned())
+        .ok_or_else(|| "测试 model-catalog.json 缺少 fallback_model 对象".to_string())?;
+    validate_model(&fallback, "测试 fallback_model", false)?;
+    parse_catalog_sources(&root.to_string(), fallback)
 }
 
 fn validate_model(
@@ -352,7 +397,6 @@ fn prepare_catalog_with_sources(
                 "display_name".to_string(),
                 Value::String(runtime.slug.clone()),
             );
-            open_all_reasoning_levels(&mut value, runtime);
             enable_fast_mode(&mut value);
             entries.push(CatalogEntry {
                 value,
@@ -547,37 +591,6 @@ fn apply_runtime_metadata(model: &mut Map<String, Value>, runtime: &CodexRuntime
     }
 }
 
-fn open_all_reasoning_levels(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
-    let default = runtime
-        .default_reasoning_level
-        .as_ref()
-        .cloned()
-        .or_else(|| {
-            optional_map_string(model, "default_reasoning_level")
-                .map(|value| value.to_ascii_lowercase())
-                .filter(|value| is_allowed_reasoning_level(value))
-        })
-        .unwrap_or_else(|| "medium".to_string());
-    model.insert(
-        "supported_reasoning_levels".to_string(),
-        Value::Array(
-            ALL_REASONING_LEVELS
-                .iter()
-                .map(|effort| {
-                    serde_json::json!({
-                        "effort": effort,
-                        "description": reasoning_description(effort),
-                    })
-                })
-                .collect(),
-        ),
-    );
-    model.insert(
-        "default_reasoning_level".to_string(),
-        Value::String(default),
-    );
-}
-
 fn disable_fallback_capabilities(model: &mut Map<String, Value>) {
     model.insert("prefer_websockets".to_string(), Value::Bool(false));
     model.insert("supports_search_tool".to_string(), Value::Bool(false));
@@ -681,20 +694,6 @@ fn is_allowed_reasoning_level(level: &str) -> bool {
     )
 }
 
-fn reasoning_description(level: &str) -> &'static str {
-    match level {
-        "none" => "No reasoning",
-        "minimal" => "Minimal reasoning",
-        "low" => "Fast responses with lighter reasoning",
-        "medium" => "Balances speed and reasoning depth for everyday tasks",
-        "high" => "Greater reasoning depth for complex problems",
-        "xhigh" => "Extra high reasoning depth for complex problems",
-        "max" => "Maximum available reasoning depth for complex problems",
-        "ultra" => "Highest available reasoning depth",
-        _ => "Model-supported reasoning level",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -711,7 +710,7 @@ mod tests {
     }
 
     fn test_sources() -> CatalogSources {
-        parse_sources(
+        parse_combined_sources_for_test(
             r#"{
               "fallback_model": {
                 "base_instructions": "You are Codex, a model-neutral coding agent.",
@@ -800,7 +799,17 @@ mod tests {
         validate_embedded_catalog().unwrap();
         let state = catalog_state().unwrap().read().unwrap();
         let sources = &state.sources;
-        assert_eq!(sources.templates.len(), 10);
+        assert_eq!(sources.templates.len(), 11);
+        assert_eq!(sources.revision, 3);
+        let embedded: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
+        assert!(embedded.get("fallback_model").is_none());
+        assert_eq!(
+            embedded["upstream_codex_commit"],
+            "ddf04ad26789d040f9ef6a96736f76602e35a6cc"
+        );
+        let fallback: Value = serde_json::from_str(FALLBACK_MODEL_JSON).unwrap();
+        assert!(fallback.get("fallback_model").is_none());
+        assert_eq!(fallback.as_object(), Some(&sources.fallback));
         let fallback_prompt = string_value(&sources.fallback, "base_instructions");
         assert!(fallback_prompt.starts_with(
             "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."
@@ -820,46 +829,47 @@ mod tests {
         assert_eq!(sources.fallback["supports_parallel_tool_calls"], false);
         assert_eq!(sources.fallback["truncation_policy"]["mode"], "bytes");
 
-        let gpt = &sources.templates["gpt-5.6-sol"].value;
-        let gpt_prompt = string_value(gpt, "base_instructions");
-        let gpt_prompt_body = gpt_prompt.split_once("\n\n").unwrap().1;
-        let gpt_messages = gpt["model_messages"].as_object().unwrap();
-        let gpt_message_prompt = gpt_messages["instructions_template"].as_str().unwrap();
-        let gpt_message_prompt_body = gpt_message_prompt.split_once("\n\n").unwrap().1;
-
-        for slug in ["deepseek-v4-flash", "deepseek-v4-pro"] {
-            let model = &sources.templates[slug].value;
-            assert_eq!(model["context_window"], 1_000_000);
-            assert_eq!(model["max_context_window"], 1_000_000);
-            assert_eq!(model["default_reasoning_level"], "high");
-            assert_eq!(reasoning_efforts(model), ["low", "high", "max"]);
-            assert_eq!(model["input_modalities"], serde_json::json!(["text"]));
-            assert_eq!(model["supports_parallel_tool_calls"], false);
-            assert_eq!(model["supports_search_tool"], false);
-            assert_eq!(model["service_tiers"], serde_json::json!([]));
-            assert_eq!(model["additional_speed_tiers"], serde_json::json!([]));
-
-            let prompt = string_value(model, "base_instructions");
-            assert!(
-                prompt.starts_with("You are Codex, a coding agent powered by a DeepSeek model.")
-            );
-            assert_eq!(prompt.split_once("\n\n").unwrap().1, gpt_prompt_body);
-
-            let mut normalized_messages = model["model_messages"].as_object().unwrap().clone();
-            let message_prompt = normalized_messages["instructions_template"]
+        let official_slugs = [
+            "gpt-6-astra",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-daybreak-blue-latest",
+            "gpt-daybreak-red-latest",
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.2",
+            "codex-auto-review",
+        ];
+        assert!(official_slugs
+            .iter()
+            .all(|slug| sources.templates.contains_key(*slug)));
+        let astra = &sources.templates["gpt-6-astra"].value;
+        assert_eq!(astra["context_window"], 272_000);
+        assert_eq!(astra["max_context_window"], 872_000);
+        assert_eq!(astra["default_reasoning_level"], "low");
+        assert_eq!(
+            reasoning_efforts(astra),
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert!(astra["model_messages"]["instructions_template"]
+            .as_str()
+            .is_some_and(|prompt| prompt.starts_with("You are Codex, an agent based on GPT-6.")));
+        assert_eq!(
+            astra["base_instructions"],
+            astra["model_messages"]["instructions_template"]
                 .as_str()
-                .unwrap();
-            assert!(message_prompt
-                .starts_with("You are Codex, a coding agent powered by a DeepSeek model."));
-            assert_eq!(
-                message_prompt.split_once("\n\n").unwrap().1,
-                gpt_message_prompt_body
-            );
-            normalized_messages.insert(
-                "instructions_template".to_string(),
-                Value::String(gpt_message_prompt.to_string()),
-            );
-            assert_eq!(&normalized_messages, gpt_messages);
+                .unwrap()
+                .replace("{{ personality }}", "")
+        );
+
+        for slug in [
+            "gpt-5.3-codex-spark",
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+        ] {
+            assert!(!sources.templates.contains_key(slug));
         }
     }
 
@@ -878,6 +888,61 @@ mod tests {
         assert_eq!(models[0].slug, "Model-A");
         assert_eq!(models[0].context_window, Some(200_000));
         assert_eq!(models[1].slug, "Model-B");
+    }
+
+    #[test]
+    fn catalog_state_rejects_older_revisions_but_accepts_same_revision_updates() {
+        let mut current = test_sources();
+        current.revision = 2;
+        let mut state = CatalogState {
+            sources: current,
+            json: "revision-two".to_string(),
+        };
+
+        let mut older = test_sources();
+        older.revision = 1;
+        assert!(!state.activate("older", older));
+        assert_eq!(state.json, "revision-two");
+        assert_eq!(state.sources.revision, 2);
+
+        let mut replacement = test_sources();
+        replacement.revision = 2;
+        assert!(state.activate("replacement", replacement));
+        assert_eq!(state.json, "replacement");
+        assert_eq!(state.sources.revision, 2);
+        assert!(!state.activate("replacement", test_sources()));
+    }
+
+    #[test]
+    fn catalog_revision_must_be_a_non_negative_integer() {
+        assert_eq!(test_sources().revision, 0);
+        for revision in [
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!("1"),
+        ] {
+            let mut value: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
+            value["catalog_revision"] = revision;
+            assert!(parse_sources(&value.to_string()).is_err());
+        }
+    }
+
+    #[test]
+    fn catalog_payload_cannot_override_the_managed_fallback_model() {
+        let mut catalog: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
+        catalog["fallback_model"] = serde_json::json!({
+            "base_instructions": "Untrusted remote fallback",
+            "context_window": 1,
+            "max_context_window": 1
+        });
+
+        let sources = parse_sources(&catalog.to_string()).unwrap();
+        assert_ne!(
+            sources.fallback["base_instructions"],
+            "Untrusted remote fallback"
+        );
+        assert_eq!(sources.fallback["context_window"], 272_000);
+        assert_eq!(sources.fallback["max_context_window"], 272_000);
     }
 
     #[test]
@@ -1031,12 +1096,7 @@ mod tests {
         for (key, expected) in template {
             if !matches!(
                 key.as_str(),
-                "slug"
-                    | "display_name"
-                    | "default_reasoning_level"
-                    | "supported_reasoning_levels"
-                    | "service_tiers"
-                    | "additional_speed_tiers"
+                "slug" | "display_name" | "service_tiers" | "additional_speed_tiers"
             ) {
                 assert_eq!(model.get(key), Some(expected), "changed field {key}");
             }
@@ -1069,7 +1129,7 @@ mod tests {
     }
 
     #[test]
-    fn known_template_opens_all_reasoning_levels() {
+    fn known_template_preserves_its_reasoning_levels_and_default() {
         let mut sources = test_sources();
         let template = &mut sources.templates.get_mut("a").unwrap().value;
         template.insert(
@@ -1092,8 +1152,39 @@ mod tests {
         let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
         let model = &output_models(&catalog)[0];
 
-        assert_eq!(model["default_reasoning_level"], "high");
-        assert_eq!(reasoning_efforts(model), ALL_REASONING_LEVELS);
+        assert_eq!(model["default_reasoning_level"], "medium");
+        assert_eq!(reasoning_efforts(model), ["low", "medium", "max"]);
+    }
+
+    #[test]
+    fn gpt_6_astra_generation_uses_official_template_and_optional_fast_mode() {
+        let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
+        let runtime = runtime(serde_json::json!({"models":[{
+            "id":"gpt-6-astra",
+            "context_window":1048576,
+            "max_context_window":1048576,
+            "default_reasoning_level":"high"
+        }]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let model = &output_models(&catalog)[0];
+
+        assert_eq!(model["context_window"], 272_000);
+        assert_eq!(model["max_context_window"], 872_000);
+        assert_eq!(model["default_reasoning_level"], "low");
+        assert_eq!(
+            reasoning_efforts(model),
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(model["default_service_tier"], Value::Null);
+        assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
+        assert_eq!(
+            model["service_tiers"],
+            serde_json::json!([{
+                "id": "priority",
+                "name": "Fast",
+                "description": "1.5x speed, increased usage"
+            }])
+        );
     }
 
     #[test]

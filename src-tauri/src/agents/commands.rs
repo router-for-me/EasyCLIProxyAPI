@@ -2,6 +2,7 @@ use super::*;
 
 const AGENT_STATUS_DETECTION_CONCURRENCY: usize = 4;
 static CODEX_CATALOG_SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static CODEX_CATALOG_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Clone, Copy)]
 enum AgentStatusDetectionTarget {
@@ -308,6 +309,7 @@ pub(crate) async fn update_codex_model_catalog(
 pub(crate) async fn update_codex_model_catalog_inner(
     app: &tauri::AppHandle,
 ) -> Result<CodexModelCatalogUpdateResult, String> {
+    let _update_guard = CODEX_CATALOG_UPDATE_LOCK.lock().await;
     let proxy_url = app.state::<GuiConfigState>().snapshot()?.proxy_url;
     let client = build_http_client_with_proxy(
         reqwest::Client::builder()
@@ -356,10 +358,12 @@ pub(crate) async fn update_codex_model_catalog_inner(
     }
     let catalog_json = String::from_utf8(bytes)
         .map_err(|_| "GitHub Codex 模型目录不是有效的 UTF-8 文件".to_string())?;
-    codex_catalog::validate_catalog_json(&catalog_json)
+    let revision = codex_catalog::validate_catalog_json(&catalog_json)
         .map_err(|error| format!("GitHub Codex 模型目录校验失败: {error}"))?;
 
-    if codex_catalog::current_catalog_json()? == catalog_json {
+    if revision < codex_catalog::current_catalog_revision()?
+        || codex_catalog::current_catalog_json()? == catalog_json
+    {
         return Ok(CodexModelCatalogUpdateResult {
             outcome: "unchanged".to_string(),
         });
