@@ -10,6 +10,7 @@ mod configuration_watcher;
 mod core_config;
 mod core_runtime;
 mod instance_lock;
+mod launch_navigation;
 mod management_api;
 mod oauth_browser;
 mod provider_health;
@@ -2246,9 +2247,16 @@ fn main() {
         }
     }
 
+    let launch_page = launch_navigation::launch_page_argument();
     let _instance_guard = match acquire_app_instance_guard() {
         Ok(guard) => guard,
         Err(error) => {
+            if let (Some(page), Ok(dir)) = (launch_page.as_deref(), executable_dir()) {
+                match launch_navigation::forward_to_running_instance(&dir, page) {
+                    Ok(()) => return,
+                    Err(forward_error) => eprintln!("{forward_error}"),
+                }
+            }
             eprintln!("{error}");
             return;
         }
@@ -2346,7 +2354,9 @@ fn main() {
     });
 
     let app = app
+        .manage(launch_navigation::LaunchPageState::new(launch_page))
         .setup(move |app| {
+            launch_navigation::start_navigation_request_watcher(app.handle().clone());
             if let Err(error) = codex_catalog::validate_embedded_catalog() {
                 eprintln!("Codex 内置模型目录无效: {error}");
             }
@@ -2467,6 +2477,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            launch_navigation::take_launch_page,
             health_check,
             detect_core_platform,
             get_core_status,

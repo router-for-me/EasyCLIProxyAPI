@@ -25,7 +25,8 @@ import { ConfigPanelPage } from './pages/ConfigPanel';
 import { ApiAccessPage } from './pages/ApiAccessPage';
 import { KernelPage } from './pages/Kernel';
 import { VersionManagementPage } from './pages/VersionManagementPage';
-import { OAuthManagementPage } from './pages/ManagementPages';
+import { OAuthManagementPage, type OAuthSubpageRequest } from './pages/ManagementPages';
+import { LAUNCH_PAGE_EVENT, parseLaunchTarget, type LaunchTarget } from './launchNavigation';
 import { AgentsPage } from './pages/AgentsPage';
 import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
@@ -89,6 +90,7 @@ const pages = [
 ] as const;
 
 type PageId = (typeof pages)[number]['id'];
+const pageIds = pages.map((page) => page.id);
 type WindowsCloseAction = 'exit' | 'minimize-to-tray';
 type WindowsCloseBehavior = 'ask' | WindowsCloseAction;
 
@@ -127,6 +129,7 @@ function AppContent() {
   const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<PageId>('home');
+  const [requestedOAuthSubpage, setRequestedOAuthSubpage] = useState<OAuthSubpageRequest | null>(null);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [theme, setTheme] = useState<AppTheme>(detectInitialTheme);
   const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
@@ -231,6 +234,50 @@ function AppContent() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [windowsClosePrompt]);
+
+  // A launch target (from `--page`) waits until its page is allowed, since pages other than
+  // Home unlock only once the core is running; otherwise the reset-to-home effect would win.
+  const [pendingLaunchTarget, setPendingLaunchTarget] = useState<LaunchTarget<PageId> | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let stopListening: (() => void) | null = null;
+    const requestLaunchTarget = (value: unknown) => {
+      const target = parseLaunchTarget(typeof value === 'string' ? value : null, pageIds);
+      if (target) setPendingLaunchTarget(target);
+    };
+    void invoke<string | null>('take_launch_page')
+      .then((value) => {
+        if (!disposed) requestLaunchTarget(value);
+      })
+      .catch((error) => {
+        console.error('读取启动页面参数失败', error);
+      });
+    void listen<string>(LAUNCH_PAGE_EVENT, (event) => requestLaunchTarget(event.payload))
+      .then((stop) => {
+        if (disposed) {
+          stop();
+        } else {
+          stopListening = stop;
+        }
+      })
+      .catch((error) => {
+        console.error('监听页面导航事件失败', error);
+      });
+    return () => {
+      disposed = true;
+      stopListening?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingLaunchTarget || !canOpenAppPage(pendingLaunchTarget.page, coreRunning)) return;
+    setActive(pendingLaunchTarget.page);
+    if (pendingLaunchTarget.oauthSubpage) {
+      setRequestedOAuthSubpage({ subpage: pendingLaunchTarget.oauthSubpage, nonce: Date.now() });
+    }
+    setPendingLaunchTarget(null);
+  }, [pendingLaunchTarget, coreRunning]);
 
   const select = (pageId: PageId) => {
     if (!canOpenAppPage(pageId, coreRunning)) {
@@ -438,6 +485,8 @@ function AppContent() {
                   locale={locale}
                   setLocale={setLocale}
                 />
+              ) : activePage.id === 'oauth' ? (
+                <OAuthManagementPage requestedSubpage={requestedOAuthSubpage} />
               ) : (
                 <ActivePage />
               )
