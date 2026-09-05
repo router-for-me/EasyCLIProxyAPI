@@ -1311,6 +1311,315 @@ fn codex_applied_configuration_remains_detectable_after_process_restart() {
 }
 
 #[test]
+fn codex_catalog_sync_removes_models_missing_from_runtime() {
+    let home = agent_test_home("codex-runtime-catalog-sync");
+    let original_models = test_agent_models(&["gpt-active", "gpt-stale"]);
+    let original_catalog = test_codex_models(&["gpt-active", "gpt-stale"]);
+    apply_agent_configuration(
+        AgentClient::Codex,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-active",
+        &original_models,
+        Some(&original_catalog),
+    )
+    .unwrap();
+
+    let current_models = test_agent_models(&["gpt-active"]);
+    let current_catalog = test_codex_models(&["gpt-active"]);
+    assert!(sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &current_models,
+        &current_catalog,
+    )
+    .unwrap());
+
+    let catalog_path = codex_model_catalog_path(&home);
+    let written = fs::read_to_string(&catalog_path).unwrap();
+    assert!(written.contains("gpt-active"));
+    assert!(!written.contains("gpt-stale"));
+    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    assert!(!catalog_path.exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn codex_catalog_sync_replaces_missing_default_and_preserves_user_configuration() {
+    let home = agent_test_home("codex-runtime-catalog-default-missing");
+    let config_path = home.join(".codex/config.toml");
+    let original_config =
+        "# Keep my settings\nmodel = \"personal-model\"\napproval_policy = \"on-request\"\n";
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, original_config).unwrap();
+    let original_models = test_agent_models(&["gpt-stale"]);
+    let original_catalog = test_codex_models(&["gpt-stale"]);
+    apply_agent_configuration(
+        AgentClient::Codex,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-stale",
+        &original_models,
+        Some(&original_catalog),
+    )
+    .unwrap();
+
+    let current_models = test_agent_models(&["gpt-active"]);
+    let current_catalog = test_codex_models(&["gpt-active"]);
+    assert!(sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &current_models,
+        &current_catalog,
+    )
+    .unwrap());
+
+    assert_eq!(
+        fs::read_to_string(codex_model_catalog_path(&home)).unwrap(),
+        current_catalog
+    );
+    let updated = fs::read_to_string(&config_path).unwrap();
+    let document: toml::Value = toml::from_str(&updated).unwrap();
+    assert_eq!(document["model"].as_str(), Some("gpt-active"));
+    assert_eq!(document["approval_policy"].as_str(), Some("on-request"));
+    assert!(updated.contains("# Keep my settings"));
+    assert_eq!(
+        load_agent_applied_state(AgentClient::Codex, &home)
+            .unwrap()
+            .unwrap()
+            .model,
+        "gpt-active"
+    );
+    assert!(!sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &current_models,
+        &current_catalog,
+    )
+    .unwrap());
+    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    assert_eq!(fs::read_to_string(&config_path).unwrap(), original_config);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn codex_catalog_sync_clears_empty_list_and_recovers_when_models_return() {
+    let home = agent_test_home("codex-runtime-catalog-empty-and-recovery");
+    let config_path = home.join(".codex/config.toml");
+    let catalog_path = codex_model_catalog_path(&home);
+    apply_agent_configuration(
+        AgentClient::Codex,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-stale",
+        &test_agent_models(&["gpt-stale"]),
+        Some(&test_codex_models(&["gpt-stale"])),
+    )
+    .unwrap();
+    let auth_path = home.join(".codex/auth.json");
+    let original_auth = fs::read(&auth_path).unwrap();
+    let empty = prepare_codex_agent_models(&[]).unwrap();
+    let empty_catalog = empty.codex_catalog.as_deref().unwrap();
+
+    assert!(sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &empty.models,
+        empty_catalog,
+    )
+    .unwrap());
+    let document: toml::Value = toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert!(document.get("model").is_none());
+    assert_eq!(
+        document["model_provider"].as_str(),
+        Some(MANAGED_AGENT_PROVIDER_ID)
+    );
+    assert_eq!(fs::read_to_string(&catalog_path).unwrap(), empty_catalog);
+    assert_eq!(fs::read(&auth_path).unwrap(), original_auth);
+    assert!(!sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &empty.models,
+        empty_catalog,
+    )
+    .unwrap());
+
+    let returned_models = test_agent_models(&["gpt-returned", "gpt-second"]);
+    let returned_catalog = test_codex_models(&["gpt-returned", "gpt-second"]);
+    assert!(sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &returned_models,
+        &returned_catalog,
+    )
+    .unwrap());
+    let document: toml::Value = toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(document["model"].as_str(), Some("gpt-returned"));
+    assert_eq!(fs::read_to_string(&catalog_path).unwrap(), returned_catalog);
+    assert_eq!(fs::read(&auth_path).unwrap(), original_auth);
+    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    assert!(!config_path.exists());
+    assert!(!catalog_path.exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn codex_catalog_sync_after_restart_backs_up_managed_files_without_memory_state() {
+    let home = agent_test_home("codex-runtime-catalog-after-restart");
+    let config_path = home.join(".codex/config.toml");
+    let catalog_path = codex_model_catalog_path(&home);
+    let original_catalog = test_codex_models(&["gpt-stale"]);
+    apply_agent_configuration(
+        AgentClient::Codex,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-stale",
+        &test_agent_models(&["gpt-stale"]),
+        Some(&original_catalog),
+    )
+    .unwrap();
+    let state_path = agent_state_path(std::slice::from_ref(&config_path)).unwrap();
+    clear_codex_applied_state(&state_path).unwrap();
+    assert!(load_agent_applied_state(AgentClient::Codex, &home)
+        .unwrap()
+        .is_none());
+    let current_catalog = test_codex_models(&["gpt-active"]);
+    assert!(sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &test_agent_models(&["gpt-active"]),
+        &current_catalog,
+    )
+    .unwrap());
+    assert_eq!(fs::read_to_string(&catalog_path).unwrap(), current_catalog);
+    assert_eq!(
+        fs::read_to_string(dated_agent_backup_path(&catalog_path).unwrap()).unwrap(),
+        original_catalog
+    );
+    assert!(load_agent_applied_state(AgentClient::Codex, &home)
+        .unwrap()
+        .is_some());
+    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn codex_catalog_only_sync_after_restart_preserves_complete_backups() {
+    let home = agent_test_home("codex-runtime-catalog-only-after-restart");
+    let config_path = home.join(".codex/config.toml");
+    let catalog_path = codex_model_catalog_path(&home);
+    let original_catalog = test_codex_models(&["gpt-active", "gpt-stale"]);
+    apply_agent_configuration(
+        AgentClient::Codex,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-active",
+        &test_agent_models(&["gpt-active", "gpt-stale"]),
+        Some(&original_catalog),
+    )
+    .unwrap();
+    let original_config = fs::read(&config_path).unwrap();
+    let state_path = agent_state_path(std::slice::from_ref(&config_path)).unwrap();
+    clear_codex_applied_state(&state_path).unwrap();
+    assert!(sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &test_agent_models(&["gpt-active"]),
+        &test_codex_models(&["gpt-active"]),
+    )
+    .unwrap());
+    assert_eq!(fs::read(&config_path).unwrap(), original_config);
+    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    assert_eq!(fs::read(&config_path).unwrap(), original_config);
+    assert_eq!(fs::read_to_string(&catalog_path).unwrap(), original_catalog);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn codex_catalog_sync_leaves_unmanaged_configuration_untouched() {
+    let home = agent_test_home("codex-runtime-catalog-unmanaged");
+    let config_path = home.join(".codex/config.toml");
+    let catalog_path = codex_model_catalog_path(&home);
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    let original_config = "model_provider = \"personal\"\nmodel = \"personal-model\"\n";
+    let original_catalog = test_codex_models(&["personal-model"]);
+    fs::write(&config_path, original_config).unwrap();
+    fs::write(&catalog_path, &original_catalog).unwrap();
+    assert!(!sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &[],
+        "{\"models\":[]}",
+    )
+    .unwrap());
+    assert_eq!(fs::read_to_string(&config_path).unwrap(), original_config);
+    assert_eq!(fs::read_to_string(&catalog_path).unwrap(), original_catalog);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn codex_catalog_sync_rejects_invalid_snapshots_without_changing_files() {
+    let home = agent_test_home("codex-runtime-catalog-invalid-snapshot");
+    let config_path = home.join(".codex/config.toml");
+    let catalog_path = codex_model_catalog_path(&home);
+    apply_agent_configuration(
+        AgentClient::Codex,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-stale",
+        &test_agent_models(&["gpt-stale"]),
+        Some(&test_codex_models(&["gpt-stale"])),
+    )
+    .unwrap();
+    let config_before = fs::read(&config_path).unwrap();
+    let catalog_before = fs::read(&catalog_path).unwrap();
+    let state_before =
+        serde_json::to_value(load_agent_applied_state(AgentClient::Codex, &home).unwrap()).unwrap();
+    for invalid in [
+        "not json",
+        "{}",
+        "{\"models\":null}",
+        "{\"models\":[{\"slug\":\"gpt-stale\"}]}",
+    ] {
+        assert!(
+            sync_codex_model_catalog_if_configured(&home, 8317, DEFAULT_API_KEY, &[], invalid,)
+                .is_err()
+        );
+    }
+    assert!(sync_codex_model_catalog_if_configured(
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        &test_agent_models(&["gpt-active"]),
+        "{\"models\":[]}",
+    )
+    .is_err());
+    assert_eq!(fs::read(&config_path).unwrap(), config_before);
+    assert_eq!(fs::read(&catalog_path).unwrap(), catalog_before);
+    assert_eq!(
+        serde_json::to_value(load_agent_applied_state(AgentClient::Codex, &home).unwrap()).unwrap(),
+        state_before
+    );
+    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn codex_session_restore_recovers_from_a_dated_backup_without_state_json() {
     let home = agent_test_home("codex-session-backup-recovery");
     let config_path = home.join(".codex/config.toml");

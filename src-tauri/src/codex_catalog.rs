@@ -151,6 +151,9 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
             models.push(make_runtime_model(slug, display_name));
         }
     }
+    if !values.is_empty() && models.is_empty() {
+        return Err("Codex 模型列表响应未包含有效的模型 ID".to_string());
+    }
     Ok(models)
 }
 
@@ -357,6 +360,7 @@ fn prepare_catalog_with_sources(
             });
         } else {
             let mut value = sources.fallback.clone();
+            normalize_fallback_model(&mut value);
             apply_runtime_metadata(&mut value, runtime);
             disable_fallback_capabilities(&mut value);
             enable_fast_mode(&mut value);
@@ -427,6 +431,75 @@ fn prepare_catalog_with_sources(
     Ok(PreparedCodexCatalog { models, json })
 }
 
+fn normalize_fallback_model(model: &mut Map<String, Value>) {
+    if matches!(
+        string_value(model, "shell_type").as_str(),
+        "default" | "local" | "shell_command"
+    ) {
+        model.insert(
+            "shell_type".to_string(),
+            Value::String("unified_exec".to_string()),
+        );
+    }
+    for field in [
+        "include_skills_usage_instructions",
+        "include_plugin_usage_instructions",
+        "include_apps_usage_instructions",
+        "node_repl_auto_review_required",
+        "node_repl_disabled",
+        "supports_image_detail_original",
+    ] {
+        model.entry(field.to_string()).or_insert(Value::Bool(false));
+    }
+    for field in [
+        "guardian",
+        "auto_review_model_override",
+        "model_specialty",
+        "tool_mode",
+        "multi_agent_version",
+        "multi_agent_reasoning_effort",
+    ] {
+        model.entry(field.to_string()).or_insert(Value::Null);
+    }
+    let base_instructions = model
+        .get("base_instructions")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let messages = model
+        .entry("model_messages".to_string())
+        .or_insert(Value::Null);
+    if !messages.is_object() {
+        *messages = Value::Object(Map::new());
+    }
+    if let Some(messages) = messages.as_object_mut() {
+        if !messages
+            .get("instructions_template")
+            .is_some_and(Value::is_string)
+        {
+            messages.insert(
+                "instructions_template".to_string(),
+                Value::String(base_instructions),
+            );
+        }
+        for field in [
+            "persistent_instructions",
+            "tools",
+            "instructions_variables",
+            "approvals",
+            "collaboration_modes",
+            "auto_review",
+            "permissions",
+            "multi_agent",
+            "token_budget",
+            "confirmation_policies",
+            "guardian_v2",
+        ] {
+            messages.entry(field.to_string()).or_insert(Value::Null);
+        }
+    }
+}
+
 fn apply_runtime_metadata(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
     model.insert("slug".to_string(), Value::String(runtime.slug.clone()));
     model.insert(
@@ -467,13 +540,8 @@ fn apply_runtime_metadata(model: &mut Map<String, Value>, runtime: &CodexRuntime
             "input_modalities".to_string(),
             Value::Array(modalities.iter().cloned().map(Value::String).collect()),
         );
-        model.insert(
-            "supports_image_detail_original".to_string(),
-            Value::Bool(modalities.iter().any(|value| value == "image")),
-        );
     }
 
-    open_all_reasoning_levels(model, runtime);
     if runtime.hidden {
         model.insert("visibility".to_string(), Value::String("hide".to_string()));
     }
@@ -652,12 +720,8 @@ mod tests {
                 "context_window": 128000,
                 "max_context_window": 128000,
                 "input_modalities": ["text"],
-                "default_reasoning_level": "medium",
-                "supported_reasoning_levels": [
-                  {"effort":"low","description":"Low"},
-                  {"effort":"medium","description":"Medium"},
-                  {"effort":"high","description":"High"}
-                ],
+                "default_reasoning_level": null,
+                "supported_reasoning_levels": [],
                 "shell_type": "shell_command",
                 "supported_in_api": true,
                 "default_reasoning_summary": "none",
@@ -750,7 +814,7 @@ mod tests {
         );
         assert_eq!(sources.fallback["default_reasoning_level"], Value::Null);
         assert!(reasoning_efforts(&sources.fallback).is_empty());
-        assert_eq!(sources.fallback["shell_type"], "default");
+        assert_eq!(sources.fallback["shell_type"], "unified_exec");
         assert_eq!(sources.fallback["visibility"], "none");
         assert_eq!(sources.fallback["default_reasoning_summary"], "auto");
         assert_eq!(sources.fallback["supports_parallel_tool_calls"], false);
@@ -814,6 +878,24 @@ mod tests {
         assert_eq!(models[0].slug, "Model-A");
         assert_eq!(models[0].context_window, Some(200_000));
         assert_eq!(models[1].slug, "Model-B");
+    }
+
+    #[test]
+    fn runtime_parser_distinguishes_empty_lists_from_invalid_model_entries() {
+        for payload in [
+            serde_json::json!({"models": []}),
+            serde_json::json!({"data": []}),
+            serde_json::json!([]),
+        ] {
+            assert!(parse_runtime_models(&payload).unwrap().is_empty());
+        }
+        for payload in [
+            serde_json::json!({"error": "unavailable"}),
+            serde_json::json!({"models": null}),
+            serde_json::json!({"models": [null, {}, {"id": " "}]}),
+        ] {
+            assert!(parse_runtime_models(&payload).is_err());
+        }
     }
 
     #[test]
@@ -1033,11 +1115,12 @@ mod tests {
         let catalog = prepare_catalog_with_sources(&runtime, &test_sources()).unwrap();
         let model = &output_models(&catalog)[0];
         assert_eq!(model["display_name"], "C");
-        assert_eq!(reasoning_efforts(model), ALL_REASONING_LEVELS);
+        assert!(reasoning_efforts(model).is_empty());
         assert_eq!(model["context_window"], 200_000);
         assert_eq!(model["max_context_window"], 200_000);
         assert_eq!(model["input_modalities"], serde_json::json!(["image"]));
-        assert_eq!(model["default_reasoning_level"], "high");
+        assert_eq!(model["supports_image_detail_original"], false);
+        assert_eq!(model["default_reasoning_level"], Value::Null);
         assert_eq!(model["visibility"], "hide");
         assert_eq!(
             model["base_instructions"],
@@ -1056,6 +1139,139 @@ mod tests {
     }
 
     #[test]
+    fn generated_fallback_uses_official_defaults_with_fast_available() {
+        let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
+        let runtime = runtime(serde_json::json!({"models":[{"id":"unknown-model"}]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let model = &output_models(&catalog)[0];
+        let expected: Value = serde_json::from_str(
+            r#"{
+            "slug": "unknown-model",
+            "display_name": "unknown-model",
+            "description": null,
+            "context_window": 272000,
+            "max_context_window": 272000,
+            "auto_compact_token_limit": null,
+            "comp_hash": null,
+            "effective_context_window_percent": 95,
+            "default_reasoning_level": null,
+            "supported_reasoning_levels": [],
+            "shell_type": "unified_exec",
+            "input_modalities": ["text", "image"],
+            "supports_image_detail_original": false,
+            "supports_reasoning_summary_parameter": true,
+            "default_reasoning_summary": "auto",
+            "support_verbosity": false,
+            "default_verbosity": null,
+            "apply_patch_tool_type": null,
+            "web_search_tool_type": "text",
+            "truncation_policy": {"mode": "bytes", "limit": 10000},
+            "experimental_supported_tools": [],
+            "supported_in_api": true,
+            "include_skills_usage_instructions": false,
+            "include_plugin_usage_instructions": false,
+            "include_apps_usage_instructions": false,
+            "supports_search_tool": false,
+            "use_responses_lite": false,
+            "guardian": null,
+            "node_repl_auto_review_required": false,
+            "node_repl_disabled": false,
+            "auto_review_model_override": null,
+            "model_specialty": null,
+            "tool_mode": null,
+            "multi_agent_version": null,
+            "multi_agent_reasoning_effort": null,
+            "availability_nux": null,
+            "upgrade": null,
+            "default_service_tier": null,
+            "visibility": "list",
+            "additional_speed_tiers": ["fast"],
+            "service_tiers": [{
+                "id": "priority",
+                "name": "Fast",
+                "description": "1.5x speed, increased usage"
+            }]
+        }"#,
+        )
+        .unwrap();
+        for (field, value) in expected.as_object().unwrap() {
+            assert_eq!(model.get(field), Some(value), "field: {field}");
+        }
+        assert_eq!(
+            model["model_messages"]["instructions_template"],
+            sources.fallback["base_instructions"]
+        );
+        let messages = model["model_messages"].as_object().unwrap();
+        assert_eq!(messages.len(), 12);
+        assert!(messages
+            .iter()
+            .all(|(field, value)| field == "instructions_template" || value.is_null()));
+    }
+
+    #[test]
+    fn legacy_fallback_templates_receive_official_message_and_capability_defaults() {
+        let sources = test_sources();
+        let runtime = runtime(serde_json::json!({"models":[{"id":"C"}]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let model = &output_models(&catalog)[0];
+
+        assert_eq!(model["shell_type"], "unified_exec");
+        assert_eq!(model["include_apps_usage_instructions"], false);
+        assert_eq!(model["include_plugin_usage_instructions"], false);
+        assert_eq!(model["node_repl_disabled"], false);
+        assert_eq!(model["default_reasoning_level"], Value::Null);
+        assert!(reasoning_efforts(model).is_empty());
+        assert_eq!(
+            model["model_messages"]["instructions_template"],
+            sources.fallback["base_instructions"]
+        );
+        assert_eq!(model["default_service_tier"], Value::Null);
+        assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
+    }
+
+    #[test]
+    fn fallback_preserves_explicit_template_reasoning_and_structured_instructions() {
+        let mut sources = test_sources();
+        sources.fallback.insert(
+            "model_messages".to_string(),
+            serde_json::json!({
+                "instructions_template": "Custom {{ personality }} instructions",
+                "instructions_variables": {"personality_default": "pragmatic"},
+                "tools": {"custom": "Keep this"}
+            }),
+        );
+        sources.fallback.insert(
+            "default_reasoning_level".to_string(),
+            serde_json::json!("low"),
+        );
+        sources.fallback.insert(
+            "supported_reasoning_levels".to_string(),
+            serde_json::json!([{"effort": "low", "description": "Low"}]),
+        );
+        sources.fallback.insert(
+            "supports_image_detail_original".to_string(),
+            Value::Bool(true),
+        );
+        let runtime = runtime(serde_json::json!({"models":[{
+            "id":"C",
+            "default_reasoning_level":"high",
+            "model_messages":{"instructions_template":"Untrusted instructions"}
+        }]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let model = &output_models(&catalog)[0];
+
+        assert_eq!(model["default_reasoning_level"], "low");
+        assert_eq!(reasoning_efforts(model), ["low"]);
+        assert_eq!(model["supports_image_detail_original"], true);
+        for field in ["instructions_template", "instructions_variables", "tools"] {
+            assert_eq!(
+                model["model_messages"][field],
+                sources.fallback["model_messages"][field]
+            );
+        }
+    }
+
+    #[test]
     fn fallback_display_name_matches_requested_model_slug() {
         let runtime = runtime(serde_json::json!({"models":[{
             "id":"gpt-5.6-sol-fast",
@@ -1071,7 +1287,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_runtime_reasoning_does_not_reduce_open_levels() {
+    fn fallback_does_not_invent_reasoning_capabilities_from_runtime_metadata() {
         let runtime = runtime(serde_json::json!({"models":[{
             "id":"C",
             "supported_reasoning_levels":["xhigh"],
@@ -1086,8 +1302,8 @@ mod tests {
         assert_eq!(model["web_search_tool_type"], "text");
         assert_eq!(model["availability_nux"], Value::Null);
         assert_eq!(model["upgrade"], Value::Null);
-        assert_eq!(model["default_reasoning_level"], "medium");
-        assert_eq!(reasoning_efforts(model), ALL_REASONING_LEVELS);
+        assert_eq!(model["default_reasoning_level"], Value::Null);
+        assert!(reasoning_efforts(model).is_empty());
     }
 
     #[test]

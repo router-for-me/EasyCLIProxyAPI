@@ -1517,6 +1517,96 @@ pub(crate) fn commit_agent_configuration(
     }
 }
 
+pub(crate) fn sync_codex_model_catalog_if_configured(
+    home: &Path,
+    port: u16,
+    api_key: &str,
+    models: &[AgentModelOption],
+    catalog: &str,
+) -> Result<bool, String> {
+    let client = AgentClient::Codex;
+    let paths = agent_config_paths(client, home);
+    let _guard = AGENT_CONFIG_FILE_LOCK
+        .lock()
+        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+    let (configured, current_model, _) =
+        inspect_agent_managed_config(client, &paths, port, api_key)?;
+    if !configured {
+        return Ok(false);
+    }
+    let next_model = models
+        .iter()
+        .find(|model| {
+            current_model
+                .as_deref()
+                .is_some_and(|current| model.name.eq_ignore_ascii_case(current))
+        })
+        .or_else(|| models.first())
+        .map(|model| model.name.as_str());
+    if let Some(model) = next_model {
+        validate_codex_catalog(catalog, model)?;
+    } else {
+        let root: serde_json::Value = serde_json::from_str(catalog)
+            .map_err(|error| format!("Codex 模型目录格式无效: {error}"))?;
+        if !root
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(Vec::is_empty)
+        {
+            return Err("空模型列表必须对应空的 Codex 模型目录".to_string());
+        }
+    }
+
+    let catalog_path = codex_model_catalog_path(home);
+    let mut updates = Vec::new();
+    if read_agent_bytes(&catalog_path)?.as_deref() != Some(catalog.as_bytes()) {
+        updates.push(AgentFileUpdate {
+            path: catalog_path,
+            after: catalog.to_string(),
+        });
+    }
+    if current_model.as_deref() != next_model {
+        let content = fs::read_to_string(&paths[0])
+            .map_err(|error| format!("读取 Codex 配置失败: {error}"))?;
+        let mut document = content
+            .parse::<toml_edit::Document>()
+            .map_err(|error| format!("Codex config.toml 格式无效: {error}"))?;
+        if let Some(model) = next_model {
+            set_codex_table_item(document.as_table_mut(), "model", toml_edit::value(model));
+        } else {
+            document.remove("model");
+        }
+        updates.push(AgentFileUpdate {
+            path: paths[0].clone(),
+            after: document.to_string(),
+        });
+    }
+    if updates.is_empty() {
+        return Ok(false);
+    }
+
+    if load_agent_applied_state(client, home)?.is_none() {
+        for path in [paths[0].clone(), codex_model_catalog_path(home)] {
+            if !updates.iter().any(|update| update.path == path) {
+                let after = fs::read_to_string(&path)
+                    .map_err(|error| format!("读取 Codex 配置以创建备份失败: {error}"))?;
+                updates.push(AgentFileUpdate { path, after });
+            }
+        }
+    }
+    updates.sort_by_key(|update| update.path != paths[0]);
+
+    let result = commit_agent_configuration(
+        client,
+        home,
+        next_model.unwrap_or_default(),
+        &updates,
+        "updated",
+        None,
+    )?;
+    Ok(!result.changed_files.is_empty())
+}
+
 #[cfg(test)]
 pub(crate) fn apply_agent_configuration(
     client: AgentClient,

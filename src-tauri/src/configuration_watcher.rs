@@ -2,9 +2,10 @@ use super::{
     agent_managed_paths, apply_gui_managed_settings, consume_software_write,
     core_config_settings_from_value, core_install_dir, gui_config_path, is_loopback_host,
     lock_core_config_file, normalized_config_path, path_to_string,
-    refresh_agent_config_status_cache, validate_gui_config, write_yaml_if_changed, AgentClient,
-    AgentConfigStatusCache, ConfigFilesChangedPayload, CoreConfigSettings, GuiConfigFile,
-    GuiConfigState, CONFIG_FILES_CHANGED_EVENT, CORE_CONFIG_FILE,
+    refresh_agent_config_status_cache, refresh_applied_codex_model_catalog, validate_gui_config,
+    write_yaml_if_changed, AgentClient, AgentConfigStatusCache, ConfigFilesChangedPayload,
+    CoreConfigSettings, GuiConfigFile, GuiConfigState, CONFIG_FILES_CHANGED_EVENT,
+    CORE_CONFIG_FILE,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
@@ -202,6 +203,21 @@ fn handle_configuration_file_changes(
                 break;
             }
         }
+
+        let catalog_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let config = match catalog_app.state::<GuiConfigState>().snapshot() {
+                Ok(config) => config,
+                Err(error) => {
+                    eprintln!("读取配置以刷新 Codex 模型目录失败: {error}");
+                    return;
+                }
+            };
+            if let Err(error) = refresh_applied_codex_model_catalog(&catalog_app, &config).await {
+                eprintln!("配置变化后刷新 Codex 模型目录失败: {error}");
+            }
+        });
     }
 
     refresh_agents |= tracked_changes

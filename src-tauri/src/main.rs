@@ -2378,6 +2378,8 @@ fn main() {
                 eprintln!("启动配置文件监控失败: {error}");
             }
 
+            start_codex_model_catalog_sync(app.handle().clone());
+
             let usage_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error) = usage::initialize_usage_storage() {

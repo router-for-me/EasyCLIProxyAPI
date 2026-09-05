@@ -783,6 +783,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       void loadStatuses().catch((requestError) => {
         if (!disposed) setDetectionError(String(requestError));
       });
+      void loadModels(selected);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else stop = unlisten;
@@ -791,7 +792,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       disposed = true;
       stop?.();
     };
-  }, [loadStatuses]);
+  }, [loadModels, loadStatuses, selected]);
 
   useEffect(() => {
     writeSelectedAgentClient(selected);
