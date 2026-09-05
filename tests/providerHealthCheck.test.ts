@@ -8,6 +8,43 @@ import {
 import { modelEndpointCandidates } from '../src/services/modelService';
 
 describe('API 接入健康检测', () => {
+  it('取消后不派发剩余模型，也不更新已关闭的界面', async () => {
+    const controller = new AbortController();
+    const requested: string[] = [];
+    const delivered: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const checking = runProviderModelHealthChecks(
+      Array.from({ length: 100 }, (_, index) => ({ name: String(index) })),
+      async (model) => {
+        requested.push(model.name);
+        await gate;
+        return { model: model.name, status: 'healthy', success: true };
+      },
+      (result) => delivered.push(result.model),
+      4,
+      controller.signal,
+    );
+    expect(requested).toHaveLength(4);
+    controller.abort();
+    release();
+    expect(await checking).toEqual([]);
+    expect(requested).toHaveLength(4);
+    expect(delivered).toEqual([]);
+  });
+
+  it('已取消的批次不会发起请求', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let requested = false;
+    const results = await runProviderModelHealthChecks([{ name: 'unused' }], async (model) => {
+      requested = true;
+      return { model: model.name, status: 'healthy', success: true };
+    }, undefined, 4, controller.signal);
+    expect(results).toEqual([]);
+    expect(requested).toBe(false);
+  });
+
   it('健康检测只保留已勾选模型，并使用发现结果补充模型信息', () => {
     const models = mergeProviderHealthModels(
       [

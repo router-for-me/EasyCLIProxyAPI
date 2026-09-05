@@ -11,12 +11,16 @@ pub(crate) fn detect_core_platform() -> Result<CorePlatform, String> {
 }
 
 #[tauri::command]
-pub(crate) fn get_core_status(
-    process_state: tauri::State<'_, CoreProcessState>,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
-) -> Result<CoreStatus, String> {
-    let config = gui_config_state.snapshot()?;
-    current_core_status(Some(process_state.inner()), Some(config.port))
+pub(crate) async fn get_core_status(app: tauri::AppHandle) -> Result<CoreStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = app.state::<GuiConfigState>().snapshot()?;
+        current_core_status(
+            Some(app.state::<CoreProcessState>().inner()),
+            Some(config.port),
+        )
+    })
+    .await
+    .map_err(|error| format!("内核状态后台任务失败: {error}"))?
 }
 
 pub(crate) fn emit_core_status(app: &tauri::AppHandle, status: &CoreStatus) {

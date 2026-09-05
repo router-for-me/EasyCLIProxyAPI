@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
@@ -26,24 +26,32 @@ const CoreRuntimeContext = createContext<CoreRuntimeContextValue | null>(null);
 export function CoreRuntimeProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<CoreStatus | null>(null);
   const [statusError, setStatusError] = useState('');
+  const refreshRequest = useRef<Promise<void> | null>(null);
+  const statusRevision = useRef(0);
 
   const publishStatus = useCallback((nextStatus: CoreStatus | null) => {
-    setStatus(nextStatus);
+    ++statusRevision.current;
+    setStatus((previous) => JSON.stringify(previous) === JSON.stringify(nextStatus) ? previous : nextStatus);
     if (nextStatus) {
       setStatusError('');
     }
   }, []);
 
-  const refreshStatus = useCallback(async () => {
-    try {
-      const nextStatus = await invoke<CoreStatus>('get_core_status');
-      setStatus(nextStatus);
-      setStatusError('');
-    } catch (error) {
-      setStatus(null);
-      setStatusError(String(error));
-    }
-  }, []);
+  const refreshStatus = useCallback(() => {
+    if (refreshRequest.current) return refreshRequest.current;
+    const revision = statusRevision.current;
+    refreshRequest.current = invoke<CoreStatus>('get_core_status')
+      .then((nextStatus) => {
+        if (revision === statusRevision.current) publishStatus(nextStatus);
+      })
+      .catch((error) => {
+        if (revision !== statusRevision.current) return;
+        setStatus(null);
+        setStatusError(String(error));
+      })
+      .finally(() => { refreshRequest.current = null; });
+    return refreshRequest.current;
+  }, [publishStatus]);
 
   useEffect(() => {
     let disposed = false;

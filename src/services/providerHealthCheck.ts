@@ -273,25 +273,27 @@ export async function runProviderModelHealthChecks(
   checkModel: (model: ModelOption, index: number) => Promise<ProviderModelHealthResult>,
   onModelChecked?: (result: ProviderModelHealthResult, index: number) => void,
   concurrency = PROVIDER_HEALTH_CONCURRENCY,
+  signal?: AbortSignal,
 ): Promise<ProviderModelHealthResult[]> {
   const results: ProviderModelHealthResult[] = new Array(models.length);
   let nextIndex = 0;
   const workerCount = Math.min(models.length, Math.max(1, Math.floor(concurrency)));
 
   const runWorker = async () => {
-    while (nextIndex < models.length) {
+    while (nextIndex < models.length && !signal?.aborted) {
       const index = nextIndex;
       nextIndex += 1;
       const model = models[index];
       if (!model) continue;
       const result = await checkModel(model, index);
+      if (signal?.aborted) break;
       results[index] = result;
       onModelChecked?.(result, index);
     }
   };
 
   await Promise.all(Array.from({ length: workerCount }, runWorker));
-  return results;
+  return results.filter((result) => result !== undefined);
 }
 
 export async function checkProviderModelsHealth(
@@ -299,11 +301,13 @@ export async function checkProviderModelsHealth(
   models: ModelOption[],
   onModelChecked?: (result: ProviderModelHealthResult, index: number) => void,
   concurrency = PROVIDER_HEALTH_CONCURRENCY,
+  signal?: AbortSignal,
 ): Promise<ProviderModelHealthResult[]> {
   return runProviderModelHealthChecks(
     models,
     (model) => checkProviderModelHealth(options, model.name),
     onModelChecked,
     concurrency,
+    signal,
   );
 }

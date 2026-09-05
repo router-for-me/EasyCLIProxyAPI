@@ -12,6 +12,7 @@ mod core_runtime;
 mod instance_lock;
 mod management_api;
 mod oauth_browser;
+mod progress;
 mod provider_health;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod tray;
@@ -2406,6 +2407,9 @@ fn main() {
 
             let core_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
+                let Ok(_guard) = CORE_OPERATION_LOCK.lock() else {
+                    return;
+                };
                 let gui_config_state = core_app.state::<GuiConfigState>();
                 let process_state = core_app.state::<CoreProcessState>();
                 let Ok(config) = gui_config_state.snapshot() else {

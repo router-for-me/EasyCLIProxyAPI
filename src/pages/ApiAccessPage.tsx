@@ -1338,6 +1338,13 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<Record<string, ProviderModelHealthState>>({});
   const [checkingAll, setCheckingAll] = useState(false);
+  const healthControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    healthControllerRef.current = controller;
+    return () => controller.abort();
+  }, []);
 
   const healthOptions = useMemo<ProviderHealthCheckOptions>(() => ({
     provider: providerModelType(row.section),
@@ -1393,22 +1400,26 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
   };
 
   const checkOneModel = async (model: ModelOption) => {
+    const signal = healthControllerRef.current?.signal;
+    if (!signal || signal.aborted) return;
     const key = model.name.toLowerCase();
     setResults((current) => ({ ...current, [key]: { status: 'checking' } }));
-    saveResult(await checkProviderModelHealth(healthOptions, model.name));
+    const result = await checkProviderModelHealth(healthOptions, model.name);
+    if (!signal.aborted) saveResult(result);
   };
 
   const checkAllModels = async () => {
-    if (models.length === 0) return;
+    const signal = healthControllerRef.current?.signal;
+    if (models.length === 0 || checkingAll || !signal || signal.aborted) return;
     setCheckingAll(true);
     setResults(Object.fromEntries(models.map((model) => [
       model.name.toLowerCase(),
       { status: 'checking' } satisfies ProviderModelHealthState,
     ])));
     try {
-      await checkProviderModelsHealth(healthOptions, models, saveResult);
+      await checkProviderModelsHealth(healthOptions, models, saveResult, undefined, signal);
     } finally {
-      setCheckingAll(false);
+      if (!signal.aborted) setCheckingAll(false);
     }
   };
 

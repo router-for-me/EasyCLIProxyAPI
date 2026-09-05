@@ -2,7 +2,7 @@ use super::{
     agent_managed_paths, apply_gui_managed_settings, consume_software_write,
     core_config_settings_from_value, core_install_dir, gui_config_path, is_loopback_host,
     lock_core_config_file, normalized_config_path, path_to_string,
-    refresh_agent_config_status_cache, refresh_applied_codex_model_catalog, validate_gui_config,
+    refresh_agent_config_status_cache, request_codex_model_catalog_refresh, validate_gui_config,
     write_yaml_if_changed, AgentClient, AgentConfigStatusCache, ConfigFilesChangedPayload,
     CoreConfigSettings, GuiConfigFile, GuiConfigState, CONFIG_FILES_CHANGED_EVENT,
     CORE_CONFIG_FILE,
@@ -11,8 +11,9 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{Emitter, Manager};
 
@@ -204,20 +205,7 @@ fn handle_configuration_file_changes(
             }
         }
 
-        let catalog_app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            let config = match catalog_app.state::<GuiConfigState>().snapshot() {
-                Ok(config) => config,
-                Err(error) => {
-                    eprintln!("读取配置以刷新 Codex 模型目录失败: {error}");
-                    return;
-                }
-            };
-            if let Err(error) = refresh_applied_codex_model_catalog(&catalog_app, &config).await {
-                eprintln!("配置变化后刷新 Codex 模型目录失败: {error}");
-            }
-        });
+        request_codex_model_catalog_refresh();
     }
 
     refresh_agents |= tracked_changes
@@ -278,44 +266,107 @@ fn ensure_configuration_watch_directories(
     Ok(newly_watched)
 }
 
+#[derive(Default)]
+struct PendingConfigurationChanges {
+    paths: Vec<PathBuf>,
+    error: Option<String>,
+}
+
+fn configuration_watch_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| {
+        nearest_existing_watch_directory(path)
+            .and_then(|parent| {
+                path.strip_prefix(&parent)
+                    .ok()
+                    .map(|suffix| normalized_config_path(&parent).join(suffix))
+            })
+            .unwrap_or_else(|| path.to_path_buf())
+    })
+}
+
+impl PendingConfigurationChanges {
+    fn insert(&mut self, path: PathBuf) {
+        self.paths.retain(|existing| existing != &path);
+        self.paths.push(path);
+    }
+
+    fn record(&mut self, event: notify::Event, tracked_paths: &[(PathBuf, PathBuf)]) -> bool {
+        if event.kind.is_access() {
+            return false;
+        }
+        if event.need_rescan() {
+            for (tracked, _) in tracked_paths {
+                self.insert(tracked.clone());
+            }
+            return true;
+        }
+        let mut relevant = false;
+        for path in &event.paths {
+            let normalized = configuration_watch_path(path);
+            for (tracked, canonical) in tracked_paths {
+                if tracked.starts_with(path) || canonical.starts_with(&normalized) {
+                    self.insert(tracked.clone());
+                    relevant = true;
+                }
+            }
+        }
+        relevant
+    }
+}
+
 pub(crate) fn start_configuration_file_watcher(app: tauri::AppHandle) -> Result<(), String> {
     let tracked_paths = tracked_configuration_paths(&app)?;
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let mut watcher: RecommendedWatcher = notify::recommended_watcher(
-        move |event: Result<notify::Event, notify::Error>| match event {
-            Ok(event) if event.kind.is_access() => {}
-            event => {
-                let _ = sender.send(event);
+    let callback_paths: Vec<_> = tracked_paths
+        .iter()
+        .map(|path| (path.clone(), configuration_watch_path(path)))
+        .collect();
+    let pending = Arc::new(Mutex::new(PendingConfigurationChanges::default()));
+    let callback_pending = pending.clone();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let mut watcher: RecommendedWatcher =
+        notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
+            let Ok(mut pending) = callback_pending.lock() else {
+                return;
+            };
+            let relevant = match event {
+                Ok(event) => pending.record(event, &callback_paths),
+                Err(error) => {
+                    pending.error = Some(error.to_string());
+                    for (path, _) in &callback_paths {
+                        pending.insert(path.clone());
+                    }
+                    true
+                }
+            };
+            if relevant {
+                let _ = sender.try_send(());
             }
-        },
-    )
-    .map_err(|error| format!("创建配置文件监控器失败: {error}"))?;
+        })
+        .map_err(|error| format!("创建配置文件监控器失败: {error}"))?;
     let mut watched_directories = Vec::new();
     ensure_configuration_watch_directories(&mut watcher, &tracked_paths, &mut watched_directories)?;
 
     thread::spawn(move || {
         let mut watcher = watcher;
         loop {
-            let first = match receiver.recv() {
-                Ok(event) => event,
+            if receiver.recv().is_err() {
+                return;
+            }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+                if receiver
+                    .recv_timeout(remaining.min(Duration::from_millis(500)))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            let mut changes = match pending.lock() {
+                Ok(mut pending) => std::mem::take(&mut *pending),
                 Err(_) => return,
             };
-            let mut paths = Vec::new();
-            let mut append_paths = |event_paths: Vec<PathBuf>| {
-                for path in event_paths {
-                    paths.retain(|existing| existing != &path);
-                    paths.push(path);
-                }
-            };
-            match first {
-                Ok(event) => append_paths(event.paths),
-                Err(error) => eprintln!("配置文件监控错误: {error}"),
-            }
-            while let Ok(event) = receiver.recv_timeout(Duration::from_millis(500)) {
-                match event {
-                    Ok(event) => append_paths(event.paths),
-                    Err(error) => eprintln!("配置文件监控错误: {error}"),
-                }
+            if let Some(error) = changes.error.take() {
+                eprintln!("配置文件监控错误: {error}");
             }
             match ensure_configuration_watch_directories(
                 &mut watcher,
@@ -330,14 +381,70 @@ pub(crate) fn start_configuration_file_watcher(app: tauri::AppHandle) -> Result<
                                 new_directories.iter().any(|directory| directory == parent)
                             })
                         {
-                            append_paths(vec![tracked_path.clone()]);
+                            changes.insert(tracked_path.clone());
                         }
                     }
                 }
                 Err(error) => eprintln!("配置目录监控更新失败: {error}"),
             }
-            handle_configuration_file_changes(&app, paths, &tracked_paths);
+            handle_configuration_file_changes(&app, changes.paths, &tracked_paths);
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_paths_match_canonical_events_after_the_directory_is_created() {
+        let root = std::env::temp_dir();
+        let relative = Path::new("cpa-nonexistent-watch-unit-test/agent/config.toml");
+        let tracked = root.join(relative);
+        let canonical = fs::canonicalize(&root).unwrap().join(relative);
+        let mut pending = PendingConfigurationChanges::default();
+        let event = notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File))
+            .add_path(canonical);
+        assert!(pending.record(
+            event,
+            &[(tracked.clone(), configuration_watch_path(&tracked))]
+        ));
+        assert_eq!(pending.paths, vec![tracked]);
+    }
+
+    #[test]
+    fn pending_changes_ignore_noise_and_remain_bounded_in_last_write_order() {
+        let root = std::env::temp_dir().join("cpa-watcher-unit-test");
+        let gui = root.join("gui.toml");
+        let core = root.join("core.yaml");
+        let tracked = vec![(gui.clone(), gui.clone()), (core.clone(), core.clone())];
+        let mut pending = PendingConfigurationChanges::default();
+        let event = |path: PathBuf| {
+            notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(path)
+        };
+        for index in 0..1000 {
+            assert!(!pending.record(event(root.join(format!("noise-{index}"))), &tracked));
+        }
+        assert!(pending.paths.is_empty());
+        for _ in 0..1000 {
+            pending.record(event(gui.clone()), &tracked);
+            pending.record(event(core.clone()), &tracked);
+        }
+        pending.record(event(gui.clone()), &tracked);
+        assert_eq!(pending.paths, vec![core, gui]);
+    }
+
+    #[test]
+    fn parent_directory_events_keep_new_configuration_directories_discoverable() {
+        let directory = std::env::temp_dir().join("cpa-watch-missing-parent");
+        let path = directory.join("agent/config.toml");
+        let mut pending = PendingConfigurationChanges::default();
+        let event =
+            notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::Folder))
+                .add_path(directory);
+        assert!(pending.record(event, &[(path.clone(), path.clone())]));
+        assert_eq!(pending.paths, vec![path]);
+    }
 }

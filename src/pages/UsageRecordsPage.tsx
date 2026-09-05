@@ -29,6 +29,7 @@ import { getCurrentLocale, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
+import { createRefreshScheduler } from '../services/refreshScheduler';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
@@ -292,6 +293,8 @@ export function UsageRecordsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const requestIdRef = useRef(0);
+  const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
+  if (!schedulerRef.current) schedulerRef.current = createRefreshScheduler();
 
   useEffect(() => {
     try {
@@ -325,7 +328,7 @@ export function UsageRecordsPage() {
     };
   }, [apiKeyHash, customEnd, customStart, model, provider, range, result, source]);
 
-  const loadData = useCallback(
+  const executeLoadData = useCallback(
     async (quiet = false) => {
       const requestId = ++requestIdRef.current;
       const { timeQuery, query } = buildQueries();
@@ -348,7 +351,9 @@ export function UsageRecordsPage() {
             statusRequest,
             optionsRequest,
             invoke<UsageOverview>('get_usage_overview', { query }),
-            invoke<UsageAnalysis>('get_usage_analysis', { query }),
+            model || provider || source || apiKeyHash || result !== 'all'
+              ? invoke<UsageAnalysis>('get_usage_analysis', { query })
+              : optionsRequest,
           ]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
@@ -390,11 +395,23 @@ export function UsageRecordsPage() {
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [activeTab, buildQueries, page, pageSize]
+    [activeTab, buildQueries, page, pageSize, model, provider, source, apiKeyHash, result]
+  );
+
+  const loadData = useCallback(
+    (quiet = false) => {
+      if (!quiet) setLoading(true);
+      return schedulerRef.current!.schedule(() => executeLoadData(quiet), !quiet);
+    },
+    [executeLoadData],
   );
 
   useEffect(() => {
     void loadData();
+    return () => {
+      ++requestIdRef.current;
+      schedulerRef.current?.cancelPending();
+    };
   }, [loadData]);
 
   useEffect(() => {

@@ -21,7 +21,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{LazyLock, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager};
@@ -52,6 +52,25 @@ const LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const BUNDLED_MODEL_PRICE_CATALOG: &str = include_str!("../resources/model_prices.json");
 const MODEL_PRICE_SYNC_URL: &str =
     "https://raw.githubusercontent.com/router-for-me/EasyCLIProxyAPI/main/src-tauri/resources/model_prices.json";
+
+static USAGE_QUERY_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+async fn run_usage_task<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let permit = USAGE_QUERY_SLOTS
+        .acquire()
+        .await
+        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        task()
+    })
+    .await
+    .map_err(|error| format!("使用记录后台任务失败: {error}"))?
+}
 
 pub(crate) struct UsageCollectorState {
     inner: Mutex<UsageCollectorInner>,
@@ -545,9 +564,8 @@ fn initialize_usage_storage_at(root: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(crate) fn repair_usage_cache_records() -> Result<UsageRepairResult, String> {
-    let root = usage_root_dir()?;
-    repair_usage_cache_records_at(&root)
+pub(crate) async fn repair_usage_cache_records() -> Result<UsageRepairResult, String> {
+    run_usage_task(|| repair_usage_cache_records_at(&usage_root_dir()?)).await
 }
 
 fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, String> {
@@ -1380,8 +1398,8 @@ pub(crate) fn start_usage_collector(app: tauri::AppHandle) {
     let Some(token) = state.start() else {
         return;
     };
-    tauri::async_runtime::spawn(async move {
-        usage_collector_loop(app, token).await;
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(usage_collector_loop(app, token));
     });
 }
 
@@ -1402,6 +1420,9 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
     let mut subscription: Option<UsageSubscription> = None;
     let mut subscribe_retry_at = tokio::time::Instant::now();
     let mut next_inbox_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60 * 60);
+    let mut next_inbox_recovery_at = tokio::time::Instant::now();
+    let mut next_core_check_at = tokio::time::Instant::now();
+    let mut core_running = false;
     loop {
         if token.is_cancelled() {
             return;
@@ -1423,35 +1444,42 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
             }
             next_inbox_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60 * 60);
         }
-        let recovered = open_usage_database_at(&root)
-            .and_then(|mut connection| process_usage_inbox(&mut connection, &config));
-        match recovered {
-            Ok(saved) if saved > 0 => {
-                let collected_at = Local::now().to_rfc3339();
-                app.state::<UsageCollectorState>()
-                    .increment_total_records(saved);
-                set_collector_status(
-                    &app,
-                    "collecting",
-                    &format!("已恢复 {saved} 条待处理记录"),
-                    Some(collected_at.clone()),
-                );
-                let _ = app.emit(USAGE_UPDATED_EVENT, collected_at);
-                retry_seconds = 1;
-                continue;
-            }
-            Ok(_) => {}
-            Err(error) => {
-                set_collector_error(&app, error);
-                wait_or_cancel(&token, retry_seconds).await;
-                retry_seconds = (retry_seconds * 2).min(10);
-                continue;
+        if tokio::time::Instant::now() >= next_inbox_recovery_at {
+            let recovered = open_usage_database_at(&root)
+                .and_then(|mut connection| process_usage_inbox(&mut connection, &config));
+            match recovered {
+                Ok(saved) if saved > 0 => {
+                    let collected_at = Local::now().to_rfc3339();
+                    app.state::<UsageCollectorState>()
+                        .increment_total_records(saved);
+                    set_collector_status(
+                        &app,
+                        "collecting",
+                        &format!("已恢复 {saved} 条待处理记录"),
+                        Some(collected_at.clone()),
+                    );
+                    let _ = app.emit(USAGE_UPDATED_EVENT, collected_at);
+                    retry_seconds = 1;
+                    continue;
+                }
+                Ok(_) => {
+                    next_inbox_recovery_at = tokio::time::Instant::now() + Duration::from_secs(2);
+                }
+                Err(error) => {
+                    set_collector_error(&app, error);
+                    wait_or_cancel(&token, retry_seconds).await;
+                    retry_seconds = (retry_seconds * 2).min(10);
+                    continue;
+                }
             }
         }
-        let process_state = app.state::<CoreProcessState>();
-        let core_running = current_core_status(Some(process_state.inner()), Some(config.port))
-            .map(|status| status.running)
-            .unwrap_or(false);
+        if tokio::time::Instant::now() >= next_core_check_at {
+            let process_state = app.state::<CoreProcessState>();
+            core_running = current_core_status(Some(process_state.inner()), Some(config.port))
+                .map(|status| status.running)
+                .unwrap_or(false);
+            next_core_check_at = tokio::time::Instant::now() + Duration::from_secs(2);
+        }
         if !core_running {
             subscription = None;
             set_collector_status(&app, "waiting-core", "等待内核启动", None);
@@ -2382,9 +2410,8 @@ pub(crate) fn get_usage_collector_status(
 }
 
 #[tauri::command]
-pub(crate) fn get_usage_overview(query: UsageQuery) -> Result<UsageOverview, String> {
-    let connection = open_usage_database()?;
-    load_usage_overview(&connection, &query)
+pub(crate) async fn get_usage_overview(query: UsageQuery) -> Result<UsageOverview, String> {
+    run_usage_task(move || load_usage_overview(&open_usage_database()?, &query)).await
 }
 
 fn load_usage_overview(
@@ -2697,12 +2724,17 @@ fn cost_for_token_segment(
 }
 
 fn official_model_price(model: &str) -> Option<ModelPrice> {
-    let prices = bundled_model_prices().ok()?;
-    find_model_price(&prices, model).cloned()
+    find_model_price(cached_bundled_model_prices().ok()?, model).cloned()
 }
 
 fn bundled_model_prices() -> Result<HashMap<String, ModelPrice>, String> {
-    parse_model_price_catalog(BUNDLED_MODEL_PRICE_CATALOG, "builtin", 0)
+    cached_bundled_model_prices().cloned()
+}
+
+fn cached_bundled_model_prices() -> Result<&'static HashMap<String, ModelPrice>, String> {
+    static PRICES: LazyLock<Result<HashMap<String, ModelPrice>, String>> =
+        LazyLock::new(|| parse_model_price_catalog(BUNDLED_MODEL_PRICE_CATALOG, "builtin", 0));
+    PRICES.as_ref().map_err(Clone::clone)
 }
 
 fn parse_model_price_catalog(
@@ -2966,9 +2998,8 @@ fn upsert_model_price(connection: &Connection, price: &ModelPrice) -> Result<(),
 }
 
 #[tauri::command]
-pub(crate) fn get_usage_pricing(query: UsageQuery) -> Result<UsagePricing, String> {
-    let connection = open_usage_database()?;
-    load_usage_pricing(&connection, &query)
+pub(crate) async fn get_usage_pricing(query: UsageQuery) -> Result<UsagePricing, String> {
+    run_usage_task(move || load_usage_pricing(&open_usage_database()?, &query)).await
 }
 
 fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<UsagePricing, String> {
@@ -3043,25 +3074,27 @@ fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<Usa
 }
 
 #[tauri::command]
-pub(crate) fn save_usage_model_price(mut price: ModelPrice) -> Result<(), String> {
-    let connection = open_usage_database()?;
+pub(crate) async fn save_usage_model_price(mut price: ModelPrice) -> Result<(), String> {
     price.model = price.model.trim().to_string();
     price.source = "manual".to_string();
     price.source_model_id.clear();
     price.updated_at_ms = Local::now().timestamp_millis();
-    upsert_model_price(&connection, &price)
+    run_usage_task(move || upsert_model_price(&open_usage_database()?, &price)).await
 }
 
 #[tauri::command]
-pub(crate) fn delete_usage_model_price(model: String) -> Result<(), String> {
-    let connection = open_usage_database()?;
-    connection
-        .execute(
-            "DELETE FROM model_prices WHERE model = ?1 COLLATE NOCASE",
-            params![model.trim()],
-        )
-        .map_err(|error| format!("删除模型价格失败: {error}"))?;
-    Ok(())
+pub(crate) async fn delete_usage_model_price(model: String) -> Result<(), String> {
+    run_usage_task(move || {
+        let connection = open_usage_database()?;
+        connection
+            .execute(
+                "DELETE FROM model_prices WHERE model = ?1 COLLATE NOCASE",
+                params![model.trim()],
+            )
+            .map_err(|error| format!("删除模型价格失败: {error}"))?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3097,53 +3130,56 @@ pub(crate) async fn sync_usage_model_prices(
         None => (bundled_model_prices()?, true),
     };
 
-    let mut connection = open_usage_database()?;
-    let current_prices = load_model_prices(&connection)?;
-    let manual_models = current_prices
-        .values()
-        .filter(|price| price.source == "manual")
-        .map(|price| price.model.to_ascii_lowercase())
-        .collect::<std::collections::HashSet<_>>();
-    let mut result = ModelPriceSyncResult {
-        used_builtin,
-        ..ModelPriceSyncResult::default()
-    };
-    if !used_builtin {
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("开始更新模型价格失败: {error}"))?;
-        transaction
-            .execute("DELETE FROM model_prices WHERE source = 'github'", [])
-            .map_err(|error| format!("清理旧模型价格失败: {error}"))?;
-        for price in remote_prices.values() {
-            if manual_models.contains(&price.model.to_ascii_lowercase()) {
-                result.skipped += 1;
-                continue;
+    run_usage_task(move || {
+        let mut connection = open_usage_database()?;
+        let current_prices = load_model_prices(&connection)?;
+        let manual_models = current_prices
+            .values()
+            .filter(|price| price.source == "manual")
+            .map(|price| price.model.to_ascii_lowercase())
+            .collect::<std::collections::HashSet<_>>();
+        let mut result = ModelPriceSyncResult {
+            used_builtin,
+            ..ModelPriceSyncResult::default()
+        };
+        if !used_builtin {
+            let transaction = connection
+                .transaction()
+                .map_err(|error| format!("开始更新模型价格失败: {error}"))?;
+            transaction
+                .execute("DELETE FROM model_prices WHERE source = 'github'", [])
+                .map_err(|error| format!("清理旧模型价格失败: {error}"))?;
+            for price in remote_prices.values() {
+                if manual_models.contains(&price.model.to_ascii_lowercase()) {
+                    result.skipped += 1;
+                    continue;
+                }
+                upsert_model_price(&transaction, price)?;
+                result.imported += 1;
             }
-            upsert_model_price(&transaction, price)?;
-            result.imported += 1;
+            transaction
+                .commit()
+                .map_err(|error| format!("提交模型价格更新失败: {error}"))?;
+        } else {
+            connection
+                .execute("DELETE FROM model_prices WHERE source = 'github'", [])
+                .map_err(|error| format!("恢复软件内置模型价格失败: {error}"))?;
         }
-        transaction
-            .commit()
-            .map_err(|error| format!("提交模型价格更新失败: {error}"))?;
-    } else {
-        connection
-            .execute("DELETE FROM model_prices WHERE source = 'github'", [])
-            .map_err(|error| format!("恢复软件内置模型价格失败: {error}"))?;
-    }
 
-    let filter = build_usage_filter(&query);
-    let models = load_usage_cost_groups(&connection, &filter)?
-        .into_iter()
-        .map(|group| group.model)
-        .collect::<std::collections::BTreeSet<_>>();
-    let effective_prices = load_model_prices(&connection)?;
-    for model in models {
-        if resolve_model_price(&model, "", &effective_prices).is_none() {
-            result.unmatched.push(model);
+        let filter = build_usage_filter(&query);
+        let models = load_usage_cost_groups(&connection, &filter)?
+            .into_iter()
+            .map(|group| group.model)
+            .collect::<std::collections::BTreeSet<_>>();
+        let effective_prices = load_model_prices(&connection)?;
+        for model in models {
+            if resolve_model_price(&model, "", &effective_prices).is_none() {
+                result.unmatched.push(model);
+            }
         }
-    }
-    Ok(result)
+        Ok(result)
+    })
+    .await
 }
 
 fn canonical_model_tail(value: &str) -> String {
@@ -3163,13 +3199,12 @@ fn normalized_model_tail(value: &str) -> String {
 }
 
 #[tauri::command]
-pub(crate) fn get_usage_analysis(
+pub(crate) async fn get_usage_analysis(
     query: UsageQuery,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<UsageAnalysis, String> {
-    let connection = open_usage_database()?;
     let config = gui_config_state.snapshot()?;
-    load_usage_analysis(&connection, &query, &config)
+    run_usage_task(move || load_usage_analysis(&open_usage_database()?, &query, &config)).await
 }
 
 fn load_usage_analysis(
@@ -3177,14 +3212,99 @@ fn load_usage_analysis(
     query: &UsageQuery,
     config: &GuiConfigFile,
 ) -> Result<UsageAnalysis, String> {
+    let filter = build_usage_filter(query);
+    let sql = format!(
+        r#"
+        SELECT
+            COALESCE(NULLIF(TRIM(model), ''), 'unknown'),
+            COALESCE(NULLIF(TRIM(provider), ''), '未知 Provider'),
+            COALESCE(NULLIF(TRIM(source), ''), '未知来源'),
+            COALESCE(NULLIF(TRIM(api_key_hash), ''), '未记录密钥'),
+            MAX(TRIM(api_key_remark)), MAX(TRIM(api_key_display)),
+            COUNT(*),
+            COALESCE(SUM(CASE WHEN failed != 0 AND canceled = 0 THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(total_tokens), 0)
+        FROM usage_events{}
+        GROUP BY 1, 2, 3, 4
+        "#,
+        filter.clause
+    );
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("准备使用分析查询失败: {error}"))?;
+    let mut rows = statement
+        .query(params_from_iter(filter.params.iter()))
+        .map_err(|error| format!("查询使用分析失败: {error}"))?;
+    let mut categories: [HashMap<String, UsageCategory>; 4] = Default::default();
+    let mut key_labels = HashMap::<String, (String, String)>::new();
+    let read_result = (|| -> rusqlite::Result<()> {
+        while let Some(row) = rows.next()? {
+            let requests = from_sql_i64(row.get(6)?);
+            let failures = from_sql_i64(row.get(7)?);
+            let tokens = from_sql_i64(row.get(8)?);
+            for (index, group) in categories.iter_mut().enumerate() {
+                let key: String = row.get(index)?;
+                if index == 3 {
+                    let remark: String = row.get(4)?;
+                    let display: String = row.get(5)?;
+                    let labels = key_labels.entry(key.clone()).or_default();
+                    if remark > labels.0 {
+                        labels.0 = remark;
+                    }
+                    if display > labels.1 {
+                        labels.1 = display;
+                    }
+                }
+                let category = group.entry(key.clone()).or_insert_with(|| UsageCategory {
+                    label: key.clone(),
+                    key,
+                    ..UsageCategory::default()
+                });
+                category.requests = category.requests.saturating_add(requests);
+                category.failures = category.failures.saturating_add(failures);
+                category.tokens = category.tokens.saturating_add(tokens);
+            }
+        }
+        Ok(())
+    })();
+    read_result.map_err(|error| format!("读取使用分析失败: {error}"))?;
+    let [models, providers, sources, api_keys] = categories.map(sorted_usage_categories);
+    let sources = sources
+        .into_iter()
+        .map(|mut category| {
+            category.label = usage_source_display(config, "", &category.key);
+            category
+        })
+        .collect();
+    let api_keys = api_keys
+        .into_iter()
+        .map(|mut category| {
+            let (remark, display) = key_labels.remove(&category.key).unwrap_or_default();
+            category.label = api_key_category_label(remark, display);
+            category
+        })
+        .collect();
     Ok(UsageAnalysis {
-        models: load_simple_categories(connection, query, "model", "unknown")?,
-        providers: load_simple_categories(connection, query, "provider", "未知 Provider")?,
-        sources: load_source_categories(connection, query, config)?,
-        api_keys: load_api_key_categories(connection, query)?,
+        models,
+        providers,
+        sources,
+        api_keys,
     })
 }
 
+fn sorted_usage_categories(categories: HashMap<String, UsageCategory>) -> Vec<UsageCategory> {
+    let mut categories: Vec<_> = categories.into_values().collect();
+    categories.sort_by(|left, right| {
+        right
+            .tokens
+            .cmp(&left.tokens)
+            .then_with(|| right.requests.cmp(&left.requests))
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    categories
+}
+
+#[cfg(test)]
 fn load_source_categories(
     connection: &Connection,
     query: &UsageQuery,
@@ -3197,6 +3317,7 @@ fn load_source_categories(
     Ok(categories)
 }
 
+#[cfg(test)]
 fn load_simple_categories(
     connection: &Connection,
     query: &UsageQuery,
@@ -3240,6 +3361,7 @@ fn load_simple_categories(
     Ok(categories)
 }
 
+#[cfg(test)]
 fn load_api_key_categories(
     connection: &Connection,
     query: &UsageQuery,
@@ -3284,13 +3406,12 @@ fn load_api_key_categories(
 }
 
 #[tauri::command]
-pub(crate) fn get_usage_events(
+pub(crate) async fn get_usage_events(
     query: UsageQuery,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<UsageEventPage, String> {
-    let connection = open_usage_database()?;
     let config = gui_config_state.snapshot()?;
-    load_usage_events(&connection, &query, &config)
+    run_usage_task(move || load_usage_events(&open_usage_database()?, &query, &config)).await
 }
 
 fn load_usage_events(
@@ -3558,6 +3679,126 @@ fn usage_source_display(config: &GuiConfigFile, provider: &str, source: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn background_usage_jobs_limit_database_concurrency() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let mut jobs = Vec::new();
+        for index in 0..6 {
+            let active = active.clone();
+            let peak = peak.clone();
+            jobs.push(tokio::spawn(run_usage_task(move || {
+                let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(count, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(10));
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(index)
+            })));
+        }
+        for (index, job) in jobs.into_iter().enumerate() {
+            assert_eq!(job.await.unwrap().unwrap(), index);
+        }
+        assert!(peak.load(Ordering::SeqCst) <= 2);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn single_scan_analysis_matches_independent_categories_for_mixed_data_and_filters() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_usage_schema(&connection).unwrap();
+        let records: Vec<_> = (0..600)
+            .map(|index| {
+                let mut record = sample_record(
+                    &format!("analysis-{index}"),
+                    if index % 2 == 0 {
+                        "2026-08-27T00:00:00Z"
+                    } else {
+                        "2026-08-28T00:00:00Z"
+                    },
+                    [" Model-A ", "model-a", "", "unknown", "Model-B"][index % 5],
+                );
+                record.provider = ["openai", "claude", " "][index % 3].to_string();
+                record.source =
+                    ["source-a", " ", "source-b", "sk-secret-source"][index % 4].to_string();
+                record.api_key_hash = ["hash-a", "hash-b", " "][index % 3].to_string();
+                record.api_key_remark = ["", " alpha ", "zeta", "测试备注"][index % 4].to_string();
+                record.api_key_display = ["", "ab••••", "xy••••"][index % 3].to_string();
+                record.failed = index % 3 == 0;
+                record.canceled = index % 6 == 0;
+                record.tokens.total_tokens = (index % 17) as u64;
+                record
+            })
+            .collect();
+        insert_usage_records(&mut connection, &records).unwrap();
+        let config = GuiConfigFile::default();
+        let queries = [
+            UsageQuery::default(),
+            UsageQuery {
+                model: Some("MODEL-A".into()),
+                ..UsageQuery::default()
+            },
+            UsageQuery {
+                provider: Some("claude".into()),
+                ..UsageQuery::default()
+            },
+            UsageQuery {
+                source: Some("source-a".into()),
+                ..UsageQuery::default()
+            },
+            UsageQuery {
+                api_key_hash: Some("hash-a".into()),
+                ..UsageQuery::default()
+            },
+            UsageQuery {
+                failed: Some(true),
+                canceled: Some(false),
+                ..UsageQuery::default()
+            },
+            UsageQuery {
+                canceled: Some(true),
+                ..UsageQuery::default()
+            },
+            UsageQuery {
+                start: Some("2026-08-28T00:00:00Z".into()),
+                ..UsageQuery::default()
+            },
+            UsageQuery {
+                model: Some("not-present".into()),
+                ..UsageQuery::default()
+            },
+        ];
+        let canonical = |mut categories: Vec<UsageCategory>| {
+            categories.sort_by(|left, right| left.key.cmp(&right.key));
+            serde_json::to_value(categories).unwrap()
+        };
+        for query in queries {
+            let actual = load_usage_analysis(&connection, &query, &config).unwrap();
+            assert_eq!(
+                canonical(actual.models),
+                canonical(load_simple_categories(&connection, &query, "model", "unknown").unwrap())
+            );
+            assert_eq!(
+                canonical(actual.providers),
+                canonical(
+                    load_simple_categories(&connection, &query, "provider", "未知 Provider")
+                        .unwrap()
+                )
+            );
+            assert_eq!(
+                canonical(actual.sources),
+                canonical(load_source_categories(&connection, &query, &config).unwrap())
+            );
+            assert_eq!(
+                canonical(actual.api_keys),
+                canonical(load_api_key_categories(&connection, &query).unwrap())
+            );
+        }
+    }
 
     #[test]
     fn collector_total_records_are_cached_and_incremented() {
