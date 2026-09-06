@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   AlertCircle,
+  Check,
   Download,
   ExternalLink,
   Info,
@@ -15,7 +16,6 @@ import { useCoreRuntime } from '../coreRuntime';
 import { useCoreUpdate } from '../coreUpdate';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
-import { InlineNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
 
 export type CoreInstallResult = {
@@ -111,26 +111,40 @@ export function VersionManagementPage() {
   const [customMirrorDraft, setCustomMirrorDraft] = useState('');
   const [customMirrorDialogOpen, setCustomMirrorDialogOpen] = useState(false);
 
-  const feedback = useAppNotice();
-  const { showNotice } = feedback;
+  const [toastNotice, setToastNotice] = useState<{
+    message: string;
+    tone: MessageType;
+  } | null>(null);
 
   const installDialogRef = useRef<HTMLDivElement>(null);
   const customMirrorInputRef = useRef<HTMLInputElement>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const completedInstallKeyRef = useRef('');
   const manualInstallInProgressRef = useRef(false);
   const pageVisitRef = useRef({});
 
-  const showInstallCompletedNotice = (result: CoreInstallResult, message?: string | null) => {
+  const showToast = (message: string, tone: MessageType = 'info') => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    setToastNotice({ message, tone });
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastNotice(null);
+      toastTimerRef.current = null;
+    }, 4000);
+  };
+
+  const showInstallCompletedToast = (result: CoreInstallResult, message?: string | null) => {
     const key = `${result.version}\u0000${result.assetName}\u0000${result.binaryPath ?? ''}`;
     if (completedInstallKeyRef.current === key) return;
     completedInstallKeyRef.current = key;
-    showNotice(message || t('kernel.install.completed', { version: result.version }), 'success');
+    showToast(message || t('kernel.install.completed', { version: result.version }), 'success');
   };
 
   const applyInstallTask = (
     task: CoreInstallTask,
     showFinishedDialog = true,
-    showCompletionNotice = true,
+    showCompletionToast = true,
   ) => {
     if (!task.running && !task.message && !task.result) {
       setProgress(null);
@@ -144,7 +158,7 @@ export function VersionManagementPage() {
       setCancellingInstall(false);
     }
 
-    if (showCompletionNotice && (task.running || showFinishedDialog)) {
+    if (showCompletionToast && (task.running || showFinishedDialog)) {
       setProgress(task);
       setInstallDialogOpen(true);
     } else {
@@ -153,8 +167,8 @@ export function VersionManagementPage() {
     }
 
     if (task.result) {
-      if (showCompletionNotice) {
-        showInstallCompletedNotice(task.result, task.message);
+      if (showCompletionToast) {
+        showInstallCompletedToast(task.result, task.message);
       }
       setInstallDialogOpen(false);
       setProgress(null);
@@ -164,7 +178,7 @@ export function VersionManagementPage() {
     }
 
     if (task.message && !task.running) {
-      showNotice(task.message, task.phase === '安装失败' ? 'error' : 'info');
+      showToast(task.message, task.phase === '安装失败' ? 'error' : 'info');
     }
   };
 
@@ -192,13 +206,13 @@ export function VersionManagementPage() {
       const settings = await invoke<VersionSourceSettings>('set_download_source', { source });
       setVersionSource(settings);
       resetLatest();
-      showNotice({ key: 'kernel.versions.sourceSwitched', variables: {
+      showToast(t('kernel.versions.sourceSwitched', {
         source: downloadSourceLabel(settings.source, t),
-      } }, 'info');
+      }), 'info');
     } catch (error) {
       await loadVersionSourceSettings();
       setVersionSourceError(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }));
-      showNotice({ key: 'kernel.versions.gitcodeSaveFailed', variables: { error: String(error) } }, 'error');
+      showToast(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }), 'error');
     } finally {
       setVersionSourceSaving(false);
     }
@@ -215,11 +229,11 @@ export function VersionManagementPage() {
       setCustomMirrorDraft('');
       setCustomMirrorDialogOpen(false);
       resetLatest();
-      showNotice({ key: 'kernel.versions.customMirrorAdded' }, 'success');
+      showToast(t('kernel.versions.customMirrorAdded'), 'success');
     } catch (error) {
       const message = t('kernel.versions.customMirrorAddFailed', { error: String(error) });
       setVersionSourceError(message);
-      showNotice(message, 'error');
+      showToast(message, 'error');
     } finally {
       setVersionSourceSaving(false);
     }
@@ -234,14 +248,14 @@ export function VersionManagementPage() {
         url,
       });
       setVersionSource(settings);
-      showNotice({ key: 'kernel.versions.customMirrorRemoved' }, 'success');
+      showToast(t('kernel.versions.customMirrorRemoved'), 'success');
       if (wasSelected) {
         resetLatest();
       }
     } catch (error) {
       const message = t('kernel.versions.customMirrorRemoveFailed', { error: String(error) });
       setVersionSourceError(message);
-      showNotice(message, 'error');
+      showToast(message, 'error');
     } finally {
       setVersionSourceSaving(false);
     }
@@ -266,7 +280,7 @@ export function VersionManagementPage() {
 
     try {
       const result = await invoke<CoreInstallResult>('install_core_version', { version });
-      showInstallCompletedNotice(result, t('kernel.install.completed', { version: result.version }));
+      showInstallCompletedToast(result, t('kernel.install.completed', { version: result.version }));
       manualInstallInProgressRef.current = false;
       setProgress({
         running: false,
@@ -285,7 +299,7 @@ export function VersionManagementPage() {
     } catch (error) {
       manualInstallInProgressRef.current = false;
       const errorMessage = String(error);
-      showNotice(errorMessage, errorMessage.includes('取消') ? 'info' : 'error');
+      showToast(errorMessage, errorMessage.includes('取消') ? 'info' : 'error');
       setProgress((current) => ({
         running: false,
         cancellable: false,
@@ -311,7 +325,7 @@ export function VersionManagementPage() {
       await invoke('cancel_core_install');
     } catch (error) {
       setCancellingInstall(false);
-      showNotice(String(error), 'error');
+      showToast(String(error), 'error');
     }
   };
 
@@ -328,7 +342,7 @@ export function VersionManagementPage() {
     try {
       await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
     } catch (error) {
-      showNotice({ key: 'kernel.error.openUpdate', variables: { error: String(error) } }, 'error');
+      showToast(t('kernel.error.openUpdate', { error: String(error) }), 'error');
     }
   };
 
@@ -374,9 +388,9 @@ export function VersionManagementPage() {
       if (disposed) return;
       setVersionSource(event.payload);
       setVersionSourceError('');
-      showNotice({ key: 'kernel.versions.sourceAutoSwitched', variables: {
+      showToast(t('kernel.versions.sourceAutoSwitched', {
         source: downloadSourceLabel(event.payload.source, t),
-      } }, 'info');
+      }), 'info');
     }).then((stop) => {
       if (disposed) stop();
       else unlistenVersionSource = stop;
@@ -396,6 +410,9 @@ export function VersionManagementPage() {
       unlisten?.();
       unlistenConfig?.();
       unlistenVersionSource?.();
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
     };
   }, []);
 
@@ -585,7 +602,6 @@ export function VersionManagementPage() {
           </div>
         </div>
 
-        <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
         <div className="version-card-grid">
         <article className="version-list-item app-module-card">
           <div className="version-item-content">
@@ -912,6 +928,23 @@ export function VersionManagementPage() {
         </div>
       ) : null}
 
+      {/* Floating Notice Toast */}
+      {toastNotice ? (
+        <div
+          className={`config-toast ${toastNotice.tone}`}
+          role="status"
+          title={toastNotice.message}
+        >
+          {toastNotice.tone === 'success' ? (
+            <Check size={18} aria-hidden="true" />
+          ) : toastNotice.tone === 'error' ? (
+            <AlertCircle size={18} aria-hidden="true" />
+          ) : (
+            <Info size={18} aria-hidden="true" />
+          )}
+          <span>{toastNotice.message}</span>
+        </div>
+      ) : null}
     </section>
   );
 }

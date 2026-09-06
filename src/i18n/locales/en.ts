@@ -1,18 +1,6 @@
 import type { MessageKey } from './zh-CN';
-import { easyModeEn } from '../easyMode';
 
 export const en: Record<MessageKey, string> = {
-  ...easyModeEn,
-  'apiAccess.provider.codex': 'Codex API',
-  'apiAccess.provider.deepseek': 'DeepSeek',
-  'apiAccess.provider.claude': 'Claude',
-  'apiAccess.provider.gemini': 'Gemini',
-  'apiAccess.field.baseUrl': 'Base URL',
-  'apiAccess.cloak.auto': 'Automatic',
-  'apiAccess.cloak.always': 'Always enabled',
-  'apiAccess.cloak.never': 'Never enabled',
-  'usage.unit.requests': 'requests',
-  'usage.unit.tokens': 'Token',
   'agents.catalog.button': 'Model list settings',
   'agents.catalog.title': 'Codex model catalog',
   'agents.catalog.subtitle': 'Customize parameters for currently available models and save them to the generated Codex catalog.',
@@ -589,7 +577,6 @@ export const en: Record<MessageKey, string> = {
   'config.keys.addTitle': 'Add Authentication Key',
   'config.keys.editTitle': 'Edit Authentication Key',
   'common.close': 'Close',
-  'app.notice.dismiss': 'Dismiss operation feedback',
   'config.keys.label': 'Authentication Key',
   'config.keys.hide': 'Hide key',
   'config.keys.show': 'Show key',

@@ -1499,6 +1499,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             </>
           ) : (
             <>
+              <span>Agent Clients</span>
               <h1>{t('agents.title')}</h1>
             </>
           )}
