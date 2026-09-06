@@ -2008,13 +2008,8 @@ pub(crate) fn read_codex_app_installation_version(
     #[cfg(target_os = "windows")]
     {
         match installation {
-            CodexAppTarget::WindowsAppId(app_id) => {
-                let _ = app_id;
-                read_windows_codex_store_version()
-            }
-            CodexAppTarget::Application(path) => {
-                read_windows_executable_version(path).or_else(|| read_agent_version(path, _home))
-            }
+            CodexAppTarget::WindowsAppId(app_id) => read_windows_codex_store_version(app_id),
+            CodexAppTarget::Application(path) => read_windows_codex_desktop_version(path),
         }
     }
     #[cfg(target_os = "macos")]
@@ -2220,23 +2215,9 @@ if ($package -and $package.Version) {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn read_windows_codex_store_version() -> Option<String> {
-    const VERSION_SCRIPT: &str = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$ProgressPreference = 'SilentlyContinue'
-$package = @(Get-AppxPackage) |
-    Where-Object {
-        $_.Name -in @('OpenAI.Codex', 'OpenAI.CodexBeta', 'OpenAI.ChatGPT') -or
-        $_.PackageFamilyName -match '^OpenAI\.(Codex|CodexBeta|ChatGPT)_'
-    } |
-    Sort-Object { [version]$_.Version } -Descending |
-    Select-Object -First 1
-if ($package -and $package.Version) {
-    Write-Output "VERSION:$($package.Version)"
-}
-"#;
-
-    let encoded_command = windows_powershell_encoded_command(VERSION_SCRIPT);
+pub(crate) fn read_windows_codex_store_version(app_id: &str) -> Option<String> {
+    let script = windows_codex_store_executable_script(app_id)?;
+    let encoded_command = windows_powershell_encoded_command(&script);
     let mut command = Command::new(windows_powershell_executable());
     command.args([
         "-NoLogo",
@@ -2252,7 +2233,122 @@ if ($package -and $package.Version) {
     if !output.status.success() {
         return None;
     }
-    parse_windows_codex_version_output(&String::from_utf8_lossy(&output.stdout))
+    match parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout))? {
+        CodexAppTarget::Application(path) => read_windows_codex_desktop_version(&path),
+        CodexAppTarget::WindowsAppId(_) => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_codex_store_executable_script(app_id: &str) -> Option<String> {
+    let (family, application) = app_id.split_once('!')?;
+    if family.is_empty() || application.is_empty() {
+        return None;
+    }
+    let family = windows_powershell_single_quoted_literal(family);
+    let application = windows_powershell_single_quoted_literal(application);
+    Some(format!(
+        r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+$package = Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq {family} }} |
+    Sort-Object {{ [version]$_.Version }} -Descending | Select-Object -First 1
+if ($package) {{
+    $manifest = Get-AppxPackageManifest -Package $package.PackageFullName
+    $application = @($manifest.Package.Applications.Application) |
+        Where-Object {{ $_.Id -eq {application} }} | Select-Object -First 1
+    if ($application.Executable -and $package.InstallLocation) {{
+        $path = Join-Path $package.InstallLocation $application.Executable
+        if (Test-Path -LiteralPath $path -PathType Leaf) {{ Write-Output "EXE:$path" }}
+    }}
+}}
+"#
+    ))
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn read_windows_codex_desktop_version(executable: &Path) -> Option<String> {
+    let resources = executable.parent()?.join("resources");
+    let owl_ini = resources.join("owl-app.ini");
+    let asar = resources.join("app.asar");
+    fs::read_to_string(&owl_ini)
+        .ok()
+        .and_then(|content| parse_codex_owl_app_version(&content))
+        .or_else(|| read_codex_asar_version(&asar))
+        .or_else(|| {
+            // Owl's EXE reports the Chromium runtime version, not the Codex
+            // version. Never launch a desktop executable with --version either.
+            if owl_ini.exists() || asar.exists() || resources.join("owl-electron-app.json").exists()
+            {
+                None
+            } else {
+                read_windows_executable_version(executable)
+            }
+        })
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn parse_codex_owl_app_version(content: &str) -> Option<String> {
+    let mut in_owl_section = false;
+    for line in content
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .map(str::trim)
+    {
+        if line.starts_with('[') && line.ends_with(']') {
+            in_owl_section = line.eq_ignore_ascii_case("[Owl]");
+        } else if in_owl_section {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("AppVersion") {
+                    return normalize_detected_agent_version(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    // ASAR starts with two Chromium pickles: a header-size pickle followed by
+    // a JSON header pickle. Read only the header and the root package.json,
+    // not the hundreds of MB of bundled application code.
+    let mut file = fs::File::open(path).ok()?;
+    let mut prefix = [0_u8; 16];
+    file.read_exact(&mut prefix).ok()?;
+    let word = |offset| u32::from_le_bytes(prefix[offset..offset + 4].try_into().unwrap()) as u64;
+    let header_size = word(4);
+    let json_size = word(12);
+    if word(0) != 4
+        || !(8..=16 * 1024 * 1024).contains(&header_size)
+        || word(8) != header_size - 4
+        || json_size > header_size - 8
+    {
+        return None;
+    }
+    let mut header = vec![0; json_size as usize];
+    file.read_exact(&mut header).ok()?;
+    let header: serde_json::Value = serde_json::from_slice(&header).ok()?;
+    let entry = header.get("files")?.get("package.json")?;
+    if entry.get("unpacked").and_then(serde_json::Value::as_bool) == Some(true) {
+        return None;
+    }
+    let size = entry.get("size")?.as_u64()?;
+    if size > 1024 * 1024 {
+        return None;
+    }
+    let offset = entry.get("offset")?.as_str()?.parse::<u64>().ok()?;
+    let position = (8 + header_size).checked_add(offset)?;
+    if position.checked_add(size)? > file.metadata().ok()?.len() {
+        return None;
+    }
+    file.seek(SeekFrom::Start(position)).ok()?;
+    let mut package = vec![0; size as usize];
+    file.read_exact(&mut package).ok()?;
+    let package: serde_json::Value = serde_json::from_slice(&package).ok()?;
+    normalize_detected_agent_version(package.get("version")?.as_str()?)
 }
 
 #[cfg(target_os = "windows")]
