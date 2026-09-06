@@ -2,6 +2,62 @@ use super::*;
 
 pub(crate) static CORE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(any(target_os = "linux", test))]
+struct CoreSpawnRequest {
+    command: Command,
+    reply: std::sync::mpsc::SyncSender<io::Result<Child>>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+static CORE_PROCESS_SPAWNER: LazyLock<Result<std::sync::mpsc::Sender<CoreSpawnRequest>, String>> =
+    LazyLock::new(|| {
+        let (sender, receiver) = std::sync::mpsc::channel::<CoreSpawnRequest>();
+        thread::Builder::new()
+            .name("cpa-core-spawner".to_string())
+            .spawn(move || {
+                for mut request in receiver {
+                    configure_child_lifetime(&mut request.command);
+                    let result = request.command.spawn();
+                    if let Err(std::sync::mpsc::SendError(Ok(mut child))) =
+                        request.reply.send(result)
+                    {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
+            })
+            .map_err(|error| format!("创建 CPA 内核启动线程失败: {error}"))?;
+        Ok(sender)
+    });
+
+pub(crate) fn spawn_core_child(command: Command) -> Result<Child, String> {
+    #[cfg(target_os = "linux")]
+    {
+        spawn_core_child_on_lifetime_thread(command)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut command = command;
+        command
+            .spawn()
+            .map_err(|error| format!("启动 CPA 内核失败: {error}"))
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn spawn_core_child_on_lifetime_thread(command: Command) -> Result<Child, String> {
+    let sender = CORE_PROCESS_SPAWNER.as_ref().map_err(Clone::clone)?;
+    let (reply, result) = std::sync::mpsc::sync_channel(1);
+    sender
+        .send(CoreSpawnRequest { command, reply })
+        .map_err(|_| "CPA 内核启动线程已退出".to_string())?;
+    result
+        .recv()
+        .map_err(|_| "CPA 内核启动线程未返回启动结果".to_string())?
+        .map_err(|error| format!("启动 CPA 内核失败: {error}"))
+}
+
 async fn run_core_command(
     app: tauri::AppHandle,
     operation: fn(&CoreProcessState, &GuiConfigState) -> Result<CoreStatus, String>,
@@ -1183,11 +1239,8 @@ pub(crate) fn start_core_process_inner(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     configure_background_command(&mut command);
-    configure_child_lifetime(&mut command);
 
-    let mut child = command
-        .spawn()
-        .map_err(|err| format!("启动 CPA 内核失败: {err}"))?;
+    let mut child = spawn_core_child(command)?;
 
     if let Err(error) = wait_for_core_management_port(&mut child, management_address) {
         let _ = terminate_child(&mut child);
@@ -1224,7 +1277,8 @@ pub(crate) fn wait_for_core_management_port(
     }
 }
 
-pub(crate) fn configure_child_lifetime(command: &mut Command) {
+#[cfg(any(target_os = "linux", test))]
+fn configure_child_lifetime(command: &mut Command) {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt;

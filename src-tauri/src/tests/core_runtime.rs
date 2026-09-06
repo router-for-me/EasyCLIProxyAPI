@@ -34,6 +34,121 @@ fn core_process_discovery_sleep_helper() {
     }
 }
 
+fn core_child_sleep_command() -> Command {
+    let mut command = Command::new(env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "tests::core_runtime::core_process_discovery_sleep_helper",
+            "--nocapture",
+        ])
+        .env("EASYCLIPROXYAPI_PROCESS_DISCOVERY_TEST_HELPER", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    configure_background_command(&mut command);
+    command
+}
+
+fn assert_core_child_survives(mut child: Child) {
+    thread::sleep(Duration::from_millis(200));
+    let status = child.try_wait();
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(status.unwrap().is_none(), "core exited with its launcher");
+}
+
+#[test]
+fn core_child_survives_launcher_thread_exit() {
+    let child = thread::spawn(|| spawn_core_child(core_child_sleep_command()).unwrap())
+        .join()
+        .unwrap();
+    assert_core_child_survives(child);
+}
+
+#[test]
+fn core_child_survives_blocking_runtime_shutdown() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let child = runtime
+        .block_on(runtime.spawn_blocking(|| spawn_core_child(core_child_sleep_command()).unwrap()))
+        .unwrap();
+    drop(runtime);
+    assert_core_child_survives(child);
+}
+
+#[test]
+fn core_child_spawner_remains_available_after_spawn_failure() {
+    let missing_binary = agent_test_home("missing-core-spawner-binary").join(core_binary_name());
+    assert!(spawn_core_child_on_lifetime_thread(Command::new(missing_binary)).is_err());
+    let child =
+        thread::spawn(|| spawn_core_child_on_lifetime_thread(core_child_sleep_command()).unwrap())
+            .join()
+            .unwrap();
+    assert_core_child_survives(child);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn core_child_owner_process_helper() {
+    if env::var_os("EASYCLIPROXYAPI_CORE_OWNER_TEST_HELPER").is_none() {
+        return;
+    }
+    let mut command = core_child_sleep_command();
+    command.stdout(Stdio::inherit());
+    let _child = spawn_core_child(command).unwrap();
+    println!("CORE_CHILD_READY");
+    io::stdout().flush().unwrap();
+    thread::sleep(Duration::from_secs(10));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn core_child_stops_when_owner_process_is_killed() {
+    use std::io::BufRead;
+
+    let mut owner = Command::new(env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::core_runtime::core_child_owner_process_helper",
+            "--nocapture",
+        ])
+        .env("EASYCLIPROXYAPI_CORE_OWNER_TEST_HELPER", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut output = io::BufReader::new(owner.stdout.take().unwrap());
+    let mut ready = false;
+    loop {
+        let mut line = String::new();
+        match output.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) if line.trim() == "CORE_CHILD_READY" => {
+                ready = true;
+                break;
+            }
+            Ok(_) => {}
+        }
+    }
+
+    let killed = owner.kill();
+    let waited = owner.wait();
+    let shutdown_started = Instant::now();
+    let mut remaining_output = String::new();
+    let drained = output.read_to_string(&mut remaining_output);
+    assert!(ready, "owner did not finish spawning its core child");
+    killed.unwrap();
+    waited.unwrap();
+    drained.unwrap();
+    assert!(
+        shutdown_started.elapsed() < Duration::from_secs(5),
+        "core kept its output pipe open after the owner was killed"
+    );
+}
+
 #[test]
 fn running_core_process_discovery_ignores_the_same_binary_name_in_another_directory() {
     let root = agent_test_home("running-core-process-scope");
