@@ -51,6 +51,13 @@ Core installation, version comparison, and offline installation are available fr
 mirror proxies or add custom HTTPS mirror prefixes; application and core updates prefer the selected
 channel and fall back automatically.
 
+Application and core updates are each checked once in the background at startup, then automatically
+on every fifth visit to **Version Management** (visits 5, 10, 15, and so on). Their respective
+**Check for Updates** buttons remain available for manual checks. Re-renders do not count as visits,
+and restarting the application resets the counter. Changing download sources does not trigger a
+check, and reopening the page preserves the saved source. Checks do not automatically download or
+install updates.
+
 ### OAuth account authorization
 
 ![OAuth account authorization](docs/screenshots/en/2.png)

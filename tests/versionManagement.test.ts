@@ -1,13 +1,103 @@
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import {
   DEFAULT_VERSION_DOWNLOAD_SOURCE,
   displayAppVersion,
 } from '../src/pages/VersionManagementPage';
 import { coreUpdateAvailable } from '../src/coreUpdate';
 import { appUpdateIndicatorState } from '../src/appUpdateModel';
+import { createVersionManagementVisitTracker } from '../src/services/versionManagementVisits';
+
+describe('VersionManagement visit counting', () => {
+  it('checks on the fifth, tenth, and fifteenth visits, but not in between', () => {
+    const recordVisit = createVersionManagementVisitTracker();
+    const checkedVisits: number[] = [];
+    for (let visitNumber = 1; visitNumber <= 15; visitNumber += 1) {
+      if (recordVisit({})) checkedVisits.push(visitNumber);
+    }
+    expect(checkedVisits).toEqual([5, 10, 15]);
+  });
+
+  it('counts each mounted page once despite repeated effects or re-renders', () => {
+    const recordVisit = createVersionManagementVisitTracker();
+    for (let visitNumber = 1; visitNumber <= 10; visitNumber += 1) {
+      const visit = {};
+      expect(recordVisit(visit)).toBe(visitNumber % 5 === 0);
+      expect(recordVisit(visit)).toBe(false);
+      expect(recordVisit(visit)).toBe(false);
+    }
+  });
+
+  it('starts counting from zero for a new application session', () => {
+    const recordVisit = createVersionManagementVisitTracker();
+    for (let visitNumber = 1; visitNumber <= 4; visitNumber += 1) {
+      expect(recordVisit({})).toBe(false);
+    }
+    const recordNewSessionVisit = createVersionManagementVisitTracker();
+    expect(recordNewSessionVisit({})).toBe(false);
+    expect(recordVisit({})).toBe(true);
+  });
+});
+
+describe('VersionManagement update triggers', () => {
+  const pageSource = ts.createSourceFile(
+    'VersionManagementPage.tsx',
+    readFileSync(new URL('../src/pages/VersionManagementPage.tsx', import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+
+  const findCalls = (name: string) => {
+    const calls: ts.CallExpression[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && node.expression.getText(pageSource) === name) {
+        calls.push(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(pageSource);
+    return calls;
+  };
+
+  for (const name of ['checkAppUpdate', 'checkLatest']) {
+    it(`calls ${name} only from the visit effect and its manual check button`, () => {
+      const calls = findCalls(name);
+      expect(calls).toHaveLength(2);
+      const triggers = calls.map((call) => {
+        let ancestor: ts.Node | undefined = call.parent;
+        while (ancestor) {
+          if (ts.isJsxAttribute(ancestor)) return ancestor.name.getText(pageSource);
+          if (ts.isCallExpression(ancestor)
+            && ancestor.expression.getText(pageSource) === 'useEffect') return 'useEffect';
+          ancestor = ancestor.parent;
+        }
+        return undefined;
+      });
+      expect(triggers.sort()).toEqual(['onClick', 'useEffect']);
+    });
+  }
+
+  it('only changes the saved download source from the source selector handler', () => {
+    const sourceWrites = findCalls('invoke').filter((call) => {
+      const command = call.arguments[0];
+      return command && ts.isStringLiteral(command) && command.text === 'set_download_source';
+    });
+    expect(sourceWrites).toHaveLength(1);
+    let ancestor: ts.Node | undefined = sourceWrites[0];
+    while (ancestor && !(ts.isVariableDeclaration(ancestor)
+      && ancestor.initializer && ts.isArrowFunction(ancestor.initializer))) {
+      ancestor = ancestor.parent;
+    }
+    expect(ancestor && ts.isVariableDeclaration(ancestor)
+      ? ancestor.name.getText(pageSource)
+      : undefined).toBe('updateVersionSource');
+  });
+});
 
 describe('VersionManagement helper functions', () => {
-  it('defaults every version management session to GitHub', () => {
+  it('uses GitHub as the fallback before saved download source settings load', () => {
     expect(DEFAULT_VERSION_DOWNLOAD_SOURCE).toBe('github');
   });
 

@@ -16,6 +16,7 @@ import { useCoreRuntime } from '../coreRuntime';
 import { useCoreUpdate } from '../coreUpdate';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
+import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
 
 export type CoreInstallResult = {
   version: string;
@@ -64,6 +65,7 @@ function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof
 export type MessageType = 'info' | 'success' | 'error';
 const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
 export const DEFAULT_VERSION_DOWNLOAD_SOURCE = 'github';
+const recordVersionManagementVisit = createVersionManagementVisitTracker();
 
 export function displayAppVersion(version: string) {
   const resolvedVersion = version.trim();
@@ -119,6 +121,7 @@ export function VersionManagementPage() {
   const toastTimerRef = useRef<number | null>(null);
   const completedInstallKeyRef = useRef('');
   const manualInstallInProgressRef = useRef(false);
+  const pageVisitRef = useRef({});
 
   const showToast = (message: string, tone: MessageType = 'info') => {
     if (toastTimerRef.current !== null) {
@@ -206,9 +209,6 @@ export function VersionManagementPage() {
       showToast(t('kernel.versions.sourceSwitched', {
         source: downloadSourceLabel(settings.source, t),
       }), 'info');
-      setVersionSourceSaving(false);
-      await checkAppUpdate();
-      await checkLatest(true);
     } catch (error) {
       await loadVersionSourceSettings();
       setVersionSourceError(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }));
@@ -230,9 +230,6 @@ export function VersionManagementPage() {
       setCustomMirrorDialogOpen(false);
       resetLatest();
       showToast(t('kernel.versions.customMirrorAdded'), 'success');
-      setVersionSourceSaving(false);
-      await checkAppUpdate();
-      await checkLatest(true);
     } catch (error) {
       const message = t('kernel.versions.customMirrorAddFailed', { error: String(error) });
       setVersionSourceError(message);
@@ -252,10 +249,8 @@ export function VersionManagementPage() {
       });
       setVersionSource(settings);
       showToast(t('kernel.versions.customMirrorRemoved'), 'success');
-      setVersionSourceSaving(false);
       if (wasSelected) {
-        await checkAppUpdate();
-        await checkLatest(true);
+        resetLatest();
       }
     } catch (error) {
       const message = t('kernel.versions.customMirrorRemoveFailed', { error: String(error) });
@@ -352,6 +347,16 @@ export function VersionManagementPage() {
   };
 
   useEffect(() => {
+    if (!recordVersionManagementVisit(pageVisitRef.current)) return;
+    if (!checkingAppUpdate && !appUpdateTask.running) {
+      void checkAppUpdate();
+    }
+    if (!checkingLatest) {
+      void checkLatest();
+    }
+  }, [appUpdateTask.running, checkAppUpdate, checkLatest, checkingAppUpdate, checkingLatest]);
+
+  useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     let unlistenConfig: (() => void) | null = null;
@@ -392,33 +397,7 @@ export function VersionManagementPage() {
     });
 
     loadInstallTask();
-
-    const initializeDefaultVersionSource = async () => {
-      setVersionSourceSaving(true);
-      setVersionSourceError('');
-      try {
-        const settings = await invoke<VersionSourceSettings>('set_download_source', {
-          source: DEFAULT_VERSION_DOWNLOAD_SOURCE,
-        });
-        if (disposed) return;
-        setVersionSource(settings);
-        resetLatest();
-        await Promise.all([
-          checkAppUpdate(),
-          checkLatest(true),
-        ]);
-      } catch (error) {
-        if (!disposed) {
-          await loadVersionSourceSettings();
-          setVersionSourceError(String(error));
-        }
-      } finally {
-        if (!disposed) {
-          setVersionSourceSaving(false);
-        }
-      }
-    };
-    void initializeDefaultVersionSource();
+    void loadVersionSourceSettings();
 
     void getVersion()
       .then((version) => {
