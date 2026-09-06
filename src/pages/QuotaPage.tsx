@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, LoaderCircle, RefreshCw } from 'lucide-react';
+import { confirm } from '@tauri-apps/plugin-dialog';
+import { resetCodexQuotaWithConfirmation } from '../services/quotaActions';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
@@ -8,7 +10,6 @@ import kimiIcon from '../assets/icons/kimi-light.svg';
 import { managementApi, readBoolean, responseList } from '../services/managementApi';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import {
-  consumeCodexResetCredit,
   fileName,
   formatQuotaTimestamp,
   idleQuota,
@@ -84,43 +85,28 @@ export function QuotaPage() {
     if (getQuotaCacheSnapshot()[key]?.status === 'loading') return;
     const cacheGeneration = captureQuotaCacheGeneration();
     updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
-    const result = await loadQuota(file, { confirmXaiPaidProbe: () => window.confirm(t('quota.xaiProbeConfirm')) });
+    const result = await loadQuota(file, {
+      confirmXaiPaidProbe: () => confirm(t('quota.xaiProbeConfirm'), { title: t('quota.title'), kind: 'warning' }),
+    });
     commitQuotaCacheIfCurrent(cacheGeneration, () => {
       updateQuotaCache((current) => ({ ...current, [key]: result }));
     });
   }, [t]);
 
   const resetCodexQuota = useCallback(async (file: AuthFile, quota: QuotaState) => {
-    if (getQuotaCacheSnapshot()[quotaKey(file)]?.status === 'loading') return;
-    const confirmed = window.confirm([
-      t('quota.confirm.title', { name: fileName(file) }),
-      '',
-      t('quota.confirm.cost'),
-      t('quota.confirm.available', { count: quota.resetCredits ?? '—' }),
-      t('quota.confirm.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) }),
-      '',
-      t('quota.confirm.warning'),
-    ].join('\n'));
-    if (!confirmed) return;
-    const key = quotaKey(file);
-    const cacheGeneration = captureQuotaCacheGeneration();
-    updateQuotaCache((current) => ({ ...current, [key]: { ...current[key], status: 'loading', rows: [] } }));
+    setError('');
     try {
-      const result = await consumeCodexResetCredit(file);
-      commitQuotaCacheIfCurrent(cacheGeneration, () => {
-        updateQuotaCache((current) => ({ ...current, [key]: result }));
-      });
+      await resetCodexQuotaWithConfirmation(file, () => confirm([
+        t('quota.confirm.title', { name: fileName(file) }),
+        '',
+        t('quota.confirm.cost'),
+        t('quota.confirm.available', { count: quota.resetCredits ?? '—' }),
+        t('quota.confirm.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) }),
+        '',
+        t('quota.confirm.warning'),
+      ].join('\n'), { title: t('quota.reset'), kind: 'warning' }));
     } catch (requestError) {
-      commitQuotaCacheIfCurrent(cacheGeneration, () => {
-        updateQuotaCache((current) => ({
-          ...current,
-          [key]: {
-            status: 'error',
-            rows: [],
-            error: requestError instanceof Error ? requestError.message : String(requestError),
-          },
-        }));
-      });
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
     }
   }, [locale, t]);
 
@@ -140,7 +126,9 @@ export function QuotaPage() {
         const batch = files.slice(index, index + REFRESH_CONCURRENCY);
         await Promise.all(batch.map(async (file) => {
           const result = await loadQuota(file, {
-            confirmXaiPaidProbe: () => window.confirm(`${fileName(file)}\n\n${t('quota.xaiProbeConfirm')}`),
+            confirmXaiPaidProbe: () => confirm(`${fileName(file)}\n\n${t('quota.xaiProbeConfirm')}`, {
+              title: t('quota.title'), kind: 'warning',
+            }),
           });
           commitQuotaCacheIfCurrent(cacheGeneration, () => {
             updateQuotaCache((current) => ({ ...current, [quotaKey(file)]: result }));

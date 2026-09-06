@@ -1,4 +1,5 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import {
   Check,
   Copy,
@@ -216,7 +217,9 @@ export function AuthFileManagementPage() {
     if (getQuotaCacheSnapshot()[key]?.status === 'loading') return;
     const cacheGeneration = captureQuotaCacheGeneration();
     updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
-    const result = await loadQuota(file, { confirmXaiPaidProbe: () => window.confirm(t('quota.xaiProbeConfirm')) });
+    const result = await loadQuota(file, {
+      confirmXaiPaidProbe: () => confirm(t('quota.xaiProbeConfirm'), { title: t('quota.title'), kind: 'warning' }),
+    });
     commitQuotaCacheIfCurrent(cacheGeneration, () => {
       updateQuotaCache((current) => ({ ...current, [key]: result }));
     });
