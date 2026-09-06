@@ -896,6 +896,10 @@ export const zhCN = {
   'apiAccess.notice.deleted': '接入已删除',
   'apiAccess.notice.enabled': '接入已启用',
   'apiAccess.notice.disabled': '接入已停用',
+  'apiAccess.orderScheduling': '按列表顺序调度',
+  'apiAccess.orderSchedulingHint':
+    '启用后，拖动接入会将其列表位置写入 priority 字段，核心在该分类内严格按从上到下的顺序故障转移。下次拖动会覆盖未拖动接入的已有优先级。关闭开关不会清除已写入的 priority。',
+  'apiAccess.orderSchedulingApplied': '已按当前列表顺序同步优先级',
   'apiAccess.title': 'API 接入',
   'apiAccess.count': '{count} 个接入',
   'apiAccess.add': '新增',

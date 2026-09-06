@@ -897,6 +897,10 @@ export const jaOverrides = {
   'apiAccess.notice.deleted': '接続を削除しました',
   'apiAccess.notice.enabled': '接続を有効にしました',
   'apiAccess.notice.disabled': '接続を無効にしました',
+  'apiAccess.orderScheduling': 'リスト順序でスケジュール',
+  'apiAccess.orderSchedulingHint':
+    '有効にすると、接続をドラッグした際にそのリスト位置が priority フィールドに書き込まれ、コアはこのカテゴリ内で上から下へ厳密にフェイルオーバーします。次回のドラッグで未操作の接続の既存優先度が上書きされます。スイッチをオフにしても書き込み済みの priority はクリアされません。',
+  'apiAccess.orderSchedulingApplied': '現在のリスト順序から優先度を同期しました',
   'apiAccess.title': 'API 接続',
   'apiAccess.count': '接続 {count} 件',
   'apiAccess.add': '追加',

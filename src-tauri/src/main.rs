@@ -597,6 +597,7 @@ struct GuiConfigFile {
     #[serde(deserialize_with = "deserialize_gui_api_keys")]
     api_keys: Vec<GuiApiKeyEntry>,
     api_access_remarks: Vec<GuiApiAccessRemark>,
+    api_access_order_scheduling: bool,
     management_secret_key: String,
     debug: bool,
     commercial_mode: bool,
@@ -889,6 +890,7 @@ impl Default for GuiConfigFile {
             auth_dir: DEFAULT_AUTH_DIR.to_string(),
             api_keys: vec![default_api_key_entry()],
             api_access_remarks: Vec::new(),
+            api_access_order_scheduling: false,
             // Populated with an OS-generated secret while loading the GUI
             // configuration. Core hashes the value written into config.yaml.
             management_secret_key: String::new(),
@@ -1976,6 +1978,13 @@ impl GuiConfigState {
         })
     }
 
+    fn set_api_access_order_scheduling(&self, enabled: bool) -> Result<GuiConfigFile, String> {
+        self.update(|config| {
+            config.api_access_order_scheduling = enabled;
+            Ok(())
+        })
+    }
+
     fn set_software_preferences(
         &self,
         close_behavior: WindowsCloseBehavior,
@@ -2481,6 +2490,8 @@ fn main() {
             resolve_windows_close_request,
             get_software_settings,
             save_software_settings,
+            get_api_access_order_scheduling,
+            set_api_access_order_scheduling,
             get_agent_config_statuses,
             refresh_agent_config_statuses,
             get_agent_models,

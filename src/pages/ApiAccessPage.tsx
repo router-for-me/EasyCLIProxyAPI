@@ -773,6 +773,28 @@ export const reorderProviderRecords = (
   return next;
 };
 
+// After a reorder, a scoped row's display position equals its record index sorted
+// ascending within the scope block, so priorities are derived straight from position.
+export const applyOrderSchedulingPriorities = (
+  records: Record<string, unknown>[],
+  scopedRows: ProviderRecordIdentity[],
+): Record<string, unknown>[] => {
+  const scopedIndexes = scopedRows
+    .map((row) => resolveProviderRecordIndex(records, row))
+    .filter((index, position, indexes) => index >= 0 && indexes.indexOf(index) === position)
+    .sort((left, right) => left - right);
+  if (scopedIndexes.length === 0) return records;
+  const next = records.map(stripResponseFields);
+  scopedIndexes.forEach((recordIndex, position) => {
+    const record = { ...next[recordIndex] };
+    const priority = scopedIndexes.length - 1 - position;
+    if (priority > 0) record.priority = priority;
+    else delete record.priority;
+    next[recordIndex] = record;
+  });
+  return next;
+};
+
 export const providerRecordWithDisabledState = (
   section: ProviderSection,
   record: Record<string, unknown>,
@@ -810,12 +832,25 @@ export function ApiAccessPage() {
   const [apiAccessRemarks, setApiAccessRemarks] = useState<Record<string, string>>({});
   const [healthDialogRow, setHealthDialogRow] = useState<ProviderRow | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [orderScheduling, setOrderScheduling] = useState(false);
   const activeDefinition = definitionFor(activeCategory);
   const activeSection = activeDefinition.section;
   const dragSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+
+  useEffect(() => {
+    let disposed = false;
+    void invoke<boolean>('get_api_access_order_scheduling')
+      .then((enabled) => {
+        if (!disposed) setOrderScheduling(enabled);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const loadProviders = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -1127,6 +1162,36 @@ export function ApiAccessPage() {
     }
   };
 
+  const toggleOrderScheduling = async (enabled: boolean) => {
+    setOrderScheduling(enabled);
+    try {
+      await invoke('set_api_access_order_scheduling', { enabled });
+    } catch (requestError) {
+      setNotice(requestErrorMessage(requestError), 'error');
+      return;
+    }
+    if (!enabled) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      const latestConfig = await managementApi.get('/config');
+      const latestRows = sectionRecordsFromConfig(latestConfig, activeSection);
+      const categoryRows = latestRows
+        .map((record, index) => rowFromRecord(activeSection, record, index))
+        .filter((row) => providerCategoryMatchesRecord(activeCategory, row.record));
+      if (categoryRows.length > 0) {
+        const prioritized = applyOrderSchedulingPriorities(latestRows, categoryRows);
+        await managementApi.put(`/${activeSection}`, prioritized);
+      }
+      await loadProviders(false);
+      setNotice(t('apiAccess.orderSchedulingApplied'));
+    } catch (requestError) {
+      setNotice(requestErrorMessage(requestError), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reorderProviders = async (source: ProviderRow, target: ProviderRow) => {
     if (source.section !== target.section || source.index === target.index) return;
     setFeedbackRow(providerDragId(source));
@@ -1138,7 +1203,8 @@ export function ApiAccessPage() {
       const latestRows = sectionRecordsFromConfig(latestConfig, source.section);
       const nextRows = reorderProviderRecords(latestRows, rows, source, target);
       if (!nextRows) throw new Error(t('apiAccess.error.stale'));
-      await managementApi.put(`/${source.section}`, nextRows);
+      const scheduledRows = orderScheduling ? applyOrderSchedulingPriorities(nextRows, rows) : nextRows;
+      await managementApi.put(`/${source.section}`, scheduledRows);
       await loadProviders(false);
     } catch (requestError) {
       await loadProviders(false);
@@ -1162,7 +1228,12 @@ export function ApiAccessPage() {
       target,
     );
     if (optimisticRows) {
-      setRecords((current) => ({ ...current, [source.section]: optimisticRows }));
+      setRecords((current) => ({
+        ...current,
+        [source.section]: orderScheduling
+          ? applyOrderSchedulingPriorities(optimisticRows, rows)
+          : optimisticRows,
+      }));
     }
     void reorderProviders(source, target);
   };
@@ -1181,6 +1252,19 @@ export function ApiAccessPage() {
           <h1>{t('apiAccess.title')}</h1>
         </div>
         <div className="management-heading-actions">
+          <label className="switch-control api-access-order-scheduling" title={t('apiAccess.orderSchedulingHint')}>
+            <input
+              type="checkbox"
+              checked={orderScheduling}
+              onChange={(event) => void toggleOrderScheduling(event.currentTarget.checked)}
+              disabled={busy || loading}
+              aria-label={t('apiAccess.orderScheduling')}
+            />
+            <span className="switch-track" />
+          </label>
+          <span className="muted-summary" title={t('apiAccess.orderSchedulingHint')}>
+            {t('apiAccess.orderScheduling')}
+          </span>
           <span className="muted-summary">{t('apiAccess.count', { count: totalCount })}</span>
           <button type="button" className="secondary-button compact-button" onClick={() => void loadProviders()} disabled={loading || busy}>
             <RefreshCw size={16} aria-hidden="true" />
