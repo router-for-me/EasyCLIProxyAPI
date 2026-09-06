@@ -3,10 +3,12 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
+  AlertCircle,
   Check,
   Copy,
   Eye,
   EyeOff,
+  Info,
 } from 'lucide-react';
 import { type CoreStatus, useCoreRuntime } from '../coreRuntime';
 import openaiIcon from '../assets/icons/openai-light.svg';
@@ -15,9 +17,9 @@ import geminiIcon from '../assets/icons/gemini.svg';
 import { clientApiProfiles } from '../services/clientAccess';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
-import { InlineNotice, useAppNotice } from '../appNotice';
 import { VersionManagementPage, displayAppVersion } from './VersionManagementPage';
 
+type MessageType = 'info' | 'success' | 'error';
 type CoreProcessCommand = 'start_core_process' | 'stop_core_process' | 'restart_core_process';
 
 type GuiSettings = {
@@ -56,9 +58,10 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const [listenHost, setListenHost] = useState('127.0.0.1');
   const [customPort, setCustomPort] = useState('8317');
   const [processBusy, setProcessBusy] = useState(false);
-  const processFeedback = useAppNotice();
-  const { showNotice: showProcessNotice, clearNotice: clearProcessNotice } = processFeedback;
-  const copyFeedback = useAppNotice();
+  const [processNotice, setProcessNotice] = useState<{
+    message: string;
+    tone: MessageType;
+  } | null>(null);
   const [copiedApiField, setCopiedApiField] = useState('');
   const [homeApiKey, setHomeApiKey] = useState<string | null | undefined>(undefined);
   const [homeApiKeyError, setHomeApiKeyError] = useState(false);
@@ -66,7 +69,20 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const [tlsEnabled, setTlsEnabled] = useState(false);
 
   const savedPortRef = useRef(8317);
+  const processNoticeTimerRef = useRef<number | null>(null);
   const copiedApiTimerRef = useRef<number | null>(null);
+
+  const showProcessNotice = (message: string, tone: MessageType) => {
+    if (processNoticeTimerRef.current !== null) {
+      window.clearTimeout(processNoticeTimerRef.current);
+    }
+
+    setProcessNotice({ message, tone });
+    processNoticeTimerRef.current = window.setTimeout(() => {
+      setProcessNotice(null);
+      processNoticeTimerRef.current = null;
+    }, 3600);
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -95,13 +111,19 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     return () => {
       disposed = true;
       unlistenConfig?.();
+      if (processNoticeTimerRef.current !== null) {
+        window.clearTimeout(processNoticeTimerRef.current);
+      }
       if (copiedApiTimerRef.current !== null) {
         window.clearTimeout(copiedApiTimerRef.current);
       }
     };
   }, []);
 
-  const runCoreProcessCommand = async (command: CoreProcessCommand) => {
+  const runCoreProcessCommand = async (
+    command: CoreProcessCommand,
+    messages?: { success?: string; failure?: string },
+  ) => {
     const actionLabel =
       command === 'start_core_process'
         ? t('kernel.action.start')
@@ -109,20 +131,19 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
           ? t('kernel.action.stop')
           : t('kernel.action.restart');
     setProcessBusy(true);
-    clearProcessNotice();
 
     try {
       const result = await invoke<CoreStatus>(command);
       publishStatus(result);
-      if (command === 'restart_core_process') {
-        showProcessNotice({ key: 'kernel.notice.restarted' }, 'success');
-      }
+      showProcessNotice(messages?.success ?? t('kernel.notice.actionSuccess', { action: actionLabel }), 'success');
       return true;
     } catch (error) {
       const errorMessage = String(error);
       await refreshStatus();
       showProcessNotice(
-        { key: 'kernel.notice.actionFailed', variables: { action: actionLabel, error: errorMessage } },
+        messages?.failure
+          ? `${messages.failure}: ${errorMessage}`
+          : t('kernel.notice.actionFailed', { action: actionLabel, error: errorMessage }),
         'error',
       );
       return false;
@@ -160,11 +181,11 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     }
   };
 
-  const copyApiValue = async (value: string, field: string) => {
-    copyFeedback.clearNotice();
+  const copyApiValue = async (value: string, field: string, message: string) => {
     try {
       await navigator.clipboard.writeText(value);
       setCopiedApiField(field);
+      showProcessNotice(message, 'success');
       if (copiedApiTimerRef.current !== null) {
         window.clearTimeout(copiedApiTimerRef.current);
       }
@@ -173,7 +194,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         copiedApiTimerRef.current = null;
       }, 1800);
     } catch {
-      copyFeedback.showNotice({ key: 'kernel.notice.copyFailed' }, 'error');
+      showProcessNotice(t('kernel.notice.copyFailed'), 'error');
     }
   };
 
@@ -220,7 +241,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
             <div>
               <h2>{t('kernel.control.title')}</h2>
             </div>
-            <span className={`state-pill ${statusTone}`} title={statusError || undefined} role="status">
+            <span className={`state-pill ${statusTone}`} title={statusError || undefined}>
               {coreProcessBusy ? t('common.processing') : statusLabel}
             </span>
           </div>
@@ -259,6 +280,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               onClick={() =>
                 void runCoreProcessCommand(
                   coreRunning ? 'stop_core_process' : 'start_core_process',
+                  { success: coreRunning ? t('kernel.notice.stopped') : t('kernel.notice.started') },
                 )
               }
             >
@@ -269,7 +291,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               className="secondary-button"
               disabled={!coreInstalled || !coreRunning || coreProcessBusy}
               onClick={() =>
-                void runCoreProcessCommand('restart_core_process')
+                void runCoreProcessCommand('restart_core_process', { success: t('kernel.notice.restarted') })
               }
             >
               {t('kernel.action.restart')}
@@ -283,7 +305,6 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               {t('kernel.control.refresh')}
             </button>
           </div>
-          <InlineNotice key={processFeedback.revision} notice={processFeedback.notice} onDismiss={processFeedback.clearNotice} />
         </div>
       </div>
 
@@ -312,9 +333,9 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                   <button
                     type="button"
                     className="icon-button quiet"
-                    onClick={() => void copyApiValue(homeApiKey, 'home:apikey')}
-                    title={copiedApiField === 'home:apikey' ? t('config.notice.keyCopied') : t('config.keys.copy')}
-                    aria-label={copiedApiField === 'home:apikey' ? t('config.notice.keyCopied') : t('config.keys.copy')}
+                    onClick={() => void copyApiValue(homeApiKey, 'home:apikey', t('config.notice.keyCopied'))}
+                    title={t('config.keys.copy')}
+                    aria-label={t('config.keys.copy')}
                   >
                     {copiedApiField === 'home:apikey' ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
                   </button>
@@ -331,7 +352,6 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
           </span>
         </div>
 
-        <InlineNotice key={copyFeedback.revision} notice={copyFeedback.notice} onDismiss={copyFeedback.clearNotice} />
         <div className="client-api-grid">
           {apiProfiles.map((profile) => (
             <article key={profile.id} className={`client-api-card ${profile.id}`}>
@@ -356,10 +376,11 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                       void copyApiValue(
                         profile.baseUrl,
                         `${profile.id}:base`,
+                        t('kernel.access.apiCopied', { name: profile.name }),
                       )
                     }
-                    title={t(copiedApiField === `${profile.id}:base` ? 'kernel.access.apiCopied' : 'kernel.access.copyApi', { name: profile.name })}
-                    aria-label={t(copiedApiField === `${profile.id}:base` ? 'kernel.access.apiCopied' : 'kernel.access.copyApi', { name: profile.name })}
+                    title={t('kernel.access.copyApi', { name: profile.name })}
+                    aria-label={t('kernel.access.copyApi', { name: profile.name })}
                   >
                     {copiedApiField === `${profile.id}:base` ? (
                       <Check size={15} aria-hidden="true" />
@@ -374,6 +395,22 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         </div>
       </section>
 
+      {processNotice ? (
+        <div
+          className={`config-toast ${processNotice.tone}`}
+          role="status"
+          title={processNotice.message}
+        >
+          {processNotice.tone === 'success' ? (
+            <Check size={17} aria-hidden="true" />
+          ) : processNotice.tone === 'error' ? (
+            <AlertCircle size={17} aria-hidden="true" />
+          ) : (
+            <Info size={17} aria-hidden="true" />
+          )}
+          <span>{processNotice.message}</span>
+        </div>
+      ) : null}
     </section>
   );
 }

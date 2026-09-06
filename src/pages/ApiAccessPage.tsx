@@ -68,8 +68,6 @@ import {
 } from '../services/providerHealthCheck';
 import { modelMatchesRule } from '../services/oauthModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
-import type { MessageKey } from '../i18n/resources';
-import { InlineNotice, useAppNotice } from '../appNotice';
 
 export type ProviderSection =
   | 'gemini-api-key'
@@ -87,7 +85,7 @@ type ProviderDefinition = {
   id: ProviderCategory;
   section: ProviderSection;
   responseKey: string;
-  labelKey: MessageKey;
+  label: string;
   icon: string;
   openAi: boolean;
 };
@@ -212,12 +210,12 @@ export type ProviderDraft = {
 };
 
 const providerDefinitions: ProviderDefinition[] = [
-  { id: 'codex-api-key', section: 'codex-api-key', responseKey: 'codex-api-key', labelKey: 'apiAccess.provider.codex', icon: codexIcon, openAi: false },
+  { id: 'codex-api-key', section: 'codex-api-key', responseKey: 'codex-api-key', label: 'Codex API', icon: codexIcon, openAi: false },
   {
     id: 'openai-compatibility',
     section: 'openai-compatibility',
     responseKey: 'openai-compatibility',
-    labelKey: 'aliases.source.openAiCompatible',
+    label: 'OpenAI 兼容',
     icon: openaiIcon,
     openAi: true,
   },
@@ -225,12 +223,12 @@ const providerDefinitions: ProviderDefinition[] = [
     id: 'deepseek',
     section: 'openai-compatibility',
     responseKey: 'openai-compatibility',
-    labelKey: 'apiAccess.provider.deepseek',
+    label: 'DeepSeek',
     icon: deepseekIcon,
     openAi: true,
   },
-  { id: 'claude-api-key', section: 'claude-api-key', responseKey: 'claude-api-key', labelKey: 'apiAccess.provider.claude', icon: claudeIcon, openAi: false },
-  { id: 'gemini-api-key', section: 'gemini-api-key', responseKey: 'gemini-api-key', labelKey: 'apiAccess.provider.gemini', icon: geminiIcon, openAi: false },
+  { id: 'claude-api-key', section: 'claude-api-key', responseKey: 'claude-api-key', label: 'Claude', icon: claudeIcon, openAi: false },
+  { id: 'gemini-api-key', section: 'gemini-api-key', responseKey: 'gemini-api-key', label: 'Gemini', icon: geminiIcon, openAi: false },
 ];
 
 export const providerSectionOrder = providerDefinitions.map((definition) => definition.id);
@@ -292,7 +290,7 @@ const rowFromRecord = (
     record,
     name: definitionFor(section).openAi
       ? readString(record, 'name') || translate(getCurrentLocale(), 'apiAccess.compatibleName', { number: index + 1 })
-      : translate(getCurrentLocale(), definitionFor(section).labelKey),
+      : definitionFor(section).label,
     apiKey: entry ? readString(entry, 'api-key', 'apiKey') : singleApiKey,
     apiKeys: entry ? apiKeys : singleApiKey ? [singleApiKey] : [],
     baseUrl: readString(record, 'base-url', 'baseUrl'),
@@ -801,9 +799,7 @@ export function ApiAccessPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const feedback = useAppNotice();
-  const { showNotice: setNotice } = feedback;
-  const [feedbackRow, setFeedbackRow] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRow, setEditingRow] = useState<ProviderRow | null>(null);
   const [dialogDraft, setDialogDraft] = useState<ProviderDraft>(emptyProviderDraft);
@@ -817,8 +813,8 @@ export function ApiAccessPage() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const loadProviders = useCallback(async (showLoading = true) => {
-    if (showLoading) setLoading(true);
+  const loadProviders = useCallback(async () => {
+    setLoading(true);
     setError('');
     try {
       const responses = await Promise.allSettled(
@@ -838,7 +834,7 @@ export function ApiAccessPage() {
           if (result.status === 'fulfilled') {
             next[result.value.section] = result.value.records;
           } else {
-            failures.push(`${t(definition.labelKey)}: ${String(result.reason)}`);
+            failures.push(`${definition.label}：${String(result.reason)}`);
           }
         });
         return next;
@@ -849,7 +845,7 @@ export function ApiAccessPage() {
     } catch (requestError) {
       setError(String(requestError));
     } finally {
-      if (showLoading) setLoading(false);
+      setLoading(false);
     }
   }, []);
 
@@ -905,8 +901,6 @@ export function ApiAccessPage() {
   );
 
   const openCreate = () => {
-    feedback.clearNotice();
-    setFeedbackRow(null);
     setError('');
     setEditingRow(null);
     setDialogDraft(createProviderDraft(activeCategory));
@@ -914,8 +908,6 @@ export function ApiAccessPage() {
   };
 
   const openEdit = (row: ProviderRow) => {
-    feedback.clearNotice();
-    setFeedbackRow(null);
     setError('');
     setEditingRow(row);
     const draft = draftFromRow(row);
@@ -926,7 +918,6 @@ export function ApiAccessPage() {
   };
 
   const saveProvider = async (nextDraft: ProviderDraft): Promise<ProviderSaveResult> => {
-    setFeedbackRow(null);
     const definition = activeDefinition;
     const preparedDraft = applyProviderRemarkIdentity(
       activeCategory,
@@ -961,7 +952,7 @@ export function ApiAccessPage() {
     let providerHeaders: Record<string, string> = {};
     try {
       if (baseUrl) baseUrl = normalizeBaseUrl(baseUrl);
-      if (baseUrlRequired && !baseUrl) throw new Error(t('apiAccess.error.baseRequired', { provider: t(definition.labelKey) }));
+      if (baseUrlRequired && !baseUrl) throw new Error(t('apiAccess.error.baseRequired', { provider: definition.label }));
       providerHeaders = parseProviderHeaders(preparedDraft.headersText ?? '');
     } catch (requestError) {
       return { saved: false, target: 'form', error: requestErrorMessage(requestError) };
@@ -1055,8 +1046,6 @@ export function ApiAccessPage() {
 
   const deleteRow = async (row: ProviderRow) => {
     if (!window.confirm(t('apiAccess.deleteConfirm', { remark: row.remark || row.name }))) return;
-    setFeedbackRow(providerDragId(row));
-    feedback.clearNotice();
     setBusy(true);
     setError('');
     try {
@@ -1075,18 +1064,16 @@ export function ApiAccessPage() {
           remark: '',
         },
       });
-      setFeedbackRow(null);
-      setNotice({ key: 'apiAccess.notice.deleted' });
+      setNotice(t('apiAccess.notice.deleted'));
       await loadProviders();
     } catch (requestError) {
-      setNotice(requestErrorMessage(requestError), 'error');
+      setError(String(requestError));
     } finally {
       setBusy(false);
     }
   };
 
   const toggleProvider = async (row: ProviderRow) => {
-    setFeedbackRow(providerDragId(row));
     setBusy(true);
     setError('');
     setNotice('');
@@ -1119,9 +1106,10 @@ export function ApiAccessPage() {
         );
         await managementApi.put(`/${row.section}`, nextRows);
       }
-      await loadProviders(false);
+      if (!currentlyDisabled) setNotice(t('apiAccess.notice.disabled'));
+      await loadProviders();
     } catch (requestError) {
-      setNotice(requestErrorMessage(requestError), 'error');
+      setError(String(requestError));
     } finally {
       setBusy(false);
     }
@@ -1129,7 +1117,6 @@ export function ApiAccessPage() {
 
   const reorderProviders = async (source: ProviderRow, target: ProviderRow) => {
     if (source.section !== target.section || source.index === target.index) return;
-    setFeedbackRow(providerDragId(source));
     setBusy(true);
     setError('');
     setNotice('');
@@ -1139,10 +1126,10 @@ export function ApiAccessPage() {
       const nextRows = reorderProviderRecords(latestRows, rows, source, target);
       if (!nextRows) throw new Error(t('apiAccess.error.stale'));
       await managementApi.put(`/${source.section}`, nextRows);
-      await loadProviders(false);
+      await loadProviders();
     } catch (requestError) {
-      await loadProviders(false);
-      setNotice(requestErrorMessage(requestError), 'error');
+      await loadProviders();
+      setError(requestErrorMessage(requestError));
     } finally {
       setDragOverId(null);
       setBusy(false);
@@ -1178,6 +1165,7 @@ export function ApiAccessPage() {
     <section className="page management-page api-access-page">
       <header className="management-header">
         <div>
+          <span>Providers</span>
           <h1>{t('apiAccess.title')}</h1>
         </div>
         <div className="management-heading-actions">
@@ -1194,6 +1182,7 @@ export function ApiAccessPage() {
       </header>
 
       {error ? <div className="management-alert error">{error}</div> : null}
+      {notice ? <div className="management-alert success">{notice}</div> : null}
 
       <div className="provider-workbench real-provider-workbench">
         <aside className="panel provider-category-panel">
@@ -1202,15 +1191,11 @@ export function ApiAccessPage() {
               type="button"
               key={definition.id}
               className={definition.id === activeCategory ? 'active' : ''}
-              onClick={() => {
-                setActiveCategory(definition.id);
-                feedback.clearNotice();
-                setFeedbackRow(null);
-              }}
+              onClick={() => setActiveCategory(definition.id)}
               disabled={busy}
             >
               <img src={definition.icon} alt="" className="provider-logo" />
-              <span title={t(definition.labelKey)}>{t(definition.labelKey)}</span>
+              <span title={definition.label}>{definition.label}</span>
               <strong>{countForDefinition(definition)}</strong>
             </button>
           ))}
@@ -1219,7 +1204,7 @@ export function ApiAccessPage() {
         <section className="panel provider-resource-panel">
           <div className="management-panel-heading">
             <div>
-              <h2 title={t(activeDefinition.labelKey)}>{t(activeDefinition.labelKey)}</h2>
+              <h2 title={activeDefinition.label}>{activeDefinition.label}</h2>
               <span>{t('apiAccess.matches', { count: rows.length })}</span>
             </div>
             <div className="management-toolbar compact-toolbar">
@@ -1228,7 +1213,6 @@ export function ApiAccessPage() {
             </div>
           </div>
 
-          {feedbackRow === null ? <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} /> : null}
           {loading ? (
             <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('apiAccess.loading')}</div>
           ) : rows.length === 0 ? (
@@ -1270,7 +1254,6 @@ export function ApiAccessPage() {
                     </code>
                     <span className="provider-row-url" title={row.baseUrl || undefined}>{row.baseUrl || t('apiAccess.defaultUrl')}</span>
                     {row.models.length > 0 ? <span className="provider-row-models">{t('apiAccess.models.summary', { count: row.models.length })}</span> : null}
-                    {feedbackRow === providerDragId(row) ? <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} /> : null}
                   </div>
                   {row.priority === null ? null : (
                     <div className="provider-row-meta">
@@ -1830,7 +1813,7 @@ function ApiProviderDialog({
             rows={3}
           />
         </label>
-        <label><span>{t('apiAccess.field.baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
+        <label><span>Base URL</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
         {activeCategory === 'deepseek' ? (
           <div className="provider-preset-summary">
             <img src={deepseekIcon} alt="" className="provider-logo" />
@@ -1956,9 +1939,9 @@ function ApiProviderDialog({
                   <span>{t('apiAccess.cloak.mode')}</span>
                   <select value={draft.cloakMode ?? ''} onChange={(event) => updateTextField('cloakMode', event.currentTarget.value)}>
                     <option value="">{t('apiAccess.cloak.default')}</option>
-                    <option value="auto">{t('apiAccess.cloak.auto')}</option>
-                    <option value="always">{t('apiAccess.cloak.always')}</option>
-                    <option value="never">{t('apiAccess.cloak.never')}</option>
+                    <option value="auto">Auto</option>
+                    <option value="always">Always</option>
+                    <option value="never">Never</option>
                   </select>
                 </label>
                 <label className="multiline-field">
@@ -2003,7 +1986,7 @@ function ApiProviderDialog({
         <div className="model-discovery-backdrop" onMouseDown={(event) => event.currentTarget === event.target && setModelDiscoveryOpen(false)}>
           <section className="model-discovery-dialog" role="dialog" aria-modal="true" aria-labelledby="model-discovery-title">
             <div className="model-discovery-header">
-              <div><h2 id="model-discovery-title">{t('apiAccess.modelDialog.title')}</h2><span>{t(definition.labelKey)}</span></div>
+              <div><h2 id="model-discovery-title">{t('apiAccess.modelDialog.title')}</h2><span>{definition.label}</span></div>
               <button type="button" className="icon-button quiet" onClick={() => setModelDiscoveryOpen(false)} title={t('common.close')}><X size={18} /></button>
             </div>
 

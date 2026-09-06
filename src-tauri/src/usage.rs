@@ -5029,7 +5029,7 @@ mod tests {
         assert_eq!(overview.tps, 0.0);
         assert_eq!(overview.tps_sample_count, 0);
         assert_eq!(overview.cache_hit_rate, 0.2);
-        assert!((overview.estimated_cost - 0.0002564).abs() < 0.0000001);
+        assert!((overview.estimated_cost - 0.0003205).abs() < 0.0000001);
         assert_eq!(overview.priced_requests, 1);
         assert_eq!(analysis.models[0].key, "gpt-5.6-terra");
         assert_eq!(events.total, 1);
@@ -5108,7 +5108,7 @@ mod tests {
             ..CostTokens::default()
         };
         let standard = cost_for_price("openai/gpt-5.6-terra", "default", &standard_tokens, &terra);
-        assert!((standard - 13.69).abs() < 0.000001);
+        assert!((standard - 17.1125).abs() < 0.000001);
 
         let long_tokens = CostTokens {
             input: 300_000,
@@ -5120,7 +5120,7 @@ mod tests {
             ..CostTokens::default()
         };
         let long_priority = cost_for_price("gpt-5.6-terra", "priority", &long_tokens, &terra);
-        assert!((long_priority - 4.44).abs() < 0.000001);
+        assert!((long_priority - 5.55).abs() < 0.000001);
         assert!(official_model_price("unpriced-model").is_none());
     }
 
@@ -5135,7 +5135,7 @@ mod tests {
             find_model_price(&bundled, "openai/gpt-5.6-terra-high")
                 .unwrap()
                 .prompt,
-            2.0
+            2.5
         );
 
         upsert_model_price(
@@ -5152,7 +5152,7 @@ mod tests {
         )
         .unwrap();
         let prices = load_model_prices(&connection).unwrap();
-        assert_eq!(prices["gpt-5.6-terra"].prompt, 2.0);
+        assert_eq!(prices["gpt-5.6-terra"].prompt, 2.5);
         assert_eq!(prices["gpt-5.6-terra"].source, "builtin");
         drop(connection);
         fs::remove_dir_all(root).unwrap();

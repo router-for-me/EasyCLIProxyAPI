@@ -33,7 +33,6 @@ import {
 } from 'lucide-react';
 import { useCoreRuntime, type CoreStatus } from '../coreRuntime';
 import { useI18n } from '../i18n';
-import { InlineNotice, useAppNotice } from '../appNotice';
 import { webUiManagementUrl } from '../services/clientAccess';
 import { ThinkingAliasesPage } from './ThinkingAliasesPage';
 
@@ -78,6 +77,7 @@ type ConfigAction =
   | 'tls'
   | 'software'
   | null;
+type NoticeTone = 'success' | 'error';
 type ConfigSubpage = 'general' | 'network' | 'routing' | 'software' | 'aliases';
 type CloseBehavior = 'ask' | 'exit' | 'minimize-to-tray';
 type NetworkDraftField =
@@ -176,17 +176,7 @@ export function ConfigPanelPage() {
   const [redisUsageRetentionDraft, setRedisUsageRetentionDraft] = useState('60');
   const [loggingError, setLoggingError] = useState('');
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const keyFeedback = useAppNotice();
-  const managementFeedback = useAppNotice();
-  const loggingFeedback = useAppNotice();
-  const networkFeedback = useAppNotice();
-  const routingFeedback = useAppNotice();
-  const retryFeedback = useAppNotice();
-  const tlsFeedback = useAppNotice();
-  const softwareFeedback = useAppNotice();
-  const renderFeedback = (feedback: ReturnType<typeof useAppNotice>) => (
-    <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
-  );
+  const [notice, setNotice] = useState<{ message: string; tone: NoticeTone } | null>(null);
   const [activeSubpage, setActiveSubpage] = useState<ConfigSubpage>('general');
   const [portDraft, setPortDraft] = useState('8317');
   const [hostDraft, setHostDraft] = useState('127.0.0.1');
@@ -203,6 +193,7 @@ export function ConfigPanelPage() {
   const [retryError, setRetryError] = useState('');
   const networkDraftDirtyRef = useRef<NetworkDraftDirty>(cleanNetworkDraft());
   const loggingDraftDirtyRef = useRef(false);
+  const noticeTimerRef = useRef<number | null>(null);
   const copyTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -224,11 +215,25 @@ export function ConfigPanelPage() {
     return () => {
       disposed = true;
       stop?.();
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
       if (copyTimerRef.current !== null) {
         window.clearTimeout(copyTimerRef.current);
       }
     };
   }, []);
+
+  const showNotice = (message: string, tone: NoticeTone) => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    setNotice({ message, tone });
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice(null);
+      noticeTimerRef.current = null;
+    }, 3200);
+  };
 
   const applySettings = (result: CoreConfigSettings, mode: DraftRefreshMode = 'replace') => {
     setSettings(result);
@@ -322,7 +327,7 @@ export function ConfigPanelPage() {
       setSoftwareDefaultTerminalDraft(result.defaultTerminal);
     } catch (error) {
       setSoftwareSettings(null);
-      softwareFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: String(error) } }, 'error');
+      showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
     } finally {
       setSoftwareSettingsLoading(false);
     }
@@ -352,19 +357,15 @@ export function ConfigPanelPage() {
     successMessage: string,
   ) => {
     setBusyAction(action);
-    const mutationFeedback = action === 'management-secret'
-      ? managementFeedback
-      : action === 'routing' ? routingFeedback : keyFeedback;
-    mutationFeedback.clearNotice();
     try {
       const result = await invoke<CoreConfigSettings>(command, args);
       setSettings(result);
       setLoadError('');
-      if (action !== 'routing') mutationFeedback.showNotice(successMessage, 'success');
+      showNotice(successMessage, 'success');
       return true;
     } catch (error) {
       if (settings) setSettings(settings);
-      mutationFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: String(error) } }, 'error');
+      showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
       void loadSettings('preserve');
       return false;
     } finally {
@@ -373,7 +374,6 @@ export function ConfigPanelPage() {
   };
 
   const openAddDialog = () => {
-    keyFeedback.clearNotice();
     setEditingApiKey(null);
     setNewApiKey('');
     setNewApiKeyRemark('');
@@ -383,7 +383,6 @@ export function ConfigPanelPage() {
   };
 
   const openEditDialog = (entry: CoreApiKey) => {
-    keyFeedback.clearNotice();
     setEditingApiKey(entry.apiKey);
     setNewApiKey(entry.apiKey);
     setNewApiKeyRemark(entry.remark);
@@ -497,7 +496,6 @@ export function ConfigPanelPage() {
 
   const saveCoreLoggingSettings = async () => {
     if (!settings || busyAction !== null) return;
-    loggingFeedback.clearNotice();
     const logsMaxTotalSizeMb = Number(logsMaxTotalSizeDraft);
     const errorLogsMaxFiles = Number(errorLogsMaxFilesDraft);
     const redisUsageQueueRetentionSeconds = Number(redisUsageRetentionDraft);
@@ -511,6 +509,7 @@ export function ConfigPanelPage() {
     ) {
       const message = t('config.diagnostics.error.nonNegativeInteger');
       setLoggingError(message);
+      showNotice(message, 'error');
       return;
     }
     if (
@@ -520,6 +519,7 @@ export function ConfigPanelPage() {
     ) {
       const message = t('config.diagnostics.error.redisRetention');
       setLoggingError(message);
+      showNotice(message, 'error');
       return;
     }
 
@@ -543,13 +543,14 @@ export function ConfigPanelPage() {
       if (commercialModeChanged && coreStatus?.running) {
         const status = await invoke<CoreStatus>('restart_core_process');
         publishStatus(status);
-        loggingFeedback.showNotice({ key: 'config.diagnostics.notice.savedAndRestarted' }, 'success');
+        showNotice(t('config.diagnostics.notice.savedAndRestarted'), 'success');
       } else {
-        loggingFeedback.showNotice({ key: 'config.diagnostics.notice.saved' }, 'success');
+        showNotice(t('config.diagnostics.notice.saved'), 'success');
       }
     } catch (error) {
       const message = t('config.error.saveFailed', { error: String(error) });
       setLoggingError(message);
+      showNotice(message, 'error');
       void refreshStatus();
       void loadSettings('preserve');
     } finally {
@@ -563,7 +564,7 @@ export function ConfigPanelPage() {
     try {
       await invoke<void>('open_core_logs_directory');
     } catch (error) {
-      loggingFeedback.showNotice({ key: 'config.diagnostics.error.openLogs', variables: { error: String(error) } }, 'error');
+      showNotice(t('config.diagnostics.error.openLogs', { error: String(error) }), 'error');
     } finally {
       setBusyAction(null);
     }
@@ -585,10 +586,10 @@ export function ConfigPanelPage() {
   };
 
   const copyApiKey = async (apiKey: string, index: number) => {
-    keyFeedback.clearNotice();
     try {
       await navigator.clipboard.writeText(apiKey);
       setCopiedIndex(index);
+      showNotice(t('config.notice.keyCopied'), 'success');
       if (copyTimerRef.current !== null) {
         window.clearTimeout(copyTimerRef.current);
       }
@@ -597,7 +598,7 @@ export function ConfigPanelPage() {
         copyTimerRef.current = null;
       }, 1800);
     } catch {
-      keyFeedback.showNotice({ key: 'config.notice.keyCopyFailed' }, 'error');
+      showNotice(t('config.notice.keyCopyFailed'), 'error');
     }
   };
 
@@ -616,12 +617,11 @@ export function ConfigPanelPage() {
         url: webUiManagementUrl(latestSettings.port, latestTlsSettings.enabled, latestSettings.host),
       });
     } catch (error) {
-      managementFeedback.showNotice({ key: 'config.webuiKey.error.openFailed', variables: { error: String(error) } }, 'error');
+      showNotice(t('config.webuiKey.error.openFailed', { error: String(error) }), 'error');
     }
   };
 
   const saveTlsSettings = async () => {
-    tlsFeedback.clearNotice();
     if (tlsSettings === null || busyAction !== null) return;
     const cert = tlsCertDraft.trim();
     const key = tlsKeyDraft.trim();
@@ -644,13 +644,14 @@ export function ConfigPanelPage() {
       if (coreStatus?.running) {
         const status = await invoke<CoreStatus>('restart_core_process');
         publishStatus(status);
-        tlsFeedback.showNotice({ key: 'config.tls.notice.savedAndRestarted' }, 'success');
+        showNotice(t('config.tls.notice.savedAndRestarted'), 'success');
       } else {
-        tlsFeedback.showNotice({ key: 'config.tls.notice.saved' }, 'success');
+        showNotice(t('config.tls.notice.saved'), 'success');
       }
       setTlsSavedStatusVisible(true);
     } catch (error) {
       setTlsError(String(error));
+      showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
       void refreshStatus();
       void loadTlsSettings();
     } finally {
@@ -681,6 +682,7 @@ export function ConfigPanelPage() {
     } catch (error) {
       const message = t('config.tls.error.selectFileFailed', { error: String(error) });
       setTlsError(message);
+      showNotice(message, 'error');
     } finally {
       setTlsFileSelecting(null);
     }
@@ -699,18 +701,17 @@ export function ConfigPanelPage() {
   };
 
   const saveNetworkEndpointSettings = async () => {
-    networkFeedback.clearNotice();
     if (!settings || busyAction !== null) return;
     const host = hostDraft.trim();
     if (!host) {
       setHostError(t('config.error.hostRequired'));
-      networkFeedback.showNotice({ key: 'config.error.hostRequired' }, 'error');
+      showNotice(t('config.error.hostRequired'), 'error');
       return;
     }
     const port = Number(portDraft);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       setPortError(t('config.error.portRange'));
-      networkFeedback.showNotice({ key: 'config.error.portRange' }, 'error');
+      showNotice(t('config.error.portRange'), 'error');
       return;
     }
 
@@ -733,18 +734,18 @@ export function ConfigPanelPage() {
         try {
           const status = await invoke<CoreStatus>('restart_core_process');
           publishStatus(status);
-          networkFeedback.showNotice({ key: 'config.notice.networkRestarted' }, 'success');
+          showNotice(t('config.notice.networkRestarted'), 'success');
         } catch (error) {
           await refreshStatus();
-          networkFeedback.showNotice({ key: 'config.error.networkRestartFailed', variables: { error: String(error) } }, 'error');
+          showNotice(t('config.error.networkRestartFailed', { error: String(error) }), 'error');
         }
       } else if (networkChanged) {
-        networkFeedback.showNotice({ key: 'config.notice.networkNextStart' }, 'success');
+        showNotice(t('config.notice.networkNextStart'), 'success');
       } else {
-        networkFeedback.showNotice({ key: 'config.notice.networkUpdated' }, 'success');
+        showNotice(t('config.notice.networkUpdated'), 'success');
       }
     } catch (error) {
-      networkFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: String(error) } }, 'error');
+      showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
       void loadSettings('preserve');
     } finally {
       setBusyAction(null);
@@ -752,7 +753,6 @@ export function ConfigPanelPage() {
   };
 
   const saveRetrySettings = async () => {
-    retryFeedback.clearNotice();
     if (!settings || busyAction !== null) return;
     const retryDrafts = [
       requestRetryDraft,
@@ -766,7 +766,7 @@ export function ConfigPanelPage() {
       || retryValues.some((value) => !Number.isInteger(value) || value < 0 || value > 4294967295)
     ) {
       setRetryError(t('config.error.retryRange'));
-      retryFeedback.showNotice({ key: 'config.error.retryRange' }, 'error');
+      showNotice(t('config.error.retryRange'), 'error');
       return;
     }
     const [requestRetry, maxRetryCredentials, maxRetryInterval, streamingBootstrapRetries] = retryValues;
@@ -789,9 +789,9 @@ export function ConfigPanelPage() {
       clearDraftDirty('streamingBootstrapRetries');
       applySettings(result, 'preserve');
       setLoadError('');
-      retryFeedback.showNotice({ key: 'config.notice.retryUpdated' }, 'success');
+      showNotice(t('config.notice.retryUpdated'), 'success');
     } catch (error) {
-      retryFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: String(error) } }, 'error');
+      showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
       void loadSettings('preserve');
     } finally {
       setBusyAction(null);
@@ -799,7 +799,6 @@ export function ConfigPanelPage() {
   };
 
   const saveSessionRoutingSettings = async () => {
-    routingFeedback.clearNotice();
     if (!settings || busyAction !== null) return;
     const routingSessionAffinityTtl = sessionTtlDraft.trim();
     setBusyAction('routing');
@@ -814,9 +813,9 @@ export function ConfigPanelPage() {
       clearDraftDirty('sessionTtl');
       applySettings(result, 'preserve');
       setLoadError('');
-      routingFeedback.showNotice({ key: 'config.notice.sessionRoutingUpdated' }, 'success');
+      showNotice(t('config.notice.sessionRoutingUpdated'), 'success');
     } catch (error) {
-      routingFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: String(error) } }, 'error');
+      showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
       void loadSettings('preserve');
     } finally {
       setBusyAction(null);
@@ -824,7 +823,6 @@ export function ConfigPanelPage() {
   };
 
   const saveSoftwareSettings = async () => {
-    softwareFeedback.clearNotice();
     if (!softwareSettings || busyAction !== null) return;
     if (
       softwareCloseBehaviorDraft === softwareSettings.closeBehavior
@@ -852,6 +850,7 @@ export function ConfigPanelPage() {
       setSoftwareSilentStartDraft(result.silentStartEnabled);
       setSoftwareDefaultTerminalDraft(result.defaultTerminal);
       setSoftwareSavedStatusVisible(true);
+      showNotice(t('config.notice.softwareUpdated'), 'success');
     } catch (error) {
       setSoftwareCloseBehaviorDraft(softwareSettings.closeBehavior);
       setSoftwareAutostartDraft(softwareSettings.autostartEnabled);
@@ -859,7 +858,7 @@ export function ConfigPanelPage() {
       setSoftwareSilentStartDraft(softwareSettings.silentStartEnabled);
       setSoftwareDefaultTerminalDraft(softwareSettings.defaultTerminal);
       setSoftwareSavedStatusVisible(false);
-      softwareFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: String(error) } }, 'error');
+      showNotice(t('config.error.saveFailed', { error: String(error) }), 'error');
       void loadSoftwareSettings();
     } finally {
       setBusyAction(null);
@@ -1078,8 +1077,8 @@ export function ConfigPanelPage() {
                       className="icon-button quiet"
                       onClick={() => void copyApiKey(entry.apiKey, index)}
                       disabled={controlsDisabled}
-                      title={copiedIndex === index ? t('config.notice.keyCopied') : t('config.keys.copy')}
-                      aria-label={copiedIndex === index ? t('config.notice.keyCopied') : t('config.keys.copyNth', { number: index + 1 })}
+                      title={t('config.keys.copy')}
+                      aria-label={t('config.keys.copyNth', { number: index + 1 })}
                     >
                       {copiedIndex === index ? (
                         <Check size={16} aria-hidden="true" />
@@ -1117,7 +1116,6 @@ export function ConfigPanelPage() {
               </div>
             )}
           </div>
-          {!addDialogOpen && deleteIndex === null ? renderFeedback(keyFeedback) : null}
         </section>
         <section className="panel config-management-panel">
           <div className="config-panel-heading">
@@ -1227,7 +1225,6 @@ export function ConfigPanelPage() {
                 </div>
               </div>
             </form>
-            {renderFeedback(managementFeedback)}
           </div>
         </section>
 
@@ -1410,7 +1407,6 @@ export function ConfigPanelPage() {
                 {loggingSettingsBusy ? t('common.saving') : t('config.diagnostics.save')}
               </button>
             </div>
-            {renderFeedback(loggingFeedback)}
           </div>
         </section>
         </div>
@@ -1443,7 +1439,6 @@ export function ConfigPanelPage() {
                 {busyAction === 'network' ? t('common.saving') : t('config.network.confirmSave')}
               </button>
             </div>
-            {renderFeedback(networkFeedback)}
             <div className="config-network-grid">
               <label className="config-network-field config-network-port-field">
             <span>{t('config.network.port')}</span>
@@ -1549,7 +1544,6 @@ export function ConfigPanelPage() {
                 {busyAction === 'routing' ? t('common.saving') : t('config.network.confirmSave')}
               </button>
             </div>
-            {renderFeedback(routingFeedback)}
             <div className="config-network-grid">
               <div className="config-network-field config-network-toggle">
                 <div>
@@ -1648,7 +1642,6 @@ export function ConfigPanelPage() {
                 {busyAction === 'retry' ? t('common.saving') : t('config.network.confirmSave')}
               </button>
             </div>
-            {renderFeedback(retryFeedback)}
             <div className="config-network-grid">
               <div className="config-network-field config-network-toggle">
                 <div>
@@ -1906,7 +1899,6 @@ export function ConfigPanelPage() {
             <div className={`config-tls-message ${tlsError ? 'error' : ''}`} role={tlsError ? 'alert' : undefined}>
               {tlsError || t('config.tls.restartHint')}
             </div>
-            {renderFeedback(tlsFeedback)}
           </div>
         </section>
         </div>
@@ -1943,7 +1935,6 @@ export function ConfigPanelPage() {
               </div>
             </div>
             <div className="config-software-content">
-              {renderFeedback(softwareFeedback)}
               <div className="config-software-settings-list">
                 <div className="config-software-setting-row">
                   <div className="config-software-setting-copy">
@@ -2172,7 +2163,6 @@ export function ConfigPanelPage() {
             <div className={`config-form-message ${formError ? 'error' : ''}`}>
               {formError || ' '}
             </div>
-            {renderFeedback(keyFeedback)}
 
             <div className="config-dialog-actions">
               <button
@@ -2214,7 +2204,6 @@ export function ConfigPanelPage() {
               </div>
             </div>
             <code className="config-delete-key">{maskApiKey(selectedDeleteKey)}</code>
-            {renderFeedback(keyFeedback)}
             {deletingLastKey ? (
               <div className="config-delete-warning">
                 <AlertCircle size={17} aria-hidden="true" />
@@ -2244,6 +2233,16 @@ export function ConfigPanelPage() {
         </div>
       ) : null}
 
+      {notice ? (
+        <div className={`config-toast ${notice.tone}`} role="status" title={notice.message}>
+          {notice.tone === 'success' ? (
+            <Check size={17} aria-hidden="true" />
+          ) : (
+            <AlertCircle size={17} aria-hidden="true" />
+          )}
+          <span>{notice.message}</span>
+        </div>
+      ) : null}
     </section>
   );
 }

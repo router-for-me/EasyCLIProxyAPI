@@ -8,4 +8,4 @@ export type { MessageKey };
 export type MessageVariables = Record<string, string | number>;
 
 export const zhTW: Record<MessageKey, string> = createTraditionalMessages(zhCN);
-export const ja: Record<MessageKey, string> = jaOverrides;
+export const ja: Record<MessageKey, string> = { ...en, ...jaOverrides };
