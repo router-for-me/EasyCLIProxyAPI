@@ -38,6 +38,7 @@ import {
 import {
   captureQuotaCacheGeneration,
   commitQuotaCacheIfCurrent,
+  getQuotaCacheSnapshot,
   pruneQuotaCache,
   updateQuotaCache,
   useQuotaCache,
@@ -57,6 +58,7 @@ import {
   type OAuthModelDefinition,
 } from '../services/oauthModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
+import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 
 type AuthFile = Record<string, unknown>;
 
@@ -102,6 +104,7 @@ const statusText = (file: AuthFile) => {
 
 function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
   const { locale, t } = useI18n();
+  const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
   if (quota.status === 'loading') {
     return (
       <div className="auth-file-quota loading">
@@ -124,18 +127,23 @@ function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
     <div className="auth-file-quota" aria-label={t('authFiles.quota.aria')}>
       {quota.plan ? <span className="auth-file-quota-plan">{quota.plan}</span> : null}
       {quota.rows.length > 0 ? quota.rows.map((row, index) => {
-        const detail = [row.detail, row.reset].filter(Boolean).join(' · ');
+        const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
+        const detail = [row.detail, reset].filter(Boolean).join(' · ');
         return (
           <span className="auth-file-quota-item" key={`${row.label}-${index}`} title={detail || undefined}>
             <span>{row.label}</span>
             <strong>{row.remainingPercent === null ? '—' : `${Math.round(row.remainingPercent)}%`}</strong>
-            {row.reset ? <small>{row.reset}</small> : null}
+            {reset ? <small>{reset}</small> : null}
+            {row.remainingPercent === null && row.detail ? <small>{row.detail}</small> : null}
           </span>
         );
       }) : <span className="auth-file-quota-empty">{t('authFiles.quota.empty')}</span>}
       {quota.resetCredits !== undefined ? (
         <span className="auth-file-quota-credit">{t('authFiles.quota.resets', { count: quota.resetCredits })}</span>
       ) : null}
+      {quota.resetCreditsApplicable !== undefined ? <span className="auth-file-quota-credit">{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</span> : null}
+      {quota.subscriptionActiveUntil ? <span className="auth-file-quota-credit">{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span> : null}
+      {quota.resetCreditsError ? <small>{t('quota.resetCreditsWarning', { error: quota.resetCreditsError })}</small> : null}
       {quota.resetCreditsEarliestExpiry ? (
         <span className="auth-file-quota-credit">{t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) })}</span>
       ) : null}
@@ -205,9 +213,10 @@ export function AuthFileManagementPage() {
   const refreshQuota = async (file: AuthFile) => {
     if (readBoolean(file, 'disabled')) return;
     const key = quotaKey(file);
+    if (getQuotaCacheSnapshot()[key]?.status === 'loading') return;
     const cacheGeneration = captureQuotaCacheGeneration();
     updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
-    const result = await loadQuota(file);
+    const result = await loadQuota(file, { confirmXaiPaidProbe: () => window.confirm(t('quota.xaiProbeConfirm')) });
     commitQuotaCacheIfCurrent(cacheGeneration, () => {
       updateQuotaCache((current) => ({ ...current, [key]: result }));
     });

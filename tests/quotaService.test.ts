@@ -56,7 +56,7 @@ describe('quotaRowsFor', () => {
     ]);
   });
 
-  it('Team 次级窗口缺少时长时按月限额处理', () => {
+  it('Team 次级窗口缺少时长时与新版一致按周窗口回退，不臆测月限额', () => {
     const rows = quotaRowsFor('codex', {
       plan_type: 'team',
       rate_limit: {
@@ -65,7 +65,20 @@ describe('quotaRowsFor', () => {
       },
     });
 
-    expect(rows.map((row) => row.label)).toEqual(['5 小时限额', '月限额']);
+    expect(rows.map((row) => row.label)).toEqual(['5 小时限额', '周限额']);
+  });
+
+  it('支持反序窗口且只在有重置时间时推断已耗尽额度', () => {
+    const rows = quotaRowsFor('codex', {
+      rateLimit: {
+        allowed: false,
+        primaryWindow: { limitWindowSeconds: 604800 },
+        secondaryWindow: { limitWindowSeconds: 18000, resetAfterSeconds: 3600 },
+      },
+    });
+    expect(rows.map((row) => row.label)).toEqual(['5 小时限额', '周限额']);
+    expect(rows.map((row) => row.remainingPercent)).toEqual([0, null]);
+    expect(rows[0].resetAtMs).toBeGreaterThan(Date.now());
   });
 
   it('读取 Codex 可用重置额度', () => {
@@ -111,6 +124,27 @@ describe('quotaRowsFor', () => {
     });
   });
 
+  it('重置次数支持 applicable 字段、空列表，不把过期积分算入推断次数', () => {
+    expect(codexResetCreditDetailsFor({ credits: [] })).toEqual({ availableCount: undefined, earliestExpiry: undefined });
+    expect(codexResetCreditDetailsFor({
+      applicableAvailableCount: '0',
+      credits: [
+        { resetType: 'codex_rate_limits', status: 'available', expiresAt: '2030-01-01T00:00:00Z' },
+        { resetType: 'codex_rate_limits', status: 'available', expiresAt: '2020-01-01T00:00:00Z' },
+        { resetType: 'codex_rate_limits', status: 'available', expiresAt: 'invalid' },
+        { resetType: 'other', status: 'available', expiresAt: '2030-01-01T00:00:00Z' },
+      ],
+    }, Date.parse('2026-01-01T00:00:00Z'))).toEqual({
+      availableCount: 1, applicableAvailableCount: 0, earliestExpiry: '2030-01-01T00:00:00Z',
+    });
+  });
+
+  it('不会把数组、对象和布尔值当作百分比', () => {
+    for (const used of [[], [25], {}, false, '', ' ', NaN, Infinity]) {
+      expect(quotaRowsFor('codex', { rate_limit: { primary_window: { used_percent: used } } })[0].remainingPercent).toBeNull();
+    }
+  });
+
   it('不会把小于 1 的上游百分比错误放大 100 倍', () => {
     const codex = quotaRowsFor('codex', {
       rate_limit: { primary_window: { used_percent: 0.63 } },
@@ -121,6 +155,31 @@ describe('quotaRowsFor', () => {
 
     expect(codex[0].remainingPercent).toBeCloseTo(99.37);
     expect(claude[0].remainingPercent).toBeCloseTo(99.56);
+  });
+
+  it('Claude 优先活动的现代 Fable 窗口，并去除旧字段重复项', () => {
+    const limit = (percent: unknown, active: boolean, name = 'Fable') => ({
+      kind: 'weekly_scoped', percent, is_active: active,
+      scope: { model: { display_name: name } }, resets_at: '2030-01-01T00:00:00Z',
+    });
+    const rows = quotaRowsFor('claude', {
+      iguana_necktie: { utilization: 41 },
+      five_hour: { utilization: 10 },
+      limits: [null, limit(null, true), limit(12, false, 'Fable 5'), limit(64, true), limit(99, true, 'Sonnet')],
+    });
+    expect(rows.map((row) => [row.label, row.remainingPercent])).toEqual([
+      ['5 小时窗口', 90], ['7 天 Fable 窗口', 36],
+    ]);
+    expect(rows[1].resetAtMs).toBe(Date.parse('2030-01-01T00:00:00Z'));
+  });
+
+  it('Claude 无有效现代 Fable 数据时兼容旧字段', () => {
+    const rows = quotaRowsFor('claude', {
+      iguana_necktie: { utilization: 41 },
+      limits: [{ kind: 'weekly_scoped', percent: null, scope: { model: { display_name: 'Fable' } } }],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ label: '7 天 Fable 窗口', remainingPercent: 59 });
   });
 
   it('显示 Claude 已启用的额外用量', () => {
@@ -159,6 +218,33 @@ describe('quotaRowsFor', () => {
     expect(antigravity[0].remainingPercent).toBe(3);
   });
 
+  it('Kimi 短期窗口排在周汇总前，识别 protobuf 时间单位且保留小数', () => {
+    const rows = quotaRowsFor('kimi', {
+      usage: { used: 99.5, limit: 100 },
+      limits: [
+        { window: { duration: 5, timeUnit: 'TIME_UNIT_HOUR' }, detail: { limit: 100, remaining: 80, reset_in: 3600 } },
+        { window: { duration: 1, time_unit: 'TIME_UNIT_WEEK' }, detail: { limit: 100, used: 20 } },
+        { window: { duration: 300, timeUnit: 'TIME_UNIT_MINUTE' }, detail: { limit: 100, used: 0 } },
+        { window: { duration: 90, timeUnit: 'TIME_UNIT_SECOND' }, detail: { limit: 100, used: 0 } },
+      ],
+    });
+    expect(rows.map((row) => row.label)).toEqual(['5 小时窗口', '7 天窗口', '5 小时窗口', '90 秒窗口', '每周额度']);
+    expect(rows.at(-1)?.remainingPercent).toBeCloseTo(0.5);
+    expect(rows[0].remainingPercent).toBe(80);
+    expect(rows[0].resetAtMs).toBeGreaterThan(Date.now());
+  });
+
+  it('Antigravity 把 5h 排在周窗口前，兼容百分数字符串且不修改响应', () => {
+    const buckets = [{ window: 'weekly', remainingFraction: '40%' }, { window: 'five_hour', remaining_fraction: 0.8 }];
+    const rows = quotaRowsFor('antigravity', { groups: [{ displayName: 'Gemini', buckets }] });
+    expect(rows.map((row) => row.remainingPercent)).toEqual([80, 40]);
+    expect(buckets[0].window).toBe('weekly');
+  });
+
+  it('Antigravity 兼容 body 包装的额度响应', () => {
+    expect(quotaRowsFor('antigravity', { body: JSON.stringify({ groups: [{ buckets: [{ remainingFraction: 0.5 }] }] }) })[0].remainingPercent).toBe(50);
+  });
+
   it('区分 Antigravity 同一分组中的不同窗口', () => {
     const rows = quotaRowsFor('antigravity', {
       groups: [{
@@ -174,6 +260,22 @@ describe('quotaRowsFor', () => {
       'Gemini Pro · 5h',
       'Gemini Pro · weekly',
     ]);
+  });
+
+  it('xAI 仅返回产品用量时仍能解析，付费探测不伪造百分比', () => {
+    expect(quotaRowsFor('xai', { config: { productUsage: [{ product: 'grok', usagePercent: 20 }] } })[1])
+      .toMatchObject({ label: 'grok', remainingPercent: 80 });
+    expect(quotaRowsFor('xai', { mode: 'paid-health' })[0])
+      .toMatchObject({ label: '付费 API 可用', remainingPercent: null });
+  });
+
+  it('xAI 不从月账单借用周窗口的重置时间', () => {
+    const rows = quotaRowsFor('xai', {
+      weekly: { config: { creditUsagePercent: 25 } },
+      monthly: { config: { monthlyLimit: 1000, used: 500, billingPeriodEnd: '2030-01-01T00:00:00Z' } },
+    });
+    expect(rows[0].resetAtMs).toBeUndefined();
+    expect(rows[1].resetAtMs).toBe(Date.parse('2030-01-01T00:00:00Z'));
   });
 
   it('合并 xAI 每周、月度和按量付费额度', () => {
