@@ -3105,44 +3105,94 @@ textarea:focus-visible {
   margin-top: 1px;
 }
 
-.config-toast {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 90;
+.action-feedback.inline-notice {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  align-items: center;
-  gap: 9px;
-  width: min(440px, calc(100vw - 48px));
-  min-height: 46px;
-  padding: 11px 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  margin: 10px 0;
   border: 1px solid var(--theme-b6d3bd);
   border-radius: 7px;
   background: var(--theme-eef7f0);
   color: var(--theme-2f6b3f);
-  box-shadow: 0 10px 30px rgba(45, 42, 38, 0.16);
+  box-sizing: border-box;
 }
 
-.config-toast.error {
+.action-feedback.inline-notice.error {
   border-color: var(--theme-dfb7b0);
   background: var(--theme-fff1ee);
   color: var(--theme-9f2d20);
 }
 
-.config-toast.info {
+.action-feedback.inline-notice.info {
   border-color: var(--theme-c9d6e2);
   background: var(--theme-f1f6fa);
   color: var(--theme-42637f);
 }
 
-.config-toast span {
+.action-feedback.inline-notice .action-feedback-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   min-width: 0;
+}
+
+.action-feedback.inline-notice .action-feedback-icon {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.action-feedback.inline-notice .action-feedback-text {
+  min-width: 0;
+  max-height: min(160px, 25vh);
+  overflow-y: auto;
+  overflow-x: hidden;
   font-size: var(--font-size-body);
-  font-weight: 700;
   line-height: var(--line-height-body);
   overflow-wrap: anywhere;
-  white-space: normal;
+  white-space: pre-wrap;
+  padding-right: 4px;
+}
+
+.action-feedback.inline-notice .action-feedback-text:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.action-feedback.inline-notice .action-feedback-source {
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.action-feedback.inline-notice .action-feedback-message {
+  min-width: 0;
+}
+
+.action-feedback.inline-notice .action-feedback-dismiss {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.action-feedback.inline-notice .action-feedback-dismiss:hover {
+  border-color: currentColor;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+:root[data-theme='dark'] .action-feedback.inline-notice .action-feedback-dismiss:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .management-header {
@@ -8718,7 +8768,7 @@ body.table-col-resizing * {
   text-overflow: ellipsis;
 }
 
-.real-auth-file-row.disabled {
+.real-auth-file-row.disabled > :not(.auth-file-actions) {
   opacity: 0.68;
 }
 
@@ -8751,6 +8801,7 @@ body.table-col-resizing * {
   gap: 10px;
 }
 
+.real-auth-file-row .primary-button,
 .real-auth-file-row .secondary-button {
   min-width: 52px;
 }
