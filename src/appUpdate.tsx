@@ -11,7 +11,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AlertCircle, Download, RefreshCw } from 'lucide-react';
-import { useI18n } from './i18n';
+import { getCurrentLocale, translate, useI18n } from './i18n';
 
 export type AppUpdateInfo = {
   currentVersion: string;
@@ -121,7 +121,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       if (disposed) return;
       setTask(event.payload);
       if (event.payload.phase === 'failed') {
-        setError(event.payload.message || 'Application update failed');
+        setError(event.payload.message || translate(getCurrentLocale(), 'appUpdate.phase.failed'));
       } else if (event.payload.phase !== 'cancelled') {
         setError('');
       }

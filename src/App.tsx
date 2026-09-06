@@ -286,7 +286,7 @@ function AppContent() {
       <div className={`app-shell${active === "easy" ? " app-shell-easy-mode" : ""}`}>
         {active !== "easy" ? (
           <aside className="sidebar">
-          <div className="sidebar-brand" title="CLI Proxy API GUI">
+          <div className="sidebar-brand" title={t('app.desktopConsole')}>
             <img src={appLogo} alt="" className="brand-mark brand-logo" />
             <div>
               <strong>EasyCLIProxyAPI</strong>

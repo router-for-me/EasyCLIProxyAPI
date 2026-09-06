@@ -108,7 +108,7 @@ pub(crate) async fn upload_auth_file(
 ) -> Result<serde_json::Value, String> {
     let name = name.trim().to_string();
     if name.is_empty() || !name.to_ascii_lowercase().ends_with(".json") {
-        return Err("认证文件名必须以 .json 结尾".to_string());
+        return Err("凭证文件名必须以 .json 结尾".to_string());
     }
 
     let config = gui_config_state.snapshot()?;
@@ -123,7 +123,7 @@ pub(crate) async fn upload_auth_file(
         .body(data)
         .send()
         .await
-        .map_err(|err| format_management_request_error("上传认证文件失败", &err))?;
+        .map_err(|err| format_management_request_error("上传凭证文件失败", &err))?;
     read_management_value(response).await
 }
 

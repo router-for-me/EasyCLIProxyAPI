@@ -591,12 +591,12 @@ export function UsageRecordsPage() {
             <label className="usage-filter-item">
               <span className="usage-filter-label">
                 <Layers size={13} />
-                Provider
+                {t('usage.column.provider')}
               </span>
               <select
                 value={provider}
                 onChange={(event) => changeFilter(setProvider, event.currentTarget.value)}
-                aria-label="Provider"
+                aria-label={t('usage.column.provider')}
               >
                 <option value="">{t('usage.filter.allProviders')}</option>
                 {filterOptions(optionsAnalysis.providers).map((item) => (
@@ -629,12 +629,12 @@ export function UsageRecordsPage() {
             <label className="usage-filter-item">
               <span className="usage-filter-label">
                 <Key size={13} />
-                API Key
+                {t('apiAccess.field.key')}
               </span>
               <select
                 value={apiKeyHash}
                 onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)}
-                aria-label="API Key"
+                aria-label={t('apiAccess.field.key')}
               >
                 <option value="">{t('usage.filter.allKeys')}</option>
                 {filterOptions(optionsAnalysis.apiKeys).map((item) => (
@@ -970,10 +970,10 @@ function UsageTrend({ points }: { points: TimelinePoint[] }) {
     <div className="usage-trend-wrapper">
       <div className="usage-trend-header-meta">
         <span className="usage-trend-chip">
-          <strong>{compactNumber(totalReqs)}</strong> requests
+          <strong>{compactNumber(totalReqs)}</strong> {t('usage.unit.requests')}
         </span>
         <span className="usage-trend-chip">
-          <strong>{compactNumber(totalTokens)}</strong> tokens
+          <strong>{compactNumber(totalTokens)}</strong> {t('usage.unit.tokens')}
         </span>
       </div>
       <div className="usage-trend">
@@ -1042,7 +1042,7 @@ function AnalysisView({ analysis, overview }: { analysis: UsageAnalysis; overvie
   return (
     <div className="usage-analysis-grid">
       <CategoryPanel title={t('usage.analysis.models')} items={analysis.models} />
-      <CategoryPanel title="Provider" items={analysis.providers} />
+      <CategoryPanel title={t('usage.column.provider')} items={analysis.providers} />
       <CategoryPanel title={t('usage.analysis.sources')} items={analysis.sources} compactLabels />
       <CategoryPanel title={t('usage.analysis.keys')} items={analysis.apiKeys} />
       <CategoryPanel title={t('usage.analysis.hours')} items={hours} />
@@ -1084,9 +1084,9 @@ function CategoryPanel({
                     </strong>
                   </div>
                   <small className="usage-category-meta">
-                    <span>{compactNumber(item.requests)} requests</span>
+                    <span>{compactNumber(item.requests)} {t('usage.unit.requests')}</span>
                     <span className="usage-category-pct">{percent}%</span>
-                    <strong>{compactNumber(item.tokens)} Token</strong>
+                    <strong>{compactNumber(item.tokens)} {t('usage.unit.tokens')}</strong>
                   </small>
                 </div>
                 <div className="usage-category-track">
@@ -1340,10 +1340,12 @@ function UsageEventCell({
   columnKey: EventColumnKey;
   noRemarkLabel: string;
 }) {
+  const { formatDate } = useI18n();
+
   switch (columnKey) {
     case 'time':
       return (
-        <td className="usage-td-time align-center" title={new Date(record.timestamp).toLocaleString()}>
+        <td className="usage-td-time align-center" title={formatDate(record.timestamp)}>
           {formatTime(record.timestamp)}
         </td>
       );
@@ -2040,7 +2042,7 @@ function PricingView({
               <tr>
                 <th>{t('usage.pricing.model')}</th>
                 <th>{t('usage.pricing.calls')}</th>
-                <th>Token</th>
+                <th>{t('usage.unit.tokens')}</th>
                 <th>{t('usage.pricing.cost')}</th>
                 <th>{t('usage.pricing.prompt')}</th>
                 <th>{t('usage.pricing.completion')}</th>
