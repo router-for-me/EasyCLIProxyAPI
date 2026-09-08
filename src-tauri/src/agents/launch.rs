@@ -1,4 +1,5 @@
 use super::*;
+use std::net::TcpListener;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,9 +111,11 @@ pub(crate) fn normalize_agent_terminal(value: &str) -> String {
 pub(crate) fn launch_agent(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    deepseek_process_state: tauri::State<'_, DeepSeekHarnessProcessState>,
     client: String,
     target: Option<String>,
     working_directory: Option<String>,
+    deepseek_harness_options: Option<DeepSeekHarnessLaunchOptions>,
 ) -> Result<(), String> {
     let home = app
         .path()
@@ -124,6 +127,10 @@ pub(crate) fn launch_agent(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    if deepseek_harness_options.is_some() && !client.trim().eq_ignore_ascii_case("deepseek-harness")
+    {
+        return Err("DeepSeek Harness 启动选项不能用于其他客户端".to_string());
+    }
 
     if client.trim().eq_ignore_ascii_case(PI_AGENT_ID) {
         if requested_target.is_some_and(|value| value != "cli") {
@@ -141,6 +148,7 @@ pub(crate) fn launch_agent(
             &executable,
             PI_AGENT_NAME,
             &launch_directory,
+            &[],
             &[],
             &terminal,
         );
@@ -176,15 +184,30 @@ pub(crate) fn launch_agent(
             let executable = find_agent_executable(client, &home)
                 .ok_or_else(|| format!("未找到 {} 的可执行文件", client.name()))?;
             let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+            if client == AgentClient::DeepSeekHarness {
+                let mode = deepseek_harness_launch_mode(deepseek_harness_options.as_ref())?;
+                let arguments =
+                    agent_cli_launch_arguments(client, deepseek_harness_options.as_ref())?;
+                return launch_managed_deepseek_harness(
+                    deepseek_process_state.inner(),
+                    &executable,
+                    &launch_directory,
+                    &arguments,
+                    &mode,
+                    deepseek_harness_options.as_ref(),
+                );
+            }
             let environment_to_remove = if client == AgentClient::ClaudeCode {
                 &["ANTHROPIC_API_KEY"][..]
             } else {
                 &[]
             };
+            let arguments = agent_cli_launch_arguments(client, deepseek_harness_options.as_ref())?;
             launch_cli_agent(
                 &executable,
                 client.name(),
                 &launch_directory,
+                &arguments,
                 environment_to_remove,
                 &terminal,
             )
@@ -192,6 +215,372 @@ pub(crate) fn launch_agent(
         (_, "app") => Err(format!("{} 不支持桌面 App 启动方式", client.name())),
         _ => Err("不支持的智能体启动方式".to_string()),
     }
+}
+
+fn deepseek_harness_launch_mode(
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<String, String> {
+    let mode = options
+        .map(|options| options.mode.trim().to_ascii_lowercase())
+        .filter(|mode| !mode.is_empty())
+        .unwrap_or_else(|| "web".to_string());
+    if matches!(
+        mode.as_str(),
+        "web" | "headless" | "acp" | "sdk" | "sdk-minimal" | "custom"
+    ) {
+        Ok(mode)
+    } else {
+        Err(format!("不支持的 DeepSeek Harness 启动模式: {mode}"))
+    }
+}
+
+fn agent_cli_launch_arguments(
+    client: AgentClient,
+    deepseek_harness_options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<Vec<String>, String> {
+    if client != AgentClient::DeepSeekHarness {
+        if deepseek_harness_options.is_some() {
+            return Err("DeepSeek Harness 启动选项不能用于其他客户端".to_string());
+        }
+        return Ok(Vec::new());
+    }
+
+    build_deepseek_harness_launch_arguments(deepseek_harness_options)
+}
+
+fn build_deepseek_harness_launch_arguments(
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<Vec<String>, String> {
+    let mode = deepseek_harness_launch_mode(options)?;
+    let profile = match mode.as_str() {
+        "web" | "headless" | "acp" | "sdk" | "sdk-minimal" => mode.as_str(),
+        "custom" => validate_deepseek_harness_profile(
+            options
+                .and_then(|options| options.profile.as_deref())
+                .unwrap_or_default(),
+        )?,
+        _ => return Err(format!("不支持的 DeepSeek Harness 启动模式: {mode}")),
+    };
+    let mut arguments = if profile == "web" {
+        vec!["web".to_string()]
+    } else {
+        vec!["--profile".to_string(), profile.to_string()]
+    };
+
+    if let Some(options) = options {
+        for patch in &options.patches {
+            arguments.push("--patch".to_string());
+            arguments.push(validate_deepseek_harness_argument(patch, "patch 路径")?);
+        }
+    }
+
+    match mode.as_str() {
+        "web" => {
+            if let Some(host) = options
+                .and_then(|options| options.web_host.as_deref())
+                .map(str::trim)
+                .filter(|host| !host.is_empty())
+            {
+                arguments.push("--host".to_string());
+                arguments.push(validate_deepseek_harness_argument(host, "Web host")?);
+            }
+            if let Some(port) = options.and_then(|options| options.web_port) {
+                arguments.push("--port".to_string());
+                arguments.push(port.to_string());
+            }
+            if options.and_then(|options| options.open_browser) == Some(false) {
+                arguments.push("--no-open".to_string());
+            }
+            if let Some(options) = options {
+                for authority in &options.trusted_hosts {
+                    arguments.push("--trusted-host".to_string());
+                    arguments.push(validate_deepseek_harness_argument(
+                        authority,
+                        "trusted host",
+                    )?);
+                }
+            }
+        }
+        "headless" => {
+            let task = options
+                .and_then(|options| options.task.as_deref())
+                .unwrap_or_default();
+            arguments.push(validate_deepseek_harness_argument(task, "Headless 任务")?);
+        }
+        "acp" | "sdk" | "sdk-minimal" | "custom" => {}
+        _ => unreachable!(),
+    }
+    Ok(arguments)
+}
+
+impl DeepSeekHarnessProcessState {
+    fn status(&self) -> Result<DeepSeekHarnessProcessStatus, String> {
+        let mut process = self
+            .process
+            .lock()
+            .map_err(|_| "DeepSeek Harness 进程状态锁已损坏".to_string())?;
+        let Some(managed) = process.as_mut() else {
+            return Ok(DeepSeekHarnessProcessStatus::default());
+        };
+        match managed.child.try_wait() {
+            Ok(None) => Ok(DeepSeekHarnessProcessStatus {
+                running: true,
+                pid: Some(managed.child.id()),
+                mode: Some(managed.mode.clone()),
+            }),
+            Ok(Some(_)) => {
+                *process = None;
+                Ok(DeepSeekHarnessProcessStatus::default())
+            }
+            Err(error) => Err(format!("检查 DeepSeek Harness 进程状态失败: {error}")),
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) fn get_deepseek_harness_process_status(
+    process_state: tauri::State<'_, DeepSeekHarnessProcessState>,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    process_state.status()
+}
+
+#[tauri::command]
+pub(crate) fn stop_deepseek_harness_process(
+    process_state: tauri::State<'_, DeepSeekHarnessProcessState>,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    stop_managed_deepseek_harness(process_state.inner())?;
+    process_state.status()
+}
+
+fn launch_managed_deepseek_harness(
+    process_state: &DeepSeekHarnessProcessState,
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+    mode: &str,
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<(), String> {
+    let mut process = process_state
+        .process
+        .lock()
+        .map_err(|_| "DeepSeek Harness 进程状态锁已损坏".to_string())?;
+    if let Some(managed) = process.as_mut() {
+        match managed.child.try_wait() {
+            Ok(None) => {
+                return Err(format!(
+                    "DeepSeek Harness 已在运行（PID {}），请先关闭当前进程",
+                    managed.child.id()
+                ));
+            }
+            Ok(Some(_)) => *process = None,
+            Err(error) => return Err(format!("检查 DeepSeek Harness 进程状态失败: {error}")),
+        }
+    }
+
+    if mode == "web" {
+        ensure_deepseek_harness_web_endpoint_available(options)?;
+    }
+
+    let child = spawn_managed_deepseek_harness(executable, working_directory, arguments)?;
+    *process = Some(ManagedDeepSeekHarnessProcess {
+        child,
+        mode: mode.to_string(),
+    });
+    Ok(())
+}
+
+fn ensure_deepseek_harness_web_endpoint_available(
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<(), String> {
+    let port = options
+        .and_then(|options| options.web_port)
+        .unwrap_or(DEEPSEEK_HARNESS_DEFAULT_WEB_PORT);
+    if port == 0 {
+        return Ok(());
+    }
+    let host = options
+        .and_then(|options| options.web_host.as_deref())
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .unwrap_or("127.0.0.1");
+    let listener = TcpListener::bind((host, port)).map_err(|error| {
+        if error.kind() == io::ErrorKind::AddrInUse {
+            format!(
+                "DeepSeek Harness Web 地址 {host}:{port} 已被占用，请关闭已有服务或选择其他端口"
+            )
+        } else {
+            format!("无法使用 DeepSeek Harness Web 地址 {host}:{port}: {error}")
+        }
+    })?;
+    drop(listener);
+    Ok(())
+}
+
+fn spawn_managed_deepseek_harness(
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+) -> Result<Child, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        let mut command = windows_command_for_executable(executable, false);
+        command
+            .args(arguments)
+            .current_dir(working_directory)
+            .creation_flags(CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP);
+        return command
+            .spawn()
+            .map_err(|error| format!("启动 DeepSeek Harness 失败: {error}"));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new(executable);
+        command
+            .args(arguments)
+            .current_dir(working_directory)
+            .process_group(0);
+        return command
+            .spawn()
+            .map_err(|error| format!("启动 DeepSeek Harness 失败: {error}"));
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = (executable, working_directory, arguments);
+        Err("当前平台不支持受控启动 DeepSeek Harness".to_string())
+    }
+}
+
+pub(crate) fn stop_managed_deepseek_harness(
+    process_state: &DeepSeekHarnessProcessState,
+) -> Result<(), String> {
+    let mut process = process_state
+        .process
+        .lock()
+        .map_err(|_| "DeepSeek Harness 进程状态锁已损坏".to_string())?;
+    let Some(managed) = process.as_mut() else {
+        return Ok(());
+    };
+    if managed
+        .child
+        .try_wait()
+        .map_err(|error| format!("检查 DeepSeek Harness 进程状态失败: {error}"))?
+        .is_some()
+    {
+        *process = None;
+        return Ok(());
+    }
+    terminate_deepseek_harness_process_tree(&mut managed.child)?;
+    *process = None;
+    Ok(())
+}
+
+fn terminate_deepseek_harness_process_tree(child: &mut Child) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let process_id = child.id().to_string();
+        let mut command = Command::new("taskkill");
+        command
+            .args(["/PID", &process_id, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_background_command(&mut command);
+        let status = command
+            .status()
+            .map_err(|error| format!("关闭 DeepSeek Harness 进程树失败: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "关闭 DeepSeek Harness 进程树失败: PID {process_id}"
+            ));
+        }
+        let _ = child.wait();
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        let process_group = format!("-{}", child.id());
+        let term_status = Command::new("kill")
+            .args(["-TERM", &process_group])
+            .status()
+            .map_err(|error| format!("关闭 DeepSeek Harness 进程组失败: {error}"))?;
+        if !term_status.success() {
+            return Err(format!(
+                "关闭 DeepSeek Harness 进程组失败: PID {}",
+                child.id()
+            ));
+        }
+        for _ in 0..20 {
+            match child.try_wait() {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) => thread::sleep(Duration::from_millis(100)),
+                Err(error) => {
+                    return Err(format!("检查 DeepSeek Harness 进程状态失败: {error}"));
+                }
+            }
+        }
+        let kill_status = Command::new("kill")
+            .args(["-KILL", &process_group])
+            .status()
+            .map_err(|error| format!("强制关闭 DeepSeek Harness 进程组失败: {error}"))?;
+        if !kill_status.success() {
+            return Err(format!(
+                "强制关闭 DeepSeek Harness 进程组失败: PID {}",
+                child.id()
+            ));
+        }
+        child
+            .wait()
+            .map_err(|error| format!("等待 DeepSeek Harness 进程退出失败: {error}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        child
+            .kill()
+            .map_err(|error| format!("关闭 DeepSeek Harness 进程失败: {error}"))?;
+        child
+            .wait()
+            .map_err(|error| format!("等待 DeepSeek Harness 进程退出失败: {error}"))?;
+        Ok(())
+    }
+}
+
+fn validate_deepseek_harness_profile(profile: &str) -> Result<&str, String> {
+    let profile = profile.trim();
+    if profile.is_empty() {
+        return Err("请输入 DeepSeek Harness profile 名称".to_string());
+    }
+    if matches!(profile, "." | "..")
+        || !profile.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        return Err(
+            "DeepSeek Harness profile 名称只能包含字母、数字、点、连字符和下划线".to_string(),
+        );
+    }
+    Ok(profile)
+}
+
+fn validate_deepseek_harness_argument(value: &str, label: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("{label}不能为空"));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!("{label}不能包含控制字符"));
+    }
+    Ok(value.to_string())
 }
 
 #[tauri::command]
@@ -715,6 +1104,7 @@ fn launch_cli_agent(
     executable: &Path,
     label: &str,
     working_directory: &Path,
+    arguments: &[String],
     environment_to_remove: &[&str],
     terminal: &str,
 ) -> Result<(), String> {
@@ -723,11 +1113,19 @@ fn launch_cli_agent(
         .map(|key| format!("-u {}", shell_single_quote(key)))
         .collect::<Vec<_>>()
         .join(" ");
+    let invocation = std::iter::once(shell_single_quote(&path_to_string(executable)))
+        .chain(
+            arguments
+                .iter()
+                .map(|argument| shell_single_quote(argument)),
+        )
+        .collect::<Vec<_>>()
+        .join(" ");
     let command_line = format!(
         "cd {} && exec env {} {}",
         shell_single_quote(&path_to_string(working_directory)),
         removals,
-        shell_single_quote(&path_to_string(executable)),
+        invocation,
     );
     let script = if terminal == "iterm2" {
         format!(
@@ -760,6 +1158,7 @@ fn launch_cli_agent(
     executable: &Path,
     label: &str,
     working_directory: &Path,
+    command_arguments: &[String],
     environment_to_remove: &[&str],
     terminal: &str,
 ) -> Result<(), String> {
@@ -777,6 +1176,7 @@ fn launch_cli_agent(
         command
             .args(arguments)
             .arg(executable)
+            .args(command_arguments)
             .current_dir(working_directory)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -803,6 +1203,7 @@ fn launch_cli_agent(
     executable: &Path,
     label: &str,
     working_directory: &Path,
+    arguments: &[String],
     environment_to_remove: &[&str],
     terminal: &str,
 ) -> Result<(), String> {
@@ -820,6 +1221,7 @@ fn launch_cli_agent(
         "auto" => {
             let mut command = windows_command_for_executable(executable, true);
             command
+                .args(arguments)
                 .current_dir(working_directory)
                 .creation_flags(CREATE_NEW_CONSOLE);
             command
@@ -834,18 +1236,25 @@ fn launch_cli_agent(
                 command
                     .arg(windows_command_processor())
                     .args(["/D", "/K", "call"])
-                    .arg(windows_batch_executable_argument(executable));
+                    .arg(windows_batch_executable_argument(executable))
+                    .args(arguments);
             } else {
-                command.arg(executable);
+                command.arg(executable).args(arguments);
             }
             command
         }
         "powershell" => {
             let mut command = Command::new(windows_powershell_executable());
+            let arguments = arguments
+                .iter()
+                .map(|argument| windows_powershell_single_quoted_literal(argument))
+                .collect::<Vec<_>>()
+                .join(" ");
             let script = format!(
-                "Set-Location -LiteralPath {}; & {}",
+                "Set-Location -LiteralPath {}; & {} {}",
                 windows_powershell_single_quoted_literal(&path_to_string(working_directory)),
                 windows_powershell_single_quoted_literal(&path_to_string(executable)),
+                arguments,
             );
             command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &script]);
             command.creation_flags(CREATE_NEW_CONSOLE);
@@ -853,10 +1262,15 @@ fn launch_cli_agent(
         }
         "cmd" => {
             let mut command = Command::new(windows_command_processor());
+            let arguments = arguments
+                .iter()
+                .map(|argument| format!(" \"{}\"", argument.replace('"', "\"\"")))
+                .collect::<String>();
             let command_line = format!(
-                "cd /d \"{}\" && call \"{}\"",
+                "cd /d \"{}\" && call \"{}\"{}",
                 path_to_string(working_directory).replace('"', "\"\""),
-                path_to_string(executable).replace('"', "\"\"")
+                path_to_string(executable).replace('"', "\"\""),
+                arguments,
             );
             command.args(["/D", "/K", &command_line]);
             command.creation_flags(CREATE_NEW_CONSOLE);
@@ -878,6 +1292,7 @@ fn launch_cli_agent(
     _executable: &Path,
     label: &str,
     _working_directory: &Path,
+    _arguments: &[String],
     _environment_to_remove: &[&str],
     _terminal: &str,
 ) -> Result<(), String> {
@@ -887,6 +1302,19 @@ fn launch_cli_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deepseek_harness_options(mode: &str) -> DeepSeekHarnessLaunchOptions {
+        DeepSeekHarnessLaunchOptions {
+            mode: mode.to_string(),
+            web_host: None,
+            web_port: None,
+            open_browser: None,
+            trusted_hosts: Vec::new(),
+            task: None,
+            profile: None,
+            patches: Vec::new(),
+        }
+    }
 
     #[test]
     fn unknown_terminal_defaults_to_automatic() {
@@ -912,6 +1340,153 @@ mod tests {
             Path::new("/home/tester")
         };
         assert_eq!(resolve_launch_directory(None, fallback).unwrap(), fallback);
+    }
+
+    #[test]
+    fn deepseek_harness_launch_selects_the_web_profile() {
+        assert_eq!(
+            agent_cli_launch_arguments(AgentClient::DeepSeekHarness, None).unwrap(),
+            ["web"]
+        );
+        assert!(agent_cli_launch_arguments(AgentClient::Codex, None)
+            .unwrap()
+            .is_empty());
+
+        let targets = agent_launch_targets(
+            AgentClient::DeepSeekHarness,
+            Some(Path::new("dsh")),
+            Some("0.1.2-rc.1"),
+            false,
+        );
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "cli");
+        assert_eq!(targets[0].label, "DeepSeek Harness Web");
+        assert_eq!(targets[0].detail, "dsh web");
+    }
+
+    #[test]
+    fn deepseek_harness_web_launch_arguments_include_supported_options() {
+        let mut options = deepseek_harness_options("web");
+        options.web_host = Some("127.0.0.1".to_string());
+        options.web_port = Some(0);
+        options.open_browser = Some(false);
+        options.trusted_hosts = vec!["localhost:3000".to_string(), "example.test".to_string()];
+        options.patches = vec!["./extra.yml".to_string()];
+
+        assert_eq!(
+            build_deepseek_harness_launch_arguments(Some(&options)).unwrap(),
+            [
+                "web",
+                "--patch",
+                "./extra.yml",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--no-open",
+                "--trusted-host",
+                "localhost:3000",
+                "--trusted-host",
+                "example.test",
+            ]
+        );
+    }
+
+    #[test]
+    fn deepseek_harness_non_web_profiles_build_expected_arguments() {
+        for mode in ["acp", "sdk", "sdk-minimal"] {
+            let options = deepseek_harness_options(mode);
+            assert_eq!(
+                build_deepseek_harness_launch_arguments(Some(&options)).unwrap(),
+                ["--profile", mode]
+            );
+        }
+
+        let mut headless = deepseek_harness_options("headless");
+        headless.task = Some("review this repository".to_string());
+        assert_eq!(
+            build_deepseek_harness_launch_arguments(Some(&headless)).unwrap(),
+            ["--profile", "headless", "review this repository"]
+        );
+
+        let mut custom = deepseek_harness_options("custom");
+        custom.profile = Some("tui-dev".to_string());
+        assert_eq!(
+            build_deepseek_harness_launch_arguments(Some(&custom)).unwrap(),
+            ["--profile", "tui-dev"]
+        );
+    }
+
+    #[test]
+    fn deepseek_harness_launch_options_reject_missing_required_values() {
+        let headless = deepseek_harness_options("headless");
+        assert!(build_deepseek_harness_launch_arguments(Some(&headless)).is_err());
+
+        let custom = deepseek_harness_options("custom");
+        assert!(build_deepseek_harness_launch_arguments(Some(&custom)).is_err());
+
+        let options = deepseek_harness_options("web");
+        assert!(agent_cli_launch_arguments(AgentClient::Codex, Some(&options)).is_err());
+    }
+
+    #[test]
+    fn managed_deepseek_harness_state_stops_only_its_tracked_process() {
+        #[cfg(windows)]
+        let child = {
+            let mut command = Command::new(windows_powershell_executable());
+            command.args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 30",
+            ]);
+            configure_background_command(&mut command);
+            command.spawn().unwrap()
+        };
+        #[cfg(unix)]
+        let child = {
+            use std::os::unix::process::CommandExt;
+
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]).process_group(0);
+            command.spawn().unwrap()
+        };
+
+        let state = DeepSeekHarnessProcessState::default();
+        let tracked_pid = child.id();
+        *state.process.lock().unwrap() = Some(ManagedDeepSeekHarnessProcess {
+            child,
+            mode: "test".to_string(),
+        });
+
+        let running = state.status().unwrap();
+        assert!(running.running);
+        assert_eq!(running.pid, Some(tracked_pid));
+        assert_eq!(running.mode.as_deref(), Some("test"));
+
+        stop_managed_deepseek_harness(&state).unwrap();
+        assert!(!state.status().unwrap().running);
+    }
+
+    #[test]
+    fn deepseek_harness_web_launch_rejects_an_occupied_port() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut options = deepseek_harness_options("web");
+        options.web_port = Some(port);
+
+        let error = ensure_deepseek_harness_web_endpoint_available(Some(&options)).unwrap_err();
+
+        assert!(error.contains("已被占用"), "{error}");
+    }
+
+    #[test]
+    fn deepseek_harness_web_launch_allows_random_ports() {
+        let mut options = deepseek_harness_options("web");
+        options.web_port = Some(0);
+
+        ensure_deepseek_harness_web_endpoint_available(Some(&options)).unwrap();
     }
 
     #[test]

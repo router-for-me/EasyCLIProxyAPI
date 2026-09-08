@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, LoaderCircle, RefreshCw } from 'lucide-react';
+import { useConfirmation } from '../components/ConfirmationDialog';
+import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
+import { canResetCodexQuota, resetCodexQuotaWithConfirmation } from '../services/quotaActions';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import { managementApi, readBoolean, responseList } from '../services/managementApi';
+import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import {
-  consumeCodexResetCredit,
   fileName,
   formatQuotaTimestamp,
   idleQuota,
@@ -21,6 +24,7 @@ import {
 import {
   captureQuotaCacheGeneration,
   commitQuotaCacheIfCurrent,
+  getQuotaCacheSnapshot,
   pruneQuotaCache,
   updateQuotaCache,
   useQuotaCache,
@@ -41,22 +45,23 @@ const REFRESH_CONCURRENCY = 4;
 
 export function QuotaPage() {
   const { locale, t } = useI18n();
+  const { askConfirmation, confirmationDialog } = useConfirmation();
   const [files, setFiles] = useState<AuthFile[]>([]);
   const quotas = useQuotaCache();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const querying = Object.values(quotas).some((quota) => quota.status === 'loading');
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const payload = await managementApi.get('/auth-files');
-      const nextFiles = dedupeAuthFiles(responseList(payload, 'files')).filter(
-        (file) => !readBoolean(file, 'disabled') && providerForFile(file),
-      );
+      const allFiles = dedupeAuthFiles(responseList(payload, 'files'));
+      const nextFiles = allFiles.filter((file) => !readBoolean(file, 'disabled') && providerForFile(file));
       setFiles(nextFiles);
-      const validQuotaKeys = new Set(nextFiles.map(quotaKey));
+      const validQuotaKeys = new Set(allFiles.map(quotaKey));
       pruneQuotaCache(validQuotaKeys);
       updateQuotaCache((current) => {
         const next = { ...current };
@@ -79,52 +84,45 @@ export function QuotaPage() {
 
   const refreshOne = useCallback(async (file: AuthFile) => {
     const key = quotaKey(file);
+    if (getQuotaCacheSnapshot()[key]?.status === 'loading') return;
     const cacheGeneration = captureQuotaCacheGeneration();
     updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
     const result = await loadQuota(file);
     commitQuotaCacheIfCurrent(cacheGeneration, () => {
       updateQuotaCache((current) => ({ ...current, [key]: result }));
     });
-  }, []);
+  }, [t]);
 
   const resetCodexQuota = useCallback(async (file: AuthFile, quota: QuotaState) => {
-    const confirmed = window.confirm([
-      t('quota.confirm.title', { name: fileName(file) }),
-      '',
-      t('quota.confirm.cost'),
-      t('quota.confirm.available', { count: quota.resetCredits ?? '—' }),
-      t('quota.confirm.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) }),
-      '',
-      t('quota.confirm.warning'),
-    ].join('\n'));
-    if (!confirmed) return;
-    const key = quotaKey(file);
-    const cacheGeneration = captureQuotaCacheGeneration();
-    updateQuotaCache((current) => ({ ...current, [key]: { ...current[key], status: 'loading', rows: [] } }));
+    setError('');
     try {
-      const result = await consumeCodexResetCredit(file);
-      commitQuotaCacheIfCurrent(cacheGeneration, () => {
-        updateQuotaCache((current) => ({ ...current, [key]: result }));
-      });
+      await resetCodexQuotaWithConfirmation(file, () => askConfirmation({
+        title: t('quota.reset'),
+        message: t('quota.confirm.title', { name: fileName(file) }),
+        confirmText: t('quota.confirm.button'),
+        details: [
+          { label: t('quota.resetCredits'), value: String(quota.resetCredits ?? '—') },
+          { label: t('quota.confirm.applicableLabel'), value: String(quota.resetCreditsApplicable ?? '—') },
+          { label: t('quota.earliestExpiry'), value: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) },
+        ],
+        warning: t('quota.confirm.warning'),
+      }));
     } catch (requestError) {
-      commitQuotaCacheIfCurrent(cacheGeneration, () => {
-        updateQuotaCache((current) => ({
-          ...current,
-          [key]: {
-            status: 'error',
-            rows: [],
-            error: requestError instanceof Error ? requestError.message : String(requestError),
-          },
-        }));
-      });
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
     }
-  }, [locale, t]);
+  }, [askConfirmation, locale, t]);
 
   const refreshAll = useCallback(async () => {
+    if (Object.values(getQuotaCacheSnapshot()).some((quota) => quota.status === 'loading')) return;
     setRefreshing(true);
     setError('');
     const cacheGeneration = captureQuotaCacheGeneration();
-    updateQuotaCache((current) => Object.fromEntries(files.map((file) => [quotaKey(file), { ...current[quotaKey(file)], status: 'loading', rows: [] }])));
+    updateQuotaCache((current) => ({
+      ...current,
+      ...Object.fromEntries(files.map((file) => [quotaKey(file), {
+        ...current[quotaKey(file)], status: 'loading', rows: [],
+      }])),
+    }));
     try {
       for (let index = 0; index < files.length; index += REFRESH_CONCURRENCY) {
         const batch = files.slice(index, index + REFRESH_CONCURRENCY);
@@ -138,7 +136,7 @@ export function QuotaPage() {
     } finally {
       setRefreshing(false);
     }
-  }, [files]);
+  }, [files, t]);
 
   const grouped = useMemo(() => {
     const groups = new Map<QuotaProvider, { file: AuthFile; quota: QuotaState }[]>();
@@ -157,14 +155,15 @@ export function QuotaPage() {
 
   return (
     <section className="page management-page quota-page">
+      {confirmationDialog}
       <header className="management-header">
-        <div><span>Quota</span><h1>{t('quota.title')}</h1></div>
+        <div><h1>{t('quota.title')}</h1></div>
         <div className="management-heading-actions">
           <span className="muted-summary">{t(files.length === 1 ? 'quota.queryableCredentials.one' : 'quota.queryableCredentials.other', { count: files.length })}</span>
-          <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || refreshing}>
+          <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || refreshing || querying}>
             <RefreshCw size={16} />{t('quota.readList')}
           </button>
-          <button type="button" className="secondary-button compact-button" onClick={() => void refreshAll()} disabled={refreshing || loading || files.length === 0}>
+          <button type="button" className="secondary-button compact-button" onClick={() => void refreshAll()} disabled={refreshing || loading || querying || files.length === 0}>
             <RefreshCw size={16} className={refreshing ? 'spin' : ''} />{t('quota.refreshAll')}
           </button>
         </div>
@@ -190,17 +189,38 @@ export function QuotaPage() {
 
 export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile; quota: QuotaState; onRefresh: () => void; onReset?: () => void }) {
   const { locale, t } = useI18n();
+  const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
   const provider = providerForFile(file);
   const name = fileName(file);
   const disabled = readBoolean(file, 'disabled');
   return (
     <article className="panel real-quota-card">
-      <div className="real-quota-card-header"><div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}{quota.plan ? ` · ${quota.plan}` : ''}</span></div><div className="quota-card-actions">{onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={disabled || quota.status === 'loading'}>{t('quota.reset')}</button> : null}<button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} /></button></div></div>
+      <div className="real-quota-card-header">
+        <div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}{quota.plan ? ' · ' + quota.plan : ''}</span></div>
+        <div className="quota-card-actions">
+          {onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={!canResetCodexQuota(file, quota)} title={quota.resetCreditsApplicable === 0 ? t('quota.resetNotApplicable') : quota.actionResult?.action === 'reset' && quota.actionResult.status !== 'success' ? t('quota.resetCheckFirst') : t('quota.reset')}>{t('quota.reset')}</button> : null}
+          <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} /></button>
+        </div>
+      </div>
+      <QuotaActionFeedback quota={quota} />
       {quota.status === 'idle' ? <div className="quota-card-message"><span>{disabled ? t('quota.fileDisabled') : t('quota.notFetched')}</span><button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={disabled}>{disabled ? t('quota.disabled') : t('quota.fetch')}</button></div> : null}
-      {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />{t('quota.querying')}</div> : null}
+      {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />{t(quota.pendingAction === 'reset' ? 'quota.resetting' : 'quota.querying')}</div> : null}
       {quota.status === 'error' ? <div className="quota-card-error"><AlertCircle size={18} />{quota.error}</div> : null}
-      {quota.status === 'success' && provider === 'codex' ? <div className="quota-reset-credit-summary"><span>{t('quota.resetCredits')} <strong>{quota.resetCredits ?? '—'}</strong></span><span>{t('quota.earliestExpiry')} <strong>{formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale)}</strong></span></div> : null}
-      {quota.status === 'success' ? <div className="quota-row-list">{quota.rows.map((row, index) => <div className="real-quota-row" key={`${row.label}-${index}`}><div><span>{row.label}</span><strong>{row.remainingPercent === null ? '—' : t('quota.remaining', { percent: Math.round(row.remainingPercent) })}</strong></div><div className="real-quota-track"><span style={{ width: `${Math.max(0, Math.min(100, row.remainingPercent ?? 0))}%` }} /></div><small>{row.detail ?? ''}{row.reset ? `${row.detail ? ' · ' : ''}${row.reset}` : ''}</small></div>)}</div> : null}
+      {quota.status === 'success' && provider === 'codex' ? <div className="quota-reset-credit-summary">
+        <span>{t('quota.resetCredits')} <strong>{quota.resetCredits ?? '—'}</strong></span>
+        {quota.resetCreditsApplicable !== undefined ? <span>{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</span> : null}
+        <span>{t('quota.earliestExpiry')} <strong>{formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale)}</strong></span>
+        {quota.subscriptionActiveUntil ? <span>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span> : null}
+        {quota.resetCreditsError ? <small>{t('quota.resetCreditsWarning', { error: quota.resetCreditsError })}</small> : null}
+      </div> : null}
+      {quota.status === 'success' ? <div className="quota-row-list">{quota.rows.map((row, index) => {
+        const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
+        return <div className="real-quota-row" key={`${row.label}-${index}`}>
+          <div><span>{row.label}</span><strong>{row.remainingPercent === null ? '—' : t('quota.remaining', { percent: Math.round(row.remainingPercent) })}</strong></div>
+          {row.remainingPercent !== null ? <div className="real-quota-track"><span style={{ width: `${Math.max(0, Math.min(100, row.remainingPercent))}%` }} /></div> : null}
+          <small>{[row.detail, reset].filter(Boolean).join(' · ')}</small>
+        </div>;
+      })}</div> : null}
     </article>
   );
 }

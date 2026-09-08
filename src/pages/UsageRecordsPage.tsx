@@ -1,3 +1,4 @@
+import { useConfirmation } from '../components/ConfirmationDialog';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -29,6 +30,7 @@ import { getCurrentLocale, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
+import { createRefreshScheduler } from '../services/refreshScheduler';
 
 function formatUsageCategoryLabel(label: string, t: (key: MessageKey) => string): string {
   if (label === '未记录密钥' || label === 'Unrecorded Key') return t('usage.key.unrecorded');
@@ -299,6 +301,8 @@ export function UsageRecordsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const requestIdRef = useRef(0);
+  const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
+  if (!schedulerRef.current) schedulerRef.current = createRefreshScheduler();
 
   useEffect(() => {
     try {
@@ -332,7 +336,7 @@ export function UsageRecordsPage() {
     };
   }, [apiKeyHash, customEnd, customStart, model, provider, range, result, source]);
 
-  const loadData = useCallback(
+  const executeLoadData = useCallback(
     async (quiet = false) => {
       const requestId = ++requestIdRef.current;
       const { timeQuery, query } = buildQueries();
@@ -355,7 +359,9 @@ export function UsageRecordsPage() {
             statusRequest,
             optionsRequest,
             invoke<UsageOverview>('get_usage_overview', { query }),
-            invoke<UsageAnalysis>('get_usage_analysis', { query }),
+            model || provider || source || apiKeyHash || result !== 'all'
+              ? invoke<UsageAnalysis>('get_usage_analysis', { query })
+              : optionsRequest,
           ]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
@@ -397,11 +403,23 @@ export function UsageRecordsPage() {
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [activeTab, buildQueries, page, pageSize]
+    [activeTab, buildQueries, page, pageSize, model, provider, source, apiKeyHash, result]
+  );
+
+  const loadData = useCallback(
+    (quiet = false) => {
+      if (!quiet) setLoading(true);
+      return schedulerRef.current!.schedule(() => executeLoadData(quiet), !quiet);
+    },
+    [executeLoadData],
   );
 
   useEffect(() => {
     void loadData();
+    return () => {
+      ++requestIdRef.current;
+      schedulerRef.current?.cancelPending();
+    };
   }, [loadData]);
 
   useEffect(() => {
@@ -581,12 +599,12 @@ export function UsageRecordsPage() {
             <label className="usage-filter-item">
               <span className="usage-filter-label">
                 <Layers size={13} />
-                Provider
+                {t('usage.column.provider')}
               </span>
               <select
                 value={provider}
                 onChange={(event) => changeFilter(setProvider, event.currentTarget.value)}
-                aria-label="Provider"
+                aria-label={t('usage.column.provider')}
               >
                 <option value="">{t('usage.filter.allProviders')}</option>
                 {filterOptions(optionsAnalysis.providers).map((item) => (
@@ -619,12 +637,12 @@ export function UsageRecordsPage() {
             <label className="usage-filter-item">
               <span className="usage-filter-label">
                 <Key size={13} />
-                API Key
+                {t('apiAccess.field.key')}
               </span>
               <select
                 value={apiKeyHash}
                 onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)}
-                aria-label="API Key"
+                aria-label={t('apiAccess.field.key')}
               >
                 <option value="">{t('usage.filter.allKeys')}</option>
                 {filterOptions(optionsAnalysis.apiKeys).map((item) => (
@@ -714,13 +732,14 @@ export function UsageRecordsPage() {
 }
 
 function UsageDataManagementView() {
+  const { askConfirmation, confirmationDialog } = useConfirmation();
   const { t } = useI18n();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<UsageRepairResult | null>(null);
   const [error, setError] = useState('');
 
   const repair = async () => {
-    if (!window.confirm(t('usage.dataManagement.confirm'))) return;
+    if (!await askConfirmation({ title: t('usage.dataManagement.title'), message: t('usage.dataManagement.confirm') })) return;
     setRunning(true);
     setError('');
     setResult(null);
@@ -736,6 +755,7 @@ function UsageDataManagementView() {
 
   return (
     <section className="panel usage-data-management-panel">
+      {confirmationDialog}
       <div className="usage-data-management-heading">
         <div>
           <Wrench size={20} aria-hidden="true" />
@@ -960,10 +980,10 @@ function UsageTrend({ points }: { points: TimelinePoint[] }) {
     <div className="usage-trend-wrapper">
       <div className="usage-trend-header-meta">
         <span className="usage-trend-chip">
-          <strong>{compactNumber(totalReqs)}</strong> requests
+          <strong>{compactNumber(totalReqs)}</strong> {t('usage.unit.requests')}
         </span>
         <span className="usage-trend-chip">
-          <strong>{compactNumber(totalTokens)}</strong> tokens
+          <strong>{compactNumber(totalTokens)}</strong> {t('usage.unit.tokens')}
         </span>
       </div>
       <div className="usage-trend">
@@ -1032,7 +1052,7 @@ function AnalysisView({ analysis, overview }: { analysis: UsageAnalysis; overvie
   return (
     <div className="usage-analysis-grid">
       <CategoryPanel title={t('usage.analysis.models')} items={analysis.models} />
-      <CategoryPanel title="Provider" items={analysis.providers} />
+      <CategoryPanel title={t('usage.column.provider')} items={analysis.providers} />
       <CategoryPanel title={t('usage.analysis.sources')} items={analysis.sources} compactLabels />
       <CategoryPanel title={t('usage.analysis.keys')} items={analysis.apiKeys} />
       <CategoryPanel title={t('usage.analysis.hours')} items={hours} />
@@ -1074,9 +1094,9 @@ function CategoryPanel({
                     </strong>
                   </div>
                   <small className="usage-category-meta">
-                    <span>{compactNumber(item.requests)} requests</span>
+                    <span>{compactNumber(item.requests)} {t('usage.unit.requests')}</span>
                     <span className="usage-category-pct">{percent}%</span>
-                    <strong>{compactNumber(item.tokens)} Token</strong>
+                    <strong>{compactNumber(item.tokens)} {t('usage.unit.tokens')}</strong>
                   </small>
                 </div>
                 <div className="usage-category-track">
@@ -1330,10 +1350,12 @@ function UsageEventCell({
   columnKey: EventColumnKey;
   noRemarkLabel: string;
 }) {
+  const { formatDate } = useI18n();
+
   switch (columnKey) {
     case 'time':
       return (
-        <td className="usage-td-time align-center" title={new Date(record.timestamp).toLocaleString()}>
+        <td className="usage-td-time align-center" title={formatDate(record.timestamp)}>
           {formatTime(record.timestamp)}
         </td>
       );
@@ -1838,6 +1860,7 @@ function PricingView({
   query: UsageQuery;
   onChanged: () => void | Promise<void>;
 }) {
+  const { askConfirmation, confirmationDialog } = useConfirmation();
   const { t } = useI18n();
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<PriceDraft | null>(null);
@@ -1886,7 +1909,7 @@ function PricingView({
   };
 
   const deletePrice = async (model: string) => {
-    if (!window.confirm(t('usage.pricing.deleteConfirm', { model }))) return;
+    if (!await askConfirmation({ title: t('common.delete'), message: t('usage.pricing.deleteConfirm', { model }), confirmText: t('common.delete'), variant: 'danger' })) return;
     try {
       await invoke('delete_usage_model_price', { model });
       setMessage(t('usage.pricing.deleted'));
@@ -1918,6 +1941,7 @@ function PricingView({
 
   return (
     <section className="panel usage-pricing-panel">
+      {confirmationDialog}
       <div className="usage-pricing-toolbar">
         <div className="usage-pricing-summary">
           <strong>{formatUsd(pricing.totalCost)}</strong>
@@ -2030,7 +2054,7 @@ function PricingView({
               <tr>
                 <th>{t('usage.pricing.model')}</th>
                 <th>{t('usage.pricing.calls')}</th>
-                <th>Token</th>
+                <th>{t('usage.unit.tokens')}</th>
                 <th>{t('usage.pricing.cost')}</th>
                 <th>{t('usage.pricing.prompt')}</th>
                 <th>{t('usage.pricing.completion')}</th>

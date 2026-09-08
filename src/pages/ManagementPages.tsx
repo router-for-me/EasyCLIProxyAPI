@@ -14,6 +14,7 @@ import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import { useI18n } from '../i18n';
+import { InlineNotice, useAppNotice } from '../appNotice';
 import { oauthSubpages, type OAuthSubpage } from '../oauthNavigation';
 import {
   changedOAuthAuthFileNames,
@@ -157,17 +158,14 @@ export function OAuthLoginPage() {
   const [states, setStates] = useState<Partial<Record<OAuthProviderId, OAuthProviderState>>>(
     cachedOAuthProviderStates,
   );
-  const [notice, setNotice] = useState<{
-    message: string;
-    tone: 'success' | 'error' | 'info';
-  } | null>(null);
+  const feedback = useAppNotice();
+  const { showNotice } = feedback;
   const [browsers, setBrowsers] = useState<OAuthBrowserOption[]>([]);
   const [browsersLoading, setBrowsersLoading] = useState(true);
   const [selectedBrowser, setSelectedBrowser] = useState(loadOAuthBrowserPreference);
   const pollingTimers = useRef<Partial<Record<OAuthProviderId, number>>>({});
   const pollingRequests = useRef<Partial<Record<OAuthProviderId, boolean>>>({});
   const credentialSnapshots = useRef<Partial<Record<OAuthProviderId, AuthFileSnapshot>>>({});
-  const noticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -197,15 +195,6 @@ export function OAuthLoginPage() {
       // Keep the in-memory selection when persistent storage is unavailable.
     }
   }, [selectedBrowser]);
-
-  const showNotice = useCallback((message: string, tone: 'success' | 'error' | 'info') => {
-    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
-    setNotice({ message, tone });
-    noticeTimerRef.current = window.setTimeout(() => {
-      setNotice(null);
-      noticeTimerRef.current = null;
-    }, 3600);
-  }, []);
 
   const updateProviderState = useCallback(
     (provider: OAuthProviderId, next: Partial<OAuthProviderState>) => {
@@ -296,10 +285,10 @@ export function OAuthLoginPage() {
             });
             clearPollingTimer(provider);
             showNotice(
-              t('oauth.loginFailed', {
+              { key: 'oauth.loginFailed', variables: {
                 provider: providerLabel(provider),
                 detail: result.error ? `: ${result.error}` : '',
-              }),
+              } },
               'error',
             );
           }
@@ -328,7 +317,6 @@ export function OAuthLoginPage() {
       Object.values(pollingTimers.current).forEach((timer) => {
         if (timer !== undefined) window.clearInterval(timer);
       });
-      if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
     };
   }, []);
 
@@ -359,7 +347,7 @@ export function OAuthLoginPage() {
           error: t('oauth.missingState'),
           polling: false,
         });
-        showNotice(t('oauth.missingStatePolling'), 'error');
+        showNotice({ key: 'oauth.missingStatePolling' }, 'error');
         return;
       }
 
@@ -424,9 +412,9 @@ export function OAuthLoginPage() {
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
-      showNotice(t('oauth.linkCopied'), 'success');
+      showNotice({ key: 'oauth.linkCopied' }, 'success');
     } catch {
-      showNotice(t('oauth.linkCopyFailed'), 'error');
+      showNotice({ key: 'oauth.linkCopyFailed' }, 'error');
     }
   };
 
@@ -463,7 +451,7 @@ export function OAuthLoginPage() {
         callbackSubmitting: false,
         callbackStatus: 'success',
       });
-      showNotice(t('oauth.callbackSubmittedNotice'), 'success');
+      showNotice({ key: 'oauth.callbackSubmittedNotice' }, 'success');
     } catch (error) {
       updateProviderState(provider, {
         callbackSubmitting: false,
@@ -477,7 +465,7 @@ export function OAuthLoginPage() {
   return (
     <section className="page management-page">
       <header className="management-header">
-        <div><span>OAuth</span><h1>{t('oauth.title')}</h1></div>
+        <div><h1>{t('oauth.title')}</h1></div>
         <label className="oauth-browser-picker">
           <span>{t('oauth.browser.label')}</span>
           <select
@@ -498,12 +486,7 @@ export function OAuthLoginPage() {
         </label>
       </header>
 
-      {notice ? (
-        <div className={`inline-notice ${notice.tone === 'error' ? 'error' : notice.tone === 'success' ? 'success' : ''}`}>
-          {notice.message}
-        </div>
-      ) : null}
-
+      <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
       <div className="oauth-grid">
         {oauthProviders.map((provider) => {
           const state = states[provider.id] ?? { status: 'idle' as const };

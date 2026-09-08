@@ -12,6 +12,7 @@ mod core_runtime;
 mod instance_lock;
 mod management_api;
 mod oauth_browser;
+mod progress;
 mod provider_health;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod tray;
@@ -138,6 +139,9 @@ const DEFAULT_MAX_RETRY_CREDENTIALS: u32 = 0;
 const DEFAULT_MAX_RETRY_INTERVAL: u32 = 30;
 const DEFAULT_STREAMING_BOOTSTRAP_RETRIES: u32 = 0;
 const DEFAULT_DISABLE_COOLING: bool = false;
+const DEFAULT_LOGS_MAX_TOTAL_SIZE_MB: u32 = 0;
+const DEFAULT_ERROR_LOGS_MAX_FILES: u32 = 10;
+const DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS: u32 = 60;
 const LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY: &str = "123456";
 const MANAGED_AGENT_PROVIDER_ID: &str = "cpa-gui";
 const ZCODE_CONFIG_FILE: &str = "config.json";
@@ -145,6 +149,8 @@ const KIMI_CODE_CONFIG_FILE: &str = "config.toml";
 const GROK_BUILD_CONFIG_FILE: &str = "config.toml";
 const DEEPSEEK_HARNESS_PROVIDER_ID: &str = "easy-cliproxyapi";
 const DEEPSEEK_HARNESS_CREDENTIAL: &str = "EASYCLIPROXYAPI_API_KEY";
+const DEEPSEEK_HARNESS_CREDENTIALS_VERSION: u64 = 1;
+const DEEPSEEK_HARNESS_DEFAULT_WEB_PORT: u16 = 3080;
 const DEEPSEEK_HARNESS_SETTINGS_FILE: &str = "settings.yaml";
 const DEEPSEEK_HARNESS_CREDENTIALS_FILE: &str = ".credentials.yaml";
 const PI_AGENT_ID: &str = "pi";
@@ -302,6 +308,16 @@ struct CoreProcessState {
     starting: AtomicBool,
     #[cfg(windows)]
     job: Mutex<Option<isize>>,
+}
+
+#[derive(Default)]
+struct DeepSeekHarnessProcessState {
+    process: Mutex<Option<ManagedDeepSeekHarnessProcess>>,
+}
+
+struct ManagedDeepSeekHarnessProcess {
+    child: Child,
+    mode: String,
 }
 
 #[derive(Clone)]
@@ -594,7 +610,14 @@ struct GuiConfigFile {
     api_keys: Vec<GuiApiKeyEntry>,
     api_access_remarks: Vec<GuiApiAccessRemark>,
     management_secret_key: String,
+    debug: bool,
+    commercial_mode: bool,
+    logging_to_file: bool,
+    logs_max_total_size_mb: u32,
+    error_logs_max_files: u32,
     usage_statistics_enabled: bool,
+    redis_usage_queue_retention_seconds: u32,
+    request_log: bool,
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
@@ -881,7 +904,14 @@ impl Default for GuiConfigFile {
             // Populated with an OS-generated secret while loading the GUI
             // configuration. Core hashes the value written into config.yaml.
             management_secret_key: String::new(),
+            debug: false,
+            commercial_mode: false,
+            logging_to_file: false,
+            logs_max_total_size_mb: DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
+            error_logs_max_files: DEFAULT_ERROR_LOGS_MAX_FILES,
             usage_statistics_enabled: true,
+            redis_usage_queue_retention_seconds: DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS,
+            request_log: false,
             plugins_enabled: false,
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
@@ -915,7 +945,14 @@ struct GuiConfigPresence {
     default_terminal: Option<String>,
     start_core_on_launch: Option<bool>,
     silent_start: Option<bool>,
+    debug: Option<bool>,
+    commercial_mode: Option<bool>,
+    logging_to_file: Option<bool>,
+    logs_max_total_size_mb: Option<u32>,
+    error_logs_max_files: Option<u32>,
     usage_statistics_enabled: Option<bool>,
+    redis_usage_queue_retention_seconds: Option<u32>,
+    request_log: Option<bool>,
     plugins_enabled: Option<bool>,
     routing_strategy: Option<String>,
     proxy_url: Option<String>,
@@ -1007,6 +1044,29 @@ struct AgentLaunchTarget {
     id: String,
     label: String,
     detail: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeepSeekHarnessLaunchOptions {
+    mode: String,
+    web_host: Option<String>,
+    web_port: Option<u16>,
+    open_browser: Option<bool>,
+    #[serde(default)]
+    trusted_hosts: Vec<String>,
+    task: Option<String>,
+    profile: Option<String>,
+    #[serde(default)]
+    patches: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeepSeekHarnessProcessStatus {
+    running: bool,
+    pid: Option<u32>,
+    mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1376,6 +1436,18 @@ struct CoreTlsSettings {
     key: String,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CoreLoggingSettingsInput {
+    debug: bool,
+    commercial_mode: bool,
+    logging_to_file: bool,
+    logs_max_total_size_mb: u32,
+    error_logs_max_files: u32,
+    usage_statistics_enabled: bool,
+    redis_usage_queue_retention_seconds: u32,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CoreConfigSettings {
@@ -1387,8 +1459,14 @@ struct CoreConfigSettings {
     auth_dir: String,
     api_keys: Vec<String>,
     management_secret_configured: bool,
-    #[serde(skip_serializing)]
+    debug: bool,
+    commercial_mode: bool,
+    logging_to_file: bool,
+    logs_max_total_size_mb: u32,
+    error_logs_max_files: u32,
     usage_statistics_enabled: bool,
+    redis_usage_queue_retention_seconds: u32,
+    request_log: bool,
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
@@ -1420,6 +1498,14 @@ struct CoreConfigView {
     management_secret_configured: bool,
     port: u16,
     allow_lan: bool,
+    debug: bool,
+    commercial_mode: bool,
+    logging_to_file: bool,
+    logs_max_total_size_mb: u32,
+    error_logs_max_files: u32,
+    usage_statistics_enabled: bool,
+    redis_usage_queue_retention_seconds: u32,
+    request_log: bool,
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
@@ -2033,7 +2119,15 @@ impl GuiConfigState {
             config.port = settings.port;
             config.allow_lan = !is_loopback_host(&settings.host);
             config.auth_dir = settings.auth_dir.clone();
+            config.debug = settings.debug;
+            config.commercial_mode = settings.commercial_mode;
+            config.logging_to_file = settings.logging_to_file;
+            config.logs_max_total_size_mb = settings.logs_max_total_size_mb;
+            config.error_logs_max_files = settings.error_logs_max_files;
             config.usage_statistics_enabled = settings.usage_statistics_enabled;
+            config.redis_usage_queue_retention_seconds =
+                settings.redis_usage_queue_retention_seconds;
+            config.request_log = settings.request_log;
             if let Some(secret_key) = settings
                 .management_secret_key
                 .as_deref()
@@ -2093,7 +2187,14 @@ impl From<&GuiConfigFile> for CoreConfigSettings {
             auth_dir: config.auth_dir.clone(),
             api_keys: gui_api_key_values(&config.api_keys),
             management_secret_configured: !config.management_secret_key.is_empty(),
+            debug: config.debug,
+            commercial_mode: config.commercial_mode,
+            logging_to_file: config.logging_to_file,
+            logs_max_total_size_mb: config.logs_max_total_size_mb,
+            error_logs_max_files: config.error_logs_max_files,
             usage_statistics_enabled: config.usage_statistics_enabled,
+            redis_usage_queue_retention_seconds: config.redis_usage_queue_retention_seconds,
+            request_log: config.request_log,
             plugins_enabled: config.plugins_enabled,
             routing_strategy: config.routing_strategy.clone(),
             proxy_url: config.proxy_url.clone(),
@@ -2124,6 +2225,14 @@ impl From<&GuiConfigFile> for CoreConfigView {
             management_secret_configured: !config.management_secret_key.is_empty(),
             port: config.port,
             allow_lan: config.allow_lan,
+            debug: config.debug,
+            commercial_mode: config.commercial_mode,
+            logging_to_file: config.logging_to_file,
+            logs_max_total_size_mb: config.logs_max_total_size_mb,
+            error_logs_max_files: config.error_logs_max_files,
+            usage_statistics_enabled: config.usage_statistics_enabled,
+            redis_usage_queue_retention_seconds: config.redis_usage_queue_retention_seconds,
+            request_log: config.request_log,
             plugins_enabled: config.plugins_enabled,
             routing_strategy: config.routing_strategy.clone(),
             proxy_url: config.proxy_url.clone(),
@@ -2214,6 +2323,7 @@ fn main() {
         .manage(CoreDownloadState::default())
         .manage(AppUpdateState::default())
         .manage(CoreProcessState::new(gui_config.start_core_on_launch))
+        .manage(DeepSeekHarnessProcessState::default())
         .manage(usage::UsageCollectorState::default())
         .manage(GuiConfigState::new(gui_config))
         .manage(MainWindowSizeState::new(initial_window_size))
@@ -2281,6 +2391,9 @@ fn main() {
                 eprintln!("加载 Codex 模型目录更新文件失败，将使用内置目录: {error}");
             }
             let catalog_update_app = app.handle().clone();
+            if let Err(error) = load_codex_model_customizations(app.handle()) {
+                eprintln!("加载 Codex 自定义模型配置失败: {error}");
+            }
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = update_codex_model_catalog_inner(&catalog_update_app).await {
                     eprintln!("后台更新 Codex 模型目录失败，继续使用当前目录: {error}");
@@ -2305,6 +2418,8 @@ fn main() {
                 eprintln!("启动配置文件监控失败: {error}");
             }
 
+            start_codex_model_catalog_sync(app.handle().clone());
+
             let usage_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error) = usage::initialize_usage_storage() {
@@ -2328,6 +2443,9 @@ fn main() {
 
             let core_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
+                let Ok(_guard) = CORE_OPERATION_LOCK.lock() else {
+                    return;
+                };
                 let gui_config_state = core_app.state::<GuiConfigState>();
                 let process_state = core_app.state::<CoreProcessState>();
                 let Ok(config) = gui_config_state.snapshot() else {
@@ -2409,6 +2527,8 @@ fn main() {
             uninstall_pi_provider,
             check_codex_oauth_login,
             update_codex_model_catalog,
+            get_codex_model_catalog_editor,
+            save_codex_model_catalog_editor,
             get_thinking_aliases,
             get_model_alias_sources,
             get_thinking_alias_sources,
@@ -2425,6 +2545,8 @@ fn main() {
             set_agent_config_enabled,
             update_agent_config,
             launch_agent,
+            get_deepseek_harness_process_status,
+            stop_deepseek_harness_process,
             restart_codex_app,
             restart_opencode_app,
             get_lan_ipv4,
@@ -2436,6 +2558,8 @@ fn main() {
             get_core_tls_settings,
             save_core_tls_settings,
             get_core_config_settings,
+            save_core_logging_settings,
+            set_core_request_log,
             add_core_api_key,
             update_core_api_key,
             delete_core_api_key,
@@ -2445,6 +2569,7 @@ fn main() {
             provider_health::provider_health_probe,
             management_api::upload_auth_file,
             management_api::open_auth_files_directory,
+            management_api::open_core_logs_directory,
             set_core_plugins_enabled,
             set_core_routing_strategy,
             set_core_proxy_url,
@@ -2505,6 +2630,10 @@ fn main() {
         }
         tauri::RunEvent::Exit => {
             usage::stop_usage_collector(app_handle);
+            let deepseek_process_state = app_handle.state::<DeepSeekHarnessProcessState>();
+            if let Err(error) = stop_managed_deepseek_harness(deepseek_process_state.inner()) {
+                eprintln!("关闭 DeepSeek Harness 失败: {error}");
+            }
             let gui_config_state = app_handle.state::<GuiConfigState>();
             let process_state = app_handle.state::<CoreProcessState>();
             shutdown_managed_core(process_state.inner(), gui_config_state.inner());

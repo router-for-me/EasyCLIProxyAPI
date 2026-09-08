@@ -153,7 +153,7 @@ fn thinking_alias_uses_source_native_override_parameters() {
     for (channel, model, effort, expected) in cases {
         let source = test_oauth_thinking_source(channel, model);
         let alias = format!("{model}-{effort}");
-        let rendered = add_model_alias_to_yaml("{}\n", &source, &alias, effort).unwrap();
+        let rendered = add_model_alias_to_yaml("{}\n", &source, &alias, effort, false).unwrap();
         for parameter in expected {
             assert!(
                 rendered.contains(parameter),
@@ -187,7 +187,8 @@ fn configured_claude_and_gemini_models_use_native_overrides() {
         .iter()
         .find(|source| source.source.kind == "claude-api")
         .unwrap();
-    let with_claude = add_model_alias_to_yaml(input, claude, "claude-fixed", "high").unwrap();
+    let with_claude =
+        add_model_alias_to_yaml(input, claude, "claude-fixed", "high", false).unwrap();
     assert!(
         with_claude.contains("output_config.effort: high"),
         "{with_claude}"
@@ -204,7 +205,8 @@ fn configured_claude_and_gemini_models_use_native_overrides() {
         .iter()
         .find(|source| source.source.kind == "gemini-api")
         .unwrap();
-    let rendered = add_model_alias_to_yaml(&with_claude, gemini, "gemini-fixed", "low").unwrap();
+    let rendered =
+        add_model_alias_to_yaml(&with_claude, gemini, "gemini-fixed", "low", false).unwrap();
     assert!(
         rendered.contains("generationConfig.thinkingConfig.thinkingLevel: low"),
         "{rendered}"
@@ -260,7 +262,7 @@ fn antigravity_alias_uses_its_own_oauth_channel_and_force_mapping() {
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].source.kind, "antigravity-oauth");
     let rendered =
-        add_model_alias_to_yaml("{}\n", &sources[0], "gemini-3.1-pro-preview", "").unwrap();
+        add_model_alias_to_yaml("{}\n", &sources[0], "gemini-3.1-pro-preview", "", false).unwrap();
 
     assert!(rendered.contains("antigravity:"), "{rendered}");
     assert!(rendered.contains("name: gemini-pro-agent"), "{rendered}");
@@ -291,15 +293,20 @@ fn oauth_alias_reader_and_delete_preserve_the_exact_channel() {
 }
 
 #[test]
-fn fast_is_only_available_for_gpt_models_from_supported_sources() {
+fn fast_is_only_available_for_supported_model_sources() {
     let input = "openai-compatibility:\n  - name: Relay\n    base-url: https://example.com/v1\n    models:\n      - name: gpt-test\n      - name: deepseek-chat\n";
     let available_models = test_agent_models(&["gpt-test", "deepseek-chat"]);
     let sources =
         resolved_oauth_alias_sources(input, &[], &available_models, AliasSourceCapability::Fast)
             .unwrap();
 
-    assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].source.model, "gpt-test");
+    assert_eq!(sources.len(), 2);
+    assert!(sources
+        .iter()
+        .any(|source| source.source.model == "gpt-test"));
+    assert!(sources
+        .iter()
+        .any(|source| source.source.model == "deepseek-chat"));
 
     let deepseek_source = ResolvedThinkingAliasSource {
         source: ThinkingAliasSource {
@@ -317,7 +324,11 @@ fn fast_is_only_available_for_gpt_models_from_supported_sources() {
             model_index: 1,
         },
     };
-    assert!(add_speed_alias_to_yaml(input, &deepseek_source, "deepseek-fast").is_err());
+    let deepseek_fast = add_speed_alias_to_yaml(input, &deepseek_source, "deepseek-fast").unwrap();
+    assert!(
+        deepseek_fast.contains("service_tier: priority"),
+        "{deepseek_fast}"
+    );
 
     let antigravity_source = ResolvedThinkingAliasSource {
         source: ThinkingAliasSource {
@@ -349,7 +360,8 @@ fn fast_is_only_available_for_gpt_models_from_supported_sources() {
 fn thinking_alias_adds_fork_and_matching_payload_rule() {
     let input = "# Keep this comment\ndebug: true\npayload:\n  override:\n    - models:\n        - name: existing-fast\n          protocol: codex\n      params:\n        service_tier: priority\n";
     let source = test_codex_oauth_thinking_source("gpt-5.5");
-    let rendered = add_model_alias_to_yaml(input, &source, "gpt-5.5-xhigh", "xhigh").unwrap();
+    let rendered =
+        add_model_alias_to_yaml(input, &source, "gpt-5.5-xhigh", "xhigh", false).unwrap();
     let aliases = thinking_aliases_from_yaml(&rendered).unwrap();
 
     assert!(rendered.contains("# Keep this comment"), "{rendered}");
@@ -370,7 +382,7 @@ fn thinking_alias_adds_fork_and_matching_payload_rule() {
 #[test]
 fn model_alias_can_be_created_without_overrides() {
     let source = test_codex_oauth_thinking_source("gpt-5.5");
-    let rendered = add_model_alias_to_yaml("{}\n", &source, "gpt-5.5-alias", "").unwrap();
+    let rendered = add_model_alias_to_yaml("{}\n", &source, "gpt-5.5-alias", "", false).unwrap();
 
     assert!(rendered.contains("alias: gpt-5.5-alias"), "{rendered}");
     assert!(!rendered.contains("payload:"), "{rendered}");
@@ -396,7 +408,7 @@ fn configured_model_alias_can_be_created_without_overrides() {
         .iter()
         .find(|source| source.source.model == "gpt-custom")
         .unwrap();
-    let rendered = add_model_alias_to_yaml(input, source, "gpt-custom-alias", "").unwrap();
+    let rendered = add_model_alias_to_yaml(input, source, "gpt-custom-alias", "", false).unwrap();
 
     assert!(rendered.contains("alias: gpt-custom-alias"), "{rendered}");
     assert!(!rendered.contains("thinking:"), "{rendered}");
@@ -412,6 +424,57 @@ fn thinking_alias_removal_cleans_legacy_combined_rules() {
     let restored = remove_thinking_alias_from_yaml(legacy, "legacy-combined").unwrap();
     assert!(!restored.contains("legacy-combined"), "{restored}");
     assert!(!restored.contains("service_tier: priority"), "{restored}");
+}
+
+#[test]
+fn model_alias_combines_reasoning_and_fast_as_independent_overrides() {
+    let source = test_codex_oauth_thinking_source("gpt-5.6-sol");
+    let alias = "gpt-5.6-sol-high-fast";
+    let rendered = add_model_alias_to_yaml("{}\n", &source, alias, "high", true).unwrap();
+
+    assert!(rendered.contains("reasoning.effort: high"), "{rendered}");
+    assert!(rendered.contains("service_tier: priority"), "{rendered}");
+    let document: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
+    let root = document.as_mapping().unwrap();
+    let rules = nested_yaml_value(root, &["payload", "override"])
+        .and_then(serde_norway::Value::as_sequence)
+        .unwrap();
+    let alias_rules = rules
+        .iter()
+        .filter_map(serde_norway::Value::as_mapping)
+        .filter(|rule| {
+            yaml_mapping_value(rule, "models")
+                .and_then(serde_norway::Value::as_sequence)
+                .is_some_and(|models| {
+                    models
+                        .iter()
+                        .any(|model| thinking_payload_model_matches(model, alias, "codex"))
+                })
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(alias_rules.len(), 2, "{rendered}");
+    assert!(alias_rules.iter().any(|rule| {
+        yaml_mapping_value(rule, "params")
+            .and_then(serde_norway::Value::as_mapping)
+            .is_some_and(|params| {
+                yaml_mapping_value(params, "reasoning.effort").is_some()
+                    && yaml_mapping_value(params, "service_tier").is_none()
+            })
+    }));
+    assert!(alias_rules.iter().any(|rule| {
+        yaml_mapping_value(rule, "params")
+            .and_then(serde_norway::Value::as_mapping)
+            .is_some_and(|params| {
+                yaml_mapping_value(params, "service_tier").is_some()
+                    && yaml_mapping_value(params, "reasoning.effort").is_none()
+            })
+    }));
+    assert_eq!(thinking_aliases_from_yaml(&rendered).unwrap().len(), 1);
+    assert_eq!(speed_aliases_from_yaml(&rendered).unwrap().len(), 1);
+
+    let restored = remove_thinking_alias_from_yaml(&rendered, alias).unwrap();
+    assert!(!restored.contains(alias), "{restored}");
 }
 
 #[test]
@@ -517,7 +580,7 @@ fn thinking_alias_rejects_duplicate_client_visible_name() {
     let input = "oauth-model-alias:\n  codex:\n    - name: gpt-5.5\n      alias: gpt-5.5-high\n      fork: true\n";
     let source = test_codex_oauth_thinking_source("gpt-5.4");
     assert!(
-        add_model_alias_to_yaml(input, &source, "GPT-5.5-HIGH", "high")
+        add_model_alias_to_yaml(input, &source, "GPT-5.5-HIGH", "high", false)
             .unwrap_err()
             .contains("已存在")
     );
@@ -532,7 +595,8 @@ fn thinking_alias_supports_openai_compatible_model_entries() {
         .iter()
         .find(|source| source.source.model == "deepseek-chat")
         .unwrap();
-    let rendered = add_model_alias_to_yaml(input, source, "deepseek-chat-high", "high").unwrap();
+    let rendered =
+        add_model_alias_to_yaml(input, source, "deepseek-chat-high", "high", false).unwrap();
     let value: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
     let root = value.as_mapping().unwrap();
     let providers = yaml_mapping_value(root, "openai-compatibility")
@@ -576,13 +640,34 @@ fn thinking_alias_supports_codex_api_model_entries() {
         .iter()
         .find(|source| source.source.kind == "codex-api")
         .unwrap();
-    let rendered = add_model_alias_to_yaml(input, source, "gpt-custom-xhigh", "xhigh").unwrap();
+    let rendered =
+        add_model_alias_to_yaml(input, source, "gpt-custom-xhigh", "xhigh", false).unwrap();
 
     assert!(rendered.contains("alias: gpt-custom-xhigh"), "{rendered}");
     assert!(rendered.contains("protocol: codex"), "{rendered}");
     assert!(rendered.contains("reasoning.effort: xhigh"), "{rendered}");
     assert!(!rendered.contains("oauth-model-alias"), "{rendered}");
     let entries = thinking_aliases_from_yaml(&rendered).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].kind, "codex-api");
+}
+
+#[test]
+fn speed_alias_supports_codex_api_model_entries() {
+    let input = "codex-api-key:\n  - api-key: test\n    base-url: https://example.com/v1\n    models:\n      - name: codex-custom\n";
+    let available_models = test_agent_models(&["codex-custom"]);
+    let sources = resolved_speed_alias_sources(input, &[], &available_models).unwrap();
+    let source = sources
+        .iter()
+        .find(|source| source.source.kind == "codex-api")
+        .unwrap();
+    let rendered = add_speed_alias_to_yaml(input, source, "codex-custom-fast").unwrap();
+
+    assert!(rendered.contains("alias: codex-custom-fast"), "{rendered}");
+    assert!(rendered.contains("protocol: codex"), "{rendered}");
+    assert!(rendered.contains("service_tier: priority"), "{rendered}");
+    assert!(!rendered.contains("oauth-model-alias"), "{rendered}");
+    let entries = speed_aliases_from_yaml(&rendered).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "codex-api");
 }

@@ -1,8 +1,8 @@
 #[cfg(target_os = "windows")]
 use super::windows_explorer_executable;
 use super::{
-    auth_dir_path_for_core, configure_background_command, core_install_dir, core_origin,
-    current_core_tls_settings, is_hashed_management_secret_key, open_oauth_url_inner,
+    auth_dir_path_for_core, configure_background_command, core_install_dir, core_logs_dir_path,
+    core_origin, current_core_tls_settings, is_hashed_management_secret_key, open_oauth_url_inner,
     path_to_string, truncate_for_error, GuiConfigFile, GuiConfigState,
 };
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,7 @@ use std::{
     fs,
     path::Path,
     process::{Command, Stdio},
+    sync::LazyLock,
     time::Duration,
 };
 
@@ -107,7 +108,7 @@ pub(crate) async fn upload_auth_file(
 ) -> Result<serde_json::Value, String> {
     let name = name.trim().to_string();
     if name.is_empty() || !name.to_ascii_lowercase().ends_with(".json") {
-        return Err("认证文件名必须以 .json 结尾".to_string());
+        return Err("凭证文件名必须以 .json 结尾".to_string());
     }
 
     let config = gui_config_state.snapshot()?;
@@ -122,7 +123,7 @@ pub(crate) async fn upload_auth_file(
         .body(data)
         .send()
         .await
-        .map_err(|err| format_management_request_error("上传认证文件失败", &err))?;
+        .map_err(|err| format_management_request_error("上传凭证文件失败", &err))?;
     read_management_value(response).await
 }
 
@@ -136,6 +137,19 @@ pub(crate) fn open_auth_files_directory(
     fs::create_dir_all(&auth_dir)
         .map_err(|error| format!("创建凭证目录失败 {}: {error}", path_to_string(&auth_dir)))?;
     open_directory_in_file_manager(&auth_dir)
+}
+
+#[tauri::command]
+pub(crate) fn open_core_logs_directory(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<(), String> {
+    let config = gui_config_state.snapshot()?;
+    let install_dir = core_install_dir()?;
+    let logs_dir = core_logs_dir_path(&config.auth_dir, &install_dir);
+    fs::create_dir_all(&logs_dir)
+        .map_err(|error| format!("创建日志目录失败 {}: {error}", path_to_string(&logs_dir)))?;
+
+    open_directory_in_file_manager(&logs_dir)
 }
 
 fn open_directory_in_file_manager(path: &Path) -> Result<(), String> {
@@ -155,7 +169,7 @@ fn open_directory_in_file_manager(path: &Path) -> Result<(), String> {
     command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("打开凭证目录失败 {}: {error}", path_to_string(path)))
+        .map_err(|error| format!("打开目录失败 {}: {error}", path_to_string(path)))
 }
 
 #[tauri::command]
@@ -282,18 +296,21 @@ pub(crate) async fn submit_oauth_callback(
 }
 
 pub(crate) fn management_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        // GUI-to-Core management traffic must always connect directly. Upstream
-        // traffic still uses Core's proxy-url, and other GUI HTTP clients keep
-        // their independently configured proxy behavior.
-        .no_proxy()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
-        // Management requests target the configured local listener. This keeps
-        // self-signed/private-CA certificates usable without weakening upstream clients.
-        .danger_accept_invalid_certs(true)
-        .build()
-        .map_err(|err| format_management_request_error("创建管理 API 客户端失败", &err))
+    static CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
+        reqwest::Client::builder()
+            // GUI-to-Core management traffic must always connect directly. Upstream
+            // traffic still uses Core's proxy-url, and other GUI HTTP clients keep
+            // their independently configured proxy behavior.
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            // Management requests target the configured local listener. This keeps
+            // self-signed/private-CA certificates usable without weakening upstream clients.
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|err| format_management_request_error("创建管理 API 客户端失败", &err))
+    });
+    CLIENT.as_ref().cloned().map_err(Clone::clone)
 }
 
 pub(crate) fn format_management_request_error(
@@ -439,5 +456,33 @@ fn format_management_error(status: u16, body: &str) -> String {
         format!("管理 API 错误 ({status})")
     } else {
         format!("管理 API 错误 ({status}): {}", truncate_for_error(body))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn core_logs_follow_the_default_auth_directory() {
+        let base_dir = PathBuf::from("test-base");
+        let install_dir = base_dir.join("cpa-core");
+
+        assert_eq!(
+            core_logs_dir_path("../oauth", &install_dir),
+            base_dir.join("oauth").join("logs")
+        );
+    }
+
+    #[test]
+    fn core_logs_follow_a_custom_auth_directory() {
+        let install_dir = PathBuf::from("test-base").join("cpa-core");
+        let auth_dir = PathBuf::from("custom-auth");
+
+        assert_eq!(
+            core_logs_dir_path(auth_dir.to_str().unwrap(), &install_dir),
+            install_dir.join(auth_dir).join("logs")
+        );
     }
 }

@@ -20,7 +20,9 @@ import {
   X,
 } from "lucide-react";
 import appLogo from "../assets/logo.jpg";
-import { useI18n, languageOptions, type AppLocale, type MessageKey } from "../i18n";
+import { useI18n, languageOptions, type AppLocale } from "../i18n";
+import type { MessageKey } from "../i18n/resources";
+import { InlineNotice, useAppNotice, type NoticeMessage } from "../appNotice";
 import {
   managementApi,
   readString,
@@ -53,16 +55,16 @@ type OAuthProviderInfo = {
   id: OAuthProviderId;
   name: string;
   icon: string;
-  description: string;
+
   descriptionKey: MessageKey;
 };
 
 const oauthProviders: OAuthProviderInfo[] = [
-  { id: "codex", name: "Codex OAuth", icon: codexIcon, description: "OpenAI / ChatGPT account authorization", descriptionKey: "easyMode.oauth.descCodex" },
-  { id: "claude", name: "Claude OAuth", icon: claudeIcon, description: "Anthropic / Claude account authorization", descriptionKey: "easyMode.oauth.descClaude" },
-  { id: "antigravity", name: "Antigravity OAuth", icon: antigravityIcon, description: "Antigravity account authorization", descriptionKey: "easyMode.oauth.descAntigravity" },
-  { id: "kimi", name: "Kimi OAuth", icon: kimiIcon, description: "Moonshot / Kimi account authorization", descriptionKey: "easyMode.oauth.descKimi" },
-  { id: "xai", name: "xAI OAuth", icon: grokIcon, description: "xAI / Grok account authorization", descriptionKey: "easyMode.oauth.descXai" },
+  { id: "codex", name: "Codex OAuth", icon: codexIcon, descriptionKey: "easyMode.oauth.providerDesc.codex" },
+  { id: "claude", name: "Claude OAuth", icon: claudeIcon, descriptionKey: "easyMode.oauth.providerDesc.claude" },
+  { id: "antigravity", name: "Antigravity OAuth", icon: antigravityIcon, descriptionKey: "easyMode.oauth.providerDesc.antigravity" },
+  { id: "kimi", name: "Kimi OAuth", icon: kimiIcon, descriptionKey: "easyMode.oauth.providerDesc.kimi" },
+  { id: "xai", name: "xAI OAuth", icon: grokIcon, descriptionKey: "easyMode.oauth.providerDesc.xai" },
 ];
 
 type ApiSection = "openai-compatibility" | "deepseek" | "claude" | "gemini" | "codex";
@@ -71,19 +73,18 @@ type ApiManagementSection = "openai-compatibility" | "claude-api-key" | "codex-a
 type ApiSectionOption = {
   id: ApiSection;
   managementSection: ApiManagementSection;
-  name: string;
-  nameKey?: MessageKey;
+  nameKey: MessageKey;
   provider: ModelProvider;
   defaultBaseUrl: string;
   icon: string;
 };
 
 const apiSectionOptions: ApiSectionOption[] = [
-  { id: "openai-compatibility", managementSection: "openai-compatibility", name: "OpenAI Format", nameKey: "easyMode.api.formatOpenAi", provider: "openai", defaultBaseUrl: "", icon: openaiIcon },
-  { id: "claude", managementSection: "claude-api-key", name: "Anthropic Format", nameKey: "easyMode.api.formatClaude", provider: "claude", defaultBaseUrl: "", icon: claudeIcon },
-  { id: "codex", managementSection: "codex-api-key", name: "Codex API", provider: "codex", defaultBaseUrl: "", icon: codexIcon },
-  { id: "gemini", managementSection: "gemini-api-key", name: "Gemini Format", nameKey: "easyMode.api.formatGemini", provider: "gemini", defaultBaseUrl: "", icon: geminiIcon },
-  { id: "deepseek", managementSection: "openai-compatibility", name: "DeepSeek", provider: "openai", defaultBaseUrl: "https://api.deepseek.com", icon: deepseekIcon },
+  { id: "openai-compatibility", managementSection: "openai-compatibility", nameKey: "easyMode.api.platformName.openai", provider: "openai", defaultBaseUrl: "", icon: openaiIcon },
+  { id: "claude", managementSection: "claude-api-key", nameKey: "easyMode.api.platformName.claude", provider: "claude", defaultBaseUrl: "", icon: claudeIcon },
+  { id: "codex", managementSection: "codex-api-key", nameKey: "easyMode.api.platformName.codex", provider: "codex", defaultBaseUrl: "", icon: codexIcon },
+  { id: "gemini", managementSection: "gemini-api-key", nameKey: "easyMode.api.platformName.gemini", provider: "gemini", defaultBaseUrl: "", icon: geminiIcon },
+  { id: "deepseek", managementSection: "openai-compatibility", nameKey: "easyMode.api.platformName.deepseek", provider: "openai", defaultBaseUrl: "https://api.deepseek.com", icon: deepseekIcon },
 ];
 
 const isDeepSeekRecord = (record: Record<string, unknown>) => {
@@ -122,11 +123,10 @@ export function EasyModePage({
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
 
   const [oauthLoggingIn, setOauthLoggingIn] = useState<OAuthProviderId | null>(null);
-  const [oauthNotice, setOauthNotice] = useState<{
-    tone: "success" | "error" | "info";
-    message: string;
-  } | null>(null);
+  const oauthFeedback = useAppNotice();
+  const { showNotice: showOAuthNotice, clearNotice: clearOAuthNotice } = oauthFeedback;
   const oauthPollTimer = useRef<number | null>(null);
+  const oauthGeneration = useRef(0);
 
   const [selectedApiSection, setSelectedApiSection] = useState<ApiSection>("openai-compatibility");
   const [apiBaseUrl, setApiBaseUrl] = useState("");
@@ -135,9 +135,13 @@ export function EasyModePage({
   const [apiTesting, setApiTesting] = useState(false);
   const [apiTestedModels, setApiTestedModels] = useState<ModelOption[]>([]);
   const [apiSelectedModels, setApiSelectedModels] = useState<ModelOption[]>([]);
-  const [apiTestError, setApiTestError] = useState("");
+  const [apiErrorMessage, setApiTestError] = useState<NoticeMessage>("");
+  const apiTestError = typeof apiErrorMessage === "string"
+    ? apiErrorMessage
+    : t(apiErrorMessage.key, apiErrorMessage.variables);
   const [apiSaving, setApiSaving] = useState(false);
-  const [apiSaveNotice, setApiSaveNotice] = useState<string | null>(null);
+  const apiFeedback = useAppNotice();
+  const { showNotice: showApiNotice, clearNotice: clearApiNotice } = apiFeedback;
 
   const [guideChoice, setGuideChoice] = useState<AuthMethod | null>(null);
   const [guideOAuthProvider, setGuideOAuthProvider] = useState<OAuthProviderId | null>(null);
@@ -202,25 +206,10 @@ export function EasyModePage({
   useEffect(() => {
     void refreshSourceStatus();
     return () => {
-      if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
+      ++oauthGeneration.current;
+      if (oauthPollTimer.current !== null) window.clearTimeout(oauthPollTimer.current);
     };
   }, [refreshSourceStatus]);
-
-  useEffect(() => {
-    if (!oauthNotice) return undefined;
-    const timer = window.setTimeout(() => {
-      setOauthNotice(null);
-    }, 4500);
-    return () => window.clearTimeout(timer);
-  }, [oauthNotice]);
-
-  useEffect(() => {
-    if (!apiSaveNotice) return undefined;
-    const timer = window.setTimeout(() => {
-      setApiSaveNotice(null);
-    }, 4500);
-    return () => window.clearTimeout(timer);
-  }, [apiSaveNotice]);
 
   const isOAuthLoggedIn = (providerId: OAuthProviderId) => {
     const norm = providerId === "claude" ? "claude" : providerId === "codex" ? "codex" : providerId;
@@ -250,9 +239,11 @@ export function EasyModePage({
       setGuideOAuthProvider(provider);
       setGuideOAuthCompleted(false);
     }
-    if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
+    const generation = ++oauthGeneration.current;
+    if (oauthPollTimer.current !== null) window.clearTimeout(oauthPollTimer.current);
+    oauthPollTimer.current = null;
     setOauthLoggingIn(provider);
-    setOauthNotice(null);
+    clearOAuthNotice();
 
     try {
       const result = await invoke<{
@@ -265,48 +256,62 @@ export function EasyModePage({
         browser: "default",
       });
 
+      if (generation !== oauthGeneration.current) return;
+
       if (!result.state) {
-        setOauthNotice({
-          tone: "error",
-          message: t("easyMode.oauth.errorGetStatus"),
-        });
+        showOAuthNotice({ key: "easyMode.notice.oauthStateFailed" }, "error");
         setOauthLoggingIn(null);
         return;
       }
 
       const stateKey = result.state;
-      oauthPollTimer.current = window.setInterval(async () => {
+      const deadline = Date.now() + 10 * 60_000;
+      let failures = 0;
+      const poll = async () => {
+        if (generation !== oauthGeneration.current) return;
+        if (Date.now() >= deadline) {
+          setOauthLoggingIn(null);
+          showOAuthNotice({ key: "easyMode.notice.oauthTimeout" }, "error");
+          return;
+        }
         try {
           const pollRes = await invoke<{ status: string; error?: string }>(
             "get_oauth_status",
             { state: stateKey },
           );
+          if (generation !== oauthGeneration.current) return;
+          failures = 0;
           const status = (pollRes.status || "").toLowerCase();
           if (status === "ok") {
-            if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
             setOauthLoggingIn(null);
-            setOauthNotice({
-              tone: "success",
-              message: t("easyMode.oauth.loginSuccess"),
-            });
+            showOAuthNotice({ key: "easyMode.notice.oauthSuccess" }, "success");
             setGuideOAuthCompleted(true);
             void refreshSourceStatus();
           } else if (status === "error") {
-            if (oauthPollTimer.current) window.clearInterval(oauthPollTimer.current);
             setOauthLoggingIn(null);
-            setOauthNotice({
-              tone: "error",
-              message: pollRes.error ? t("easyMode.oauth.errorWithDetail", { error: pollRes.error }) : t("easyMode.oauth.errorRetry"),
-            });
+            showOAuthNotice(pollRes.error
+              ? { key: "easyMode.notice.oauthFailedWithReason", variables: { error: pollRes.error } }
+              : { key: "easyMode.notice.oauthFailed" }, "error");
           }
-        } catch {}
-      }, 1500);
+          if (status === "ok" || status === "error") return;
+        } catch (error) {
+          if (generation !== oauthGeneration.current) return;
+          failures += 1;
+          if (failures >= 3) {
+            setOauthLoggingIn(null);
+            showOAuthNotice(String(error), "error");
+            return;
+          }
+        }
+        if (generation === oauthGeneration.current) {
+          oauthPollTimer.current = window.setTimeout(poll, Math.min(1500 * 2 ** failures, 10_000));
+        }
+      };
+      oauthPollTimer.current = window.setTimeout(poll, 1500);
     } catch (err) {
+      if (generation !== oauthGeneration.current) return;
       setOauthLoggingIn(null);
-      setOauthNotice({
-        tone: "error",
-        message: String(err),
-      });
+      showOAuthNotice(String(err), "error");
     }
   };
 
@@ -317,18 +322,18 @@ export function EasyModePage({
     setApiTestedModels([]);
     setApiSelectedModels([]);
     setApiTestError("");
-    setApiSaveNotice(null);
+    clearApiNotice();
     setGuideApiSaved(false);
     setGuideApiModelsFetched(false);
   };
 
   const handleTestApi = async () => {
     if (!apiBaseUrl.trim()) {
-      setApiTestError(t("easyMode.api.errorBaseUrl"));
+      setApiTestError({ key: "easyMode.api.baseUrlRequired" });
       return;
     }
     if (!apiKey.trim()) {
-      setApiTestError(t("easyMode.api.errorApiKey"));
+      setApiTestError({ key: "easyMode.api.apiKeyRequired" });
       return;
     }
     setApiTesting(true);
@@ -355,7 +360,7 @@ export function EasyModePage({
         setApiSelectedModels(models);
         setGuideApiModelsFetched(true);
       } else {
-        setApiTestError(t("easyMode.api.errorNoModels"));
+        setApiTestError({ key: "easyMode.api.noModelsFound" });
       }
     } catch (err) {
       setApiTestError(String(err));
@@ -378,23 +383,23 @@ export function EasyModePage({
 
   const handleSaveApi = async () => {
     if (!apiBaseUrl.trim()) {
-      setApiTestError(t("easyMode.api.errorBaseUrl"));
+      setApiTestError({ key: "easyMode.api.baseUrlRequired" });
       return;
     }
     if (!apiKey.trim()) {
-      setApiTestError(t("easyMode.api.errorApiKey"));
+      setApiTestError({ key: "easyMode.api.apiKeyRequired" });
       return;
     }
     if (apiSelectedModels.length === 0) {
-      setApiTestError(t("easyMode.api.modelRequired"));
+      setApiTestError({ key: "easyMode.api.modelRequired" });
       return;
     }
     if (guideActive && guideStep === 2 && authMethod === "api" && !guideApiModelsFetched) {
-      setApiTestError(t("easyMode.api.errorFetchModelsFirst"));
+      setApiTestError({ key: "easyMode.api.fetchListFirst" });
       return;
     }
     setApiSaving(true);
-    setApiSaveNotice(null);
+    clearApiNotice();
     setApiTestError("");
     setGuideApiSaved(false);
 
@@ -420,7 +425,7 @@ export function EasyModePage({
         };
 
       await managementApi.put(`/${managementSection}`, [...list, newEntry]);
-      setApiSaveNotice(t("easyMode.api.savedNotice"));
+      showApiNotice({ key: "easyMode.notice.apiSaveSuccess" });
       setGuideApiSaved(true);
       void refreshSourceStatus();
     } catch (err) {
@@ -453,28 +458,41 @@ export function EasyModePage({
     const el = document.getElementById(currentTargetId);
     if (el) {
       const rect = el.getBoundingClientRect();
-      setSpotlightRect({
+      const next = {
         top: Math.max(0, rect.top),
         left: Math.max(0, rect.left),
         width: rect.width,
         height: rect.height,
-      });
-      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      };
+      setSpotlightRect((previous) => previous && previous.top === next.top && previous.left === next.left
+        && previous.width === next.width && previous.height === next.height ? previous : next);
     } else {
       setSpotlightRect(null);
     }
   }, [guideActive, currentTargetId]);
 
   useEffect(() => {
-    const timer = setTimeout(updateSpotlightPosition, 100);
-    window.addEventListener("resize", updateSpotlightPosition);
-    window.addEventListener("scroll", updateSpotlightPosition, true);
+    let frame: number | null = null;
+    const schedulePosition = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        updateSpotlightPosition();
+      });
+    };
+    const timer = setTimeout(() => {
+      if (currentTargetId) document.getElementById(currentTargetId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      schedulePosition();
+    }, 100);
+    window.addEventListener("resize", schedulePosition);
+    window.addEventListener("scroll", schedulePosition, { capture: true, passive: true });
     return () => {
       clearTimeout(timer);
-      window.removeEventListener("resize", updateSpotlightPosition);
-      window.removeEventListener("scroll", updateSpotlightPosition, true);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedulePosition);
+      window.removeEventListener("scroll", schedulePosition, true);
     };
-  }, [updateSpotlightPosition]);
+  }, [currentTargetId, updateSpotlightPosition]);
 
   useEffect(() => {
     setGuideCardPosition(null);
@@ -594,21 +612,21 @@ export function EasyModePage({
             <div className="simple-mode-brand-text">
               <div className="simple-mode-brand-title">
                 <strong>EasyCLIProxyAPI</strong>
-                <span className="simple-mode-badge">{t("app.nav.easy")}</span>
+                <span className="simple-mode-badge">{t("easyMode.badge")}</span>
               </div>
-              <span className="simple-mode-brand-sub">{t("easyMode.subtitle")}</span>
+              <span className="simple-mode-brand-sub">{t("easyMode.brandSub")}</span>
             </div>
           </div>
           {/* Guided setup toggle */}
           <button
             type="button"
             className={`simple-mode-guide-toggle simple-mode-highlight-button${guideActive ? " active" : ""}`}
-            title={guideActive ? t("easyMode.guide.tooltipClose") : t("easyMode.guide.tooltipOpen")}
+            title={guideActive ? t("easyMode.guide.toggleClose") : t("easyMode.guide.toggleOpen")}
             onClick={() => {
               handleGuideToggle();
             }}
           >
-            <span>{guideActive ? t("easyMode.guide.buttonActive") : t("easyMode.guide.button")}</span>
+            <span>{guideActive ? t("easyMode.guide.buttonRunning") : t("easyMode.guide.button")}</span>
           </button>
         </div>
 
@@ -619,7 +637,7 @@ export function EasyModePage({
               <button
                 type="button"
                 className={theme === "light" ? "active" : ""}
-                title={t("app.theme.switchToLight")}
+                title={t("easyMode.theme.light")}
                 onClick={() => setTheme("light")}
               >
                 <Sun size={15} />
@@ -627,7 +645,7 @@ export function EasyModePage({
               <button
                 type="button"
                 className={theme === "dark" ? "active" : ""}
-                title={t("app.theme.switchToDark")}
+                title={t("easyMode.theme.dark")}
                 onClick={() => setTheme("dark")}
               >
                 <Moon size={15} />
@@ -641,7 +659,7 @@ export function EasyModePage({
               type="button"
               className="simple-mode-lang-btn"
               onClick={() => setLangMenuOpen(!langMenuOpen)}
-              title={t("app.language")}
+              title={t("easyMode.language.switch")}
             >
               <Languages size={15} />
               <span>{currentActiveLang.nativeLabel}</span>
@@ -672,10 +690,10 @@ export function EasyModePage({
           <button
             type="button"
             className="secondary-button simple-mode-exit-btn simple-mode-highlight-button"
-            title={t("easyMode.exit.tooltip")}
+            title={t("easyMode.exitTitle")}
             onClick={() => onExit?.()}
           >
-            <span>{t("easyMode.exit.button")}</span>
+            <span>{t("easyMode.exit")}</span>
           </button>
         </div>
       </header>
@@ -751,7 +769,7 @@ export function EasyModePage({
                   <strong>{t("easyMode.oauth.title")}</strong>
                   {totalLoggedInOAuth > 0 ? (
                     <span className="state-pill success" style={{ fontSize: "12px" }}>
-                      {t("easyMode.oauth.loggedInCount", { count: totalLoggedInOAuth })}
+                      {t("easyMode.oauth.accountsLoggedIn", { count: totalLoggedInOAuth })}
                     </span>
                   ) : (
                     <span className="state-pill neutral" style={{ fontSize: "12px" }}>{t("easyMode.oauth.recommended")}</span>
@@ -774,13 +792,13 @@ export function EasyModePage({
                   <strong>{t("easyMode.api.title")}</strong>
                   {totalApiProviders > 0 ? (
                     <span className="state-pill success" style={{ fontSize: "12px" }}>
-                      {t("easyMode.api.connectedCount", { count: totalApiProviders })}
+                      {t("easyMode.api.platformsConnected", { count: totalApiProviders })}
                     </span>
                   ) : null}
                 </div>
               </div>
               <span>{t("easyMode.api.description")}</span>
-              <small>{t("easyMode.api.supportedProviders")}</small>
+              <small>{t("easyMode.api.supportedPlatforms")}</small>
             </button>
           </div>
 
@@ -790,13 +808,7 @@ export function EasyModePage({
               id="easy-guide-oauth-box"
               className={`simple-mode-embedded-box${guideActive && guideStep === 2 ? " guide-focus-highlight" : ""}`}
             >
-              {oauthNotice ? (
-                <div className={`config-toast ${oauthNotice.tone}`}>
-                  {oauthNotice.tone === "success" ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
-                  <span>{oauthNotice.message}</span>
-                </div>
-              ) : null}
-
+              <InlineNotice key={oauthFeedback.revision} notice={oauthFeedback.notice} onDismiss={clearOAuthNotice} />
               <div className="simple-mode-provider-grid">
                 {oauthProviders.map((provider) => {
                   const loggedIn = isOAuthLoggedIn(provider.id);
@@ -813,7 +825,7 @@ export function EasyModePage({
                         </div>
                         <div className="simple-mode-provider-copy">
                           <strong>{provider.name}</strong>
-                          <span>{provider.descriptionKey ? t(provider.descriptionKey) : provider.description}</span>
+                          <span>{t(provider.descriptionKey)}</span>
                         </div>
                       </div>
 
@@ -824,7 +836,7 @@ export function EasyModePage({
                             {t("easyMode.oauth.loggedIn")}
                           </span>
                         ) : (
-                          <span className="state-pill neutral" style={{ fontSize: "12px" }}>{t("easyMode.oauth.notLoggedIn")}</span>
+                          <span className="state-pill neutral" style={{ fontSize: "12px" }}>{t("easyMode.status.notLoggedIn")}</span>
                         )}
 
                         <button
@@ -841,7 +853,7 @@ export function EasyModePage({
                           ) : loggedIn ? (
                             t("easyMode.oauth.relogin")
                           ) : (
-                            t("easyMode.oauth.startLogin")
+                            t("oauth.startLogin")
                           )}
                         </button>
                       </div>
@@ -858,21 +870,9 @@ export function EasyModePage({
               id="easy-guide-api-box"
               className={`simple-mode-embedded-box${guideActive && guideStep === 2 ? " guide-focus-highlight" : ""}`}
             >
-              {apiSaveNotice ? (
-                <div className="config-toast success">
-                  <CheckCircle2 size={16} />
-                  <span>{apiSaveNotice}</span>
-                </div>
-              ) : null}
-
+              <InlineNotice key={apiFeedback.revision} notice={apiFeedback.notice} onDismiss={clearApiNotice} />
               {apiTestError ? (
-                <div
-                  className="config-toast error"
-                  style={{ position: "static", transform: "none", margin: 0 }}
-                >
-                  <AlertCircle size={16} />
-                  <span>{apiTestError}</span>
-                </div>
+                <div className="management-alert error" role="alert">{apiTestError}</div>
               ) : null}
 
               <div className="simple-mode-api-form">
@@ -886,7 +886,7 @@ export function EasyModePage({
                       onClick={() => handleApiSectionChange(opt.id)}
                     >
                       <img className="simple-mode-api-platform-icon" src={opt.icon} alt="" />
-                      {opt.nameKey ? t(opt.nameKey) : opt.name}
+                      {t(opt.nameKey)}
                     </button>
                   ))}
                 </div>
@@ -898,7 +898,7 @@ export function EasyModePage({
                     className="text-input"
                     value={apiRemark}
                     onChange={(e) => { setApiRemark(e.target.value); setGuideApiSaved(false); }}
-                    placeholder={t("easyMode.api.remarkPlaceholder")}
+                    placeholder={t("easyMode.api.namePlaceholder")}
                   />
                 </div>
 
@@ -1021,7 +1021,7 @@ export function EasyModePage({
                 if (guideActive) setGuideStep(4);
               }}
             >
-              {t("easyMode.navigation.next")}: {t("easyMode.steps.configureAgent")}
+              {t("easyMode.navigation.nextAgent")}
               <ArrowRight size={16} style={{ marginLeft: 6 }} />
             </button>
           </div>
@@ -1077,7 +1077,7 @@ export function EasyModePage({
             <button
               type="button"
               className="guide-tooltip-close"
-              title={t("easyMode.guide.closeTooltip")}
+              title={t("easyMode.guide.close")}
               onClick={() => setGuideActive(false)}
             >
               <X size={15} />
@@ -1087,29 +1087,29 @@ export function EasyModePage({
           <div className="guide-tooltip-body">
             {guideStep === 1 ? (
               <>
-                <h4>{t("easyMode.guide.step1.heading")}</h4>
+                <h4>{t("easyMode.guide.cardStep1Title")}</h4>
                 <p>
-                  <strong>{t("easyMode.oauth.title")}</strong>：{t("easyMode.guide.step1.oauthDesc")}<br />
-                  <strong>{t("easyMode.api.title")}</strong>：{t("easyMode.guide.step1.apiDesc")}
+                  <strong>{t("easyMode.guide.cardStep1OAuth")}</strong>{t("easyMode.guide.cardStep1OAuthDesc")}<br />
+                  <strong>{t("easyMode.guide.cardStep1Api")}</strong>{t("easyMode.guide.cardStep1ApiDesc")}
                 </p>
                 <div className="guide-tooltip-tip">
-                  {guideChoice ? t("easyMode.guide.step1.tipSelected") : t("easyMode.guide.step1.tipUnselected")}
+                  {guideChoice ? t("easyMode.guide.cardStep1TipSelected") : t("easyMode.guide.cardStep1TipUnselected")}
                 </div>
               </>
             ) : null}
 
             {guideStep === 2 && authMethod === "oauth" ? (
               <>
-                <h4>{t("easyMode.guide.step2OAuth.heading")}</h4>
+                <h4>{t("easyMode.guide.cardStep2OAuthTitle")}</h4>
                 <p>
-                  {t("easyMode.guide.step2OAuth.desc1")}<br />
-                  {t("easyMode.guide.step2OAuth.desc2")}
+                  {t("easyMode.guide.oauthInstructions", { start: t("oauth.startLogin"), relogin: t("easyMode.oauth.relogin") })}<br />
+                  {t("easyMode.guide.oauthCompletion", { signedIn: t("easyMode.oauth.loggedIn") })}
                 </p>
                 <div className="guide-tooltip-tip">
                   {guideOAuthCompleted && guideOAuthProvider ? (
-                    <strong>{t("easyMode.guide.step2OAuth.tipSuccess", { provider: oauthProviders.find((provider) => provider.id === guideOAuthProvider)?.name ?? "" })}</strong>
+                    <strong>{t("easyMode.guide.cardStep2OAuthSuccessTip", { provider: oauthProviders.find((provider) => provider.id === guideOAuthProvider)?.name ?? "" })}</strong>
                   ) : (
-                    t("easyMode.guide.step2OAuth.tipPending")
+                    t("easyMode.guide.cardStep2OAuthWaitTip")
                   )}
                 </div>
               </>
@@ -1117,23 +1117,23 @@ export function EasyModePage({
 
             {guideStep === 2 && authMethod === "api" ? (
               <>
-                <h4>{t("easyMode.guide.step2Api.heading")}</h4>
+                <h4>{t("easyMode.guide.cardStep2ApiTitle")}</h4>
                 <p>
-                  {t("easyMode.guide.step2Api.desc1")}<br />
-                  {t("easyMode.guide.step2Api.desc2")}<br />
-                  {t("easyMode.guide.step2Api.desc3")}
+                  {t("easyMode.guide.cardStep2Api1")}<br />
+                  {t("easyMode.guide.apiCredentials", { baseUrl: t("easyMode.api.baseUrl"), apiKey: t("easyMode.api.apiKey") })}<br />
+                  {t("easyMode.guide.apiModels", { fetch: t("easyMode.api.fetchModels"), save: t("easyMode.api.saveAndConnect") })}
                 </p>
                 <div className="guide-tooltip-tip">
                   {guideApiSaved ? (
-                    <strong>{t("easyMode.guide.step2Api.tipSaved")}</strong>
+                    <strong>{t("easyMode.guide.cardStep2ApiSavedTip")}</strong>
                   ) : !apiBaseUrl.trim() || !apiKey.trim() ? (
-                    t("easyMode.guide.step2Api.tipEmpty")
+                    t("easyMode.guide.cardStep2ApiFillTip")
                   ) : !guideApiModelsFetched || apiTestedModels.length === 0 ? (
-                    t("easyMode.guide.step2Api.tipFetch")
+                    t("easyMode.guide.cardStep2ApiFetchTip")
                   ) : apiSelectedModels.length === 0 ? (
-                    t("easyMode.guide.step2Api.tipNoSelected")
+                    t("easyMode.guide.cardStep2ApiSelectTip")
                   ) : (
-                    <span>{t("easyMode.guide.step2Api.tipSelectedCount", { count: apiSelectedModels.length })}</span>
+                    <span>{t("easyMode.guide.cardStep2ApiSelectedTip", { count: apiSelectedModels.length })}</span>
                   )}
                 </div>
               </>
@@ -1141,26 +1141,26 @@ export function EasyModePage({
 
             {guideStep === 3 ? (
               <>
-                <h4>{t("easyMode.guide.step3.heading")}</h4>
+                <h4>{t("easyMode.guide.cardStep3Title")}</h4>
                 <p>
-                  {t("easyMode.guide.step3.desc1", { count: guideConnectedSourceCount })}<br />
-                  {t("easyMode.guide.step3.desc2")}
+                  {t("easyMode.guide.sourcesSummary", { count: guideConnectedSourceCount })}<br />
+                  {t("easyMode.guide.sourcesNext", { next: t("easyMode.navigation.nextAgent") })}
                 </p>
                 <div className="guide-tooltip-tip">
-                  {guideCanAdvance ? t("easyMode.guide.step3.tipReady") : t("easyMode.guide.step3.tipWaiting")}
+                  {guideCanAdvance ? t("easyMode.guide.cardStep3TipReady") : t("easyMode.guide.cardStep3TipPending")}
                 </div>
               </>
             ) : null}
 
             {guideStep === 4 ? (
               <>
-                <h4>{t("easyMode.guide.step4.heading")}</h4>
+                <h4>{t("easyMode.guide.cardStep4Title")}</h4>
                 <p>
-                  {t("easyMode.guide.step4.desc1")}<br />
-                  {t("easyMode.guide.step4.desc2")}
+                  {t("easyMode.guide.clientSelection")}<br />
+                  {t("easyMode.guide.clientApply")}
                 </p>
                 <div className="guide-tooltip-tip">
-                  {guideAgentConfigured ? t("easyMode.guide.step4.tipSuccess") : t("easyMode.guide.step4.tipWaiting")}
+                  {guideAgentConfigured ? t("easyMode.guide.cardStep4TipConfigured") : t("easyMode.guide.cardStep4TipPending")}
                 </div>
               </>
             ) : null}

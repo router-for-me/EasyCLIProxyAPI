@@ -757,6 +757,58 @@ fn github_proxy_core_release_uses_proxy_then_official_and_gitcode() {
 }
 
 #[test]
+fn core_download_candidates_follow_the_complete_fallback_chain() {
+    let release = release_from_tag_for_repositories(
+        "v7.2.80",
+        Some("lzt404/CLIProxyAPI"),
+        &VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+    );
+    let platform = CorePlatform {
+        os: "windows".to_string(),
+        arch: "x86_64".to_string(),
+        asset_os: "windows".to_string(),
+        asset_arch: "amd64".to_string(),
+        archive_kind: "zip".to_string(),
+    };
+    let asset = select_release_asset(&release, &platform).unwrap();
+    let custom_mirrors = vec!["https://mirror.example.com/".to_string()];
+    let candidates = core_download_candidates(
+        &release.tag_name,
+        asset,
+        VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+        Some("lzt404/CLIProxyAPI"),
+        &custom_mirrors,
+    );
+
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|(candidate, _)| candidate.key())
+            .collect::<Vec<_>>(),
+        [
+            "github",
+            "gitcode",
+            "gh-proxy",
+            "gh-fast",
+            "custom:https://mirror.example.com/",
+        ]
+    );
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|(_, url)| core_download_source_name(url))
+            .collect::<Vec<_>>(),
+        [
+            "GitHub",
+            "GitCode",
+            "gh-proxy.com",
+            "ghfast.top",
+            "mirror.example.com",
+        ]
+    );
+}
+
+#[test]
 fn release_asset_names_cover_the_six_supported_gui_targets() {
     let targets = [
         ("linux", "amd64", "tar.gz"),

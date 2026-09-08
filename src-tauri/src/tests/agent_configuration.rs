@@ -346,6 +346,52 @@ fn codex_oauth_configuration_uses_openai_auth_with_bearer_token() {
 }
 
 #[test]
+fn codex_oauth_configuration_is_preserved_for_legacy_updates() {
+    let home = agent_test_home("codex-oauth-preserved-update");
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).unwrap();
+    fs::write(
+        codex_dir.join("config.toml"),
+        "[model_providers.cpa-gui]\nrequires_openai_auth = true\n",
+    )
+    .unwrap();
+    fs::write(
+        codex_dir.join("auth.json"),
+        r#"{"tokens":{"access_token":"oauth-access-token"}}"#,
+    )
+    .unwrap();
+
+    let oauth_configuration = current_codex_oauth_configuration(&home).unwrap();
+    assert!(oauth_configuration);
+
+    let models = test_agent_models(&["gpt-test"]);
+    let catalog = test_codex_models(&["gpt-test"]);
+    let updates = build_agent_updates_with_oauth(
+        AgentClient::Codex,
+        &home,
+        8317,
+        DEFAULT_API_KEY,
+        "gpt-test",
+        AgentConfigurationOptions {
+            models: &models,
+            codex_catalog: Some(&catalog),
+            oauth_configuration,
+            claude_code_model_mappings: None,
+            claude_desktop_model_mappings: None,
+        },
+    )
+    .unwrap();
+
+    assert!(updates[0].after.contains("requires_openai_auth = true"));
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&updates[2].after).unwrap()["tokens"]
+            ["access_token"]
+            .is_string()
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn codex_api_and_oauth_modes_write_the_same_catalog() {
     let home = agent_test_home("codex-auth-mode-catalog");
     fs::create_dir_all(home.join(".codex")).unwrap();
@@ -864,7 +910,7 @@ fn zcode_agent_config_preserves_other_providers_and_uses_anthropic_messages() {
     models[1].context_window = Some(272_000);
     let rendered = build_zcode_agent_config(
         Some(
-            r#"{"locale":"zh-CN","provider":{"other":{"kind":"openai"},"cpa-gui":{"custom":"keep","options":{"timeout":30}}}}"#,
+            r#"{"locale":"zh-CN","provider":{"other":{"kind":"openai"},"cpa-gui":{"custom":"keep","npm":"@ai-sdk/anthropic","options":{"timeout":30}}}}"#,
         ),
         "http://127.0.0.1:8317",
         DEFAULT_API_KEY,
@@ -893,6 +939,9 @@ fn zcode_agent_config_preserves_other_providers_and_uses_anthropic_messages() {
         value["provider"][MANAGED_AGENT_PROVIDER_ID]["apiFormat"],
         "anthropic-messages"
     );
+    assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]
+        .get("npm")
+        .is_none());
     assert_eq!(
         value["provider"][MANAGED_AGENT_PROVIDER_ID]["options"]["baseURL"],
         "http://127.0.0.1:8317"
@@ -954,6 +1003,9 @@ fn zcode_cli_config_sets_main_model_and_both_configs_must_match() {
     assert_eq!(cli_value["model"]["main"], "cpa-gui/gpt-test");
     assert_eq!(cli_value["model"]["lite"], "other/lite");
     assert_eq!(cli_value["plugins"]["keep"], true);
+    assert!(cli_value["provider"][MANAGED_AGENT_PROVIDER_ID]
+        .get("npm")
+        .is_none());
     fs::write(&paths[0], app_config).unwrap();
     fs::write(&paths[1], &cli_config).unwrap();
     assert_eq!(
@@ -1497,18 +1549,105 @@ agent-default-model:
 #[test]
 fn deepseek_harness_credentials_preserve_other_entries() {
     let rendered = build_deepseek_harness_credentials(
-        Some("# existing key\nOTHER_API_KEY: other-secret\n"),
+        Some(
+            "# existing key\nversion: 1\nrefs:\n  OTHER_API_KEY: other-secret\nrecords:\n  plugin/account:\n    kind: api-key\n    key: record-secret\n",
+        ),
         "cpa-secret",
     )
     .unwrap();
     let value: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
 
     assert!(rendered.contains("# existing key"));
-    assert_eq!(value["OTHER_API_KEY"].as_str(), Some("other-secret"));
+    assert_eq!(value["version"].as_u64(), Some(1));
     assert_eq!(
-        value[DEEPSEEK_HARNESS_CREDENTIAL].as_str(),
+        value["refs"]["OTHER_API_KEY"].as_str(),
+        Some("other-secret")
+    );
+    assert_eq!(
+        value["refs"][DEEPSEEK_HARNESS_CREDENTIAL].as_str(),
         Some("cpa-secret")
     );
+    assert_eq!(
+        value["records"]["plugin/account"]["key"].as_str(),
+        Some("record-secret")
+    );
+    assert!(value.get(DEEPSEEK_HARNESS_CREDENTIAL).is_none());
+}
+
+#[test]
+fn deepseek_harness_credentials_reject_legacy_flat_layout() {
+    let error = build_deepseek_harness_credentials(
+        Some("# legacy flat layout\nOTHER_API_KEY: other-secret\n"),
+        "cpa-secret",
+    )
+    .unwrap_err();
+
+    assert!(error.contains("缺少 version 字段"), "{error}");
+}
+
+#[test]
+fn deepseek_harness_credentials_repair_misplaced_managed_key() {
+    let rendered = build_deepseek_harness_credentials(
+        Some(
+            "version: 1\nrefs:\n  OTHER_API_KEY: other-secret\nrecords: {}\nEASYCLIPROXYAPI_API_KEY: misplaced-secret\n",
+        ),
+        "cpa-secret",
+    )
+    .unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
+
+    assert_eq!(
+        value["refs"][DEEPSEEK_HARNESS_CREDENTIAL].as_str(),
+        Some("cpa-secret")
+    );
+    assert!(value.get(DEEPSEEK_HARNESS_CREDENTIAL).is_none());
+}
+
+#[test]
+fn deepseek_harness_removal_preserves_other_versioned_credentials() {
+    let home = agent_test_home("deepseek-harness-remove-versioned-credentials");
+    let paths = vec![home.join("settings.yaml"), home.join(".credentials.yaml")];
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        &paths[1],
+        "version: 1\nrefs:\n  OTHER_API_KEY: other-secret\n  EASYCLIPROXYAPI_API_KEY: cpa-secret\nrecords:\n  plugin/account:\n    kind: api-key\n    key: record-secret\n",
+    )
+    .unwrap();
+
+    let changed = remove_deepseek_harness_managed_configuration(&paths).unwrap();
+    let value: serde_norway::Value =
+        serde_norway::from_str(&fs::read_to_string(&paths[1]).unwrap()).unwrap();
+
+    assert_eq!(changed, vec![path_to_string(&paths[1])]);
+    assert_eq!(value["version"].as_u64(), Some(1));
+    assert_eq!(
+        value["refs"]["OTHER_API_KEY"].as_str(),
+        Some("other-secret")
+    );
+    assert!(value["refs"].get(DEEPSEEK_HARNESS_CREDENTIAL).is_none());
+    assert_eq!(
+        value["records"]["plugin/account"]["key"].as_str(),
+        Some("record-secret")
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn deepseek_harness_removal_deletes_semantically_empty_credentials_file() {
+    let home = agent_test_home("deepseek-harness-remove-empty-credentials");
+    let paths = vec![home.join("settings.yaml"), home.join(".credentials.yaml")];
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        &paths[1],
+        build_deepseek_harness_credentials(None, "cpa-secret").unwrap(),
+    )
+    .unwrap();
+
+    let changed = remove_deepseek_harness_managed_configuration(&paths).unwrap();
+
+    assert_eq!(changed, vec![path_to_string(&paths[1])]);
+    assert!(!paths[1].exists());
+    fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
@@ -1535,6 +1674,24 @@ fn deepseek_harness_inspection_requires_managed_route_selection_and_credential()
 
     let (wrong_key, _) = inspect_deepseek_harness_config(&paths, 8317, "different-key").unwrap();
     assert!(!wrong_key);
+
+    let credentials = fs::read_to_string(&paths[1]).unwrap();
+    let credentials = render_agent_yaml_mapping_update(
+        Some(&credentials),
+        "test invalid Harness credentials",
+        |root| {
+            root.insert(
+                yaml_key(DEEPSEEK_HARNESS_CREDENTIAL),
+                serde_norway::Value::String("misplaced-key".to_string()),
+            );
+            Ok(())
+        },
+    )
+    .unwrap();
+    fs::write(&paths[1], credentials).unwrap();
+    let (invalid_layout, _) = inspect_deepseek_harness_config(&paths, 8317, "agent-key").unwrap();
+    assert!(!invalid_layout);
+    assert!(deepseek_harness_has_managed_marker(&paths).unwrap());
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -2139,7 +2296,11 @@ fn codex_model_list_is_empty_when_cpa_has_no_writable_models() {
     let prepared = prepare_codex_agent_models(&[]).unwrap();
 
     assert!(prepared.models.is_empty());
-    assert!(prepared.codex_catalog.is_none());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(prepared.codex_catalog.as_deref().unwrap())
+            .unwrap(),
+        serde_json::json!({"models": []})
+    );
 }
 
 #[test]
@@ -2214,7 +2375,7 @@ fn thinking_alias_prefers_codex_api_key_model_over_same_named_oauth_definition()
     ));
 
     let rendered =
-        add_model_alias_to_yaml(input, &sources[0], "gpt-5.6-luna-xhigh", "xhigh").unwrap();
+        add_model_alias_to_yaml(input, &sources[0], "gpt-5.6-luna-xhigh", "xhigh", false).unwrap();
     assert!(rendered.contains("alias: gpt-5.6-luna-xhigh"), "{rendered}");
     assert!(!rendered.contains("oauth-model-alias"), "{rendered}");
 }

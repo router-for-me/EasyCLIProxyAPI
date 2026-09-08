@@ -1,6 +1,9 @@
 use super::*;
 
 const AGENT_STATUS_DETECTION_CONCURRENCY: usize = 4;
+static CODEX_CATALOG_SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static CODEX_CATALOG_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static CODEX_CATALOG_REFRESH: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 #[derive(Clone, Copy)]
 enum AgentStatusDetectionTarget {
@@ -132,6 +135,7 @@ pub(crate) async fn refresh_agent_config_statuses(
 
 #[tauri::command]
 pub(crate) async fn get_agent_models(
+    app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
 ) -> Result<Vec<AgentModelOption>, String> {
@@ -140,8 +144,19 @@ pub(crate) async fn get_agent_models(
         return fetch_agent_models(config.port, effective_agent_api_key(&config)).await;
     }
     let client = AgentClient::parse(&client)?;
+    let _sync_guard = if client == AgentClient::Codex {
+        Some(CODEX_CATALOG_SYNC_LOCK.lock().await)
+    } else {
+        None
+    };
     let config = gui_config_state.snapshot()?;
-    Ok(fetch_prepared_agent_models(client, &config).await?.models)
+    let prepared = fetch_prepared_agent_models(client, &config).await?;
+    if client == AgentClient::Codex {
+        if let Err(error) = sync_prepared_codex_model_catalog(&app, &config, &prepared) {
+            eprintln!("自动刷新已应用的 Codex 模型目录失败: {error}");
+        }
+    }
+    Ok(prepared.models)
 }
 
 pub(crate) async fn resolve_pi_default_model(
@@ -295,6 +310,7 @@ pub(crate) async fn update_codex_model_catalog(
 pub(crate) async fn update_codex_model_catalog_inner(
     app: &tauri::AppHandle,
 ) -> Result<CodexModelCatalogUpdateResult, String> {
+    let _update_guard = CODEX_CATALOG_UPDATE_LOCK.lock().await;
     let proxy_url = app.state::<GuiConfigState>().snapshot()?.proxy_url;
     let client = build_http_client_with_proxy(
         reqwest::Client::builder()
@@ -343,10 +359,12 @@ pub(crate) async fn update_codex_model_catalog_inner(
     }
     let catalog_json = String::from_utf8(bytes)
         .map_err(|_| "GitHub Codex 模型目录不是有效的 UTF-8 文件".to_string())?;
-    codex_catalog::validate_catalog_json(&catalog_json)
+    let revision = codex_catalog::validate_catalog_json(&catalog_json)
         .map_err(|error| format!("GitHub Codex 模型目录校验失败: {error}"))?;
 
-    if codex_catalog::current_catalog_json()? == catalog_json {
+    if revision < codex_catalog::current_catalog_revision()?
+        || codex_catalog::current_catalog_json()? == catalog_json
+    {
         return Ok(CodexModelCatalogUpdateResult {
             outcome: "unchanged".to_string(),
         });
@@ -380,6 +398,54 @@ pub(crate) fn load_codex_model_catalog_override(app: &tauri::AppHandle) -> Resul
     codex_catalog::activate_catalog_json(&catalog_json)
         .map_err(|error| format!("本地 Codex 模型目录更新文件无效: {error}"))?;
     Ok(())
+}
+
+fn codex_model_customizations_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(codex_model_catalog_override_path(app)?.with_file_name("model-customizations.json"))
+}
+
+pub(crate) fn load_codex_model_customizations(app: &tauri::AppHandle) -> Result<(), String> {
+    codex_catalog::load_customizations(&codex_model_customizations_path(app)?)
+}
+
+#[tauri::command]
+pub(crate) async fn get_codex_model_catalog_editor(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<codex_catalog::CatalogEditorSnapshot, String> {
+    let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
+    let config = gui_config_state.snapshot()?;
+    let runtime_models = fetch_codex_catalog_runtime_models(&config).await?;
+    codex_catalog::editor_snapshot(&runtime_models)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexCatalogEditorSaveResult {
+    snapshot: codex_catalog::CatalogEditorSnapshot,
+    synchronization_error: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) async fn save_codex_model_catalog_editor(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    request: codex_catalog::CatalogEditorRequest,
+) -> Result<CodexCatalogEditorSaveResult, String> {
+    let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
+    let config = gui_config_state.snapshot()?;
+    let runtime_models = fetch_codex_catalog_runtime_models(&config).await?;
+    let snapshot = codex_catalog::save_customizations(
+        &codex_model_customizations_path(&app)?,
+        &runtime_models,
+        request,
+    )?;
+    let synchronization_error = prepare_codex_agent_models(&runtime_models)
+        .and_then(|prepared| sync_prepared_codex_model_catalog(&app, &config, &prepared))
+        .err();
+    Ok(CodexCatalogEditorSaveResult {
+        snapshot,
+        synchronization_error,
+    })
 }
 
 #[tauri::command]
@@ -437,6 +503,7 @@ pub(crate) async fn create_thinking_alias(
     source_id: String,
     alias: String,
     effort: String,
+    fast: Option<bool>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
     let source_id = source_id.trim().to_string();
@@ -449,12 +516,15 @@ pub(crate) async fn create_thinking_alias(
     } else {
         validate_thinking_alias_effort(&effort)?
     };
+    let fast = fast.unwrap_or(false);
     let content = fetch_management_config_yaml(&config).await?;
     let available_models =
         fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
     let definitions = fetch_oauth_model_definitions(&config).await;
     let capability = if !effort.is_empty() {
         AliasSourceCapability::Reasoning
+    } else if fast {
+        AliasSourceCapability::Fast
     } else {
         AliasSourceCapability::Base
     };
@@ -467,6 +537,9 @@ pub(crate) async fn create_thinking_alias(
         .ok_or_else(|| {
             "原模型已不在内核当前可用模型中，或其配置来源已经变化，请刷新后重新选择".to_string()
         })?;
+    if fast && !alias_source_supports_fast(&source) {
+        return Err("Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 模型源".to_string());
+    }
     if !effort.is_empty()
         && !source
             .source
@@ -498,7 +571,7 @@ pub(crate) async fn create_thinking_alias(
         return Err(format!("别名模型 {alias} 已存在"));
     }
 
-    let updated = add_model_alias_to_yaml(&content, &source, &alias, &effort)?;
+    let updated = add_model_alias_to_yaml(&content, &source, &alias, &effort, fast)?;
     put_management_alias_config_changes(&config, &content, &updated).await?;
     thinking_aliases_from_yaml(&updated)
 }
@@ -721,13 +794,60 @@ pub(crate) async fn fetch_codex_runtime_models(
     Err("本地内核不支持 Codex 模型列表接口".to_string())
 }
 
+// The client_version response contains synthesized Codex templates; its context
+// fields are not the raw core model definitions. Resolve defaults through the
+// management APIs before generating or editing the Codex catalog.
+pub(crate) async fn fetch_codex_catalog_runtime_models(
+    config: &GuiConfigFile,
+) -> Result<Vec<codex_catalog::CodexRuntimeModel>, String> {
+    let (runtime, definitions, content) = tokio::join!(
+        fetch_codex_runtime_models(config.port, effective_agent_api_key(config)),
+        fetch_codex_context_definitions(config),
+        fetch_management_config_yaml(config),
+    );
+    let mut runtime = runtime?;
+    let definitions = definitions?;
+    let content = content?;
+    let mut aliases = runtime.iter().map(|model| AgentModelOption {
+        name: model.slug.clone(), alias: None, is_alias: false, context_window: None,
+    }).collect::<Vec<_>>();
+    mark_configured_agent_model_aliases(&mut aliases, &content)?;
+    codex_catalog::merge_context_definitions(&mut runtime, &definitions, &aliases);
+    codex_catalog::apply_configured_context_limits(&mut runtime, &content)?;
+    Ok(runtime)
+}
+
+async fn fetch_codex_context_definitions(
+    config: &GuiConfigFile,
+) -> Result<Vec<CodexModelDefinition>, String> {
+    // API-key sources may expose models from other channels, so do not filter by
+    // active OAuth credentials. Model IDs still come only from the available list.
+    let channels = ["gemini", "vertex", "aistudio", "antigravity", "claude", "codex", "kimi", "xai"];
+    let results = futures_util::future::join_all(channels.iter().map(|channel|
+        fetch_oauth_channel_model_definitions(config, channel)
+    )).await;
+    let mut definitions = Vec::new();
+    let mut successes = 0;
+    let mut first_error = None;
+    for result in results {
+        match result {
+            Ok(models) => { successes += 1; definitions.extend(models); }
+            Err(error) => { first_error.get_or_insert(error); }
+        }
+    }
+    if successes == 0 {
+        return Err(format!("读取 CPA 模型上下文定义失败: {}", first_error.unwrap_or_default()));
+    }
+    Ok(definitions)
+}
+
 pub(crate) async fn fetch_prepared_agent_models(
     client: AgentClient,
     config: &GuiConfigFile,
 ) -> Result<PreparedAgentModels, String> {
     let api_key = effective_agent_api_key(config);
     if client == AgentClient::Codex {
-        let runtime_models = fetch_codex_runtime_models(config.port, api_key).await?;
+        let runtime_models = fetch_codex_catalog_runtime_models(config).await?;
         prepare_codex_agent_models(&runtime_models)
     } else {
         let mut models = fetch_agent_models(config.port, api_key).await?;
@@ -755,6 +875,91 @@ pub(crate) async fn fetch_prepared_agent_models(
             codex_catalog: None,
         })
     }
+}
+
+fn sync_prepared_codex_model_catalog(
+    app: &tauri::AppHandle,
+    config: &GuiConfigFile,
+    prepared: &PreparedAgentModels,
+) -> Result<bool, String> {
+    let Some(catalog) = prepared.codex_catalog.as_deref() else {
+        return Ok(false);
+    };
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+    let changed = sync_codex_model_catalog_if_configured(
+        &home,
+        config.port,
+        effective_agent_api_key(config),
+        &prepared.models,
+        catalog,
+    )?;
+    if changed {
+        app.state::<AgentConfigStatusCache>().clear()?;
+        let _ = app.emit(
+            CONFIG_FILES_CHANGED_EVENT,
+            ConfigFilesChangedPayload {
+                paths: agent_managed_paths(AgentClient::Codex, &home)
+                    .iter()
+                    .map(|path| path_to_string(path))
+                    .collect(),
+                errors: Vec::new(),
+            },
+        );
+    }
+    Ok(changed)
+}
+
+pub(crate) async fn refresh_applied_codex_model_catalog(
+    app: &tauri::AppHandle,
+    config: &GuiConfigFile,
+) -> Result<bool, String> {
+    let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
+    let runtime_models = fetch_codex_catalog_runtime_models(config).await?;
+    let prepared = prepare_codex_agent_models(&runtime_models)?;
+    sync_prepared_codex_model_catalog(app, config, &prepared)
+}
+
+pub(crate) fn request_codex_model_catalog_refresh() {
+    CODEX_CATALOG_REFRESH.notify_one();
+}
+
+pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let Ok(home) = app.path().home_dir() else {
+            return;
+        };
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {},
+                _ = CODEX_CATALOG_REFRESH.notified() => {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                },
+            }
+            let Ok(config) = app.state::<GuiConfigState>().snapshot() else {
+                continue;
+            };
+            let paths = agent_config_paths(AgentClient::Codex, &home);
+            if !matches!(
+                inspect_agent_managed_config(
+                    AgentClient::Codex,
+                    &paths,
+                    config.port,
+                    effective_agent_api_key(&config),
+                ),
+                Ok((true, _, _))
+            ) {
+                continue;
+            }
+            if let Err(error) = refresh_applied_codex_model_catalog(&app, &config).await {
+                eprintln!("后台同步 Codex 模型目录失败，保留现有配置: {error}");
+            }
+        }
+    });
 }
 
 pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> bool {
@@ -836,7 +1041,7 @@ pub(crate) fn prepare_codex_agent_models(
         Err(error) if error.contains("CPA 当前没有可写入 Codex 的模型") => {
             Ok(PreparedAgentModels {
                 models: Vec::new(),
-                codex_catalog: None,
+                codex_catalog: Some("{\n  \"models\": []\n}\n".to_string()),
             })
         }
         Err(error) => Err(error),
@@ -1028,6 +1233,11 @@ pub(crate) async fn set_agent_config_enabled(
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
             .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+        let oauth_configuration = if client == AgentClient::Codex {
+            current_codex_oauth_configuration(&home)?
+        } else {
+            false
+        };
         apply_agent_configuration_with_oauth(
             client,
             &home,
@@ -1037,7 +1247,7 @@ pub(crate) async fn set_agent_config_enabled(
             AgentConfigurationOptions {
                 models: &prepared.models,
                 codex_catalog: prepared.codex_catalog.as_deref(),
-                oauth_configuration: false,
+                oauth_configuration,
                 claude_code_model_mappings: claude_code_model_mappings.as_ref(),
                 claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
             },
@@ -1088,6 +1298,11 @@ pub(crate) async fn update_agent_config(
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+    let oauth_configuration = if client == AgentClient::Codex {
+        current_codex_oauth_configuration(&home)?
+    } else {
+        false
+    };
     apply_agent_configuration_with_oauth(
         client,
         &home,
@@ -1097,7 +1312,7 @@ pub(crate) async fn update_agent_config(
         AgentConfigurationOptions {
             models: &prepared.models,
             codex_catalog: prepared.codex_catalog.as_deref(),
-            oauth_configuration: false,
+            oauth_configuration,
             claude_code_model_mappings: claude_code_model_mappings.as_ref(),
             claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
         },

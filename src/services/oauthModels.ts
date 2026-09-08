@@ -55,27 +55,27 @@ export const openOAuthModelNames = (
   );
 };
 
-export const exclusionsForOpenOAuthModels = (
-  currentRules: Iterable<string>,
-  models: OAuthModelDefinition[],
-  openModelNames: Iterable<string>,
-) => {
-  const open = new Set(
-    Array.from(openModelNames, (name) => name.trim().toLowerCase()).filter(Boolean),
-  );
-  const modelIds = new Set(models.map((model) => model.id.toLowerCase()));
-  const openedModels = models.filter((model) => open.has(model.id.toLowerCase()));
-  const preservedRules = Array.from(currentRules, (rule) => rule.trim().toLowerCase())
-    .filter(Boolean)
-    .filter((rule) => {
-      if (modelIds.has(rule)) return false;
-      return !openedModels.some((model) => modelMatchesRule(model.id, rule));
-    });
-  const closedModels = models
-    .filter((model) => !open.has(model.id.toLowerCase()))
-    .map((model) => model.id.toLowerCase());
+export const normalizeOAuthExcludedRules = (rules: Iterable<string>): string[] =>
+  [...new Set(Array.from(rules, (rule) => rule.trim().toLowerCase()).filter(Boolean))];
 
-  return [...preservedRules, ...closedModels]
-    .filter((rule, index, rules) => rules.indexOf(rule) === index)
-    .sort();
+export const oauthModelCandidates = (
+  models: OAuthModelDefinition[],
+  rules: Iterable<string>,
+): OAuthModelDefinition[] => {
+  const candidates = new Map(models.map((model) => [model.id.toLowerCase(), model]));
+  for (const rule of normalizeOAuthExcludedRules(rules)) {
+    if (!rule.includes('*') && !candidates.has(rule)) candidates.set(rule, { id: rule });
+  }
+  return [...candidates.values()].sort((left, right) => left.id.localeCompare(right.id));
+};
+
+export const setOAuthModelsExcluded = (
+  rules: Iterable<string>,
+  models: OAuthModelDefinition[],
+  excluded: boolean,
+): string[] => {
+  const normalized = normalizeOAuthExcludedRules(rules);
+  if (excluded) return normalizeOAuthExcludedRules([...normalized, ...models.map((model) => model.id)]);
+  const modelIds = new Set(models.map((model) => model.id.toLowerCase()));
+  return normalized.filter((rule) => rule.includes('*') || !modelIds.has(rule));
 };
