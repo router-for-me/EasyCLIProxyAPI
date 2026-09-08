@@ -122,38 +122,90 @@ describe('quota API compatibility', () => {
   });
 });
 
-describe('xAI quota queries without paid probes', () => {
+describe('xAI quota queries aligned with Management Center', () => {
   const file = { name: 'xai.json', provider: 'x-ai', auth_index: 'x' };
 
-  it('单个账单接口失败仍展示另一接口的数据，不触发收费探测', async () => {
+  it('一个账单失败时保留另一个接口的真实额度，不探测', async () => {
     handler = (request) => request.url.includes('format=credits')
       ? { status_code: 403, body: 'weekly denied' }
-      : success({ config: { monthlyLimit: 1000, used: 200 } });
+      : success({ config: { monthlyLimit: 1000, used: 0 } });
     const result = await loadQuota({ ...file, metadata: { user: { id: 'u' } } });
-    expect(result.status).toBe('success');
-    expect(result.rows[0].remainingPercent).toBe(80);
+    expect(result).toMatchObject({ status: 'success', rows: [{ remainingPercent: 100 }] });
     expect(calls).toHaveLength(2);
     calls.forEach((request) => expect(request.header['x-userid']).toBe('u'));
   });
 
-  it('查询付费账号只说明额度不可用，不要求确认也不发送计费请求', async () => {
+  it('付费账号直接探测，profile 失败不影响聊天成功', async () => {
+    handler = (request) => request.url.endsWith('/me')
+      ? { status_code: 403, body: 'profile denied' } : success({});
     const result = await loadQuota({ ...file, using_api: true, prefix: 'paid' });
-    expect(result.status).toBe('success');
+    expect(result).toMatchObject({ status: 'success', plan: 'Paid' });
     expect(result.rows[0].remainingPercent).toBeNull();
-    expect(result.rows[0].detail).toBe('此账号不提供剩余额度。');
-    expect(post).not.toHaveBeenCalled();
+    expect(result.rows[0].detail).toContain('付费 API 对话可用');
+    expect(calls).toHaveLength(2);
+    expect(calls.map((request) => request.url)).toEqual([
+      'https://api.x.ai/v1/me', 'https://api.x.ai/v1/chat/completions',
+    ]);
+    expect(JSON.parse(calls[1].data!)).toEqual({
+      model: 'grok-4.5', messages: [{ role: 'user', content: 'ping' }],
+      max_tokens: 1, stream: false,
+    });
+    expect(calls[1].method).toBe('POST');
+    expect(calls[1].header).toEqual({
+      Authorization: 'Bearer $TOKEN$', accept: 'application/json', 'Content-Type': 'application/json',
+    });
+    post.mock.calls.forEach((call) => expect(call[2]).toEqual({ timeoutMs: 15000 }));
   });
 
-  it('两个账单均无数据时返回查询错误，不自动发起付费测试', async () => {
-    handler = (request) => request.url.includes('cli-chat-proxy') ? { status_code: 403, body: 'billing denied' }
-      : { status_code: 429, body: 'paid denied' };
+  it('账单为空后探测成功只显示账户可用，不伪造额度', async () => {
+    handler = () => success({});
     const result = await loadQuota(file);
-    expect(result).toMatchObject({ status: 'error', error: 'billing denied' });
+    expect(result).toMatchObject({ status: 'success', plan: 'Paid', rows: [{ remainingPercent: null }] });
+    expect(calls).toHaveLength(4);
+  });
+
+  it('账单和回退都失败时保留原始账单错误', async () => {
+    handler = (request) => request.url.includes('cli-chat-proxy')
+      ? { status_code: 403, body: 'billing denied' } : { status_code: 429, body: 'paid denied' };
+    expect(await loadQuota(file)).toMatchObject({ status: 'error', error: 'billing denied' });
+    expect(calls).toHaveLength(4);
+  });
+
+  it('已识别付费账号聊天失败时显示聊天错误', async () => {
+    handler = (request) => request.url.endsWith('/me')
+      ? success({}) : { status_code: 429, body: 'chat denied' };
+    expect(await loadQuota({ ...file, using_api: true, prefix: 'paid' }))
+      .toMatchObject({ status: 'error', error: 'chat denied' });
     expect(calls).toHaveLength(2);
-    expect(calls.every((request) => request.method === 'GET')).toBe(true);
+  });
+
+  it('合并缺失百分比与零用量后仍查询成功，不触发探测', async () => {
+    handler = (request) => success({ config: request.url.includes('format=credits')
+      ? { currentPeriod: { type: 'weekly' } } : { creditUsagePercent: 0 } });
+    expect(await loadQuota(file)).toMatchObject({
+      status: 'success', rows: [{ remainingPercent: 100 }],
+    });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('已识别的空周周期或零按量上限不触发付费探测', async () => {
+    for (const config of [{ currentPeriod: { type: 'weekly' } }, { onDemandCap: 0 }]) {
+      calls = [];
+      handler = () => success({ config });
+      expect(await loadQuota(file)).toMatchObject({
+        status: 'success', rows: [{ remainingPercent: null }],
+      });
+      expect(calls).toHaveLength(2);
+    }
+  });
+  it('仅有账单周期也不触发付费回退', async () => {
+    handler = () => success({ config: { billingPeriodEnd: '2030-01-01T00:00:00Z' } });
+    expect(await loadQuota(file)).toMatchObject({
+      status: 'success', rows: [{ remainingPercent: null }],
+    });
+    expect(calls).toHaveLength(2);
   });
 });
-
 describe('quota request synchronization', () => {
   it('跨页面重复刷新共用同一个请求', async () => {
     let release!: () => void;

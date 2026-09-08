@@ -1,3 +1,4 @@
+import { buildXaiBillingSummary, mergeXaiBillingSummaries, type XaiBillingConfig } from './xaiBilling';
 import {
   apiCallErrorMessage,
   isRecord,
@@ -466,102 +467,69 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
   }
 
   if (provider === 'xai') {
-    if (value.mode === 'paid-info') return [{
+    if (value.mode === 'paid-health' || value.mode === 'paid-info') return [{
       label: quotaText('quota.service.xaiPaidAccount'),
       remainingPercent: null,
-      detail: quotaText('quota.service.xaiPaidQuotaUnavailable'),
+      detail: quotaText(value.mode === 'paid-health'
+        ? 'quota.service.xaiPaidHealth' : 'quota.service.xaiPaidQuotaUnavailable'),
     }];
-    const payloads = isRecord(value.weekly) || isRecord(value.monthly)
-      ? [value.weekly, value.monthly]
-      : [value];
+    const build = (payload: unknown) => {
+      if (!isRecord(payload)) return null;
+      return buildXaiBillingSummary(
+        (isRecord(payload.config) ? payload.config : payload) as XaiBillingConfig,
+      );
+    };
+    const billing = isRecord(value.weekly) || isRecord(value.monthly)
+      ? mergeXaiBillingSummaries(build(value.weekly), build(value.monthly))
+      : build(value);
+    if (!billing) return [];
     const rows: QuotaRow[] = [];
-
-    payloads.forEach((payload) => {
-      if (!isRecord(payload)) return;
-      const config = isRecord(payload.config) ? payload.config : payload;
-      const currentPeriod = isRecord(config.current_period)
-        ? config.current_period
-        : isRecord(config.currentPeriod)
-          ? config.currentPeriod
-          : null;
-      const periodType = readString(currentPeriod, 'type').toLowerCase();
-      const weeklyUsed = numberValue(config.credit_usage_percent ?? config.creditUsagePercent);
-
-      const productItems = config.product_usage ?? config.productUsage;
-      if (weeklyUsed !== null || periodType.includes('week') || (Array.isArray(productItems) && productItems.length > 0)) {
-        rows.push({
-          label: quotaText('quota.service.weekly'),
-          remainingPercent: remainingFromUsedPercent(weeklyUsed),
-          reset: absoluteResetLabel(currentPeriod?.end),
-          resetAtMs: currentPeriod ? quotaResetFor(currentPeriod, ['end']) : undefined,
-        });
-        const productUsage = Array.isArray(config.product_usage)
-          ? config.product_usage
-          : Array.isArray(config.productUsage)
-            ? config.productUsage
-            : [];
-        productUsage.forEach((item, index) => {
-          if (!isRecord(item)) return;
-          rows.push({
-            label: readString(item, 'product')
-              || quotaText('quota.service.product.numbered', { index: index + 1 }),
-            remainingPercent: remainingFromUsedPercent(
-              item.usage_percent ?? item.usagePercent,
-            ),
-            reset: absoluteResetLabel(currentPeriod?.end),
-            resetAtMs: currentPeriod ? quotaResetFor(currentPeriod, ['end']) : undefined,
-          });
-        });
-      }
-
-      const limit = numberValue(config.monthly_limit ?? config.monthlyLimit);
-      const used = numberValue(config.used);
-      const includedUsed = used === null
-        ? null
-        : limit !== null && limit > 0
-          ? Math.min(used, limit)
-          : used;
-      if (limit !== null || used !== null) {
-        const remaining = limit !== null && limit > 0 && includedUsed !== null
-          ? ((limit - includedUsed) / limit) * 100
-          : null;
-        rows.push({
-          label: quotaText('quota.service.monthlyIncluded'),
-          remainingPercent: clampPercent(remaining),
-          reset: absoluteResetLabel(config.billing_period_end ?? config.billingPeriodEnd),
-          resetAtMs: quotaResetFor(config, ['billing_period_end', 'billingPeriodEnd']),
-          detail: limit !== null
-            ? `${formatUsdFromCents(Math.max(0, limit - (includedUsed ?? 0)))} / ${formatUsdFromCents(limit)}`
-            : undefined,
-        });
-      }
-
-      const onDemandCap = numberValue(config.on_demand_cap ?? config.onDemandCap);
-      const explicitOnDemandUsed = numberValue(config.on_demand_used ?? config.onDemandUsed);
-      const onDemandUsed = explicitOnDemandUsed
-        ?? (used !== null && limit !== null ? Math.max(0, used - limit) : null);
-      if (onDemandCap !== null && onDemandCap > 0) {
-        rows.push({
-          label: quotaText('quota.service.onDemand'),
-          remainingPercent: clampPercent(
-            onDemandUsed === null ? null : ((onDemandCap - onDemandUsed) / onDemandCap) * 100,
-          ),
-          reset: absoluteResetLabel(config.billing_period_end ?? config.billingPeriodEnd),
-          resetAtMs: quotaResetFor(config, ['billing_period_end', 'billingPeriodEnd']),
-          detail: `${formatUsdFromCents(Math.max(0, onDemandCap - (onDemandUsed ?? 0)))} / ${formatUsdFromCents(onDemandCap)}`,
-        });
-      }
-    });
-
-    const seen = new Set<string>();
-    return rows.filter((row) => {
-      const key = `${row.label}::${row.reset ?? ''}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    const weeklyReset = {
+      reset: absoluteResetLabel(billing.periodEnd),
+      resetAtMs: billing.resetAtMs ?? undefined,
+    };
+    if (billing.periodType === 'weekly'
+      && (billing.usagePercent !== null || billing.periodEnd || billing.productUsage.length > 0)) {
+      rows.push({
+        label: quotaText('quota.service.weekly'),
+        remainingPercent: remainingFromUsedPercent(billing.usagePercent),
+        ...weeklyReset,
+      });
+    }
+    billing.productUsage.forEach((item) => rows.push({
+      label: item.product,
+      remainingPercent: remainingFromUsedPercent(item.usagePercent),
+    }));
+    const monthlyReset = {
+      reset: absoluteResetLabel(billing.billingPeriodEnd),
+      resetAtMs: quotaResetInstant(billing.billingPeriodEnd),
+    };
+    const amount = (cap: number | null, used: number | null) => {
+      const remaining = cap !== null && used !== null ? Math.max(0, cap - used) : null;
+      return cap === null ? formatUsdFromCents(remaining)
+        : `${formatUsdFromCents(remaining)} / ${formatUsdFromCents(cap)}`;
+    };
+    if (billing.onDemandCapCents !== null && billing.onDemandCapCents > 0) {
+      rows.push({
+        label: quotaText('quota.service.onDemand'),
+        remainingPercent: remainingFromUsedPercent(billing.onDemandUsedPercent),
+        detail: amount(billing.onDemandCapCents, billing.onDemandUsedCents),
+      });
+    }
+    if (billing.monthlyLimitCents !== null || billing.usedCents !== null || billing.billingPeriodEnd) {
+      rows.push({
+        label: quotaText('quota.service.monthlyIncluded'),
+        remainingPercent: remainingFromUsedPercent(billing.usedPercent),
+        detail: amount(billing.monthlyLimitCents, billing.includedUsedCents),
+        ...monthlyReset,
+      });
+    }
+    return rows.length > 0 ? rows : [{
+      label: quotaText(billing.periodType === 'weekly'
+        ? 'quota.service.weekly' : 'quota.service.monthlyIncluded'),
+      remainingPercent: null,
+    }];
   }
-
   const nested = parseBody(value.body);
   const summary = !Array.isArray(value.groups) && isRecord(nested) ? nested : value;
   const groups = Array.isArray(summary.groups) ? summary.groups : [];
@@ -656,10 +624,31 @@ const requestQuotaPayload = async (
   return parseBody(response.body ?? response.bodyText);
 };
 
+const callXaiPaidHealth = async (authIndex: string): Promise<unknown> => {
+  const header = { Authorization: 'Bearer $TOKEN$', accept: 'application/json' };
+  const [profile, chat] = await Promise.allSettled([
+    requestQuotaPayload(authIndex, 'https://api.x.ai/v1/me', header, 'GET', undefined, 15_000),
+    requestQuotaPayload(authIndex, 'https://api.x.ai/v1/chat/completions', {
+      ...header, 'Content-Type': 'application/json',
+    }, 'POST', JSON.stringify({
+      model: 'grok-4.5',
+      messages: [{ role: 'user', content: 'ping' }],
+      max_tokens: 1,
+      stream: false,
+    }), 15_000),
+  ]);
+  if (chat.status === 'rejected') throw chat.reason;
+  const record = profile.status === 'fulfilled' && isRecord(profile.value) ? profile.value : {};
+  return {
+    mode: 'paid-health', plan_type: 'Paid',
+    userId: readString(record, 'user_id', 'userId') || undefined,
+    teamId: readString(record, 'team_id', 'teamId') || undefined,
+  };
+};
 const callXaiQuota = async (file: AuthFile): Promise<unknown> => {
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
   if (!authIndex) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
-  if (isPaidXaiFile(file)) return { mode: 'paid-info', plan_type: 'Paid' };
+  if (isPaidXaiFile(file)) return callXaiPaidHealth(authIndex);
   const header = { ...headersByProvider.xai };
   const userId = await resolveXaiUserId(file);
   if (userId) header['x-userid'] = userId;
@@ -674,7 +663,11 @@ const callXaiQuota = async (file: AuthFile): Promise<unknown> => {
   if (quotaRowsFor('xai', payload).length > 0) return payload;
   const billingError = weekly.status === 'rejected' && monthly.status === 'rejected'
     ? weekly.reason : new Error(quotaText('quota.service.error.unrecognized'));
-  throw billingError;
+  try {
+    return await callXaiPaidHealth(authIndex);
+  } catch {
+    throw billingError;
+  }
 };
 
 const booleanValue = (value: unknown): boolean | null => {

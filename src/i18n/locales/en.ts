@@ -179,6 +179,7 @@ export const en: Record<MessageKey, string> = {
   'quota.unknownProvider': 'Unknown',
   'common.confirm': 'Confirm',
   'quota.service.xaiPaidAccount': 'Paid API account',
+  'quota.service.xaiPaidHealth': 'Paid API chat is available. xAI does not currently provide total quota data for this OAuth credential.',
   'quota.service.xaiPaidQuotaUnavailable': 'Remaining quota is not provided for this account.',
   'quota.confirm.button': 'Confirm Reset',
   'quota.confirm.applicableLabel': 'Currently applicable resets',

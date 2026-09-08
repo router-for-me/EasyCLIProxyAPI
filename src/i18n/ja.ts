@@ -192,6 +192,7 @@ export const jaOverrides = {
   'quota.unknownProvider': '不明',
   'common.confirm': '確認',
   'quota.service.xaiPaidAccount': '有料 API アカウント',
+  'quota.service.xaiPaidHealth': '有料 API の会話が利用可能です。xAI は現在、この OAuth 認証情報の総クォータを提供していません。',
   'quota.service.xaiPaidQuotaUnavailable': 'このアカウントの残りクォータは提供されていません。',
   'quota.confirm.button': 'リセットを実行',
   'quota.confirm.applicableLabel': '現在適用可能な回数',

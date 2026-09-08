@@ -178,6 +178,7 @@ export const zhCN = {
   'quota.unknownProvider': '未知',
   'common.confirm': '确认',
   'quota.service.xaiPaidAccount': '付费 API 账号',
+  'quota.service.xaiPaidHealth': '付费 API 对话可用。xAI 暂不为此 OAuth 凭证提供额度总量数据。',
   'quota.service.xaiPaidQuotaUnavailable': '此账号不提供剩余额度。',
   'quota.confirm.button': '确认重置',
   'quota.confirm.applicableLabel': '当前适用次数',

@@ -302,4 +302,24 @@ describe('quotaRowsFor', () => {
     expect(rows.find((row) => row.label === '月度包含额度')?.remainingPercent).toBe(0);
     expect(rows.find((row) => row.label === '按量付费额度')?.remainingPercent).toBe(60);
   });
+
+  it('xAI 保留 0 和 100 的边界值，缺失用量不显示全额余额', () => {
+    expect(quotaRowsFor('xai', { config: { creditUsagePercent: 0 } })[0].remainingPercent).toBe(100);
+    expect(quotaRowsFor('xai', { config: { creditUsagePercent: 100 } })[0].remainingPercent).toBe(0);
+    expect(quotaRowsFor('xai', { config: { monthlyLimit: { val: 15000 }, used: { val: 0 } } })[0].remainingPercent).toBe(100);
+    const unknown = quotaRowsFor('xai', { config: { monthlyLimit: 15000 } })[0];
+    expect(unknown.remainingPercent).toBeNull();
+    expect(unknown.detail).not.toBe('US$150.00 / US$150.00');
+    expect(quotaRowsFor('xai', { config: { monthlyLimit: 15000, used: 15000 } })[0].remainingPercent).toBe(0);
+  });
+
+  it('xAI 按字段合并并保留活动周期，不由月账单补齐周重置时间', () => {
+    const rows = quotaRowsFor('xai', {
+      weekly: { config: { currentPeriod: { type: 'weekly' } } },
+      monthly: { config: { creditUsagePercent: 0, currentPeriod: { type: 'monthly', end: '2030-01-01T00:00:00Z' } } },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].remainingPercent).toBe(100);
+    expect(rows[0].resetAtMs).toBeUndefined();
+  });
 });
