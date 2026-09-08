@@ -1,8 +1,8 @@
 #[cfg(target_os = "windows")]
 use super::windows_explorer_executable;
 use super::{
-    auth_dir_path_for_core, configure_background_command, core_install_dir, core_origin,
-    current_core_tls_settings, is_hashed_management_secret_key, open_oauth_url_inner,
+    auth_dir_path_for_core, configure_background_command, core_install_dir, core_logs_dir_path,
+    core_origin, current_core_tls_settings, is_hashed_management_secret_key, open_oauth_url_inner,
     path_to_string, truncate_for_error, GuiConfigFile, GuiConfigState,
 };
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Command, Stdio},
     sync::LazyLock,
     time::Duration,
@@ -150,10 +150,6 @@ pub(crate) fn open_core_logs_directory(
         .map_err(|error| format!("创建日志目录失败 {}: {error}", path_to_string(&logs_dir)))?;
 
     open_directory_in_file_manager(&logs_dir)
-}
-
-fn core_logs_dir_path(auth_dir: &str, install_dir: &Path) -> PathBuf {
-    auth_dir_path_for_core(auth_dir, install_dir).join("logs")
 }
 
 fn open_directory_in_file_manager(path: &Path) -> Result<(), String> {

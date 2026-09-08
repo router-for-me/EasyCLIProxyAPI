@@ -1231,25 +1231,124 @@ pub(crate) fn start_core_process_inner(
 
     let config_path = merge_core_config_for_start(&install_dir, gui_config)?;
     let config_path = path_to_string(&config_path);
-    let mut command = Command::new(&binary_path);
-    command
-        .args(["-config", &config_path])
-        .current_dir(&install_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    configure_background_command(&mut command);
+    let build_command = || {
+        let mut command = Command::new(&binary_path);
+        command
+            .args(["-config", &config_path])
+            .current_dir(&install_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(core_start_stdio(&install_dir, &gui_config.auth_dir));
+        configure_background_command(&mut command);
+        command
+    };
 
-    let mut child = spawn_core_child(command)?;
+    let mut retried_after_sigkill = false;
+    loop {
+        let mut child = spawn_core_child(build_command())?;
 
-    if let Err(error) = wait_for_core_management_port(&mut child, management_address) {
+        let start_error = match wait_for_core_management_port(&mut child, management_address) {
+            Ok(()) => {
+                process_state.store_child(child)?;
+                return Ok(());
+            }
+            Err(error) => error,
+        };
+
+        let killed_by_signal = child
+            .try_wait()
+            .ok()
+            .flatten()
+            .is_some_and(|status| exited_through_kill_signal(&status));
+
         let _ = terminate_child(&mut child);
-        return Err(error);
+
+        #[cfg(target_os = "macos")]
+        if killed_by_signal
+            && !retried_after_sigkill
+            && heal_tainted_core_binary(&binary_path)
+        {
+            retried_after_sigkill = true;
+            continue;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (&killed_by_signal, &retried_after_sigkill);
+        }
+
+        #[cfg(target_os = "macos")]
+        if killed_by_signal {
+            return Err(format!(
+                "{start_error}；系统多次终止 CPA 内核进程，请在内核管理中重新安装内核后重试"
+            ));
+        }
+
+        return Err(start_error);
     }
+}
 
-    process_state.store_child(child)?;
+pub(crate) fn core_start_log_path(install_dir: &Path, auth_dir: &str) -> PathBuf {
+    core_logs_dir_path(auth_dir, install_dir).join("core-start-output.log")
+}
 
-    Ok(())
+pub(crate) fn core_start_stdio(install_dir: &Path, auth_dir: &str) -> Stdio {
+    // Keep the core's early output on disk: when the core dies right after
+    // spawn (for example exit code 0 or a kernel SIGKILL), this file is the
+    // only trace of what it printed before exiting.
+    let log_path = core_start_log_path(install_dir, auth_dir);
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    File::options()
+        .append(true)
+        .create(true)
+        .open(&log_path)
+        .map(|file| {
+            let mut file = file;
+            let _ = writeln!(file, "===== CPA 内核启动 {} =====", unix_now());
+            Stdio::from(file)
+        })
+        .unwrap_or(Stdio::null())
+}
+
+#[cfg(unix)]
+fn exited_through_kill_signal(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+
+    status.code().is_none() && status.signal() == Some(libc::SIGKILL)
+}
+
+#[cfg(not(unix))]
+fn exited_through_kill_signal(_status: &std::process::ExitStatus) -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn heal_tainted_core_binary(binary_path: &Path) -> bool {
+    // macOS caches the code-signature validation result per file (vnode).
+    // When the binary file has been overwritten in place by an earlier update,
+    // the kernel treats every new exec of that same file as an invalid
+    // signature and kills the process with SIGKILL before main() runs.
+    // Re-materializing the file through a sibling temporary file + rename
+    // gives exec a fresh inode and clears the poisoned cache for this path.
+    let (Some(parent), Some(file_name)) = (binary_path.parent(), binary_path.file_name()) else {
+        return false;
+    };
+    let temp_path = parent.join(format!(
+        ".{}.heal-{}-{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        unix_now()
+    ));
+    if fs::copy(binary_path, &temp_path).is_err() {
+        return false;
+    }
+    if fs::rename(&temp_path, binary_path).is_ok() {
+        true
+    } else {
+        let _ = fs::remove_file(&temp_path);
+        false
+    }
 }
 
 pub(crate) fn wait_for_core_management_port(
@@ -2163,7 +2262,7 @@ pub(crate) fn overlay_install_dir(install_dir: &Path, staging_dir: &Path) -> Res
     fs::remove_dir_all(staging_dir).map_err(|err| format!("清理内核暂存目录失败: {err}"))
 }
 
-fn overlay_directory(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
+pub(crate) fn overlay_directory(source_dir: &Path, target_dir: &Path) -> Result<(), String> {
     for entry in fs::read_dir(source_dir)
         .map_err(|err| format!("读取内核暂存目录失败 {}: {err}", path_to_string(source_dir)))?
     {
@@ -2195,15 +2294,65 @@ fn overlay_directory(source_dir: &Path, target_dir: &Path) -> Result<(), String>
                     path_to_string(&target_path)
                 ));
             }
-            fs::copy(&source_path, &target_path).map_err(|err| {
-                format!("覆盖内核文件失败 {}: {err}", path_to_string(&target_path))
-            })?;
+            copy_file_replace(&source_path, &target_path)?;
         } else {
             return Err(format!(
                 "内核暂存目录包含不支持的条目: {}",
                 path_to_string(&source_path)
             ));
         }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn copy_file_replace(source_path: &Path, target_path: &Path) -> Result<(), String> {
+    // Replace the target through a sibling temporary file + rename instead of
+    // copying over an existing file in place. On macOS the kernel caches
+    // code-signature validation per file (vnode): overwriting a previously
+    // executed binary in place invalidates the cached signature and every
+    // later exec of that same file is killed with SIGKILL immediately
+    // ("CPA 内核启动后立即退出: signal: 9 (SIGKILL)"). Renaming in a fresh
+    // inode keeps the installed binary exec-safe after every update.
+    if !target_path.exists() {
+        return fs::copy(source_path, target_path)
+            .map(|_| ())
+            .map_err(|err| format!("覆盖内核文件失败 {}: {err}", path_to_string(target_path)));
+    }
+
+    let Some(parent) = target_path.parent() else {
+        return Err(format!(
+            "覆盖内核文件失败 {}: 无法确定父目录",
+            path_to_string(target_path)
+        ));
+    };
+    let Some(file_name) = target_path.file_name() else {
+        return Err(format!(
+            "覆盖内核文件失败 {}: 无法确定文件名",
+            path_to_string(target_path)
+        ));
+    };
+    let temp_path = parent.join(format!(
+        ".{}.overlay-{}-{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        unix_now()
+    ));
+
+    if let Err(err) = fs::copy(source_path, &temp_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!(
+            "覆盖内核文件失败 {}: {err}",
+            path_to_string(target_path)
+        ));
+    }
+
+    if let Err(err) = fs::rename(&temp_path, target_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(format!(
+            "覆盖内核文件失败 {}: {err}",
+            path_to_string(target_path)
+        ));
     }
 
     Ok(())

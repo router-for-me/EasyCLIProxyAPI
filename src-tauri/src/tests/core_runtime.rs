@@ -537,3 +537,133 @@ fn release_page_assets_parse_download_links_and_sha256() {
         .browser_download_url
         .ends_with("/releases/download/v1.2.3/CLIProxyAPI_1.2.3_linux_amd64.tar.gz"));
 }
+
+#[test]
+fn copy_file_replace_replaces_existing_target_with_fresh_inode() {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+
+    let root = agent_test_home("copy-file-replace-fresh-inode");
+    let staging_dir = root.join("staging");
+    let install_dir = root.join("install");
+    fs::create_dir_all(&staging_dir).unwrap();
+    fs::create_dir_all(&install_dir).unwrap();
+
+    let source = staging_dir.join(core_binary_name());
+    let target = install_dir.join(core_binary_name());
+    fs::write(&source, b"new core bytes").unwrap();
+    fs::write(&target, b"old core bytes").unwrap();
+    #[cfg(unix)]
+    let old_inode = fs::metadata(&target).unwrap().ino();
+
+    copy_file_replace(&source, &target).unwrap();
+
+    assert_eq!(fs::read(&target).unwrap(), b"new core bytes");
+    #[cfg(unix)]
+    assert_ne!(
+        fs::metadata(&target).unwrap().ino(),
+        old_inode,
+        "replaced binary must get a fresh inode so macOS does not kill exec with SIGKILL"
+    );
+
+    let leftovers: Vec<_> = fs::read_dir(&install_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('.'))
+        .collect();
+    assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn copy_file_replace_creates_missing_target() {
+    let root = agent_test_home("copy-file-replace-missing-target");
+    let source_dir = root.join("source");
+    let target_dir = root.join("target");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(&target_dir).unwrap();
+
+    let source = source_dir.join(core_binary_name());
+    let target = target_dir.join(core_binary_name());
+    fs::write(&source, b"core bytes").unwrap();
+
+    copy_file_replace(&source, &target).unwrap();
+
+    assert_eq!(fs::read(&target).unwrap(), b"core bytes");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn overlay_directory_replaces_existing_binary_with_fresh_inode() {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+
+    let root = agent_test_home("overlay-directory-fresh-inode");
+    let staging_dir = root.join("cpa-core.staging");
+    let install_dir = root.join("cpa-core");
+    fs::create_dir_all(&staging_dir).unwrap();
+    fs::create_dir_all(&install_dir).unwrap();
+
+    let binary_name = core_binary_name();
+    let staged_binary = staging_dir.join(&binary_name);
+    let installed_binary = install_dir.join(&binary_name);
+    fs::write(&staged_binary, b"updated core").unwrap();
+    fs::write(&installed_binary, b"outdated core").unwrap();
+    fs::write(staging_dir.join("config.example.yaml"), b"config").unwrap();
+    #[cfg(unix)]
+    let old_inode = fs::metadata(&installed_binary).unwrap().ino();
+
+    overlay_directory(&staging_dir, &install_dir).unwrap();
+
+    assert_eq!(fs::read(&installed_binary).unwrap(), b"updated core");
+    assert_eq!(
+        fs::read(install_dir.join("config.example.yaml")).unwrap(),
+        b"config"
+    );
+    #[cfg(unix)]
+    assert_ne!(
+        fs::metadata(&installed_binary).unwrap().ino(),
+        old_inode,
+        "overlay must not overwrite the binary in place; macOS kills exec of a modified executable with SIGKILL"
+    );
+    // Staging cleanup happens in overlay_install_dir, not overlay_directory.
+    assert!(staging_dir.exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn core_start_log_path_follows_managed_logs_directory() {
+    let base_dir = PathBuf::from("test-base");
+    let install_dir = base_dir.join("cpa-core");
+
+    assert_eq!(
+        core_start_log_path(&install_dir, "../oauth"),
+        base_dir.join("oauth").join("logs").join("core-start-output.log")
+    );
+
+    assert_eq!(
+        core_start_log_path(&install_dir, "custom-auth"),
+        install_dir.join("custom-auth").join("logs").join("core-start-output.log")
+    );
+}
+
+#[test]
+fn core_start_stdio_creates_log_file_in_managed_logs_directory() {
+    let root = agent_test_home("core-start-stdio-log-dir");
+    let install_dir = root.join("cpa-core");
+    fs::create_dir_all(&install_dir).unwrap();
+
+    let stdio = core_start_stdio(&install_dir, "../oauth");
+    drop(stdio);
+
+    let expected_log_path = root.join("oauth").join("logs").join("core-start-output.log");
+    assert!(expected_log_path.exists(), "log file must exist at {expected_log_path:?}");
+    let content = fs::read_to_string(&expected_log_path).unwrap();
+    assert!(content.contains("===== CPA 内核启动"));
+
+    fs::remove_dir_all(root).unwrap();
+}
