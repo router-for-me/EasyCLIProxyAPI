@@ -1201,6 +1201,147 @@ fn core_management_address(listen_host: &str, port: u16) -> Result<SocketAddr, S
     Ok(SocketAddr::new(ip, port))
 }
 
+pub(crate) enum CoreStartupFailure {
+    Exited(std::process::ExitStatus),
+    Spawn(String),
+    StatusCheck(io::Error),
+    TimedOut(u16),
+}
+
+impl CoreStartupFailure {
+    fn child_has_exited(&self) -> bool {
+        matches!(self, Self::Exited(_))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn was_killed_by_sigkill(&self) -> bool {
+        use std::os::unix::process::ExitStatusExt;
+
+        matches!(
+            self,
+            Self::Exited(status)
+                if status.code().is_none() && status.signal() == Some(libc::SIGKILL)
+        )
+    }
+}
+
+impl std::fmt::Display for CoreStartupFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exited(status) => write!(formatter, "CPA 内核启动后立即退出: {status}"),
+            Self::Spawn(error) => formatter.write_str(error),
+            Self::StatusCheck(error) => write!(formatter, "检查 CPA 内核启动状态失败: {error}"),
+            Self::TimedOut(port) => {
+                write!(formatter, "CPA 内核启动超时：10 秒内未监听管理端口 {port}")
+            }
+        }
+    }
+}
+
+pub(crate) fn core_start_log_path(install_dir: &Path, auth_dir: &str) -> PathBuf {
+    core_logs_dir_path(auth_dir, install_dir).join("core-start-output.log")
+}
+
+pub(crate) fn core_start_stdio(log_path: &Path) -> io::Result<(Stdio, Stdio)> {
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Keep only the current process run so console output cannot grow without
+    // bound across restarts. Both child handles use append mode to avoid their
+    // independent file cursors overwriting each other's output.
+    let mut header_file = File::options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(log_path)?;
+    writeln!(header_file, "===== CPA 内核启动 {} =====", unix_now())?;
+    drop(header_file);
+
+    let stdout_file = File::options().append(true).open(log_path)?;
+    let stderr_file = File::options().append(true).create(true).open(log_path)?;
+
+    Ok((Stdio::from(stdout_file), Stdio::from(stderr_file)))
+}
+
+fn core_start_error_with_log(error: &str, log_path: &Path, log_error: Option<&str>) -> String {
+    match log_error {
+        Some(log_error) => format!(
+            "{error}；无法写入启动日志 {}: {log_error}",
+            path_to_string(log_path)
+        ),
+        None => format!("{error}；启动日志: {}", path_to_string(log_path)),
+    }
+}
+
+struct CoreStartAttemptFailure {
+    failure: CoreStartupFailure,
+    log_error: Option<String>,
+}
+
+impl CoreStartAttemptFailure {
+    #[cfg(target_os = "macos")]
+    fn was_killed_by_sigkill(&self) -> bool {
+        self.failure.was_killed_by_sigkill()
+    }
+
+    fn message(&self, log_path: &Path) -> String {
+        self.message_with_detail(log_path, None)
+    }
+
+    fn message_with_detail(&self, log_path: &Path, detail: Option<&str>) -> String {
+        let error = match detail {
+            Some(detail) => format!("{}；{detail}", self.failure),
+            None => self.failure.to_string(),
+        };
+        core_start_error_with_log(&error, log_path, self.log_error.as_deref())
+    }
+}
+
+fn start_core_process_once(
+    binary_path: &Path,
+    config_path: &str,
+    install_dir: &Path,
+    log_path: &Path,
+    management_address: SocketAddr,
+) -> Result<Child, CoreStartAttemptFailure> {
+    let mut command = Command::new(binary_path);
+    command
+        .args(["-config", config_path])
+        .current_dir(install_dir)
+        .stdin(Stdio::null());
+    let log_error = match core_start_stdio(log_path) {
+        Ok((stdout, stderr)) => {
+            command.stdout(stdout).stderr(stderr);
+            None
+        }
+        Err(error) => {
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            Some(error.to_string())
+        }
+    };
+    configure_background_command(&mut command);
+
+    let mut child = match spawn_core_child(command) {
+        Ok(child) => child,
+        Err(error) => {
+            return Err(CoreStartAttemptFailure {
+                failure: CoreStartupFailure::Spawn(error),
+                log_error,
+            });
+        }
+    };
+    match wait_for_core_management_port(&mut child, management_address) {
+        Ok(()) => Ok(child),
+        Err(failure) => {
+            if !failure.child_has_exited() {
+                let _ = terminate_child(&mut child);
+            }
+            Err(CoreStartAttemptFailure { failure, log_error })
+        }
+    }
+}
+
 pub(crate) fn start_core_process_inner(
     process_state: &CoreProcessState,
     gui_config: &GuiConfigFile,
@@ -1231,47 +1372,61 @@ pub(crate) fn start_core_process_inner(
 
     let config_path = merge_core_config_for_start(&install_dir, gui_config)?;
     let config_path = path_to_string(&config_path);
-    let mut command = Command::new(&binary_path);
-    command
-        .args(["-config", &config_path])
-        .current_dir(&install_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    configure_background_command(&mut command);
+    let log_path = core_start_log_path(&install_dir, &gui_config.auth_dir);
+    let start_once = || {
+        start_core_process_once(
+            &binary_path,
+            &config_path,
+            &install_dir,
+            &log_path,
+            management_address,
+        )
+    };
 
-    let mut child = spawn_core_child(command)?;
-
-    if let Err(error) = wait_for_core_management_port(&mut child, management_address) {
-        let _ = terminate_child(&mut child);
-        return Err(error);
-    }
+    #[cfg(target_os = "macos")]
+    let child = match start_once() {
+        Ok(child) => child,
+        Err(failure) if failure.was_killed_by_sigkill() => {
+            if let Err(heal_error) = rematerialize_core_binary(&binary_path) {
+                return Err(failure.message_with_detail(
+                    &log_path,
+                    Some(&format!("自动修复 CPA 内核文件失败: {heal_error}")),
+                ));
+            }
+            match start_once() {
+                Ok(child) => child,
+                Err(failure) if failure.was_killed_by_sigkill() => {
+                    return Err(failure.message_with_detail(
+                        &log_path,
+                        Some("系统再次终止 CPA 内核，请重新安装内核后重试"),
+                    ));
+                }
+                Err(failure) => return Err(failure.message(&log_path)),
+            }
+        }
+        Err(failure) => return Err(failure.message(&log_path)),
+    };
+    #[cfg(not(target_os = "macos"))]
+    let child = start_once().map_err(|failure| failure.message(&log_path))?;
 
     process_state.store_child(child)?;
-
     Ok(())
 }
 
 pub(crate) fn wait_for_core_management_port(
     child: &mut Child,
     address: SocketAddr,
-) -> Result<(), String> {
+) -> Result<(), CoreStartupFailure> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|err| format!("检查 CPA 内核启动状态失败: {err}"))?
-        {
-            return Err(format!("CPA 内核启动后立即退出: {status}"));
+        if let Some(status) = child.try_wait().map_err(CoreStartupFailure::StatusCheck)? {
+            return Err(CoreStartupFailure::Exited(status));
         }
         if TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok() {
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!(
-                "CPA 内核启动超时：10 秒内未监听管理端口 {}",
-                address.port()
-            ));
+            return Err(CoreStartupFailure::TimedOut(address.port()));
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -2195,9 +2350,7 @@ fn overlay_directory(source_dir: &Path, target_dir: &Path) -> Result<(), String>
                     path_to_string(&target_path)
                 ));
             }
-            fs::copy(&source_path, &target_path).map_err(|err| {
-                format!("覆盖内核文件失败 {}: {err}", path_to_string(&target_path))
-            })?;
+            copy_core_file_replace(&source_path, &target_path)?;
         } else {
             return Err(format!(
                 "内核暂存目录包含不支持的条目: {}",
@@ -2207,6 +2360,59 @@ fn overlay_directory(source_dir: &Path, target_dir: &Path) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Copies through a sibling temporary file and atomically replaces the target.
+///
+/// In particular, do not change this back to copying over an existing file:
+/// macOS caches code-signature validation by vnode, so in-place updates can
+/// leave an otherwise valid executable permanently rejected with SIGKILL.
+pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let parent = target_path.parent().ok_or_else(|| {
+        format!(
+            "覆盖内核文件失败 {}: 无法确定父目录",
+            path_to_string(target_path)
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("创建内核文件目录失败 {}: {error}", path_to_string(parent)))?;
+    let file_name = target_path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "cpa-core".into());
+    let temporary_path = parent.join(format!(
+        ".{file_name}.replace.{}.{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let replace_result = (|| -> io::Result<()> {
+        fs::copy(source_path, &temporary_path)?;
+        let temporary_file = File::options().write(true).open(&temporary_path)?;
+        temporary_file.sync_all()?;
+        drop(temporary_file);
+        replace_file_atomically(&temporary_path, target_path)
+    })();
+
+    if let Err(error) = replace_result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(format!(
+            "覆盖内核文件失败 {}: {error}",
+            path_to_string(target_path)
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn rematerialize_core_binary(binary_path: &Path) -> Result<(), String> {
+    // Replacing the path with an identical copy gives it a fresh vnode and
+    // clears the macOS signature-cache state left by older in-place updates.
+    copy_core_file_replace(binary_path, binary_path)
 }
 
 pub(crate) fn extract_tar_gz(archive_path: &Path, install_dir: &Path) -> Result<(), String> {

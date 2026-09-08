@@ -307,6 +307,9 @@ fn replacing_a_core_preserves_only_regular_bundled_assets() {
 
 #[test]
 fn overlaying_a_core_updates_packaged_files_and_preserves_plugins() {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+
     let root = agent_test_home("core-overlay-preserves-plugins");
     let install_dir = root.join("cpa-core");
     let staging_dir = root.join("cpa-core.staging");
@@ -329,6 +332,10 @@ fn overlaying_a_core_updates_packaged_files_and_preserves_plugins() {
     )
     .unwrap();
     fs::write(staging_dir.join("runtime/default.json"), b"new runtime").unwrap();
+    #[cfg(unix)]
+    let original_binary_inode = fs::metadata(install_dir.join(core_binary_name()))
+        .unwrap()
+        .ino();
 
     overlay_install_dir(&install_dir, &staging_dir).unwrap();
 
@@ -355,6 +362,14 @@ fn overlaying_a_core_updates_packaged_files_and_preserves_plugins() {
     assert_eq!(
         fs::read(install_dir.join("user-data.json")).unwrap(),
         b"user data"
+    );
+    #[cfg(unix)]
+    assert_ne!(
+        fs::metadata(install_dir.join(core_binary_name()))
+            .unwrap()
+            .ino(),
+        original_binary_inode,
+        "更新后的内核必须使用新 inode"
     );
     assert!(!staging_dir.exists());
     fs::remove_dir_all(root).unwrap();
@@ -536,4 +551,85 @@ fn release_page_assets_parse_download_links_and_sha256() {
     assert!(assets[1]
         .browser_download_url
         .ends_with("/releases/download/v1.2.3/CLIProxyAPI_1.2.3_linux_amd64.tar.gz"));
+}
+
+#[test]
+fn rematerializing_core_binary_preserves_bytes_and_cleans_up_temporary_file() {
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+
+    let root = agent_test_home("core-rematerialize");
+    fs::create_dir_all(&root).unwrap();
+    let binary_path = root.join(core_binary_name());
+    fs::write(&binary_path, b"signed core bytes").unwrap();
+    #[cfg(unix)]
+    let original_inode = fs::metadata(&binary_path).unwrap().ino();
+
+    rematerialize_core_binary(&binary_path).unwrap();
+
+    assert_eq!(fs::read(&binary_path).unwrap(), b"signed core bytes");
+    #[cfg(unix)]
+    assert_ne!(fs::metadata(&binary_path).unwrap().ino(), original_inode);
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn core_start_log_path_follows_the_managed_logs_directory() {
+    let base_dir = PathBuf::from("test-base");
+    let install_dir = base_dir.join("cpa-core");
+
+    assert_eq!(
+        core_start_log_path(&install_dir, DEFAULT_AUTH_DIR),
+        base_dir
+            .join("oauth")
+            .join("logs")
+            .join("core-start-output.log")
+    );
+    assert_eq!(
+        core_start_log_path(&install_dir, "custom-auth"),
+        install_dir
+            .join("custom-auth")
+            .join("logs")
+            .join("core-start-output.log")
+    );
+}
+
+#[test]
+fn core_start_output_helper() {
+    if env::var_os("EASYCLIPROXYAPI_CORE_OUTPUT_TEST_HELPER").is_none() {
+        return;
+    }
+    println!("core stdout marker");
+    eprintln!("core stderr marker");
+}
+
+#[test]
+fn core_start_log_captures_stdout_and_stderr() {
+    let root = agent_test_home("core-start-output");
+    let log_path = root.join("logs").join("core-start-output.log");
+    fs::create_dir_all(log_path.parent().unwrap()).unwrap();
+    fs::write(&log_path, "stale startup output").unwrap();
+    let (stdout, stderr) = core_start_stdio(&log_path).unwrap();
+    let mut command = Command::new(env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "tests::core_runtime::core_start_output_helper",
+            "--nocapture",
+        ])
+        .env("EASYCLIPROXYAPI_CORE_OUTPUT_TEST_HELPER", "1")
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr);
+    configure_background_command(&mut command);
+
+    assert!(command.status().unwrap().success());
+
+    let output = fs::read_to_string(&log_path).unwrap();
+    assert!(output.contains("===== CPA 内核启动"));
+    assert!(output.contains("core stdout marker"));
+    assert!(output.contains("core stderr marker"));
+    assert!(!output.contains("stale startup output"));
+    fs::remove_dir_all(root).unwrap();
 }

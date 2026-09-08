@@ -867,6 +867,10 @@ pub(crate) fn auth_dir_path_for_core(auth_dir: &str, install_dir: &Path) -> Path
     }
 }
 
+pub(crate) fn core_logs_dir_path(auth_dir: &str, install_dir: &Path) -> PathBuf {
+    auth_dir_path_for_core(auth_dir, install_dir).join("logs")
+}
+
 #[cfg(any(target_os = "macos", test))]
 fn normalize_path_lexically(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
