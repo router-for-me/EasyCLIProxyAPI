@@ -2856,6 +2856,9 @@ fn build_zcode_config(
         })
         .collect::<serde_json::Map<_, _>>();
     let managed_provider = ensure_json_object_entry(providers, MANAGED_AGENT_PROVIDER_ID);
+    // `npm` is an OpenCode provider field. ZCode treats it as an incompatible
+    // provider definition, so also remove values written by earlier versions.
+    managed_provider.remove("npm");
     managed_provider.insert("enabled".to_string(), serde_json::json!(true));
     managed_provider.insert("name".to_string(), serde_json::json!("EasyCLIProxyAPI"));
     managed_provider.insert("source".to_string(), serde_json::json!("custom"));
@@ -2865,7 +2868,6 @@ fn build_zcode_config(
         "apiFormat".to_string(),
         serde_json::json!("anthropic-messages"),
     );
-    managed_provider.insert("npm".to_string(), serde_json::json!("@ai-sdk/anthropic"));
     let options = ensure_json_object_entry(managed_provider, "options");
     options.insert("baseURL".to_string(), serde_json::json!(base_url));
     options.insert("apiKey".to_string(), serde_json::json!(api_key));

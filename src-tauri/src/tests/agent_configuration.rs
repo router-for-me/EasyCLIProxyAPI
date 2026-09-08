@@ -910,7 +910,7 @@ fn zcode_agent_config_preserves_other_providers_and_uses_anthropic_messages() {
     models[1].context_window = Some(272_000);
     let rendered = build_zcode_agent_config(
         Some(
-            r#"{"locale":"zh-CN","provider":{"other":{"kind":"openai"},"cpa-gui":{"custom":"keep","options":{"timeout":30}}}}"#,
+            r#"{"locale":"zh-CN","provider":{"other":{"kind":"openai"},"cpa-gui":{"custom":"keep","npm":"@ai-sdk/anthropic","options":{"timeout":30}}}}"#,
         ),
         "http://127.0.0.1:8317",
         DEFAULT_API_KEY,
@@ -939,6 +939,9 @@ fn zcode_agent_config_preserves_other_providers_and_uses_anthropic_messages() {
         value["provider"][MANAGED_AGENT_PROVIDER_ID]["apiFormat"],
         "anthropic-messages"
     );
+    assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]
+        .get("npm")
+        .is_none());
     assert_eq!(
         value["provider"][MANAGED_AGENT_PROVIDER_ID]["options"]["baseURL"],
         "http://127.0.0.1:8317"
@@ -1000,6 +1003,9 @@ fn zcode_cli_config_sets_main_model_and_both_configs_must_match() {
     assert_eq!(cli_value["model"]["main"], "cpa-gui/gpt-test");
     assert_eq!(cli_value["model"]["lite"], "other/lite");
     assert_eq!(cli_value["plugins"]["keep"], true);
+    assert!(cli_value["provider"][MANAGED_AGENT_PROVIDER_ID]
+        .get("npm")
+        .is_none());
     fs::write(&paths[0], app_config).unwrap();
     fs::write(&paths[1], &cli_config).unwrap();
     assert_eq!(
