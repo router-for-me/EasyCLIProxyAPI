@@ -149,6 +149,8 @@ const KIMI_CODE_CONFIG_FILE: &str = "config.toml";
 const GROK_BUILD_CONFIG_FILE: &str = "config.toml";
 const DEEPSEEK_HARNESS_PROVIDER_ID: &str = "easy-cliproxyapi";
 const DEEPSEEK_HARNESS_CREDENTIAL: &str = "EASYCLIPROXYAPI_API_KEY";
+const DEEPSEEK_HARNESS_CREDENTIALS_VERSION: u64 = 1;
+const DEEPSEEK_HARNESS_DEFAULT_WEB_PORT: u16 = 3080;
 const DEEPSEEK_HARNESS_SETTINGS_FILE: &str = "settings.yaml";
 const DEEPSEEK_HARNESS_CREDENTIALS_FILE: &str = ".credentials.yaml";
 const PI_AGENT_ID: &str = "pi";
@@ -306,6 +308,16 @@ struct CoreProcessState {
     starting: AtomicBool,
     #[cfg(windows)]
     job: Mutex<Option<isize>>,
+}
+
+#[derive(Default)]
+struct DeepSeekHarnessProcessState {
+    process: Mutex<Option<ManagedDeepSeekHarnessProcess>>,
+}
+
+struct ManagedDeepSeekHarnessProcess {
+    child: Child,
+    mode: String,
 }
 
 #[derive(Clone)]
@@ -1032,6 +1044,29 @@ struct AgentLaunchTarget {
     id: String,
     label: String,
     detail: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeepSeekHarnessLaunchOptions {
+    mode: String,
+    web_host: Option<String>,
+    web_port: Option<u16>,
+    open_browser: Option<bool>,
+    #[serde(default)]
+    trusted_hosts: Vec<String>,
+    task: Option<String>,
+    profile: Option<String>,
+    #[serde(default)]
+    patches: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeepSeekHarnessProcessStatus {
+    running: bool,
+    pid: Option<u32>,
+    mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2288,6 +2323,7 @@ fn main() {
         .manage(CoreDownloadState::default())
         .manage(AppUpdateState::default())
         .manage(CoreProcessState::new(gui_config.start_core_on_launch))
+        .manage(DeepSeekHarnessProcessState::default())
         .manage(usage::UsageCollectorState::default())
         .manage(GuiConfigState::new(gui_config))
         .manage(MainWindowSizeState::new(initial_window_size))
@@ -2509,6 +2545,8 @@ fn main() {
             set_agent_config_enabled,
             update_agent_config,
             launch_agent,
+            get_deepseek_harness_process_status,
+            stop_deepseek_harness_process,
             restart_codex_app,
             restart_opencode_app,
             get_lan_ipv4,
@@ -2592,6 +2630,10 @@ fn main() {
         }
         tauri::RunEvent::Exit => {
             usage::stop_usage_collector(app_handle);
+            let deepseek_process_state = app_handle.state::<DeepSeekHarnessProcessState>();
+            if let Err(error) = stop_managed_deepseek_harness(deepseek_process_state.inner()) {
+                eprintln!("关闭 DeepSeek Harness 失败: {error}");
+            }
             let gui_config_state = app_handle.state::<GuiConfigState>();
             let process_state = app_handle.state::<CoreProcessState>();
             shutdown_managed_core(process_state.inner(), gui_config_state.inner());

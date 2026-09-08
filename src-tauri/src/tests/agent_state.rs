@@ -219,7 +219,7 @@ agent-default-model:
   provider: existing
   model: old-model
 "#;
-    let original_credentials = "OTHER_API_KEY: old-secret\n";
+    let original_credentials = "version: 1\nrefs:\n  OTHER_API_KEY: old-secret\n";
     fs::write(&paths[0], original_settings).unwrap();
     fs::write(&paths[1], original_credentials).unwrap();
     let models = test_agent_models(&["gpt-test", "gpt-other"]);
@@ -252,7 +252,11 @@ agent-default-model:
     let credentials = fs::read_to_string(&paths[1]).unwrap();
     let credentials =
         render_agent_yaml_mapping_update(Some(&credentials), "test Harness credentials", |root| {
-            root.insert(
+            let refs = root
+                .get_mut(yaml_key("refs"))
+                .and_then(serde_norway::Value::as_mapping_mut)
+                .unwrap();
+            refs.insert(
                 yaml_key("NEW_API_KEY"),
                 serde_norway::Value::String("new-secret".to_string()),
             );
@@ -274,9 +278,18 @@ agent-default-model:
         .get(DEEPSEEK_HARNESS_PROVIDER_ID)
         .is_none());
     assert_eq!(settings["added-after-apply"].as_bool(), Some(true));
-    assert_eq!(credentials["OTHER_API_KEY"].as_str(), Some("old-secret"));
-    assert_eq!(credentials["NEW_API_KEY"].as_str(), Some("new-secret"));
-    assert!(credentials.get(DEEPSEEK_HARNESS_CREDENTIAL).is_none());
+    assert_eq!(credentials["version"].as_u64(), Some(1));
+    assert_eq!(
+        credentials["refs"]["OTHER_API_KEY"].as_str(),
+        Some("old-secret")
+    );
+    assert_eq!(
+        credentials["refs"]["NEW_API_KEY"].as_str(),
+        Some("new-secret")
+    );
+    assert!(credentials["refs"]
+        .get(DEEPSEEK_HARNESS_CREDENTIAL)
+        .is_none());
     assert!(!dated_agent_backup_path(&paths[0]).unwrap().exists());
     assert!(!dated_agent_backup_path(&paths[1]).unwrap().exists());
     assert!(!agent_state_path(&paths).unwrap().exists());

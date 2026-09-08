@@ -1549,18 +1549,105 @@ agent-default-model:
 #[test]
 fn deepseek_harness_credentials_preserve_other_entries() {
     let rendered = build_deepseek_harness_credentials(
-        Some("# existing key\nOTHER_API_KEY: other-secret\n"),
+        Some(
+            "# existing key\nversion: 1\nrefs:\n  OTHER_API_KEY: other-secret\nrecords:\n  plugin/account:\n    kind: api-key\n    key: record-secret\n",
+        ),
         "cpa-secret",
     )
     .unwrap();
     let value: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
 
     assert!(rendered.contains("# existing key"));
-    assert_eq!(value["OTHER_API_KEY"].as_str(), Some("other-secret"));
+    assert_eq!(value["version"].as_u64(), Some(1));
     assert_eq!(
-        value[DEEPSEEK_HARNESS_CREDENTIAL].as_str(),
+        value["refs"]["OTHER_API_KEY"].as_str(),
+        Some("other-secret")
+    );
+    assert_eq!(
+        value["refs"][DEEPSEEK_HARNESS_CREDENTIAL].as_str(),
         Some("cpa-secret")
     );
+    assert_eq!(
+        value["records"]["plugin/account"]["key"].as_str(),
+        Some("record-secret")
+    );
+    assert!(value.get(DEEPSEEK_HARNESS_CREDENTIAL).is_none());
+}
+
+#[test]
+fn deepseek_harness_credentials_reject_legacy_flat_layout() {
+    let error = build_deepseek_harness_credentials(
+        Some("# legacy flat layout\nOTHER_API_KEY: other-secret\n"),
+        "cpa-secret",
+    )
+    .unwrap_err();
+
+    assert!(error.contains("缺少 version 字段"), "{error}");
+}
+
+#[test]
+fn deepseek_harness_credentials_repair_misplaced_managed_key() {
+    let rendered = build_deepseek_harness_credentials(
+        Some(
+            "version: 1\nrefs:\n  OTHER_API_KEY: other-secret\nrecords: {}\nEASYCLIPROXYAPI_API_KEY: misplaced-secret\n",
+        ),
+        "cpa-secret",
+    )
+    .unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
+
+    assert_eq!(
+        value["refs"][DEEPSEEK_HARNESS_CREDENTIAL].as_str(),
+        Some("cpa-secret")
+    );
+    assert!(value.get(DEEPSEEK_HARNESS_CREDENTIAL).is_none());
+}
+
+#[test]
+fn deepseek_harness_removal_preserves_other_versioned_credentials() {
+    let home = agent_test_home("deepseek-harness-remove-versioned-credentials");
+    let paths = vec![home.join("settings.yaml"), home.join(".credentials.yaml")];
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        &paths[1],
+        "version: 1\nrefs:\n  OTHER_API_KEY: other-secret\n  EASYCLIPROXYAPI_API_KEY: cpa-secret\nrecords:\n  plugin/account:\n    kind: api-key\n    key: record-secret\n",
+    )
+    .unwrap();
+
+    let changed = remove_deepseek_harness_managed_configuration(&paths).unwrap();
+    let value: serde_norway::Value =
+        serde_norway::from_str(&fs::read_to_string(&paths[1]).unwrap()).unwrap();
+
+    assert_eq!(changed, vec![path_to_string(&paths[1])]);
+    assert_eq!(value["version"].as_u64(), Some(1));
+    assert_eq!(
+        value["refs"]["OTHER_API_KEY"].as_str(),
+        Some("other-secret")
+    );
+    assert!(value["refs"].get(DEEPSEEK_HARNESS_CREDENTIAL).is_none());
+    assert_eq!(
+        value["records"]["plugin/account"]["key"].as_str(),
+        Some("record-secret")
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn deepseek_harness_removal_deletes_semantically_empty_credentials_file() {
+    let home = agent_test_home("deepseek-harness-remove-empty-credentials");
+    let paths = vec![home.join("settings.yaml"), home.join(".credentials.yaml")];
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        &paths[1],
+        build_deepseek_harness_credentials(None, "cpa-secret").unwrap(),
+    )
+    .unwrap();
+
+    let changed = remove_deepseek_harness_managed_configuration(&paths).unwrap();
+
+    assert_eq!(changed, vec![path_to_string(&paths[1])]);
+    assert!(!paths[1].exists());
+    fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
@@ -1587,6 +1674,24 @@ fn deepseek_harness_inspection_requires_managed_route_selection_and_credential()
 
     let (wrong_key, _) = inspect_deepseek_harness_config(&paths, 8317, "different-key").unwrap();
     assert!(!wrong_key);
+
+    let credentials = fs::read_to_string(&paths[1]).unwrap();
+    let credentials = render_agent_yaml_mapping_update(
+        Some(&credentials),
+        "test invalid Harness credentials",
+        |root| {
+            root.insert(
+                yaml_key(DEEPSEEK_HARNESS_CREDENTIAL),
+                serde_norway::Value::String("misplaced-key".to_string()),
+            );
+            Ok(())
+        },
+    )
+    .unwrap();
+    fs::write(&paths[1], credentials).unwrap();
+    let (invalid_layout, _) = inspect_deepseek_harness_config(&paths, 8317, "agent-key").unwrap();
+    assert!(!invalid_layout);
+    assert!(deepseek_harness_has_managed_marker(&paths).unwrap());
     fs::remove_dir_all(home).unwrap();
 }
 

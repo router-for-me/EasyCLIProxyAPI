@@ -425,12 +425,112 @@ pub(crate) fn build_deepseek_harness_credentials(
     api_key: &str,
 ) -> Result<String, String> {
     render_agent_yaml_mapping_update(existing, "DeepSeek Harness credentials", |root| {
-        root.insert(
+        let refs = deepseek_harness_credentials_refs_mut(root, "DeepSeek Harness credentials")?;
+        refs.insert(
             yaml_key(DEEPSEEK_HARNESS_CREDENTIAL),
             serde_norway::Value::String(api_key.to_string()),
         );
         Ok(())
     })
+}
+
+fn deepseek_harness_credentials_version_is_supported(value: &serde_norway::Value) -> bool {
+    value.as_u64() == Some(DEEPSEEK_HARNESS_CREDENTIALS_VERSION)
+        || value.as_i64() == Some(DEEPSEEK_HARNESS_CREDENTIALS_VERSION as i64)
+}
+
+fn validate_deepseek_harness_versioned_credentials(
+    root: &serde_norway::Mapping,
+    label: &str,
+) -> Result<(), String> {
+    let version =
+        yaml_mapping_value(root, "version").ok_or_else(|| format!("{label} 缺少 version 字段"))?;
+    if !deepseek_harness_credentials_version_is_supported(version) {
+        return Err(format!(
+            "{label} version 必须为 {DEEPSEEK_HARNESS_CREDENTIALS_VERSION}"
+        ));
+    }
+    for key in root.keys() {
+        let Some(key) = key.as_str() else {
+            return Err(format!("{label} 顶层字段名必须是字符串"));
+        };
+        if !matches!(
+            key,
+            "version" | "refs" | "records" | DEEPSEEK_HARNESS_CREDENTIAL
+        ) {
+            return Err(format!("{label} 包含未知顶层字段 {key}"));
+        }
+    }
+    for section in ["refs", "records"] {
+        if yaml_mapping_value(root, section).is_some_and(|value| !value.is_mapping()) {
+            return Err(format!("{label} {section} 必须是映射"));
+        }
+    }
+    Ok(())
+}
+
+fn deepseek_harness_credentials_refs_mut<'a>(
+    root: &'a mut serde_norway::Mapping,
+    label: &str,
+) -> Result<&'a mut serde_norway::Mapping, String> {
+    if root.is_empty() {
+        root.insert(
+            yaml_key("version"),
+            serde_norway::Value::Number(DEEPSEEK_HARNESS_CREDENTIALS_VERSION.into()),
+        );
+    } else {
+        validate_deepseek_harness_versioned_credentials(root, label)?;
+        // Repair files written by older EasyCLIProxyAPI builds, which placed
+        // this managed reference beside version/refs/records.
+        root.remove(yaml_key(DEEPSEEK_HARNESS_CREDENTIAL));
+    }
+
+    root.entry(yaml_key("refs"))
+        .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
+        .as_mapping_mut()
+        .ok_or_else(|| format!("{label} refs 必须是映射"))
+}
+
+fn remove_deepseek_harness_managed_credential(
+    root: &mut serde_norway::Mapping,
+    label: &str,
+) -> Result<bool, String> {
+    if root.is_empty() {
+        return Ok(false);
+    }
+
+    validate_deepseek_harness_versioned_credentials(root, label)?;
+    let mut changed = root.remove(yaml_key(DEEPSEEK_HARNESS_CREDENTIAL)).is_some();
+    let mut remove_refs = false;
+    if let Some(refs) = root
+        .get_mut(yaml_key("refs"))
+        .and_then(serde_norway::Value::as_mapping_mut)
+    {
+        changed |= refs.remove(yaml_key(DEEPSEEK_HARNESS_CREDENTIAL)).is_some();
+        remove_refs = refs.is_empty();
+    }
+    if remove_refs {
+        root.remove(yaml_key("refs"));
+    }
+    Ok(changed)
+}
+
+fn deepseek_harness_credentials_document_is_empty(root: &serde_norway::Mapping) -> bool {
+    root.iter().all(|(key, value)| match key.as_str() {
+        Some("version") => deepseek_harness_credentials_version_is_supported(value),
+        Some("refs" | "records") => value
+            .as_mapping()
+            .is_some_and(serde_norway::Mapping::is_empty),
+        _ => false,
+    })
+}
+
+fn deepseek_harness_original_credential(
+    root: &serde_norway::Mapping,
+) -> Option<&serde_norway::Value> {
+    yaml_mapping_value(root, "refs")
+        .and_then(serde_norway::Value::as_mapping)
+        .and_then(|refs| yaml_mapping_value(refs, DEEPSEEK_HARNESS_CREDENTIAL))
 }
 
 pub(crate) fn write_deepseek_harness_file(
@@ -1526,13 +1626,16 @@ pub(crate) fn remove_deepseek_harness_managed_configuration(
             Some(&current),
             "DeepSeek Harness credentials",
             |root| {
-                changed = root.remove(yaml_key(DEEPSEEK_HARNESS_CREDENTIAL)).is_some();
+                changed = remove_deepseek_harness_managed_credential(
+                    root,
+                    "DeepSeek Harness credentials",
+                )?;
                 Ok(())
             },
         )?;
         if changed {
             let root = parse_agent_yaml_mapping(Some(&rendered), "DeepSeek Harness credentials")?;
-            if root.is_empty() {
+            if deepseek_harness_credentials_document_is_empty(&root) {
                 fs::remove_file(&paths[1]).map_err(|error| {
                     format!("删除空的 DeepSeek Harness credentials 失败: {error}")
                 })?;
@@ -2352,16 +2455,36 @@ pub(crate) fn build_restored_deepseek_harness_credentials(
     original: Option<&str>,
 ) -> Result<Option<String>, String> {
     let original_root = parse_agent_yaml_mapping(original, "原始 DeepSeek Harness credentials")?;
+    let original_credential = deepseek_harness_original_credential(&original_root).cloned();
+    let original_had_refs = yaml_mapping_value(&original_root, "refs").is_some();
     let rendered = render_agent_yaml_mapping_update(
         Some(current),
         "当前 DeepSeek Harness credentials",
         |root| {
-            restore_yaml_key(root, Some(&original_root), DEEPSEEK_HARNESS_CREDENTIAL);
+            let refs =
+                deepseek_harness_credentials_refs_mut(root, "当前 DeepSeek Harness credentials")?;
+            if let Some(value) = original_credential {
+                refs.insert(yaml_key(DEEPSEEK_HARNESS_CREDENTIAL), value);
+            } else {
+                refs.remove(yaml_key(DEEPSEEK_HARNESS_CREDENTIAL));
+            }
+            let remove_refs = refs.is_empty() && !original_had_refs;
+            if remove_refs {
+                root.remove(yaml_key("refs"));
+            }
             Ok(())
         },
     )?;
     let root = parse_agent_yaml_mapping(Some(&rendered), "恢复后的 DeepSeek Harness credentials")?;
-    Ok((!root.is_empty() || original.is_some()).then_some(rendered))
+    if deepseek_harness_credentials_document_is_empty(&root) {
+        if let Some(original) = original.filter(|_| original_root.is_empty()) {
+            return Ok(Some(original.to_string()));
+        }
+        if original.is_none() {
+            return Ok(None);
+        }
+    }
+    Ok(Some(rendered))
 }
 
 pub(crate) fn agent_config_semantically_equal(

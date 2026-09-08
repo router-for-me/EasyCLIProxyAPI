@@ -1110,6 +1110,15 @@ pub(crate) fn agent_launch_targets(
                 });
             }
         }
+        AgentClient::DeepSeekHarness => {
+            if let Some(executable) = executable {
+                targets.push(AgentLaunchTarget {
+                    id: "cli".to_string(),
+                    label: "DeepSeek Harness Web".to_string(),
+                    detail: format!("{} web", path_to_string(executable)),
+                });
+            }
+        }
         _ => {
             if let Some(executable) = executable {
                 targets.push(AgentLaunchTarget {
@@ -3751,7 +3760,10 @@ pub(crate) fn inspect_deepseek_harness_config(
         })
         .flatten();
     let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
-    let credential = yaml_mapping_value(&credentials, DEEPSEEK_HARNESS_CREDENTIAL)
+    let credentials_layout_supported = deepseek_harness_credentials_layout_supported(&credentials);
+    let credential = yaml_mapping_value(&credentials, "refs")
+        .and_then(serde_norway::Value::as_mapping)
+        .and_then(|refs| yaml_mapping_value(refs, DEEPSEEK_HARNESS_CREDENTIAL))
         .and_then(serde_norway::Value::as_str);
     let model_is_published = model.as_deref().is_some_and(|selected| {
         provider
@@ -3781,8 +3793,24 @@ pub(crate) fn inspect_deepseek_harness_config(
             == Some(expected_base.as_str())
         && selected_provider == Some(DEEPSEEK_HARNESS_PROVIDER_ID)
         && model_is_published
+        && credentials_layout_supported
         && credential == Some(api_key);
     Ok((configured, model))
+}
+
+fn deepseek_harness_credentials_layout_supported(credentials: &serde_norway::Mapping) -> bool {
+    let Some(version) = yaml_mapping_value(credentials, "version") else {
+        return false;
+    };
+    let version_supported = version.as_u64() == Some(DEEPSEEK_HARNESS_CREDENTIALS_VERSION)
+        || version.as_i64() == Some(DEEPSEEK_HARNESS_CREDENTIALS_VERSION as i64);
+    version_supported
+        && credentials
+            .keys()
+            .all(|key| matches!(key.as_str(), Some("version" | "refs" | "records")))
+        && ["refs", "records"].into_iter().all(|section| {
+            yaml_mapping_value(credentials, section).is_none_or(serde_norway::Value::is_mapping)
+        })
 }
 
 pub(crate) fn deepseek_harness_has_managed_marker(paths: &[PathBuf]) -> Result<bool, String> {
@@ -3803,6 +3831,9 @@ pub(crate) fn deepseek_harness_has_managed_marker(paths: &[PathBuf]) -> Result<b
         .and_then(|selection| yaml_mapping_value(selection, "provider"))
         .and_then(serde_norway::Value::as_str)
         == Some(DEEPSEEK_HARNESS_PROVIDER_ID);
-    let credential_exists = yaml_mapping_value(&credentials, DEEPSEEK_HARNESS_CREDENTIAL).is_some();
+    let credential_exists = yaml_mapping_value(&credentials, "refs")
+        .and_then(serde_norway::Value::as_mapping)
+        .is_some_and(|refs| yaml_mapping_value(refs, DEEPSEEK_HARNESS_CREDENTIAL).is_some())
+        || yaml_mapping_value(&credentials, DEEPSEEK_HARNESS_CREDENTIAL).is_some();
     Ok(provider_exists || default_selected || credential_exists)
 }

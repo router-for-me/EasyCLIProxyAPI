@@ -6160,6 +6160,87 @@ textarea:focus-visible {
   min-height: 0;
 }
 
+.deepseek-harness-launch-options {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--theme-e3ded5);
+  border-radius: 10px;
+  background: var(--theme-faf8f4);
+}
+
+.deepseek-harness-launch-field {
+  grid-template-rows: auto auto;
+  gap: 6px;
+}
+
+.deepseek-harness-launch-field > span {
+  font-size: var(--font-size-label);
+}
+
+.deepseek-harness-launch-field select.config-dialog-text-input {
+  cursor: pointer;
+}
+
+.deepseek-harness-launch-field textarea.config-dialog-text-input {
+  height: 72px;
+  min-height: 72px;
+  padding-block: 9px;
+  resize: vertical;
+  line-height: var(--line-height-relaxed);
+}
+
+.deepseek-harness-launch-mode-description {
+  margin: -4px 0 0;
+  color: var(--theme-777067);
+  font-size: var(--font-size-label);
+  font-weight: 500;
+  line-height: var(--line-height-relaxed);
+}
+
+.deepseek-harness-launch-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(132px, 0.42fr);
+  gap: 10px;
+}
+
+.deepseek-harness-launch-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--theme-5f5a53);
+  cursor: pointer;
+}
+
+.deepseek-harness-launch-checkbox > input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--theme-8069ad);
+}
+
+.deepseek-harness-launch-checkbox > span {
+  display: grid;
+  gap: 2px;
+}
+
+.deepseek-harness-launch-checkbox strong {
+  color: var(--theme-2d2a26);
+  font-size: var(--font-size-label);
+}
+
+.deepseek-harness-launch-checkbox small {
+  color: var(--theme-777067);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-relaxed);
+}
+
+@media (max-width: 680px) {
+  .deepseek-harness-launch-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .agent-launch-directory-picker {
   display: flex;
   width: 100%;
@@ -12945,7 +13026,6 @@ body.table-col-resizing * {
   gap: 10px;
 }
 
-/* 聚焦指导切换按钮 */
 .simple-mode-guide-toggle {
   display: inline-flex;
   align-items: center;

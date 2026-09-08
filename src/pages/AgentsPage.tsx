@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
+  Square,
   Trash2,
   Terminal,
   Wrench,
@@ -57,6 +58,13 @@ import {
   rememberAgentLaunchDirectory,
   type AgentLaunchDirectoryHistory,
 } from '../services/agentLaunchDirectoryHistory';
+import {
+  buildDeepSeekHarnessLaunchOptions,
+  DEFAULT_DEEPSEEK_HARNESS_LAUNCH_DRAFT,
+  type DeepSeekHarnessLaunchDraft,
+  type DeepSeekHarnessLaunchMode,
+  type DeepSeekHarnessLaunchOptions,
+} from '../services/deepSeekHarnessLaunch';
 import type { ModelOption } from '../services/modelService';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
@@ -109,6 +117,12 @@ type AgentLaunchTarget = {
   id: 'app' | 'cli';
   label: string;
   detail: string;
+};
+
+type DeepSeekHarnessProcessStatus = {
+  running: boolean;
+  pid: number | null;
+  mode: string | null;
 };
 
 type AgentConfigActionResult = {
@@ -658,7 +672,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [loading, setLoading] = useState(true);
   const [modelLoading, setModelLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<
-    'apply' | 'close-config' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | null
+    'apply' | 'close-config' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | null
   >(null);
   const busy = busyAction !== null;
   const [detectionError, setDetectionError] = useState('');
@@ -676,6 +690,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [launchDirectory, setLaunchDirectory] = useState('');
   const [launchDirectoryTarget, setLaunchDirectoryTarget] = useState<AgentLaunchTarget | null>(null);
   const [launchDirectoryError, setLaunchDirectoryError] = useState('');
+  const [deepSeekHarnessLaunchDraft, setDeepSeekHarnessLaunchDraft] = useState<DeepSeekHarnessLaunchDraft>(
+    () => ({ ...DEFAULT_DEEPSEEK_HARNESS_LAUNCH_DRAFT }),
+  );
+  const [deepSeekHarnessProcessStatus, setDeepSeekHarnessProcessStatus] = useState<DeepSeekHarnessProcessStatus>({
+    running: false,
+    pid: null,
+    mode: null,
+  });
   const [launchDirectoryHistory, setLaunchDirectoryHistory] = useState(
     readAgentLaunchDirectoryHistory,
   );
@@ -723,6 +745,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       : 'get_agent_config_statuses';
     const nextStatuses = await invoke<AgentConfigStatus[]>(command);
     setStatuses(nextStatuses);
+  }, []);
+
+  const loadDeepSeekHarnessProcessStatus = useCallback(async () => {
+    const status = await invoke<DeepSeekHarnessProcessStatus>('get_deepseek_harness_process_status');
+    setDeepSeekHarnessProcessStatus(status);
   }, []);
 
   const loadModels = useCallback(async (client: AgentClientId, preferredModel = '') => {
@@ -798,6 +825,22 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   }, [loadModels, loadStatuses, selected]);
 
   useEffect(() => {
+    if (selected !== 'deepseek-harness') return undefined;
+    let disposed = false;
+    const refreshProcessStatus = () => {
+      void loadDeepSeekHarnessProcessStatus().catch((requestError) => {
+        if (!disposed) setLaunchError(String(requestError));
+      });
+    };
+    refreshProcessStatus();
+    const timer = window.setInterval(refreshProcessStatus, 2000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [loadDeepSeekHarnessProcessStatus, selected]);
+
+  useEffect(() => {
     writeSelectedAgentClient(selected);
   }, [selected]);
 
@@ -829,6 +872,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const selectedModelOption = findAgentModel(models, savedSelectedModel);
   const selectedModel = selectedModelOption?.name ?? '';
   const isPiClient = selected === 'pi';
+  const isDeepSeekHarnessClient = selected === 'deepseek-harness';
   const hasIndependentCliAndApp = selected === 'codex' || selected === 'opencode';
   const isClaudeModelMappingClient = selected === 'claude-code' || selected === 'claude-desktop';
   const claudeModelMappingsDraft = isClaudeModelMappingClient
@@ -980,6 +1024,22 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   );
   const canLaunchTarget = (target: AgentLaunchTarget | null) => launchEnabled && Boolean(target);
   const activeLaunchDirectoryHistory = launchDirectoryHistory[selected] ?? [];
+  const deepSeekHarnessLaunchModeLabel = {
+    web: t('agents.deepseekLaunch.mode.web'),
+    headless: t('agents.deepseekLaunch.mode.headless'),
+    acp: t('agents.deepseekLaunch.mode.acp'),
+    sdk: t('agents.deepseekLaunch.mode.sdk'),
+    'sdk-minimal': t('agents.deepseekLaunch.mode.sdkMinimal'),
+    custom: t('agents.deepseekLaunch.mode.custom'),
+  }[deepSeekHarnessLaunchDraft.mode];
+  const deepSeekHarnessLaunchModeDescription = {
+    web: t('agents.deepseekLaunch.mode.webDescription'),
+    headless: t('agents.deepseekLaunch.mode.headlessDescription'),
+    acp: t('agents.deepseekLaunch.mode.acpDescription'),
+    sdk: t('agents.deepseekLaunch.mode.sdkDescription'),
+    'sdk-minimal': t('agents.deepseekLaunch.mode.sdkMinimalDescription'),
+    custom: t('agents.deepseekLaunch.mode.customDescription'),
+  }[deepSeekHarnessLaunchDraft.mode];
   const modelHint = modelSelectionError
     || modelError
     || (modelLoading
@@ -1365,6 +1425,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setLaunchDirectoryDialogOpen(true);
   };
 
+  const updateDeepSeekHarnessLaunchDraft = (update: Partial<DeepSeekHarnessLaunchDraft>) => {
+    setDeepSeekHarnessLaunchDraft((current) => ({ ...current, ...update }));
+    setLaunchDirectoryError('');
+  };
+
   const chooseLaunchDirectory = async () => {
     setBusyAction('directory');
     setLaunchDirectoryError('');
@@ -1394,6 +1459,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const invokeAgentLaunch = async (
     target: AgentLaunchTarget,
     workingDirectory: string | null = null,
+    deepSeekHarnessOptions: DeepSeekHarnessLaunchOptions | null = null,
   ) => {
     const action = hasIndependentCliAndApp
       ? target.id === 'cli' ? 'launch-cli' : 'launch-app'
@@ -1405,7 +1471,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         client: selected,
         target: target.id,
         workingDirectory,
+        deepseekHarnessOptions: deepSeekHarnessOptions,
       });
+      if (selected === 'deepseek-harness') {
+        await loadDeepSeekHarnessProcessStatus();
+      }
       if (workingDirectory) {
         rememberLaunchDirectory(selected, workingDirectory);
         setLaunchDirectoryDialogOpen(false);
@@ -1431,6 +1501,19 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     await invokeAgentLaunch(target);
   };
 
+  const stopDeepSeekHarness = async () => {
+    setBusyAction('stop-deepseek');
+    setLaunchError('');
+    try {
+      const status = await invoke<DeepSeekHarnessProcessStatus>('stop_deepseek_harness_process');
+      setDeepSeekHarnessProcessStatus(status);
+    } catch (requestError) {
+      setLaunchError(String(requestError));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const restartDesktopApp = async () => {
     if (!hasIndependentCliAndApp) return;
     setBusyAction('restart-app');
@@ -1453,8 +1536,23 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       setLaunchDirectoryError(t('agents.launchDirectory.directoryRequired'));
       return;
     }
+    let deepSeekHarnessOptions: DeepSeekHarnessLaunchOptions | null = null;
+    if (isDeepSeekHarnessClient) {
+      const result = buildDeepSeekHarnessLaunchOptions(deepSeekHarnessLaunchDraft);
+      if (result.error) {
+        const errorKeys = {
+          invalidPort: 'agents.deepseekLaunch.error.invalidPort',
+          taskRequired: 'agents.deepseekLaunch.error.taskRequired',
+          profileRequired: 'agents.deepseekLaunch.error.profileRequired',
+          invalidProfile: 'agents.deepseekLaunch.error.invalidProfile',
+        } as const;
+        setLaunchDirectoryError(t(errorKeys[result.error]));
+        return;
+      }
+      deepSeekHarnessOptions = result.options;
+    }
     setLaunchDirectoryError('');
-    await invokeAgentLaunch(launchDirectoryTarget, workingDirectory);
+    await invokeAgentLaunch(launchDirectoryTarget, workingDirectory, deepSeekHarnessOptions);
   };
 
   const openDefaultConfirmation = () => {
@@ -1605,17 +1703,34 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </button>
                 <button
                   type="button"
-                  className="secondary-button"
-                  onClick={() => void launchAgent(defaultLaunchTarget)}
-                  disabled={busy || !canLaunchTarget(defaultLaunchTarget)}
-                  title={defaultLaunchTarget?.detail ?? t('agents.launch.unavailable')}
+                  className={isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                    ? 'danger-button'
+                    : 'secondary-button'}
+                  onClick={() => void (isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                    ? stopDeepSeekHarness()
+                    : launchAgent(defaultLaunchTarget))}
+                  disabled={busy || (isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                    ? false
+                    : !canLaunchTarget(defaultLaunchTarget))}
+                  title={isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                    ? t('agents.deepseekLaunch.runningDetail', {
+                      pid: deepSeekHarnessProcessStatus.pid ?? '—',
+                      mode: deepSeekHarnessProcessStatus.mode ?? '—',
+                    })
+                    : defaultLaunchTarget?.detail ?? t('agents.launch.unavailable')}
                 >
-                  {busyAction === 'launch' || busyAction === 'launch-cli'
+                  {busyAction === 'launch' || busyAction === 'launch-cli' || busyAction === 'stop-deepseek'
                     ? <LoaderCircle size={16} className="spin" />
-                    : <Play size={16} />}
-                  {busyAction === 'launch' || busyAction === 'launch-cli'
-                    ? t('agents.launch.starting')
-                    : t('agents.launch.start', { target: defaultLaunchTarget?.label ?? activeDefinition.name })}
+                    : isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                      ? <Square size={16} />
+                      : <Play size={16} />}
+                  {busyAction === 'stop-deepseek'
+                    ? t('agents.deepseekLaunch.stopping')
+                    : busyAction === 'launch' || busyAction === 'launch-cli'
+                      ? t('agents.launch.starting')
+                      : isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                        ? t('agents.deepseekLaunch.stop')
+                        : t('agents.launch.start', { target: defaultLaunchTarget?.label ?? activeDefinition.name })}
                 </button>
               </div>
 
@@ -2066,21 +2181,38 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     ) : (
                       <button
                         type="button"
-                        className="primary-button agent-launch-button"
-                        onClick={() => void launchAgent(defaultLaunchTarget)}
-                        disabled={busy || !canLaunchTarget(defaultLaunchTarget)}
-                        title={defaultLaunchTarget?.detail ?? t('agents.launch.unavailable')}
+                        className={`${isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                          ? 'danger-button'
+                          : 'primary-button'} agent-launch-button`}
+                        onClick={() => void (isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                          ? stopDeepSeekHarness()
+                          : launchAgent(defaultLaunchTarget))}
+                        disabled={busy || (isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                          ? false
+                          : !canLaunchTarget(defaultLaunchTarget))}
+                        title={isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                          ? t('agents.deepseekLaunch.runningDetail', {
+                            pid: deepSeekHarnessProcessStatus.pid ?? '—',
+                            mode: deepSeekHarnessProcessStatus.mode ?? '—',
+                          })
+                          : defaultLaunchTarget?.detail ?? t('agents.launch.unavailable')}
                       >
-                        {busyAction === 'launch'
+                        {busyAction === 'launch' || busyAction === 'stop-deepseek'
                           ? <LoaderCircle size={16} className="spin" />
+                          : isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                            ? <Square size={16} />
                           : defaultLaunchTarget?.id === 'cli'
                             ? <Terminal size={16} />
                             : <Play size={16} />}
-                        {busyAction === 'launch'
-                          ? t('agents.launch.starting')
-                          : defaultLaunchTarget
-                            ? t('agents.launch.start', { target: defaultLaunchTarget.label })
-                            : t('agents.launch.unavailable')}
+                        {busyAction === 'stop-deepseek'
+                          ? t('agents.deepseekLaunch.stopping')
+                          : busyAction === 'launch'
+                            ? t('agents.launch.starting')
+                            : isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
+                              ? t('agents.deepseekLaunch.stop')
+                              : defaultLaunchTarget
+                                ? t('agents.launch.start', { target: defaultLaunchTarget.label })
+                                : t('agents.launch.unavailable')}
                       </button>
                     )}
                   </div>
@@ -2133,11 +2265,131 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             <div className="config-dialog-heading">
               <div>
                 <h2 id="agent-launch-directory-title">
-                  {t('agents.launchDirectory.dialogTitle', { client: activeDefinition.name })}
+                  {isDeepSeekHarnessClient
+                    ? t('agents.deepseekLaunch.dialogTitle')
+                    : t('agents.launchDirectory.dialogTitle', { client: activeDefinition.name })}
                 </h2>
               </div>
             </div>
-            <p>{t('agents.launchDirectory.dialogDescription', { client: activeDefinition.name })}</p>
+            <p>{isDeepSeekHarnessClient
+              ? t('agents.deepseekLaunch.dialogDescription')
+              : t('agents.launchDirectory.dialogDescription', { client: activeDefinition.name })}</p>
+            {isDeepSeekHarnessClient ? (
+              <div className="deepseek-harness-launch-options">
+                <label className="config-dialog-field deepseek-harness-launch-field">
+                  <span>{t('agents.deepseekLaunch.mode.label')}</span>
+                  <select
+                    className="config-dialog-text-input"
+                    value={deepSeekHarnessLaunchDraft.mode}
+                    onChange={(event) => updateDeepSeekHarnessLaunchDraft({
+                      mode: event.currentTarget.value as DeepSeekHarnessLaunchMode,
+                    })}
+                    disabled={busy}
+                  >
+                    <option value="web">{t('agents.deepseekLaunch.mode.web')}</option>
+                    <option value="headless">{t('agents.deepseekLaunch.mode.headless')}</option>
+                    <option value="acp">{t('agents.deepseekLaunch.mode.acp')}</option>
+                    <option value="sdk">{t('agents.deepseekLaunch.mode.sdk')}</option>
+                    <option value="sdk-minimal">{t('agents.deepseekLaunch.mode.sdkMinimal')}</option>
+                    <option value="custom">{t('agents.deepseekLaunch.mode.custom')}</option>
+                  </select>
+                </label>
+                <p className="deepseek-harness-launch-mode-description">
+                  {deepSeekHarnessLaunchModeDescription}
+                </p>
+
+                {deepSeekHarnessLaunchDraft.mode === 'web' ? (
+                  <>
+                    <div className="deepseek-harness-launch-grid">
+                      <label className="config-dialog-field deepseek-harness-launch-field">
+                        <span>{t('agents.deepseekLaunch.web.host')}</span>
+                        <input
+                          className="config-dialog-text-input"
+                          type="text"
+                          value={deepSeekHarnessLaunchDraft.webHost}
+                          onChange={(event) => updateDeepSeekHarnessLaunchDraft({ webHost: event.currentTarget.value })}
+                          placeholder={t('agents.deepseekLaunch.web.hostPlaceholder')}
+                          disabled={busy}
+                        />
+                      </label>
+                      <label className="config-dialog-field deepseek-harness-launch-field">
+                        <span>{t('agents.deepseekLaunch.web.port')}</span>
+                        <input
+                          className="config-dialog-text-input"
+                          type="text"
+                          inputMode="numeric"
+                          value={deepSeekHarnessLaunchDraft.webPort}
+                          onChange={(event) => updateDeepSeekHarnessLaunchDraft({ webPort: event.currentTarget.value })}
+                          placeholder={t('agents.deepseekLaunch.web.portPlaceholder')}
+                          disabled={busy}
+                        />
+                      </label>
+                    </div>
+                    <label className="deepseek-harness-launch-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={deepSeekHarnessLaunchDraft.openBrowser}
+                        onChange={(event) => updateDeepSeekHarnessLaunchDraft({ openBrowser: event.currentTarget.checked })}
+                        disabled={busy}
+                      />
+                      <span>
+                        <strong>{t('agents.deepseekLaunch.web.openBrowser')}</strong>
+                        <small>{t('agents.deepseekLaunch.web.openBrowserDescription')}</small>
+                      </span>
+                    </label>
+                    <label className="config-dialog-field deepseek-harness-launch-field multiline">
+                      <span>{t('agents.deepseekLaunch.web.trustedHosts')}</span>
+                      <textarea
+                        className="config-dialog-text-input"
+                        value={deepSeekHarnessLaunchDraft.trustedHosts}
+                        onChange={(event) => updateDeepSeekHarnessLaunchDraft({ trustedHosts: event.currentTarget.value })}
+                        placeholder={t('agents.deepseekLaunch.web.trustedHostsPlaceholder')}
+                        disabled={busy}
+                      />
+                    </label>
+                  </>
+                ) : null}
+
+                {deepSeekHarnessLaunchDraft.mode === 'headless' ? (
+                  <label className="config-dialog-field deepseek-harness-launch-field">
+                    <span>{t('agents.deepseekLaunch.headless.task')}</span>
+                    <input
+                      className="config-dialog-text-input"
+                      type="text"
+                      value={deepSeekHarnessLaunchDraft.task}
+                      onChange={(event) => updateDeepSeekHarnessLaunchDraft({ task: event.currentTarget.value })}
+                      placeholder={t('agents.deepseekLaunch.headless.taskPlaceholder')}
+                      disabled={busy}
+                    />
+                  </label>
+                ) : null}
+
+                {deepSeekHarnessLaunchDraft.mode === 'custom' ? (
+                  <label className="config-dialog-field deepseek-harness-launch-field">
+                    <span>{t('agents.deepseekLaunch.custom.profile')}</span>
+                    <input
+                      className="config-dialog-text-input"
+                      type="text"
+                      value={deepSeekHarnessLaunchDraft.profile}
+                      onChange={(event) => updateDeepSeekHarnessLaunchDraft({ profile: event.currentTarget.value })}
+                      placeholder={t('agents.deepseekLaunch.custom.profilePlaceholder')}
+                      disabled={busy}
+                    />
+                  </label>
+                ) : null}
+
+                <label className="config-dialog-field deepseek-harness-launch-field multiline">
+                  <span>{t('agents.deepseekLaunch.patches')}</span>
+                  <textarea
+                    className="config-dialog-text-input"
+                    value={deepSeekHarnessLaunchDraft.patches}
+                    onChange={(event) => updateDeepSeekHarnessLaunchDraft({ patches: event.currentTarget.value })}
+                    placeholder={t('agents.deepseekLaunch.patchesPlaceholder')}
+                    disabled={busy}
+                  />
+                </label>
+              </div>
+            ) : null}
             <div className="config-dialog-field">
               <span>{t('agents.launchDirectory.workingDirectory')}</span>
               <button
@@ -2222,7 +2474,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 {busyAction === 'launch' || busyAction === 'launch-cli'
                   ? <LoaderCircle size={16} className="spin" />
                   : null}
-                {t('agents.launchDirectory.launch', { client: activeDefinition.name })}
+                {isDeepSeekHarnessClient
+                  ? t('agents.deepseekLaunch.launch', { mode: deepSeekHarnessLaunchModeLabel })
+                  : t('agents.launchDirectory.launch', { client: activeDefinition.name })}
               </button>
             </div>
           </section>
