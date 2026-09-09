@@ -100,6 +100,16 @@ const appliedConfiguration = (
 });
 
 describe('agent configuration update action', () => {
+  test('仅修改 Codex 全局审批模型也走现有更新入口，其他客户端不受影响', () => {
+    for (const client of ['codex', 'opencode'] as const) {
+      expect(resolveAgentConfigurationAction({
+        client, modificationState: 'applied', selectedModel: 'main-a', appliedModel: 'main-a',
+        oauthConfiguration: false, appliedOauthConfiguration: false, codexReviewModelChanged: true,
+        modelMappings: { opus: 'main-a', sonnet: 'main-a', haiku: 'main-a' },
+        appliedModelMappings: { opus: 'main-a', sonnet: 'main-a', haiku: 'main-a' },
+      })).toBe(client === 'codex' ? 'update' : 'close');
+    }
+  });
   test('Claude mapping clients keep their own unsaved draft after switching away and back', () => {
     const codeDraft = { opus: 'code-opus', sonnet: 'code-sonnet', haiku: 'code-haiku' };
     const desktopDraft = {

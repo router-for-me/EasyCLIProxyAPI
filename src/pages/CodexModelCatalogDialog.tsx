@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, LoaderCircle, RefreshCw, RotateCcw, Search, X } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { AgentModelPicker } from '../components/AgentModelPicker';
 import {
   cloneCodexModelConfiguration,
+  reviewModelPickerModels,
   codexContextSourceHint,
   codexReasoningEfforts,
   sameCodexModelConfiguration,
@@ -33,7 +35,6 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
   const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<CodexCatalogEditorSnapshot | null>(null);
   const [models, setModels] = useState<CodexCatalogEditorModel[]>([]);
-  const [defaultAutoReviewModel, setDefaultAutoReviewModel] = useState<string | null>(null);
   const [selectedSlug, setSelectedSlug] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -50,7 +51,6 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
     try {
       const next = await invoke<CodexCatalogEditorSnapshot>('get_codex_model_catalog_editor');
       setSnapshot(next);
-      setDefaultAutoReviewModel(restoreDefaults ? null : next.defaultAutoReviewModel);
       setModels(cloneModels(next).map((model) => restoreDefaults
         ? { ...model, configuration: cloneCodexModelConfiguration(model.defaults) }
         : model));
@@ -74,12 +74,11 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
   const dirty = useMemo(() => {
     if (defaultsRestored) return true;
     if (!snapshot || snapshot.models.length !== models.length) return false;
-    if (defaultAutoReviewModel !== snapshot.defaultAutoReviewModel) return true;
     return models.some((model) => {
       const saved = snapshot.models.find((candidate) => candidate.slug === model.slug);
       return !saved || !sameCodexModelConfiguration(model.configuration, saved.configuration);
     });
-  }, [defaultsRestored, defaultAutoReviewModel, models, snapshot]);
+  }, [defaultsRestored, models, snapshot]);
 
   const filteredModels = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -89,12 +88,8 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
   }, [models, search]);
 
   const activeModel = models.find((model) => model.slug === selectedSlug) ?? null;
-  const reviewModelMissing = (slug: string | null) => slug !== null && !models.some((model) => model.slug === slug);
-  // 审批模型选项包含隐藏模型；已保存的失效 ID 仍展示，避免下拉框静默切换路由。
-  const reviewModelOptions = (selected: string | null) => <>
-    {reviewModelMissing(selected) ? <option value={selected!}>{selected}</option> : null}
-    {models.map((model) => <option key={model.slug} value={model.slug}>{model.slug}</option>)}
-  </>;
+  const reviewSelection = activeModel?.configuration.auto_review_model_override ?? null;
+  const reviewModelMissing = typeof reviewSelection === 'string' && !models.some((model) => model.slug === reviewSelection);
   const activeCustomized = activeModel
     ? !sameCodexModelConfiguration(activeModel.configuration, activeModel.defaults)
     : false;
@@ -170,7 +165,6 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
       const result = await invoke<CodexCatalogEditorSaveResult>('save_codex_model_catalog_editor', {
         request: {
           revision: snapshot.revision,
-          default_auto_review_model: defaultAutoReviewModel,
           models: models.map((model) => ({
             slug: model.slug,
             configuration: model.configuration,
@@ -178,7 +172,6 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
         },
       });
       setSnapshot(result.snapshot);
-      setDefaultAutoReviewModel(result.snapshot.defaultAutoReviewModel);
       setModels(cloneModels(result.snapshot));
       setDefaultsRestored(false);
       setNotice(result.synchronizationError
@@ -247,22 +240,6 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
           </aside>
 
           <main className="codex-catalog-editor">
-            {!loading && snapshot ? <section className="codex-catalog-review-default" aria-label={t('agents.catalog.defaultReviewModel')}>
-              <div className="codex-catalog-form">
-                <label className="wide"><span>{t('agents.catalog.defaultReviewModel')}</span>
-                  <select value={defaultAutoReviewModel ?? ''} disabled={saving} onChange={(event) => {
-                    setDefaultAutoReviewModel(event.currentTarget.value || null);
-                    setError('');
-                    setNotice('');
-                  }}>
-                    <option value="">{t('agents.catalog.reviewTemplateDefault')}</option>
-                    {reviewModelOptions(defaultAutoReviewModel)}
-                  </select>
-                </label>
-              </div>
-              <p className="codex-catalog-hint">{t('agents.catalog.defaultReviewHint')}</p>
-              {reviewModelMissing(defaultAutoReviewModel) ? <p className="agent-inline-message error" role="status">{t('agents.catalog.reviewModelMissing', { model: defaultAutoReviewModel! })}</p> : null}
-            </section> : null}
             {activeModel && !loading ? (
               <>
                 <div className="codex-catalog-model-heading">
@@ -279,14 +256,25 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
                 </div>
 
                 <div className="codex-catalog-form">
-                  <label className="wide"><span>{t('agents.catalog.reviewModelOverride')}</span>
-                    <select value={activeModel.configuration.auto_review_model_override ?? ''} disabled={saving} onChange={(event) => updateField('auto_review_model_override', event.currentTarget.value || null)}>
-                      <option value="">{t('agents.catalog.reviewInherit')}</option>
-                      {reviewModelOptions(activeModel.configuration.auto_review_model_override)}
-                    </select>
-                    {reviewModelMissing(activeModel.configuration.auto_review_model_override) ? <span className="agent-inline-message error" role="status">{t('agents.catalog.reviewModelMissing', { model: activeModel.configuration.auto_review_model_override! })}</span> : null}
-                  </label>
                   <label><span>{t('agents.catalog.displayName')}</span><input value={activeModel.configuration.display_name} onChange={(event) => updateField('display_name', event.currentTarget.value)} /></label>
+                  <div className="codex-catalog-review-field">
+                    <span>{t('agents.catalog.reviewModelOverride')}</span>
+                    <AgentModelPicker
+                      models={reviewModelPickerModels(models, reviewSelection)}
+                      value={typeof reviewSelection === 'string' ? reviewSelection : ''}
+                      specialValue={reviewSelection === null ? 'inherit' : typeof reviewSelection === 'object' ? 'codex_default' : undefined}
+                      specialOptions={[
+                        { value: 'inherit', label: t('agents.catalog.reviewInherit') },
+                        { value: 'codex_default', label: t('agents.catalog.reviewTemplateDefault') },
+                      ]}
+                      onSpecialChange={(mode) => updateField('auto_review_model_override', mode === 'inherit' ? null : { mode: 'codex_default' })}
+                      onChange={(model) => updateField('auto_review_model_override', model)}
+                      onRefresh={() => { if (!dirty) void load(); }}
+                      loading={loading} error="" disabled={saving} exactModelIds
+                      ariaLabel={t('agents.catalog.reviewModelOverride')}
+                    />
+                    {reviewModelMissing ? <span className="agent-inline-message error" role="status">{t('agents.catalog.reviewModelMissing', { model: reviewSelection as string })}</span> : null}
+                  </div>
                   <label className="wide"><span>{t('agents.catalog.description')}</span><textarea value={activeModel.configuration.description ?? ''} onChange={(event) => updateField('description', event.currentTarget.value || null)} /></label>
                   <label><span>{t('agents.catalog.context')}</span><input type="number" min="1" value={Number.isFinite(activeModel.configuration.context_window) ? activeModel.configuration.context_window : ''} onChange={(event) => updateField('context_window', event.currentTarget.value ? Number(event.currentTarget.value) : Number.NaN)} /></label>
                   <label><span>{t('agents.catalog.maximum')}</span><input type="number" min="1" value={Number.isFinite(activeModel.configuration.max_context_window) ? activeModel.configuration.max_context_window : ''} onChange={(event) => updateField('max_context_window', event.currentTarget.value ? Number(event.currentTarget.value) : Number.NaN)} /></label>

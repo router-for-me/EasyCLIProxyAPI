@@ -1,4 +1,17 @@
 import type { MessageKey } from '../i18n/resources';
+import type { ModelOption } from './modelService';
+
+// null 继承全局；对象明确使用 Codex 默认；字符串保留原样作为模型 ID。
+export type CodexReviewModelSelection = string | null | { mode: 'codex_default' };
+
+export function reviewModelPickerModels(models: CodexCatalogEditorModel[], selected: CodexReviewModelSelection): ModelOption[] {
+  const options = models.map((model) => ({ name: model.slug }));
+  // 隐藏模型也可选；失效 ID 保留显示，避免静默改写选择。
+  if (typeof selected === 'string' && !options.some((model) => model.name === selected)) {
+    options.unshift({ name: selected });
+  }
+  return options;
+}
 
 export const codexReasoningEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
 export type CodexReasoningEffort = typeof codexReasoningEfforts[number];
@@ -20,8 +33,7 @@ export type CodexModelConfiguration = {
   input_modalities: Array<'text' | 'image'>;
   visibility: 'list' | 'hide' | 'none';
   supports_parallel_tool_calls: boolean;
-  // null 表示继承统一默认值；实际模型 ID 由后端生成目录时解析。
-  auto_review_model_override: string | null;
+  auto_review_model_override: CodexReviewModelSelection;
 };
 
 export type CodexCatalogEditorModel = {
@@ -70,7 +82,7 @@ export function sameCodexModelConfiguration(left: CodexModelConfiguration, right
     && left.default_reasoning_level === right.default_reasoning_level
     && left.visibility === right.visibility
     && left.supports_parallel_tool_calls === right.supports_parallel_tool_calls
-    && left.auto_review_model_override === right.auto_review_model_override
+    && JSON.stringify(left.auto_review_model_override) === JSON.stringify(right.auto_review_model_override)
     && left.input_modalities.join(',') === right.input_modalities.join(',')
     && left.supported_reasoning_levels.length === right.supported_reasoning_levels.length
     && left.supported_reasoning_levels.every((level, index) => level.effort === right.supported_reasoning_levels[index].effort

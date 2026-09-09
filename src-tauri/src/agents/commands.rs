@@ -1057,8 +1057,14 @@ pub(crate) async fn apply_agent_config(
     oauth_configuration: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    codex_review_model: Option<codex_catalog::DefaultReviewModelRequest>,
 ) -> Result<AgentConfigActionResult, String> {
     let client = AgentClient::parse(&client)?;
+    let _sync_guard = if client == AgentClient::Codex {
+        Some(CODEX_CATALOG_SYNC_LOCK.lock().await)
+    } else {
+        None
+    };
     let home = app
         .path()
         .home_dir()
@@ -1069,7 +1075,17 @@ pub(crate) async fn apply_agent_config(
         validate_codex_oauth_login(&home)?;
     }
     validate_agent_can_enable(client, &home, config.port, api_key)?;
-    let prepared = fetch_prepared_agent_models(client, &config).await?;
+    // 全局审批设置与主模型共用应用入口，生成时保留最新的单模型覆盖。
+    let runtime_models = if client == AgentClient::Codex && codex_review_model.is_some() {
+        Some(fetch_codex_catalog_runtime_models(&config).await?)
+    } else {
+        None
+    };
+    let prepared = if let Some(runtime_models) = &runtime_models {
+        prepare_codex_agent_models(runtime_models)?
+    } else {
+        fetch_prepared_agent_models(client, &config).await?
+    };
     let model = resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
     let claude_code_model_mappings = resolve_claude_code_model_mappings(
         client,
@@ -1089,7 +1105,7 @@ pub(crate) async fn apply_agent_config(
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    apply_agent_configuration_with_oauth(
+    let apply = |catalog: Option<&str>| apply_agent_configuration_with_oauth(
         client,
         &home,
         config.port,
@@ -1097,12 +1113,22 @@ pub(crate) async fn apply_agent_config(
         &model,
         AgentConfigurationOptions {
             models: &prepared.models,
-            codex_catalog: prepared.codex_catalog.as_deref(),
+            codex_catalog: catalog,
             oauth_configuration,
             claude_code_model_mappings: claude_code_model_mappings.as_ref(),
             claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
         },
-    )
+    );
+    if let (Some(request), Some(runtime_models)) = (codex_review_model, runtime_models) {
+        codex_catalog::apply_default_review_model(
+            &codex_model_customizations_path(&app)?,
+            &runtime_models,
+            request,
+            |catalog| apply(Some(catalog)),
+        )
+    } else {
+        apply(prepared.codex_catalog.as_deref())
+    }
 }
 
 #[tauri::command]

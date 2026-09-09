@@ -6,8 +6,8 @@ use std::sync::{OnceLock, RwLock};
 mod customizations;
 mod runtime_context;
 pub(crate) use customizations::{
-    editor_snapshot, load_customizations, save_customizations, CatalogEditorRequest,
-    CatalogEditorSnapshot,
+    apply_default_review_model, editor_snapshot, load_customizations, save_customizations,
+    CatalogEditorRequest, CatalogEditorSnapshot, DefaultReviewModelRequest,
 };
 pub(crate) use runtime_context::{apply_configured_context_limits, merge_context_definitions};
 
@@ -1371,7 +1371,6 @@ mod tests {
             "guardian": null,
             "node_repl_auto_review_required": false,
             "node_repl_disabled": false,
-            "auto_review_model_override": null,
             "model_specialty": null,
             "tool_mode": null,
             "multi_agent_version": null,
@@ -1392,6 +1391,8 @@ mod tests {
         for (field, value) in expected.as_object().unwrap() {
             assert_eq!(model.get(field), Some(value), "field: {field}");
         }
+        // 默认审批行为要求省略覆盖字段，而不是从模板保留 null。
+        assert!(!model.contains_key("auto_review_model_override"));
         assert_eq!(
             model["model_messages"]["instructions_template"],
             sources.fallback["base_instructions"]
