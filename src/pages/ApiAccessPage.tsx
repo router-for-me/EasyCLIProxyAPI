@@ -50,7 +50,6 @@ import {
   readBoolean,
   readNumber,
   readString,
-  responseList,
 } from '../services/managementApi';
 import {
   fetchModels,
@@ -71,6 +70,15 @@ import { modelMatchesRule } from '../services/oauthModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import { InlineNotice, useAppNotice } from '../appNotice';
+import {
+  apiAccessRecordIdentityFromRecord,
+  apiAccessRecordIdentityFor,
+  apiAccessRecordIdentityKey,
+  loadApiAccessRecords,
+  resolveApiAccessBalanceUrls,
+  saveApiAccessBalanceEndpoint,
+  validateBalanceUrl,
+} from '../services/apiQuota';
 
 export type ProviderSection =
   | 'gemini-api-key'
@@ -101,6 +109,7 @@ type ProviderRow = {
   apiKey: string;
   apiKeys: string[];
   baseUrl: string;
+  balanceUrl: string;
   models: ModelOption[];
   disabled: boolean;
   priority: number | null;
@@ -196,6 +205,7 @@ export type ProviderDraft = {
   apiKey: string;
   remark: string;
   baseUrl: string;
+  balanceUrl?: string;
   priority: string;
   models: ModelOption[];
   prefix?: string;
@@ -236,11 +246,6 @@ const providerDefinitions: ProviderDefinition[] = [
 
 export const providerSectionOrder = providerDefinitions.map((definition) => definition.id);
 
-const providerLoadDefinitions = providerDefinitions.filter(
-  (definition, index, definitions) =>
-    definitions.findIndex((item) => item.section === definition.section) === index,
-);
-
 const emptyRecords = (): Record<ProviderSection, Record<string, unknown>[]> => ({
   'gemini-api-key': [],
   'codex-api-key': [],
@@ -271,6 +276,21 @@ export const sectionRecordsFromConfig = (payload: unknown, section: ProviderSect
     ? payload[section].filter(isRecord)
     : [];
 
+export const providerRecordsFromConfig = (
+  payload: unknown,
+): Record<ProviderSection, Record<string, unknown>[]> => ({
+  'gemini-api-key': sectionRecordsFromConfig(payload, 'gemini-api-key'),
+  'codex-api-key': sectionRecordsFromConfig(payload, 'codex-api-key'),
+  'claude-api-key': sectionRecordsFromConfig(payload, 'claude-api-key'),
+  'openai-compatibility': sectionRecordsFromConfig(payload, 'openai-compatibility'),
+});
+
+export const loadProviderRecords = async (
+  getConfig: (path: string) => Promise<unknown> = managementApi.get,
+): Promise<Record<ProviderSection, Record<string, unknown>[]>> => (
+  await loadApiAccessRecords(getConfig)
+);
+
 const rowFromRecord = (
   section: ProviderSection,
   record: Record<string, unknown>,
@@ -297,6 +317,7 @@ const rowFromRecord = (
     apiKey: entry ? readString(entry, 'api-key', 'apiKey') : singleApiKey,
     apiKeys: entry ? apiKeys : singleApiKey ? [singleApiKey] : [],
     baseUrl: readString(record, 'base-url', 'baseUrl'),
+    balanceUrl: '',
     models: modelsFromRecord(record.models),
     disabled: definitionFor(section).openAi
       ? readBoolean(record, 'disabled')
@@ -337,6 +358,8 @@ const providerHeadersFromRecord = (record: Record<string, unknown>) =>
 
 export const stripResponseFields = (record: Record<string, unknown>) => {
   const next = { ...record };
+  delete next['balance-url'];
+  delete next.balanceUrl;
   delete next['auth-index'];
   delete next.authIndex;
   delete next.auth_index;
@@ -478,6 +501,7 @@ const draftFromRow = (row: ProviderRow): ProviderDraft => {
     apiKey: definition.openAi ? row.apiKeys.join('\n') : row.apiKey,
     remark: row.remark || (definition.openAi && !isDeepSeek ? row.name : ''),
     baseUrl: row.baseUrl,
+    balanceUrl: row.balanceUrl,
     priority: row.priority === null ? '' : String(row.priority),
     models: row.models,
     prefix: readString(row.record, 'prefix'),
@@ -515,6 +539,7 @@ const emptyProviderDraft = (): ProviderDraft => ({
   apiKey: '',
   remark: '',
   baseUrl: '',
+  balanceUrl: '',
   priority: '',
   models: [],
   prefix: '',
@@ -810,6 +835,7 @@ export function ApiAccessPage() {
   const [editingRow, setEditingRow] = useState<ProviderRow | null>(null);
   const [dialogDraft, setDialogDraft] = useState<ProviderDraft>(emptyProviderDraft);
   const [apiAccessRemarks, setApiAccessRemarks] = useState<Record<string, string>>({});
+  const [apiBalanceUrls, setApiBalanceUrls] = useState<Record<string, string>>({});
   const [healthDialogRow, setHealthDialogRow] = useState<ProviderRow | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const activeDefinition = definitionFor(activeCategory);
@@ -823,31 +849,16 @@ export function ApiAccessPage() {
     if (showLoading) setLoading(true);
     setError('');
     try {
-      const responses = await Promise.allSettled(
-        providerLoadDefinitions.map(async (definition) => ({
-          section: definition.section,
-          records: responseList(
-            await managementApi.get(`/${definition.section}`),
-            definition.responseKey,
-          ),
-        })),
-      );
-      const failures: string[] = [];
-      setRecords((current) => {
-        const next = { ...current };
-        responses.forEach((result, index) => {
-          const definition = providerLoadDefinitions[index];
-          if (result.status === 'fulfilled') {
-            next[result.value.section] = result.value.records;
-          } else {
-            failures.push(`${t(definition.labelKey)}: ${String(result.reason)}`);
-          }
-        });
-        return next;
-      });
-      if (failures.length > 0) {
-        setError(t('apiAccess.error.partialLoad', { errors: failures.join('; ') }));
-      }
+      const nextRecords = await loadProviderRecords();
+      setRecords(nextRecords);
+      const recordEntries = (Object.entries(nextRecords) as [ProviderSection, Record<string, unknown>[]][])
+        .flatMap(([section, items]) => items.map((record) => ({ section, record })));
+      const identities = recordEntries.map(({ section, record }) => apiAccessRecordIdentityFromRecord(section, record));
+      const urls = await resolveApiAccessBalanceUrls(identities);
+      setApiBalanceUrls(Object.fromEntries(identities.map((identity, index) => [
+        apiAccessRecordIdentityKey(identity),
+        urls[index] ?? '',
+      ])));
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -892,6 +903,7 @@ export function ApiAccessPage() {
         .map((record, index) => rowFromRecord(activeSection, record, index))
         .map((row) => ({
           ...row,
+          balanceUrl: apiBalanceUrls[apiAccessRecordIdentityKey(apiAccessRecordIdentityFromRecord(row.section, row.record))] ?? '',
           remark: apiAccessRemarks[providerRemarkIdentity(row.section, row.apiKeys)] ?? '',
         }))
         .filter((row) => providerCategoryMatchesRecord(activeCategory, row.record))
@@ -903,7 +915,7 @@ export function ApiAccessPage() {
             .toLowerCase()
             .includes(query);
         }),
-    [activeCategory, activeSection, apiAccessRemarks, filter, records],
+    [activeCategory, activeSection, apiAccessRemarks, apiBalanceUrls, filter, records],
   );
 
   const openCreate = () => {
@@ -936,6 +948,7 @@ export function ApiAccessPage() {
     );
     const preparedDraftForSave = {
       ...preparedDraft,
+      balanceUrl: preparedDraft.balanceUrl ?? '',
       models: preparedDraft.models.filter((model) => model.name.trim()),
     };
     const baseUrlRequired = definition.openAi || definition.section === 'codex-api-key';
@@ -960,10 +973,12 @@ export function ApiAccessPage() {
       return { saved: false, target: 'form', error: t('apiAccess.error.remarkInvalid') };
     }
     let baseUrl = preparedDraft.baseUrl.trim();
+    let balanceUrl = preparedDraft.balanceUrl?.trim() ?? '';
     let providerHeaders: Record<string, string> = {};
     try {
       if (baseUrl) baseUrl = normalizeBaseUrl(baseUrl);
       if (baseUrlRequired && !baseUrl) throw new Error(t('apiAccess.error.baseRequired', { provider: t(definition.labelKey) }));
+      balanceUrl = validateBalanceUrl(balanceUrl, baseUrl);
       providerHeaders = parseProviderHeaders(preparedDraft.headersText ?? '');
     } catch (requestError) {
       return { saved: false, target: 'form', error: requestErrorMessage(requestError) };
@@ -971,7 +986,7 @@ export function ApiAccessPage() {
     setBusy(true);
     setError('');
     try {
-      let draftToSave = { ...preparedDraftForSave, baseUrl };
+      let draftToSave: ProviderDraft = { ...preparedDraftForSave, baseUrl, balanceUrl };
       if (definition.openAi && draftToSave.models.length === 0) {
         let fetchedModels: ModelOption[];
         try {
@@ -997,8 +1012,8 @@ export function ApiAccessPage() {
           models: fetchedModels,
         });
       }
-      const latestConfig = await managementApi.get('/config');
-      const current = sectionRecordsFromConfig(latestConfig, activeSection);
+      const latestRecords = await loadProviderRecords();
+      const current = latestRecords[activeSection];
       let nextList: Record<string, unknown>[];
       let targetIndex = -1;
       let currentRecord: Record<string, unknown> | undefined;
@@ -1037,6 +1052,16 @@ export function ApiAccessPage() {
         : [...current, ...recordsToSave];
 
       await managementApi.put(`/${activeSection}`, nextList.map(stripResponseFields));
+      const previousIdentity = editingRow && currentRecord
+        ? apiAccessRecordIdentityFromRecord(activeSection, currentRecord)
+        : null;
+      for (const [index, record] of recordsToSave.entries()) {
+        await saveApiAccessBalanceEndpoint(
+          index === 0 ? previousIdentity : null,
+          apiAccessRecordIdentityFromRecord(activeSection, record),
+          draftToSave.balanceUrl ?? '',
+        );
+      }
       await invoke('save_api_access_remark', {
         update: {
           providerSection: activeSection,
@@ -1069,6 +1094,11 @@ export function ApiAccessPage() {
           query: { 'api-key': row.apiKey, 'base-url': row.baseUrl },
         });
       }
+      await saveApiAccessBalanceEndpoint(
+        apiAccessRecordIdentityFromRecord(row.section, row.record),
+        null,
+        '',
+      );
       await invoke('save_api_access_remark', {
         update: {
           providerSection: row.section,
@@ -1093,8 +1123,8 @@ export function ApiAccessPage() {
     setError('');
     setNotice('');
     try {
-      const latestConfig = await managementApi.get('/config');
-      const latestRows = sectionRecordsFromConfig(latestConfig, row.section);
+      const latestRecords = await loadProviderRecords();
+      const latestRows = latestRecords[row.section];
       const targetIndex = resolveProviderRecordIndex(latestRows, row);
       if (targetIndex < 0) {
         throw new Error(t('apiAccess.error.stale'));
@@ -1136,8 +1166,8 @@ export function ApiAccessPage() {
     setError('');
     setNotice('');
     try {
-      const latestConfig = await managementApi.get('/config');
-      const latestRows = sectionRecordsFromConfig(latestConfig, source.section);
+      const latestRecords = await loadProviderRecords();
+      const latestRows = latestRecords[source.section];
       const nextRows = reorderProviderRecords(latestRows, rows, source, target);
       if (!nextRows) throw new Error(t('apiAccess.error.stale'));
       await managementApi.put(`/${source.section}`, nextRows);
@@ -1616,7 +1646,7 @@ function ApiProviderDialog({
     && visibleModelOptions.every((model) => selectedModelNames.has(model.name.toLowerCase()));
 
   const updateTextField = (
-    field: 'apiKey' | 'remark' | 'baseUrl' | 'priority' | 'prefix' | 'headersText' | 'excludedModelsText' | 'testModel' | 'cloakMode' | 'cloakSensitiveWordsText',
+    field: 'apiKey' | 'remark' | 'baseUrl' | 'balanceUrl' | 'priority' | 'prefix' | 'headersText' | 'excludedModelsText' | 'testModel' | 'cloakMode' | 'cloakSensitiveWordsText',
     value: string,
   ) => {
     setFormError('');
@@ -1834,6 +1864,8 @@ function ApiProviderDialog({
           />
         </label>
         <label><span>{t('apiAccess.field.baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
+        <label><span>{t('quota.api.balanceUrl.label')}</span><input value={draft.balanceUrl ?? ''} onChange={(event) => updateTextField('balanceUrl', event.currentTarget.value)} placeholder={t('quota.api.balanceUrl.placeholder')} /></label>
+        <small className="api-balance-url-hint">{t('quota.api.balanceUrl.description')}</small>
         {activeCategory === 'deepseek' ? (
           <div className="provider-preset-summary">
             <img src={deepseekIcon} alt="" className="provider-logo" />

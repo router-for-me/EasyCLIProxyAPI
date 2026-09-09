@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { appPageIds } from '../src/App';
 import { appUpdateIndicatorState } from '../src/appUpdateModel';
 import { canOpenAppPage, isAlwaysAvailablePage } from '../src/navigation';
 import { oauthSubpages } from '../src/oauthNavigation';
@@ -21,16 +22,24 @@ describe('简易模式、首页、配置与版本管理导航', () => {
   test('内核运行后解锁其他功能页', () => {
     expect(canOpenAppPage('config', true)).toBe(true);
     expect(canOpenAppPage('agents', true)).toBe(true);
+    expect(canOpenAppPage('quota', true)).toBe(true);
   });
 });
 
-describe('OAuth 子页面导航', () => {
-  test('认证文件和额度查询收纳在 OAuth 页面内', () => {
-    expect(oauthSubpages.map((page) => page.id)).toEqual(['login', 'authFiles', 'quota']);
+describe('Top-level sidebar navigation', () => {
+  test('places quota immediately after API access and before usage records', () => {
+    const apiIndex = appPageIds.indexOf('api');
+    expect(appPageIds.slice(apiIndex, apiIndex + 3)).toEqual(['api', 'quota', 'usage-records']);
+
+  });
+});
+
+describe('OAuth subpage navigation', () => {
+  test('OAuth keeps login and auth file subpages', () => {
+    expect(oauthSubpages.map((page) => page.id)).toEqual(['login', 'authFiles']);
     expect(oauthSubpages.map((page) => page.labelKey)).toEqual([
       'oauth.title',
       'authFiles.title',
-      'quota.title',
     ]);
   });
 });
