@@ -27,7 +27,6 @@ import {
   shouldShowOAuthLoginStatus,
 } from '../services/oauthLoginState';
 import { AuthFileManagementPage } from './AuthFileManagementPage';
-import { QuotaPage } from './QuotaPage';
 
 type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai';
 type OAuthFlowStatus = 'idle' | 'waiting' | 'success' | 'error';
@@ -147,7 +146,6 @@ export function OAuthManagementPage() {
       >
         {activeSubpage === 'login' ? <OAuthLoginPage /> : null}
         {activeSubpage === 'authFiles' ? <AuthFileManagementPage /> : null}
-        {activeSubpage === 'quota' ? <QuotaPage /> : null}
       </div>
     </section>
   );

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
+import { act, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider } from '../src/i18n';
-import { QuotaCard } from '../src/pages/QuotaPage';
+import { ApiBalanceUrlDialog, ApiQuotaCard, QuotaCard } from '../src/pages/QuotaPage';
+import { apiQuotaAdapterFor, type ApiQuotaSource } from '../src/services/apiQuota';
 import { quotaRowsFor } from '../src/services/quotaService';
 import type { QuotaState } from '../src/services/quotaService';
 
@@ -39,6 +42,7 @@ describe('quota card rendering', () => {
     expect(html).not.toContain('real-quota-track');
     expect(html).not.toContain('测试可用性');
     expect(html).toContain('获取/刷新额度');
+    expect(html).toContain('OAuth');
   });
 
   it('xAI 探测成功显示可用说明，100% 额度保留刷新按钮', () => {
@@ -58,5 +62,136 @@ describe('quota card rendering', () => {
     const html = render({ status: 'success', rows: [{ label: '5h', remainingPercent: 0, resetAtMs: Date.parse('2020-01-01T00:00:00Z') }] });
     expect(html).toContain('重置时间已到，请刷新确认');
     expect(html).toContain('剩余 0%');
+  });
+
+  it('renders API monetary balances without fabricating a percentage meter', () => {
+    const source: ApiQuotaSource = {
+      id: 'safe-source',
+      protocol: 'openai-compatibility',
+      recordIndex: 0,
+      entryIndex: 0,
+      entryCount: 1,
+      recordName: 'ignored-record-name',
+      recordOrdinal: 1,
+      recordCount: 1,
+      baseUrl: 'https://openrouter.ai/v1',
+      balanceUrl: '',
+      authIndex: 'auth-index',
+      apiKey: 'secret-key',
+      adapter: apiQuotaAdapterFor('https://openrouter.ai/v1'),
+      label: 'ignored-safe-label',
+      disabled: false,
+    };
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <ApiQuotaCard
+          source={source}
+          quota={{
+            status: 'success',
+            rows: [{
+              label: 'OpenRouter',
+              remainingPercent: null,
+              amount: { remaining: 65, used: 35, total: 100, unit: 'USD' },
+            }],
+          }}
+          onRefresh={() => {}}
+          onConfigure={() => {}}
+        />
+      </I18nProvider>,
+    );
+    expect(html).toContain('剩余');
+    expect(html).toContain('已用');
+    expect(html).toContain('总量');
+    expect(html).toContain('65 USD');
+    expect(html).toContain('API Key');
+    expect(html).toContain('余额接口');
+    expect(html).not.toContain('real-quota-track');
+    expect(html).not.toContain('secret-key');
+  });
+
+  const interactionTest = typeof document === 'undefined' ? it.skip : it;
+
+  interactionTest('opens the balance endpoint dialog and handles close and save actions', async () => {
+    const source: ApiQuotaSource = {
+      id: 'interactive-source',
+      protocol: 'openai-compatibility',
+      recordIndex: 0,
+      entryIndex: 0,
+      entryCount: 1,
+      recordName: 'Interactive provider',
+      recordOrdinal: 1,
+      recordCount: 1,
+      baseUrl: 'https://custom.example/v1',
+      balanceUrl: 'https://api.deepseek.com/user/balance?test=1',
+      authIndex: 'auth-index',
+      apiKey: 'secret-key',
+      adapter: apiQuotaAdapterFor('https://custom.example/v1'),
+      label: 'Interactive provider',
+      disabled: false,
+    };
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    window.localStorage.setItem('easy-cli-proxy-api.locale', 'en');
+    let savedValue = '';
+
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <ApiQuotaCard source={source} quota={{ status: 'idle', rows: [] }} onRefresh={() => {}} onConfigure={() => setOpen(true)} />
+          {open ? (
+            <ApiBalanceUrlDialog
+              source={source}
+              busy={false}
+              error=""
+              onClose={() => setOpen(false)}
+              onSave={(value) => { savedValue = value; setOpen(false); }}
+            />
+          ) : null}
+        </>
+      );
+    }
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<I18nProvider><Harness /></I18nProvider>);
+    });
+    const endpointButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Balance endpoint');
+    expect(endpointButton).toBeDefined();
+    await act(async () => {
+      endpointButton?.click();
+    });
+    const dialog = document.body.querySelector('[role="dialog"]');
+    const input = dialog?.querySelector('input[type="url"]') as HTMLInputElement | null;
+    expect(dialog).not.toBeNull();
+    expect(input?.className).toBe('config-dialog-text-input');
+    expect(input?.parentElement?.className).toBe('config-dialog-field');
+    expect(input?.value).toBe(source.balanceUrl);
+
+    const closeButton = dialog?.querySelector('button.icon-button') as HTMLButtonElement | null;
+    expect(closeButton).not.toBeNull();
+    await act(async () => {
+      closeButton?.click();
+    });
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+
+    await act(async () => {
+      endpointButton?.click();
+    });
+    const reopenedInput = document.body.querySelector('input[type="url"]') as HTMLInputElement;
+    await act(async () => {
+      const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setInputValue?.call(reopenedInput, 'https://api.deepseek.com/user/balance?updated=1');
+      reopenedInput.dispatchEvent(new Event('input', { bubbles: true }));
+      reopenedInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const saveButton = document.body.querySelector('button.primary-button') as HTMLButtonElement | null;
+    await act(async () => {
+      saveButton?.click();
+    });
+    expect(savedValue).toBe('https://api.deepseek.com/user/balance?updated=1');
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    root.unmount();
+    container.remove();
   });
 });

@@ -200,3 +200,115 @@ fn physical_window_size_uses_display_scale_and_ignores_minimized_sizes() {
     assert!(logical_window_size_from_physical(&tauri::PhysicalSize::new(0, 0), 1.0).is_none());
     assert!(logical_window_size_from_physical(&physical_size, 0.0).is_none());
 }
+
+#[test]
+fn api_balance_record_identity_is_stable_and_secret_free() {
+    let first = api_access_record_identity(
+        "openai-compatibility",
+        "Shared provider",
+        "https://custom.example/v1",
+        &["second-secret".to_string(), "first-secret".to_string()],
+    )
+    .unwrap();
+    let reordered = api_access_record_identity(
+        "openai-compatibility",
+        "Shared provider",
+        "https://custom.example/v1",
+        &["first-secret".to_string(), "second-secret".to_string()],
+    )
+    .unwrap();
+    let changed = api_access_record_identity(
+        "openai-compatibility",
+        "Shared provider",
+        "https://other.example/v1",
+        &["first-secret".to_string(), "second-secret".to_string()],
+    )
+    .unwrap();
+
+    assert_eq!(first, reordered);
+    assert_ne!(first, changed);
+    assert_eq!(first.len(), 64);
+    assert!(first.chars().all(|character| character.is_ascii_hexdigit()));
+    assert!(!first.contains("secret"));
+}
+
+#[test]
+fn api_balance_metadata_saves_migrates_clears_and_serializes_without_keys() {
+    let old_identity = ApiAccessRecordIdentityInput {
+        provider_section: "openai-compatibility".to_string(),
+        record_name: "Shared provider".to_string(),
+        base_url: "https://custom.example/v1".to_string(),
+        api_keys: vec!["old-secret".to_string()],
+    };
+    let new_identity = ApiAccessRecordIdentityInput {
+        provider_section: "openai-compatibility".to_string(),
+        record_name: "Renamed provider".to_string(),
+        base_url: "https://custom.example/v2".to_string(),
+        api_keys: vec!["new-secret".to_string()],
+    };
+    let old_hash = api_access_record_identity(
+        &old_identity.provider_section,
+        &old_identity.record_name,
+        &old_identity.base_url,
+        &old_identity.api_keys,
+    )
+    .unwrap();
+    let new_hash = api_access_record_identity(
+        &new_identity.provider_section,
+        &new_identity.record_name,
+        &new_identity.base_url,
+        &new_identity.api_keys,
+    )
+    .unwrap();
+    let mut config = GuiConfigFile {
+        management_secret_key: "test-management-secret".to_string(),
+        ..GuiConfigFile::default()
+    };
+
+    apply_api_access_balance_endpoint_update(
+        &mut config,
+        &ApiAccessBalanceEndpointUpdate {
+            previous_identity: None,
+            next_identity: Some(old_identity.clone()),
+            balance_url: "https://api.deepseek.com/user/balance".to_string(),
+        },
+    )
+    .unwrap();
+    assert_eq!(config.api_balance_endpoints.len(), 1);
+    assert_eq!(config.api_balance_endpoints[0].record_identity, old_hash);
+
+    apply_api_access_balance_endpoint_update(
+        &mut config,
+        &ApiAccessBalanceEndpointUpdate {
+            previous_identity: Some(old_identity),
+            next_identity: Some(new_identity.clone()),
+            balance_url: "https://api.deepseek.com/user/balance".to_string(),
+        },
+    )
+    .unwrap();
+    assert_eq!(config.api_balance_endpoints.len(), 1);
+    assert_eq!(config.api_balance_endpoints[0].record_identity, new_hash);
+
+    let home = agent_test_home("api-balance-metadata");
+    let path = home.join("config.toml");
+    write_gui_config_to_path(&config, &path).unwrap();
+    let content = fs::read_to_string(&path).unwrap();
+    assert!(content.contains("api-balance-endpoints"));
+    assert!(content.contains("https://api.deepseek.com/user/balance"));
+    assert!(!content.contains("old-secret"));
+    assert!(!content.contains("new-secret"));
+    let restored = toml::from_str::<GuiConfigFile>(&content).unwrap();
+    assert_eq!(restored.api_balance_endpoints, config.api_balance_endpoints);
+
+    apply_api_access_balance_endpoint_update(
+        &mut config,
+        &ApiAccessBalanceEndpointUpdate {
+            previous_identity: Some(new_identity),
+            next_identity: None,
+            balance_url: String::new(),
+        },
+    )
+    .unwrap();
+    assert!(config.api_balance_endpoints.is_empty());
+    fs::remove_dir_all(home).unwrap();
+}

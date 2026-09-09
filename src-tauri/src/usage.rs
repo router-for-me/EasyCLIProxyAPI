@@ -4095,6 +4095,7 @@ mod tests {
             auth_dir: String::new(),
             api_keys: Vec::new(),
             api_access_remarks: Vec::new(),
+            api_balance_endpoints: Vec::new(),
             management_secret_key: "123456".to_string(),
             debug: false,
             commercial_mode: false,

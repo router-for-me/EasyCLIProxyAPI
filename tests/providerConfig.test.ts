@@ -8,10 +8,12 @@ import {
   DEEPSEEK_BASE_URL,
   DEEPSEEK_THINKING_LEVELS,
   exclusionsForModelSelection,
+  loadProviderRecords,
   modelSelectionForDiscovery,
   parseProviderHeaders,
   parseProviderApiKeys,
   providerCategoryMatchesRecord,
+  providerRecordsFromConfig,
   providerRecordWithDisabledState,
   providerSectionOrder,
   reorderProviderRecords,
@@ -38,6 +40,69 @@ it('saves non-empty custom model names and removes duplicate or blank entries', 
 
 it('parses multiline API keys into unique trimmed entries', () => {
   expect(parseProviderApiKeys(' key-a\n\nkey-b\r\nkey-a ')).toEqual(['key-a', 'key-b']);
+});
+
+it('keeps balance metadata out of core provider records while preserving extensions', () => {
+  const current = {
+    name: 'shared-provider',
+    'base-url': 'https://custom.example/v1',
+    'balance-url': 'https://api.deepseek.com/user/balance',
+    'api-key-entries': [{ 'api-key': 'one' }, { 'api-key': 'two' }],
+    hidden: { keep: true },
+  };
+  const next = buildProviderRecord('openai-compatibility', {
+    name: 'shared-provider',
+    apiKey: 'one\ntwo',
+    baseUrl: 'https://custom.example/v1',
+    balanceUrl: 'https://openrouter.ai/api/v1/credits',
+    priority: '',
+    models: [],
+  }, current);
+  expect(next['balance-url']).toBeUndefined();
+  expect(next.hidden).toEqual({ keep: true });
+  expect(next['api-key-entries']).toEqual([{ 'api-key': 'one' }, { 'api-key': 'two' }]);
+});
+
+it('parses all API Access provider sections from one config payload', () => {
+  const records = providerRecordsFromConfig({
+    'codex-api-key': [{ 'api-key': 'codex' }],
+    'openai-compatibility': [{ name: 'openai' }],
+    'claude-api-key': [{ 'api-key': 'claude' }],
+    'gemini-api-key': [{ 'api-key': 'gemini' }],
+  });
+  expect(Object.values(records).map((items) => items.length)).toEqual([1, 1, 1, 1]);
+});
+
+it('authenticates once before loading enriched API Access records sequentially', async () => {
+  const paths: string[] = [];
+  const records = await loadProviderRecords(async (path) => {
+    paths.push(path);
+    if (path === '/config') return {};
+    return {
+      'codex-api-key': [{ 'api-key': 'codex' }],
+      'openai-compatibility': [{ name: 'openai' }],
+      'claude-api-key': [{ 'api-key': 'claude' }],
+      'gemini-api-key': [{ 'api-key': 'gemini' }],
+    };
+  });
+
+  expect(paths).toEqual([
+    '/config',
+    '/codex-api-key',
+    '/openai-compatibility',
+    '/claude-api-key',
+    '/gemini-api-key',
+  ]);
+  expect(Object.values(records).map((items) => items.length)).toEqual([1, 1, 1, 1]);
+});
+
+it('propagates API Access config failures without fallback requests', async () => {
+  const paths: string[] = [];
+  await expect(loadProviderRecords(async (path) => {
+    paths.push(path);
+    throw new Error('management 401');
+  })).rejects.toThrow('management 401');
+  expect(paths).toEqual(['/config']);
 });
 
 describe('API 接入配置合并', () => {
