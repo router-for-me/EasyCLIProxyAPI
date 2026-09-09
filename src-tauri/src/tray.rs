@@ -473,6 +473,7 @@ pub(crate) fn run_windows_tray_core_action(
         let process_state = app_handle.state::<CoreProcessState>();
         let gui_config_state = app_handle.state::<GuiConfigState>();
         let result = (|| -> Result<CoreStatus, String> {
+            let _guard = lock_core_operation(process_state.inner())?;
             match action {
                 WindowsTrayCoreAction::Toggle => {
                     let config = gui_config_state.snapshot()?;

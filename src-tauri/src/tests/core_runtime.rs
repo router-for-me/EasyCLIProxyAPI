@@ -50,7 +50,7 @@ fn core_child_sleep_command() -> Command {
     command
 }
 
-fn assert_core_child_survives(mut child: Child) {
+fn assert_core_child_survives(child: &mut Child) {
     thread::sleep(Duration::from_millis(200));
     let status = child.try_wait();
     let _ = child.kill();
@@ -60,10 +60,10 @@ fn assert_core_child_survives(mut child: Child) {
 
 #[test]
 fn core_child_survives_launcher_thread_exit() {
-    let child = thread::spawn(|| spawn_core_child(core_child_sleep_command()).unwrap())
+    let mut child = thread::spawn(|| spawn_core_child(core_child_sleep_command()).unwrap())
         .join()
         .unwrap();
-    assert_core_child_survives(child);
+    assert_core_child_survives(&mut child);
 }
 
 #[test]
@@ -71,25 +71,152 @@ fn core_child_survives_blocking_runtime_shutdown() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
-    let child = runtime
+    let mut child = runtime
         .block_on(runtime.spawn_blocking(|| spawn_core_child(core_child_sleep_command()).unwrap()))
         .unwrap();
     drop(runtime);
-    assert_core_child_survives(child);
+    assert_core_child_survives(&mut child);
 }
 
 #[test]
 fn core_child_spawner_remains_available_after_spawn_failure() {
     let missing_binary = agent_test_home("missing-core-spawner-binary").join(core_binary_name());
     assert!(spawn_core_child_on_lifetime_thread(Command::new(missing_binary)).is_err());
-    let child =
+    let mut child =
         thread::spawn(|| spawn_core_child_on_lifetime_thread(core_child_sleep_command()).unwrap())
             .join()
             .unwrap();
-    assert_core_child_survives(child);
+    assert_core_child_survives(&mut child);
 }
 
-#[cfg(target_os = "linux")]
+#[test]
+fn exiting_during_core_startup_cancels_the_port_wait() {
+    let state = std::sync::Arc::new(CoreProcessState::new(true));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let mut child = spawn_core_child(core_child_sleep_command()).unwrap();
+    let child_id = child.id();
+    let exiting_state = state.clone();
+    let exit = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        exiting_state.shutting_down.store(true, Ordering::Release);
+    });
+
+    let started = Instant::now();
+    let result = wait_for_core_management_port(&mut child, address, &state);
+    drop(child);
+    exit.join().unwrap();
+    assert!(matches!(result, Err(CoreStartupFailure::ShuttingDown)));
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(!is_process_alive(child_id));
+}
+
+#[test]
+fn exiting_rejects_new_core_operations_and_cleans_up_an_in_flight_child() {
+    let state = CoreProcessState::new(false);
+    let child = spawn_core_child(core_child_sleep_command()).unwrap();
+    let child_id = child.id();
+    state.shutting_down.store(true, Ordering::Release);
+
+    assert!(lock_core_operation(&state)
+        .unwrap_err()
+        .contains("应用正在退出"));
+    assert!(state
+        .store_child(child)
+        .unwrap_err()
+        .contains("应用正在退出"));
+    assert!(!is_process_alive(child_id));
+    assert_eq!(state.managed_pid(), None);
+}
+
+#[cfg(windows)]
+#[test]
+fn core_config_file_lock_helper() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+
+    let Some(path) = env::var_os("EASYCLIPROXYAPI_CORE_FILE_LOCK_TEST_HELPER") else {
+        return;
+    };
+    let _file = File::options()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(path)
+        .unwrap();
+    println!("CORE_FILE_LOCKED");
+    io::stdout().flush().unwrap();
+    thread::sleep(Duration::from_secs(10));
+}
+
+#[cfg(windows)]
+#[test]
+fn updating_stops_an_adopted_core_without_a_port_before_replacing_its_config() {
+    use std::io::BufRead;
+
+    let root = agent_test_home("core-stop-before-replace");
+    let config_path = root.join(CORE_CONFIG_FILE);
+    let replacement = root.join("new-config.yaml");
+    fs::write(&config_path, b"old config").unwrap();
+    fs::write(&replacement, b"new config").unwrap();
+    let binary_path = env::current_exe().unwrap();
+    let mut command = Command::new(&binary_path);
+    command
+        .args([
+            "--exact",
+            "tests::core_runtime::core_config_file_lock_helper",
+            "--nocapture",
+        ])
+        .env("EASYCLIPROXYAPI_CORE_FILE_LOCK_TEST_HELPER", &config_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    configure_background_command(&mut command);
+    // Spawn without the GUI's job guard to simulate a previous orphan.
+    let mut child = command.spawn().unwrap();
+    let output = io::BufReader::new(child.stdout.take().unwrap());
+    let ready = output
+        .lines()
+        .any(|line| line.unwrap() == "CORE_FILE_LOCKED");
+    let state = CoreProcessState::new(false);
+    state
+        .adopt_process_ids(&binary_path, vec![child.id()])
+        .unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let status = current_core_status(Some(&state), Some(port)).unwrap();
+    let locked_result = copy_core_file_replace(&replacement, &config_path);
+    let stopped = pause_core_process_for_install(&state);
+    let exited = child.try_wait().unwrap().is_some();
+    let replace_result = copy_core_file_replace(&replacement, &config_path);
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(ready);
+    assert!(
+        !status.running,
+        "the orphan has no listening management port"
+    );
+    assert!(
+        locked_result.is_err(),
+        "the orphan must hold a real Windows file lock"
+    );
+    assert!(
+        stopped.unwrap(),
+        "the update must stop the orphan despite the closed port"
+    );
+    assert!(
+        exited,
+        "stopping must wait until the process has actually exited"
+    );
+    replace_result.unwrap();
+    assert_eq!(fs::read(&config_path).unwrap(), b"new config");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(target_os = "linux", windows))]
 #[test]
 fn core_child_owner_process_helper() {
     if env::var_os("EASYCLIPROXYAPI_CORE_OWNER_TEST_HELPER").is_none() {
@@ -103,7 +230,7 @@ fn core_child_owner_process_helper() {
     thread::sleep(Duration::from_secs(10));
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 #[test]
 fn core_child_stops_when_owner_process_is_killed() {
     use std::io::BufRead;

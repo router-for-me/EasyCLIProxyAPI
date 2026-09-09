@@ -303,11 +303,11 @@ struct AppUpdateInner {
 
 #[derive(Default)]
 struct CoreProcessState {
-    child: Mutex<Option<Child>>,
+    child: Mutex<Option<CoreChild>>,
     adopted_processes: Mutex<Vec<AdoptedCoreProcess>>,
     starting: AtomicBool,
-    #[cfg(windows)]
-    job: Mutex<Option<isize>>,
+    shutting_down: AtomicBool,
+    shutdown_complete: AtomicBool,
 }
 
 #[derive(Default)]
@@ -1739,8 +1739,20 @@ impl CoreProcessState {
             child: Mutex::new(None),
             adopted_processes: Mutex::new(Vec::new()),
             starting: AtomicBool::new(starting),
-            #[cfg(windows)]
-            job: Mutex::new(None),
+            shutting_down: AtomicBool::new(false),
+            shutdown_complete: AtomicBool::new(false),
+        }
+    }
+
+    fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::Acquire)
+    }
+
+    fn ensure_active(&self) -> Result<(), String> {
+        if self.is_shutting_down() {
+            Err("应用正在退出，已取消内核操作".to_string())
+        } else {
+            Ok(())
         }
     }
 
@@ -1760,8 +1772,6 @@ impl CoreProcessState {
                 }
 
                 *child = None;
-                drop(child);
-                self.clear_lifetime_guard();
             }
         }
 
@@ -1778,16 +1788,7 @@ impl CoreProcessState {
             })
     }
 
-    fn clear_lifetime_guard(&self) {
-        #[cfg(windows)]
-        if let Ok(mut job) = self.job.lock() {
-            if let Some(handle) = job.take() {
-                close_windows_handle(handle);
-            }
-        }
-    }
-
-    fn take_child(&self) -> Option<Child> {
+    fn take_child(&self) -> Option<CoreChild> {
         self.child.lock().ok().and_then(|mut child| child.take())
     }
 
@@ -1823,55 +1824,15 @@ impl CoreProcessState {
             .unwrap_or_default()
     }
 
-    fn store_child(&self, child: Child) -> Result<u32, String> {
+    fn store_child(&self, child: CoreChild) -> Result<u32, String> {
+        self.ensure_active()?;
         let pid = child.id();
         self.clear_adopted_processes()?;
-
-        #[cfg(windows)]
-        {
-            let job = match attach_child_to_windows_job(&child) {
-                Ok(job) => job,
-                Err(error) => {
-                    let mut child = child;
-                    let cleanup_error = terminate_child(&mut child).err();
-                    return Err(match cleanup_error {
-                        Some(cleanup_error) => {
-                            format!("{error}；清理未托管的内核进程也失败: {cleanup_error}")
-                        }
-                        None => error,
-                    });
-                }
-            };
-            let Ok(mut managed_child) = self.child.lock() else {
-                close_windows_handle(job);
-                return Err("内核进程状态锁已损坏".to_string());
-            };
-            let Ok(mut managed_job) = self.job.lock() else {
-                close_windows_handle(job);
-                return Err("内核进程作业状态锁已损坏".to_string());
-            };
-            *managed_child = Some(child);
-            *managed_job = Some(job);
-        }
-
-        #[cfg(not(windows))]
-        {
-            let mut managed_child = match self.child.lock() {
-                Ok(managed_child) => managed_child,
-                Err(_) => {
-                    let mut child = child;
-                    let cleanup_error = terminate_child(&mut child).err();
-                    return Err(match cleanup_error {
-                        Some(cleanup_error) => format!(
-                            "内核进程状态锁已损坏；清理未托管的内核进程也失败: {cleanup_error}"
-                        ),
-                        None => "内核进程状态锁已损坏".to_string(),
-                    });
-                }
-            };
-            *managed_child = Some(child);
-        }
-
+        let mut managed_child = self
+            .child
+            .lock()
+            .map_err(|_| "内核进程状态锁已损坏".to_string())?;
+        *managed_child = Some(child);
         Ok(pid)
     }
 }
@@ -2448,6 +2409,10 @@ fn main() {
                 };
                 let gui_config_state = core_app.state::<GuiConfigState>();
                 let process_state = core_app.state::<CoreProcessState>();
+                if process_state.ensure_active().is_err() {
+                    process_state.set_starting(false);
+                    return;
+                }
                 let Ok(config) = gui_config_state.snapshot() else {
                     process_state.set_starting(false);
                     return;
@@ -2623,10 +2588,34 @@ fn main() {
             has_visible_windows: false,
             ..
         } => show_main_window(app_handle),
-        tauri::RunEvent::ExitRequested { .. } => {
+        tauri::RunEvent::ExitRequested { api, code, .. } => {
+            let process_state = app_handle.state::<CoreProcessState>();
+            if process_state.shutdown_complete.load(Ordering::Acquire) {
+                return;
+            }
+            api.prevent_exit();
+            if process_state.shutting_down.swap(true, Ordering::AcqRel) {
+                return;
+            }
             if let Err(error) = persist_main_window_size(app_handle) {
                 eprintln!("保存主窗口尺寸失败: {error}");
             }
+            app_handle.state::<CoreDownloadState>().cancel();
+            let app_handle = app_handle.clone();
+            // Keep the event loop alive while an in-flight operation finishes:
+            // tray/status updates from that operation may need the UI thread.
+            tauri::async_runtime::spawn_blocking(move || {
+                let _guard = CORE_OPERATION_LOCK
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                let process_state = app_handle.state::<CoreProcessState>();
+                let gui_config_state = app_handle.state::<GuiConfigState>();
+                shutdown_managed_core(process_state.inner(), gui_config_state.inner());
+                process_state
+                    .shutdown_complete
+                    .store(true, Ordering::Release);
+                app_handle.exit(code.unwrap_or(0));
+            });
         }
         tauri::RunEvent::Exit => {
             usage::stop_usage_collector(app_handle);
@@ -2636,7 +2625,10 @@ fn main() {
             }
             let gui_config_state = app_handle.state::<GuiConfigState>();
             let process_state = app_handle.state::<CoreProcessState>();
-            shutdown_managed_core(process_state.inner(), gui_config_state.inner());
+            if !process_state.shutdown_complete.load(Ordering::Acquire) {
+                process_state.shutting_down.store(true, Ordering::Release);
+                shutdown_managed_core(process_state.inner(), gui_config_state.inner());
+            }
         }
         _ => {}
     });
