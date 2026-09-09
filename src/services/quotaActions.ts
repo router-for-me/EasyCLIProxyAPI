@@ -16,10 +16,8 @@ type QuotaActionOutcome = 'cancelled' | 'success' | 'refresh-error' | 'error';
 export const canResetCodexQuota = (file: AuthFile, quota: QuotaState): boolean =>
   providerForFile(file) === 'codex'
   && !readBoolean(file, 'disabled')
-  && quota.status === 'success'
-  && (quota.resetCredits ?? 0) > 0
-  && quota.resetCreditsApplicable !== 0
-  && !(quota.actionResult?.action === 'reset' && quota.actionResult.status !== 'success');
+  && quota.status !== 'loading'
+  && (quota.resetCredits ?? 0) > 0;
 
 async function runConfirmedQuotaAction(
   file: AuthFile,

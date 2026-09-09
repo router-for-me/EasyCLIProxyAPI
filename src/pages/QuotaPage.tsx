@@ -102,7 +102,6 @@ export function QuotaPage() {
         confirmText: t('quota.confirm.button'),
         details: [
           { label: t('quota.resetCredits'), value: String(quota.resetCredits ?? '—') },
-          { label: t('quota.confirm.applicableLabel'), value: String(quota.resetCreditsApplicable ?? '—') },
           { label: t('quota.earliestExpiry'), value: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) },
         ],
         warning: t('quota.confirm.warning'),
@@ -198,7 +197,7 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
       <div className="real-quota-card-header">
         <div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}{quota.plan ? ' · ' + quota.plan : ''}</span></div>
         <div className="quota-card-actions">
-          {onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={!canResetCodexQuota(file, quota)} title={quota.resetCreditsApplicable === 0 ? t('quota.resetNotApplicable') : quota.actionResult?.action === 'reset' && quota.actionResult.status !== 'success' ? t('quota.resetCheckFirst') : t('quota.reset')}>{t('quota.reset')}</button> : null}
+          {onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={!canResetCodexQuota(file, quota)} title={t('quota.reset')}>{t('quota.reset')}</button> : null}
           <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} /></button>
         </div>
       </div>

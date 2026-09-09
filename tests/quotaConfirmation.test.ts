@@ -108,35 +108,60 @@ describe('quota action confirmation with fully mocked IPC', () => {
     expect(upstreamCalls).toHaveLength(0);
   });
 
-  it('does not offer or execute a reset when no credits currently apply', async () => {
-    updateQuotaCache({ [key]: { ...previous, resetCreditsApplicable: 0 } });
-    let asked = false;
-    await resetCodexQuotaWithConfirmation(file, async () => { asked = true; return true; });
-    expect(asked).toBe(false);
+  it.each([0, undefined])('allows a confirmed reset with full quota regardless of applicable credits: %s', async (applicable) => {
+    const quota: QuotaState = {
+      ...previous, rows: [{ label: '5h', remainingPercent: 100 }], resetCreditsApplicable: applicable,
+    };
+    updateQuotaCache({ [key]: quota });
+    expect(canResetCodexQuota(file, quota)).toBe(true);
+    expect(await resetCodexQuotaWithConfirmation(file, async () => false)).toBe('cancelled');
     expect(upstreamCalls).toHaveLength(0);
-    expect(canResetCodexQuota(file, getQuotaCacheSnapshot()[key])).toBe(false);
-    expect(canResetCodexQuota({ ...file, disabled: true }, previous)).toBe(false);
+    expect(getQuotaCacheSnapshot()[key]).toBe(quota);
+
+    let decide!: (confirmed: boolean) => void;
+    const resetting = resetCodexQuotaWithConfirmation(file, () => new Promise((resolve) => { decide = resolve; }));
+    expect(upstreamCalls).toHaveLength(0);
+    expect(getQuotaCacheSnapshot()[key]).toBe(quota);
+    decide(true);
+    expect(await resetting).toBe('success');
+    expect(upstreamCalls.filter((request) => request.url.endsWith('/consume'))).toHaveLength(1);
   });
 
-  it('retains quota and reports a failed reset on the account, requiring refresh before retry', async () => {
+  it('keeps disabled credentials and pending requests unavailable', async () => {
+    expect(canResetCodexQuota({ ...file, disabled: true }, previous)).toBe(false);
+    expect(await resetCodexQuotaWithConfirmation({ ...file, disabled: true }, async () => true)).toBe('cancelled');
+    updateQuotaCache({ [key]: { ...previous, status: 'loading' } });
+    expect(canResetCodexQuota(file, getQuotaCacheSnapshot()[key])).toBe(false);
+    expect(await resetCodexQuotaWithConfirmation(file, async () => true)).toBe('cancelled');
+    expect(upstreamCalls).toHaveLength(0);
+  });
+
+  it('reports a failed reset and allows retry after a new confirmation', async () => {
     consumeError = true;
     expect(await resetCodexQuotaWithConfirmation(file, async () => true)).toBe('error');
     expect(getQuotaCacheSnapshot()[key]).toMatchObject({
       rows: previous.rows, actionResult: { action: 'reset', status: 'error', error: 'reset denied' },
     });
-    expect(canResetCodexQuota(file, getQuotaCacheSnapshot()[key])).toBe(false);
-    expect(await resetCodexQuotaWithConfirmation(file, async () => true)).toBe('cancelled');
+    expect(canResetCodexQuota(file, getQuotaCacheSnapshot()[key])).toBe(true);
+    expect(await resetCodexQuotaWithConfirmation(file, async () => false)).toBe('cancelled');
     expect(upstreamCalls).toHaveLength(1);
+    consumeError = false;
+    expect(await resetCodexQuotaWithConfirmation(file, async () => true)).toBe('success');
+    expect(upstreamCalls.filter((request) => request.url.endsWith('/consume'))).toHaveLength(2);
   });
 
-  it('distinguishes an accepted reset from a failed refresh and prevents a second consume', async () => {
+  it('reports a failed follow-up refresh and requires a new confirmation for another reset', async () => {
     refreshError = true;
     expect(await resetCodexQuotaWithConfirmation(file, async () => true)).toBe('refresh-error');
     expect(getQuotaCacheSnapshot()[key]).toMatchObject({
       rows: previous.rows, actionResult: { action: 'reset', status: 'refresh-error', error: 'usage unavailable' },
     });
-    await resetCodexQuotaWithConfirmation(file, async () => true);
+    expect(canResetCodexQuota(file, getQuotaCacheSnapshot()[key])).toBe(true);
+    expect(await resetCodexQuotaWithConfirmation(file, async () => false)).toBe('cancelled');
     expect(upstreamCalls.filter((request) => request.url.endsWith('/consume'))).toHaveLength(1);
+    refreshError = false;
+    expect(await resetCodexQuotaWithConfirmation(file, async () => true)).toBe('success');
+    expect(upstreamCalls.filter((request) => request.url.endsWith('/consume'))).toHaveLength(2);
   });
 
   it('keeps application confirmations out of native and browser dialog APIs', async () => {

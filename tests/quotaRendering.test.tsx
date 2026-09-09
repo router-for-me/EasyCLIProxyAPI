@@ -10,15 +10,27 @@ const render = (quota: QuotaState, provider = 'codex') => renderToStaticMarkup(
 );
 
 describe('quota card rendering', () => {
-  it('当前适用次数为零时禁用重置按钮，并保留额度详情', () => {
+  it('当前适用次数为零时仍可重置，并保留额度详情', () => {
     const html = render({
       status: 'success', rows: [], resetCredits: 2, resetCreditsApplicable: 0,
       resetCreditsError: 'temporary failure', subscriptionActiveUntil: '2030-01-01T00:00:00Z',
     });
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>重置额度<\/button>/);
+    expect(html).toMatch(/<button[^>]*title="重置额度"[^>]*>重置额度<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>重置额度<\/button>/);
+    expect(html).not.toContain('当前没有适用的重置次数');
     expect(html).toContain('当前适用：0 次');
     expect(html).toContain('temporary failure');
     expect(html).toContain('订阅到期');
+  });
+
+  it.each(['error', 'refresh-error'] as const)('重置结果为 %s 时仍可再次点击重置', (status) => {
+    const html = render({
+      status: 'success', rows: [], resetCredits: 2,
+      actionResult: { action: 'reset', status, error: 'temporary failure' },
+    });
+    expect(html).toMatch(/<button[^>]*title="重置额度"[^>]*>重置额度<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>重置额度<\/button>/);
+    expect(html).toContain('temporary failure');
   });
 
   it('xAI 付费账号保留额度说明和刷新入口，不显示可用性测试', () => {
