@@ -809,14 +809,46 @@ pub(crate) fn replace_file_atomically(
 }
 
 #[cfg(windows)]
+pub(crate) fn retry_windows_file_replace(
+    mut replace: impl FnMut() -> io::Result<()>,
+    mut wait: impl FnMut(Duration),
+) -> io::Result<()> {
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION,
+        ERROR_UNABLE_TO_REMOVE_REPLACED,
+    };
+
+    let mut delays = [50, 100, 200, 400, 800].into_iter();
+    loop {
+        match replace() {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let retryable = matches!(
+                    error.raw_os_error().map(|code| code as u32),
+                    Some(
+                        ERROR_ACCESS_DENIED
+                            | ERROR_LOCK_VIOLATION
+                            | ERROR_SHARING_VIOLATION
+                            | ERROR_UNABLE_TO_REMOVE_REPLACED
+                    )
+                );
+                if retryable {
+                    if let Some(delay) = delays.next() {
+                        wait(Duration::from_millis(delay));
+                        continue;
+                    }
+                }
+                return Err(error);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
 pub(crate) fn replace_file_atomically(
     temporary_path: &Path,
     destination_path: &Path,
 ) -> io::Result<()> {
-    if !destination_path.exists() {
-        return fs::rename(temporary_path, destination_path);
-    }
-
     use std::{os::windows::ffi::OsStrExt, ptr};
     use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
 
@@ -830,22 +862,28 @@ pub(crate) fn replace_file_atomically(
         .encode_wide()
         .chain(Some(0))
         .collect::<Vec<_>>();
-    let replaced = unsafe {
-        ReplaceFileW(
-            destination.as_ptr(),
-            replacement.as_ptr(),
-            ptr::null(),
-            0,
-            ptr::null(),
-            ptr::null(),
-        )
-    };
-
-    if replaced == 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    Ok(())
+    retry_windows_file_replace(
+        || {
+            if !destination_path.exists() {
+                return fs::rename(temporary_path, destination_path);
+            }
+            let replaced = unsafe {
+                ReplaceFileW(
+                    destination.as_ptr(),
+                    replacement.as_ptr(),
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    ptr::null(),
+                )
+            };
+            if replaced == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        },
+        thread::sleep,
+    )
 }
 
 pub(crate) fn fixed_oauth_dir() -> Result<PathBuf, String> {
