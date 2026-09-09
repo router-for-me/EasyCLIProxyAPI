@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   cloneCodexModelConfiguration,
   codexContextSourceHint,
+  reviewModelPickerModels,
   sameCodexModelConfiguration,
   toggleCodexReasoningLevel,
   validateCodexModelConfiguration,
@@ -25,9 +26,31 @@ const configuration = (): CodexModelConfiguration => ({
   input_modalities: ['text', 'image'],
   visibility: 'list',
   supports_parallel_tool_calls: false,
+  auto_review_model_override: null,
 });
 
 describe('Codex 模型列表编辑', () => {
+  test('Codex 默认独立于继承，序列化重载后仍保持相同选择', () => {
+    const inherited = configuration();
+    const codexDefault: CodexModelConfiguration = { ...inherited, auto_review_model_override: { mode: 'codex_default' } };
+    expect(sameCodexModelConfiguration(inherited, codexDefault)).toBeFalse();
+    expect(sameCodexModelConfiguration(codexDefault, JSON.parse(JSON.stringify(codexDefault)))).toBeTrue();
+  });
+  test('选择器保留隐藏模型、失效 ID 和与特殊选项同名的真实模型', () => {
+    const model: CodexCatalogEditorModel = {
+      slug: 'codex_default', hasOfficialTemplate: false, customized: false,
+      contextSource: 'template', configuration: { ...configuration(), visibility: 'hide' }, defaults: configuration(),
+    };
+    expect(reviewModelPickerModels([model], 'review-gone').map((option) => option.name)).toEqual(['review-gone', 'codex_default']);
+    expect(reviewModelPickerModels([model], { mode: 'codex_default' }).map((option) => option.name)).toEqual(['codex_default']);
+  });
+  test('审批模型显式选择与继承状态不同，恢复默认不会固化统一默认值', () => {
+    const inherited = configuration();
+    const selected = { ...inherited, auto_review_model_override: 'team/Codex Auto Review' };
+    expect(sameCodexModelConfiguration(inherited, selected)).toBeFalse();
+    expect(cloneCodexModelConfiguration(selected).auto_review_model_override).toBe('team/Codex Auto Review');
+    expect(cloneCodexModelConfiguration(inherited).auto_review_model_override).toBeNull();
+  });
   test("区分内核模型定义与兼容目录的后备上下文", () => {
     const model: CodexCatalogEditorModel = {
       slug: "model-a", hasOfficialTemplate: true, customized: false,

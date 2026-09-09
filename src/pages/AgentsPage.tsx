@@ -1,12 +1,10 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ComponentType,
-  type KeyboardEvent,
 } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -17,11 +15,9 @@ import {
   BadgeCheck,
   Bot,
   Check,
-  ChevronDown,
   LoaderCircle,
   Play,
   RefreshCw,
-  Search,
   SlidersHorizontal,
   Square,
   Trash2,
@@ -40,8 +36,6 @@ import opencodeIcon from '../assets/icons/opencode.svg';
 import piIcon from '../assets/icons/pi-logo-on-light.svg';
 import zcodeIcon from '../assets/icons/zcode.png';
 import {
-  agentModelAlias,
-  filterAgentModels,
   filterAgentModelsByAlias,
   findAgentModel,
   resolveAgentModelForAliasMode,
@@ -69,6 +63,8 @@ import type { ModelOption } from '../services/modelService';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
+import { AgentModelPicker } from '../components/AgentModelPicker';
+import { reviewModelPickerModels, type CodexCatalogEditorSnapshot } from '../services/codexModelCatalog';
 
 type AgentClientId =
   | 'claude-code'
@@ -403,248 +399,6 @@ const listStatusText = (status: AgentConfigStatus | undefined) => {
     : translate(locale, 'agents.list.installed');
 };
 
-type AgentModelPickerProps = {
-  models: ModelOption[];
-  value: string;
-  loading: boolean;
-  error: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-  onRefresh: () => void;
-};
-
-type AgentModelDropdownLayout = {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-};
-
-function AgentModelPicker({
-  models,
-  value,
-  loading,
-  error,
-  disabled,
-  onChange,
-  onRefresh,
-}: AgentModelPickerProps) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [dropdownLayout, setDropdownLayout] = useState<AgentModelDropdownLayout | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const visibleModels = useMemo(() => filterAgentModels(models, search), [models, search]);
-  const choices = useMemo(
-    () => visibleModels.map((model) => ({ name: model.name, alias: model.alias ?? '' })),
-    [visibleModels],
-  );
-  const selectedModel = findAgentModel(models, value);
-  const selectedName = selectedModel?.name ?? '';
-  const selectedAlias = selectedName ? agentModelAlias(models, selectedName) : '';
-
-  const updateDropdownLayout = useCallback(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const rect = root.getBoundingClientRect();
-    const edgeGap = 12;
-    const triggerGap = 6;
-    const preferredHeight = 282;
-    const minimumHeight = 150;
-    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - triggerGap - edgeGap);
-    const spaceAbove = Math.max(0, rect.top - triggerGap - edgeGap);
-    const placeAbove = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
-    const availableHeight = placeAbove ? spaceAbove : spaceBelow;
-    const height = Math.min(preferredHeight, Math.max(minimumHeight, availableHeight));
-    const width = Math.min(rect.width, window.innerWidth - edgeGap * 2);
-    const left = Math.min(
-      Math.max(edgeGap, rect.left),
-      Math.max(edgeGap, window.innerWidth - edgeGap - width),
-    );
-    const desiredTop = placeAbove
-      ? rect.top - triggerGap - height
-      : rect.bottom + triggerGap;
-    const top = Math.min(
-      Math.max(edgeGap, desiredTop),
-      Math.max(edgeGap, window.innerHeight - edgeGap - height),
-    );
-
-    setDropdownLayout({ top, left, width, height });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setDropdownLayout(null);
-      return undefined;
-    }
-
-    updateDropdownLayout();
-    window.addEventListener('resize', updateDropdownLayout);
-    window.addEventListener('scroll', updateDropdownLayout);
-    return () => {
-      window.removeEventListener('resize', updateDropdownLayout);
-      window.removeEventListener('scroll', updateDropdownLayout);
-    };
-  }, [open, updateDropdownLayout]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    setSearch('');
-    const selectedIndex = filterAgentModels(models, '').findIndex(
-      (model) => model.name.toLocaleLowerCase() === value.trim().toLocaleLowerCase(),
-    );
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
-    requestAnimationFrame(() => searchRef.current?.focus());
-  }, [open]);
-
-  useEffect(() => {
-    setActiveIndex((current) => Math.min(current, Math.max(choices.length - 1, 0)));
-  }, [choices.length]);
-
-  const choose = (name: string) => {
-    onChange(name);
-    setOpen(false);
-  };
-
-  const moveActive = (offset: number) => {
-    if (choices.length === 0) return;
-    setActiveIndex((current) => (current + offset + choices.length) % choices.length);
-  };
-
-  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      moveActive(1);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      moveActive(-1);
-    } else if (event.key === 'Enter' && choices[activeIndex]) {
-      event.preventDefault();
-      choose(choices[activeIndex].name);
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      setOpen(false);
-    }
-  };
-
-  return (
-    <div className={`agent-model-picker ${open ? 'open' : ''}`} ref={rootRef}>
-      <button
-        type="button"
-        className="agent-model-trigger"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (!open && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
-            event.preventDefault();
-            setOpen(true);
-          }
-        }}
-      >
-        <span>
-          <strong title={selectedName || undefined}>
-            {selectedName || (loading ? t('agents.model.loading') : error ? t('agents.model.loadFailed') : models.length ? t('agents.model.select') : t('agents.model.none'))}
-          </strong>
-          {selectedAlias ? <small title={selectedAlias}>{selectedAlias}</small> : null}
-        </span>
-        <ChevronDown size={17} aria-hidden />
-      </button>
-
-      {open ? (
-        <div
-          className="agent-model-dropdown"
-          style={dropdownLayout
-            ? dropdownLayout
-            : { top: 0, left: 0, width: 0, height: 0, visibility: 'hidden' }}
-        >
-          <div className="agent-model-search">
-            <Search size={15} aria-hidden />
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={(event) => {
-                setSearch(event.currentTarget.value);
-                setActiveIndex(0);
-              }}
-              onKeyDown={handleSearchKeyDown}
-              placeholder={t('agents.model.search')}
-              role="combobox"
-              aria-controls="agent-model-listbox"
-              aria-expanded="true"
-            />
-            {search ? (
-              <button
-                type="button"
-                className="icon-button quiet"
-                onClick={() => {
-                  setSearch('');
-                  setActiveIndex(0);
-                  searchRef.current?.focus();
-                }}
-                title={t('agents.model.clearSearch')}
-              >
-                <X size={14} />
-              </button>
-            ) : null}
-            <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={loading} title={t('agents.model.refresh')}>
-              <RefreshCw size={14} className={loading ? 'spin' : ''} />
-            </button>
-          </div>
-
-          <div className="agent-model-list" id="agent-model-listbox" role="listbox">
-            {loading && models.length === 0 ? (
-              <div className="agent-model-empty"><LoaderCircle size={18} className="spin" />{t('agents.model.fetching')}</div>
-            ) : error && models.length === 0 ? (
-              <div className="agent-model-empty error"><strong>{t('agents.model.loadFailed')}</strong><span>{error}</span></div>
-            ) : choices.length === 0 ? (
-              <div className="agent-model-empty">
-                <strong>{search.trim() ? t('agents.model.noMatch') : t('agents.model.unavailable')}</strong>
-                <span>{search.trim() ? t('agents.model.tryKeywords') : t('agents.model.connectFirst')}</span>
-              </div>
-            ) : choices.map((choice, index) => {
-              const selected = choice.name.toLocaleLowerCase() === value.trim().toLocaleLowerCase();
-              return (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  className={`agent-model-option ${selected ? 'selected' : ''} ${index === activeIndex ? 'active' : ''}`}
-                  key={choice.name}
-                  onMouseEnter={() => setActiveIndex(index)}
-                  onClick={() => choose(choice.name)}
-                >
-                  <span>
-                    <strong title={choice.name}>{choice.name}</strong>
-                    <small>{choice.alias || t('agents.model.available')}</small>
-                  </span>
-                  {selected ? <Check size={16} aria-hidden /> : null}
-                </button>
-              );
-            })}
-          </div>
-          <div className="agent-model-dropdown-footer">
-            <span>{t('agents.model.count', { count: models.length })}</span>
-            {error && models.length > 0 ? <span className="error">{t('agents.model.stale')}</span> : null}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 type AgentsPageProps = {
   embedded?: boolean;
@@ -687,6 +441,33 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [launchError, setLaunchError] = useState('');
   const [launchDirectoryDialogOpen, setLaunchDirectoryDialogOpen] = useState(false);
   const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
+  const [codexReviewSnapshot, setCodexReviewSnapshot] = useState<CodexCatalogEditorSnapshot | null>(null);
+  // undefined 是未编辑的草稿；null 是用户明确选择 Codex 默认，不能合并这两态。
+  const [codexReviewDraft, setCodexReviewDraft] = useState<string | null | undefined>(undefined);
+  const [codexReviewLoading, setCodexReviewLoading] = useState(false);
+  const [codexReviewError, setCodexReviewError] = useState('');
+  const codexReviewLoadId = useRef(0);
+  const loadCodexReview = useCallback(async () => {
+    const loadId = ++codexReviewLoadId.current;
+    setCodexReviewLoading(true);
+    setCodexReviewError('');
+    try {
+      const snapshot = await invoke<CodexCatalogEditorSnapshot>('get_codex_model_catalog_editor');
+      if (loadId === codexReviewLoadId.current) setCodexReviewSnapshot(snapshot);
+    } catch (error) {
+      if (loadId === codexReviewLoadId.current) setCodexReviewError(String(error));
+    } finally {
+      if (loadId === codexReviewLoadId.current) setCodexReviewLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (selected === 'codex') void loadCodexReview();
+  }, [selected, loadCodexReview]);
+  const codexReviewModel = codexReviewDraft === undefined
+    ? codexReviewSnapshot?.defaultAutoReviewModel ?? null
+    : codexReviewDraft;
+  const codexReviewChanged = selected === 'codex' && codexReviewSnapshot !== null
+    && codexReviewModel !== codexReviewSnapshot.defaultAutoReviewModel;
   const [launchDirectory, setLaunchDirectory] = useState('');
   const [launchDirectoryTarget, setLaunchDirectoryTarget] = useState<AgentLaunchTarget | null>(null);
   const [launchDirectoryError, setLaunchDirectoryError] = useState('');
@@ -783,12 +564,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setDetectionError('');
     try {
       await loadStatuses(true);
+      if (selected === 'codex') await loadCodexReview();
     } catch (requestError) {
       setDetectionError(String(requestError));
     } finally {
       setLoading(false);
     }
-  }, [loadStatuses]);
+  }, [loadStatuses, selected, loadCodexReview]);
 
   useEffect(() => {
     setLoading(true);
@@ -994,7 +776,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     );
   const oauthConfigurationChanged = selected === 'codex'
     && oauthConfiguration !== Boolean(activeStatus?.oauthConfiguration);
-  const draftChanged = modelDraftChanged || claudeMappingDraftChanged || oauthConfigurationChanged;
+  const draftChanged = modelDraftChanged || claudeMappingDraftChanged || oauthConfigurationChanged || codexReviewChanged;
   const configurationAction = resolveAgentConfigurationAction({
     client: selected,
     modificationState: activeStatus?.modificationState ?? 'unconfigured',
@@ -1003,6 +785,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     appliedModel,
     oauthConfiguration,
     appliedOauthConfiguration: Boolean(activeStatus?.oauthConfiguration),
+    codexReviewModelChanged: codexReviewChanged,
     modelMappings: claudeModelMappingsDraft,
     appliedModelMappings: appliedClaudeModelMappings,
   });
@@ -1010,6 +793,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     activeStatus?.supportedPlatform
       && activeStatus.installed
       && !modelLoading
+      && (selected !== 'codex' || (codexReviewSnapshot !== null && !codexReviewLoading && !codexReviewError))
       && (isClaudeModelMappingClient
         ? claudeMappingsReady && claudeCodeRuntimeSettingsReady
         : selectedModelOption),
@@ -1056,6 +840,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       : '';
   const refreshModels = () => {
     void loadModels(selected);
+    if (selected === 'codex') void loadCodexReview();
   };
 
   const runEmbeddedPrimaryAction = () => {
@@ -1258,6 +1043,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
   const applyConfigurationChanges = async () => {
     setConfigurationError('');
+    if (selected === 'codex' && (!codexReviewSnapshot || codexReviewLoading || codexReviewError)) {
+      setConfigurationError(codexReviewError || t('agents.catalog.loading'));
+      return;
+    }
     const claudeModelMappings = requireClaudeModelMappings();
     if (isClaudeModelMappingClient && !claudeModelMappings) return;
     const model = isClaudeModelMappingClient
@@ -1272,7 +1061,15 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         oauthConfiguration,
         claudeCodeModelMappings: selected === 'claude-code' ? claudeModelMappings : null,
         claudeDesktopModelMappings: selected === 'claude-desktop' ? claudeModelMappings : null,
+        codexReviewModel: selected === 'codex' && codexReviewSnapshot ? {
+          revision: codexReviewSnapshot.revision,
+          model: codexReviewModel,
+        } : null,
       });
+      if (selected === 'codex') {
+        setCodexReviewDraft(undefined);
+        await loadCodexReview();
+      }
       if (isClaudeModelMappingClient) {
         claudeModelMappingsDirtyRef.current[selected] = false;
       }
@@ -1845,6 +1642,27 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       {modelHint}
                     </span>
                   ) : null}
+                  {selected === 'codex' ? (
+                    <div className="agent-review-model-setting">
+                      <div className="agent-section-heading"><strong>{t('agents.catalog.defaultReviewModel')}</strong></div>
+                      <AgentModelPicker
+                        models={reviewModelPickerModels(codexReviewSnapshot?.models ?? [], codexReviewModel)}
+                        value={codexReviewModel ?? ''}
+                        specialValue={codexReviewModel === null ? 'codex_default' : undefined}
+                        specialOptions={[{ value: 'codex_default', label: t('agents.catalog.reviewTemplateDefault') }]}
+                        onSpecialChange={() => setCodexReviewDraft(null)}
+                        onChange={setCodexReviewDraft}
+                        onRefresh={() => void loadCodexReview()}
+                        loading={codexReviewLoading} error={codexReviewError}
+                        disabled={busy || codexReviewLoading || !codexReviewSnapshot}
+                        exactModelIds ariaLabel={t('agents.catalog.defaultReviewModel')}
+                      />
+                      <span className="agent-model-hint">{t('agents.catalog.defaultReviewHint')}</span>
+                      {codexReviewError ? <span className="agent-inline-message error" role="alert">{codexReviewError}</span> : null}
+                      {codexReviewSnapshot && typeof codexReviewModel === 'string' && !codexReviewSnapshot.models.some((model) => model.slug === codexReviewModel)
+                        ? <span className="agent-inline-message error" role="status">{t('agents.catalog.reviewModelMissing', { model: codexReviewModel })}</span> : null}
+                    </div>
+                  ) : null}
                 </section>
               ) : null}
 
@@ -2245,7 +2063,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       {codexCatalogDialogOpen ? (
         <CodexModelCatalogDialog
           onClose={() => setCodexCatalogDialogOpen(false)}
-          onSaved={() => loadModels('codex', selectedModel)}
+          onSaved={async () => {
+            await loadModels('codex', selectedModel);
+            await loadCodexReview();
+          }}
         />
       ) : null}
 

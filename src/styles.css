@@ -7021,6 +7021,34 @@ textarea:focus-visible {
   margin-bottom: 16px;
 }
 
+/* 全局审批选择随主页面提交；模型详情复用同一选择器，与显示名称并排。 */
+.agent-review-model-setting {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.codex-catalog-review-field {
+  min-width: 0;
+}
+
+.codex-catalog-review-field .agent-model-trigger {
+  min-height: 40px;
+  padding: 9px 10px;
+}
+
+.codex-catalog-review-field .agent-model-trigger small {
+  display: none;
+}
+
+/* 弹窗表单的通用输入框规则不应覆盖共享选择器内部的搜索框。 */
+.codex-catalog-form .codex-catalog-review-field .agent-model-search input {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .codex-catalog-model-heading > div {
   display: grid;
   gap: 3px;
@@ -7049,7 +7077,8 @@ textarea:focus-visible {
   gap: 14px;
 }
 
-.codex-catalog-form > label {
+.codex-catalog-form > label,
+.codex-catalog-form > .codex-catalog-review-field {
   display: grid;
   align-content: start;
   gap: 7px;

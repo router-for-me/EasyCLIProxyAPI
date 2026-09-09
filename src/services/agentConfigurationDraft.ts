@@ -37,6 +37,7 @@ type ResolveAgentConfigurationActionOptions = {
   appliedModel: string;
   oauthConfiguration: boolean;
   appliedOauthConfiguration: boolean;
+  codexReviewModelChanged?: boolean;
   modelMappings: AgentModelMappings;
   appliedModelMappings: AgentModelMappings;
 };
@@ -88,6 +89,7 @@ export function resolveAgentConfigurationAction({
   appliedModel,
   oauthConfiguration,
   appliedOauthConfiguration,
+  codexReviewModelChanged = false,
   modelMappings,
   appliedModelMappings,
 }: ResolveAgentConfigurationActionOptions): AgentConfigurationAction {
@@ -108,5 +110,6 @@ export function resolveAgentConfigurationAction({
   const oauthChanged = client === 'codex'
     && oauthConfiguration !== appliedOauthConfiguration;
 
-  return modelChanged || oauthChanged ? 'update' : 'close';
+  // 审批模型草稿也使用现有“更新配置”，不能误走“关闭配置修改”。
+  return modelChanged || oauthChanged || (client === 'codex' && codexReviewModelChanged) ? 'update' : 'close';
 }

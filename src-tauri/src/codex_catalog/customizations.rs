@@ -4,9 +4,13 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub(super) type ModelCustomizations = BTreeMap<String, Map<String, Value>>;
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub(super) struct ModelCustomizations {
+    default_auto_review_model: Option<String>,
+    models: BTreeMap<String, Map<String, Value>>,
+}
 
-const EDITABLE_FIELDS: [&str; 11] = [
+const EDITABLE_FIELDS: [&str; 12] = [
     "display_name",
     "description",
     "context_window",
@@ -18,19 +22,24 @@ const EDITABLE_FIELDS: [&str; 11] = [
     "input_modalities",
     "visibility",
     "supports_parallel_tool_calls",
+    "auto_review_model_override",
 ];
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SavedCustomizations {
     version: u32,
-    models: ModelCustomizations,
+    // 未指定全局模型时使用 Codex 默认选择逻辑，不保留模板中的审批覆盖。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_auto_review_model: Option<String>,
+    models: BTreeMap<String, Map<String, Value>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CatalogEditorSnapshot {
     revision: String,
+    default_auto_review_model: Option<String>,
     models: Vec<CatalogEditorModel>,
 }
 
@@ -50,6 +59,13 @@ struct CatalogEditorModel {
 pub(crate) struct CatalogEditorRequest {
     revision: String,
     models: Vec<CatalogEditorModelRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DefaultReviewModelRequest {
+    revision: String,
+    model: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -83,6 +99,11 @@ fn validate_configuration(model: &Map<String, Value>) -> Result<(), String> {
     for field in model.keys() {
         if !EDITABLE_FIELDS.contains(&field.as_str()) {
             return Err(format!("不允许修改模型字段 {field}"));
+        }
+    }
+    if let Some(value) = model.get("auto_review_model_override") {
+        if !value.is_null() && *value != serde_json::json!({"mode": "codex_default"}) {
+            validate_review_model(Some(value.as_str().ok_or("审批模型 ID 必须是字符串")?))?;
         }
     }
     for field in [
@@ -193,16 +214,50 @@ fn validate_configuration(model: &Map<String, Value>) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_review_model(model: Option<&str>) -> Result<(), String> {
+    // 模型 ID 区分大小写并允许内部空格；只拒绝空值、首尾空白和控制字符，不改写代理别名。
+    if model.is_some_and(|id| {
+        id.is_empty() || id.len() > 4_000 || id.trim() != id || id.chars().any(char::is_control)
+    }) {
+        return Err(
+            "审批模型 ID 必须是有效文本，不能包含首尾空白或控制字符，且不超过 4000 字节"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn apply_customizations(
     model: &mut Map<String, Value>,
     customizations: &ModelCustomizations,
 ) -> Result<(), String> {
     let slug = string_value(model, "slug");
-    if let Some(customization) = customizations.get(&normalize_id(&slug)) {
-        model.extend(customization.clone());
+    let customization = customizations.models.get(&normalize_id(&slug));
+    if let Some(customization) = customization {
+        model.extend(
+            customization
+                .iter()
+                .filter(|(field, _)| field.as_str() != "auto_review_model_override")
+                .map(|(field, value)| (field.clone(), value.clone())),
+        );
         validate_configuration(&editable_configuration(model))
             .map_err(|error| format!("模型 {slug} 的自定义配置无效: {error}"))?;
         enable_fast_mode(model);
+    }
+    // 单模型有三态：null/缺省继承全局，明确 Codex 默认则绕过全局，字符串指定模型。
+    // 先移除模板覆盖；Codex 默认必须真正交回客户端选择，不能回退到模板覆盖。
+    let selection = customization.and_then(|fields| fields.get("auto_review_model_override"));
+    let review_model = match selection {
+        None | Some(Value::Null) => customizations.default_auto_review_model.as_deref(),
+        Some(Value::String(model)) => Some(model.as_str()),
+        _ => None,
+    };
+    model.remove("auto_review_model_override");
+    if let Some(review_model) = review_model {
+        model.insert(
+            "auto_review_model_override".to_string(),
+            Value::from(review_model),
+        );
     }
     Ok(())
 }
@@ -226,8 +281,21 @@ pub(super) fn snapshot_for_state(
         let mut model = value.as_object().cloned().ok_or("模型目录条目必须为对象")?;
         let slug = string_value(&model, "slug");
         let key = normalize_id(&slug);
-        let defaults = editable_configuration(&model);
+        let mut defaults = editable_configuration(&model);
+        defaults.insert("auto_review_model_override".to_string(), Value::Null);
         apply_customizations(&mut model, &state.customizations)?;
+        let mut configuration = editable_configuration(&model);
+        // 编辑器展示用户的显式选择；null 表示继承，而不是解析后的实际审批模型。
+        configuration.insert(
+            "auto_review_model_override".to_string(),
+            state
+                .customizations
+                .models
+                .get(&key)
+                .and_then(|fields| fields.get("auto_review_model_override"))
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
         models.push(CatalogEditorModel {
             slug,
             has_official_template: state.sources.templates.contains_key(&key),
@@ -235,8 +303,8 @@ pub(super) fn snapshot_for_state(
                 .iter()
                 .find(|runtime| normalize_id(&runtime.slug) == key)
                 .map_or("template", |runtime| runtime.context_source),
-            customized: state.customizations.contains_key(&key),
-            configuration: editable_configuration(&model),
+            customized: state.customizations.models.contains_key(&key),
+            configuration,
             defaults,
         });
     }
@@ -245,6 +313,7 @@ pub(super) fn snapshot_for_state(
     digest.update(serde_json::to_vec(&state.customizations).map_err(|error| error.to_string())?);
     Ok(CatalogEditorSnapshot {
         revision: format!("{:x}", digest.finalize()),
+        default_auto_review_model: state.customizations.default_auto_review_model.clone(),
         models,
     })
 }
@@ -310,7 +379,11 @@ fn customizations_from_request(
             customizations.insert(key, changes);
         }
     }
-    Ok(customizations)
+    Ok(ModelCustomizations {
+        // 弹窗只保存单模型设置，不能覆盖主页面管理的全局选择。
+        default_auto_review_model: snapshot.default_auto_review_model.clone(),
+        models: customizations,
+    })
 }
 
 fn decode_customizations(content: &[u8]) -> Result<ModelCustomizations, String> {
@@ -322,6 +395,7 @@ fn decode_customizations(content: &[u8]) -> Result<ModelCustomizations, String> 
     if saved.version != 1 {
         return Err("不支持的 Codex 自定义模型配置版本".to_string());
     }
+    validate_review_model(saved.default_auto_review_model.as_deref())?;
     let mut normalized = BTreeMap::new();
     for (slug, model) in saved.models {
         let key = normalize_id(&slug);
@@ -331,7 +405,10 @@ fn decode_customizations(content: &[u8]) -> Result<ModelCustomizations, String> 
         validate_configuration(&model)?;
         normalized.insert(key, model);
     }
-    Ok(normalized)
+    Ok(ModelCustomizations {
+        default_auto_review_model: saved.default_auto_review_model,
+        models: normalized,
+    })
 }
 
 pub(crate) fn load_customizations(path: &Path) -> Result<(), String> {
@@ -356,17 +433,59 @@ fn save_for_state(
 ) -> Result<CatalogEditorSnapshot, String> {
     let snapshot = snapshot_for_state(runtime_models, state)?;
     let customizations = customizations_from_request(&snapshot, request)?;
+    persist_customizations(path, &customizations)?;
+    state.customizations = customizations;
+    snapshot_for_state(runtime_models, state)
+}
+
+fn persist_customizations(path: &Path, customizations: &ModelCustomizations) -> Result<(), String> {
     let saved = SavedCustomizations {
         version: 1,
-        models: customizations,
+        default_auto_review_model: customizations.default_auto_review_model.clone(),
+        models: customizations.models.clone(),
     };
     let content = serde_json::to_vec_pretty(&saved).map_err(|error| error.to_string())?;
     if content.len() > crate::MAX_CODEX_MODEL_CATALOG_BYTES {
         return Err("Codex 自定义模型配置超过大小限制".to_string());
     }
     crate::write_bytes_atomically(path, &content)?;
-    state.customizations = saved.models;
-    snapshot_for_state(runtime_models, state)
+    Ok(())
+}
+
+// 全局选择只由现有“更新配置”入口提交。用候选配置生成目录，应用成功后才持久化。
+// 持有目录锁确保单模型保存和后台同步不会与本次提交交错。
+pub(crate) fn apply_default_review_model<T>(
+    path: &Path,
+    runtime_models: &[CodexRuntimeModel],
+    request: DefaultReviewModelRequest,
+    apply: impl FnOnce(&str) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut state = catalog_state()?
+        .write()
+        .map_err(|_| "Codex 模型目录内存锁已损坏")?;
+    apply_default_review_model_for_state(path, runtime_models, request, &mut state, apply)
+}
+
+fn apply_default_review_model_for_state<T>(
+    path: &Path,
+    runtime_models: &[CodexRuntimeModel],
+    request: DefaultReviewModelRequest,
+    state: &mut CatalogState,
+    apply: impl FnOnce(&str) -> Result<T, String>,
+) -> Result<T, String> {
+    if request.revision != snapshot_for_state(runtime_models, state)?.revision {
+        return Err("CODEX_MODEL_CATALOG_CHANGED".to_string());
+    }
+    validate_review_model(request.model.as_deref())?;
+    let mut candidate = state.customizations.clone();
+    candidate.default_auto_review_model = request.model;
+    let prepared = prepare_catalog_with_customizations(runtime_models, &state.sources, &candidate)?;
+    let result = apply(&prepared.json)?;
+    persist_customizations(path, &candidate).map_err(|error| {
+        format!("Codex 配置已应用，但审批模型设置保存失败，请重试更新配置: {error}")
+    })?;
+    state.customizations = candidate;
+    Ok(result)
 }
 
 pub(crate) fn save_customizations(
@@ -406,6 +525,328 @@ mod tests {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[test]
+    fn approval_selection_matrix_removes_templates_without_materializing_inheritance() {
+        // 每种单模型状态分别覆盖全局默认/指定模型，以及有无模板覆盖两种情况。
+        for global in [None, Some("review-a")] {
+            for selection in [
+                Value::Null,
+                serde_json::json!({"mode":"codex_default"}),
+                Value::from("review-b"),
+            ] {
+                for template in [None, Some("template-review")] {
+                    let settings = ModelCustomizations {
+                        default_auto_review_model: global.map(str::to_string),
+                        models: BTreeMap::from([(
+                            "main-a".to_string(),
+                            Map::from_iter([(
+                                "auto_review_model_override".to_string(),
+                                selection.clone(),
+                            )]),
+                        )]),
+                    };
+                    let mut model = serde_json::json!({"slug":"main-a"})
+                        .as_object()
+                        .unwrap()
+                        .clone();
+                    if let Some(template) = template {
+                        model.insert(
+                            "auto_review_model_override".to_string(),
+                            Value::from(template),
+                        );
+                    }
+                    // 使用完整模板满足其他字段的既有校验。
+                    let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
+                    let prepared = prepare_catalog_with_customizations(
+                        &[runtime_model("main-a")],
+                        &sources,
+                        &Default::default(),
+                    )
+                    .unwrap();
+                    let root: Value = serde_json::from_str(&prepared.json).unwrap();
+                    let mut full = root["models"][0].as_object().unwrap().clone();
+                    full.extend(model);
+                    apply_customizations(&mut full, &settings).unwrap();
+                    let expected = if selection.is_null() {
+                        global
+                    } else {
+                        selection.as_str()
+                    };
+                    assert_eq!(
+                        full.get("auto_review_model_override")
+                            .and_then(Value::as_str),
+                        expected
+                    );
+                    if expected.is_none() {
+                        assert!(!full.contains_key("auto_review_model_override"));
+                    }
+                    assert_eq!(
+                        settings.models["main-a"]["auto_review_model_override"],
+                        selection
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn global_apply_preserves_model_choices_and_rejects_stale_or_failed_updates() {
+        let mut state = CatalogState {
+            sources: parse_sources(MODEL_CATALOG_JSON).unwrap(),
+            json: MODEL_CATALOG_JSON.to_string(),
+            customizations: decode_customizations(br#"{"version":1,"default_auto_review_model":"review-old","models":{"main-b":{"auto_review_model_override":{"mode":"codex_default"}}}}"#).unwrap(),
+        };
+        let runtime = vec![runtime_model("main-a"), runtime_model("main-b")];
+        let path = temporary_path();
+        let before = state.customizations.clone();
+        let revision = snapshot_for_state(&runtime, &state).unwrap().revision;
+        let failed = apply_default_review_model_for_state(
+            &path,
+            &runtime,
+            DefaultReviewModelRequest {
+                revision: revision.clone(),
+                model: Some("review-new".to_string()),
+            },
+            &mut state,
+            |_| Err::<(), _>("apply failed".to_string()),
+        );
+        assert!(failed.is_err());
+        assert_eq!(state.customizations, before);
+        assert!(!path.exists());
+        apply_default_review_model_for_state(
+            &path,
+            &runtime,
+            DefaultReviewModelRequest {
+                revision: revision.clone(),
+                model: Some("review-new".to_string()),
+            },
+            &mut state,
+            |catalog| {
+                let root: Value = serde_json::from_str(catalog).unwrap();
+                for model in root["models"].as_array().unwrap() {
+                    if model["slug"] == "main-a" {
+                        assert_eq!(model["auto_review_model_override"], "review-new");
+                    } else {
+                        assert!(model.get("auto_review_model_override").is_none());
+                    }
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(state.customizations.models, before.models);
+        assert_eq!(
+            decode_customizations(&std::fs::read(&path).unwrap()).unwrap(),
+            state.customizations
+        );
+        let result: Result<(), String> = apply_default_review_model_for_state(
+            &path,
+            &runtime,
+            DefaultReviewModelRequest {
+                revision,
+                model: None,
+            },
+            &mut state,
+            |_| panic!("过期请求不能应用配置"),
+        );
+        assert!(result.unwrap_err().contains("CODEX_MODEL_CATALOG_CHANGED"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn approval_models_inherit_override_and_persist_without_materializing_defaults() {
+        let mut state = CatalogState {
+            sources: parse_sources(MODEL_CATALOG_JSON).unwrap(),
+            json: MODEL_CATALOG_JSON.to_string(),
+            customizations: Default::default(),
+        };
+        let mut runtime_models = vec![runtime_model("main-a"), runtime_model("main-b")];
+        let path = temporary_path();
+        state.customizations.default_auto_review_model = Some("team/Review Default".to_string());
+        let snapshot = snapshot_for_state(&runtime_models, &state).unwrap();
+        let request = CatalogEditorRequest {
+            revision: snapshot.revision,
+            models: snapshot
+                .models
+                .into_iter()
+                .map(|model| {
+                    let mut configuration = model.configuration;
+                    if model.slug == "main-b" {
+                        configuration.insert(
+                            "auto_review_model_override".to_string(),
+                            Value::from("review-special"),
+                        );
+                    }
+                    CatalogEditorModelRequest {
+                        slug: model.slug,
+                        configuration,
+                    }
+                })
+                .collect(),
+        };
+        let saved = save_for_state(&path, &runtime_models, request, &mut state).unwrap();
+        assert_eq!(
+            saved.default_auto_review_model.as_deref(),
+            Some("team/Review Default")
+        );
+        assert!(!state.customizations.models.contains_key("main-a"));
+
+        // 模拟重启和新增模型；审批目标暂时不在列表中也必须原样保留。
+        state.customizations = decode_customizations(&std::fs::read(&path).unwrap()).unwrap();
+        runtime_models.push(runtime_model("main-c"));
+        let generated = prepare_catalog_with_customizations(
+            &runtime_models,
+            &state.sources,
+            &state.customizations,
+        )
+        .unwrap();
+        let generated: Value = serde_json::from_str(&generated.json).unwrap();
+        for model in generated["models"].as_array().unwrap() {
+            let expected = if model["slug"] == "main-b" {
+                "review-special"
+            } else {
+                "team/Review Default"
+            };
+            assert_eq!(model["auto_review_model_override"], expected);
+        }
+
+        let snapshot = snapshot_for_state(&runtime_models, &state).unwrap();
+        assert!(snapshot
+            .models
+            .iter()
+            .filter(|model| model.slug != "main-b")
+            .all(|model| model.configuration["auto_review_model_override"].is_null()));
+        let stale_revision = snapshot.revision.clone();
+        apply_default_review_model_for_state(
+            &path,
+            &runtime_models,
+            DefaultReviewModelRequest {
+                revision: snapshot.revision.clone(),
+                model: Some("review-next".to_string()),
+            },
+            &mut state,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let snapshot = snapshot_for_state(&runtime_models, &state).unwrap();
+        let request = CatalogEditorRequest {
+            revision: snapshot.revision,
+            models: snapshot
+                .models
+                .into_iter()
+                .map(|model| CatalogEditorModelRequest {
+                    slug: model.slug,
+                    configuration: model.configuration,
+                })
+                .collect(),
+        };
+        let saved = save_for_state(&path, &runtime_models, request, &mut state).unwrap();
+        assert_ne!(saved.revision, stale_revision);
+        let generated = prepare_catalog_with_customizations(
+            &runtime_models,
+            &state.sources,
+            &state.customizations,
+        )
+        .unwrap();
+        let generated: Value = serde_json::from_str(&generated.json).unwrap();
+        for model in generated["models"].as_array().unwrap() {
+            assert_eq!(
+                model["auto_review_model_override"],
+                if model["slug"] == "main-b" {
+                    "review-special"
+                } else {
+                    "review-next"
+                }
+            );
+        }
+
+        // 清除单模型覆盖后恢复继承；编辑器不应把统一默认保存成单模型固定值。
+        let request = CatalogEditorRequest {
+            revision: saved.revision,
+            models: saved
+                .models
+                .into_iter()
+                .map(|model| CatalogEditorModelRequest {
+                    slug: model.slug,
+                    configuration: model.defaults,
+                })
+                .collect(),
+        };
+        save_for_state(&path, &runtime_models, request, &mut state).unwrap();
+        assert!(state.customizations.models.is_empty());
+        let generated = prepare_catalog_with_customizations(
+            &runtime_models,
+            &state.sources,
+            &state.customizations,
+        )
+        .unwrap();
+        let generated: Value = serde_json::from_str(&generated.json).unwrap();
+        assert!(generated["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|model| model["auto_review_model_override"] == "review-next"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn approval_defaults_remove_template_overrides_and_read_legacy_settings() {
+        let legacy = decode_customizations(br#"{"version":1,"models":{}}"#).unwrap();
+        assert_eq!(legacy, ModelCustomizations::default());
+        let prepared = prepare_catalog_with_customizations(
+            &[runtime_model("main-a")],
+            &parse_sources(MODEL_CATALOG_JSON).unwrap(),
+            &legacy,
+        )
+        .unwrap();
+        let prepared: Value = serde_json::from_str(&prepared.json).unwrap();
+        let mut original = prepared["models"][0].as_object().unwrap().clone();
+        original.insert(
+            "auto_review_model_override".to_string(),
+            Value::from("template-review"),
+        );
+        let mut model = original.clone();
+        apply_customizations(&mut model, &legacy).unwrap();
+        original.remove("auto_review_model_override");
+        assert_eq!(model, original);
+
+        // 旧配置中的 null 仍是继承；全局未指定时清除模板覆盖，交给 Codex 默认逻辑。
+        let settings = decode_customizations(
+            br#"{"version":1,"models":{"main-a":{"auto_review_model_override":null}}}"#,
+        )
+        .unwrap();
+        apply_customizations(&mut model, &settings).unwrap();
+        assert!(!model.contains_key("auto_review_model_override"));
+        assert_eq!(model, original);
+
+        let mut no_template_override = serde_json::json!({"slug":"main-b"})
+            .as_object()
+            .unwrap()
+            .clone();
+        apply_customizations(&mut no_template_override, &legacy).unwrap();
+        assert!(!no_template_override.contains_key("auto_review_model_override"));
+    }
+
+    #[test]
+    fn approval_model_ids_are_validated_without_requiring_catalog_membership() {
+        for value in [
+            serde_json::json!(""),
+            serde_json::json!(" review"),
+            serde_json::json!("review\n"),
+            serde_json::json!(42),
+        ] {
+            let settings =
+                serde_json::json!({"version":1,"default_auto_review_model": value,"models":{}});
+            assert!(decode_customizations(&serde_json::to_vec(&settings).unwrap()).is_err());
+            let settings = serde_json::json!({"version":1,"models":{"main":{"auto_review_model_override":value}}});
+            assert!(decode_customizations(&serde_json::to_vec(&settings).unwrap()).is_err());
+        }
+        assert!(decode_customizations(
+            br#"{"version":1,"default_auto_review_model":"team/Codex Auto Review","models":{}}"#
+        )
+        .is_ok());
     }
 
     #[test]
@@ -467,7 +908,7 @@ mod tests {
         )
         .unwrap();
         assert!(!restored.models[0].customized);
-        assert!(state.customizations.is_empty());
+        assert!(state.customizations.models.is_empty());
         let persisted: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(persisted["models"], serde_json::json!({}));
 
@@ -529,7 +970,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(state.customizations.is_empty());
+        assert!(state.customizations.models.is_empty());
         let generated =
             prepare_catalog_with_customizations(&[runtime], &state.sources, &state.customizations)
                 .unwrap();
@@ -564,7 +1005,7 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, "CODEX_MODEL_CATALOG_CHANGED");
-        assert!(state.customizations.is_empty());
+        assert!(state.customizations.models.is_empty());
         assert!(!path.exists());
     }
 }
