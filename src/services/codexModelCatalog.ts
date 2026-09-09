@@ -20,6 +20,8 @@ export type CodexModelConfiguration = {
   input_modalities: Array<'text' | 'image'>;
   visibility: 'list' | 'hide' | 'none';
   supports_parallel_tool_calls: boolean;
+  // null 表示继承统一默认值；实际模型 ID 由后端生成目录时解析。
+  auto_review_model_override: string | null;
 };
 
 export type CodexCatalogEditorModel = {
@@ -33,6 +35,7 @@ export type CodexCatalogEditorModel = {
 
 export type CodexCatalogEditorSnapshot = {
   revision: string;
+  defaultAutoReviewModel: string | null;
   models: CodexCatalogEditorModel[];
 };
 
@@ -67,6 +70,7 @@ export function sameCodexModelConfiguration(left: CodexModelConfiguration, right
     && left.default_reasoning_level === right.default_reasoning_level
     && left.visibility === right.visibility
     && left.supports_parallel_tool_calls === right.supports_parallel_tool_calls
+    && left.auto_review_model_override === right.auto_review_model_override
     && left.input_modalities.join(',') === right.input_modalities.join(',')
     && left.supported_reasoning_levels.length === right.supported_reasoning_levels.length
     && left.supported_reasoning_levels.every((level, index) => level.effort === right.supported_reasoning_levels[index].effort

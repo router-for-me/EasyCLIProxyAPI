@@ -25,9 +25,17 @@ const configuration = (): CodexModelConfiguration => ({
   input_modalities: ['text', 'image'],
   visibility: 'list',
   supports_parallel_tool_calls: false,
+  auto_review_model_override: null,
 });
 
 describe('Codex 模型列表编辑', () => {
+  test('审批模型显式选择与继承状态不同，恢复默认不会固化统一默认值', () => {
+    const inherited = configuration();
+    const selected = { ...inherited, auto_review_model_override: 'team/Codex Auto Review' };
+    expect(sameCodexModelConfiguration(inherited, selected)).toBeFalse();
+    expect(cloneCodexModelConfiguration(selected).auto_review_model_override).toBe('team/Codex Auto Review');
+    expect(cloneCodexModelConfiguration(inherited).auto_review_model_override).toBeNull();
+  });
   test("区分内核模型定义与兼容目录的后备上下文", () => {
     const model: CodexCatalogEditorModel = {
       slug: "model-a", hasOfficialTemplate: true, customized: false,

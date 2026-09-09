@@ -7021,6 +7021,13 @@ textarea:focus-visible {
   margin-bottom: 16px;
 }
 
+/* 统一审批设置独立于当前主模型，切换左侧模型时保持同一份草稿。 */
+.codex-catalog-review-default {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--theme-e5e1d9);
+}
+
 .codex-catalog-model-heading > div {
   display: grid;
   gap: 3px;
