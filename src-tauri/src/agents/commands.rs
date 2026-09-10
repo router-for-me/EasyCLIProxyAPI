@@ -504,6 +504,7 @@ pub(crate) async fn create_thinking_alias(
     alias: String,
     effort: String,
     fast: Option<bool>,
+    original_alias: Option<String>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
     let source_id = source_id.trim().to_string();
@@ -518,6 +519,10 @@ pub(crate) async fn create_thinking_alias(
     };
     let fast = fast.unwrap_or(false);
     let content = fetch_management_config_yaml(&config).await?;
+    let working_content = match original_alias.as_deref() {
+        Some(original) => prepare_model_alias_edit(&content, original)?,
+        None => content.clone(),
+    };
     let available_models =
         fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
     let definitions = fetch_oauth_model_definitions(&config).await;
@@ -528,12 +533,33 @@ pub(crate) async fn create_thinking_alias(
     } else {
         AliasSourceCapability::Base
     };
-    let sources =
+    let sources = resolved_oauth_alias_sources(
+        &working_content,
+        &definitions,
+        &available_models,
+        capability,
+    )?;
+    // Removing a configured alias can shift model indices in source IDs.
+    let original_sources =
         resolved_oauth_alias_sources(&content, &definitions, &available_models, capability)?;
-    let source = sources
+    let original_source = original_sources
         .iter()
-        .find(|source| source.source.id == source_id)
-        .cloned()
+        .find(|source| source.source.id == source_id);
+    let candidates = sources
+        .iter()
+        .filter(|source| {
+            if original_alias.is_none() {
+                return source.source.id == source_id;
+            }
+            original_source.is_some_and(|original| {
+                source.source.model == original.source.model
+                    && source.source.kind == original.source.kind
+                    && source.source.provider == original.source.provider
+            })
+        })
+        .collect::<Vec<_>>();
+    let source = (candidates.len() == 1)
+        .then(|| candidates[0].clone())
         .ok_or_else(|| {
             "原模型已不在内核当前可用模型中，或其配置来源已经变化，请刷新后重新选择".to_string()
         })?;
@@ -556,13 +582,15 @@ pub(crate) async fn create_thinking_alias(
         return Err("别名模型不能和原模型相同".to_string());
     }
 
-    if available_models
-        .iter()
-        .any(|model| model.name.eq_ignore_ascii_case(&alias))
-    {
+    if available_models.iter().any(|model| {
+        model.name.eq_ignore_ascii_case(&alias)
+            && !original_alias
+                .as_deref()
+                .is_some_and(|original| original.eq_ignore_ascii_case(&alias))
+    }) {
         return Err(format!("{alias} 已经是实际模型 ID，不能再作为别名"));
     }
-    let document = serde_norway::from_str::<serde_norway::Value>(&content)
+    let document = serde_norway::from_str::<serde_norway::Value>(&working_content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
     let root = document
         .as_mapping()
@@ -571,7 +599,7 @@ pub(crate) async fn create_thinking_alias(
         return Err(format!("别名模型 {alias} 已存在"));
     }
 
-    let updated = add_model_alias_to_yaml(&content, &source, &alias, &effort, fast)?;
+    let updated = add_model_alias_to_yaml(&working_content, &source, &alias, &effort, fast)?;
     put_management_alias_config_changes(&config, &content, &updated).await?;
     thinking_aliases_from_yaml(&updated)
 }

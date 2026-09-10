@@ -436,7 +436,7 @@ export const en: Record<MessageKey, string> = {
   'aliases.createdList.description': 'Each alias shows its fixed reasoning effort and Fast status',
   'aliases.loadingConfig': 'Loading configuration',
   'aliases.empty.title': 'No model aliases yet',
-  'aliases.empty.description': 'Select a model and alias option on the left to create one',
+  'aliases.empty.description': 'Click “Create Alias” to add your first model alias',
   'aliases.unboundEffort': 'No effort bound',
   'aliases.delete': 'Delete {alias}',
   'speedAliases.created': 'Created {alias} with the Fast request tier fixed',

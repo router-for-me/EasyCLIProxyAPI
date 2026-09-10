@@ -671,3 +671,32 @@ fn speed_alias_supports_codex_api_model_entries() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "codex-api");
 }
+
+#[test]
+fn edit_model_alias_replaces_name_effort_and_fast_in_memory() {
+    let source = test_oauth_thinking_source("codex", "gpt-test");
+    let original =
+        add_model_alias_to_yaml("port: 8317\n", &source, "old-alias", "high", true).unwrap();
+    let prepared = prepare_model_alias_edit(&original, "old-alias").unwrap();
+    let updated = add_model_alias_to_yaml(&prepared, &source, "new-alias", "low", false).unwrap();
+    let entries = thinking_aliases_from_yaml(&updated).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].alias, "new-alias");
+    assert_eq!(entries[0].effort.as_deref(), Some("low"));
+    assert!(speed_aliases_from_yaml(&updated).unwrap().is_empty());
+    assert!(updated.contains("port: 8317"));
+    assert!(!updated.contains("old-alias"));
+    let unchanged_name =
+        add_model_alias_to_yaml(&prepared, &source, "old-alias", "", false).unwrap();
+    assert_eq!(
+        thinking_aliases_from_yaml(&unchanged_name).unwrap()[0].effort,
+        None
+    );
+}
+
+#[test]
+fn edit_model_alias_rejects_missing_and_ambiguous_aliases() {
+    assert!(prepare_model_alias_edit("port: 8317\n", "missing").is_err());
+    let content = "oauth-model-alias:\n  codex:\n    - name: model-a\n      alias: shared\n  claude:\n    - name: model-b\n      alias: shared\n";
+    assert!(prepare_model_alias_edit(content, "shared").is_err());
+}

@@ -1619,6 +1619,46 @@ pub(crate) fn insert_thinking_effort_params(
     Ok(())
 }
 
+// Build the replacement in memory; callers only persist after all validation succeeds.
+pub(crate) fn prepare_model_alias_edit(content: &str, alias: &str) -> Result<String, String> {
+    let mut document = yaml_serde_edit::YamlValue::parse(content)
+        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+    let mut updated = document.get().clone();
+    let root = updated
+        .as_mapping_mut()
+        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+    let matches = |model: &&serde_norway::Value| {
+        configured_model_identity(model)
+            .is_some_and(|(_, name, _)| name.eq_ignore_ascii_case(alias))
+    };
+    let api_count = MODEL_ALIAS_CONFIG_SECTIONS
+        .into_iter()
+        .filter_map(|section| yaml_mapping_value(root, section))
+        .filter_map(serde_norway::Value::as_sequence)
+        .flatten()
+        .filter_map(serde_norway::Value::as_mapping)
+        .filter_map(|provider| yaml_mapping_value(provider, "models"))
+        .filter_map(serde_norway::Value::as_sequence)
+        .flatten()
+        .filter(matches)
+        .count();
+    let oauth_count = yaml_mapping_value(root, "oauth-model-alias")
+        .and_then(serde_norway::Value::as_mapping)
+        .into_iter()
+        .flat_map(|channels| channels.values())
+        .filter_map(serde_norway::Value::as_sequence)
+        .flatten()
+        .filter(matches)
+        .count();
+    if api_count + oauth_count != 1 {
+        return Err("别名不存在或存在多个同名映射，请刷新并检查配置后重试".to_string());
+    }
+    remove_existing_claude_model_alias(root, alias)?;
+    remove_thinking_payload_model(root, alias)?;
+    remove_speed_payload_model(root, alias)?;
+    render_updated_core_yaml(&mut document, updated)
+}
+
 pub(crate) fn add_model_alias_to_yaml(
     content: &str,
     source: &ResolvedThinkingAliasSource,
