@@ -305,7 +305,7 @@ pub(crate) fn load_agent_applied_state(
 }
 
 pub(crate) fn read_agent_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    if !path.is_file() {
+    if !path.exists() {
         return Ok(None);
     }
     fs::read(path)
@@ -1402,119 +1402,11 @@ pub(crate) fn commit_agent_configuration(
     model: &str,
     updates: &[AgentFileUpdate],
     outcome: &str,
-    claude_desktop_model_mappings: Option<&ClaudeDesktopModelMappings>,
+    _claude_desktop_model_mappings: Option<&ClaudeDesktopModelMappings>,
 ) -> Result<AgentConfigActionResult, String> {
-    let base_paths = agent_config_paths(client, home);
-    let state_path = agent_state_path(&base_paths)?;
-    let existing_state = load_agent_applied_state(client, home)?;
-    let previous_state = read_agent_bytes(&state_path)?;
-    let mut legacy_backups = previous_state
-        .as_deref()
-        .and_then(|content| std::str::from_utf8(content).ok())
-        .map(legacy_agent_backup_paths)
-        .unwrap_or_default();
-    legacy_backups.extend(
-        expected_agent_record_paths(client, &base_paths)
-            .iter()
-            .filter_map(|path| agent_backup_path(path).ok()),
-    );
-    legacy_backups.sort();
-    legacy_backups.dedup();
-
-    let mut snapshots = updates
-        .iter()
-        .map(|update| Ok((update.path.clone(), read_agent_bytes(&update.path)?)))
-        .collect::<Result<Vec<_>, String>>()?;
-    snapshots.push((state_path.clone(), previous_state));
-
-    let mut created_backup_paths = Vec::new();
-    let backup_files =
-        if let Some(state) = existing_state.filter(|state| !state.backup_files.is_empty()) {
-            let mut backup_files = state.backup_files;
-            let missing_updates = updates
-                .iter()
-                .filter(|update| !backup_files.iter().any(|file| file.path == update.path))
-                .map(|update| AgentFileUpdate {
-                    path: update.path.clone(),
-                    after: update.after.clone(),
-                })
-                .collect::<Vec<_>>();
-            let added_backups = prepare_agent_session_backups(client, &missing_updates)?;
-            created_backup_paths.extend(
-                added_backups
-                    .iter()
-                    .filter(|file| file.existed_before)
-                    .map(|file| file.backup_path.clone()),
-            );
-            backup_files.extend(added_backups);
-            backup_files
-        } else {
-            let backup_files = prepare_agent_session_backups(client, updates)?;
-            created_backup_paths.extend(
-                backup_files
-                    .iter()
-                    .filter(|file| file.existed_before)
-                    .map(|file| file.backup_path.clone()),
-            );
-            backup_files
-        };
-
-    let transaction = (|| -> Result<Vec<String>, String> {
-        let mut changed = Vec::new();
-        for update in updates {
-            let next = update.after.as_bytes();
-            if read_agent_bytes(&update.path)?.as_deref() == Some(next) {
-                continue;
-            }
-            write_agent_configuration_file(client, &update.path, next)?;
-            changed.push(path_to_string(&update.path));
-        }
-        let state = AgentAppliedState {
-            version: AGENT_APPLIED_STATE_VERSION,
-            client: client.id().to_string(),
-            model: model.to_string(),
-            configuration_revision: AGENT_CONFIGURATION_REVISION,
-            claude_desktop_model_mappings: (client == AgentClient::ClaudeDesktop)
-                .then(|| claude_desktop_model_mappings.cloned())
-                .flatten(),
-            backup_files: backup_files.clone(),
-            updated_at_unix: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        };
-        write_agent_applied_state(&state_path, &state)?;
-        Ok(changed)
-    })();
-
-    match transaction {
-        Ok(changed) => {
-            for backup_path in legacy_backups {
-                if backup_path.is_file() {
-                    let _ = fs::remove_file(backup_path);
-                }
-            }
-            Ok(action_result(
-                outcome,
-                true,
-                Some(model.to_string()),
-                changed,
-                Vec::new(),
-            ))
-        }
-        Err(error) => {
-            let rollback = restore_agent_snapshots_direct(&snapshots);
-            for backup_path in created_backup_paths {
-                if backup_path.is_file() {
-                    let _ = fs::remove_file(backup_path);
-                }
-            }
-            match rollback {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(format!("{error}；回滚配置失败: {rollback_error}")),
-            }
-        }
-    }
+    let paths = history_paths(client.id(), home)?;
+    let before = history_images(&paths)?;
+    history_updates(client.id(), home, &before, updates, outcome, Some(model.to_string()), _claude_desktop_model_mappings)
 }
 
 pub(crate) fn sync_codex_model_catalog_if_configured(
@@ -1529,6 +1421,7 @@ pub(crate) fn sync_codex_model_catalog_if_configured(
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+    let before = history_images(&history_paths(client.id(), home)?)?;
     let (configured, current_model, _) =
         inspect_agent_managed_config(client, &paths, port, api_key)?;
     if !configured {
@@ -1585,25 +1478,7 @@ pub(crate) fn sync_codex_model_catalog_if_configured(
         return Ok(false);
     }
 
-    if load_agent_applied_state(client, home)?.is_none() {
-        for path in [paths[0].clone(), codex_model_catalog_path(home)] {
-            if !updates.iter().any(|update| update.path == path) {
-                let after = fs::read_to_string(&path)
-                    .map_err(|error| format!("读取 Codex 配置以创建备份失败: {error}"))?;
-                updates.push(AgentFileUpdate { path, after });
-            }
-        }
-    }
-    updates.sort_by_key(|update| update.path != paths[0]);
-
-    let result = commit_agent_configuration(
-        client,
-        home,
-        next_model.unwrap_or_default(),
-        &updates,
-        "updated",
-        None,
-    )?;
+    let result = history_updates(client.id(), home, &before, &updates, "sync", next_model.map(str::to_string), None)?;
     Ok(!result.changed_files.is_empty())
 }
 
@@ -1641,16 +1516,10 @@ pub(crate) fn apply_agent_configuration_with_oauth(
     model: &str,
     options: AgentConfigurationOptions<'_>,
 ) -> Result<AgentConfigActionResult, String> {
-    let claude_desktop_model_mappings = options.claude_desktop_model_mappings;
+    let before = history_images(&history_paths(client.id(), home)?)?;
+    let mappings = options.claude_desktop_model_mappings;
     let updates = build_agent_updates_with_oauth(client, home, port, api_key, model, options)?;
-    commit_agent_configuration(
-        client,
-        home,
-        model,
-        &updates,
-        "applied",
-        claude_desktop_model_mappings,
-    )
+    history_updates(client.id(), home, &before, &updates, "update", Some(model.to_string()), mappings)
 }
 
 #[cfg(test)]
@@ -1709,6 +1578,7 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
         claude_code_model_mappings,
         claude_desktop_model_mappings,
     } = request;
+    let before = history_images(&history_paths(client.id(), home)?)?;
     if client == AgentClient::DeepSeekHarness {
         let updates = build_agent_updates_with_oauth(
             client,
@@ -1724,14 +1594,7 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
                 claude_desktop_model_mappings,
             },
         )?;
-        return commit_agent_configuration(
-            client,
-            home,
-            model,
-            &updates,
-            "default",
-            claude_desktop_model_mappings,
-        );
+        return history_updates(client.id(), home, &before, &updates, "default", Some(model.to_string()), claude_desktop_model_mappings);
     }
     let paths = agent_config_paths(client, home);
     let contents = fresh_agent_contents_with_oauth(
@@ -1762,16 +1625,11 @@ pub(crate) fn reset_agent_configuration_to_default_with_oauth(
             path: codex_model_catalog_path(home),
             after: catalog.to_string(),
         });
-        updates.push(build_codex_auth_update(home, api_key, oauth_configuration)?);
+        updates.push(if oauth_configuration { build_codex_auth_update(home, api_key, true)? } else {
+            AgentFileUpdate { path: codex_configuration_directory(home).join("auth.json"), after: build_codex_api_auth(api_key)? }
+        });
     }
-    commit_agent_configuration(
-        client,
-        home,
-        model,
-        &updates,
-        "default",
-        claude_desktop_model_mappings,
-    )
+    history_updates(client.id(), home, &before, &updates, "default", Some(model.to_string()), claude_desktop_model_mappings)
 }
 
 #[cfg(test)]
@@ -1890,6 +1748,7 @@ pub(crate) fn action_result(
         model,
         changed_files,
         conflict_files,
+        history_version: None,
     }
 }
 

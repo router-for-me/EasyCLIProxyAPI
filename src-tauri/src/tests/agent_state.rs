@@ -167,45 +167,26 @@ fn codex_oauth_requires_auth_json_with_tokens() {
 }
 
 #[test]
-fn agent_configuration_is_restored_from_the_dated_session_backup_when_closed() {
-    let home = agent_test_home("session-backup");
-    let path = home.join(".config/opencode/opencode.json");
-    let original = b"{\"provider\":\"original\"}";
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, original).unwrap();
-
-    commit_agent_configuration(
-        AgentClient::OpenCode,
-        &home,
-        "gpt-test",
-        &[AgentFileUpdate {
-            path: path.clone(),
-            after: "{\"provider\":\"managed\"}".to_string(),
-        }],
-        "applied",
-        None,
-    )
-    .unwrap();
-
-    let backup = dated_agent_backup_path(&path).unwrap();
-    assert!(backup.is_file());
-    assert_eq!(fs::read(&backup).unwrap(), original);
-    assert!(fs::read_to_string(&path).unwrap().contains("managed"));
-    let inspection = inspect_agent_application(AgentClient::OpenCode, &home);
-    assert_eq!(inspection.state, "applied");
-    assert!(inspection.backup_available);
-
-    restore_agent_session_configuration(AgentClient::OpenCode, &home).unwrap();
-    assert_eq!(fs::read(&path).unwrap(), original);
-    assert!(!backup.exists());
-    assert!(!agent_state_path(std::slice::from_ref(&path))
-        .unwrap()
-        .exists());
+fn successive_updates_and_noop_have_independent_history() {
+    let home = agent_test_home("history-first-update");
+    let models = test_agent_models(&["gpt-one", "gpt-two"]);
+    for model in ["gpt-one", "gpt-two"] {
+        let result = apply_agent_configuration(AgentClient::OpenCode, &home, 8317, DEFAULT_API_KEY, model, &models, None).unwrap();
+        assert_eq!(result.outcome, "updated");
+        assert!(result.history_version.is_some());
+    }
+    assert_eq!(test_history_count(AgentClient::OpenCode, &home), 4);
+    let result = apply_agent_configuration(AgentClient::OpenCode, &home, 8317, DEFAULT_API_KEY, "gpt-two", &models, None).unwrap();
+    assert_eq!(result.outcome, "unchanged");
+    assert_eq!(test_history_count(AgentClient::OpenCode, &home), 4);
+    test_restore_history(AgentClient::OpenCode, &home, "update");
+    let path = agent_config_paths(AgentClient::OpenCode, &home).remove(0);
+    assert!(fs::read_to_string(path).unwrap().contains("cpa-gui/gpt-one"));
     fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
-fn deepseek_harness_session_restore_keeps_concurrent_unmanaged_yaml_changes() {
+fn deepseek_harness_history_restore_keeps_concurrent_unmanaged_yaml_changes() {
     let home = agent_test_home("deepseek-harness-session-restore");
     let paths = agent_config_paths(AgentClient::DeepSeekHarness, &home);
     fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
@@ -265,7 +246,7 @@ agent-default-model:
         .unwrap();
     fs::write(&paths[1], credentials).unwrap();
 
-    restore_agent_session_configuration(AgentClient::DeepSeekHarness, &home).unwrap();
+    test_restore_history(AgentClient::DeepSeekHarness, &home, "before-update");
     let settings: serde_norway::Value =
         serde_norway::from_str(&fs::read_to_string(&paths[0]).unwrap()).unwrap();
     let credentials: serde_norway::Value =
@@ -297,7 +278,7 @@ agent-default-model:
 }
 
 #[test]
-fn opencode_runtime_edits_survive_close_and_next_apply_owns_conflicts() {
+fn opencode_runtime_edits_survive_history_restore_and_next_apply_owns_conflicts() {
     let home = agent_test_home("opencode-runtime-edit-merge");
     let path = home.join(".config/opencode/opencode.json");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -331,7 +312,7 @@ fn opencode_runtime_edits_survive_close_and_next_apply_owns_conflicts() {
     runtime["model"] = serde_json::json!("cpa-gui/agent-overwrite");
     fs::write(&path, serde_json::to_string_pretty(&runtime).unwrap()).unwrap();
 
-    restore_agent_session_configuration(AgentClient::OpenCode, &home).unwrap();
+    test_restore_history(AgentClient::OpenCode, &home, "before-update");
     let closed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(closed["keep"], "root");
@@ -376,12 +357,12 @@ fn opencode_runtime_edits_survive_close_and_next_apply_owns_conflicts() {
     assert_eq!(reapplied["agentAdded"]["enabled"], true);
     assert_eq!(reapplied["provider"]["other"]["runtimeAdded"], 42);
 
-    restore_agent_session_configuration(AgentClient::OpenCode, &home).unwrap();
+    test_restore_history(AgentClient::OpenCode, &home, "before-update");
     fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
-fn zcode_runtime_edits_survive_close_and_original_provider_is_restored() {
+fn zcode_runtime_edits_survive_history_restore_and_original_provider_is_restored() {
     let home = agent_test_home("zcode-runtime-edit-merge");
     let path = home.join(".zcode/v2/config.json");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -412,7 +393,7 @@ fn zcode_runtime_edits_survive_close_and_original_provider_is_restored() {
         serde_json::json!("https://agent-overwrite.invalid");
     fs::write(&path, serde_json::to_string_pretty(&runtime).unwrap()).unwrap();
 
-    restore_agent_session_configuration(AgentClient::ZCode, &home).unwrap();
+    test_restore_history(AgentClient::ZCode, &home, "before-update");
     let closed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(closed["keep"], "root");
@@ -438,7 +419,7 @@ fn zcode_runtime_edits_survive_close_and_original_provider_is_restored() {
 }
 
 #[test]
-fn zcode_legacy_single_file_state_upgrades_and_restores_cli_config() {
+fn zcode_incomplete_legacy_backup_is_preserved_and_warned() {
     let home = agent_test_home("zcode-legacy-state-upgrade");
     let paths = agent_config_paths(AgentClient::ZCode, &home);
     fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
@@ -488,23 +469,19 @@ fn zcode_legacy_single_file_state_upgrades_and_restores_cli_config() {
         None,
     )
     .unwrap();
-    let upgraded = load_agent_applied_state(AgentClient::ZCode, &home)
-        .unwrap()
-        .unwrap();
-    assert_eq!(upgraded.backup_files.len(), 2);
-    let cli_value: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&paths[1]).unwrap()).unwrap();
-    assert_eq!(cli_value["model"]["main"], "cpa-gui/gpt-two");
-
-    restore_agent_session_configuration(AgentClient::ZCode, &home).unwrap();
-    assert_eq!(fs::read(&paths[0]).unwrap(), original_app);
-    assert_eq!(fs::read(&paths[1]).unwrap(), original_cli);
-    assert!(!state_path.exists());
+    assert!(!import_legacy_history("zcode", &home, &history_paths("zcode", &home).unwrap()).unwrap().is_empty());
+    let unchanged = load_agent_applied_state(AgentClient::ZCode, &home).unwrap().unwrap();
+    assert_eq!(unchanged.backup_files.len(), 1);
+    assert!(state_path.exists());
+    assert_eq!(fs::read(&unchanged.backup_files[0].backup_path).unwrap(), original_app);
+    test_restore_history(AgentClient::ZCode, &home, "before-update");
+    let cli: serde_json::Value = serde_json::from_slice(&fs::read(&paths[1]).unwrap()).unwrap();
+    assert_eq!(cli["model"]["main"], "other/original");
     fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
-fn kimi_and_grok_legacy_states_require_context_catalog_resynchronization() {
+fn kimi_and_grok_status_does_not_depend_on_legacy_state() {
     for client in [AgentClient::KimiCode, AgentClient::GrokBuild] {
         let home = agent_test_home(&format!("{}-context-revision", client.id()));
         let paths = agent_config_paths(client, &home);
@@ -521,7 +498,7 @@ fn kimi_and_grok_legacy_states_require_context_catalog_resynchronization() {
         };
         write_agent_applied_state(&state_path, &state).unwrap();
 
-        assert!(!agent_configuration_is_synchronized(client, &home, true));
+        assert!(agent_configuration_is_synchronized(client, &home, true));
 
         state.configuration_revision = AGENT_CONFIGURATION_REVISION;
         write_agent_applied_state(&state_path, &state).unwrap();
@@ -1269,15 +1246,12 @@ fn codex_session_restore_does_not_create_a_state_json_file() {
     .unwrap();
 
     let backup = dated_agent_backup_path(&config_path).unwrap();
-    assert!(backup.is_file());
+    assert!(!backup.exists());
     assert!(!state_path.exists());
-    assert_eq!(
-        inspect_agent_application(AgentClient::Codex, &home).state,
-        "applied"
-    );
+    assert_eq!(test_history_count(AgentClient::Codex, &home), 2);
 
-    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
-    assert_eq!(fs::read(&config_path).unwrap(), original);
+    test_restore_history(AgentClient::Codex, &home, "before-applied");
+    assert!(!fs::read_to_string(&config_path).unwrap().contains("approval_policy"));
     assert!(!catalog_path.exists());
     assert!(!backup.exists());
     assert!(!state_path.exists());
@@ -1314,12 +1288,9 @@ fn codex_applied_configuration_remains_detectable_after_process_restart() {
 
     clear_codex_applied_state(&state_path).unwrap();
 
-    let inspection = inspect_agent_application(AgentClient::Codex, &home);
-    assert_eq!(inspection.state, "applied");
-    assert_eq!(inspection.applied_model.as_deref(), Some("gpt-test"));
-    assert!(dated_agent_backup_path(&config_path).unwrap().is_file());
-
-    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    assert_eq!(test_history_count(AgentClient::Codex, &home), 2);
+    assert!(fs::read_to_string(&config_path).unwrap().contains("gpt-test"));
+    test_restore_history(AgentClient::Codex, &home, "before-applied");
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -1354,7 +1325,7 @@ fn codex_catalog_sync_removes_models_missing_from_runtime() {
     let written = fs::read_to_string(&catalog_path).unwrap();
     assert!(written.contains("gpt-active"));
     assert!(!written.contains("gpt-stale"));
-    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    test_restore_history(AgentClient::Codex, &home, "before-update");
     assert!(!catalog_path.exists());
     fs::remove_dir_all(home).unwrap();
 }
@@ -1400,13 +1371,7 @@ fn codex_catalog_sync_replaces_missing_default_and_preserves_user_configuration(
     assert_eq!(document["model"].as_str(), Some("gpt-active"));
     assert_eq!(document["approval_policy"].as_str(), Some("on-request"));
     assert!(updated.contains("# Keep my settings"));
-    assert_eq!(
-        load_agent_applied_state(AgentClient::Codex, &home)
-            .unwrap()
-            .unwrap()
-            .model,
-        "gpt-active"
-    );
+    assert_eq!(test_history_count(AgentClient::Codex, &home), 4);
     assert!(!sync_codex_model_catalog_if_configured(
         &home,
         8317,
@@ -1415,7 +1380,7 @@ fn codex_catalog_sync_replaces_missing_default_and_preserves_user_configuration(
         &current_catalog,
     )
     .unwrap());
-    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    test_restore_history(AgentClient::Codex, &home, "before-update");
     assert_eq!(fs::read_to_string(&config_path).unwrap(), original_config);
     fs::remove_dir_all(home).unwrap();
 }
@@ -1479,7 +1444,7 @@ fn codex_catalog_sync_clears_empty_list_and_recovers_when_models_return() {
     assert_eq!(document["model"].as_str(), Some("gpt-returned"));
     assert_eq!(fs::read_to_string(&catalog_path).unwrap(), returned_catalog);
     assert_eq!(fs::read(&auth_path).unwrap(), original_auth);
-    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    test_restore_history(AgentClient::Codex, &home, "before-update");
     assert!(!config_path.exists());
     assert!(!catalog_path.exists());
     fs::remove_dir_all(home).unwrap();
@@ -1516,14 +1481,9 @@ fn codex_catalog_sync_after_restart_backs_up_managed_files_without_memory_state(
     )
     .unwrap());
     assert_eq!(fs::read_to_string(&catalog_path).unwrap(), current_catalog);
-    assert_eq!(
-        fs::read_to_string(dated_agent_backup_path(&catalog_path).unwrap()).unwrap(),
-        original_catalog
-    );
-    assert!(load_agent_applied_state(AgentClient::Codex, &home)
-        .unwrap()
-        .is_some());
-    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    assert_eq!(test_history_count(AgentClient::Codex, &home), 4);
+    test_restore_history(AgentClient::Codex, &home, "before-sync");
+    assert_eq!(fs::read_to_string(&catalog_path).unwrap(), original_catalog);
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -1555,7 +1515,7 @@ fn codex_catalog_only_sync_after_restart_preserves_complete_backups() {
     )
     .unwrap());
     assert_eq!(fs::read(&config_path).unwrap(), original_config);
-    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    test_restore_history(AgentClient::Codex, &home, "before-sync");
     assert_eq!(fs::read(&config_path).unwrap(), original_config);
     assert_eq!(fs::read_to_string(&catalog_path).unwrap(), original_catalog);
     fs::remove_dir_all(home).unwrap();
@@ -1628,7 +1588,7 @@ fn codex_catalog_sync_rejects_invalid_snapshots_without_changing_files() {
         serde_json::to_value(load_agent_applied_state(AgentClient::Codex, &home).unwrap()).unwrap(),
         state_before
     );
-    restore_agent_session_configuration(AgentClient::Codex, &home).unwrap();
+    test_restore_history(AgentClient::Codex, &home, "before-update");
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -1678,7 +1638,7 @@ fn direct_agent_apply_preserves_unrelated_fields_and_default_reset_removes_them(
         Some(&codex_models),
     )
     .unwrap();
-    assert_eq!(result.outcome, "applied");
+    assert_eq!(result.outcome, "updated");
     let applied = fs::read_to_string(&path).unwrap();
     assert!(applied.contains("# user comment"));
     assert!(applied.contains("user_setting = \"keep\""));
@@ -1694,25 +1654,16 @@ fn direct_agent_apply_preserves_unrelated_fields_and_default_reset_removes_them(
     assert!(!agent_backup_path(&codex_model_catalog_path(&home))
         .unwrap()
         .exists());
-    assert_eq!(
-        inspect_agent_application(AgentClient::Codex, &home).state,
-        "applied"
-    );
+    assert!(test_history_count(AgentClient::Codex, &home) >= 2);
 
     let mut document = applied.parse::<toml_edit::Document>().unwrap();
     document["user_setting"] = toml_edit::value("changed-externally");
     fs::write(&path, document.to_string()).unwrap();
-    assert_eq!(
-        inspect_agent_application(AgentClient::Codex, &home).state,
-        "applied"
-    );
+    assert!(test_history_count(AgentClient::Codex, &home) >= 2);
 
     document["model"] = toml_edit::value("external-model");
     fs::write(&path, document.to_string()).unwrap();
-    assert_eq!(
-        inspect_agent_application(AgentClient::Codex, &home).state,
-        "applied"
-    );
+    assert!(test_history_count(AgentClient::Codex, &home) >= 2);
 
     apply_agent_configuration(
         AgentClient::Codex,
@@ -1745,7 +1696,7 @@ fn direct_agent_apply_preserves_unrelated_fields_and_default_reset_removes_them(
 }
 
 #[test]
-fn clear_codex_config_removes_only_requested_config_files_and_application_state() {
+fn clear_codex_config_removes_only_requested_config_files_and_preserves_legacy_state() {
     let home = agent_test_home("clear-codex-config");
     let codex_dir = home.join(".codex");
     fs::create_dir_all(&codex_dir).unwrap();
@@ -1763,7 +1714,8 @@ fn clear_codex_config_removes_only_requested_config_files_and_application_state(
     assert_eq!(deleted.len(), 2);
     assert!(!auth_path.exists());
     assert!(!config_path.exists());
-    assert!(!state_path.exists());
+    assert!(state_path.exists());
+    assert_eq!(test_history_count(AgentClient::Codex, &home), 2);
     assert_eq!(fs::read_to_string(&preserved_path).unwrap(), "keep");
     assert!(clear_codex_config_files(&home).unwrap().is_empty());
 
@@ -1788,32 +1740,19 @@ fn clear_codex_config_removes_only_requested_config_files_and_application_state(
 }
 
 #[test]
-fn direct_agent_apply_rebuilds_an_unparseable_file_without_backup() {
+fn ordinary_update_rejects_invalid_file_and_explicit_default_backs_it_up() {
     let home = agent_test_home("invalid-apply");
     let path = home.join(".config/opencode/opencode.json");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "{ invalid json").unwrap();
     let models = test_agent_models(&["model-a"]);
 
-    apply_agent_configuration(
-        AgentClient::OpenCode,
-        &home,
-        8317,
-        DEFAULT_API_KEY,
-        "model-a",
-        &models,
-        None,
-    )
-    .unwrap();
-
-    let root =
-        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(root["model"], "cpa-gui/model-a");
-    assert!(!agent_backup_path(&path).unwrap().exists());
-    assert_eq!(
-        inspect_agent_application(AgentClient::OpenCode, &home).state,
-        "applied"
-    );
+    assert!(apply_agent_configuration(AgentClient::OpenCode, &home, 8317, DEFAULT_API_KEY, "model-a", &models, None).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{ invalid json");
+    assert_eq!(test_history_count(AgentClient::OpenCode, &home), 0);
+    reset_agent_configuration_to_default(AgentClient::OpenCode, &home, 8317, DEFAULT_API_KEY, "model-a", None).unwrap();
+    assert_eq!(test_history_count(AgentClient::OpenCode, &home), 2);
+    assert!(serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).is_ok());
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -1861,7 +1800,7 @@ fn agent_builders_repair_wrong_managed_node_types() {
 }
 
 #[test]
-fn build_agent_updates_rebuilds_invalid_json5_toml_and_yaml() {
+fn build_agent_updates_rejects_invalid_json5_toml_and_yaml() {
     let home = agent_test_home("invalid-formats");
     let models = test_agent_models(&["model-a"]);
     let codex_models = test_codex_models(&["model-a"]);
@@ -1880,9 +1819,9 @@ fn build_agent_updates_rebuilds_invalid_json5_toml_and_yaml() {
             "model-a",
             &models,
             (client == AgentClient::Codex).then_some(codex_models.as_str()),
-        )
-        .unwrap();
-        assert!(!updates[0].after.trim().is_empty());
+        );
+        assert!(updates.is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), "not valid {{{");
     }
     let hermes = build_hermes_agent_config(
         Some("not valid {{{"),
@@ -1891,16 +1830,40 @@ fn build_agent_updates_rebuilds_invalid_json5_toml_and_yaml() {
         "model-a",
         &models,
     )
-    .or_else(|_| {
-        build_hermes_agent_config(
-            None,
-            "http://127.0.0.1:8317/v1",
-            DEFAULT_API_KEY,
-            "model-a",
-            &models,
-        )
-    })
-    .unwrap();
-    assert!(!hermes.trim().is_empty());
+    ;
+    assert!(hermes.is_err());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn connection_state_distinguishes_fresh_repair_invalid_and_ready() {
+    assert_eq!(agent_connection_state(false, true, Ok(false)), "not-configured");
+    assert_eq!(agent_connection_state(false, true, Ok(true)), "needs-update");
+    assert_eq!(agent_connection_state(true, true, Ok(true)), "configured");
+    assert_eq!(agent_connection_state(false, false, Ok(false)), "invalid");
+    assert_eq!(agent_connection_state(false, true, Err("read failed".into())), "invalid");
+}
+
+#[test]
+fn codex_connection_evidence_survives_port_key_and_partial_config_changes() {
+    let home = agent_test_home("connection-evidence");
+    let paths = agent_config_paths(AgentClient::Codex, &home);
+    assert!(!agent_has_connection_evidence(AgentClient::Codex, &paths).unwrap());
+    fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+    fs::write(&paths[0], "model_provider = 'personal'\ncustom_note = 'cpa-gui'\n").unwrap();
+    assert!(!agent_has_connection_evidence(AgentClient::Codex, &paths).unwrap());
+    apply_agent_configuration(AgentClient::Codex, &home, 8317, "old-key", "gpt-one", &test_agent_models(&["gpt-one"]), Some(&test_codex_models(&["gpt-one"]))).unwrap();
+    for (port, key) in [(8318, "old-key"), (8317, "new-key")] {
+        let (configured, _, _) = inspect_codex_agent_config(&paths[0], port, key).unwrap();
+        assert!(!configured);
+        assert_eq!(agent_connection_state(configured, true, agent_has_connection_evidence(AgentClient::Codex, &paths)), "needs-update");
+    }
+    fs::remove_file(home.join(".codex/auth.json")).unwrap();
+    assert!(!inspect_codex_agent_config(&paths[0],8317,"old-key").unwrap().0);
+    assert!(agent_has_connection_evidence(AgentClient::Codex, &paths).unwrap());
+    fs::write(&paths[0], "[model_providers.cpa-gui]\nbase_url = 'http://127.0.0.1:1234/v1'\n").unwrap();
+    assert!(agent_has_connection_evidence(AgentClient::Codex, &paths).unwrap());
+    fs::write(&paths[0], "{{broken").unwrap();
+    assert!(agent_has_connection_evidence(AgentClient::Codex, &paths).is_err());
     fs::remove_dir_all(home).unwrap();
 }

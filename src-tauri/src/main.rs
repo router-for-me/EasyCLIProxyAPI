@@ -1026,6 +1026,7 @@ struct AgentConfigStatus {
     config_valid: bool,
     configured: bool,
     configuration_synchronized: bool,
+    connection_state: String,
     current_model: Option<String>,
     oauth_configuration: bool,
     modification_enabled: bool,
@@ -1077,6 +1078,7 @@ struct AgentConfigActionResult {
     model: Option<String>,
     changed_files: Vec<String>,
     conflict_files: Vec<String>,
+    history_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2483,6 +2485,9 @@ fn main() {
             get_software_settings,
             save_software_settings,
             get_agent_config_statuses,
+            list_agent_config_history,
+            preview_agent_config_history,
+            restore_agent_config_history,
             refresh_agent_config_statuses,
             get_agent_models,
             check_pi_provider_update,

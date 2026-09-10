@@ -55,16 +55,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 models,
                 claude_code_model_mappings,
             )
-            .or_else(|_| {
-                build_claude_agent_config(
-                    None,
-                    &root_base,
-                    api_key,
-                    model,
-                    models,
-                    claude_code_model_mappings,
-                )
-            })?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -82,12 +73,12 @@ pub(crate) fn build_agent_updates_with_oauth(
                 AgentFileUpdate {
                     path: paths[0].clone(),
                     after: build_claude_desktop_deployment_config(normal_before.as_deref())
-                        .or_else(|_| build_claude_desktop_deployment_config(None))?,
+                        ?,
                 },
                 AgentFileUpdate {
                     path: paths[1].clone(),
                     after: build_claude_desktop_deployment_config(threep_before.as_deref())
-                        .or_else(|_| build_claude_desktop_deployment_config(None))?,
+                        ?,
                 },
                 AgentFileUpdate {
                     path: paths[2].clone(),
@@ -99,21 +90,12 @@ pub(crate) fn build_agent_updates_with_oauth(
                         models,
                         claude_desktop_model_mappings,
                     )
-                    .or_else(|_| {
-                        build_claude_desktop_profile(
-                            None,
-                            &root_base,
-                            api_key,
-                            model,
-                            models,
-                            claude_desktop_model_mappings,
-                        )
-                    })?,
+                    ?,
                 },
                 AgentFileUpdate {
                     path: paths[3].clone(),
                     after: build_claude_desktop_meta(meta_before.as_deref())
-                        .or_else(|_| build_claude_desktop_meta(None))?,
+                        ?,
                 },
             ])
         }
@@ -126,15 +108,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 oauth_configuration,
             )
-            .or_else(|_| {
-                build_codex_agent_config_with_oauth(
-                    None,
-                    &openai_base,
-                    api_key,
-                    model,
-                    oauth_configuration,
-                )
-            })?;
+            ?;
             let mut updates = vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -157,7 +131,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| build_opencode_agent_config(None, &openai_base, api_key, model, models))?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -172,7 +146,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| build_openclaw_agent_config(None, &openai_base, api_key, model, models))?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -182,9 +156,7 @@ pub(crate) fn build_agent_updates_with_oauth(
             let before = read_optional_text(&paths[0])?;
             let after =
                 build_hermes_agent_config(before.as_deref(), &openai_base, api_key, model, models)
-                    .or_else(|_| {
-                        build_hermes_agent_config(None, &openai_base, api_key, model, models)
-                    })?;
+                    ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -220,9 +192,7 @@ pub(crate) fn build_agent_updates_with_oauth(
             let cli_before = read_optional_text(&paths[1])?;
             let app_after =
                 build_zcode_agent_config(app_before.as_deref(), &root_base, api_key, model, models)
-                    .or_else(|_| {
-                        build_zcode_agent_config(None, &root_base, api_key, model, models)
-                    })?;
+                    ?;
             let cli_after = build_zcode_cli_agent_config(
                 cli_before.as_deref(),
                 &root_base,
@@ -230,7 +200,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| build_zcode_cli_agent_config(None, &root_base, api_key, model, models))?;
+            ?;
             Ok(vec![
                 AgentFileUpdate {
                     path: paths[0].clone(),
@@ -251,9 +221,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| {
-                build_kimi_code_agent_config(None, &openai_base, api_key, model, models)
-            })?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -268,9 +236,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| {
-                build_grok_build_agent_config(None, &openai_base, api_key, model, models)
-            })?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -2669,7 +2635,12 @@ pub(crate) fn build_codex_auth_update(
         read_optional_text(&path)?
             .ok_or_else(|| "Codex OAuth 登录凭据在应用配置前已被删除，请重新登录".to_string())?
     } else {
-        build_codex_api_auth(api_key)?
+        let path_text = read_optional_text(&path)?;
+        let mut root = parse_agent_json_object(path_text.as_deref(), "Codex auth.json")?;
+        for key in ["tokens", "last_refresh"] { root.remove(key); }
+        root.insert("auth_mode".into(), serde_json::json!("apikey"));
+        root.insert("OPENAI_API_KEY".into(), serde_json::json!(api_key));
+        render_agent_json(root, "Codex auth.json")?
     };
     Ok(AgentFileUpdate { path, after })
 }

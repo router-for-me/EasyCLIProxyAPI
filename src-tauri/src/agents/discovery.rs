@@ -425,6 +425,7 @@ pub(crate) fn inspect_pi_provider_status(
         config_valid,
         configured,
         configuration_synchronized: configured,
+        connection_state: agent_connection_state(configured, config_valid, Ok(config_path.is_file() || default_provider_matches)).into(),
         current_model: current_model.clone(),
         oauth_configuration: false,
         modification_enabled: configured,
@@ -455,7 +456,7 @@ pub(crate) fn install_pi_provider_inner(
     let settings_path = pi_provider_settings_path(home);
     let mut changed_files = Vec::new();
     if !pi_provider_package_installed(home)? {
-        install_pi_package(executable, home, proxy_url)?;
+        history_package_operation(home, "plugin-install", || install_pi_package(executable, home, proxy_url))?;
         changed_files.push(path_to_string(&settings_path));
     }
 
@@ -479,7 +480,8 @@ pub(crate) fn repair_pi_provider_inner(
     }
     let config_path = pi_provider_config_path(home);
     let settings_path = pi_provider_settings_path(home);
-    let mut changed_files = Vec::new();
+    let _guard = AGENT_CONFIG_FILE_LOCK.lock().map_err(|_| "配置文件锁已损坏")?;
+    let before = history_images(&history_paths(PI_AGENT_ID, home)?)?;
     if !pi_provider_package_installed(home)? {
         return Err("Pi CLIProxyAPI provider is not installed".to_string());
     }
@@ -495,11 +497,6 @@ pub(crate) fn repair_pi_provider_inner(
     };
     let base_url = managed_core_loopback_origin(port);
     let rendered = build_pi_provider_config(existing.as_deref(), &base_url, api_key)?;
-    if existing.as_deref() != Some(rendered.as_str()) {
-        write_bytes_atomically(&config_path, rendered.as_bytes())?;
-        changed_files.push(path_to_string(&config_path));
-    }
-
     let settings = fs::read_to_string(&settings_path).map_err(|error| {
         format!(
             "读取 Pi settings.json 失败 {}: {error}",
@@ -507,18 +504,10 @@ pub(crate) fn repair_pi_provider_inner(
         )
     })?;
     let rendered_settings = build_pi_provider_settings(&settings, default_model)?;
-    if settings != rendered_settings {
-        write_bytes_atomically(&settings_path, rendered_settings.as_bytes())?;
-        changed_files.push(path_to_string(&settings_path));
-    }
-
-    Ok(action_result(
-        "applied",
-        true,
-        Some(default_model.trim().to_string()),
-        changed_files,
-        Vec::new(),
-    ))
+    history_updates(PI_AGENT_ID, home, &before, &[
+        AgentFileUpdate { path: config_path, after: rendered },
+        AgentFileUpdate { path: settings_path, after: rendered_settings },
+    ], "update", Some(default_model.to_string()), None)
 }
 
 pub(crate) fn update_pi_provider_inner(
@@ -532,7 +521,7 @@ pub(crate) fn update_pi_provider_inner(
     if !pi_provider_package_installed(home)? {
         return Err("Pi CLIProxyAPI provider 插件尚未安装".to_string());
     }
-    update_pi_package(executable, home, proxy_url)?;
+    history_package_operation(home, "plugin-update", || update_pi_package(executable, home, proxy_url))?;
     let mut result = repair_pi_provider_inner(home, port, api_key, default_model)?;
     result.outcome = "updated".to_string();
     Ok(result)
@@ -551,7 +540,7 @@ pub(crate) fn uninstall_pi_provider_inner(
             Vec::new(),
         ));
     }
-    remove_pi_package(executable, home)?;
+    history_package_operation(home, "plugin-remove", || remove_pi_package(executable, home))?;
     Ok(action_result(
         "removed",
         false,
@@ -776,24 +765,13 @@ pub(crate) fn remove_codex_config_file(path: &Path) -> Result<bool, String> {
 }
 
 pub(crate) fn clear_codex_config_files(home: &Path) -> Result<Vec<String>, String> {
-    let codex_dir = codex_configuration_directory(home);
-    let config_path = codex_dir.join("config.toml");
-    let targets = [codex_dir.join("auth.json"), config_path.clone()];
-    let mut deleted = Vec::new();
-
-    for path in targets {
-        if remove_codex_config_file(&path)? {
-            deleted.push(path_to_string(&path));
-        }
+    let paths = history_paths("codex",home)?;
+    let before = history_images(&paths)?;
+    let mut after = before.clone();
+    for (path, bytes) in &mut after {
+        if path.file_name().and_then(|v| v.to_str()).is_some_and(|v| v == "auth.json" || v == "config.toml") { *bytes = None; }
     }
-
-    let state_path = agent_state_path(std::slice::from_ref(&config_path))?;
-    clear_codex_applied_state(&state_path)?;
-    // Clean up state files left by older releases. New Codex applications keep
-    // this short-lived restore metadata in memory instead.
-    remove_codex_config_file(&state_path)?;
-
-    Ok(deleted)
+    Ok(commit_history("codex", &paths, &before, &after, "clear", None)?.changed_files)
 }
 
 pub(crate) fn codex_model_catalog_path(home: &Path) -> PathBuf {
@@ -997,9 +975,9 @@ pub(crate) fn inspect_agent_config(
     if let Some(message) = error.as_ref() {
         warnings.push(message.clone());
     }
-    let modification = inspect_agent_application(client, home);
+
     let configuration_synchronized = agent_configuration_is_synchronized(client, home, configured);
-    warnings.extend(modification.warnings.iter().cloned());
+    // Legacy backup warnings belong in the history dialog, not the current configuration status.
 
     AgentConfigStatus {
         id: client.id().to_string(),
@@ -1017,16 +995,17 @@ pub(crate) fn inspect_agent_config(
         config_valid,
         configured,
         configuration_synchronized,
-        current_model,
+        connection_state: agent_connection_state(configured, config_valid, agent_has_connection_evidence(client, &paths)).into(),
+        current_model: current_model.clone(),
         oauth_configuration,
-        modification_enabled: modification.enabled,
-        modification_state: modification.state,
-        backup_available: modification.backup_available,
-        applied_model: modification.applied_model,
+        modification_enabled: configured,
+        modification_state: if !config_valid { "invalid" } else if configured { "applied" } else { "unconfigured" }.into(),
+        backup_available: false,
+        applied_model: current_model,
         claude_code_model_mappings: (client == AgentClient::ClaudeCode)
             .then(|| inspect_claude_code_model_mappings(&paths[0]).ok().flatten())
             .flatten(),
-        claude_desktop_model_mappings: modification.claude_desktop_model_mappings,
+        claude_desktop_model_mappings: (client == AgentClient::ClaudeDesktop).then(|| current_desktop_history_mappings(home)).flatten(),
         warnings,
         error,
     }
@@ -1133,20 +1112,11 @@ pub(crate) fn agent_launch_targets(
 }
 
 pub(crate) fn agent_configuration_is_synchronized(
-    client: AgentClient,
-    home: &Path,
+    _client: AgentClient,
+    _home: &Path,
     configured: bool,
 ) -> bool {
-    if !configured {
-        return false;
-    }
-    if !matches!(client, AgentClient::KimiCode | AgentClient::GrokBuild) {
-        return true;
-    }
-    load_agent_applied_state(client, home)
-        .ok()
-        .flatten()
-        .is_some_and(|state| state.configuration_revision >= AGENT_CONFIGURATION_REVISION)
+    configured
 }
 
 pub(crate) fn inspect_agent_application(
@@ -1261,6 +1231,40 @@ pub(crate) fn inspect_agent_managed_config(
         AgentClient::GrokBuild => inspect_grok_build_agent_config(&paths[0], port, api_key)
             .map(|(configured, model)| (configured, model, false)),
     }
+}
+
+// Configuration health and evidence of CPA integration are separate facts.
+// A saved history version alone does not mean the current files still use CPA.
+pub(crate) fn agent_connection_state(configured: bool, valid: bool, managed: Result<bool, String>) -> &'static str {
+    if !valid || managed.is_err() { "invalid" }
+    else if configured { "configured" }
+    else if managed == Ok(true) { "needs-update" }
+    else { "not-configured" }
+}
+
+pub(crate) fn agent_has_connection_evidence(client: AgentClient, paths: &[PathBuf]) -> Result<bool, String> {
+    let active_marker = agent_has_managed_marker(client, paths)?;
+    if active_marker { return Ok(true); }
+    // Recognize partial configurations too, even if the selected provider/model was removed.
+    for path in paths {
+        let Some(bytes) = read_agent_bytes(path)? else { continue; };
+        let content = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
+        let value: serde_json::Value = match path.extension().and_then(|v| v.to_str()) {
+            Some("toml") => serde_json::to_value(toml::from_str::<toml::Value>(content).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
+            Some("yaml" | "yml") => serde_yaml::from_str(content).map_err(|e| e.to_string())?,
+            _ => json5::from_str(content).map_err(|e| e.to_string())?,
+        };
+        let provider_present = ["/provider/cpa-gui", "/model_providers/cpa-gui", "/providers/cpa-gui", "/models/providers/cpa-gui"]
+            .iter().any(|pointer| value.pointer(pointer).is_some());
+        let selected = ["/model_provider", "/model", "/model/main", "/model/provider", "/default_model", "/models/default", "/agents/defaults/model/primary"]
+            .iter().filter_map(|pointer| value.pointer(pointer).and_then(serde_json::Value::as_str))
+            .any(|model| model == MANAGED_AGENT_PROVIDER_ID || model.starts_with(&format!("{MANAGED_AGENT_PROVIDER_ID}/")));
+        let catalog = client == AgentClient::Codex && value.get("model_catalog_json").and_then(serde_json::Value::as_str) == Some(CODEX_MODEL_CATALOG_FILE);
+        let hermes_provider = client == AgentClient::Hermes && value.get("custom_providers").and_then(serde_json::Value::as_array)
+            .is_some_and(|items| items.iter().any(|item| item.get("name").and_then(serde_json::Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)));
+        if provider_present || selected || catalog || hermes_provider { return Ok(true); }
+    }
+    Ok(false)
 }
 
 pub(crate) fn agent_has_managed_marker(

@@ -48,7 +48,6 @@ import {
   resolveAgentModelSelection,
 } from '../services/agentModelPicker';
 import {
-  resolveAgentConfigurationAction,
   resolveAgentModelMappingsDraftSourceForClient,
   sameAgentModel,
   sameAgentModelMappings,
@@ -69,6 +68,7 @@ import type { ModelOption } from '../services/modelService';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
+import { AgentConfigHistoryDialog } from './AgentConfigHistoryDialog';
 
 type AgentClientId =
   | 'claude-code'
@@ -100,6 +100,7 @@ type AgentConfigStatus = {
   pluginVersion: string | null;
   configValid: boolean;
   configured: boolean;
+  connectionState: 'configured' | 'not-configured' | 'needs-update' | 'invalid';
   configurationSynchronized: boolean;
   currentModel: string | null;
   oauthConfiguration: boolean;
@@ -126,7 +127,8 @@ type DeepSeekHarnessProcessStatus = {
 };
 
 type AgentConfigActionResult = {
-  outcome: 'applied' | 'default';
+  outcome: 'applied' | 'default' | 'updated' | 'unchanged';
+  historyVersion: string | null;
   enabled: boolean;
   model: string | null;
   changedFiles: string[];
@@ -672,13 +674,16 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [loading, setLoading] = useState(true);
   const [modelLoading, setModelLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<
-    'apply' | 'close-config' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | null
+    'apply' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | null
   >(null);
   const busy = busyAction !== null;
   const [detectionError, setDetectionError] = useState('');
   const [modelError, setModelError] = useState('');
   const [modelSelectionError, setModelSelectionError] = useState('');
   const [configurationError, setConfigurationError] = useState('');
+  const [configurationNotice, setConfigurationNotice] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [connectionHelpOpen, setConnectionHelpOpen] = useState(false);
   const [defaultError, setDefaultError] = useState('');
   const [defaultConfirmOpen, setDefaultConfirmOpen] = useState(false);
   const [clearError, setClearError] = useState('');
@@ -848,6 +853,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setActiveSubpage(DEFAULT_AGENT_SUBPAGE);
     setModelSelectionError('');
     setConfigurationError('');
+    setConfigurationNotice('');
+    setHistoryOpen(false);
+    setConnectionHelpOpen(false);
     setDefaultError('');
     setDefaultConfirmOpen(false);
     setClearError('');
@@ -966,16 +974,19 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     selectedModel,
   ]);
 
-  const appliedModel = activeStatus?.appliedModel ?? activeStatus?.currentModel ?? '';
-  const modelDraftChanged = !isClaudeModelMappingClient && Boolean(
-    selectedModel.trim()
-      && appliedModel.trim()
-      && !sameAgentModel(selectedModel, appliedModel),
-  );
-  const appliedClaudeModelMappings = (selected === 'claude-code'
+  const connectionState = activeStatus?.connectionState ?? 'invalid';
+  const configurationActionLabel = t(connectionState === 'not-configured' ? 'agents.modify.connect'
+    : connectionState === 'needs-update' ? 'agents.modify.repair' : 'agents.modify.update');
+  const configurationWriteBlocked = loading || !activeStatus || connectionState === 'invalid';
+  const appliedModel = activeStatus?.currentModel ?? activeStatus?.appliedModel ?? '';
+  const appliedMappings = selected === 'claude-code'
     ? activeStatus?.claudeCodeModelMappings
-    : activeStatus?.claudeDesktopModelMappings)
-    ?? createClaudeModelMappings(appliedModel);
+    : activeStatus?.claudeDesktopModelMappings;
+  const formMatchesConfiguration = Boolean(activeStatus?.configValid && activeStatus?.configured)
+    && (isClaudeModelMappingClient
+      ? Boolean(appliedMappings && sameAgentModelMappings(claudeModelMappingsDraft, appliedMappings))
+      : sameAgentModel(selectedModel, appliedModel))
+    && (selected !== 'codex' || oauthConfiguration === Boolean(activeStatus?.oauthConfiguration));
   const claudeMappingsReady = !isClaudeModelMappingClient
     || claudeMappingRoles.every((role) =>
       Boolean(findAgentModel(models, claudeModelMappingsDraft[role.key])),
@@ -986,26 +997,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     && claudeModelMappingsDraft.autoCompactPct >= 1
     && claudeModelMappingsDraft.autoCompactPct <= 100
   );
-  const claudeMappingDraftChanged = isClaudeModelMappingClient
-    && activeStatus?.modificationState === 'applied'
-    && !sameAgentModelMappings(
-      claudeModelMappingsDraft,
-      appliedClaudeModelMappings,
-    );
-  const oauthConfigurationChanged = selected === 'codex'
-    && oauthConfiguration !== Boolean(activeStatus?.oauthConfiguration);
-  const draftChanged = modelDraftChanged || claudeMappingDraftChanged || oauthConfigurationChanged;
-  const configurationAction = resolveAgentConfigurationAction({
-    client: selected,
-    modificationState: activeStatus?.modificationState ?? 'unconfigured',
-    configurationSynchronized: Boolean(activeStatus?.configurationSynchronized),
-    selectedModel,
-    appliedModel,
-    oauthConfiguration,
-    appliedOauthConfiguration: Boolean(activeStatus?.oauthConfiguration),
-    modelMappings: claudeModelMappingsDraft,
-    appliedModelMappings: appliedClaudeModelMappings,
-  });
   const canEnable = Boolean(
     activeStatus?.supportedPlatform
       && activeStatus.installed
@@ -1063,9 +1054,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       void (activeStatus?.pluginInstalled ? repairPiProvider() : installPiProvider());
       return;
     }
-    void (configurationAction === 'close'
-      ? closeConfigurationChanges()
-      : applyConfigurationChanges());
+    void applyConfigurationChanges();
   };
 
   const reloadStatusesAfterAction = async () => {
@@ -1078,6 +1067,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   };
 
   const selectModel = (value: string) => {
+    setConfigurationNotice('');
+    setClearNotice('');
     const model = findAgentModel(models, value);
     if (!model) return;
     setModelSelectionError('');
@@ -1092,7 +1083,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     const model = findAgentModel(models, value);
     if (!model) return;
     if (isClaudeModelMappingClient) {
-      claudeModelMappingsDirtyRef.current[selected] = true;
+      setConfigurationNotice('');
+    claudeModelMappingsDirtyRef.current[selected] = true;
       setClaudeModelMappingsDraftByClient((current) => ({
         ...current,
         [selected]: {
@@ -1112,6 +1104,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   ) => {
     const model = findAgentModel(models, value);
     if (!model || !isClaudeModelMappingClient) return;
+    setConfigurationNotice('');
     claudeModelMappingsDirtyRef.current[selected] = true;
     setModelSelectionError('');
     setClaudeModelMappingsDraftByClient((current) => ({
@@ -1125,6 +1118,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     enabled: boolean,
   ) => {
     if (!isClaudeModelMappingClient) return;
+    setConfigurationNotice('');
     claudeModelMappingsDirtyRef.current[selected] = true;
     setClaudeModelMappingsDraftByClient((current) => {
       const next = { ...current[selected], [preference]: enabled };
@@ -1143,6 +1137,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     value: number,
   ) => {
     if (selected !== 'claude-code') return;
+    setConfigurationNotice('');
     claudeModelMappingsDirtyRef.current[selected] = true;
     setClaudeModelMappingsDraftByClient((current) => ({
       ...current,
@@ -1152,6 +1147,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
   const changeClaudeCodeAutoCompactDisabled = (disabled: boolean) => {
     if (selected !== 'claude-code') return;
+    setConfigurationNotice('');
     claudeModelMappingsDirtyRef.current[selected] = true;
     setClaudeModelMappingsDraftByClient((current) => ({
       ...current,
@@ -1180,7 +1176,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         disableAutoCompact: currentClientDraft.disableAutoCompact,
       };
       if (!sameAgentModelMappings(currentClientDraft, next)) {
-        claudeModelMappingsDirtyRef.current[selected] = true;
+        setConfigurationNotice('');
+    claudeModelMappingsDirtyRef.current[selected] = true;
       }
       return { ...current, [selected]: next };
     });
@@ -1238,6 +1235,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   };
 
   const changeOauthConfiguration = async (enabled: boolean) => {
+    setConfigurationNotice('');
+    setClearNotice('');
     if (!enabled) {
       setOauthConfigurationDraft(false);
       return;
@@ -1265,8 +1264,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       : requireSelectedModel();
     if (!model) return;
     setBusyAction('apply');
+    setConfigurationNotice('');
     try {
-      await invoke<AgentConfigActionResult>('apply_agent_config', {
+      const result = await invoke<AgentConfigActionResult>('update_agent_config', {
         client: selected,
         model,
         oauthConfiguration,
@@ -1278,6 +1278,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
+      setConfigurationNotice(t(result.outcome === 'unchanged' ? 'agents.history.unchanged' : 'agents.history.updated'));
       onConfigurationApplied?.();
     } catch (requestError) {
       if (!handleOAuthLoginError(requestError, 'apply')) {
@@ -1327,8 +1328,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setBusyAction('repair-pi');
     setConfigurationError('');
     try {
-      await invoke<AgentConfigActionResult>('repair_pi_provider', { model });
+      const result = await invoke<AgentConfigActionResult>('repair_pi_provider', { model });
       await reloadStatusesAfterAction();
+      setConfigurationNotice(t(result.outcome === 'unchanged' ? 'agents.history.unchanged' : 'agents.history.updated'));
       onConfigurationApplied?.();
     } catch (requestError) {
       setConfigurationError(String(requestError));
@@ -1344,24 +1346,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     try {
       await invoke<AgentConfigActionResult>('uninstall_pi_provider');
       await reloadStatusesAfterAction();
-    } catch (requestError) {
-      setConfigurationError(String(requestError));
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const closeConfigurationChanges = async () => {
-    const retainedOauthConfiguration = selected === 'codex' ? oauthConfiguration : null;
-    setConfigurationError('');
-    setBusyAction('close-config');
-    try {
-      await invoke<AgentConfigActionResult>('close_agent_config_modification', { client: selected });
-      if (isClaudeModelMappingClient) {
-        claudeModelMappingsDirtyRef.current[selected] = false;
-      }
-      await reloadStatusesAfterAction();
-      setOauthConfigurationDraft(retainedOauthConfiguration);
     } catch (requestError) {
       setConfigurationError(String(requestError));
     } finally {
@@ -1690,17 +1674,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   type="button"
                   className="primary-button"
                   onClick={runEmbeddedPrimaryAction}
-                  disabled={busy || (isPiClient ? !canEnable : configurationAction !== 'close' && !canEnable)}
+                  disabled={busy || !canEnable || configurationWriteBlocked}
                 >
                   {busyAction ? <LoaderCircle size={16} className="spin" /> : null}
                   {isPiClient
-                    ? activeStatus?.pluginInstalled ? t('agents.pi.repair') : t('agents.pi.install')
-                    : configurationAction === 'update'
-                      ? t('agents.modify.update')
-                      : configurationAction === 'close'
-                        ? t('agents.modify.close')
-                        : t('agents.modify.apply')}
+                    ? activeStatus?.pluginInstalled ? configurationActionLabel : t('agents.pi.install')
+                    : configurationActionLabel}
                 </button>
+                <button type="button" className="secondary-button" onClick={() => setHistoryOpen(true)} disabled={busy}>{t('agents.history.button')}</button>
                 <button
                   type="button"
                   className={isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
@@ -1767,6 +1748,20 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               role="tabpanel"
               aria-labelledby="agent-subpage-tab-core"
             >
+              {!isPiClient ? <div className="agent-settings-toolbar">
+                <div className="agent-settings-title">
+                  <strong>{activeDefinition.name}</strong>
+                  <p className={`agent-connection-state ${activeStatus?.configured ? 'connected' : ''}`} role="status">
+                    {t(loading || !activeStatus
+                      ? 'agents.modify.connectionChecking'
+                      : connectionState === 'invalid'
+                        ? 'agents.modify.connectionUnknown'
+                        : connectionState === 'needs-update' ? 'agents.modify.connectionRepair'
+                        : connectionState === 'configured' ? 'agents.modify.connected' : 'agents.modify.disconnected')}
+                  </p>
+                </div>
+
+              </div> : null}
               <div className={`agent-status-grid ${hasIndependentCliAndApp ? 'dual-install-status-grid' : isPiClient ? 'pi-status-grid' : ''}`}>
                 <div>
                   <span><BadgeCheck size={14} />{t('agents.installStatus')}</span>
@@ -1844,6 +1839,40 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     >
                       {modelHint}
                     </span>
+                  ) : null}
+                  {selected === 'codex' ? (
+                    <div className="agent-codex-options">
+                      <div className="agent-auth-method">
+                        <div className="agent-signin-label"><label htmlFor="agent-connection-method">{t('agents.modify.authMethod')}</label>
+                          <button type="button" className="agent-signin-help-toggle" aria-expanded={connectionHelpOpen} aria-controls="agent-signin-hint"
+                            onClick={() => setConnectionHelpOpen((open) => !open)}>
+                            {t(connectionHelpOpen ? 'agents.modify.authHelpHide' : 'agents.modify.authHelpShow')}
+                            <ChevronDown size={14} aria-hidden="true" />
+                          </button>
+                        </div>
+                        <select id="agent-connection-method" aria-label={t('agents.modify.authMethod')} aria-describedby={connectionHelpOpen ? "agent-signin-hint" : undefined} value={oauthConfiguration ? 'oauth' : 'apikey'}
+                          onChange={(event) => void changeOauthConfiguration(event.currentTarget.value === 'oauth')}
+                          disabled={busy}>
+                          <option value="apikey">{t('agents.modify.authApiKey')}</option>
+                          <option value="oauth">{t('agents.modify.authOAuth')}</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        className="secondary-button agent-codex-catalog-button"
+                        onClick={() => setCodexCatalogDialogOpen(true)}
+                        disabled={busy}
+                      >
+                        <SlidersHorizontal size={16} />
+                        {t('agents.catalog.button')}
+                      </button>
+                      <div id="agent-signin-hint" className="agent-signin-explanation" hidden={!connectionHelpOpen}>
+                        <dl>
+                          <div><dt>{t('agents.modify.authApiKey')}</dt><dd>{t('agents.modify.authApiKeyHint')}</dd></div>
+                          <div><dt>{t('agents.modify.authOAuth')}</dt><dd>{t('agents.modify.authOAuthHint')}</dd></div>
+                        </dl>
+                      </div>
+                    </div>
                   ) : null}
                 </section>
               ) : null}
@@ -1989,6 +2018,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   <div className="agent-section-heading">
                     <div>
                       <strong>{t('agents.pi.installTitle')}</strong>
+                      <button type="button" className="secondary-button" onClick={() => setHistoryOpen(true)} disabled={busy}>{t('agents.history.button')}</button>
                       <span>{t('agents.pi.installDescription')}</span>
                     </div>
                   </div>
@@ -2011,16 +2041,16 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         type="button"
                         className="secondary-button"
                         onClick={() => void repairPiProvider()}
-                        disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform || !activeStatus.pluginInstalled || !selectedModelOption}
+                        disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform || !activeStatus.pluginInstalled || !selectedModelOption || configurationWriteBlocked}
                       >
                         {busyAction === 'repair-pi' ? <LoaderCircle size={16} className="spin" /> : <Wrench size={16} />}
-                        {busyAction === 'repair-pi' ? t('agents.pi.repairing') : t('agents.pi.repair')}
+                        {configurationActionLabel}
                       </button>
                       <button
                         type="button"
                         className="secondary-button"
                         onClick={() => void updatePiProvider()}
-                        disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform || !activeStatus.pluginInstalled || !selectedModelOption}
+                        disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform || !activeStatus.pluginInstalled || !selectedModelOption || configurationWriteBlocked}
                       >
                         {busyAction === 'update-pi' ? <LoaderCircle size={16} className="spin" /> : <RefreshCw size={16} />}
                         {busyAction === 'update-pi' ? t('agents.pi.updating') : t('agents.pi.update')}
@@ -2034,65 +2064,17 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   </div>
                 </section>
               ) : (
-              <section className={`agent-core-setting-section agent-modification-actions ${activeStatus?.modificationState === 'applied' ? 'enabled' : ''}`}>
-                <div className="agent-section-heading">
-                  <div>
-                    <strong>{t('agents.modify.title')}</strong>
-                    {modificationDescription ? <span>{modificationDescription}</span> : null}
-                  </div>
+              <div className="agent-save-bar">
+                <div className="agent-save-feedback" aria-live="polite">
+                  {configurationError ? <span className="agent-inline-message error" role="alert">{configurationError}</span>
+                    : <span className="agent-write-state">{configurationNotice || clearNotice || (modelLoading || !activeStatus
+                      ? t('agents.modify.checking')
+                      : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState')
+                      : formMatchesConfiguration ? '' : t('agents.modify.pending'))}</span>}
+                  {modificationDescription ? <small>{modificationDescription}</small> : null}
                 </div>
-                <div className="agent-modification-control">
-                  {selected === 'codex' ? (
-                    <div className="agent-codex-options">
-                      <label
-                        className="agent-oauth-configuration"
-                        title={t('agents.modify.oauthConfiguration')}
-                      >
-                        <span>{t('agents.modify.oauthConfiguration')}</span>
-                        <span className="switch-control">
-                          <input
-                            type="checkbox"
-                            role="switch"
-                            checked={oauthConfiguration}
-                            onChange={(event) => void changeOauthConfiguration(event.currentTarget.checked)}
-                            disabled={busy}
-                            aria-label={t('agents.modify.oauthConfiguration')}
-                          />
-                          <span className="switch-track" />
-                        </span>
-                      </label>
-                      <button
-                        type="button"
-                        className="secondary-button agent-codex-catalog-button"
-                        onClick={() => setCodexCatalogDialogOpen(true)}
-                        disabled={busy}
-                      >
-                        <SlidersHorizontal size={16} />
-                        {t('agents.catalog.button')}
-                      </button>
-                    </div>
-                  ) : null}
-                  <div className={`agent-modification-buttons ${selected === 'codex' ? 'codex' : ''}`}>
-                    <button
-                      type="button"
-                      className="primary-button"
-                      onClick={() => void (configurationAction === 'close'
-                        ? closeConfigurationChanges()
-                        : applyConfigurationChanges())}
-                      disabled={
-                        busy
-                        || (configurationAction === 'close' ? false : !canEnable)
-                      }
-                    >
-                      {busyAction === 'apply' || busyAction === 'close-config'
-                        ? <LoaderCircle size={16} className="spin" />
-                        : null}
-                      {configurationAction === 'update'
-                        ? t('agents.modify.update')
-                        : configurationAction === 'close'
-                          ? t('agents.modify.close')
-                          : t('agents.modify.apply')}
-                    </button>
+                <div className="agent-save-actions">
+                  <button type="button" className="secondary-button" onClick={() => setHistoryOpen(true)} disabled={busy}>{t('agents.history.button')}</button>
                     <button
                       type="button"
                       className="secondary-button"
@@ -2115,19 +2097,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         {t('agents.modify.clear')}
                       </button>
                     ) : null}
-                  </div>
-                  {configurationError ? (
-                    <span className="agent-inline-message error" role="alert" aria-live="polite">
-                      {configurationError}
-                    </span>
-                  ) : null}
-                  {clearNotice ? (
-                    <span className="agent-inline-message" role="status" aria-live="polite">
-                      {clearNotice}
-                    </span>
-                  ) : null}
+
+                  <button type="button" className="primary-button" onClick={() => void applyConfigurationChanges()} disabled={busy || !canEnable || configurationWriteBlocked}>
+                    {busyAction === 'apply' ? <LoaderCircle size={16} className="spin" /> : null}
+                    {configurationActionLabel}
+                  </button>
                 </div>
-              </section>
+              </div>
               )}
 
               <div className="agent-config-footer">
@@ -2241,6 +2217,17 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           )}
         </section>
       </div>
+
+      {historyOpen ? <AgentConfigHistoryDialog client={selected} onClose={() => setHistoryOpen(false)} onRestored={async () => {
+        if (selected === 'claude-code' || selected === 'claude-desktop') claudeModelMappingsDirtyRef.current[selected] = false;
+        setOauthConfigurationDraft(null);
+        const refreshed = await invoke<AgentConfigStatus[]>('refresh_agent_config_statuses');
+        setStatuses(refreshed);
+        const current = refreshed.find((status) => status.id === selected)?.currentModel;
+        if (current) setModelByClient((values) => { const next = { ...values, [selected]: current }; writeAgentModelSelections(next); return next; });
+        setConfigurationNotice(t('agents.history.restored'));
+      }} /> : null}
+      {configurationNotice && (embedded || isPiClient) ? <p className="agent-inline-message" role="status">{configurationNotice}</p> : null}
 
       {codexCatalogDialogOpen ? (
         <CodexModelCatalogDialog
