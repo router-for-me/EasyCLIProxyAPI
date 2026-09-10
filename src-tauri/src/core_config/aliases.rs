@@ -2279,8 +2279,15 @@ pub(crate) fn render_updated_core_yaml(
     document.set(updated);
     let rendered = expand_top_level_flow_style_collections(&document.get_string(), document.get())?;
     let rendered = indent_indentationless_yaml_sequences(&rendered);
-    serde_norway::from_str::<serde_norway::Value>(&rendered)
+    let validated = serde_norway::from_str::<serde_norway::Value>(&rendered)
         .map_err(|error| format!("验证更新后的内核配置失败: {error}"))?;
+    if &validated != document.get() {
+        let path = first_yaml_mismatch_path(document.get(), &validated, &mut Vec::new())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        return Err(format!(
+            "更新后的内核配置与预期值不一致（路径: {path}），已拒绝写入"
+        ));
+    }
     Ok(rendered)
 }
 

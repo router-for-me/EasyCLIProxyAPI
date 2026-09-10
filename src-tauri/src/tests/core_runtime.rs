@@ -556,7 +556,7 @@ fn replacing_a_core_migrates_old_fields_into_the_new_template() {
 }
 
 #[test]
-fn replacing_a_core_discards_invalid_fields_and_continues_migration() {
+fn replacing_a_core_rejects_invalid_config_without_overwriting_files() {
     let root = agent_test_home("core-config-migrate-invalid");
     let source = root.join("source");
     let target = root.join("target");
@@ -574,16 +574,46 @@ fn replacing_a_core_discards_invalid_fields_and_continues_migration() {
         .unwrap();
     fs::write(target.join(CORE_CONFIG_FILE), "staged: untouched\n").unwrap();
 
-    migrate_core_config_for_update(&source, &target).unwrap();
+    let original = fs::read(source.join(CORE_CONFIG_FILE)).unwrap();
+    assert!(migrate_core_config_for_update(&source, &target).is_err());
+    assert_eq!(fs::read(source.join(CORE_CONFIG_FILE)).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap(),
+        "staged: untouched\n"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
 
-    let migrated = fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap();
-    let document = serde_norway::from_str::<serde_norway::Value>(&migrated).unwrap();
-    assert_eq!(document["host"], "127.0.0.1");
-    assert_eq!(document["broken"], "new-default");
-    assert_eq!(document["port"], 9527);
-    assert_eq!(document["api-keys"][0], "old-a");
-    assert_eq!(document["api-keys"][1], "old-b");
-    assert_eq!(document["new-option"], true);
+#[cfg(windows)]
+#[test]
+fn replacing_a_core_rejects_locked_config_without_using_defaults() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = agent_test_home("core-config-locked");
+    let source = root.join("source");
+    let target = root.join("target");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    let original = "codex-api-key:\n  - api-key: test-key\n    base-url: https://example.test\n";
+    let source_path = source.join(CORE_CONFIG_FILE);
+    fs::write(&source_path, original).unwrap();
+    fs::write(target.join(CORE_EXAMPLE_CONFIG_FILE), "port: 8317\n").unwrap();
+    fs::write(target.join(CORE_CONFIG_FILE), "staged: untouched\n").unwrap();
+    let locked = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&source_path)
+        .unwrap();
+    let result = migrate_core_config_for_update(&source, &target);
+    drop(locked);
+    assert!(
+        result.is_err(),
+        "unreadable configuration must not be replaced by defaults"
+    );
+    assert_eq!(fs::read_to_string(source_path).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap(),
+        "staged: untouched\n"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

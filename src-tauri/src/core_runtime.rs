@@ -1834,9 +1834,16 @@ pub(crate) fn migrate_core_config_for_update(
         return Ok(());
     }
     let old_config_path = source_dir.join(CORE_CONFIG_FILE);
-    if !old_config_path.is_file() {
-        return Ok(());
-    }
+    let old_config = match fs::read_to_string(&old_config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "读取旧版内核配置失败，为避免配置丢失已取消更新 {}: {error}",
+                path_to_string(&old_config_path)
+            ));
+        }
+    };
 
     let template_path = target_dir.join(CORE_EXAMPLE_CONFIG_FILE);
     if !template_path.is_file() {
@@ -1845,23 +1852,13 @@ pub(crate) fn migrate_core_config_for_update(
             path_to_string(&template_path)
         ));
     }
-    let old_config = match fs::read(&old_config_path) {
-        Ok(content) => String::from_utf8_lossy(&content).into_owned(),
-        Err(error) => {
-            eprintln!(
-                "读取旧版内核配置失败，将使用新版默认配置继续更新 {}: {error}",
-                path_to_string(&old_config_path)
-            );
-            String::new()
-        }
-    };
     let template = fs::read_to_string(&template_path).map_err(|error| {
         format!(
             "读取新版内核配置模板失败 {}: {error}",
             path_to_string(&template_path)
         )
     })?;
-    let migrated = merge_core_config_fields_tolerant(&template, &old_config)?;
+    let migrated = merge_core_config_fields(&template, Some(&old_config))?;
     let config_path = target_dir.join(CORE_CONFIG_FILE);
     fs::write(&config_path, migrated).map_err(|error| {
         format!(

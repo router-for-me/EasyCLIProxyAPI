@@ -16,6 +16,42 @@ enum Failure {
     ForeignChange,
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn alias_save_rejects_loss_of_api_access_before_any_write() {
+    let initial = format!("{CURRENT}codex-api-key:\n  - api-key: test-key\n    base-url: https://example.test\n    models: [{{name: model-a}}]\nopenai-compatibility:\n  - name: preserved\n    disabled: true\n    api-key-entries: [{{api-key: other-test-key}}]\n    models: [{{name: model-b}}]\n");
+    for section in ["codex-api-key", "openai-compatibility"] {
+        for mode in ["missing", "empty", "credential"] {
+            let mut corrupted = yaml_json(&initial);
+            match mode {
+                "missing" => {
+                    corrupted.as_object_mut().unwrap().remove(section);
+                }
+                "empty" => corrupted[section] = serde_json::json!([]),
+                _ => {
+                    corrupted[section][0]
+                        .as_object_mut()
+                        .unwrap()
+                        .retain(|key, _| !key.starts_with("api-key"));
+                }
+            }
+            let core = MockCore::new(&initial, Failure::None);
+            let result = put_management_alias_config_changes(
+                &core.config,
+                &initial,
+                &serde_norway::to_string(&corrupted).unwrap(),
+            )
+            .await;
+            let (persisted, requests) = core.finish();
+            assert!(
+                result.is_err(),
+                "accepted provider loss: {section}/{mode}"
+            );
+            assert_eq!(persisted, yaml_json(&initial));
+            assert!(!requests.iter().any(|request| request.starts_with("PUT")));
+        }
+    }
+}
+
 struct MockCore {
     config: GuiConfigFile,
     finished: Arc<AtomicBool>,

@@ -276,17 +276,6 @@ pub(crate) fn merge_core_config_fields(
     merge_core_config_value(template, current_value)
 }
 
-pub(crate) fn merge_core_config_fields_tolerant(
-    template: &str,
-    current: &str,
-) -> Result<String, String> {
-    let current = match serde_norway::from_str::<serde_norway::Value>(current) {
-        Ok(current) if current.is_mapping() => current,
-        _ => recover_parseable_top_level_yaml_fields(current),
-    };
-    merge_core_config_value(template, Some(current))
-}
-
 pub(crate) fn merge_core_config_value(
     template: &str,
     current: Option<serde_norway::Value>,
@@ -309,75 +298,6 @@ pub(crate) fn merge_core_config_value(
         return Err("迁移后的内核配置根节点必须是 YAML 映射".to_string());
     }
     Ok(rendered)
-}
-
-pub(crate) fn recover_parseable_top_level_yaml_fields(content: &str) -> serde_norway::Value {
-    let lines = yaml_line_ranges(content);
-    let boundaries = lines
-        .iter()
-        .copied()
-        .filter(|range| is_top_level_yaml_boundary(yaml_line_content(content, *range)))
-        .collect::<Vec<_>>();
-    let mut recovered = serde_norway::Mapping::new();
-
-    for (index, (start, _)) in boundaries.iter().copied().enumerate() {
-        let line = yaml_line_content(content, boundaries[index]);
-        if !is_top_level_yaml_mapping_field(line) {
-            continue;
-        }
-        let end = boundaries
-            .get(index + 1)
-            .map(|(next_start, _)| *next_start)
-            .unwrap_or(content.len());
-        let Ok(value) = serde_norway::from_str::<serde_norway::Value>(&content[start..end]) else {
-            continue;
-        };
-        let Some(mapping) = value.as_mapping() else {
-            continue;
-        };
-        for (key, value) in mapping {
-            recovered.insert(key.clone(), value.clone());
-        }
-    }
-
-    serde_norway::Value::Mapping(recovered)
-}
-
-pub(crate) fn is_top_level_yaml_boundary(line: &str) -> bool {
-    if line.is_empty()
-        || line.chars().next().is_some_and(char::is_whitespace)
-        || line.starts_with('#')
-        || is_indentationless_yaml_sequence_item(line)
-    {
-        return false;
-    }
-    !matches!(line.trim(), "---" | "...") && !line.starts_with('%')
-}
-
-pub(crate) fn is_top_level_yaml_mapping_field(line: &str) -> bool {
-    let mut single_quoted = false;
-    let mut double_quoted = false;
-    let mut escaped = false;
-    for (index, character) in line.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if double_quoted && character == '\\' {
-            escaped = true;
-            continue;
-        }
-        match character {
-            '\'' if !double_quoted => single_quoted = !single_quoted,
-            '"' if !single_quoted => double_quoted = !double_quoted,
-            ':' if !single_quoted && !double_quoted => {
-                let rest = &line[index + character.len_utf8()..];
-                return rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace);
-            }
-            _ => {}
-        }
-    }
-    false
 }
 
 pub(crate) fn patch_core_network_yaml(

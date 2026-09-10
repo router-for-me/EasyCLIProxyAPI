@@ -5,6 +5,47 @@ fn alias_config_is_unchanged(current: &str, latest: &str) -> Result<bool, String
     Ok(changes.oauth_model_aliases.is_none() && !changes.update_config_yaml)
 }
 
+fn validate_alias_api_access_preserved(current: &str, updated: &str) -> Result<(), String> {
+    let parse = |content: &str| {
+        serde_norway::from_str::<serde_norway::Value>(content)
+            .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))
+    };
+    let current = parse(current)?;
+    let updated = parse(updated)?;
+    for section in MODEL_ALIAS_CONFIG_SECTIONS
+        .iter()
+        .copied()
+        .chain(["vertex-api-key", "xai-api-key", "interactions-api-key"])
+    {
+        let without_models = |root: &serde_norway::Value| -> Result<_, String> {
+            let mut value = root
+                .get(section)
+                .cloned()
+                .unwrap_or(serde_norway::Value::Null);
+            if value.is_null() {
+                return Ok(serde_norway::Value::Sequence(Vec::new()));
+            }
+            let providers = value
+                .as_sequence_mut()
+                .ok_or_else(|| format!("{section} 必须是数组，已拒绝保存别名"))?;
+            if MODEL_ALIAS_CONFIG_SECTIONS.contains(&section) {
+                for provider in providers {
+                    if let Some(provider) = provider.as_mapping_mut() {
+                        provider.remove(yaml_key("models"));
+                    }
+                }
+            }
+            Ok(value)
+        };
+        if without_models(&current)? != without_models(&updated)? {
+            return Err(format!(
+                "别名更新意外改变了 API 接入配置（{section}），已拒绝写入"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn put_management_alias_config_changes(
     config: &GuiConfigFile,
     current: &str,
@@ -25,6 +66,7 @@ pub(crate) async fn commit_management_alias_config_changes<T>(
 ) -> Result<T, String> {
     static SAVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _guard = SAVE_LOCK.lock().await;
+    validate_alias_api_access_preserved(current, updated)?;
     let changes = management_alias_config_changes(current, updated)?;
     let latest = fetch_management_config_yaml(config).await?;
     if !alias_config_is_unchanged(current, &latest)? {

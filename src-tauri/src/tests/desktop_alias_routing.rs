@@ -6,6 +6,35 @@ fn json(content: &str) -> serde_json::Value {
 }
 
 #[test]
+fn desktop_routes_preserve_api_access_when_switching_models() {
+    let input = "codex-api-key:\n  - api-key: codex-test-key\n    base-url: https://codex.example.test\n    proxy-url: socks5://127.0.0.1:1080\n    models: [{name: model-a}, {name: model-b}]\nopenai-compatibility:\n  - name: other\n    disabled: true\n    api-key-entries: [{api-key: other-test-key}]\n    models: [{name: other-model}]\npayload:\n  override:\n    - models: [{name: other-model}]\n      params: {custom: retained}\n";
+    let before = json(input);
+    let mut content = input.to_string();
+    for selected in ["model-a", "model-b", "model-b"] {
+        content = ensure_claude_desktop_model_aliases_in_yaml(
+            &content,
+            &ClaudeDesktopModelMappings::all(selected),
+            &test_agent_models(&["model-a", "model-b"]),
+        )
+        .unwrap();
+        let mut after = json(&content);
+        let models = after["codex-api-key"][0]["models"].as_array_mut().unwrap();
+        assert_eq!(models.len(), 5);
+        for route in [
+            CLAUDE_DESKTOP_OPUS_MODEL_ID,
+            CLAUDE_DESKTOP_SONNET_MODEL_ID,
+            CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+        ] {
+            assert!(models
+                .iter()
+                .any(|model| model["alias"] == route && model["name"] == selected));
+        }
+        models.retain(|model| model.get("display-name").is_none());
+        assert_eq!(after, before);
+    }
+}
+
+#[test]
 fn desktop_routes_move_from_disabled_provider_to_enabled_source() {
     let models = test_agent_models(&["grok-4.6"]);
     let mappings = ClaudeDesktopModelMappings::all("grok-4.6");
