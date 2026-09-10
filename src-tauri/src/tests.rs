@@ -12,6 +12,7 @@ mod app_settings;
 mod app_update;
 mod core_config;
 mod core_runtime;
+mod desktop_alias_routing;
 #[cfg(windows)]
 mod file_replace;
 mod instance_lock;

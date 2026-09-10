@@ -1406,6 +1406,9 @@ pub(crate) fn mark_configured_agent_model_aliases(
             let Some(provider) = provider.as_mapping() else {
                 continue;
             };
+            if yaml_mapping_value(provider, "disabled") == Some(&serde_norway::Value::Bool(true)) {
+                continue;
+            }
             let Some(configured_models) = yaml_mapping_value(provider, "models") else {
                 continue;
             };

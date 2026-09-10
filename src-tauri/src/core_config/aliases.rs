@@ -528,20 +528,29 @@ pub(crate) fn is_managed_claude_model_alias(model: &serde_norway::Value, alias: 
             .is_some_and(|value| value == expected_display_name)
 }
 
-pub(crate) fn configured_managed_claude_alias_exists(
+pub(crate) fn configured_managed_claude_alias_matches(
     root: &serde_norway::Mapping,
     alias: &str,
+    source_model: &str,
 ) -> bool {
+    let matches = |model: &serde_norway::Value| {
+        is_managed_claude_model_alias(model, alias)
+            && configured_model_identity(model)
+                .is_some_and(|(source, _, _)| source.eq_ignore_ascii_case(source_model))
+    };
     let configured_provider_alias = MODEL_ALIAS_CONFIG_SECTIONS.iter().any(|section| {
         yaml_mapping_value(root, section)
             .and_then(serde_norway::Value::as_sequence)
             .into_iter()
             .flatten()
             .filter_map(serde_norway::Value::as_mapping)
+            .filter(|provider| {
+                yaml_mapping_value(provider, "disabled") != Some(&serde_norway::Value::Bool(true))
+            })
             .filter_map(|provider| yaml_mapping_value(provider, "models"))
             .filter_map(serde_norway::Value::as_sequence)
             .flatten()
-            .any(|model| is_managed_claude_model_alias(model, alias))
+            .any(matches)
     });
     configured_provider_alias
         || yaml_mapping_value(root, "oauth-model-alias")
@@ -550,7 +559,7 @@ pub(crate) fn configured_managed_claude_alias_exists(
             .flat_map(|channels| channels.values())
             .filter_map(serde_norway::Value::as_sequence)
             .flatten()
-            .any(|model| is_managed_claude_model_alias(model, alias))
+            .any(matches)
 }
 
 pub(crate) fn ensure_claude_desktop_model_alias(
@@ -559,14 +568,10 @@ pub(crate) fn ensure_claude_desktop_model_alias(
     alias: &str,
     oauth_model_definitions: &[OAuthModelDefinitions],
 ) -> Result<(), String> {
-    if let Some((existing_source, _)) = configured_model_client_identity(root, alias) {
-        if existing_source.eq_ignore_ascii_case(source_model)
-            && configured_managed_claude_alias_exists(root, alias)
-        {
-            return Ok(());
-        }
-        remove_existing_claude_model_alias(root, alias)?;
+    if configured_managed_claude_alias_matches(root, alias, source_model) {
+        return Ok(());
     }
+    remove_existing_claude_model_alias(root, alias)?;
     if append_claude_desktop_model_alias(root, source_model, alias)? {
         return Ok(());
     }
@@ -657,6 +662,9 @@ pub(crate) fn append_claude_desktop_model_alias(
             let Some(provider) = provider.as_mapping_mut() else {
                 continue;
             };
+            if yaml_mapping_value(provider, "disabled") == Some(&serde_norway::Value::Bool(true)) {
+                continue;
+            }
             let Some(models) = yaml_mapping_value_mut(provider, "models") else {
                 continue;
             };
