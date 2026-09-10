@@ -3,6 +3,18 @@ use super::*;
 const AGENT_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const AGENT_VERSION_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+#[cfg(not(test))]
+fn agent_configuration_environment(name: &str) -> Option<PathBuf> {
+    env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+#[cfg(test)]
+fn agent_configuration_environment(_: &str) -> Option<PathBuf> {
+    None
+}
+
 pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBuf> {
     match client {
         AgentClient::ClaudeCode => {
@@ -89,23 +101,17 @@ pub(crate) fn opencode_config_path_from_environment(
 }
 
 pub(crate) fn kimi_code_home(home: &Path) -> PathBuf {
-    env::var_os("KIMI_CODE_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
+    agent_configuration_environment("KIMI_CODE_HOME")
         .unwrap_or_else(|| home.join(".kimi-code"))
 }
 
 pub(crate) fn grok_build_home(home: &Path) -> PathBuf {
-    env::var_os("GROK_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
+    agent_configuration_environment("GROK_HOME")
         .unwrap_or_else(|| home.join(".grok"))
 }
 
 pub(crate) fn deepseek_harness_home(home: &Path) -> PathBuf {
-    env::var_os("DSH_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
+    agent_configuration_environment("DSH_HOME")
         .unwrap_or_else(|| home.join(".dsh"))
 }
 
@@ -131,9 +137,7 @@ pub(crate) fn read_package_json_version(path: &Path) -> Option<String> {
 }
 
 pub(crate) fn pi_agent_directory(home: &Path) -> PathBuf {
-    env::var_os("PI_CODING_AGENT_DIR")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
+    agent_configuration_environment("PI_CODING_AGENT_DIR")
         .unwrap_or_else(|| home.join(".pi/agent"))
 }
 
@@ -683,9 +687,7 @@ pub(crate) fn remove_pi_package(executable: &Path, home: &Path) -> Result<(), St
 }
 
 pub(crate) fn codex_configuration_directory(home: &Path) -> PathBuf {
-    env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
+    agent_configuration_environment("CODEX_HOME")
         .unwrap_or_else(|| home.join(".codex"))
 }
 
@@ -786,15 +788,13 @@ pub(crate) fn claude_desktop_config_paths(_home: &Path) -> Vec<PathBuf> {
     };
     #[cfg(target_os = "windows")]
     {
-        let local = env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
+        let local = agent_configuration_environment("LOCALAPPDATA")
             .unwrap_or_else(|| _home.join("AppData/Local"));
         claude_desktop_config_paths_from_local_app_data(&local)
     }
     #[cfg(target_os = "linux")]
     let (normal, threep) = {
-        let config_home = env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
+        let config_home = agent_configuration_environment("XDG_CONFIG_HOME")
             .filter(|path| path.is_absolute())
             .unwrap_or_else(|| _home.join(".config"));
         (config_home.join("Claude"), config_home.join("Claude-3p"))
@@ -865,16 +865,12 @@ pub(crate) fn find_windows_claude_data_directory(
 }
 
 pub(crate) fn hermes_agent_config_path(home: &Path) -> PathBuf {
-    if let Some(directory) = env::var_os("HERMES_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-    {
+    if let Some(directory) = agent_configuration_environment("HERMES_HOME") {
         return directory.join("config.yaml");
     }
     #[cfg(target_os = "windows")]
     {
-        env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
+        agent_configuration_environment("LOCALAPPDATA")
             .unwrap_or_else(|| home.join("AppData/Local"))
             .join("hermes/config.yaml")
     }

@@ -1,6 +1,7 @@
 use super::*;
 
 mod agent_configuration;
+mod agent_paths;
 mod agent_state;
 mod agent_transactions;
 mod alias_edit;

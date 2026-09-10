@@ -65,6 +65,13 @@ pub(crate) struct HistoryPreview {
 }
 
 pub(crate) fn history_paths(client: &str, home: &Path) -> Result<Vec<PathBuf>, String> {
+    let paths = history_paths_inner(client, home)?;
+    #[cfg(test)]
+    assert!(paths.iter().all(|path| path.starts_with(home)));
+    Ok(paths)
+}
+
+fn history_paths_inner(client: &str, home: &Path) -> Result<Vec<PathBuf>, String> {
     if client == PI_AGENT_ID {
         return Ok(vec![
             pi_provider_config_path(home),
