@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OAuthAliasChannel {
@@ -1630,8 +1631,9 @@ pub(crate) fn add_model_alias_to_yaml(
         )?,
     }
 
-    remove_thinking_payload_model(root, alias)?;
-    remove_speed_payload_model(root, alias)?;
+    let scope = AliasPayloadScope::for_protocol(&source.source.protocol);
+    remove_thinking_payload_model(root, alias, &scope)?;
+    remove_speed_payload_model(root, alias, &scope)?;
     if !effort.is_empty() {
         let mut params_mapping = serde_norway::Mapping::new();
         insert_thinking_effort_params(&mut params_mapping, &source.source, effort)?;
@@ -1729,7 +1731,11 @@ pub(crate) fn add_speed_alias_to_yaml(
         )?,
     }
 
-    remove_speed_payload_model(root, alias)?;
+    remove_speed_payload_model(
+        root,
+        alias,
+        &AliasPayloadScope::for_protocol(&source.source.protocol),
+    )?;
     let mut params_mapping = serde_norway::Mapping::new();
     params_mapping.insert(
         yaml_key("service_tier"),
@@ -1914,8 +1920,9 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
     if !removed {
         return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
     }
-    remove_thinking_payload_model(root, alias)?;
-    remove_speed_payload_model(root, alias)?;
+    let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
+    remove_thinking_payload_model(root, alias, &scope)?;
+    remove_speed_payload_model(root, alias, &scope)?;
     render_updated_core_yaml(&mut document, updated)
 }
 
@@ -1943,7 +1950,8 @@ pub(crate) fn remove_speed_alias_from_yaml_for_channel(
     if !removed {
         return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
     }
-    remove_speed_payload_model(root, alias)?;
+    let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
+    remove_speed_payload_model(root, alias, &scope)?;
     render_updated_core_yaml(&mut document, updated)
 }
 
@@ -2095,9 +2103,96 @@ pub(crate) fn remove_config_speed_alias(
     Ok(removed)
 }
 
-pub(crate) fn remove_thinking_payload_model(
+struct AliasPayloadScope {
+    protocol: Option<String>,
+    preserved_protocols: BTreeSet<String>,
+}
+
+impl AliasPayloadScope {
+    fn for_protocol(protocol: &str) -> Self {
+        Self {
+            protocol: Some(protocol.to_string()),
+            preserved_protocols: BTreeSet::new(),
+        }
+    }
+
+    fn after_removal(root: &serde_norway::Mapping, alias: &str, channel: Option<&str>) -> Self {
+        let mut preserved_protocols = BTreeSet::new();
+        if let Some(channels) =
+            yaml_mapping_value(root, "oauth-model-alias").and_then(serde_norway::Value::as_mapping)
+        {
+            for (channel, entries) in channels {
+                let matches = entries.as_sequence().is_some_and(|entries| {
+                    entries.iter().any(|entry| {
+                        entry
+                            .as_mapping()
+                            .and_then(|entry| yaml_mapping_value(entry, "alias"))
+                            .and_then(serde_norway::Value::as_str)
+                            .is_some_and(|name| name.trim().eq_ignore_ascii_case(alias))
+                    })
+                });
+                if matches {
+                    preserved_protocols.insert(
+                        oauth_alias_channel_details(channel.as_str().unwrap_or_default()).2,
+                    );
+                }
+            }
+        }
+        for (section, protocol) in [
+            ("codex-api-key", "codex"),
+            ("openai-compatibility", "openai"),
+            ("claude-api-key", "claude"),
+            ("gemini-api-key", "gemini"),
+        ] {
+            let matches = yaml_mapping_value(root, section)
+                .and_then(serde_norway::Value::as_sequence)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_norway::Value::as_mapping)
+                .filter_map(|provider| yaml_mapping_value(provider, "models"))
+                .filter_map(serde_norway::Value::as_sequence)
+                .flatten()
+                .filter_map(configured_model_identity)
+                .any(|(_, name, _)| name.eq_ignore_ascii_case(alias));
+            if matches {
+                preserved_protocols.insert(protocol.to_string());
+            }
+        }
+        Self {
+            protocol: channel.map(|channel| oauth_alias_channel_details(channel).2),
+            preserved_protocols,
+        }
+    }
+
+    fn matches(&self, model: &serde_norway::Value, alias: &str) -> bool {
+        if !thinking_payload_model_name_matches(model, alias) {
+            return false;
+        }
+        let protocol = model
+            .as_mapping()
+            .and_then(|model| yaml_mapping_value(model, "protocol"))
+            .and_then(serde_norway::Value::as_str)
+            .map(str::trim)
+            .filter(|protocol| !protocol.is_empty());
+        match protocol {
+            Some(protocol) => {
+                self.protocol
+                    .as_ref()
+                    .is_none_or(|target| target.eq_ignore_ascii_case(protocol))
+                    && !self
+                        .preserved_protocols
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(protocol))
+            }
+            None => self.preserved_protocols.is_empty(),
+        }
+    }
+}
+
+fn remove_thinking_payload_model(
     root: &mut serde_norway::Mapping,
     alias: &str,
+    scope: &AliasPayloadScope,
 ) -> Result<(), String> {
     let mut remove_payload_section = false;
     if let Some(payload) = yaml_mapping_value_mut(root, "payload") {
@@ -2134,7 +2229,7 @@ pub(crate) fn remove_thinking_payload_model(
                                 .ok_or_else(|| "payload.override.models 必须是数组".to_string())?;
                             let before = models.len();
                             models
-                                .retain(|model| !thinking_payload_model_name_matches(model, alias));
+                                .retain(|model| !scope.matches(model, alias));
                             removed_from_rule = models.len() != before;
                             models_empty = models.is_empty();
                         }
@@ -2157,9 +2252,10 @@ pub(crate) fn remove_thinking_payload_model(
     Ok(())
 }
 
-pub(crate) fn remove_speed_payload_model(
+fn remove_speed_payload_model(
     root: &mut serde_norway::Mapping,
     alias: &str,
+    scope: &AliasPayloadScope,
 ) -> Result<(), String> {
     let mut remove_payload_section = false;
     if let Some(payload) = yaml_mapping_value_mut(root, "payload") {
@@ -2185,8 +2281,9 @@ pub(crate) fn remove_speed_payload_model(
                                 .ok_or_else(|| "payload.override.models 必须是数组".to_string())?;
                             let before = models.len();
                             models.retain(|model| {
-                                !thinking_payload_model_matches(model, alias, "codex")
-                                    && !thinking_payload_model_matches(model, alias, "openai")
+                                !scope.matches(model, alias)
+                                    || (!thinking_payload_model_matches(model, alias, "codex")
+                                        && !thinking_payload_model_matches(model, alias, "openai"))
                             });
                             removed_from_rule = models.len() != before;
                             models_empty = models.is_empty();
