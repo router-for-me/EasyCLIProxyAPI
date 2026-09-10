@@ -6,7 +6,7 @@ use std::path::Path;
 
 pub(super) type ModelCustomizations = BTreeMap<String, Map<String, Value>>;
 
-const EDITABLE_FIELDS: [&str; 11] = [
+pub(super) const EDITABLE_FIELDS: [&str; 11] = [
     "display_name",
     "description",
     "context_window",

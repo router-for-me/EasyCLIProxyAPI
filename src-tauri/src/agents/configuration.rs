@@ -246,12 +246,8 @@ pub(crate) fn build_agent_updates_with_oauth(
 }
 
 pub(crate) fn read_optional_text(path: &Path) -> Result<Option<String>, String> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    fs::read_to_string(path)
-        .map(Some)
-        .map_err(|error| format!("读取配置失败 {}: {error}", path_to_string(path)))
+    read_agent_bytes(path)?.map(|bytes| String::from_utf8(bytes)
+        .map_err(|_| "配置不是 UTF-8 文本，请使用手动备份恢复或基础配置模板修复".to_string())).transpose()
 }
 
 pub(crate) fn read_agent_yaml_mapping_or_empty(
@@ -420,12 +416,7 @@ fn validate_deepseek_harness_versioned_credentials(
         let Some(key) = key.as_str() else {
             return Err(format!("{label} 顶层字段名必须是字符串"));
         };
-        if !matches!(
-            key,
-            "version" | "refs" | "records" | DEEPSEEK_HARNESS_CREDENTIAL
-        ) {
-            return Err(format!("{label} 包含未知顶层字段 {key}"));
-        }
+        let _ = key; // Preserve extension fields from the client and other integrations.
     }
     for section in ["refs", "records"] {
         if yaml_mapping_value(root, section).is_some_and(|value| !value.is_mapping()) {
@@ -457,6 +448,7 @@ fn deepseek_harness_credentials_refs_mut<'a>(
         .ok_or_else(|| format!("{label} refs 必须是映射"))
 }
 
+#[cfg(test)]
 fn remove_deepseek_harness_managed_credential(
     root: &mut serde_norway::Mapping,
     label: &str,
@@ -870,6 +862,7 @@ pub(crate) fn build_claude_desktop_meta(existing: Option<&str>) -> Result<String
     render_agent_json(root, "Claude Desktop 配置索引")
 }
 
+#[cfg(test)]
 pub(crate) fn update_agent_json_file<F>(path: &Path, label: &str, update: F) -> Result<bool, String>
 where
     F: FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> bool,
@@ -893,6 +886,7 @@ where
     Ok(true)
 }
 
+#[cfg(test)]
 pub(crate) fn remove_claude_desktop_managed_configuration(
     paths: &[PathBuf],
 ) -> Result<Vec<String>, String> {
@@ -970,6 +964,7 @@ pub(crate) fn remove_claude_desktop_managed_configuration(
     Ok(changed)
 }
 
+#[cfg(test)]
 pub(crate) fn remove_claude_code_managed_configuration(
     paths: &[PathBuf],
 ) -> Result<Vec<String>, String> {
@@ -1027,6 +1022,7 @@ pub(crate) fn remove_claude_code_managed_configuration(
     Ok(updated.then(|| path_to_string(path)).into_iter().collect())
 }
 
+#[cfg(test)]
 pub(crate) fn remove_codex_managed_configuration(paths: &[PathBuf]) -> Result<Vec<String>, String> {
     use toml_edit::{Document, Item};
 
@@ -1098,6 +1094,7 @@ pub(crate) fn remove_codex_managed_configuration(paths: &[PathBuf]) -> Result<Ve
     Ok(changed)
 }
 
+#[cfg(test)]
 pub(crate) fn remove_opencode_managed_configuration(
     paths: &[PathBuf],
 ) -> Result<Vec<String>, String> {
@@ -1132,6 +1129,7 @@ pub(crate) fn remove_opencode_managed_configuration(
     Ok(updated.then(|| path_to_string(path)).into_iter().collect())
 }
 
+#[cfg(test)]
 pub(crate) fn remove_zcode_managed_configuration(paths: &[PathBuf]) -> Result<Vec<String>, String> {
     if paths.is_empty() {
         return Err("ZCode 当前平台配置路径不可用".to_string());
@@ -1188,6 +1186,7 @@ pub(crate) fn remove_zcode_managed_configuration(paths: &[PathBuf]) -> Result<Ve
     Ok(changed_paths)
 }
 
+#[cfg(test)]
 pub(crate) fn remove_kimi_code_managed_configuration(
     paths: &[PathBuf],
 ) -> Result<Vec<String>, String> {
@@ -1201,6 +1200,7 @@ pub(crate) fn remove_kimi_code_managed_configuration(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn remove_grok_build_managed_configuration(
     paths: &[PathBuf],
 ) -> Result<Vec<String>, String> {
@@ -1214,6 +1214,7 @@ pub(crate) fn remove_grok_build_managed_configuration(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn remove_managed_toml_client_configuration(
     paths: &[PathBuf],
     label: &str,
@@ -1320,6 +1321,7 @@ pub(crate) fn remove_managed_toml_client_configuration(
     Ok(vec![path_to_string(path)])
 }
 
+#[cfg(test)]
 pub(crate) fn update_agent_json5_file<F>(
     path: &Path,
     label: &str,
@@ -1358,6 +1360,7 @@ where
     Ok(true)
 }
 
+#[cfg(test)]
 pub(crate) fn remove_openclaw_managed_configuration(
     paths: &[PathBuf],
 ) -> Result<Vec<String>, String> {
@@ -1429,6 +1432,7 @@ pub(crate) fn remove_openclaw_managed_configuration(
     Ok(updated.then(|| path_to_string(path)).into_iter().collect())
 }
 
+#[cfg(test)]
 pub(crate) fn remove_hermes_managed_configuration(
     paths: &[PathBuf],
 ) -> Result<Vec<String>, String> {
@@ -1498,6 +1502,7 @@ pub(crate) fn remove_hermes_managed_configuration(
     Ok(vec![path_to_string(path)])
 }
 
+#[cfg(test)]
 pub(crate) fn remove_agent_managed_configuration(
     client: AgentClient,
     paths: &[PathBuf],
@@ -1516,6 +1521,7 @@ pub(crate) fn remove_agent_managed_configuration(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn remove_deepseek_harness_settings_fields(root: &mut serde_norway::Mapping) -> bool {
     let mut changed = false;
     let mut remove_llm = false;
@@ -1554,6 +1560,7 @@ pub(crate) fn remove_deepseek_harness_settings_fields(root: &mut serde_norway::M
     changed
 }
 
+#[cfg(test)]
 pub(crate) fn remove_deepseek_harness_managed_configuration(
     paths: &[PathBuf],
 ) -> Result<Vec<String>, String> {
@@ -3310,7 +3317,8 @@ pub(crate) fn build_hermes_agent_config(
         serde_norway::Value::String(MANAGED_AGENT_PROVIDER_ID.to_string()),
     );
     let rendered = if let Some(existing) = existing.filter(|value| !value.trim().is_empty()) {
-        render_yaml_value_changes(existing, &original, &root)?
+        render_yaml_value_changes(existing, &original, &root)
+            .or_else(|_| serde_norway::to_string(&root).map_err(|_| "生成 Hermes 配置失败".to_string()))?
     } else {
         serde_norway::to_string(&root).map_err(|error| format!("生成 Hermes 配置失败: {error}"))?
     };

@@ -460,7 +460,7 @@ pub(crate) fn install_pi_provider_inner(
     let settings_path = pi_provider_settings_path(home);
     let mut changed_files = Vec::new();
     if !pi_provider_package_installed(home)? {
-        history_package_operation(home, "plugin-install", || install_pi_package(executable, home, proxy_url))?;
+        config_package_operation(home, "plugin-install", || install_pi_package(executable, home, proxy_url))?;
         changed_files.push(path_to_string(&settings_path));
     }
 
@@ -485,7 +485,8 @@ pub(crate) fn repair_pi_provider_inner(
     let config_path = pi_provider_config_path(home);
     let settings_path = pi_provider_settings_path(home);
     let _guard = AGENT_CONFIG_FILE_LOCK.lock().map_err(|_| "配置文件锁已损坏")?;
-    let before = history_images(&history_paths(PI_AGENT_ID, home)?)?;
+    let before = config_images(&config_paths(PI_AGENT_ID, home)?)?;
+    validate_config_images(&before)?;
     if !pi_provider_package_installed(home)? {
         return Err("Pi CLIProxyAPI provider is not installed".to_string());
     }
@@ -508,7 +509,7 @@ pub(crate) fn repair_pi_provider_inner(
         )
     })?;
     let rendered_settings = build_pi_provider_settings(&settings, default_model)?;
-    history_updates(PI_AGENT_ID, home, &before, &[
+    config_updates(PI_AGENT_ID, home, &before, &[
         AgentFileUpdate { path: config_path, after: rendered },
         AgentFileUpdate { path: settings_path, after: rendered_settings },
     ], "update", Some(default_model.to_string()), None)
@@ -525,7 +526,7 @@ pub(crate) fn update_pi_provider_inner(
     if !pi_provider_package_installed(home)? {
         return Err("Pi CLIProxyAPI provider 插件尚未安装".to_string());
     }
-    history_package_operation(home, "plugin-update", || update_pi_package(executable, home, proxy_url))?;
+    config_package_operation(home, "plugin-update", || update_pi_package(executable, home, proxy_url))?;
     let mut result = repair_pi_provider_inner(home, port, api_key, default_model)?;
     result.outcome = "updated".to_string();
     Ok(result)
@@ -544,7 +545,7 @@ pub(crate) fn uninstall_pi_provider_inner(
             Vec::new(),
         ));
     }
-    history_package_operation(home, "plugin-remove", || remove_pi_package(executable, home))?;
+    config_package_operation(home, "plugin-remove", || remove_pi_package(executable, home))?;
     Ok(action_result(
         "removed",
         false,
@@ -756,13 +757,13 @@ pub(crate) fn validate_codex_oauth_login_at(auth_path: &Path) -> Result<(), Stri
 }
 
 pub(crate) fn clear_codex_config_files(home: &Path) -> Result<Vec<String>, String> {
-    let paths = history_paths("codex",home)?;
-    let before = history_images(&paths)?;
+    let paths = config_paths("codex",home)?;
+    let before = config_images(&paths)?;
     let mut after = before.clone();
     for (path, bytes) in &mut after {
         if path.file_name().and_then(|v| v.to_str()).is_some_and(|v| v == "auth.json" || v == "config.toml") { *bytes = None; }
     }
-    Ok(commit_history("codex", &paths, &before, &after, "clear", None)?.changed_files)
+    Ok(commit_config("codex", &paths, &before, &after, "clear", None)?.changed_files)
 }
 
 pub(crate) fn codex_model_catalog_path(home: &Path) -> PathBuf {
@@ -886,7 +887,10 @@ pub(crate) fn inspect_agent_config(
 ) -> AgentConfigStatus {
     let paths = agent_config_paths(client, home);
     let config_exists = paths.iter().any(|path| path.is_file());
-    let result = inspect_agent_managed_config(client, &paths, port, api_key).and_then(
+    let result = config_paths(client.id(), home)
+        .and_then(|paths| config_images(&paths))
+        .and_then(|images| validate_config_images(&images))
+        .and_then(|_| inspect_agent_managed_config(client, &paths, port, api_key)).and_then(
         |(configured, model, oauth_configuration)| {
             if client == AgentClient::Codex && configured {
                 let model = model
@@ -901,7 +905,7 @@ pub(crate) fn inspect_agent_config(
         Ok((configured, model, oauth_configuration)) => {
             (configured, model, oauth_configuration, true, None)
         }
-        Err(error) => (false, None, false, false, Some(error)),
+        Err(_) => (false, None, false, false, Some("配置读取或解析失败，请检查文件权限，或使用手动备份恢复、基础配置模板修复".to_string())),
     };
     let executable = find_agent_executable(client, home);
     // Desktop application executables are not CLIs. Invoking them with
@@ -962,7 +966,7 @@ pub(crate) fn inspect_agent_config(
     }
 
     let configuration_synchronized = agent_configuration_is_synchronized(client, home, configured);
-    // Legacy backup warnings belong in the history dialog, not the current configuration status.
+    // Legacy backup state never participates in current configuration discovery.
 
     AgentConfigStatus {
         id: client.id().to_string(),
@@ -990,7 +994,7 @@ pub(crate) fn inspect_agent_config(
         claude_code_model_mappings: (client == AgentClient::ClaudeCode)
             .then(|| inspect_claude_code_model_mappings(&paths[0]).ok().flatten())
             .flatten(),
-        claude_desktop_model_mappings: (client == AgentClient::ClaudeDesktop).then(|| current_desktop_history_mappings(home)).flatten(),
+        claude_desktop_model_mappings: (client == AgentClient::ClaudeDesktop).then(|| current_desktop_mappings(home)).flatten(),
         warnings,
         error,
     }

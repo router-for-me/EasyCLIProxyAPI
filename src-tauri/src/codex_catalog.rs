@@ -77,6 +77,31 @@ pub(crate) fn validate_embedded_catalog() -> Result<(), String> {
     catalog_state().map(|_| ())
 }
 
+// An omitted managed field means "use the Codex default", not "keep the disk value".
+// Derive ownership from the bundled schemas and editor so optional fields stay in sync.
+pub(crate) fn is_managed_model_field(field: &str) -> bool {
+    static FIELDS: OnceLock<HashSet<String>> = OnceLock::new();
+    FIELDS
+        .get_or_init(|| {
+            let sources = parse_sources(MODEL_CATALOG_JSON)
+                .expect("embedded Codex model catalog must be valid");
+            sources
+                .fallback
+                .keys()
+                .chain(
+                    sources
+                        .templates
+                        .values()
+                        .flat_map(|template| template.value.keys()),
+                )
+                .map(String::as_str)
+                .chain(customizations::EDITABLE_FIELDS)
+                .map(str::to_string)
+                .collect()
+        })
+        .contains(field)
+}
+
 pub(crate) fn activate_catalog_json(catalog_json: &str) -> Result<bool, String> {
     let parsed = parse_sources(catalog_json)?;
     let mut state = catalog_state()?

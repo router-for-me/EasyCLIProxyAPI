@@ -350,7 +350,7 @@ impl DesktopRestoreFixture {
             core_versions.push(
                 ensure_claude_desktop_model_aliases_in_yaml(initial, &mappings, &models).unwrap(),
             );
-            let result = apply_agent_configuration_with_oauth(
+            let _result = apply_agent_configuration_with_oauth(
                 AgentClient::ClaudeDesktop,
                 &home,
                 8317,
@@ -366,7 +366,7 @@ impl DesktopRestoreFixture {
             )
             .unwrap();
             if name == "model-a" {
-                id = result.history_version;
+                id = Some(create_backup("claude-desktop", &home).unwrap().id);
             }
         }
         Self {
@@ -385,7 +385,7 @@ impl Drop for DesktopRestoreFixture {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn desktop_history_restore_updates_core_routes_and_mapping_metadata() {
+async fn desktop_backup_restore_updates_core_routes_and_mapping_metadata() {
     let fixture = DesktopRestoreFixture::new();
     let core = MockCore::new(&fixture.core_b, Failure::None);
     let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
@@ -397,7 +397,7 @@ async fn desktop_history_restore_updates_core_routes_and_mapping_metadata() {
         .await
         .unwrap();
     assert_eq!(
-        current_desktop_history_mappings(&fixture.home)
+        current_desktop_mappings(&fixture.home)
             .unwrap()
             .opus,
         "model-a"
@@ -407,7 +407,7 @@ async fn desktop_history_restore_updates_core_routes_and_mapping_metadata() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn desktop_history_restore_rejects_core_changes_since_preview() {
+async fn desktop_backup_restore_rejects_core_changes_since_preview() {
     let fixture = DesktopRestoreFixture::new();
     let core = MockCore::new(&fixture.core_b, Failure::None);
     let preview = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
@@ -427,7 +427,7 @@ async fn desktop_history_restore_rejects_core_changes_since_preview() {
             .contains("预览后")
     );
     assert_eq!(
-        current_desktop_history_mappings(&fixture.home)
+        current_desktop_mappings(&fixture.home)
             .unwrap()
             .opus,
         "model-b"
@@ -436,23 +436,23 @@ async fn desktop_history_restore_rejects_core_changes_since_preview() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn desktop_history_restore_rolls_back_core_when_local_files_change() {
+async fn desktop_backup_restore_rolls_back_core_when_local_files_change() {
     let fixture = DesktopRestoreFixture::new();
     let core = MockCore::new(&fixture.core_b, Failure::None);
     let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
         .await
         .unwrap();
     let revision = plan.preview.revision.clone();
-    let paths = history_paths("claude-desktop", &fixture.home).unwrap();
+    let paths = config_paths("claude-desktop", &fixture.home).unwrap();
     fs::write(&paths[0], r#"{"deploymentMode":"3p","external":true}"#).unwrap();
-    let before = history_images(&paths).unwrap();
+    let before = config_images(&paths).unwrap();
     assert!(execute_restore_plan(&core.config, plan, &revision)
         .await
         .unwrap_err()
         .contains("已恢复原配置"));
-    assert_eq!(history_images(&paths).unwrap(), before);
+    assert_eq!(config_images(&paths).unwrap(), before);
     assert_eq!(
-        current_desktop_history_mappings(&fixture.home)
+        current_desktop_mappings(&fixture.home)
             .unwrap()
             .opus,
         "model-b"
@@ -461,21 +461,21 @@ async fn desktop_history_restore_rolls_back_core_when_local_files_change() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn desktop_history_restore_does_not_write_local_files_when_core_save_fails() {
+async fn desktop_backup_restore_does_not_write_local_files_when_core_save_fails() {
     let fixture = DesktopRestoreFixture::new();
     let core = MockCore::new(&fixture.core_b, Failure::YamlAfterWrite);
     let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
         .await
         .unwrap();
     let revision = plan.preview.revision.clone();
-    let paths = history_paths("claude-desktop", &fixture.home).unwrap();
-    let before = history_images(&paths).unwrap();
+    let paths = config_paths("claude-desktop", &fixture.home).unwrap();
+    let before = config_images(&paths).unwrap();
     assert!(execute_restore_plan(&core.config, plan, &revision)
         .await
         .is_err());
-    assert_eq!(history_images(&paths).unwrap(), before);
+    assert_eq!(config_images(&paths).unwrap(), before);
     assert_eq!(
-        current_desktop_history_mappings(&fixture.home)
+        current_desktop_mappings(&fixture.home)
             .unwrap()
             .opus,
         "model-b"
@@ -493,6 +493,88 @@ async fn alias_transaction_rolls_back_when_followup_commit_fails() {
     .await;
     assert!(result.unwrap_err().contains("local history write failed"));
     assert_eq!(core.finish().0, yaml_json(CURRENT));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_update_and_template_preserve_core_access_and_rollback_failed_local_changes() {
+    let initial = "debug: true\napi-keys: [client-key]\nopenai-compatibility:\n  - name: provider\n    base-url: https://provider.test/v1\n    api-key-entries: [{api-key: provider-secret}]\n    custom: {nested: keep}\n    models: [{name: model-a}]\ncodex-api-key:\n  - api-key: unrelated-secret\n    base-url: https://codex.test\n    models: [{name: unrelated-model}]\n";
+    let legacy = initial.replace(
+        "{name: model-a}",
+        &format!("{{name: model-a, alias: {CLAUDE_DESKTOP_OPUS_MODEL_ID}}}"),
+    );
+    let models = super::support::test_agent_models(&["model-a"]);
+    let mappings = ClaudeDesktopModelMappings::all("model-a");
+    for initial in [initial, legacy.as_str()] {
+        for template in [false, true] {
+            for fail in [false, true] {
+                let home = super::support::agent_test_home("desktop-protected-update");
+                let paths = config_paths("claude-desktop", &home).unwrap();
+                if template {
+                    fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+                    fs::write(&paths[0], "broken-client-config").unwrap();
+                }
+                let before = config_images(&paths).unwrap();
+                let core = MockCore::new(initial, Failure::None);
+                let result = commit_agent_with_core(&core.config, Some(&mappings), &models, || {
+                    if fail {
+                        return Err("local write rejected".into());
+                    }
+                    if template {
+                        reset_agent_configuration_to_default_with_oauth(AgentDefaultConfiguration {
+                            client: AgentClient::ClaudeDesktop,
+                            home: &home,
+                            port: 8317,
+                            api_key: "client-key",
+                            model: "model-a",
+                            models: &models,
+                            codex_catalog: None,
+                            oauth_configuration: false,
+                            claude_code_model_mappings: None,
+                            claude_desktop_model_mappings: Some(&mappings),
+                        })
+                    } else {
+                        apply_agent_configuration_with_oauth(
+                            AgentClient::ClaudeDesktop,
+                            &home,
+                            8317,
+                            "client-key",
+                            "model-a",
+                            AgentConfigurationOptions {
+                                models: &models,
+                                codex_catalog: None,
+                                oauth_configuration: false,
+                                claude_code_model_mappings: None,
+                                claude_desktop_model_mappings: Some(&mappings),
+                            },
+                        )
+                    }
+                })
+                .await;
+                let (persisted, _) = core.finish();
+                if fail {
+                    assert!(result.is_err());
+                    assert_eq!(persisted, yaml_json(initial));
+                    assert_eq!(before, config_images(&paths).unwrap());
+                } else {
+                    result.unwrap();
+                    assert_eq!(persisted["api-keys"], yaml_json(initial)["api-keys"]);
+                    assert_eq!(
+                        persisted["codex-api-key"],
+                        yaml_json(initial)["codex-api-key"]
+                    );
+                    let mut provider = persisted["openai-compatibility"][0].clone();
+                    provider.as_object_mut().unwrap().remove("models");
+                    let mut original = yaml_json(initial)["openai-compatibility"][0].clone();
+                    original.as_object_mut().unwrap().remove("models");
+                    assert_eq!(provider, original);
+                    assert_eq!(persisted["debug"], true);
+                    assert_eq!(current_desktop_mappings(&home).unwrap().opus, "model-a");
+                }
+                assert_eq!(test_backup_count(AgentClient::ClaudeDesktop, &home), 0);
+                fs::remove_dir_all(home).unwrap();
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

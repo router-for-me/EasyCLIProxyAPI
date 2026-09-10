@@ -948,13 +948,13 @@ pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> boo
 pub(crate) fn resolve_claude_desktop_model_mappings(
     client: AgentClient,
     models: &[AgentModelOption],
-    selected_model: &str,
+    _selected_model: &str,
     requested: Option<ClaudeDesktopModelMappings>,
 ) -> Result<Option<ClaudeDesktopModelMappings>, String> {
     if client != AgentClient::ClaudeDesktop {
         return Ok(None);
     }
-    let requested = requested.unwrap_or_else(|| ClaudeDesktopModelMappings::all(selected_model));
+    let requested = requested.ok_or("请重新选择 Claude Desktop 的模型映射")?;
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
     Ok(Some(ClaudeDesktopModelMappings {
@@ -1059,98 +1059,25 @@ pub(crate) async fn apply_agent_config(
         &model,
         claude_desktop_model_mappings,
     )?;
-    if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
-        ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
-    }
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    apply_agent_configuration_with_oauth(
-        client,
-        &home,
-        config.port,
-        api_key,
-        &model,
-        AgentConfigurationOptions {
-            models: &prepared.models,
-            codex_catalog: prepared.codex_catalog.as_deref(),
-            oauth_configuration,
-            claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-            claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
-        },
-    )
-}
-
-#[tauri::command]
-pub(crate) fn close_agent_config_modification(
-    app: tauri::AppHandle,
-    client: String,
-) -> Result<AgentConfigActionResult, String> {
-    let client = AgentClient::parse(&client)?;
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    restore_agent_session_configuration(client, &home)?;
-    Ok(action_result("closed", false, None, Vec::new(), Vec::new()))
-}
-
-#[tauri::command]
-pub(crate) async fn reset_agent_config_to_default(
-    app: tauri::AppHandle,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
-    client: String,
-    model: String,
-    oauth_configuration: bool,
-    claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
-    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
-) -> Result<AgentConfigActionResult, String> {
-    let client = AgentClient::parse(&client)?;
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let config = gui_config_state.snapshot()?;
-    let api_key = effective_agent_api_key(&config);
-    if client == AgentClient::Codex && oauth_configuration {
-        validate_codex_oauth_login(&home)?;
-    }
-    validate_agent_can_enable(client, &home, config.port, api_key)?;
-    let prepared = fetch_prepared_agent_models(client, &config).await?;
-    let model = resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
-    let claude_code_model_mappings = resolve_claude_code_model_mappings(
-        client,
-        &prepared.models,
-        &model,
-        claude_code_model_mappings,
-    )?;
-    let claude_desktop_model_mappings = resolve_claude_desktop_model_mappings(
-        client,
-        &prepared.models,
-        &model,
-        claude_desktop_model_mappings,
-    )?;
-    if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
-        ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
-    }
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    reset_agent_configuration_to_default_with_oauth(AgentDefaultConfiguration {
-        client,
-        home: &home,
-        port: config.port,
-        api_key,
-        model: &model,
-        models: &prepared.models,
-        codex_catalog: prepared.codex_catalog.as_deref(),
-        oauth_configuration,
-        claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-        claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
-    })
+    commit_agent_with_core(&config, claude_desktop_model_mappings.as_ref(), &prepared.models, || {
+        let _guard = AGENT_CONFIG_FILE_LOCK
+            .lock()
+            .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+        apply_agent_configuration_with_oauth(
+            client,
+            &home,
+            config.port,
+            api_key,
+            &model,
+            AgentConfigurationOptions {
+                models: &prepared.models,
+                codex_catalog: prepared.codex_catalog.as_deref(),
+                oauth_configuration,
+                claude_code_model_mappings: claude_code_model_mappings.as_ref(),
+                claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+            },
+        )
+    }).await
 }
 
 #[tauri::command]
@@ -1203,37 +1130,36 @@ pub(crate) async fn set_agent_config_enabled(
             &model,
             claude_desktop_model_mappings,
         )?;
-        if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
-            ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
-        }
-        let _guard = AGENT_CONFIG_FILE_LOCK
-            .lock()
-            .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-        let oauth_configuration = if client == AgentClient::Codex {
-            current_codex_oauth_configuration(&home)?
-        } else {
-            false
-        };
-        apply_agent_configuration_with_oauth(
-            client,
-            &home,
-            port,
-            api_key,
-            &model,
-            AgentConfigurationOptions {
-                models: &prepared.models,
-                codex_catalog: prepared.codex_catalog.as_deref(),
-                oauth_configuration,
-                claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-                claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
-            },
-        )
+        commit_agent_with_core(&config, claude_desktop_model_mappings.as_ref(), &prepared.models, || {
+            let _guard = AGENT_CONFIG_FILE_LOCK
+                .lock()
+                .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+            let oauth_configuration = if client == AgentClient::Codex {
+                current_codex_oauth_configuration(&home)?
+            } else {
+                false
+            };
+            apply_agent_configuration_with_oauth(
+                client,
+                &home,
+                port,
+                api_key,
+                &model,
+                AgentConfigurationOptions {
+                    models: &prepared.models,
+                    codex_catalog: prepared.codex_catalog.as_deref(),
+                    oauth_configuration,
+                    claude_code_model_mappings: claude_code_model_mappings.as_ref(),
+                    claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+                },
+            )
+        }).await
     } else {
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
             .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
         let _ = force_restore;
-        Err("停用智能体配置接口已移除；如需整体重置，请使用“默认配置”".to_string())
+        Err("停用智能体配置接口已移除；如需整体重置，请使用“基础配置模板”".to_string())
     }
 }
 

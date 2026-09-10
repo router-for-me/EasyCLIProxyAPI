@@ -17,7 +17,7 @@ fn configuration_paths_ignore_inherited_environment() {
         "grok-build",
         "pi",
     ] {
-        let paths = history_paths(client, &home).unwrap();
+        let paths = config_paths(client, &home).unwrap();
         assert!(!paths.is_empty(), "{client}");
         assert!(
             paths.iter().all(|path| path.starts_with(&home)),

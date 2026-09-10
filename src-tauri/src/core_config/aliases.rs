@@ -291,27 +291,6 @@ pub(crate) fn management_alias_config_changes(
     })
 }
 
-pub(crate) async fn ensure_claude_desktop_model_aliases(
-    config: &GuiConfigFile,
-    mappings: &ClaudeDesktopModelMappings,
-    models: &[AgentModelOption],
-) -> Result<(), String> {
-    let content = fetch_management_config_yaml(config).await?;
-    let updated = match ensure_claude_desktop_model_aliases_in_yaml(&content, mappings, models) {
-        Ok(updated) => updated,
-        Err(_) => {
-            let definitions = fetch_oauth_model_definitions(config).await;
-            ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
-                &content,
-                mappings,
-                models,
-                &definitions,
-            )?
-        }
-    };
-    put_management_alias_config_changes(config, &content, &updated).await
-}
-
 pub(crate) fn ensure_claude_desktop_model_aliases_in_yaml(
     content: &str,
     mappings: &ClaudeDesktopModelMappings,
@@ -353,6 +332,9 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
         .as_mapping_mut()
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
 
+    // All roles resolve against the same input. Replacing one old role must not erase
+    // the only source record needed to configure another role.
+    let sources = root.clone();
     for (alias, source_model) in [
         (CLAUDE_DESKTOP_OPUS_MODEL_ID, mappings.opus.as_str()),
         (CLAUDE_DESKTOP_SONNET_MODEL_ID, mappings.sonnet.as_str()),
@@ -366,7 +348,13 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
                 remove_managed_claude_model_alias(root, alias)?;
             }
         } else {
-            ensure_claude_desktop_model_alias(root, source_model, alias, oauth_model_definitions)?;
+            ensure_claude_desktop_model_alias(
+                root,
+                &sources,
+                source_model,
+                alias,
+                oauth_model_definitions,
+            )?;
         }
     }
     render_updated_core_yaml(&mut document, updated)
@@ -564,6 +552,7 @@ pub(crate) fn configured_managed_claude_alias_matches(
 
 pub(crate) fn ensure_claude_desktop_model_alias(
     root: &mut serde_norway::Mapping,
+    sources: &serde_norway::Mapping,
     source_model: &str,
     alias: &str,
     oauth_model_definitions: &[OAuthModelDefinitions],
@@ -571,8 +560,10 @@ pub(crate) fn ensure_claude_desktop_model_alias(
     if configured_managed_claude_alias_matches(root, alias, source_model) {
         return Ok(());
     }
-    remove_existing_claude_model_alias(root, alias)?;
-    if append_claude_desktop_model_alias(root, source_model, alias)? {
+    let source = resolve_claude_desktop_alias_source(sources, source_model)?;
+    if let Some(source) = source {
+        remove_existing_claude_model_alias(root, alias)?;
+        append_claude_desktop_model_alias(root, source, alias)?;
         return Ok(());
     }
     if let Some(definition) = oauth_model_definitions.iter().find(|definition| {
@@ -581,6 +572,7 @@ pub(crate) fn ensure_claude_desktop_model_alias(
             .iter()
             .any(|model| model.id.eq_ignore_ascii_case(source_model))
     }) {
+        remove_existing_claude_model_alias(root, alias)?;
         append_managed_oauth_model_alias(
             root,
             definition.channel.key,
@@ -646,67 +638,133 @@ pub(crate) fn configured_model_client_identity(
     None
 }
 
-pub(crate) fn append_claude_desktop_model_alias(
-    root: &mut serde_norway::Mapping,
+enum ClaudeDesktopAliasSource {
+    Provider {
+        section: &'static str,
+        provider_index: usize,
+        model: serde_norway::Mapping,
+    },
+    OAuth {
+        channel: String,
+        model: serde_norway::Mapping,
+    },
+}
+
+fn resolve_claude_desktop_alias_source(
+    root: &serde_norway::Mapping,
     source_model: &str,
-    alias: &str,
-) -> Result<bool, String> {
-    for section in MODEL_ALIAS_CONFIG_SECTIONS {
-        let Some(providers) = yaml_mapping_value_mut(root, section) else {
-            continue;
-        };
-        let providers = providers
-            .as_sequence_mut()
-            .ok_or_else(|| format!("{section} 必须是数组"))?;
-        for provider in providers {
-            let Some(provider) = provider.as_mapping_mut() else {
-                continue;
-            };
-            if yaml_mapping_value(provider, "disabled") == Some(&serde_norway::Value::Bool(true)) {
-                continue;
+) -> Result<Option<ClaudeDesktopAliasSource>, String> {
+    // Prefer an exact client-visible model. Legacy configurations may only retain
+    // an aliased entry, whose upstream name still identifies its configured source.
+    for upstream in [false, true] {
+        let matching_model = |model: &serde_norway::Value| {
+            let (name, client_model, _) = configured_model_identity(model)?;
+            let matches = if upstream { &name } else { &client_model };
+            if !matches.eq_ignore_ascii_case(source_model) {
+                return None;
             }
-            let Some(models) = yaml_mapping_value_mut(provider, "models") else {
+            let mut model = model.as_mapping().cloned().unwrap_or_default();
+            model.insert(yaml_key("name"), serde_norway::Value::String(name));
+            Some(model)
+        };
+        for section in MODEL_ALIAS_CONFIG_SECTIONS {
+            let Some(providers) = yaml_mapping_value(root, section) else {
                 continue;
             };
-            let models = models
-                .as_sequence_mut()
-                .ok_or_else(|| format!("{section}.models 必须是数组"))?;
-            let Some(source) = models.iter().find_map(|model| {
-                let (upstream_model, client_model, _) = configured_model_identity(model)?;
-                client_model
-                    .eq_ignore_ascii_case(source_model)
-                    .then(|| (model.clone(), upstream_model))
-            }) else {
-                continue;
-            };
-            let (source, upstream_model) = source;
-            let mut alias_model = source.as_mapping().cloned().unwrap_or_else(|| {
-                let mut mapping = serde_norway::Mapping::new();
-                mapping.insert(
-                    yaml_key("name"),
-                    serde_norway::Value::String(upstream_model.clone()),
-                );
-                mapping
-            });
-            alias_model.insert(
-                yaml_key("name"),
-                serde_norway::Value::String(upstream_model),
-            );
-            alias_model.insert(
-                yaml_key("alias"),
-                serde_norway::Value::String(alias.to_string()),
-            );
-            let display_name = managed_claude_alias_display_name(alias)
-                .ok_or_else(|| format!("不支持的 Claude 托管别名: {alias}"))?;
-            alias_model.insert(
-                yaml_key("display-name"),
-                serde_norway::Value::String(display_name.to_string()),
-            );
-            models.push(serde_norway::Value::Mapping(alias_model));
-            return Ok(true);
+            let providers = providers
+                .as_sequence()
+                .ok_or_else(|| format!("{section} 必须是数组"))?;
+            for (provider_index, provider) in providers.iter().enumerate() {
+                let Some(provider) = provider.as_mapping() else {
+                    continue;
+                };
+                if yaml_mapping_value(provider, "disabled") == Some(&serde_norway::Value::Bool(true)) {
+                    continue;
+                }
+                let Some(models) = yaml_mapping_value(provider, "models") else {
+                    continue;
+                };
+                let models = models
+                    .as_sequence()
+                    .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+                if let Some(model) = models.iter().find_map(matching_model) {
+                    return Ok(Some(ClaudeDesktopAliasSource::Provider {
+                        section,
+                        provider_index,
+                        model,
+                    }));
+                }
+            }
+        }
+        if let Some(channels) =
+            yaml_mapping_value(root, "oauth-model-alias").and_then(serde_norway::Value::as_mapping)
+        {
+            for (channel, models) in channels {
+                let (Some(channel), Some(models)) = (channel.as_str(), models.as_sequence()) else {
+                    continue;
+                };
+                if let Some(model) = models.iter().find_map(matching_model) {
+                    return Ok(Some(ClaudeDesktopAliasSource::OAuth {
+                        channel: channel.to_string(),
+                        model,
+                    }));
+                }
+            }
         }
     }
-    Ok(false)
+    Ok(None)
+}
+
+fn append_claude_desktop_model_alias(
+    root: &mut serde_norway::Mapping,
+    source: ClaudeDesktopAliasSource,
+    alias: &str,
+) -> Result<(), String> {
+    let (models, mut model) = match source {
+        ClaudeDesktopAliasSource::Provider {
+            section,
+            provider_index,
+            model,
+        } => {
+            let models = yaml_mapping_value_mut(root, section)
+                .and_then(serde_norway::Value::as_sequence_mut)
+                .and_then(|providers| providers.get_mut(provider_index))
+                .and_then(serde_norway::Value::as_mapping_mut)
+                .and_then(|provider| yaml_mapping_value_mut(provider, "models"))
+                .and_then(serde_norway::Value::as_sequence_mut)
+                .ok_or("模型来源配置已变化，请刷新后重试")?;
+            (models, model)
+        }
+        ClaudeDesktopAliasSource::OAuth { channel, mut model } => {
+            let aliases = root
+                .entry(yaml_key("oauth-model-alias"))
+                .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
+                .as_mapping_mut()
+                .ok_or("oauth-model-alias 必须是 YAML 映射")?;
+            let models = aliases
+                .entry(yaml_key(&channel))
+                .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
+                .as_sequence_mut()
+                .ok_or_else(|| format!("oauth-model-alias.{channel} 必须是数组"))?;
+            model.insert(yaml_key("fork"), serde_norway::Value::Bool(true));
+            if oauth_alias_channel(&channel).is_some_and(|channel| channel.force_mapping) {
+                model.insert(yaml_key("force-mapping"), serde_norway::Value::Bool(true));
+            }
+            (models, model)
+        }
+    };
+    model.insert(
+        yaml_key("alias"),
+        serde_norway::Value::String(alias.to_string()),
+    );
+    let display_name = managed_claude_alias_display_name(alias)
+        .ok_or_else(|| format!("不支持的 Claude 托管别名: {alias}"))?;
+    model.insert(
+        yaml_key("display-name"),
+        serde_norway::Value::String(display_name.to_string()),
+    );
+    models.push(serde_norway::Value::Mapping(model));
+    Ok(())
 }
 
 pub(crate) fn append_managed_oauth_model_alias(

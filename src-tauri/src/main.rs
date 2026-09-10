@@ -186,13 +186,21 @@ const MODEL_ALIAS_CONFIG_SECTIONS: &[&str] = &[
     "claude-api-key",
     "gemini-api-key",
 ];
+#[cfg(test)]
 const LEGACY_AGENT_MODIFICATION_STATE_VERSION: u8 = 1;
+#[cfg(test)]
 const AGENT_MODIFICATION_STATE_VERSION: u8 = 2;
+#[cfg(test)]
 const AGENT_APPLIED_STATE_VERSION: u8 = 4;
+#[cfg(test)]
 const AGENT_CONFIGURATION_REVISION: u8 = 1;
+#[cfg(test)]
 const AGENT_PHASE_APPLYING: &str = "applying";
+#[cfg(test)]
 const AGENT_PHASE_ACTIVE: &str = "active";
+#[cfg(test)]
 const AGENT_PHASE_RESTORING: &str = "restoring";
+#[cfg(test)]
 const AGENT_PHASE_RECOVERY: &str = "recovery";
 #[cfg(test)]
 const AGENT_MODIFICATION_STATE_CONFLICT: &str = "conflict";
@@ -208,6 +216,7 @@ const APP_USER_AGENT: &str = concat!(
 );
 static CORE_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 static AGENT_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
+#[cfg(test)]
 static CODEX_APPLIED_STATES: LazyLock<
     Mutex<std::collections::HashMap<PathBuf, AgentAppliedState>>,
 > = LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
@@ -1078,7 +1087,6 @@ struct AgentConfigActionResult {
     model: Option<String>,
     changed_files: Vec<String>,
     conflict_files: Vec<String>,
-    history_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1213,6 +1221,7 @@ struct ResolvedThinkingAliasSource {
     location: ThinkingAliasSourceLocation,
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentModificationRecord {
@@ -1223,6 +1232,7 @@ struct AgentModificationRecord {
     files: Vec<AgentModificationFile>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentModificationFile {
@@ -1241,6 +1251,7 @@ struct AgentModificationInspection {
     warnings: Vec<String>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentAppliedState {
@@ -1256,6 +1267,7 @@ struct AgentAppliedState {
     updated_at_unix: u64,
 }
 
+#[cfg(test)]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentAppliedBackupFile {
@@ -1376,6 +1388,7 @@ struct PreparedAgentModels {
     codex_catalog: Option<String>,
 }
 
+#[cfg(test)]
 type FileSnapshot = (PathBuf, Option<Vec<u8>>);
 #[cfg(test)]
 type AgentRecordExtension = (AgentModificationRecord, Vec<FileSnapshot>);
@@ -2484,9 +2497,13 @@ fn main() {
             get_software_settings,
             save_software_settings,
             get_agent_config_statuses,
-            list_agent_config_history,
-            preview_agent_config_history,
-            restore_agent_config_history,
+            create_agent_config_backup,
+            list_agent_config_backups,
+            preview_agent_config_backup,
+            restore_agent_config_backup,
+            delete_agent_config_backup,
+            preview_agent_config_template,
+            apply_agent_config_template,
             refresh_agent_config_statuses,
             get_agent_models,
             check_pi_provider_update,
@@ -2509,8 +2526,6 @@ fn main() {
             create_speed_alias,
             delete_speed_alias,
             apply_agent_config,
-            close_agent_config_modification,
-            reset_agent_config_to_default,
             clear_codex_config,
             set_agent_config_enabled,
             update_agent_config,

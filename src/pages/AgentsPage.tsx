@@ -68,7 +68,7 @@ import type { ModelOption } from '../services/modelService';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
-import { AgentConfigHistoryDialog } from './AgentConfigHistoryDialog';
+import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
 
 type AgentClientId =
   | 'claude-code'
@@ -128,7 +128,6 @@ type DeepSeekHarnessProcessStatus = {
 
 type AgentConfigActionResult = {
   outcome: 'applied' | 'default' | 'updated' | 'unchanged';
-  historyVersion: string | null;
   enabled: boolean;
   model: string | null;
   changedFiles: string[];
@@ -674,7 +673,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [loading, setLoading] = useState(true);
   const [modelLoading, setModelLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<
-    'apply' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | null
+    'backup' | 'apply' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | null
   >(null);
   const busy = busyAction !== null;
   const [detectionError, setDetectionError] = useState('');
@@ -682,9 +681,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [modelSelectionError, setModelSelectionError] = useState('');
   const [configurationError, setConfigurationError] = useState('');
   const [configurationNotice, setConfigurationNotice] = useState('');
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [backupsOpen, setBackupsOpen] = useState(false);
   const [connectionHelpOpen, setConnectionHelpOpen] = useState(false);
   const [defaultError, setDefaultError] = useState('');
+  const [templatePreview, setTemplatePreview] = useState<{ revision: string; files: string[] } | null>(null);
   const [defaultConfirmOpen, setDefaultConfirmOpen] = useState(false);
   const [clearError, setClearError] = useState('');
   const [clearNotice, setClearNotice] = useState('');
@@ -854,7 +854,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setModelSelectionError('');
     setConfigurationError('');
     setConfigurationNotice('');
-    setHistoryOpen(false);
+    setBackupsOpen(false);
     setConnectionHelpOpen(false);
     setDefaultError('');
     setDefaultConfirmOpen(false);
@@ -947,13 +947,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         current,
         selected,
         appliedMappings,
-        createClaudeModelMappings(selectedModel),
+        createClaudeModelMappings(selected === 'claude-desktop' ? '' : selectedModel),
         dirty,
       );
       const next: ClaudeModelMappings = {
-        opus: findAgentModel(models, source.opus)?.name ?? selectedModel,
-        sonnet: findAgentModel(models, source.sonnet)?.name ?? selectedModel,
-        haiku: findAgentModel(models, source.haiku)?.name ?? selectedModel,
+        opus: findAgentModel(models, source.opus)?.name ?? (selected === 'claude-desktop' ? '' : selectedModel),
+        sonnet: findAgentModel(models, source.sonnet)?.name ?? (selected === 'claude-desktop' ? '' : selectedModel),
+        haiku: findAgentModel(models, source.haiku)?.name ?? (selected === 'claude-desktop' ? '' : selectedModel),
         opus1m: Boolean(source.opus1m),
         sonnet1m: Boolean(source.sonnet1m),
         haiku1m: Boolean(source.haiku1m),
@@ -1278,7 +1278,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       }
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
-      setConfigurationNotice(t(result.outcome === 'unchanged' ? 'agents.history.unchanged' : 'agents.history.updated'));
+      setConfigurationNotice(t(result.outcome === 'unchanged' ? 'agents.backup.unchanged' : 'agents.backup.updated'));
       onConfigurationApplied?.();
     } catch (requestError) {
       if (!handleOAuthLoginError(requestError, 'apply')) {
@@ -1330,7 +1330,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     try {
       const result = await invoke<AgentConfigActionResult>('repair_pi_provider', { model });
       await reloadStatusesAfterAction();
-      setConfigurationNotice(t(result.outcome === 'unchanged' ? 'agents.history.unchanged' : 'agents.history.updated'));
+      setConfigurationNotice(t(result.outcome === 'unchanged' ? 'agents.backup.unchanged' : 'agents.backup.updated'));
       onConfigurationApplied?.();
     } catch (requestError) {
       setConfigurationError(String(requestError));
@@ -1354,6 +1354,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   };
 
   const resetConfigurationToDefault = async () => {
+    if (!templatePreview) return;
     const claudeModelMappings = requireClaudeModelMappings();
     if (isClaudeModelMappingClient && !claudeModelMappings) return;
     const model = isClaudeModelMappingClient
@@ -1363,7 +1364,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setBusyAction('default');
     setDefaultError('');
     try {
-      await invoke<AgentConfigActionResult>('reset_agent_config_to_default', {
+      await invoke<AgentConfigActionResult>('apply_agent_config_template', {
+        revision: templatePreview.revision,
         client: selected,
         model,
         oauthConfiguration,
@@ -1374,11 +1376,17 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       if (isClaudeModelMappingClient) {
         claudeModelMappingsDirtyRef.current[selected] = false;
       }
-      await reloadStatusesAfterAction();
+      const refreshed = await invoke<AgentConfigStatus[]>('refresh_agent_config_statuses');
+      setStatuses(refreshed);
+      const current = refreshed.find((status) => status.id === selected)?.currentModel;
+      setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next); return next; });
+      setConfigurationNotice(t('agents.backup.updated'));
+      onConfigurationApplied?.();
       setOauthConfigurationDraft(null);
     } catch (requestError) {
       if (!handleOAuthLoginError(requestError, 'apply')) {
         setDefaultError(String(requestError));
+        setTemplatePreview(null);
       }
     } finally {
       setBusyAction(null);
@@ -1539,9 +1547,30 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     await invokeAgentLaunch(launchDirectoryTarget, workingDirectory, deepSeekHarnessOptions);
   };
 
-  const openDefaultConfirmation = () => {
-    setDefaultError('');
-    setDefaultConfirmOpen(true);
+  const createManualBackup = async () => {
+    setBusyAction('backup'); setConfigurationError(''); setConfigurationNotice('');
+    try {
+      await invoke('create_agent_config_backup', { client: selected });
+      setConfigurationNotice(t('agents.backup.created'));
+    } catch (cause) { setConfigurationError(String(cause)); }
+    finally { setBusyAction(null); }
+  };
+
+  const openDefaultConfirmation = async () => {
+    const mappings = requireClaudeModelMappings();
+    if (isClaudeModelMappingClient && !mappings) return;
+    const model = isClaudeModelMappingClient ? mappings?.sonnet : requireSelectedModel();
+    if (!model) return;
+    setDefaultError(''); setConfigurationError(''); setTemplatePreview(null); setBusyAction('default');
+    try {
+      const preview = await invoke<{ revision: string; files: string[] }>('preview_agent_config_template', {
+        client: selected, model, oauthConfiguration,
+        claudeCodeModelMappings: selected === 'claude-code' ? mappings : null,
+        claudeDesktopModelMappings: selected === 'claude-desktop' ? mappings : null,
+      });
+      setTemplatePreview(preview); setDefaultConfirmOpen(true);
+    } catch (cause) { setConfigurationError(String(cause)); }
+    finally { setBusyAction(null); }
   };
 
   const closeDefaultConfirmation = () => {
@@ -1656,6 +1685,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </div>
               ) : null}
 
+              {selected === 'claude-desktop' && !activeStatus?.claudeDesktopModelMappings ? <p className="agent-inline-message warning">{t('agents.backup.mappingRequired')}</p> : null}
               <div className="agent-minimal-field">
                 <label htmlFor="embedded-agent-model">{t('agents.useModel')}</label>
                 <AgentModelPicker
@@ -1681,7 +1711,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     ? activeStatus?.pluginInstalled ? configurationActionLabel : t('agents.pi.install')
                     : configurationActionLabel}
                 </button>
-                <button type="button" className="secondary-button" onClick={() => setHistoryOpen(true)} disabled={busy}>{t('agents.history.button')}</button>
+                <button type="button" className="secondary-button" onClick={() => void createManualBackup()} disabled={busy}>{t('agents.backup.create')}</button>
+                <button type="button" className="secondary-button" onClick={() => setBackupsOpen(true)} disabled={busy}>{t('agents.backup.button')}</button>
+                <button type="button" className="secondary-button" onClick={() => void openDefaultConfirmation()} disabled={busy || !canEnable}>{t('agents.modify.default')}</button>
                 <button
                   type="button"
                   className={isDeepSeekHarnessClient && deepSeekHarnessProcessStatus.running
@@ -2018,7 +2050,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   <div className="agent-section-heading">
                     <div>
                       <strong>{t('agents.pi.installTitle')}</strong>
-                      <button type="button" className="secondary-button" onClick={() => setHistoryOpen(true)} disabled={busy}>{t('agents.history.button')}</button>
+                      <button type="button" className="secondary-button" onClick={() => void createManualBackup()} disabled={busy}>{t('agents.backup.create')}</button>
+                      <button type="button" className="secondary-button" onClick={() => setBackupsOpen(true)} disabled={busy}>{t('agents.backup.button')}</button>
+                      <button type="button" className="secondary-button" onClick={() => void openDefaultConfirmation()} disabled={busy || !canEnable}>{t('agents.modify.default')}</button>
                       <span>{t('agents.pi.installDescription')}</span>
                     </div>
                   </div>
@@ -2065,6 +2099,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </section>
               ) : (
               <div className="agent-save-bar">
+                {selected === 'claude-desktop' && !activeStatus?.claudeDesktopModelMappings ? <p className="agent-inline-message warning">{t('agents.backup.mappingRequired')}</p> : null}
                 <div className="agent-save-feedback" aria-live="polite">
                   {configurationError ? <span className="agent-inline-message error" role="alert">{configurationError}</span>
                     : <span className="agent-write-state">{configurationNotice || clearNotice || (modelLoading || !activeStatus
@@ -2074,7 +2109,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   {modificationDescription ? <small>{modificationDescription}</small> : null}
                 </div>
                 <div className="agent-save-actions">
-                  <button type="button" className="secondary-button" onClick={() => setHistoryOpen(true)} disabled={busy}>{t('agents.history.button')}</button>
+                  <button type="button" className="secondary-button" onClick={() => void createManualBackup()} disabled={busy}>{t('agents.backup.create')}</button>
+                  <button type="button" className="secondary-button" onClick={() => setBackupsOpen(true)} disabled={busy}>{t('agents.backup.button')}</button>
                     <button
                       type="button"
                       className="secondary-button"
@@ -2218,14 +2254,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         </section>
       </div>
 
-      {historyOpen ? <AgentConfigHistoryDialog client={selected} onClose={() => setHistoryOpen(false)} onRestored={async () => {
+      {backupsOpen ? <AgentConfigBackupDialog client={selected} onClose={() => setBackupsOpen(false)} onRestored={async () => {
         if (selected === 'claude-code' || selected === 'claude-desktop') claudeModelMappingsDirtyRef.current[selected] = false;
         setOauthConfigurationDraft(null);
         const refreshed = await invoke<AgentConfigStatus[]>('refresh_agent_config_statuses');
         setStatuses(refreshed);
         const current = refreshed.find((status) => status.id === selected)?.currentModel;
-        if (current) setModelByClient((values) => { const next = { ...values, [selected]: current }; writeAgentModelSelections(next); return next; });
-        setConfigurationNotice(t('agents.history.restored'));
+        setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next); return next; });
+        setConfigurationNotice(t('agents.backup.restored'));
       }} /> : null}
       {configurationNotice && (embedded || isPiClient) ? <p className="agent-inline-message" role="status">{configurationNotice}</p> : null}
 
@@ -2479,6 +2515,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             <p>
               {t('agents.default.description', { name: activeDefinition.name })}
             </p>
+            {templatePreview ? <ul className="agent-template-files">{templatePreview.files.map((file) => <li key={file}><code>{file}</code></li>)}</ul> : null}
             {defaultError ? (
               <span className="agent-inline-message error" role="alert" aria-live="polite">
                 {defaultError}
@@ -2486,7 +2523,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             ) : null}
             <div className="config-dialog-actions two-actions">
               <button type="button" className="secondary-button" onClick={closeDefaultConfirmation} disabled={busy}>{t('common.cancel')}</button>
-              <button type="button" className="danger-button" onClick={() => void resetConfigurationToDefault()} disabled={busy}>
+              <button type="button" className="danger-button" onClick={() => void resetConfigurationToDefault()} disabled={busy || !templatePreview}>
                 {busyAction === 'default' ? <LoaderCircle size={16} className="spin" /> : null}
                 {t('agents.default.confirm')}
               </button>
