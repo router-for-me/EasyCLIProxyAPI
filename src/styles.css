@@ -4782,7 +4782,7 @@ textarea:focus-visible {
   overflow: visible;
 }
 
-.thinking-alias-dialog {
+.management-dialog.thinking-alias-dialog {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(640px, calc(100vw - 32px));
@@ -4809,6 +4809,8 @@ textarea:focus-visible {
 
 .thinking-alias-dialog-body {
   display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 18px;
   min-height: 0;
   padding: 18px 20px;
@@ -4839,7 +4841,7 @@ textarea:focus-visible {
   white-space: normal;
 }
 
-.thinking-alias-dialog .thinking-fast-option {
+.thinking-alias-dialog .thinking-alias-field > .thinking-fast-option {
   display: flex;
   grid-template-rows: none;
 }

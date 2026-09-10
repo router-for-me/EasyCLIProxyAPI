@@ -399,6 +399,7 @@ export const zhCN = {
   'aliases.created': '已创建 {alias}，思考强度固定为 {effort}',
   'aliases.createdCombined': '已创建 {alias}，思考强度固定为 {effort}，同时启用 Fast',
   'aliases.createdPlain': '已创建别名 {alias}',
+  'aliases.updated': '已更新别名 {alias}',
   'aliases.deleteConfirm': '确定删除别名模型“{alias}”吗？\n对应的思考强度和 Fast 覆写规则也会被移除。',
   'aliases.deleted': '已删除 {alias}',
   'aliases.create.title': '创建模型别名',

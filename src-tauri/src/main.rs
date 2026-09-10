@@ -2500,6 +2500,7 @@ fn main() {
             save_codex_model_catalog_editor,
             get_thinking_aliases,
             get_model_alias_sources,
+            get_model_alias_edit_source,
             get_thinking_alias_sources,
             create_thinking_alias,
             delete_thinking_alias,

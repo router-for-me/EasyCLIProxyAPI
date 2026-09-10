@@ -190,15 +190,17 @@ export function ThinkingAliasesPage() {
   const [fastEnabled, setFastEnabled] = useState(false);
   const [alias, setAlias] = useState('');
   const [editingEntry, setEditingEntry] = useState<AliasListEntry | null>(null);
+  const [editingSource, setEditingSource] = useState<ThinkingAliasSource | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [activeSourceIndex, setActiveSourceIndex] = useState(0);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
   const generatedAliasRef = useRef('');
   const [loading, setLoading] = useState(true);
   const [busyAlias, setBusyAlias] = useState('');
-  const [busyAction, setBusyAction] = useState<'create' | 'delete' | ''>('');
+  const [busyAction, setBusyAction] = useState<'create' | 'edit' | 'delete' | ''>('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -253,8 +255,16 @@ export function ThinkingAliasesPage() {
   }, [modelPickerOpen]);
 
   const sources = useMemo(
-    () => combineModelAliasSources(baseSources, thinkingSources, speedSources),
-    [baseSources, speedSources, thinkingSources],
+    () => {
+      const choices = combineModelAliasSources(baseSources, thinkingSources, speedSources);
+      if (!editingSource) return choices;
+      return [{
+        ...editingSource,
+        supportsReasoning: editingSource.reasoningLevels.length > 0,
+        supportsFast: ['codex-oauth', 'codex-api', 'openai-compatible'].includes(editingSource.kind),
+      }, ...choices];
+    },
+    [baseSources, speedSources, thinkingSources, editingSource],
   );
   const entries = useMemo(
     () => combineModelAliasEntries(thinkingEntries, speedEntries),
@@ -320,10 +330,11 @@ export function ThinkingAliasesPage() {
   };
 
   const handleModelSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && modelPickerOpen) {
+      event.preventDefault();
+      event.stopPropagation();
       setModelPickerOpen(false);
       setSearch('');
-      event.currentTarget.blur();
       return;
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -395,8 +406,7 @@ export function ThinkingAliasesPage() {
           sourceId: selectedSource.id, alias: normalizedAlias,
           effort: normalizedEffort, fast: fastEnabled, originalAlias: editingEntry.alias,
         });
-        setNotice('');
-        setEditingEntry(null);
+        setNotice(t('aliases.updated', { alias: normalizedAlias }));
       } else if (normalizedEffort) {
         await invoke<ThinkingAliasEntry[]>('create_thinking_alias', {
           sourceId: selectedSource.id,
@@ -426,6 +436,7 @@ export function ThinkingAliasesPage() {
       setAlias('');
       await load();
       setEditorOpen(false);
+      resetEditor();
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -436,6 +447,7 @@ export function ThinkingAliasesPage() {
 
   const resetEditor = () => {
     setEditingEntry(null);
+    setEditingSource(null);
     setSelectedSourceId('');
     setEffort('');
     setFastEnabled(false);
@@ -458,25 +470,60 @@ export function ThinkingAliasesPage() {
     setEditorOpen(true);
   };
 
-  const editAlias = (entry: AliasListEntry) => {
-    const source = sources.find((candidate) => candidate.model === entry.sourceModel
-      && candidate.kind === entry.kind && candidate.provider === entry.provider);
-    if (!source) {
-      setError(`${entry.sourceModel}: ${t('common.unavailable')}`);
-      return;
-    }
-    setEditingEntry(entry);
-    setSelectedSourceId(source.id);
-    setEffort(entry.effort ?? '');
-    setFastEnabled(Boolean(entry.serviceTier));
-    setAlias(entry.alias);
-    generatedAliasRef.current = '';
-    setModelPickerOpen(false);
-    setSearch('');
+  const editAlias = async (entry: AliasListEntry) => {
+    setBusyAlias(entry.alias);
+    setBusyAction('edit');
     setError('');
     setNotice('');
-    setEditorOpen(true);
+    try {
+      const source = await invoke<ThinkingAliasSource>('get_model_alias_edit_source', { alias: entry.alias });
+      setEditingEntry(entry);
+      setEditingSource(source);
+      setSelectedSourceId(source.id);
+      setEffort(entry.effort ?? '');
+      setFastEnabled(entry.serviceTier === 'priority');
+      setAlias(entry.alias);
+      generatedAliasRef.current = '';
+      setModelPickerOpen(false);
+      setSearch('');
+      setEditorOpen(true);
+    } catch (requestError) {
+      setError(String(requestError));
+    } finally {
+      setBusyAlias('');
+      setBusyAction('');
+    }
   };
+
+  useEffect(() => {
+    if (!editorOpen) return;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    editorRef.current?.querySelector<HTMLInputElement>('input')?.focus();
+    const trapFocus = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const controls = Array.from(editorRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), [tabindex="0"]',
+      ) ?? []);
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      const outside = !editorRef.current?.contains(document.activeElement);
+      if (event.shiftKey && (outside || document.activeElement === first)) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && (outside || document.activeElement === last)) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener('keydown', trapFocus);
+    return () => {
+      document.removeEventListener('keydown', trapFocus);
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, [editorOpen]);
 
   const deleteAlias = async (entry: AliasListEntry) => {
     if (!await askConfirmation({ title: t('common.delete'), message: t('aliases.deleteConfirm', { alias: entry.alias }), confirmText: t('common.delete'), variant: 'danger' })) return;
@@ -510,7 +557,7 @@ export function ThinkingAliasesPage() {
     <section className="page management-page thinking-alias-page">
       {confirmationDialog}
       <div className="thinking-alias-feedback" aria-live="polite">
-        {error ? <div className="management-alert error">{error}</div> : null}
+        {error && !editorOpen ? <div className="management-alert error">{error}</div> : null}
         {!error && notice ? <div className="management-alert success">{notice}</div> : null}
       </div>
 
@@ -536,6 +583,7 @@ export function ThinkingAliasesPage() {
       {editorOpen ? (
         <div className="config-dialog-backdrop" onMouseDown={(event) => event.currentTarget === event.target && closeEditor()}>
         <section
+          ref={editorRef}
           className="panel management-dialog thinking-alias-editor-panel thinking-alias-dialog"
           role="dialog"
           aria-modal="true"
@@ -554,6 +602,7 @@ export function ThinkingAliasesPage() {
             </div>
 
             <div className="thinking-alias-dialog-body">
+            {error ? <div className="management-alert error" role="alert">{error}</div> : null}
             <div className="thinking-alias-field thinking-model-field">
             <label htmlFor="thinking-model-search">{t('aliases.originalModel')}</label>
             <div className="thinking-model-picker" ref={modelPickerRef}>
@@ -805,7 +854,7 @@ export function ThinkingAliasesPage() {
                     <span className="thinking-effort-badge fast">{t('speedAliases.fast.title')}</span>
                   ) : null}
                 <button type="button" className="icon-button quiet" disabled={loading || Boolean(busyAlias)}
-                  onClick={() => editAlias(entry)} title={t('common.edit')} aria-label={t('common.edit')}>
+                  onClick={() => void editAlias(entry)} title={t('common.edit')} aria-label={t('common.edit')}>
                   <Pencil size={15} />
                 </button>
                 </div>

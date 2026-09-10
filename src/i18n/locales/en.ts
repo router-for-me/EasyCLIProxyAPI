@@ -400,6 +400,7 @@ export const en: Record<MessageKey, string> = {
   'aliases.created': 'Created {alias} with reasoning effort fixed to {effort}',
   'aliases.createdCombined': 'Created {alias} with reasoning effort {effort} and Fast enabled',
   'aliases.createdPlain': 'Created model alias {alias}',
+  'aliases.updated': 'Updated model alias {alias}',
   'aliases.deleteConfirm': 'Delete the model alias “{alias}”?\nIts reasoning-effort and Fast overrides will also be removed.',
   'aliases.deleted': 'Deleted {alias}',
   'aliases.create.title': 'Create Model Alias',
