@@ -9,7 +9,7 @@ pub(crate) use customizations::{
     editor_snapshot, load_customizations, save_customizations, CatalogEditorRequest,
     CatalogEditorSnapshot,
 };
-pub(crate) use runtime_context::{apply_configured_context_limits, merge_context_definitions};
+pub(crate) use runtime_context::apply_configured_context_limits;
 
 const MODEL_CATALOG_JSON: &str = include_str!("../resources/codex_models/model-catalog.json");
 const FALLBACK_MODEL_JSON: &str = include_str!("../resources/codex_models/fallback-model.json");
@@ -165,7 +165,7 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
             context_window,
             max_context_window,
             context_source: if context_window.or(max_context_window).is_some() {
-                "compatibility"
+                "client"
             } else {
                 "template"
             },

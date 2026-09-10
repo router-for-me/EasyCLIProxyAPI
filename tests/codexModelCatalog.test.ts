@@ -28,18 +28,18 @@ const configuration = (): CodexModelConfiguration => ({
 });
 
 describe('Codex 模型列表编辑', () => {
-  test("区分内核模型定义与兼容目录的后备上下文", () => {
+  test("区分 Codex 客户端 API、模板后备与自定义上下文", () => {
     const model: CodexCatalogEditorModel = {
       slug: "model-a", hasOfficialTemplate: true, customized: false,
-      contextSource: "definition", configuration: configuration(), defaults: configuration(),
+      contextSource: "client", configuration: configuration(), defaults: configuration(),
     };
-    expect(codexContextSourceHint(model)).toBe("agents.catalog.contextSource.definition");
-    expect(codexContextSourceHint({ ...model, contextSource: "compatibility" }))
-      .toBe("agents.catalog.contextSource.compatibility");
+    expect(codexContextSourceHint(model)).toBe("agents.catalog.contextSource.client");
+    expect(codexContextSourceHint({ ...model, contextSource: "template" }))
+      .toBe("agents.catalog.contextSource.template");
     model.configuration.context_window = 64_000;
     expect(codexContextSourceHint(model)).toBe("agents.catalog.contextSource.customized");
     model.configuration = cloneCodexModelConfiguration(model.defaults);
-    expect(codexContextSourceHint(model)).toBe("agents.catalog.contextSource.definition");
+    expect(codexContextSourceHint(model)).toBe("agents.catalog.contextSource.client");
   });
 
   test('克隆配置时隔离数组字段', () => {

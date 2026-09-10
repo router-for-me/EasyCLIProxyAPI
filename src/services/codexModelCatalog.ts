@@ -25,7 +25,7 @@ export type CodexModelConfiguration = {
 export type CodexCatalogEditorModel = {
   slug: string;
   hasOfficialTemplate: boolean;
-  contextSource: "definition" | "configuration" | "compatibility" | "template";
+  contextSource: "client" | "configuration" | "template";
   customized: boolean;
   configuration: CodexModelConfiguration;
   defaults: CodexModelConfiguration;

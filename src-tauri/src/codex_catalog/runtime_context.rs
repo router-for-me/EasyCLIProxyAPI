@@ -1,32 +1,5 @@
 use super::*;
 
-pub(crate) fn merge_context_definitions(
-    runtime_models: &mut [CodexRuntimeModel],
-    definitions: &[crate::CodexModelDefinition],
-    aliases: &[AgentModelOption],
-) {
-    for runtime in runtime_models {
-        let source = aliases
-            .iter()
-            .find(|model| model.is_alias && model.name.eq_ignore_ascii_case(&runtime.slug))
-            .and_then(|model| model.alias.as_deref())
-            .unwrap_or(&runtime.slug);
-        // These are core model definitions, not the synthesized Codex client catalog.
-        let context = definitions
-            .iter()
-            .filter(|definition| definition.id.eq_ignore_ascii_case(source))
-            .filter_map(|definition| definition.context_window)
-            .filter(|value| *value > 0)
-            .min();
-        if let Some(context) = context {
-            runtime.context_window = Some(context);
-            runtime.max_context_window =
-                Some(runtime.max_context_window.unwrap_or(context).max(context));
-            runtime.context_source = "definition";
-        }
-    }
-}
-
 pub(crate) fn apply_configured_context_limits(
     runtime_models: &mut [CodexRuntimeModel],
     content: &str,
@@ -85,32 +58,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn raw_core_definitions_replace_synthesized_272k_for_models_and_aliases() {
-        let mut runtime = parse_runtime_models(&serde_json::json!({"models":[
+    fn codex_client_context_defaults_are_preserved_in_editor_and_generated_catalog() {
+        let runtime = parse_runtime_models(&serde_json::json!({"models":[
             {"slug":"gpt-5.6-sol","context_window":272000,"max_context_window":872000},
-            {"slug":"gemini-3.8-flash-high","context_window":272000,"max_context_window":272000},
-            {"slug":"fast-alias","context_window":272000,"max_context_window":272000},
-            {"slug":"no-definition","context_window":272000,"max_context_window":272000}
+            {"slug":"fast-alias","context_window":128000,"max_context_window":256000},
+            {"slug":"missing-context"}
         ]}))
         .unwrap();
-        let definitions = crate::parse_codex_model_definitions(&serde_json::json!({"models":[
-            {"id":"gpt-5.6-sol","context_length":921000},
-            {"id":"gemini-3.8-flash-high","context_length":1048576}
-        ]}))
-        .unwrap();
-        let aliases = vec![AgentModelOption {
-            name: "fast-alias".to_string(),
-            alias: Some("GPT-5.6-SOL".to_string()),
-            is_alias: true,
-            context_window: None,
-        }];
-        merge_context_definitions(&mut runtime, &definitions, &aliases);
-        assert_eq!(runtime[0].context_window, Some(921_000));
-        assert_eq!(runtime[0].max_context_window, Some(921_000));
-        assert_eq!(runtime[1].context_window, Some(1_048_576));
-        assert_eq!(runtime[2].context_window, Some(921_000));
-        assert_eq!(runtime[2].context_source, "definition");
-        assert_eq!(runtime[3].context_source, "compatibility");
         let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
         let state = CatalogState {
             sources,
@@ -119,19 +73,39 @@ mod tests {
         };
         let snapshot = customizations::snapshot_for_state(&runtime, &state).unwrap();
         let snapshot = serde_json::to_value(snapshot).unwrap();
-        let model = snapshot["models"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|model| model["slug"] == "gpt-5.6-sol")
-            .unwrap();
-        assert_eq!(model["configuration"]["context_window"], 921_000);
-        assert_eq!(model["defaults"]["context_window"], 921_000);
-        assert_eq!(model["contextSource"], "definition");
+        let prepared =
+            prepare_catalog_with_customizations(&runtime, &state.sources, &state.customizations)
+                .unwrap();
+        let catalog: Value = serde_json::from_str(&prepared.json).unwrap();
+        for (slug, context, maximum, source) in [
+            ("gpt-5.6-sol", 272_000, 872_000, "client"),
+            ("fast-alias", 128_000, 256_000, "client"),
+            ("missing-context", 272_000, 272_000, "template"),
+        ] {
+            let model = snapshot["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap();
+            for field in ["configuration", "defaults"] {
+                assert_eq!(model[field]["context_window"], context);
+                assert_eq!(model[field]["max_context_window"], maximum);
+            }
+            assert_eq!(model["contextSource"], source);
+            let generated = catalog["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap();
+            assert_eq!(generated["context_window"], context);
+            assert_eq!(generated["max_context_window"], maximum);
+        }
     }
 
     #[test]
-    fn core_configured_context_limit_takes_precedence_over_static_definitions() {
+    fn core_configured_context_limit_takes_precedence_over_client_defaults() {
         let mut runtime = parse_runtime_models(&serde_json::json!({"models":[
             {"slug":"custom-alias","context_window":921000,"max_context_window":921000},
             {"slug":"unmodified","context_window":128000,"max_context_window":128000}

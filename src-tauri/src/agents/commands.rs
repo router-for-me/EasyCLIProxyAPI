@@ -135,7 +135,7 @@ pub(crate) async fn refresh_agent_config_statuses(
 
 #[tauri::command]
 pub(crate) async fn get_agent_models(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
 ) -> Result<Vec<AgentModelOption>, String> {
@@ -151,11 +151,6 @@ pub(crate) async fn get_agent_models(
     };
     let config = gui_config_state.snapshot()?;
     let prepared = fetch_prepared_agent_models(client, &config).await?;
-    if client == AgentClient::Codex {
-        if let Err(error) = sync_prepared_codex_model_catalog(&app, &config, &prepared) {
-            eprintln!("自动刷新已应用的 Codex 模型目录失败: {error}");
-        }
-    }
     Ok(prepared.models)
 }
 
@@ -794,51 +789,18 @@ pub(crate) async fn fetch_codex_runtime_models(
     Err("本地内核不支持 Codex 模型列表接口".to_string())
 }
 
-// The client_version response contains synthesized Codex templates; its context
-// fields are not the raw core model definitions. Resolve defaults through the
-// management APIs before generating or editing the Codex catalog.
+// Codex client metadata distinguishes the default context from the maximum.
+// Do not overwrite either with the generic model-definitions context_length.
 pub(crate) async fn fetch_codex_catalog_runtime_models(
     config: &GuiConfigFile,
 ) -> Result<Vec<codex_catalog::CodexRuntimeModel>, String> {
-    let (runtime, definitions, content) = tokio::join!(
+    let (runtime, content) = tokio::join!(
         fetch_codex_runtime_models(config.port, effective_agent_api_key(config)),
-        fetch_codex_context_definitions(config),
         fetch_management_config_yaml(config),
     );
     let mut runtime = runtime?;
-    let definitions = definitions?;
-    let content = content?;
-    let mut aliases = runtime.iter().map(|model| AgentModelOption {
-        name: model.slug.clone(), alias: None, is_alias: false, context_window: None,
-    }).collect::<Vec<_>>();
-    mark_configured_agent_model_aliases(&mut aliases, &content)?;
-    codex_catalog::merge_context_definitions(&mut runtime, &definitions, &aliases);
-    codex_catalog::apply_configured_context_limits(&mut runtime, &content)?;
+    codex_catalog::apply_configured_context_limits(&mut runtime, &content?)?;
     Ok(runtime)
-}
-
-async fn fetch_codex_context_definitions(
-    config: &GuiConfigFile,
-) -> Result<Vec<CodexModelDefinition>, String> {
-    // API-key sources may expose models from other channels, so do not filter by
-    // active OAuth credentials. Model IDs still come only from the available list.
-    let channels = ["gemini", "vertex", "aistudio", "antigravity", "claude", "codex", "kimi", "xai"];
-    let results = futures_util::future::join_all(channels.iter().map(|channel|
-        fetch_oauth_channel_model_definitions(config, channel)
-    )).await;
-    let mut definitions = Vec::new();
-    let mut successes = 0;
-    let mut first_error = None;
-    for result in results {
-        match result {
-            Ok(models) => { successes += 1; definitions.extend(models); }
-            Err(error) => { first_error.get_or_insert(error); }
-        }
-    }
-    if successes == 0 {
-        return Err(format!("读取 CPA 模型上下文定义失败: {}", first_error.unwrap_or_default()));
-    }
-    Ok(definitions)
 }
 
 pub(crate) async fn fetch_prepared_agent_models(
@@ -1267,56 +1229,12 @@ pub(crate) async fn update_agent_config(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
     model: String,
+    oauth_configuration: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
 ) -> Result<AgentConfigActionResult, String> {
-    let client = AgentClient::parse(&client)?;
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let config = gui_config_state.snapshot()?;
-    let port = config.port;
-    let api_key = effective_agent_api_key(&config);
-    let prepared = fetch_prepared_agent_models(client, &config).await?;
-    let model = resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
-    let claude_code_model_mappings = resolve_claude_code_model_mappings(
-        client,
-        &prepared.models,
-        &model,
-        claude_code_model_mappings,
-    )?;
-    let claude_desktop_model_mappings = resolve_claude_desktop_model_mappings(
-        client,
-        &prepared.models,
-        &model,
-        claude_desktop_model_mappings,
-    )?;
-    if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
-        ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
-    }
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    let oauth_configuration = if client == AgentClient::Codex {
-        current_codex_oauth_configuration(&home)?
-    } else {
-        false
-    };
-    apply_agent_configuration_with_oauth(
-        client,
-        &home,
-        port,
-        api_key,
-        &model,
-        AgentConfigurationOptions {
-            models: &prepared.models,
-            codex_catalog: prepared.codex_catalog.as_deref(),
-            oauth_configuration,
-            claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-            claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
-        },
-    )
+    apply_agent_config(app, gui_config_state, client, model, oauth_configuration,
+        claude_code_model_mappings, claude_desktop_model_mappings).await
 }
 
 pub(crate) fn validate_agent_can_enable(
