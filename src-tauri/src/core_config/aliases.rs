@@ -1906,10 +1906,10 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
     let mut removed = remove_oauth_model_alias(root, alias, oauth_channel)?;
     if oauth_channel.is_none() {
-        removed |= remove_config_thinking_alias(root, "codex-api-key", "codex", alias)?;
-        removed |= remove_config_thinking_alias(root, "openai-compatibility", "openai", alias)?;
-        removed |= remove_config_thinking_alias(root, "claude-api-key", "claude", alias)?;
-        removed |= remove_config_thinking_alias(root, "gemini-api-key", "gemini", alias)?;
+        removed |= remove_config_model_alias(root, "codex-api-key", alias)?;
+        removed |= remove_config_model_alias(root, "openai-compatibility", alias)?;
+        removed |= remove_config_model_alias(root, "claude-api-key", alias)?;
+        removed |= remove_config_model_alias(root, "gemini-api-key", alias)?;
     }
     if !removed {
         return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
@@ -2021,15 +2021,11 @@ pub(crate) fn configured_model_alias_exists(root: &serde_norway::Mapping, alias:
             .any(|value| value.eq_ignore_ascii_case(alias))
 }
 
-pub(crate) fn remove_config_thinking_alias(
+pub(crate) fn remove_config_model_alias(
     root: &mut serde_norway::Mapping,
     section: &str,
-    protocol: &str,
     alias: &str,
 ) -> Result<bool, String> {
-    if find_thinking_alias_effort(root, alias, protocol).is_none() {
-        return Ok(false);
-    }
     let Some(providers) = yaml_mapping_value_mut(root, section) else {
         return Ok(false);
     };
