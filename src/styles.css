@@ -4782,6 +4782,85 @@ textarea:focus-visible {
   overflow: visible;
 }
 
+.thinking-alias-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(640px, calc(100vw - 32px));
+  height: auto;
+  min-height: 0;
+  max-height: min(780px, calc(100vh - 40px));
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.thinking-alias-dialog .thinking-alias-panel-heading {
+  padding: 18px 20px 16px;
+}
+
+.thinking-alias-dialog .thinking-alias-panel-heading > div {
+  flex: 1;
+}
+
+.thinking-alias-dialog .thinking-alias-panel-heading > .icon-button {
+  margin-left: auto;
+}
+
+.thinking-alias-dialog-body {
+  display: grid;
+  gap: 18px;
+  min-height: 0;
+  padding: 18px 20px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.thinking-alias-dialog .thinking-alias-field > label {
+  display: block;
+  height: auto;
+  grid-template-rows: none;
+}
+
+.thinking-alias-dialog .thinking-field-heading > strong {
+  flex: none;
+}
+
+.thinking-alias-dialog .thinking-field-heading {
+  display: grid;
+  justify-content: stretch;
+  gap: 3px;
+}
+
+.thinking-alias-dialog .thinking-field-heading > span {
+  min-width: 0;
+  line-height: var(--line-height-body);
+  text-overflow: initial;
+  white-space: normal;
+}
+
+.thinking-alias-dialog .thinking-fast-option {
+  display: flex;
+  grid-template-rows: none;
+}
+
+.thinking-alias-dialog-actions {
+  display: flex;
+  gap: 10px;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--theme-e3e1db);
+  background: var(--theme-fffdf8);
+}
+
+.thinking-alias-dialog-actions > button {
+  width: auto;
+  flex: 1;
+}
+
+.thinking-alias-dialog-actions .thinking-alias-create {
+  margin-top: 0;
+}
+
 .thinking-alias-section-divider {
   height: 1px;
   flex: none;
@@ -5204,8 +5283,7 @@ textarea:focus-visible {
 
 .thinking-alias-list-panel {
   display: grid;
-  grid-template-rows: 64px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-rows: minmax(0, 1fr);
   padding: 16px;
 }
 
@@ -5343,25 +5421,6 @@ textarea:focus-visible {
   border-color: var(--theme-d7a447);
   background: var(--theme-fff8eb);
   color: var(--theme-805a24);
-}
-
-@media (min-width: 1081px) {
-  .thinking-alias-list-panel .thinking-alias-row {
-    grid-template-columns: minmax(0, 1fr) auto 34px;
-    min-height: 94px;
-  }
-
-  .thinking-alias-list-panel .thinking-alias-route {
-    grid-column: 1 / -1;
-  }
-
-  .thinking-alias-list-panel .thinking-alias-badges {
-    grid-column: 2;
-  }
-
-  .thinking-alias-list-panel .thinking-alias-row > .icon-button {
-    grid-column: 3;
-  }
 }
 
 .agent-workbench {
@@ -13740,4 +13799,24 @@ body.table-col-resizing * {
  .agent-settings-toolbar { align-items: flex-start; flex-wrap: wrap; }
  .agent-save-bar { flex-wrap: wrap; gap: 12px; }
  .agent-save-actions { margin-left: auto; }
+}
+
+.thinking-alias-page > .management-header {
+  align-items: center;
+  flex-direction: row;
+}
+
+.thinking-alias-page > .management-header .management-heading-actions {
+  width: auto;
+  flex-wrap: nowrap;
+}
+
+.thinking-alias-page > .management-header .muted-summary {
+  width: auto;
+}
+
+.thinking-alias-page > .management-header .management-heading-actions button {
+  width: 42px;
+  flex: 0 0 42px;
+  padding: 0;
 }
