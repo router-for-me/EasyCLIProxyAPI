@@ -1649,12 +1649,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 >
                   <span className="agent-client-icon"><AgentMark definition={agent} /></span>
                   <span><strong>{agent.name}</strong><small>{listStatusText(status)}</small></span>
-                  <i
-                    className={status?.id === 'pi'
-                      ? status?.installed ? 'installed' : ''
-                      : status?.modificationEnabled ? 'configured' : status?.installed ? 'installed' : ''}
-                    aria-hidden="true"
-                  />
                 </button>
               );
             })}
@@ -1821,11 +1815,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         {t('agents.pluginVersion')}
                         {piPluginUpdateAvailable ? (
                           <span
-                            className="agent-version-update-dot"
+                            className="agent-version-update-label"
                             role="status"
                             aria-label={piPluginUpdateTitle}
                             title={piPluginUpdateTitle}
-                          />
+                          >
+                            {t('agents.pi.updateAvailableShort')}
+                          </span>
                         ) : null}
                       </span>
                       <strong title={piPluginUpdateTitle}>{activeStatus?.pluginVersion ?? t('agents.notFetched')}</strong>

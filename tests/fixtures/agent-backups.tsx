@@ -30,7 +30,7 @@ mockIPC(async (cmd,args:any) => {
  if(cmd==='delete_agent_config_backup') {backups.splice(backups.findIndex(b=>b.id===args.id),1);return null;}
  if(cmd==='preview_agent_config_template') return {revision:'template1',files:['C:/test/.codex/config.toml','C:/test/.codex/auth.json','C:/test/.codex/models.json']};
  if(cmd==='apply_agent_config_template') {currentModel=args.model;return {outcome:'updated'};}
- if(cmd==='check_pi_provider_update') return {installedVersion:'1.0',latestVersion:'1.0',updateAvailable:false};
+ if(cmd==='check_pi_provider_update') return {installedVersion:'1.0',latestVersion:params.has('update')?'1.1':'1.0',updateAvailable:params.has('update')};
  if(cmd==='get_codex_model_catalog_editor') return {models:[],hiddenModels:[],customizations:{}};
  if(cmd==='check_codex_oauth_login')return null;
  throw new Error('Unhandled fixture command: '+cmd);

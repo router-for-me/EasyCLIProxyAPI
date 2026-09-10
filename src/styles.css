@@ -5529,7 +5529,7 @@ textarea:focus-visible {
 
 .agent-list-items button {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 8px;
+  grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
   gap: 9px;
   width: 100%;
@@ -5566,21 +5566,6 @@ textarea:focus-visible {
 
 .agent-client-icon .provider-logo {
   object-fit: contain;
-}
-
-.agent-list-items i {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--theme-c9c4ba);
-}
-
-.agent-list-items i.configured {
-  background: var(--theme-bf8a43);
-}
-
-.agent-list-items i.installed {
-  background: var(--theme-5d9a6c);
 }
 
 .agent-config-panel {
@@ -6463,14 +6448,16 @@ textarea:focus-visible {
   font-size: var(--font-size-meta);
 }
 
-.agent-status-grid .agent-version-update-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
+.agent-status-grid .agent-version-update-label {
+  display: inline-flex;
   flex: none;
-  border-radius: 999px;
-  background: var(--theme-c77b30);
-  box-shadow: 0 0 0 3px rgba(199, 123, 48, 0.14);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--theme-f4f1ea);
+  color: var(--theme-5f5a53);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 .agent-status-grid strong {
@@ -10141,10 +10128,6 @@ body.table-col-resizing * {
     grid-template-columns: 26px minmax(0, 1fr);
   }
 
-  .agent-list-items i {
-    display: none;
-  }
-
   .auth-filter-grid {
     grid-template-columns: 1fr;
   }
@@ -12789,7 +12772,7 @@ body.table-col-resizing * {
 }
 
 .agents-page-embedded .agent-list-items button {
-  grid-template-columns: 30px minmax(0, 1fr) 8px;
+  grid-template-columns: 30px minmax(0, 1fr);
   gap: 11px;
   min-height: 66px;
   padding: 10px 11px;
