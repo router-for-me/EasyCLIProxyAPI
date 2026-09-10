@@ -294,3 +294,182 @@ async fn alias_save_can_retry_after_restoration_reformats_yaml() {
     let (persisted, _) = core.finish();
     assert_eq!(persisted, yaml_json(&updated));
 }
+
+struct DesktopRestoreFixture {
+    home: PathBuf,
+    id: String,
+    core_a: String,
+    core_b: String,
+}
+
+impl DesktopRestoreFixture {
+    fn new() -> Self {
+        let home = super::support::agent_test_home("desktop-restore");
+        let models = super::support::test_agent_models(&["model-a", "model-b"]);
+        let initial = "openai-compatibility:\n  - name: provider\n    models: [{name: model-a}, {name: model-b}]\n";
+        let mut id = None;
+        let mut core_versions = Vec::new();
+        for name in ["model-a", "model-b"] {
+            let mappings = ClaudeDesktopModelMappings::all(name);
+            core_versions.push(
+                ensure_claude_desktop_model_aliases_in_yaml(initial, &mappings, &models).unwrap(),
+            );
+            let result = apply_agent_configuration_with_oauth(
+                AgentClient::ClaudeDesktop,
+                &home,
+                8317,
+                "test-key",
+                name,
+                AgentConfigurationOptions {
+                    models: &models,
+                    codex_catalog: None,
+                    oauth_configuration: false,
+                    claude_code_model_mappings: None,
+                    claude_desktop_model_mappings: Some(&mappings),
+                },
+            )
+            .unwrap();
+            if name == "model-a" {
+                id = result.history_version;
+            }
+        }
+        Self {
+            home,
+            id: id.unwrap(),
+            core_a: core_versions.remove(0),
+            core_b: core_versions.remove(0),
+        }
+    }
+}
+
+impl Drop for DesktopRestoreFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.home);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_history_restore_updates_core_routes_and_mapping_metadata() {
+    let fixture = DesktopRestoreFixture::new();
+    let core = MockCore::new(&fixture.core_b, Failure::None);
+    let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
+        .await
+        .unwrap();
+    assert!(!plan.preview.differences.is_empty());
+    let revision = plan.preview.revision.clone();
+    execute_restore_plan(&core.config, plan, &revision)
+        .await
+        .unwrap();
+    assert_eq!(
+        current_desktop_history_mappings(&fixture.home)
+            .unwrap()
+            .opus,
+        "model-a"
+    );
+    let (persisted, _) = core.finish();
+    assert_eq!(persisted, yaml_json(&fixture.core_a));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_history_restore_rejects_core_changes_since_preview() {
+    let fixture = DesktopRestoreFixture::new();
+    let core = MockCore::new(&fixture.core_b, Failure::None);
+    let preview = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
+        .await
+        .unwrap();
+    let changed = format!("{}debug: true\n", fixture.core_b);
+    put_management_alias_config_changes(&core.config, &fixture.core_b, &changed)
+        .await
+        .unwrap();
+    let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
+        .await
+        .unwrap();
+    assert!(
+        execute_restore_plan(&core.config, plan, &preview.preview.revision)
+            .await
+            .unwrap_err()
+            .contains("预览后")
+    );
+    assert_eq!(
+        current_desktop_history_mappings(&fixture.home)
+            .unwrap()
+            .opus,
+        "model-b"
+    );
+    assert_eq!(core.finish().0, yaml_json(&changed));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_history_restore_rolls_back_core_when_local_files_change() {
+    let fixture = DesktopRestoreFixture::new();
+    let core = MockCore::new(&fixture.core_b, Failure::None);
+    let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
+        .await
+        .unwrap();
+    let revision = plan.preview.revision.clone();
+    let paths = history_paths("claude-desktop", &fixture.home).unwrap();
+    fs::write(&paths[0], r#"{"deploymentMode":"3p","external":true}"#).unwrap();
+    let before = history_images(&paths).unwrap();
+    assert!(execute_restore_plan(&core.config, plan, &revision)
+        .await
+        .unwrap_err()
+        .contains("已恢复原配置"));
+    assert_eq!(history_images(&paths).unwrap(), before);
+    assert_eq!(
+        current_desktop_history_mappings(&fixture.home)
+            .unwrap()
+            .opus,
+        "model-b"
+    );
+    assert_eq!(core.finish().0, yaml_json(&fixture.core_b));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_history_restore_does_not_write_local_files_when_core_save_fails() {
+    let fixture = DesktopRestoreFixture::new();
+    let core = MockCore::new(&fixture.core_b, Failure::YamlAfterWrite);
+    let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
+        .await
+        .unwrap();
+    let revision = plan.preview.revision.clone();
+    let paths = history_paths("claude-desktop", &fixture.home).unwrap();
+    let before = history_images(&paths).unwrap();
+    assert!(execute_restore_plan(&core.config, plan, &revision)
+        .await
+        .is_err());
+    assert_eq!(history_images(&paths).unwrap(), before);
+    assert_eq!(
+        current_desktop_history_mappings(&fixture.home)
+            .unwrap()
+            .opus,
+        "model-b"
+    );
+    assert_eq!(core.finish().0, yaml_json(&fixture.core_b));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn alias_transaction_rolls_back_when_followup_commit_fails() {
+    let core = MockCore::new(CURRENT, Failure::None);
+    let updated = CURRENT.replace("my-alias", "renamed");
+    let result = commit_management_alias_config_changes(&core.config, CURRENT, &updated, || {
+        Err::<(), _>("local history write failed".into())
+    })
+    .await;
+    assert!(result.unwrap_err().contains("local history write failed"));
+    assert_eq!(core.finish().0, yaml_json(CURRENT));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn alias_transaction_checks_core_before_a_local_only_commit() {
+    let current = format!("{CURRENT}debug: true\n");
+    let core = MockCore::new(&current, Failure::None);
+    let committed = AtomicBool::new(false);
+    let result = commit_management_alias_config_changes(&core.config, CURRENT, CURRENT, || {
+        committed.store(true, Ordering::SeqCst);
+        Ok(())
+    })
+    .await;
+    assert!(result.is_err());
+    assert!(!committed.load(Ordering::SeqCst));
+    assert_eq!(core.finish().0, yaml_json(&current));
+}

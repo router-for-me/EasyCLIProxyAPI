@@ -10,12 +10,22 @@ pub(crate) async fn put_management_alias_config_changes(
     current: &str,
     updated: &str,
 ) -> Result<(), String> {
-    static SAVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _guard = SAVE_LOCK.lock().await;
     let changes = management_alias_config_changes(current, updated)?;
     if changes.oauth_model_aliases.is_none() && !changes.update_config_yaml {
         return Ok(());
     }
+    commit_management_alias_config_changes(config, current, updated, || Ok(())).await
+}
+
+pub(crate) async fn commit_management_alias_config_changes<T>(
+    config: &GuiConfigFile,
+    current: &str,
+    updated: &str,
+    commit: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    static SAVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = SAVE_LOCK.lock().await;
+    let changes = management_alias_config_changes(current, updated)?;
     let latest = fetch_management_config_yaml(config).await?;
     if !alias_config_is_unchanged(current, &latest)? {
         return Err("配置已变化，请关闭编辑器并刷新后重试".to_string());
@@ -27,16 +37,16 @@ pub(crate) async fn put_management_alias_config_changes(
         if changes.update_config_yaml {
             put_management_config_yaml(config, updated).await?;
         }
-        Ok::<_, String>(())
+        commit()
     }
     .await;
-    if let Err(error) = result {
-        return Err(match restore_management_alias_config(config, current, updated).await {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => Err(match restore_management_alias_config(config, current, updated).await {
             Ok(()) => format!("保存失败，已恢复原配置，可重试：{error}"),
             Err(restore_error) => format!("保存失败：{error}；自动恢复失败，配置可能已部分写入，请关闭编辑器并刷新检查：{restore_error}"),
-        });
+        }),
     }
-    Ok(())
 }
 
 async fn restore_management_alias_config(

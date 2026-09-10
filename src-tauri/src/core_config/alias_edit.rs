@@ -25,7 +25,7 @@ pub(crate) fn validate_model_alias_revision(
     Ok(())
 }
 
-fn model_alias_config_revision(content: &str) -> Result<String, String> {
+pub(crate) fn model_alias_config_revision(content: &str) -> Result<String, String> {
     let document = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
     let mut value = serde_json::to_value(document).map_err(|error| error.to_string())?;

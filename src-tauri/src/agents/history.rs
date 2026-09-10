@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 type Images = Vec<(PathBuf, Option<Vec<u8>>)>;
 
+mod restore;
+pub(crate) use restore::*;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HistoryFile {
@@ -60,8 +63,8 @@ pub(crate) struct HistoryDifference {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryPreview {
-    revision: String,
-    differences: Vec<HistoryDifference>,
+    pub(crate) revision: String,
+    pub(crate) differences: Vec<HistoryDifference>,
 }
 
 pub(crate) fn history_paths(client: &str, home: &Path) -> Result<Vec<PathBuf>, String> {
@@ -882,49 +885,6 @@ pub(crate) fn list_agent_config_history(
             .collect(),
         warnings,
     })
-}
-
-#[tauri::command]
-pub(crate) fn preview_agent_config_history(
-    app: tauri::AppHandle,
-    client: String,
-    id: String,
-) -> Result<HistoryPreview, String> {
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "配置文件锁已损坏")?;
-    Ok(preview(&client, &history_paths(&client, &home)?, &id)?.0)
-}
-
-#[tauri::command]
-pub(crate) fn restore_agent_config_history(
-    app: tauri::AppHandle,
-    client: String,
-    id: String,
-    revision: String,
-) -> Result<AgentConfigActionResult, String> {
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "配置文件锁已损坏")?;
-    let paths = history_paths(&client, &home)?;
-    let (preview, before, after) = preview(&client, &paths, &id)?;
-    if preview.revision != revision {
-        return Err("预览后配置发生变化，请重新选择历史版本".into());
-    }
-    let version = read_version(&client, &paths, &id)?;
-    let result = commit_history_with_mappings(
-        &client,
-        &paths,
-        &before,
-        &after,
-        "restore",
-        version.model,
-        version.mappings,
-    )?;
-    app.state::<AgentConfigStatusCache>().clear()?;
-    Ok(result)
 }
 
 pub(crate) fn import_legacy_history(
