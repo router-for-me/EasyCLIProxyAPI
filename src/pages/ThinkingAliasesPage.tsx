@@ -14,8 +14,11 @@ import {
   Check,
   GitFork,
   LoaderCircle,
+  Plus,
   Search,
+  Pencil,
   Trash2,
+  X,
   Zap,
 } from 'lucide-react';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
@@ -186,6 +189,8 @@ export function ThinkingAliasesPage() {
   const [effort, setEffort] = useState('');
   const [fastEnabled, setFastEnabled] = useState(false);
   const [alias, setAlias] = useState('');
+  const [editingEntry, setEditingEntry] = useState<AliasListEntry | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [activeSourceIndex, setActiveSourceIndex] = useState(0);
@@ -304,7 +309,7 @@ export function ThinkingAliasesPage() {
     setSelectedSourceId(source.id);
     setEffort('');
     setFastEnabled((current) => current && source.supportsFast);
-    setAlias('');
+    if (!editingEntry) setAlias('');
     generatedAliasRef.current = '';
     setModelPickerOpen(false);
     setSearch('');
@@ -352,6 +357,7 @@ export function ThinkingAliasesPage() {
   });
 
   useEffect(() => {
+    if (editingEntry) return;
     setAlias((current) => {
       const currentValue = current.trim();
       const canReplace = !currentValue || currentValue === generatedAliasRef.current;
@@ -359,7 +365,7 @@ export function ThinkingAliasesPage() {
       generatedAliasRef.current = uniqueDefaultAlias;
       return uniqueDefaultAlias;
     });
-  }, [uniqueDefaultAlias]);
+  }, [uniqueDefaultAlias, editingEntry]);
 
   const createAlias = async () => {
     if (!selectedSource) {
@@ -384,7 +390,14 @@ export function ThinkingAliasesPage() {
     setError('');
     setNotice('');
     try {
-      if (normalizedEffort) {
+      if (editingEntry) {
+        await invoke('create_thinking_alias', {
+          sourceId: selectedSource.id, alias: normalizedAlias,
+          effort: normalizedEffort, fast: fastEnabled, originalAlias: editingEntry.alias,
+        });
+        setNotice('');
+        setEditingEntry(null);
+      } else if (normalizedEffort) {
         await invoke<ThinkingAliasEntry[]>('create_thinking_alias', {
           sourceId: selectedSource.id,
           alias: normalizedAlias,
@@ -412,12 +425,57 @@ export function ThinkingAliasesPage() {
       }
       setAlias('');
       await load();
+      setEditorOpen(false);
     } catch (requestError) {
       setError(String(requestError));
     } finally {
       setBusyAlias('');
       setBusyAction('');
     }
+  };
+
+  const resetEditor = () => {
+    setEditingEntry(null);
+    setSelectedSourceId('');
+    setEffort('');
+    setFastEnabled(false);
+    setAlias('');
+    setSearch('');
+    setModelPickerOpen(false);
+    generatedAliasRef.current = '';
+  };
+
+  const closeEditor = () => {
+    if (busyAlias) return;
+    setEditorOpen(false);
+    resetEditor();
+  };
+
+  const addAlias = () => {
+    resetEditor();
+    setError('');
+    setNotice('');
+    setEditorOpen(true);
+  };
+
+  const editAlias = (entry: AliasListEntry) => {
+    const source = sources.find((candidate) => candidate.model === entry.sourceModel
+      && candidate.kind === entry.kind && candidate.provider === entry.provider);
+    if (!source) {
+      setError(`${entry.sourceModel}: ${t('common.unavailable')}`);
+      return;
+    }
+    setEditingEntry(entry);
+    setSelectedSourceId(source.id);
+    setEffort(entry.effort ?? '');
+    setFastEnabled(Boolean(entry.serviceTier));
+    setAlias(entry.alias);
+    generatedAliasRef.current = '';
+    setModelPickerOpen(false);
+    setSearch('');
+    setError('');
+    setNotice('');
+    setEditorOpen(true);
   };
 
   const deleteAlias = async (entry: AliasListEntry) => {
@@ -456,16 +514,46 @@ export function ThinkingAliasesPage() {
         {!error && notice ? <div className="management-alert success">{notice}</div> : null}
       </div>
 
-      <div className="thinking-alias-workbench">
-        <section className="panel thinking-alias-editor-panel">
+      <header className="management-header">
+        <div>
+          <h1>{t('app.nav.thinkingAliases')}</h1>
+        </div>
+        <div className="management-heading-actions">
+          <span className="muted-summary">{entries.length}</span>
+          <button
+            type="button"
+            className="primary-button compact-button"
+            onClick={addAlias}
+            disabled={loading || Boolean(busyAlias)}
+            title={t('aliases.create')}
+            aria-label={t('aliases.create')}
+          >
+            <Plus size={18} aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+
+      {editorOpen ? (
+        <div className="config-dialog-backdrop" onMouseDown={(event) => event.currentTarget === event.target && closeEditor()}>
+        <section
+          className="panel management-dialog thinking-alias-editor-panel thinking-alias-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="thinking-alias-editor-title"
+          onKeyDown={(event) => { if (event.key === 'Escape') closeEditor(); }}
+        >
             <div className="thinking-alias-panel-heading">
               <span><GitFork size={18} /></span>
               <div>
-                <h2>{t('aliases.create.title')}</h2>
+                <h2 id="thinking-alias-editor-title">{t(editingEntry ? 'common.edit' : 'aliases.create.title')}</h2>
                 <p>{t('aliases.create.description')}</p>
               </div>
+              <button type="button" className="icon-button quiet" onClick={closeEditor} disabled={Boolean(busyAlias)} title={t('common.close')} aria-label={t('common.close')}>
+                <X size={18} />
+              </button>
             </div>
 
+            <div className="thinking-alias-dialog-body">
             <div className="thinking-alias-field thinking-model-field">
             <label htmlFor="thinking-model-search">{t('aliases.originalModel')}</label>
             <div className="thinking-model-picker" ref={modelPickerRef}>
@@ -497,7 +585,7 @@ export function ThinkingAliasesPage() {
                       setSelectedSourceId('');
                       setEffort('');
                       setFastEnabled(false);
-                      setAlias('');
+                      if (!editingEntry) setAlias('');
                       generatedAliasRef.current = '';
                     }
                   }}
@@ -505,7 +593,7 @@ export function ThinkingAliasesPage() {
                   placeholder={loading ? t('aliases.loadingModels') : t('aliases.searchModel')}
                   autoComplete="off"
                   spellCheck={false}
-                  disabled={loading}
+                  disabled={loading || Boolean(busyAlias)}
                 />
                 {!modelPickerOpen && selectedSource ? (
                   <span className="thinking-source-kind">
@@ -662,7 +750,12 @@ export function ThinkingAliasesPage() {
                 <span>{selectedSource?.model || t('aliases.notSelected')} <ArrowRight size={13} /> {alias || t('aliases.enterAlias')}</span>
               </div>
             </div>
+            </div>
 
+            <div className="thinking-alias-dialog-actions">
+            <button type="button" className="secondary-button" disabled={Boolean(busyAlias)} onClick={closeEditor}>
+              {t('common.cancel')}
+            </button>
             <button
               type="button"
               className="primary-button thinking-alias-create"
@@ -672,19 +765,14 @@ export function ThinkingAliasesPage() {
               {busyAction === 'create'
                 ? <LoaderCircle size={16} className="spin" />
                 : fastEnabled && !normalizedEffort ? <Zap size={16} /> : <GitFork size={16} />}
-              {busyAction === 'create' ? t('aliases.creating') : t('aliases.create')}
+              {busyAction === 'create' ? t(editingEntry ? 'common.saving' : 'aliases.creating') : t(editingEntry ? 'common.save' : 'aliases.create')}
             </button>
+            </div>
         </section>
+        </div>
+      ) : null}
 
         <section className="panel thinking-alias-list-panel">
-          <div className="thinking-alias-list-heading">
-            <div>
-              <h2>{t('aliases.createdList.title')}</h2>
-              <span>{t('aliases.createdList.description')}</span>
-            </div>
-            <strong>{entries.length}</strong>
-          </div>
-
           <div className="thinking-alias-list">
             {loading ? (
               <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('aliases.loadingConfig')}</div>
@@ -716,10 +804,14 @@ export function ThinkingAliasesPage() {
                   {entry.serviceTier ? (
                     <span className="thinking-effort-badge fast">{t('speedAliases.fast.title')}</span>
                   ) : null}
+                <button type="button" className="icon-button quiet" disabled={loading || Boolean(busyAlias)}
+                  onClick={() => editAlias(entry)} title={t('common.edit')} aria-label={t('common.edit')}>
+                  <Pencil size={15} />
+                </button>
                 </div>
                 <button
                   type="button"
-                  className="icon-button danger"
+                  className="icon-button quiet danger"
                   onClick={() => void deleteAlias(entry)}
                   disabled={Boolean(busyAlias)}
                   title={t('aliases.delete', { alias: entry.alias })}
@@ -732,7 +824,6 @@ export function ThinkingAliasesPage() {
             ))}
           </div>
         </section>
-      </div>
     </section>
   );
 }

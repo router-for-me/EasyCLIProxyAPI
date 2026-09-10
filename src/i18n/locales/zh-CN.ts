@@ -435,7 +435,7 @@ export const zhCN = {
   'aliases.createdList.description': '每个别名会显示已固定的思考强度和 Fast 状态',
   'aliases.loadingConfig': '读取配置中',
   'aliases.empty.title': '尚未创建模型别名',
-  'aliases.empty.description': '从左侧选择模型和别名选项即可创建',
+  'aliases.empty.description': '点击“创建别名”添加第一个模型别名',
   'aliases.unboundEffort': '未绑定强度',
   'aliases.delete': '删除 {alias}',
   'speedAliases.created': '已创建 {alias}，并固定使用 Fast 请求层级',
