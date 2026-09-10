@@ -610,7 +610,9 @@ fn commit_history_with_writer(
     if image_revision(&history_images(paths)?) != image_revision(before) {
         return Err("配置已被其他程序修改，请刷新后重试".into());
     }
-    if changed.is_empty() {
+    let prior_mappings = matching_desktop_mappings(client, paths, before);
+    let next_mappings = mappings.or_else(|| matching_desktop_mappings(client, paths, after));
+    if changed.is_empty() && prior_mappings == next_mappings {
         return Ok(action_result(
             "unchanged",
             true,
@@ -620,9 +622,12 @@ fn commit_history_with_writer(
         ));
     }
     let mut prior = make_version(client, paths, before, &format!("before-{source}"), None);
-    prior.mappings = matching_desktop_mappings(client, paths, before);
+    prior.mappings = prior_mappings;
+    if let Some(mappings) = prior.mappings.as_ref() {
+        prior.model = Some(mappings.opus.clone());
+    }
     let mut next = make_version(client, paths, after, source, model.clone());
-    next.mappings = mappings.or_else(|| matching_desktop_mappings(client, paths, after));
+    next.mappings = next_mappings;
     write_version(paths, &prior)?;
     if image_revision(&history_images(paths)?) != image_revision(before) {
         return Err("备份期间配置发生变化，请刷新后重试".into());
@@ -823,9 +828,27 @@ fn preview(
             });
         }
     }
+    let current_mappings = matching_desktop_mappings(client, paths, &current);
+    if client == "claude-desktop" && current_mappings != version.mappings {
+        let before = serde_json::to_value(&current_mappings).map_err(|e| e.to_string())?;
+        let after = serde_json::to_value(&version.mappings).map_err(|e| e.to_string())?;
+        let mut fields = BTreeSet::new();
+        collect_changes(Some(&before), Some(&after), Vec::new(), &mut fields);
+        for field in fields {
+            differences.push(HistoryDifference {
+                file: path_to_string(&paths[2]),
+                field: format!("modelMappings.{}", field.join(".")),
+                before: hidden(get(&before, &field), &field),
+                after: hidden(get(&after, &field), &field),
+            });
+        }
+    }
+    let revision = sha256_bytes(
+        format!("{}:{}", image_revision(&current), serde_json::to_string(&current_mappings).map_err(|e| e.to_string())?).as_bytes(),
+    );
     Ok((
         HistoryPreview {
-            revision: image_revision(&current),
+            revision,
             differences,
         },
         current,

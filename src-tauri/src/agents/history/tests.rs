@@ -405,3 +405,44 @@ fn directory_at_config_path_is_an_error() {
     fs::create_dir_all(&paths[0]).unwrap();
     assert!(history_images(&paths).is_err());
 }
+
+fn desktop_test_models() -> Vec<AgentModelOption> {
+    ["model-a", "model-b"].into_iter().map(|name| AgentModelOption {
+        name: name.into(), alias: None, is_alias: false, context_window: Some(200_000),
+    }).collect()
+}
+
+fn apply_desktop_test_model(home: &Path, model: &str) -> AgentConfigActionResult {
+    let mappings = ClaudeDesktopModelMappings::all(model);
+    apply_agent_configuration_with_oauth(
+        AgentClient::ClaudeDesktop, home, 8317, "test-key", model,
+        AgentConfigurationOptions {
+            models: &desktop_test_models(), codex_catalog: None, oauth_configuration: false,
+            claude_code_model_mappings: None, claude_desktop_model_mappings: Some(&mappings),
+        },
+    ).unwrap()
+}
+
+#[test]
+fn desktop_mapping_changes_are_saved_when_profile_bytes_are_identical() {
+    let home = Home::new();
+    let paths = history_paths("claude-desktop", &home.0).unwrap();
+    let first = apply_desktop_test_model(&home.0, "model-a");
+    let images = history_images(&paths).unwrap();
+    let first_id = first.history_version.unwrap();
+    let original_preview = preview("claude-desktop", &paths, &first_id).unwrap().0;
+    let second = apply_desktop_test_model(&home.0, "model-b");
+    assert_eq!(second.outcome, "updated");
+    assert!(second.changed_files.is_empty());
+    assert!(second.history_version.is_some());
+    assert_eq!(images, history_images(&paths).unwrap());
+    assert_eq!(versions("claude-desktop", &paths).unwrap().0.len(), 4);
+    assert_eq!(current_desktop_history_mappings(&home.0).unwrap().opus, "model-b");
+    let next_preview = preview("claude-desktop", &paths, &first_id).unwrap().0;
+    assert_ne!(original_preview.revision, next_preview.revision);
+    assert!(next_preview.differences.iter().any(|diff| diff.field == "modelMappings.opus"));
+    let unchanged = apply_desktop_test_model(&home.0, "model-b");
+    assert_eq!(unchanged.outcome, "unchanged");
+    assert!(unchanged.history_version.is_none());
+    assert_eq!(versions("claude-desktop", &paths).unwrap().0.len(), 4);
+}
