@@ -1,5 +1,3 @@
-// Run Vite on port 1423, then: node tests/model-alias-editor-ui.cjs
-// Set PLAYWRIGHT_MODULE to an installed Playwright module path when needed.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const { mkdirSync } = require('node:fs');
@@ -9,7 +7,6 @@ const { mkdirSync } = require('node:fs');
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     page.setDefaultTimeout(10000);
-    // External font loading is unrelated to the editor's behavior.
     await page.route('**/*', route => route.request().url().startsWith('http://127.0.0.1:1423/')
       ? route.continue() : route.abort());
     const errors = [];
@@ -21,7 +18,6 @@ const { mkdirSync } = require('node:fs');
     await dialog.waitFor();
     assert.equal(await dialog.locator('#thinking-model-search').inputValue(), 'upstream-gpt');
     assert.equal(await dialog.locator('#thinking-alias-name').inputValue(), 'my-alias');
-    // Escape dismisses the model picker before dismissing the editor.
     await page.keyboard.press('Escape');
     assert.equal(await dialog.count(), 1);
     assert.equal(await page.getByRole('listbox').count(), 0);
@@ -48,18 +44,21 @@ const { mkdirSync } = require('node:fs');
     const saved = (await writes()).at(-1).args;
     assert.equal(saved.sourceId, 'alias-edit:my-alias');
     assert.equal(saved.originalAlias, 'my-alias');
+    assert.equal(saved.expectedRevision, 'revision:my-alias');
     assert.equal(saved.alias, 'renamed-alias');
     assert.equal(saved.effort, 'low');
     await page.getByText('Updated model alias renamed-alias', { exact: true }).waitFor();
 
-    // Switch from the original configuration source to a live model source.
+    await page.evaluate(() => { window.fixtureCurrentEffort = 'high'; });
     await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    assert.match(await dialog.getByRole('button', { name: 'High', exact: true }).getAttribute('class'), /active/);
     await dialog.locator('#thinking-model-search').fill('public-gpt');
     await page.getByRole('option').click();
     assert.equal(await dialog.locator('#thinking-alias-name').inputValue(), 'renamed-alias');
     await dialog.getByRole('button', { name: 'Save', exact: true }).click();
     await dialog.waitFor({ state: 'detached' });
-    assert.equal((await writes()).at(-1).args.sourceId, 'openai-compatibility:0:0');
+    assert.equal((await writes()).at(-1).args.sourceId, 'openai-compatibility:0:0:provider-revision');
+    assert.equal((await writes()).at(-1).args.expectedRevision, 'revision:renamed-alias');
 
     await page.setViewportSize({ width: 640, height: 600 });
     await page.getByRole('button', { name: 'Create Alias', exact: true }).click();
@@ -82,6 +81,7 @@ const { mkdirSync } = require('node:fs');
     await dialog.getByRole('button', { name: 'Create Alias', exact: true }).click();
     await dialog.waitFor({ state: 'detached' });
     assert.equal((await writes()).at(-1).args.originalAlias, undefined);
+    assert.equal((await writes()).at(-1).args.expectedRevision, undefined);
     assert.equal((await writes()).at(-1).args.alias, 'new-alias');
     assert.deepEqual(errors, []);
     console.log('PASS: remapped source, cancel, focus trap, Escape, inline errors, retry, rename, source switch, create, narrow dialog');

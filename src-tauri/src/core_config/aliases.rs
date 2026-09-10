@@ -290,27 +290,6 @@ pub(crate) fn management_alias_config_changes(
     })
 }
 
-pub(crate) async fn put_management_alias_config_changes(
-    config: &GuiConfigFile,
-    current: &str,
-    updated: &str,
-) -> Result<(), String> {
-    if updated == current {
-        return Ok(());
-    }
-    let changes = management_alias_config_changes(current, updated)?;
-    if let Some(oauth_model_aliases) = changes.oauth_model_aliases.as_ref() {
-        // The dedicated endpoint refreshes CPA's OAuth model registry immediately.
-        // Writing the same section only through config.yaml updates the file and
-        // management snapshot, but can leave /v1/models and routing stale.
-        put_management_oauth_model_aliases(config, oauth_model_aliases).await?;
-    }
-    if changes.update_config_yaml {
-        put_management_config_yaml(config, updated).await?;
-    }
-    Ok(())
-}
-
 pub(crate) async fn ensure_claude_desktop_model_aliases(
     config: &GuiConfigFile,
     mappings: &ClaudeDesktopModelMappings,
@@ -876,11 +855,6 @@ pub(crate) fn resolved_oauth_alias_sources(
     let root = document
         .as_mapping()
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
-    // A configured API-key model must win over a catalog entry with the same
-    // name. `model-definitions/codex` describes the OAuth channel's capabilities;
-    // it is not evidence that a model returned by /v1/models is using OAuth.
-    // Otherwise a Codex API alias would be written to oauth-model-alias, which
-    // CPA deliberately does not apply to codex-api-key credentials.
     let mut sources = Vec::new();
     collect_config_thinking_alias_sources(
         root,
@@ -1017,6 +991,11 @@ pub(crate) fn collect_config_thinking_alias_sources(
         }
         let provider_name =
             thinking_alias_provider_name(provider, fallback_provider, provider_index);
+        let provider_revision = sha256_bytes(
+            serde_norway::to_string(provider)
+                .map_err(|error| format!("读取模型源配置失败: {error}"))?
+                .as_bytes(),
+        );
         let Some(models) = yaml_mapping_value(provider, "models") else {
             continue;
         };
@@ -1040,7 +1019,7 @@ pub(crate) fn collect_config_thinking_alias_sources(
             let reasoning_levels = configured_model_reasoning_levels(model, protocol);
             sources.push(ResolvedThinkingAliasSource {
                 source: ThinkingAliasSource {
-                    id: format!("{section}:{provider_index}:{model_index}"),
+                    id: format!("{section}:{provider_index}:{model_index}:{provider_revision}"),
                     model: client_model,
                     display_name,
                     provider: provider_name.clone(),
@@ -1417,64 +1396,79 @@ pub(crate) fn collect_config_speed_alias_entries(
     Ok(())
 }
 
+fn alias_override_params<'a>(
+    root: &'a serde_norway::Mapping,
+    alias: &'a str,
+    protocol: &'a str,
+) -> impl Iterator<Item = (&'a serde_norway::Mapping, bool)> {
+    ["override-raw", "override"]
+        .into_iter()
+        .flat_map(move |section| {
+            nested_yaml_value(root, &["payload", section])
+                .and_then(serde_norway::Value::as_sequence)
+                .into_iter()
+                .flatten()
+                .rev()
+                .filter_map(move |rule| {
+                    let rule = rule.as_mapping()?;
+                    let models = yaml_mapping_value(rule, "models")?.as_sequence()?;
+                    if !models
+                        .iter()
+                        .any(|model| thinking_payload_model_matches(model, alias, protocol))
+                    {
+                        return None;
+                    }
+                    Some((
+                        yaml_mapping_value(rule, "params")?.as_mapping()?,
+                        section == "override-raw",
+                    ))
+                })
+        })
+}
+
+fn alias_payload_string(params: &serde_norway::Mapping, key: &str, raw: bool) -> Option<String> {
+    let value = yaml_mapping_value(params, key)?.as_str()?;
+    let decoded;
+    let value = if raw {
+        decoded = serde_json::from_str::<serde_json::Value>(value).ok()?;
+        decoded.as_str()?
+    } else {
+        value
+    };
+    let value = value.trim().to_ascii_lowercase();
+    (!value.is_empty()).then_some(value)
+}
+
+pub(crate) fn thinking_effort_from_params(
+    params: &serde_norway::Mapping,
+    protocol: &str,
+    raw: bool,
+) -> Option<String> {
+    [
+        "reasoning.effort",
+        "reasoning_effort",
+        "output_config.effort",
+        "generationConfig.thinkingConfig.thinkingLevel",
+        "thinking.effort",
+    ]
+    .into_iter()
+    .find_map(|key| alias_payload_string(params, key, raw))
+    .or_else(
+        || match alias_payload_string(params, "thinking.type", raw)?.as_str() {
+            "disabled" => Some("none".to_string()),
+            "adaptive" if protocol.eq_ignore_ascii_case("claude") => Some("auto".to_string()),
+            _ => None,
+        },
+    )
+}
+
 pub(crate) fn find_thinking_alias_effort(
     root: &serde_norway::Mapping,
     alias: &str,
     protocol: &str,
 ) -> Option<String> {
-    let rules = nested_yaml_value(root, &["payload", "override"])?.as_sequence()?;
-    for rule in rules {
-        let Some(rule) = rule.as_mapping() else {
-            continue;
-        };
-        let effort = yaml_mapping_value(rule, "params")
-            .and_then(serde_norway::Value::as_mapping)
-            .and_then(|params| {
-                let explicit = [
-                    "reasoning.effort",
-                    "reasoning_effort",
-                    "output_config.effort",
-                    "generationConfig.thinkingConfig.thinkingLevel",
-                    "thinking.effort",
-                ]
-                .into_iter()
-                .find_map(|key| yaml_mapping_value(params, key))
-                .and_then(serde_norway::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_ascii_lowercase);
-                explicit.or_else(|| {
-                    let thinking_type = yaml_mapping_value(params, "thinking.type")
-                        .and_then(serde_norway::Value::as_str)
-                        .map(str::trim)?;
-                    if thinking_type.eq_ignore_ascii_case("disabled") {
-                        Some("none".to_string())
-                    } else if protocol.eq_ignore_ascii_case("claude")
-                        && thinking_type.eq_ignore_ascii_case("adaptive")
-                    {
-                        Some("auto".to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .filter(|value| !value.is_empty());
-        let Some(effort) = effort else {
-            continue;
-        };
-        let Some(models) =
-            yaml_mapping_value(rule, "models").and_then(serde_norway::Value::as_sequence)
-        else {
-            continue;
-        };
-        if models
-            .iter()
-            .any(|model| thinking_payload_model_matches(model, alias, protocol))
-        {
-            return Some(effort);
-        }
-    }
-    None
+    alias_override_params(root, alias, protocol)
+        .find_map(|(params, raw)| thinking_effort_from_params(params, protocol, raw))
 }
 
 pub(crate) fn find_speed_alias_service_tier(
@@ -1482,33 +1476,8 @@ pub(crate) fn find_speed_alias_service_tier(
     alias: &str,
     protocol: &str,
 ) -> Option<String> {
-    let rules = nested_yaml_value(root, &["payload", "override"])?.as_sequence()?;
-    for rule in rules {
-        let Some(rule) = rule.as_mapping() else {
-            continue;
-        };
-        let service_tier = yaml_mapping_value(rule, "params")
-            .and_then(serde_norway::Value::as_mapping)
-            .and_then(|params| yaml_mapping_value(params, "service_tier"))
-            .and_then(serde_norway::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        let Some(service_tier) = service_tier else {
-            continue;
-        };
-        let Some(models) =
-            yaml_mapping_value(rule, "models").and_then(serde_norway::Value::as_sequence)
-        else {
-            continue;
-        };
-        if models
-            .iter()
-            .any(|model| thinking_payload_model_matches(model, alias, protocol))
-        {
-            return Some(service_tier.to_ascii_lowercase());
-        }
-    }
-    None
+    alias_override_params(root, alias, protocol)
+        .find_map(|(params, raw)| alias_payload_string(params, "service_tier", raw))
 }
 
 pub(crate) fn thinking_payload_model_matches(
@@ -1522,9 +1491,11 @@ pub(crate) fn thinking_payload_model_matches(
     let name_matches = yaml_mapping_value(model, "name")
         .and_then(serde_norway::Value::as_str)
         .is_some_and(|name| name.trim().eq_ignore_ascii_case(alias));
-    let protocol_matches = yaml_mapping_value(model, "protocol")
-        .and_then(serde_norway::Value::as_str)
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case(protocol));
+    let protocol_matches = yaml_mapping_value(model, "protocol").is_none_or(|value| {
+        value.as_str().is_some_and(|value| {
+            value.trim().is_empty() || value.trim().eq_ignore_ascii_case(protocol)
+        })
+    });
     name_matches && protocol_matches
 }
 
@@ -1569,7 +1540,6 @@ pub(crate) fn insert_thinking_effort_params(
             );
         }
         "antigravity-oauth" => {
-            // Antigravity applies payload rules relative to its `request` object.
             insert(
                 params,
                 "generationConfig.thinkingConfig.thinkingLevel",

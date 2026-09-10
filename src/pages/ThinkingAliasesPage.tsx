@@ -62,6 +62,13 @@ type ModelAliasSource = ThinkingAliasSource & {
   supportsFast: boolean;
 };
 
+type ModelAliasEditContext = {
+  source: ThinkingAliasSource;
+  revision: string;
+  effort: string | null;
+  fast: boolean;
+};
+
 const effortOptions = [
   { value: 'low', label: 'Low', hintKey: 'aliases.effort.low' },
   { value: 'medium', label: 'Medium', hintKey: 'aliases.effort.medium' },
@@ -191,6 +198,7 @@ export function ThinkingAliasesPage() {
   const [alias, setAlias] = useState('');
   const [editingEntry, setEditingEntry] = useState<AliasListEntry | null>(null);
   const [editingSource, setEditingSource] = useState<ThinkingAliasSource | null>(null);
+  const [editingRevision, setEditingRevision] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -405,6 +413,7 @@ export function ThinkingAliasesPage() {
         await invoke('create_thinking_alias', {
           sourceId: selectedSource.id, alias: normalizedAlias,
           effort: normalizedEffort, fast: fastEnabled, originalAlias: editingEntry.alias,
+          expectedRevision: editingRevision,
         });
         setNotice(t('aliases.updated', { alias: normalizedAlias }));
       } else if (normalizedEffort) {
@@ -448,6 +457,7 @@ export function ThinkingAliasesPage() {
   const resetEditor = () => {
     setEditingEntry(null);
     setEditingSource(null);
+    setEditingRevision(null);
     setSelectedSourceId('');
     setEffort('');
     setFastEnabled(false);
@@ -476,12 +486,14 @@ export function ThinkingAliasesPage() {
     setError('');
     setNotice('');
     try {
-      const source = await invoke<ThinkingAliasSource>('get_model_alias_edit_source', { alias: entry.alias });
+      const context = await invoke<ModelAliasEditContext>('get_model_alias_edit_source', { alias: entry.alias });
+      const source = context.source;
       setEditingEntry(entry);
       setEditingSource(source);
+      setEditingRevision(context.revision);
       setSelectedSourceId(source.id);
-      setEffort(entry.effort ?? '');
-      setFastEnabled(entry.serviceTier === 'priority');
+      setEffort(context.effort ?? '');
+      setFastEnabled(context.fast);
       setAlias(entry.alias);
       generatedAliasRef.current = '';
       setModelPickerOpen(false);

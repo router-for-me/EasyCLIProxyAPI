@@ -1,9 +1,70 @@
-//! Edit aliases without rebuilding their configuration from a base model.
 use super::*;
 
 struct EditableModelAlias {
     source: ResolvedThinkingAliasSource,
     value: serde_norway::Value,
+    model_index: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelAliasEditContext {
+    pub(crate) source: ThinkingAliasSource,
+    pub(crate) revision: String,
+    pub(crate) effort: Option<String>,
+    pub(crate) fast: bool,
+}
+
+pub(crate) fn validate_model_alias_revision(
+    content: &str,
+    revision: Option<&str>,
+) -> Result<(), String> {
+    if revision != Some(model_alias_config_revision(content)?.as_str()) {
+        return Err("配置已变化，请关闭编辑器并刷新后重试".to_string());
+    }
+    Ok(())
+}
+
+fn model_alias_config_revision(content: &str) -> Result<String, String> {
+    let document = serde_norway::from_str::<serde_norway::Value>(content)
+        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+    let mut value = serde_json::to_value(document).map_err(|error| error.to_string())?;
+    let root = value
+        .as_object_mut()
+        .ok_or("内核配置顶层必须是 YAML 映射")?;
+    if root
+        .get("oauth-model-alias")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|aliases| aliases.is_empty())
+    {
+        root.remove("oauth-model-alias");
+    }
+    value.sort_all_objects();
+    Ok(sha256_bytes(
+        serde_json::to_string(&value)
+            .map_err(|error| error.to_string())?
+            .as_bytes(),
+    ))
+}
+
+pub(crate) fn model_alias_edit_context(
+    content: &str,
+    alias: &str,
+    definitions: &[OAuthModelDefinitions],
+) -> Result<ModelAliasEditContext, String> {
+    let source = resolve_model_alias_edit_source(content, alias, definitions)?.source;
+    let document = serde_norway::from_str::<serde_norway::Value>(content)
+        .map_err(|error| error.to_string())?;
+    let root = document
+        .as_mapping()
+        .ok_or("内核配置顶层必须是 YAML 映射")?;
+    Ok(ModelAliasEditContext {
+        effort: find_thinking_alias_effort(root, alias, &source.protocol),
+        fast: find_speed_alias_service_tier(root, alias, &source.protocol).as_deref()
+            == Some("priority"),
+        source,
+        revision: model_alias_config_revision(content)?,
+    })
 }
 
 pub(crate) fn model_alias_edit_source_id(alias: &str) -> String {
@@ -15,6 +76,7 @@ fn editable_model_alias(
     alias: &str,
 ) -> Result<EditableModelAlias, String> {
     let mut matches = Vec::new();
+    let mut matching_names = 0;
     for (section, provider, kind, protocol) in [
         ("codex-api-key", "Codex API", "codex-api", "codex"),
         (
@@ -47,7 +109,11 @@ fn editable_model_alias(
                 else {
                     continue;
                 };
-                if upstream == client || !client.eq_ignore_ascii_case(alias) {
+                if !client.eq_ignore_ascii_case(alias) {
+                    continue;
+                }
+                matching_names += 1;
+                if upstream == client {
                     continue;
                 }
                 matches.push(EditableModelAlias {
@@ -68,6 +134,7 @@ fn editable_model_alias(
                         },
                     },
                     value: model.clone(),
+                    model_index,
                 });
             }
         }
@@ -80,12 +147,16 @@ fn editable_model_alias(
             let models = models
                 .as_sequence()
                 .ok_or("oauth-model-alias 的通道配置必须是数组")?;
-            for model in models {
+            for (model_index, model) in models.iter().enumerate() {
                 let Some((upstream, client, display_name)) = configured_model_identity(model)
                 else {
                     continue;
                 };
-                if upstream == client || !client.eq_ignore_ascii_case(alias) {
+                if !client.eq_ignore_ascii_case(alias) {
+                    continue;
+                }
+                matching_names += 1;
+                if upstream == client {
                     continue;
                 }
                 let channel = channel_name
@@ -109,11 +180,12 @@ fn editable_model_alias(
                         },
                     },
                     value: model.clone(),
+                    model_index,
                 });
             }
         }
     }
-    if matches.len() != 1 {
+    if matching_names != 1 || matches.len() != 1 {
         return Err("别名不存在或存在多个同名映射，请刷新并检查配置后重试".to_string());
     }
     Ok(matches.remove(0))
@@ -140,7 +212,6 @@ pub(crate) fn resolve_model_alias_edit_source(
             source.source.reasoning_levels = model.reasoning_levels.clone();
         }
     }
-    // An unavailable catalog must not prevent keeping an existing effort setting.
     if let Some(effort) = find_thinking_alias_effort(root, alias, &source.source.protocol) {
         if !source.source.reasoning_levels.contains(&effort) {
             source.source.reasoning_levels.push(effort);
@@ -170,7 +241,6 @@ pub(crate) fn edit_model_alias_in_yaml(
     if !alias.eq_ignore_ascii_case(original_alias) && configured_model_alias_exists(root, alias) {
         return Err(format!("别名模型 {alias} 已存在"));
     }
-    // Capture the destination before removing anything so array indices cannot shift.
     let mut replacement = match &source.location {
         ThinkingAliasSourceLocation::ConfigModel {
             section,
@@ -227,7 +297,6 @@ pub(crate) fn edit_model_alias_in_yaml(
         yaml_key("alias"),
         serde_norway::Value::String(alias.to_string()),
     );
-    // Preserve ordering and metadata for edits within the same provider/channel.
     let same_group = match (&original.source.location, &source.location) {
         (
             ThinkingAliasSourceLocation::ConfigModel {
@@ -247,6 +316,35 @@ pub(crate) fn edit_model_alias_in_yaml(
         ) => a == b,
         _ => false,
     };
+    let payload_edit = AliasPayloadEdit {
+        source: &source.source,
+        effort,
+        fast,
+        change_effort: find_thinking_alias_effort(
+            root,
+            original_alias,
+            &original.source.source.protocol,
+        )
+        .as_deref()
+        .unwrap_or("")
+            != effort,
+        change_fast: (find_speed_alias_service_tier(
+            root,
+            original_alias,
+            &original.source.source.protocol,
+        )
+        .as_deref()
+            == Some("priority"))
+            != fast,
+    };
+    if same_group
+        && original.value.as_mapping() == Some(&replacement)
+        && original.source.source.protocol == source.source.protocol
+        && !payload_edit.change_effort
+        && !payload_edit.change_fast
+    {
+        return Ok(content.to_string());
+    }
     if !same_group {
         remove_existing_claude_model_alias(root, original_alias)?;
     }
@@ -274,11 +372,7 @@ pub(crate) fn edit_model_alias_in_yaml(
     };
     if same_group {
         let model = models
-            .iter_mut()
-            .find(|model| {
-                configured_model_identity(model)
-                    .is_some_and(|(_, name, _)| name.eq_ignore_ascii_case(original_alias))
-            })
+            .get_mut(original.model_index)
             .ok_or("原别名已经变化，请刷新后重试")?;
         *model = serde_norway::Value::Mapping(replacement);
     } else {
@@ -289,20 +383,44 @@ pub(crate) fn edit_model_alias_in_yaml(
         original_alias,
         &original.source.source.protocol,
         alias,
-        &source.source.protocol,
+        &payload_edit,
     )?;
-    let mut params = serde_norway::Mapping::new();
-    if !effort.is_empty() {
-        insert_thinking_effort_params(&mut params, &source.source, effort)?;
-    }
-    if fast {
-        params.insert(
-            yaml_key("service_tier"),
-            serde_norway::Value::String("priority".to_string()),
-        );
-    }
-    append_alias_payload_override(root, alias, &source.source.protocol, params)?;
     render_updated_core_yaml(&mut document, updated)
+}
+
+const ALIAS_EFFORT_KEYS: &[&str] = &[
+    "reasoning.effort",
+    "reasoning_effort",
+    "output_config.effort",
+    "generationConfig.thinkingConfig.thinkingLevel",
+    "thinking.effort",
+    "thinking.type",
+];
+
+struct AliasPayloadEdit<'a> {
+    source: &'a ThinkingAliasSource,
+    effort: &'a str,
+    fast: bool,
+    change_effort: bool,
+    change_fast: bool,
+}
+
+fn insert_alias_edit_params(
+    params: &mut serde_norway::Mapping,
+    replacement: serde_norway::Mapping,
+    raw: bool,
+) -> Result<(), String> {
+    for (key, value) in replacement {
+        let value = if raw {
+            serde_norway::Value::String(
+                serde_json::to_string(&value).map_err(|error| error.to_string())?,
+            )
+        } else {
+            value
+        };
+        params.insert(key, value);
+    }
+    Ok(())
 }
 
 fn edit_alias_payload(
@@ -310,11 +428,14 @@ fn edit_alias_payload(
     original_alias: &str,
     original_protocol: &str,
     alias: &str,
-    protocol: &str,
+    edit: &AliasPayloadEdit<'_>,
 ) -> Result<(), String> {
-    let Some(payload) = yaml_mapping_value_mut(root, "payload") else {
-        return Ok(());
-    };
+    let protocol = &edit.source.protocol;
+    let mut found_effort = false;
+    let mut found_fast = false;
+    let payload = root
+        .entry(yaml_key("payload"))
+        .or_insert_with(|| serde_norway::Value::Mapping(Default::default()));
     let payload = payload.as_mapping_mut().ok_or("payload 必须是 YAML 映射")?;
     for section in [
         "default",
@@ -342,24 +463,11 @@ fn edit_alias_payload(
             let models = models.as_sequence().ok_or("payload.models 必须是数组")?;
             let (mut target, others): (Vec<_>, Vec<_>) =
                 models.iter().cloned().partition(|model| {
-                    thinking_payload_model_name_matches(model, original_alias)
-                        && model
-                            .as_mapping()
-                            .and_then(|model| yaml_mapping_value(model, "protocol"))
-                            .is_none_or(|value| {
-                                value.as_str().is_some_and(|value| {
-                                    value.eq_ignore_ascii_case(original_protocol)
-                                })
-                            })
+                    thinking_payload_model_matches(model, original_alias, original_protocol)
                 });
             if target.is_empty() {
                 result.push(rule.clone());
                 continue;
-            }
-            if !others.is_empty() {
-                let mut shared = mapping.clone();
-                shared.insert(yaml_key("models"), serde_norway::Value::Sequence(others));
-                result.push(serde_norway::Value::Mapping(shared));
             }
             for model in &mut target {
                 let model = model
@@ -369,7 +477,10 @@ fn edit_alias_payload(
                     yaml_key("name"),
                     serde_norway::Value::String(alias.to_string()),
                 );
-                if model.contains_key(yaml_key("protocol")) {
+                if yaml_mapping_value(model, "protocol")
+                    .and_then(serde_norway::Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+                {
                     model.insert(
                         yaml_key("protocol"),
                         serde_norway::Value::String(protocol.to_string()),
@@ -378,28 +489,67 @@ fn edit_alias_payload(
             }
             let mut edited = mapping.clone();
             edited.insert(yaml_key("models"), serde_norway::Value::Sequence(target));
+            let mut remove_target = false;
             if matches!(section, "override" | "override-raw") {
                 if let Some(params) = yaml_mapping_value_mut(&mut edited, "params") {
                     let params = params
                         .as_mapping_mut()
                         .ok_or("payload.override.params 必须是映射")?;
-                    for key in [
-                        "reasoning.effort",
-                        "reasoning_effort",
-                        "output_config.effort",
-                        "generationConfig.thinkingConfig.thinkingLevel",
-                        "thinking.effort",
-                        "thinking.type",
-                        "service_tier",
-                    ] {
-                        params.remove(yaml_key(key));
+                    let has_effort = ALIAS_EFFORT_KEYS
+                        .iter()
+                        .any(|key| params.contains_key(yaml_key(key)));
+                    let has_fast = params.contains_key(yaml_key("service_tier"));
+                    found_effort |= has_effort;
+                    found_fast |= has_fast;
+                    let raw = section == "override-raw";
+                    if has_effort && (edit.change_effort || original_protocol != protocol) {
+                        let effort = if edit.change_effort {
+                            edit.effort.to_string()
+                        } else {
+                            thinking_effort_from_params(params, original_protocol, raw).ok_or(
+                                "此规则的思考配置无法转换，请先在配置中调整后再切换模型协议",
+                            )?
+                        };
+                        for key in ALIAS_EFFORT_KEYS {
+                            params.remove(yaml_key(key));
+                        }
+                        if !effort.is_empty() {
+                            let mut replacement = serde_norway::Mapping::new();
+                            insert_thinking_effort_params(&mut replacement, edit.source, &effort)?;
+                            insert_alias_edit_params(params, replacement, raw)?;
+                        }
                     }
-                    if params.is_empty() {
-                        continue;
+                    if has_fast && edit.change_fast {
+                        params.remove(yaml_key("service_tier"));
+                        if edit.fast {
+                            let replacement = serde_norway::Mapping::from_iter([(
+                                yaml_key("service_tier"),
+                                yaml_key("priority"),
+                            )]);
+                            insert_alias_edit_params(params, replacement, raw)?;
+                        }
                     }
+                    remove_target = params.is_empty();
                 }
             }
-            result.push(serde_norway::Value::Mapping(edited));
+            let mut unchanged = mapping.clone();
+            unchanged.insert(yaml_key("models"), edited[yaml_key("models")].clone());
+            if !remove_target
+                && original_alias == alias
+                && original_protocol == protocol
+                && edited == unchanged
+            {
+                result.push(rule.clone());
+                continue;
+            }
+            if !others.is_empty() {
+                let mut shared = mapping.clone();
+                shared.insert(yaml_key("models"), serde_norway::Value::Sequence(others));
+                result.push(serde_norway::Value::Mapping(shared));
+            }
+            if !remove_target {
+                result.push(serde_norway::Value::Mapping(edited));
+            }
         }
         *rules = result;
         if rules.is_empty() {
@@ -409,5 +559,12 @@ fn edit_alias_payload(
     if payload.is_empty() {
         root.remove(yaml_key("payload"));
     }
-    Ok(())
+    let mut params = serde_norway::Mapping::new();
+    if edit.change_effort && !found_effort && !edit.effort.is_empty() {
+        insert_thinking_effort_params(&mut params, edit.source, edit.effort)?;
+    }
+    if edit.change_fast && !found_fast && edit.fast {
+        params.insert(yaml_key("service_tier"), yaml_key("priority"));
+    }
+    append_alias_payload_override(root, alias, protocol, params)
 }

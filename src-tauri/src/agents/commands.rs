@@ -496,12 +496,12 @@ pub(crate) async fn get_thinking_alias_sources(
 pub(crate) async fn get_model_alias_edit_source(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     alias: String,
-) -> Result<ThinkingAliasSource, String> {
+) -> Result<ModelAliasEditContext, String> {
     let config = gui_config_state.snapshot()?;
     let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
     let content = fetch_management_config_yaml(&config).await?;
     let definitions = fetch_oauth_model_definitions(&config).await;
-    Ok(resolve_model_alias_edit_source(&content, &alias, &definitions)?.source)
+    model_alias_edit_context(&content, &alias, &definitions)
 }
 
 #[tauri::command]
@@ -512,6 +512,7 @@ pub(crate) async fn create_thinking_alias(
     effort: String,
     fast: Option<bool>,
     original_alias: Option<String>,
+    expected_revision: Option<String>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
     let source_id = source_id.trim().to_string();
@@ -526,6 +527,9 @@ pub(crate) async fn create_thinking_alias(
     };
     let fast = fast.unwrap_or(false);
     let content = fetch_management_config_yaml(&config).await?;
+    if original_alias.is_some() {
+        validate_model_alias_revision(&content, expected_revision.as_deref())?;
+    }
     let available_models =
         fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
     let definitions = fetch_oauth_model_definitions(&config).await;
@@ -801,8 +805,6 @@ pub(crate) async fn fetch_codex_runtime_models(
     Err("本地内核不支持 Codex 模型列表接口".to_string())
 }
 
-// Codex client metadata distinguishes the default context from the maximum.
-// Do not overwrite either with the generic model-definitions context_length.
 pub(crate) async fn fetch_codex_catalog_runtime_models(
     config: &GuiConfigFile,
 ) -> Result<Vec<codex_catalog::CodexRuntimeModel>, String> {

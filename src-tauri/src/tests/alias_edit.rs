@@ -37,7 +37,7 @@ fn alias_edit_preserves_other_parameters_and_shared_models() {
     let before = value(MIXED_PAYLOAD);
     let after = value(&updated);
     let rules = after["payload"]["override"].as_array().unwrap();
-    assert_eq!(rules.len(), 3);
+    assert_eq!(rules.len(), 2);
     assert_eq!(rules[0]["models"].as_array().unwrap().len(), 1);
     assert_eq!(rules[0]["models"][0]["name"], "other-alias");
     assert_eq!(
@@ -47,11 +47,7 @@ fn alias_edit_preserves_other_parameters_and_shared_models() {
     assert_eq!(rules[1]["models"][0]["name"], "my-alias");
     assert_eq!(
         rules[1]["params"],
-        serde_json::json!({"temperature": 0.2, "max_output_tokens": 1024})
-    );
-    assert_eq!(
-        rules[2]["params"],
-        serde_json::json!({"reasoning.effort": "low"})
+        serde_json::json!({"temperature": 0.2, "max_output_tokens": 1024, "reasoning.effort": "low"})
     );
     assert_eq!(after["oauth-model-alias"], before["oauth-model-alias"]);
     assert!(updated.contains("# Keep this comment"));
@@ -109,7 +105,6 @@ fn alias_edit_keeps_api_metadata_and_order_on_an_unchanged_save() {
     let content = "openai-compatibility:\n  - name: my-provider\n    models:\n      - name: gpt-test\n        display-name: Base Model\n      - name: gpt-test\n        alias: my-alias\n        display-name: Custom Alias Label\n        thinking:\n          levels: [low, high]\n        custom: {keep: true}\n      - name: other\n";
     let updated = edit(content, "my-alias", "my-alias", "", false);
     assert_eq!(value(&updated), value(content));
-    // Selecting the base entry for the same upstream must preserve alias metadata too.
     let source = resolved_oauth_alias_sources(
         content,
         &[],
@@ -198,7 +193,7 @@ fn alias_edit_selects_exact_provider_even_with_identical_display_names() {
     .unwrap();
     let source = sources
         .iter()
-        .find(|source| source.source.id == "openai-compatibility:1:0")
+        .find(|source| source.source.id.starts_with("openai-compatibility:1:0:"))
         .unwrap();
     let updated =
         edit_model_alias_in_yaml(content, "my-alias", source, "my-alias", "", false).unwrap();
@@ -240,7 +235,7 @@ fn alias_edit_moves_between_api_and_oauth_and_updates_payload_protocol() {
     );
     assert_eq!(
         after["payload"]["override"][0]["params"],
-        serde_json::json!({"temperature":0.2})
+        serde_json::json!({"temperature":0.2, "reasoning.effort":"low"})
     );
     let content = format!("{updated}codex-api-key:\n  - models: [{{name: back-to-api}}]\n");
     let source = resolved_oauth_alias_sources(
@@ -282,7 +277,6 @@ fn alias_edit_rejects_duplicates_missing_aliases_and_name_collisions() {
         "      fork: false\n    - name: another\n      alias: taken",
     );
     assert!(edit_model_alias_in_yaml(&occupied, "my-alias", &source, "TAKEN", "", false).is_err());
-    // A real model entry without an alias is not an editable alias.
     assert!(resolve_model_alias_edit_source(
         "codex-api-key:\n  - models: [{name: real-model}]\n",
         "real-model",
