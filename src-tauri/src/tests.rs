@@ -10,6 +10,7 @@ mod core_runtime;
 #[cfg(windows)]
 mod file_replace;
 mod instance_lock;
+mod launch_navigation;
 mod model_aliases;
 mod platform;
 mod provider_health;

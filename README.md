@@ -25,6 +25,16 @@ quota inspection, usage records, model aliases, and agent client configuration i
 The application is built with Tauri, React, and Rust. It can carry a matching CLIProxyAPI core
 archive, making first-time setup and offline installation easier.
 
+
+## Launch arguments
+
+- `--page <id>` opens the app on a page instead of Home. Page ids match the sidebar: `home`, `versions`, `config`, `oauth`, `api`, `usage-records`, `agents`; the OAuth subpages are `oauth/login`, `oauth/authFiles`, `oauth/quota` (or just `quota` / `authFiles`).
+- If EasyCLIProxyAPI is already running, the running instance is shown and switched to that page; no second window is opened.
+
+```bash
+EasyCLIProxyAPI --page quota
+```
+
 ## Sponsor
 
 [![https://go.apimart.ai/gh-easycliproxyapi](./assets/apimart-en.png)](https://go.apimart.ai/gh-easycliproxyapi)
