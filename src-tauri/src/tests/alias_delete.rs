@@ -125,3 +125,98 @@ fn channel_deletion_preserves_rules_used_by_same_protocol_mappings() {
         }
     }
 }
+
+#[test]
+fn raw_alias_options_do_not_survive_deletion_and_recreation() {
+    let original = "oauth-model-alias:\n  codex: [{name: model-a, alias: reused, fork: true}]\npayload:\n  override-raw:\n    - models: [{name: reused, protocol: codex}]\n      params: {reasoning.effort: '\"high\"', service_tier: '\"priority\"'}\n";
+    let source = test_codex_oauth_thinking_source("model-a");
+    for speed in [false, true] {
+        let deleted = if speed {
+            remove_speed_alias_from_yaml(original, "reused")
+        } else {
+            remove_thinking_alias_from_yaml(original, "reused")
+        }
+        .unwrap();
+        assert!(json(&deleted).get("payload").is_none());
+        let recreated = add_model_alias_to_yaml(&deleted, &source, "reused", "low", false).unwrap();
+        let context = model_alias_edit_context(&recreated, "reused", &[]).unwrap();
+        assert_eq!(context.effort.as_deref(), Some("low"));
+        assert!(!context.fast);
+    }
+}
+
+#[test]
+fn creation_cleans_orphaned_raw_options_for_model_and_speed_aliases() {
+    let original = "payload:\n  override-raw:\n    - models: [{name: reused, protocol: codex}]\n      params: {reasoning.effort: '\"high\"', service_tier: '\"priority\"', temperature: '0.2'}\n    - models: [{name: reused, protocol: claude}]\n      params: {output_config.effort: '\"high\"'}\n";
+    let source = test_codex_oauth_thinking_source("model-a");
+    for speed in [false, true] {
+        let created = if speed {
+            add_speed_alias_to_yaml(original, &source, "reused")
+        } else {
+            add_model_alias_to_yaml(original, &source, "reused", "low", false)
+        }
+        .unwrap();
+        let context = model_alias_edit_context(&created, "reused", &[]).unwrap();
+        assert_eq!(
+            context.effort.as_deref(),
+            if speed { None } else { Some("low") }
+        );
+        assert_eq!(context.fast, speed);
+        let rules = json(&created)["payload"]["override-raw"].clone();
+        assert_eq!(
+            rules[0]["params"],
+            serde_json::json!({"temperature": "0.2"})
+        );
+        assert_eq!(rules[1], json(original)["payload"]["override-raw"][1]);
+    }
+}
+
+#[test]
+fn option_cleanup_preserves_shared_models_conditions_and_unrelated_parameters() {
+    for (section, effort, tier, temperature) in [
+        ("override", "high", "priority", "0.2"),
+        ("override-raw", "'\"high\"'", "'\"priority\"'", "'0.2'"),
+    ] {
+        let original = format!("oauth-model-alias:\n  codex: [{{name: model-a, alias: shared}}]\n  claude: [{{name: model-b, alias: shared}}]\npayload:\n  {section}:\n    - models:\n        - name: shared\n          protocol: codex\n          headers: {{X-Client: premium}}\n          from-protocol: responses\n        - name: other\n          protocol: codex\n        - name: shared\n          protocol: claude\n      params: {{reasoning.effort: {effort}, service_tier: {tier}, temperature: {temperature}}}\n      match: [{{metadata.client: codex}}]\n  default:\n    - models: [{{name: shared}}]\n      params: {{max_tokens: 4096}}\n  default-raw:\n    - models: [{{name: shared}}]\n      params: {{top_p: '0.9'}}\n  filter:\n    - models: [{{name: shared}}]\n      params: [metadata.internal]\n");
+        let before = json(&original);
+        let deleted =
+            remove_thinking_alias_from_yaml_for_channel(&original, "shared", Some("codex"))
+                .unwrap();
+        let after = json(&deleted);
+        let original_rule = &before["payload"][section][0];
+        let mut shared = original_rule.clone();
+        shared["models"].as_array_mut().unwrap().remove(0);
+        let mut retained = original_rule.clone();
+        retained["models"].as_array_mut().unwrap().truncate(1);
+        retained["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reasoning.effort");
+        retained["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("service_tier");
+        assert_eq!(
+            after["payload"][section],
+            serde_json::json!([shared, retained])
+        );
+        for unchanged in ["default", "default-raw", "filter"] {
+            assert_eq!(after["payload"][unchanged], before["payload"][unchanged]);
+        }
+        assert_eq!(
+            after["oauth-model-alias"]["claude"],
+            before["oauth-model-alias"]["claude"]
+        );
+    }
+}
+
+#[test]
+fn raw_cleanup_removes_every_supported_effort_key_with_wildcard_protocols() {
+    for key in ALIAS_EFFORT_KEYS {
+        for protocol in ["", ", protocol: ''"] {
+            let original = format!("oauth-model-alias:\n  codex: [{{name: model-a, alias: reused}}]\npayload:\n  override-raw:\n    - models: [{{name: reused{protocol}}}]\n      params: {{{key}: '\"high\"', service_tier: '\"priority\"'}}\n");
+            let deleted = remove_thinking_alias_from_yaml(&original, "reused").unwrap();
+            assert!(json(&deleted).get("payload").is_none(), "{key}");
+        }
+    }
+}

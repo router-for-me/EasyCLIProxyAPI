@@ -388,7 +388,7 @@ pub(crate) fn edit_model_alias_in_yaml(
     render_updated_core_yaml(&mut document, updated)
 }
 
-const ALIAS_EFFORT_KEYS: &[&str] = &[
+pub(crate) const ALIAS_EFFORT_KEYS: &[&str] = &[
     "reasoning.effort",
     "reasoning_effort",
     "output_config.effort",

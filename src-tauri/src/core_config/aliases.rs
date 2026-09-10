@@ -1632,8 +1632,7 @@ pub(crate) fn add_model_alias_to_yaml(
     }
 
     let scope = AliasPayloadScope::for_protocol(&source.source.protocol);
-    remove_thinking_payload_model(root, alias, &scope)?;
-    remove_speed_payload_model(root, alias, &scope)?;
+    remove_alias_payload_options(root, alias, &scope)?;
     if !effort.is_empty() {
         let mut params_mapping = serde_norway::Mapping::new();
         insert_thinking_effort_params(&mut params_mapping, &source.source, effort)?;
@@ -1731,7 +1730,7 @@ pub(crate) fn add_speed_alias_to_yaml(
         )?,
     }
 
-    remove_speed_payload_model(
+    remove_alias_payload_options(
         root,
         alias,
         &AliasPayloadScope::for_protocol(&source.source.protocol),
@@ -1921,8 +1920,7 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
         return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
     }
     let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
-    remove_thinking_payload_model(root, alias, &scope)?;
-    remove_speed_payload_model(root, alias, &scope)?;
+    remove_alias_payload_options(root, alias, &scope)?;
     render_updated_core_yaml(&mut document, updated)
 }
 
@@ -1951,7 +1949,7 @@ pub(crate) fn remove_speed_alias_from_yaml_for_channel(
         return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
     }
     let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
-    remove_speed_payload_model(root, alias, &scope)?;
+    remove_alias_payload_options(root, alias, &scope)?;
     render_updated_core_yaml(&mut document, updated)
 }
 
@@ -2189,119 +2187,78 @@ impl AliasPayloadScope {
     }
 }
 
-fn remove_thinking_payload_model(
+fn remove_alias_payload_options(
     root: &mut serde_norway::Mapping,
     alias: &str,
     scope: &AliasPayloadScope,
 ) -> Result<(), String> {
-    let mut remove_payload_section = false;
-    if let Some(payload) = yaml_mapping_value_mut(root, "payload") {
-        let payload = payload
-            .as_mapping_mut()
-            .ok_or_else(|| "payload 必须是 YAML 映射".to_string())?;
-        if let Some(override_rules) = yaml_mapping_value_mut(payload, "override") {
-            let override_rules = override_rules
-                .as_sequence_mut()
-                .ok_or_else(|| "payload.override 必须是数组".to_string())?;
-            let mut next_rules = Vec::with_capacity(override_rules.len());
-            for mut rule in std::mem::take(override_rules) {
-                let mut removed_from_rule = false;
-                let mut models_empty = false;
-                if let Some(rule_mapping) = rule.as_mapping_mut() {
-                    let has_effort = yaml_mapping_value(rule_mapping, "params")
-                        .and_then(serde_norway::Value::as_mapping)
-                        .is_some_and(|params| {
-                            [
-                                "reasoning.effort",
-                                "reasoning_effort",
-                                "output_config.effort",
-                                "generationConfig.thinkingConfig.thinkingLevel",
-                                "thinking.effort",
-                            ]
-                            .into_iter()
-                            .any(|key| yaml_mapping_value(params, key).is_some())
-                                || yaml_mapping_value(params, "thinking.type").is_some()
-                        });
-                    if has_effort {
-                        if let Some(models) = yaml_mapping_value_mut(rule_mapping, "models") {
-                            let models = models
-                                .as_sequence_mut()
-                                .ok_or_else(|| "payload.override.models 必须是数组".to_string())?;
-                            let before = models.len();
-                            models
-                                .retain(|model| !scope.matches(model, alias));
-                            removed_from_rule = models.len() != before;
-                            models_empty = models.is_empty();
-                        }
-                    }
-                }
-                if !(removed_from_rule && models_empty) {
-                    next_rules.push(rule);
-                }
+    let Some(payload) = yaml_mapping_value_mut(root, "payload") else {
+        return Ok(());
+    };
+    let payload = payload.as_mapping_mut().ok_or("payload 必须是 YAML 映射")?;
+    for section in ["override", "override-raw"] {
+        let Some(rules) = yaml_mapping_value_mut(payload, section) else {
+            continue;
+        };
+        let rules = rules
+            .as_sequence_mut()
+            .ok_or_else(|| format!("payload.{section} 必须是数组"))?;
+        let mut next = Vec::with_capacity(rules.len());
+        for rule in rules.iter() {
+            let Some(mapping) = rule.as_mapping() else {
+                next.push(rule.clone());
+                continue;
+            };
+            let Some(params) =
+                yaml_mapping_value(mapping, "params").and_then(serde_norway::Value::as_mapping)
+            else {
+                next.push(rule.clone());
+                continue;
+            };
+            let mut retained_params = params.clone();
+            for key in ALIAS_EFFORT_KEYS.iter().copied().chain(["service_tier"]) {
+                retained_params.remove(yaml_key(key));
             }
-            *override_rules = next_rules;
-            if override_rules.is_empty() {
-                payload.remove(yaml_key("override"));
+            if retained_params == *params {
+                next.push(rule.clone());
+                continue;
             }
-        }
-        remove_payload_section = payload.is_empty();
-    }
-    if remove_payload_section {
-        root.remove(yaml_key("payload"));
-    }
-    Ok(())
-}
-
-fn remove_speed_payload_model(
-    root: &mut serde_norway::Mapping,
-    alias: &str,
-    scope: &AliasPayloadScope,
-) -> Result<(), String> {
-    let mut remove_payload_section = false;
-    if let Some(payload) = yaml_mapping_value_mut(root, "payload") {
-        let payload = payload
-            .as_mapping_mut()
-            .ok_or_else(|| "payload 必须是 YAML 映射".to_string())?;
-        if let Some(override_rules) = yaml_mapping_value_mut(payload, "override") {
-            let override_rules = override_rules
-                .as_sequence_mut()
-                .ok_or_else(|| "payload.override 必须是数组".to_string())?;
-            let mut next_rules = Vec::with_capacity(override_rules.len());
-            for mut rule in std::mem::take(override_rules) {
-                let mut removed_from_rule = false;
-                let mut models_empty = false;
-                if let Some(rule_mapping) = rule.as_mapping_mut() {
-                    let has_speed = yaml_mapping_value(rule_mapping, "params")
-                        .and_then(serde_norway::Value::as_mapping)
-                        .is_some_and(|params| yaml_mapping_value(params, "service_tier").is_some());
-                    if has_speed {
-                        if let Some(models) = yaml_mapping_value_mut(rule_mapping, "models") {
-                            let models = models
-                                .as_sequence_mut()
-                                .ok_or_else(|| "payload.override.models 必须是数组".to_string())?;
-                            let before = models.len();
-                            models.retain(|model| {
-                                !scope.matches(model, alias)
-                                    || (!thinking_payload_model_matches(model, alias, "codex")
-                                        && !thinking_payload_model_matches(model, alias, "openai"))
-                            });
-                            removed_from_rule = models.len() != before;
-                            models_empty = models.is_empty();
-                        }
-                    }
-                }
-                if !(removed_from_rule && models_empty) {
-                    next_rules.push(rule);
-                }
+            let Some(models) = yaml_mapping_value(mapping, "models") else {
+                next.push(rule.clone());
+                continue;
+            };
+            let models = models
+                .as_sequence()
+                .ok_or_else(|| format!("payload.{section}.models 必须是数组"))?;
+            let (target, others): (Vec<_>, Vec<_>) = models
+                .iter()
+                .cloned()
+                .partition(|model| scope.matches(model, alias));
+            if target.is_empty() {
+                next.push(rule.clone());
+                continue;
             }
-            *override_rules = next_rules;
-            if override_rules.is_empty() {
-                payload.remove(yaml_key("override"));
+            if !others.is_empty() {
+                let mut shared = mapping.clone();
+                shared.insert(yaml_key("models"), serde_norway::Value::Sequence(others));
+                next.push(serde_norway::Value::Mapping(shared));
+            }
+            if !retained_params.is_empty() {
+                let mut retained = mapping.clone();
+                retained.insert(yaml_key("models"), serde_norway::Value::Sequence(target));
+                retained.insert(
+                    yaml_key("params"),
+                    serde_norway::Value::Mapping(retained_params),
+                );
+                next.push(serde_norway::Value::Mapping(retained));
             }
         }
-        remove_payload_section = payload.is_empty();
+        *rules = next;
+        if rules.is_empty() {
+            payload.remove(yaml_key(section));
+        }
     }
-    if remove_payload_section {
+    if payload.is_empty() {
         root.remove(yaml_key("payload"));
     }
     Ok(())
