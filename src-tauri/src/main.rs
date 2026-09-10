@@ -1233,12 +1233,11 @@ struct AgentModificationFile {
     managed_sha256: String,
 }
 
+#[cfg(test)]
 struct AgentModificationInspection {
     enabled: bool,
     state: String,
     backup_available: bool,
-    applied_model: Option<String>,
-    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
     warnings: Vec<String>,
 }
 

@@ -28,19 +28,6 @@ pub(crate) fn agent_managed_paths(client: AgentClient, home: &Path) -> Vec<PathB
     expected_agent_record_paths(client, &paths)
 }
 
-pub(crate) fn legacy_agent_backup_paths(state_content: &str) -> Vec<PathBuf> {
-    serde_json::from_str::<AgentModificationRecord>(state_content)
-        .ok()
-        .map(|record| {
-            record
-                .files
-                .into_iter()
-                .map(|file| file.backup_path)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 pub(crate) fn write_agent_applied_state(
     path: &Path,
     state: &AgentAppliedState,
@@ -530,8 +517,6 @@ pub(crate) fn inspect_agent_modification(
                 enabled: false,
                 state: "inactive".to_string(),
                 backup_available: false,
-                applied_model: current_model.map(str::to_string),
-                claude_desktop_model_mappings: None,
                 warnings: Vec::new(),
             }
         }
@@ -571,8 +556,6 @@ pub(crate) fn inspect_agent_modification(
                     enabled: true,
                     state: state.to_string(),
                     backup_available,
-                    applied_model: Some(record.model),
-                    claude_desktop_model_mappings: None,
                     warnings,
                 }
             }
@@ -580,8 +563,6 @@ pub(crate) fn inspect_agent_modification(
                 enabled: false,
                 state: "inactive".to_string(),
                 backup_available: false,
-                applied_model: current_model.map(str::to_string),
-                claude_desktop_model_mappings: None,
                 warnings: Vec::new(),
             },
             Err(error) => AgentModificationInspection {
@@ -591,8 +572,6 @@ pub(crate) fn inspect_agent_modification(
                     .iter()
                     .filter_map(|path| agent_backup_path(path).ok())
                     .any(|path| path.is_file()),
-                applied_model: current_model.map(str::to_string),
-                claude_desktop_model_mappings: None,
                 warnings: vec![error],
             },
         };
@@ -601,13 +580,11 @@ pub(crate) fn inspect_agent_modification(
     if configured {
         if let Some(model) = current_model {
             match build_legacy_agent_record(client, home, port, model) {
-                Ok(Some(record)) => {
+                Ok(Some(_)) => {
                     return AgentModificationInspection {
                         enabled: true,
                         state: "active".to_string(),
                         backup_available: true,
-                        applied_model: Some(record.model),
-                        claude_desktop_model_mappings: None,
                         warnings: vec![
                             "检测到旧版 CPA 配置和备份，可使用“清除修改”恢复原配置".to_string()
                         ],
@@ -618,8 +595,6 @@ pub(crate) fn inspect_agent_modification(
                         enabled: false,
                         state: "inactive".to_string(),
                         backup_available: false,
-                        applied_model: current_model.map(str::to_string),
-                        claude_desktop_model_mappings: None,
                         warnings: vec!["检测到 CPA 配置，但缺少可安全恢复的原始备份".to_string()],
                     }
                 }
@@ -628,8 +603,6 @@ pub(crate) fn inspect_agent_modification(
                         enabled: false,
                         state: "inactive".to_string(),
                         backup_available: false,
-                        applied_model: current_model.map(str::to_string),
-                        claude_desktop_model_mappings: None,
                         warnings: vec![error],
                     }
                 }
@@ -641,8 +614,6 @@ pub(crate) fn inspect_agent_modification(
         enabled: false,
         state: "inactive".to_string(),
         backup_available: false,
-        applied_model: current_model.map(str::to_string),
-        claude_desktop_model_mappings: None,
         warnings: Vec::new(),
     }
 }
@@ -1233,63 +1204,6 @@ pub(crate) fn dated_agent_backup_path(path: &Path) -> Result<PathBuf, String> {
     Ok(path.with_file_name(format!("{file_name}.{date}.bak")))
 }
 
-pub(crate) fn prepare_agent_session_backups(
-    client: AgentClient,
-    updates: &[AgentFileUpdate],
-) -> Result<Vec<AgentAppliedBackupFile>, String> {
-    let mut backups: Vec<AgentAppliedBackupFile> = Vec::with_capacity(updates.len());
-    let mut renamed = Vec::new();
-    for update in updates {
-        let existed_before = update.path.is_file();
-        let backup_path = dated_agent_backup_path(&update.path)?;
-        if existed_before {
-            if backup_path.exists() {
-                if client == AgentClient::DeepSeekHarness {
-                    for backup in &backups {
-                        if backup.existed_before {
-                            let _ = fs::remove_file(&backup.backup_path);
-                        }
-                    }
-                }
-                for (path, backup) in renamed.iter().rev() {
-                    let _ = fs::rename(backup, path);
-                }
-                return Err(format!(
-                    "智能体备份文件已存在，无法覆盖: {}",
-                    path_to_string(&backup_path)
-                ));
-            }
-            if client == AgentClient::DeepSeekHarness {
-                if let Err(error) = fs::copy(&update.path, &backup_path) {
-                    for backup in &backups {
-                        if backup.existed_before {
-                            let _ = fs::remove_file(&backup.backup_path);
-                        }
-                    }
-                    return Err(format!(
-                        "备份 DeepSeek Harness 配置失败 {}: {error}",
-                        path_to_string(&update.path)
-                    ));
-                }
-            } else {
-                fs::rename(&update.path, &backup_path).map_err(|error| {
-                    format!(
-                        "重命名原智能体配置为备份失败 {}: {error}",
-                        path_to_string(&update.path)
-                    )
-                })?;
-                renamed.push((update.path.clone(), backup_path.clone()));
-            }
-        }
-        backups.push(AgentAppliedBackupFile {
-            path: update.path.clone(),
-            backup_path,
-            existed_before,
-        });
-    }
-    Ok(backups)
-}
-
 pub(crate) fn restore_agent_session_configuration(
     client: AgentClient,
     home: &Path,
@@ -1396,6 +1310,7 @@ pub(crate) fn restore_agent_applied_state_configuration(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn commit_agent_configuration(
     client: AgentClient,
     home: &Path,

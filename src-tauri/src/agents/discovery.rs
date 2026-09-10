@@ -753,17 +753,6 @@ pub(crate) fn validate_codex_oauth_login_at(auth_path: &Path) -> Result<(), Stri
     }
 }
 
-pub(crate) fn remove_codex_config_file(path: &Path) -> Result<bool, String> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!(
-            "删除 Codex 配置文件失败 {}: {error}",
-            path_to_string(path)
-        )),
-    }
-}
-
 pub(crate) fn clear_codex_config_files(home: &Path) -> Result<Vec<String>, String> {
     let paths = history_paths("codex",home)?;
     let before = history_images(&paths)?;
@@ -1119,6 +1108,7 @@ pub(crate) fn agent_configuration_is_synchronized(
     configured
 }
 
+#[cfg(test)]
 pub(crate) fn inspect_agent_application(
     client: AgentClient,
     home: &Path,
@@ -1138,8 +1128,6 @@ pub(crate) fn inspect_agent_application(
                             enabled: false,
                             state: "unconfigured".to_string(),
                             backup_available: false,
-                            applied_model: None,
-                            claude_desktop_model_mappings: None,
                             warnings: Vec::new(),
                         };
                     }
@@ -1148,8 +1136,6 @@ pub(crate) fn inspect_agent_application(
                             enabled: false,
                             state: "invalid".to_string(),
                             backup_available: false,
-                            applied_model: None,
-                            claude_desktop_model_mappings: None,
                             warnings: vec![error],
                         };
                     }
@@ -1166,8 +1152,6 @@ pub(crate) fn inspect_agent_application(
                 enabled: true,
                 state: "applied".to_string(),
                 backup_available,
-                applied_model: Some(state.model),
-                claude_desktop_model_mappings: state.claude_desktop_model_mappings,
                 warnings,
             }
         }
@@ -1175,16 +1159,12 @@ pub(crate) fn inspect_agent_application(
             enabled: false,
             state: "unconfigured".to_string(),
             backup_available: false,
-            applied_model: None,
-            claude_desktop_model_mappings: None,
             warnings: Vec::new(),
         },
         Err(error) => AgentModificationInspection {
             enabled: false,
             state: "invalid".to_string(),
             backup_available: false,
-            applied_model: None,
-            claude_desktop_model_mappings: None,
             warnings: vec![error],
         },
     }
