@@ -938,7 +938,7 @@ pub(crate) fn inspect_agent_config(
             .as_deref()
             .and_then(read_opencode_desktop_version),
         AgentClient::DeepSeekHarness => read_deepseek_harness_profile_version(home),
-        AgentClient::ZCode => read_zcode_app_version(home),
+        AgentClient::ZCode => executable.as_deref().and_then(read_zcode_app_version),
         _ => None,
     };
     let version = cli_version.clone().or_else(|| app_version.clone());
@@ -2017,30 +2017,22 @@ pub(crate) fn read_codex_app_installation_version(
     }
 }
 
-pub(crate) fn read_zcode_app_version(home: &Path) -> Option<String> {
+pub(crate) fn read_zcode_app_version(executable: &Path) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        find_zcode_desktop_executable(home).and_then(|path| {
-            read_windows_executable_version(&path).or_else(|| read_agent_version(&path, home))
-        })
+        // Missing version metadata must not cause the desktop app to be launched.
+        read_windows_executable_version(executable)
     }
     #[cfg(target_os = "macos")]
     {
-        [
-            PathBuf::from("/Applications/ZCode.app"),
-            home.join("Applications/ZCode.app"),
-        ]
-        .into_iter()
-        .find(|path| path.is_dir())
-        .and_then(|path| read_macos_app_version(&path))
-        .or_else(|| {
-            find_named_agent_executable(home, &["zcode"])
-                .and_then(|path| read_agent_version(&path, home))
-        })
+        let application = executable.ancestors().find(|path| {
+            path.extension().and_then(|value| value.to_str()) == Some("app")
+        })?;
+        read_macos_app_version(application)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = home;
+        let _ = executable;
         None
     }
 }
@@ -2050,6 +2042,7 @@ pub(crate) fn find_zcode_desktop_executable(home: &Path) -> Option<PathBuf> {
     {
         let local = env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or_else(|| home.join("AppData/Local"));
         let mut candidates = vec![
             local.join("Programs/ZCode/ZCode.exe"),
@@ -2067,6 +2060,7 @@ pub(crate) fn find_zcode_desktop_executable(home: &Path) -> Option<PathBuf> {
             .into_iter()
             .find(|path| path.is_file())
             .or_else(|| find_named_agent_executable(home, &["zcode"]))
+            .or_else(find_windows_registered_zcode_executable)
     }
     #[cfg(target_os = "macos")]
     {
@@ -2095,6 +2089,124 @@ pub(crate) fn find_zcode_desktop_executable(home: &Path) -> Option<PathBuf> {
     {
         find_named_agent_executable(home, &["zcode"])
     }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn find_windows_registered_zcode_executable() -> Option<PathBuf> {
+    // Electron/NSIS permits arbitrary installation directories. Its uninstall
+    // record may omit InstallLocation and point DisplayIcon at an .ico file.
+    const DISCOVERY_SCRIPT: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$registryRoots = @(
+    'HKCU:\Software\Microsoft\Windows\CurrentVersion',
+    'HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion',
+    'HKLM:\Software\Microsoft\Windows\CurrentVersion',
+    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion'
+)
+$candidates = @(
+    foreach ($root in $registryRoots) {
+        $appPath = Get-Item -LiteralPath "$root\App Paths\ZCode.exe"
+        if ($appPath) {
+            $value = $appPath.GetValue('')
+            if ($value) { @{ kind = 'executable'; value = [string]$value } }
+        }
+        foreach ($key in (Get-ChildItem -LiteralPath "$root\Uninstall")) {
+            $entry = Get-ItemProperty -LiteralPath $key.PSPath
+            if ($entry.DisplayName -notmatch '^ZCode(?:$|[\s(])') { continue }
+            if ($entry.InstallLocation) {
+                @{ kind = 'directory'; value = [string]$entry.InstallLocation }
+            }
+            if ($entry.DisplayIcon) {
+                @{ kind = 'icon'; value = [string]$entry.DisplayIcon }
+            }
+            if ($entry.UninstallString) {
+                @{ kind = 'uninstaller'; value = [string]$entry.UninstallString }
+            }
+        }
+    }
+    $shortcutRoots = @(
+        [Environment]::GetFolderPath('Programs'),
+        [Environment]::GetFolderPath('CommonPrograms'),
+        [Environment]::GetFolderPath('DesktopDirectory'),
+        [Environment]::GetFolderPath('CommonDesktopDirectory')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($root in $shortcutRoots) {
+        foreach ($file in (Get-ChildItem -LiteralPath $root -Filter '*ZCode*.lnk' -Recurse)) {
+            $target = $shell.CreateShortcut($file.FullName).TargetPath
+            if ($target -and [System.IO.Path]::GetFileName($target) -ieq 'ZCode.exe') {
+                @{ kind = 'executable'; value = [string]$target }
+            }
+        }
+    }
+)
+ConvertTo-Json -InputObject $candidates -Compress
+"#;
+    let encoded_command = windows_powershell_encoded_command(DISCOVERY_SCRIPT);
+    let mut command = Command::new(windows_powershell_executable());
+    command.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        &encoded_command,
+    ]);
+    configure_background_command(&mut command);
+    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
+    if !output.status.success() {
+        return None;
+    }
+    parse_windows_zcode_discovery_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn parse_windows_zcode_discovery_output(output: &str) -> Option<PathBuf> {
+    let candidates: Vec<serde_json::Value> = serde_json::from_str(output.trim()).ok()?;
+    candidates.into_iter().find_map(|candidate| {
+        let kind = candidate.get("kind")?.as_str()?;
+        let value = candidate.get("value")?.as_str()?.trim();
+        let value = if let Some(quoted) = value.strip_prefix('"') {
+            quoted.split_once('"')?.0
+        } else if kind == "uninstaller" {
+            // Never execute UninstallString; only use its executable's directory.
+            let end = value.to_ascii_lowercase().match_indices(".exe").find_map(
+                |(index, extension)| {
+                    let end = index + extension.len();
+                    (value[end..].is_empty() || value[end..].starts_with(char::is_whitespace))
+                        .then_some(end)
+                },
+            )?;
+            &value[..end]
+        } else if kind == "icon" {
+            value
+                .rsplit_once(',')
+                .filter(|(_, index)| index.trim().parse::<i32>().is_ok())
+                .map(|(path, _)| path.trim())
+                .unwrap_or(value)
+        } else {
+            value
+        };
+        let path = PathBuf::from(value);
+        if !path.is_absolute() {
+            return None;
+        }
+        let executable = match kind {
+            "executable" => path,
+            "directory" => path.join("ZCode.exe"),
+            "icon" | "uninstaller" => path.parent()?.join("ZCode.exe"),
+            _ => return None,
+        };
+        (executable
+            .file_name()?
+            .to_str()?
+            .eq_ignore_ascii_case("ZCode.exe")
+            && executable.is_file())
+        .then_some(executable)
+    })
 }
 
 #[cfg(target_os = "macos")]
