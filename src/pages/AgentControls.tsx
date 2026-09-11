@@ -75,12 +75,12 @@ export function AgentConfigurationFeedback({ pending, notice, error, description
 
 export function AgentConfigManagementPanel({
   pi, codex, busyAction, canTemplate, canUpdatePi, canUninstallPi, pluginInstalled, pluginVersion, updateLabel,
-  onBackup, onRestore, onTemplate, onClear, onCatalog, onUpdatePi, onUninstallPi,
+  onBackup, onRestore, onTemplate, onClear, onUpdatePi, onUninstallPi,
 }: {
   pi: boolean; codex: boolean; busyAction: string | null; canTemplate: boolean;
   canUpdatePi: boolean; canUninstallPi: boolean; pluginInstalled: boolean; pluginVersion: string | null; updateLabel: string;
   onBackup: () => void; onRestore: () => void; onTemplate: () => void; onClear: () => void;
-  onCatalog: () => void; onUpdatePi: () => void; onUninstallPi: () => void;
+  onUpdatePi: () => void; onUninstallPi: () => void;
 }) {
   const { t } = useI18n();
   const busy = busyAction !== null;
@@ -94,15 +94,16 @@ export function AgentConfigManagementPanel({
         <button type="button" className="secondary-button" onClick={onRestore} disabled={busy}>{t('agents.backup.button')}</button>
       </div>
     </section> : null}
-    {codex ? <section className="agent-management-row">
-      <div><h3>{t('agents.management.models')}</h3><p>{t('agents.management.modelsDescription')}</p></div>
-      <div className="agent-management-actions"><button type="button" className="secondary-button" onClick={onCatalog} disabled={busy}>{t('agents.catalog.button')}</button></div>
-    </section> : null}
-    {!pi ? <section className="agent-management-row agent-management-reset">
-      <div><h3>{t('agents.management.reset')}</h3><p>{t('agents.management.resetDescription')}</p></div>
+    {!pi ? <section className="agent-management-row agent-management-template">
+      <div><h3>{t('agents.management.template')}</h3><p>{t('agents.management.templateDescription')}</p></div>
       <div className="agent-management-actions">
         <button type="button" className="secondary-button" onClick={onTemplate} disabled={busy || !canTemplate}>{t('agents.modify.default')}</button>
-        {codex ? <button type="button" className="danger-button" onClick={onClear} disabled={busy}><Trash2 size={16} />{t('agents.modify.clear')}</button> : null}
+      </div>
+    </section> : null}
+    {codex ? <section className="agent-management-row">
+      <div><h3>{t('agents.modify.clear')}</h3><p>{t('agents.management.clearDescription')}</p></div>
+      <div className="agent-management-actions">
+        <button type="button" className="danger-button" onClick={onClear} disabled={busy}><Trash2 size={16} />{t('agents.modify.clear')}</button>
       </div>
     </section> : null}
     {pi ? <section className="agent-management-row">

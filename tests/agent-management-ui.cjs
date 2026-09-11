@@ -29,8 +29,8 @@ const path = require('node:path');
     for (const mode of ['', 'embedded&']) {
       await open(mode + 'defer-restart');
       assert.equal(await button('手动备份').count(), 0);
-      assert.equal(await button('基础配置模板').count(), 0);
-      assert.equal(await button('模型列表设置').count(), 0);
+      assert.equal(await button('应用 ezcpa 模板').count(), 0);
+      assert.ok(await page.locator('#agent-subpage-panel-core').getByRole('button', { name: '模型列表设置', exact: true }).isVisible());
       assert.equal(await page.locator('.agent-launch-actions button').count(), 3);
       assert.equal(await tab('会话管理').count(), mode ? 0 : 1);
       await page.locator('.agent-model-trigger').click();
@@ -51,7 +51,8 @@ const path = require('node:path');
       await pending();
       assert.equal(await page.locator('.agent-launch-actions').count(), 0);
       assert.equal(await button('更新配置').count(), 0);
-      for (const name of ['手动备份', '恢复备份', '基础配置模板', '清空配置', '模型列表设置']) {
+      assert.equal(await button('模型列表设置').count(), 0);
+      for (const name of ['手动备份', '恢复备份', '应用 ezcpa 模板', '清空配置']) {
         assert.ok(await button(name).isVisible());
       }
       await tab('配置管理').press('ArrowLeft');

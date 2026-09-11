@@ -119,7 +119,7 @@ const assert = require('node:assert/strict');
         await page.getByRole('button', { name: '确认恢复', exact: true }).click();
         await page.locator('.agent-backup-modal').waitFor({ state: 'detached' });
       } else {
-        await page.getByRole('button', { name: '基础配置模板', exact: true }).click();
+        await page.getByRole('button', { name: '应用 ezcpa 模板', exact: true }).click();
         await page.getByRole('button', { name: '确认覆盖', exact: true }).click();
         await page.getByRole('button', { name: '确认覆盖', exact: true }).waitFor({ state: 'detached' });
       }

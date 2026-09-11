@@ -20,6 +20,7 @@ import {
   LoaderCircle,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -1632,10 +1633,20 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const oauthLoginRequiredDescription = oauthLoginRequiredAction === 'enable' ? (
     <>
       {t('agents.oauthLoginRequired.enableDescription')}
+      <strong>{t('agents.tabs.management')}</strong>
+      {t('agents.oauthLoginRequired.enableManagementConnector')}
       <strong>{t('agents.oauthLoginRequired.enableClearConfiguration')}</strong>
       {t('agents.oauthLoginRequired.enableDescriptionSuffix')}
     </>
   ) : oauthLoginRequiredAction ? t(`agents.oauthLoginRequired.${oauthLoginRequiredAction}Description`) : '';
+
+  const codexCatalogButton = selected === 'codex' ? (
+    <button type="button" className="secondary-button agent-codex-catalog-button"
+      onClick={() => setCodexCatalogDialogOpen(true)} disabled={busy}>
+      <SlidersHorizontal size={16} />
+      {t('agents.catalog.button')}
+    </button>
+  ) : null;
 
   return (
     <section className={`page management-page agents-page${embedded ? ' agents-page-embedded' : ''}`}>
@@ -1760,6 +1771,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   onChange={selectEmbeddedModel}
                   onRefresh={refreshModels}
                 />
+                {codexCatalogButton}
               </div>
 
               <div className="agent-minimal-actions">
@@ -1885,6 +1897,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         </select>
                       </div>
 
+                      {codexCatalogButton}
                       <div id="agent-signin-hint" className="agent-signin-explanation" hidden={!connectionHelpOpen}>
                         <dl>
                           <div><dt>{t('agents.modify.authApiKey')}</dt><dd>{t('agents.modify.authApiKeyHint')}</dd></div>
@@ -2064,7 +2077,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 updateLabel={piPluginUpdateAvailable ? piPluginUpdateTitle ?? '' : ''}
                 onBackup={() => void createManualBackup()} onRestore={() => setBackupsOpen(true)}
                 onTemplate={() => void openDefaultConfirmation()} onClear={openClearConfirmation}
-                onCatalog={() => setCodexCatalogDialogOpen(true)} onUpdatePi={() => void updatePiProvider()}
+                onUpdatePi={() => void updatePiProvider()}
                 onUninstallPi={() => void uninstallPiProvider()} />
             </div>
           ) : null}
