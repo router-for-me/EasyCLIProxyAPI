@@ -4,6 +4,15 @@ import { en, ja, zhCN, zhTW, type MessageKey } from '../src/i18n/resources';
 import { jaOverrides } from '../src/i18n/ja';
 
 describe('i18n', () => {
+  it('localizes system appearance controls in every language', () => {
+    expect(translate('zh-CN', 'app.theme.system')).toBe('跟随系统');
+    expect(translate('zh-TW', 'app.theme.system')).toBe('跟隨系統');
+    expect(translate('zh-TW', 'app.theme.label')).toBe('外觀模式');
+    expect(translate('zh-TW', 'app.theme.switchToSystem')).toBe('隨系統自動切換日間和夜間模式');
+    expect(translate('en', 'app.theme.system')).toBe('Follow system');
+    expect(translate('ja', 'app.theme.system')).toBe('システムに従う');
+  });
+
   it('uses credential-file terminology throughout both Chinese locales', () => {
     for (const key of ['app.nav.authFiles', 'authFiles.title'] as const) {
       expect(translate('zh-CN', key)).toBe('凭证文件');

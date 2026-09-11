@@ -94,6 +94,36 @@ fn import_changes(
         let previous = generated.and_then(|fields| fields.get(key));
         if current != previous {
             if let Some(value) = current {
+                if key == "compat" {
+                    if let Some(fields) = value.as_object() {
+                        let previous = previous.and_then(Value::as_object);
+                        let mut imported = overrides
+                            .get(key)
+                            .and_then(Value::as_object)
+                            .cloned()
+                            .unwrap_or_default();
+                        let keys = fields
+                            .keys()
+                            .chain(previous.into_iter().flat_map(|fields| fields.keys()))
+                            .collect::<std::collections::BTreeSet<_>>();
+                        for field in keys {
+                            let current = fields.get(field);
+                            if current != previous.and_then(|fields| fields.get(field)) {
+                                if let Some(value) = current {
+                                    imported.insert(field.clone(), value.clone());
+                                } else {
+                                    imported.remove(field);
+                                }
+                            }
+                        }
+                        if imported.is_empty() {
+                            overrides.remove(key);
+                        } else {
+                            overrides.insert(key.into(), Value::Object(imported));
+                        }
+                        continue;
+                    }
+                }
                 overrides.insert(key.into(), value.clone());
             } else {
                 overrides.remove(key);
@@ -327,7 +357,7 @@ fn validate_harness_field(
         "reasoning" => {
             value == &json!(false)
                 || value.as_object().is_some_and(|values| {
-                    !values.is_empty()
+                    values.keys().any(|key| key != "off")
                         && values.iter().all(|(key, value)| {
                             ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
                                 .contains(&key.as_str())
@@ -376,6 +406,9 @@ fn render_harness_profiles(
     models: &[AgentModelOption],
     state: &mut DeepSeekHarnessCatalogState,
 ) -> Result<String, String> {
+    if models.is_empty() {
+        return Err("DSH 模型列表为空，已保留现有配置，请刷新后重试".into());
+    }
     let root = harness_root(existing)?;
     let old = harness_provider(&root);
     let api = state

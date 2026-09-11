@@ -15,6 +15,7 @@ import {
   ChevronDown,
   Languages,
   LoaderCircle,
+  Monitor,
   Moon,
   Sun,
   X,
@@ -34,7 +35,7 @@ import {
   type ModelOption,
   type ModelProvider,
 } from "../services/modelService";
-import { type AppTheme } from "../theme";
+import { type ThemePreference } from "../theme";
 import { AgentsPage } from "./AgentsPage";
 
 import codexIcon from "../assets/icons/codex.svg";
@@ -100,8 +101,8 @@ export function EasyModePage({
   setLocale,
 }: {
   onExit?: () => void;
-  theme?: AppTheme;
-  setTheme?: (theme: AppTheme) => void;
+  theme?: ThemePreference;
+  setTheme?: (theme: ThemePreference) => void;
   locale?: AppLocale;
   setLocale?: (locale: AppLocale) => void;
 }) {
@@ -632,11 +633,13 @@ export function EasyModePage({
         <div className="simple-mode-topbar-right">
           {/* 主题切换 */}
           {setTheme ? (
-            <div className="simple-mode-theme-group">
+            <div className="simple-mode-theme-group" role="group" aria-label={t("app.theme.label")}>
               <button
                 type="button"
                 className={theme === "light" ? "active" : ""}
                 title={t("easyMode.theme.light")}
+                aria-label={t("easyMode.theme.light")}
+                aria-pressed={theme === "light"}
                 onClick={() => setTheme("light")}
               >
                 <Sun size={15} />
@@ -645,9 +648,21 @@ export function EasyModePage({
                 type="button"
                 className={theme === "dark" ? "active" : ""}
                 title={t("easyMode.theme.dark")}
+                aria-label={t("easyMode.theme.dark")}
+                aria-pressed={theme === "dark"}
                 onClick={() => setTheme("dark")}
               >
                 <Moon size={15} />
+              </button>
+              <button
+                type="button"
+                className={theme === "system" ? "active" : ""}
+                title={t("app.theme.switchToSystem")}
+                aria-label={t("app.theme.system")}
+                aria-pressed={theme === "system"}
+                onClick={() => setTheme("system")}
+              >
+                <Monitor size={15} />
               </button>
             </div>
           ) : null}

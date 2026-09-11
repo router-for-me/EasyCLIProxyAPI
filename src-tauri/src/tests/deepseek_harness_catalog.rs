@@ -249,6 +249,54 @@ fn harness_saves_before_connection_and_applies_documented_protocol() {
 }
 
 #[test]
+fn harness_rejects_empty_catalog_without_modifying_configured_files() {
+    let home = agent_test_home("harness-empty-catalog");
+    apply(&home, &models());
+    let mut paths = agent_config_paths(AgentClient::DeepSeekHarness, &home);
+    paths.push(deepseek_harness_catalog_state_path(&paths).unwrap());
+    for selection in [
+        root(&home).get("agent-default-model").cloned(),
+        Some(json!({"provider":"deepseek","model":"deepseek-chat"})),
+        None,
+    ] {
+        let mut document = root(&home);
+        if let Some(selection) = selection {
+            document["agent-default-model"] = selection;
+        } else {
+            document
+                .as_object_mut()
+                .unwrap()
+                .remove("agent-default-model");
+        }
+        fs::write(&paths[0], serde_norway::to_string(&document).unwrap()).unwrap();
+        let before = config_images(&paths).unwrap();
+        let mut edit = request(harness_editor_snapshot(&home, &[], 8317).unwrap());
+        edit.provider.insert("timeoutMs".into(), json!(60000));
+        assert!(save_harness_editor(&home, &[], 8317, edit).is_err());
+        assert_eq!(config_images(&paths).unwrap(), before);
+        assert_eq!(provider(&home)["models"].as_array().unwrap().len(), 3);
+    }
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn harness_allows_empty_catalog_for_unconnected_provider_drafts() {
+    let home = agent_test_home("harness-empty-catalog-draft");
+    let mut edit = request(harness_editor_snapshot(&home, &[], 8317).unwrap());
+    edit.provider.insert("timeoutMs".into(), json!(60000));
+    save_harness_editor(&home, &[], 8317, edit).unwrap();
+    let paths = agent_config_paths(AgentClient::DeepSeekHarness, &home);
+    assert!(paths.iter().all(|path| !path.exists()));
+    assert_eq!(
+        harness_editor_snapshot(&home, &[], 8317).unwrap().provider["timeoutMs"],
+        60000
+    );
+    apply(&home, &models());
+    assert_eq!(provider(&home)["timeoutMs"], 60000);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn harness_rejects_stale_catalog_and_invalid_fields_without_writing() {
     let home = agent_test_home("harness-catalog-validation");
     let models = models();
@@ -260,13 +308,17 @@ fn harness_rejects_stale_catalog_and_invalid_fields_without_writing() {
         .err()
         .unwrap()
         .contains("DSH_MODEL_CATALOG_CHANGED"));
-    let paths = agent_config_paths(AgentClient::DeepSeekHarness, &home);
+    let mut paths = agent_config_paths(AgentClient::DeepSeekHarness, &home);
+    paths.push(deepseek_harness_catalog_state_path(&paths).unwrap());
     let before = config_images(&paths).unwrap();
     for configuration in [
         json!({"contextWindow":0}),
         json!({"maxTokens":1.5}),
         json!({"input":["audio"]}),
         json!({"reasoningEfforts":{"high":null}}),
+        json!({"reasoningEfforts":{"off":null}}),
+        json!({"reasoningEfforts":{"off":"none"}}),
+        json!({"reasoningEfforts":{}}),
         json!({"compat":{"supportsTemperature":true}}),
         json!({"compat":{"supportsStore":null}}),
         json!({"compat":{"vllmPriority":0.5}}),
@@ -325,6 +377,82 @@ fn harness_imports_external_edits_and_keeps_default_selection_and_other_settings
         json!({"keep":true})
     );
     assert_eq!(provider(&home)["models"][0]["input"], json!(["text"]));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn harness_imports_compat_changes_without_freezing_other_api_defaults() {
+    let home = agent_test_home("harness-compat-import");
+    let mut models = models();
+    models[0].harness_metadata = harness_api_metadata(&json!({"compat":{
+        "supportsStore":true,"supportsDeveloperRole":true,"supportsStrictMode":true
+    }}));
+    apply(&home, &models);
+    let mut edit = request(harness_editor_snapshot(&home, &models, 8317).unwrap());
+    edit.models[0]
+        .configuration
+        .insert("compat".into(), json!({"supportsStrictMode":false}));
+    save_harness_editor(&home, &models, 8317, edit).unwrap();
+    let paths = agent_config_paths(AgentClient::DeepSeekHarness, &home);
+    let mut document = root(&home);
+    document["llm-pi-ai"]["providers"][DEEPSEEK_HARNESS_PROVIDER_ID]["models"][0]["compat"]
+        ["supportsStore"] = json!(false);
+    fs::write(&paths[0], serde_norway::to_string(&document).unwrap()).unwrap();
+    let edit = request(harness_editor_snapshot(&home, &models, 8317).unwrap());
+    assert_eq!(
+        edit.models[0].configuration["compat"],
+        json!({
+            "supportsStore":false,"supportsStrictMode":false
+        })
+    );
+    save_harness_editor(&home, &models, 8317, edit).unwrap();
+    models[0].harness_metadata = harness_api_metadata(&json!({"compat":{
+        "supportsStore":true,"supportsDeveloperRole":false,"supportsStrictMode":true
+    }}));
+    apply(&home, &models);
+    assert_eq!(
+        provider(&home)["models"][0]["compat"],
+        json!({
+            "supportsStore":false,"supportsDeveloperRole":false,"supportsStrictMode":false
+        })
+    );
+
+    let mut document = root(&home);
+    let compat = document["llm-pi-ai"]["providers"][DEEPSEEK_HARNESS_PROVIDER_ID]["models"][0]
+        ["compat"]
+        .as_object_mut()
+        .unwrap();
+    compat.remove("supportsStore");
+    compat.insert("maxTokensField".into(), json!("max_tokens"));
+    fs::write(&paths[0], serde_norway::to_string(&document).unwrap()).unwrap();
+    let edit = request(harness_editor_snapshot(&home, &models, 8317).unwrap());
+    assert_eq!(
+        edit.models[0].configuration["compat"],
+        json!({
+            "supportsStrictMode":false,"maxTokensField":"max_tokens"
+        })
+    );
+    save_harness_editor(&home, &models, 8317, edit).unwrap();
+    assert_eq!(
+        provider(&home)["models"][0]["compat"]["supportsStore"],
+        true
+    );
+
+    let mut document = root(&home);
+    document["llm-pi-ai"]["providers"][DEEPSEEK_HARNESS_PROVIDER_ID]["models"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("compat");
+    fs::write(&paths[0], serde_norway::to_string(&document).unwrap()).unwrap();
+    let edit = request(harness_editor_snapshot(&home, &models, 8317).unwrap());
+    assert!(!edit.models[0].configuration.contains_key("compat"));
+    save_harness_editor(&home, &models, 8317, edit).unwrap();
+    assert_eq!(
+        provider(&home)["models"][0]["compat"],
+        json!({
+            "supportsStore":true,"supportsDeveloperRole":false,"supportsStrictMode":true
+        })
+    );
     fs::remove_dir_all(home).unwrap();
 }
 

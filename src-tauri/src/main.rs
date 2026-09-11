@@ -9,6 +9,7 @@ mod codex_sessions;
 mod configuration_watcher;
 mod core_config;
 mod core_runtime;
+mod desktop_theme;
 mod instance_lock;
 mod management_api;
 mod oauth_browser;
@@ -2499,6 +2500,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            desktop_theme::get_linux_system_theme,
             health_check,
             detect_core_platform,
             get_core_status,

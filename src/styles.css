@@ -660,6 +660,10 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.sidebar-theme-selector button:last-child {
+  grid-column: 1 / -1;
+}
+
 .sidebar-theme-selector button:hover {
   background: var(--theme-e8e5dc);
   color: var(--theme-2d2a26);

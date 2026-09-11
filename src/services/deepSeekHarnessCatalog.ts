@@ -82,7 +82,7 @@ export function parseHarnessDraft(draft: HarnessDraft, group: string, api: strin
     if (['modalities', 'strings'].includes(field.kind)) valid = Array.isArray(value) && (value.length > 0 || field.name === 'input')
       && value.every(v => typeof v === 'string' && v.trim() && (field.kind !== 'modalities' || ['text', 'image'].includes(v)))
       && new Set(value).size === value.length;
-    if (field.kind === 'reasoning') valid = value === false || (isHarnessRecord(value) && Object.keys(value).length > 0
+    if (field.kind === 'reasoning') valid = value === false || (isHarnessRecord(value) && Object.keys(value).some(level => level !== 'off')
       && Object.entries(value).every(([level, wire]) => harnessReasoningLevels.includes(level)
         && ((level === 'off' && wire === null) || (typeof wire === 'string' && wire.trim()))));
     if (field.kind === 'headers') valid = isHarnessRecord(value)

@@ -21,6 +21,12 @@ describe('DSH catalog overrides', () => {
     expect(() => parseHarnessDraft({ reasoningEfforts: '{"high":null}' }, 'model', 'openai-completions')).toThrow();
     expect(() => parseHarnessDraft({ reasoningEfforts: '{}' }, 'model', 'openai-completions')).toThrow();
   });
+  test('reasoning maps require a thinking level beyond off', () => {
+    for (const reasoningEfforts of ['{"off":null}', '{"off":"none"}']) {
+      expect(() => parseHarnessDraft({ reasoningEfforts }, 'model', 'openai-completions')).toThrow('reasoningEfforts');
+    }
+    expect(parseHarnessDraft({ reasoningEfforts: '{"high":"high"}' }, 'model', 'openai-completions')).toEqual({ reasoningEfforts: { high: 'high' } });
+  });
   test('invalid numbers, JSON, headers and incompatible protocol switches are rejected', () => {
     for (const draft of [{ maxTokens: '-1' }, { input: '["audio"]' }, { contextWindow: '2.5' }, { 'compat.supportsStore': 'null' }, { 'compat.supportsTemperature': 'true' }]) {
       expect(() => parseHarnessDraft(draft, 'model', 'openai-completions')).toThrow();
