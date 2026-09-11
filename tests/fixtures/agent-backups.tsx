@@ -5,19 +5,39 @@ import { AgentsPage } from '../../src/pages/AgentsPage';
 import { I18nProvider } from '../../src/i18n';
 import '../../src/styles.css';
 const params = new URLSearchParams(location.search);
-localStorage.setItem('easy-cli-proxy-api.locale','zh-CN');
+if(params.has('reset-selections'))localStorage.removeItem('cpa-gui.agent-model-selections.v1');
+localStorage.setItem('easy-cli-proxy-api.locale',params.get('locale') || 'zh-CN');
+document.documentElement.dataset.theme = params.get('theme') || 'light';
 localStorage.setItem('cpa-gui.agent-selected-client.v1', params.get('client') || 'codex');
 const ids = ['claude-code','claude-desktop','codex','opencode','openclaw','hermes','deepseek-harness','zcode','kimi-code','grok-build','pi'];
 let count=0; let backupCount=0; const backups:any[]=[]; let currentModel=params.has('fresh')?null:'gpt-one';
+let currentOauth=false; const currentMappings:Record<string,any>={};
+let harnessStatus={running:params.has('running'),pid:params.has('running')?100:null as number|null,mode:params.has('running')?params.get('harness-mode')||'web':null as string|null};
+let appliedCount=0;
 const calls:any[]=[];(window as any).fixtureCalls=calls;
 mockIPC(async (cmd,args:any) => {
  calls.push({cmd,args});
  if(cmd==='plugin:event|listen') return 1;
  if(cmd==='plugin:event|unlisten'||cmd==='set_app_locale') return null;
- if(cmd==='get_agent_config_statuses'||cmd==='refresh_agent_config_statuses') return ids.map(id=>({id,name:id,supportedPlatform:true,installed:true,pluginInstalled:true,launchTargets:[{id:'cli',label:'CLI',detail:'test'}],version:'1.0',cliVersion:'1.0',appVersion:null,pluginVersion:'1.0',configValid:params.get('state')!=='invalid',connectionState:params.get('state') || (currentModel?'configured':'not-configured'),configured:!!currentModel,configurationSynchronized:!!currentModel,currentModel,oauthConfiguration:false,modificationEnabled:!!currentModel,modificationState:currentModel?'applied':'unconfigured',backupAvailable:false,appliedModel:currentModel,claudeCodeModelMappings:null,claudeDesktopModelMappings:null,warnings:[],error:null}));
+ if(cmd==='get_agent_config_statuses'||cmd==='refresh_agent_config_statuses') return ids.map(id=>({id,name:id,supportedPlatform:true,installed:!params.has('not-installed'),pluginInstalled:!params.has('no-plugin'),launchTargets:params.has('not-installed')?[]:['claude-desktop','zcode'].includes(id)?[{id:'app',label:id,detail:'test desktop'}]:['codex','opencode'].includes(id)&&!params.has('cli-only')?[...(params.has('app-only')?[]:[{id:'cli',label:'CLI',detail:'test CLI'}]),{id:'app',label:'APP',detail:'test desktop'}]:[{id:'cli',label:'CLI',detail:'test CLI'}],version:'1.0',cliVersion:'1.0',appVersion:null,pluginVersion:'1.0',configValid:params.get('state')!=='invalid',connectionState:params.get('state') || (currentModel?'configured':'not-configured'),configured:!!currentModel,configurationSynchronized:!!currentModel,currentModel,oauthConfiguration:id==='codex'&&currentOauth,modificationEnabled:!!currentModel,modificationState:currentModel?'applied':'unconfigured',backupAvailable:false,appliedModel:currentModel,claudeCodeModelMappings:id==='claude-code'?currentMappings[id]??null:null,claudeDesktopModelMappings:id==='claude-desktop'?currentMappings[id]??null:null,warnings:[],error:null}));
  if(cmd==='get_agent_models') return [{name:'gpt-one'},{name:'gpt-two'}];
- if(cmd==='get_deepseek_harness_process_status') return {running:false,pid:null,mode:null};
- if(cmd==='update_agent_config') {count++;currentModel=args.model;return {outcome:count>1?'unchanged':'updated',model:currentModel,enabled:true,changedFiles:[],conflictFiles:[]};}
+ if(cmd==='get_deepseek_harness_process_status') return harnessStatus;
+ if(cmd==='restart_agent_app'||cmd==='restart_deepseek_harness_process') {
+   if(params.has('defer-restart'))await new Promise<void>(resolve=>{(window as any).fixtureFinishRestart=resolve;});
+   if(params.has('fail-restart')) { if(cmd==='restart_deepseek_harness_process')harnessStatus={running:false,pid:null,mode:null}; throw new Error('模拟重启失败'); }
+   if(cmd==='restart_deepseek_harness_process')return harnessStatus={running:true,pid:101,mode:'web'};
+   return null;
+ }
+ if(cmd==='stop_deepseek_harness_process')return harnessStatus={running:false,pid:null,mode:null};
+ if(cmd==='launch_agent')return null;
+ if(cmd==='clear_codex_config') { currentModel=null; return []; }
+ if(cmd==='uninstall_pi_provider')return null;
+ if(['update_agent_config','repair_pi_provider','install_pi_provider','update_pi_provider'].includes(cmd)) {
+   count++;if(params.has('fail-apply')&&count===1)throw new Error('模拟配置写入失败');
+   currentModel=args.model;currentOauth=!!args.oauthConfiguration;
+   currentMappings[args.client]=args.claudeCodeModelMappings??args.claudeDesktopModelMappings;
+   return {outcome:count>1?'unchanged':'updated',model:currentModel,enabled:true,changedFiles:[],conflictFiles:[]};
+ }
  if(cmd==='create_agent_config_backup') {
    const id=String(++backupCount);
    const files=[{path:'C:/test/.codex/config.toml',exists:true,size:120},{path:'C:/test/.codex/models.json',exists:true,size:60},{path:'C:/test/.codex/auth.json',exists:false,size:null}];
@@ -35,4 +55,7 @@ mockIPC(async (cmd,args:any) => {
  if(cmd==='check_codex_oauth_login')return null;
  throw new Error('Unhandled fixture command: '+cmd);
 });
-createRoot(document.getElementById('root')!).render(<I18nProvider><AgentsPage embedded={params.has('embedded')}/></I18nProvider>);
+let root=createRoot(document.getElementById('root')!);
+const render=()=>root.render(<I18nProvider><AgentsPage embedded={params.has('embedded')} onConfigurationApplied={()=>{document.documentElement.dataset.fixtureApplied=String(++appliedCount);}}/></I18nProvider>);
+(window as any).fixtureRemount=()=>{root.unmount();root=createRoot(document.getElementById('root')!);render();};
+render();

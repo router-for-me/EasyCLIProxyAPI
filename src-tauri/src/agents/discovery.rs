@@ -1474,7 +1474,7 @@ pub(crate) fn inspect_managed_toml_model_marker(
     Ok(provider_exists && catalog_has_selected)
 }
 
-pub(crate) fn find_codex_app_installation(home: &Path) -> Option<CodexAppTarget> {
+pub(crate) fn find_codex_app_installation(home: &Path) -> Option<DesktopAppTarget> {
     #[cfg(target_os = "macos")]
     {
         [PathBuf::from("/Applications"), home.join("Applications")]
@@ -1490,7 +1490,7 @@ pub(crate) fn find_codex_app_installation(home: &Path) -> Option<CodexAppTarget>
                 .map(move |name| directory.join(name))
             })
             .find(|path| path.is_dir())
-            .map(CodexAppTarget::Application)
+            .map(DesktopAppTarget::Application)
     }
 
     #[cfg(target_os = "windows")]
@@ -1995,19 +1995,19 @@ pub(crate) fn read_claude_desktop_version(home: &Path) -> Option<String> {
 }
 
 pub(crate) fn read_codex_app_installation_version(
-    installation: &CodexAppTarget,
+    installation: &DesktopAppTarget,
     _home: &Path,
 ) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         match installation {
-            CodexAppTarget::WindowsAppId(app_id) => read_windows_codex_store_version(app_id),
-            CodexAppTarget::Application(path) => read_windows_codex_desktop_version(path),
+            DesktopAppTarget::WindowsAppId(app_id) => read_windows_codex_store_version(app_id),
+            DesktopAppTarget::Application(path) => read_windows_codex_desktop_version(path),
         }
     }
     #[cfg(target_os = "macos")]
     {
-        let CodexAppTarget::Application(path) = installation;
+        let DesktopAppTarget::Application(path) = installation;
         read_macos_app_version(path)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -2166,10 +2166,10 @@ pub(crate) fn windows_command_processor() -> PathBuf {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn find_windows_codex_app_installation(home: &Path) -> Option<CodexAppTarget> {
+pub(crate) fn find_windows_codex_app_installation(home: &Path) -> Option<DesktopAppTarget> {
     find_windows_registered_codex_app_installation()
-        .or_else(|| find_windows_codex_app_id_via_registry().map(CodexAppTarget::WindowsAppId))
-        .or_else(|| find_windows_codex_app_executable(home).map(CodexAppTarget::Application))
+        .or_else(|| find_windows_codex_app_id_via_registry().map(DesktopAppTarget::WindowsAppId))
+        .or_else(|| find_windows_codex_app_executable(home).map(DesktopAppTarget::Application))
 }
 
 #[cfg(target_os = "windows")]
@@ -2227,8 +2227,8 @@ pub(crate) fn read_windows_codex_store_version(app_id: &str) -> Option<String> {
         return None;
     }
     match parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout))? {
-        CodexAppTarget::Application(path) => read_windows_codex_desktop_version(&path),
-        CodexAppTarget::WindowsAppId(_) => None,
+        DesktopAppTarget::Application(path) => read_windows_codex_desktop_version(&path),
+        DesktopAppTarget::WindowsAppId(_) => None,
     }
 }
 
@@ -2345,7 +2345,7 @@ pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn find_windows_registered_codex_app_installation() -> Option<CodexAppTarget> {
+pub(crate) fn find_windows_registered_codex_app_installation() -> Option<DesktopAppTarget> {
     const DISCOVERY_SCRIPT: &str = r#"
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
@@ -2430,7 +2430,7 @@ foreach ($shortcutFile in (Get-ChildItem -LiteralPath $shortcutRoots -Filter '*.
     }
     parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout)).and_then(
         |target| match &target {
-            CodexAppTarget::Application(path) if !path.is_file() => None,
+            DesktopAppTarget::Application(path) if !path.is_file() => None,
             _ => Some(target),
         },
     )
@@ -2485,16 +2485,16 @@ if ($version) {{
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_codex_app_discovery_output(output: &str) -> Option<CodexAppTarget> {
+pub(crate) fn parse_windows_codex_app_discovery_output(output: &str) -> Option<DesktopAppTarget> {
     output.lines().find_map(|line| {
         let line = line.trim();
         if let Some(app_id) = line.strip_prefix("APPID:").map(str::trim) {
-            return (!app_id.is_empty()).then(|| CodexAppTarget::WindowsAppId(app_id.to_string()));
+            return (!app_id.is_empty()).then(|| DesktopAppTarget::WindowsAppId(app_id.to_string()));
         }
         line.strip_prefix("EXE:")
             .map(str::trim)
             .filter(|path| !path.is_empty())
-            .map(|path| CodexAppTarget::Application(PathBuf::from(path)))
+            .map(|path| DesktopAppTarget::Application(PathBuf::from(path)))
     })
 }
 

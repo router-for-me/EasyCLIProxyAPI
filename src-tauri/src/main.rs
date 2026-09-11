@@ -327,6 +327,15 @@ struct DeepSeekHarnessProcessState {
 struct ManagedDeepSeekHarnessProcess {
     child: Child,
     mode: String,
+    launch: DeepSeekHarnessLaunchSnapshot,
+}
+
+#[derive(Clone)]
+struct DeepSeekHarnessLaunchSnapshot {
+    executable: PathBuf,
+    working_directory: PathBuf,
+    arguments: Vec<String>,
+    options: Option<DeepSeekHarnessLaunchOptions>,
 }
 
 #[derive(Clone)]
@@ -1291,8 +1300,7 @@ enum AgentClient {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))] // The desktop-app variants are constructed only on macOS/Windows builds.
-enum CodexAppTarget {
+enum DesktopAppTarget {
     Application(PathBuf),
     #[cfg(target_os = "windows")]
     WindowsAppId(String),
@@ -2532,6 +2540,8 @@ fn main() {
             launch_agent,
             get_deepseek_harness_process_status,
             stop_deepseek_harness_process,
+            restart_deepseek_harness_process,
+            restart_agent_app,
             restart_codex_app,
             restart_opencode_app,
             get_lan_ipv4,

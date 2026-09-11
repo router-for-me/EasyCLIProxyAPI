@@ -66,10 +66,10 @@ fn windows_chatgpt_discovery_parser_accepts_registered_app_and_executable() {
     let app = parse_windows_codex_app_discovery_output("APPID:OpenAI.Codex_2p2nqsd0c76g0!App\r\n")
         .unwrap();
     match app {
-        CodexAppTarget::WindowsAppId(app_id) => {
+        DesktopAppTarget::WindowsAppId(app_id) => {
             assert_eq!(app_id, "OpenAI.Codex_2p2nqsd0c76g0!App");
         }
-        CodexAppTarget::Application(_) => panic!("expected Store application ID"),
+        DesktopAppTarget::Application(_) => panic!("expected Store application ID"),
     }
 
     let executable = parse_windows_codex_app_discovery_output(
@@ -77,13 +77,13 @@ fn windows_chatgpt_discovery_parser_accepts_registered_app_and_executable() {
     )
     .unwrap();
     match executable {
-        CodexAppTarget::Application(path) => {
+        DesktopAppTarget::Application(path) => {
             assert_eq!(
                 path,
                 PathBuf::from(r"C:\Program Files\OpenAI\ChatGPT\ChatGPT.exe")
             );
         }
-        CodexAppTarget::WindowsAppId(_) => panic!("expected desktop executable"),
+        DesktopAppTarget::WindowsAppId(_) => panic!("expected desktop executable"),
     }
 
     assert!(parse_windows_codex_app_discovery_output("MSEdgePWA:ChatGPT\r\n").is_none());
@@ -279,7 +279,7 @@ function Get-AppxPackageManifest($Package) {{
             parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout));
         if expected {
             assert!(
-                matches!(target, Some(CodexAppTarget::Application(path)) if path == executable)
+                matches!(target, Some(DesktopAppTarget::Application(path)) if path == executable)
             );
         } else {
             assert!(target.is_none());

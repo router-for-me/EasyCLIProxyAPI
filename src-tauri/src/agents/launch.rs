@@ -385,8 +385,87 @@ fn launch_managed_deepseek_harness(
     *process = Some(ManagedDeepSeekHarnessProcess {
         child,
         mode: mode.to_string(),
+        launch: DeepSeekHarnessLaunchSnapshot {
+            executable: executable.to_path_buf(),
+            working_directory: working_directory.to_path_buf(),
+            arguments: arguments.to_vec(),
+            options: options.cloned(),
+        },
     });
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn restart_deepseek_harness_process(
+    app: tauri::AppHandle,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        restart_managed_deepseek_harness(app.state::<DeepSeekHarnessProcessState>().inner())
+    })
+    .await
+    .map_err(|error| format!("重启 DeepSeek Harness Web 任务失败: {error}"))?
+}
+
+fn restart_managed_deepseek_harness(
+    process_state: &DeepSeekHarnessProcessState,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    restart_managed_deepseek_harness_with(
+        process_state,
+        terminate_deepseek_harness_process_tree,
+        spawn_managed_deepseek_harness,
+    )
+}
+
+fn restart_managed_deepseek_harness_with(
+    process_state: &DeepSeekHarnessProcessState,
+    stop: impl FnOnce(&mut Child) -> Result<(), String>,
+    spawn: impl FnOnce(&Path, &Path, &[String]) -> Result<Child, String>,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    // Keep the lock across stop and spawn so launch/stop/status cannot interleave.
+    let mut process = process_state
+        .process
+        .lock()
+        .map_err(|_| "DeepSeek Harness 进程状态锁已损坏".to_string())?;
+    let managed = process
+        .as_mut()
+        .ok_or_else(|| "没有正在运行的 DeepSeek Harness Web 服务".to_string())?;
+    if managed
+        .child
+        .try_wait()
+        .map_err(|error| format!("检查 DeepSeek Harness 进程状态失败: {error}"))?
+        .is_some()
+    {
+        *process = None;
+        return Err("DeepSeek Harness Web 已退出，请重新启动".to_string());
+    }
+    if managed.mode != "web" {
+        return Err("只有 Web 模式支持重启".to_string());
+    }
+    let launch = managed.launch.clone();
+    // Validate paths before shutting down a working service.
+    if !launch.executable.is_file() || !launch.working_directory.is_dir() {
+        return Err("DeepSeek Harness 启动程序或工作目录已不存在".to_string());
+    }
+    stop(&mut managed.child)?;
+    *process = None;
+    // The old process must release its endpoint before the replacement starts.
+    ensure_deepseek_harness_web_endpoint_available(launch.options.as_ref())?;
+    let child = spawn(
+        &launch.executable,
+        &launch.working_directory,
+        &launch.arguments,
+    )?;
+    let status = DeepSeekHarnessProcessStatus {
+        running: true,
+        pid: Some(child.id()),
+        mode: Some("web".to_string()),
+    };
+    *process = Some(ManagedDeepSeekHarnessProcess {
+        child,
+        mode: "web".to_string(),
+        launch,
+    });
+    Ok(status)
 }
 
 fn ensure_deepseek_harness_web_endpoint_available(
@@ -431,7 +510,13 @@ fn spawn_managed_deepseek_harness(
         command
             .args(arguments)
             .current_dir(working_directory)
-            .creation_flags(CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP);
+            .creation_flags(
+                (if cfg!(test) {
+                    0x0800_0000
+                } else {
+                    CREATE_NEW_CONSOLE
+                }) | CREATE_NEW_PROCESS_GROUP,
+            );
         return command
             .spawn()
             .map_err(|error| format!("启动 DeepSeek Harness 失败: {error}"));
@@ -585,37 +670,153 @@ fn validate_deepseek_harness_argument(value: &str, label: &str) -> Result<String
 
 #[tauri::command]
 pub(crate) async fn restart_codex_app(app: tauri::AppHandle) -> Result<(), String> {
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let target = find_codex_app_installation(&home)
-        .ok_or_else(|| "未检测到 Codex 桌面应用，请重新检测或改用 Codex CLI".to_string())?;
-
-    tauri::async_runtime::spawn_blocking(move || {
-        stop_codex_desktop(&target)?;
-        launch_codex_target(&target)
-    })
-    .await
-    .map_err(|error| format!("重启 Codex App 任务失败: {error}"))?
+    restart_agent_app(app, "codex".to_string()).await
 }
 
 #[tauri::command]
 pub(crate) async fn restart_opencode_app(app: tauri::AppHandle) -> Result<(), String> {
+    restart_agent_app(app, "opencode".to_string()).await
+}
+
+#[tauri::command]
+pub(crate) async fn restart_agent_app(app: tauri::AppHandle, client: String) -> Result<(), String> {
+    let client = AgentClient::parse(&client)?;
+    if !matches!(
+        client,
+        AgentClient::Codex
+            | AgentClient::OpenCode
+            | AgentClient::ClaudeDesktop
+            | AgentClient::ZCode
+    ) {
+        return Err(format!("{} 不支持桌面应用重启", client.name()));
+    }
     let home = app
         .path()
         .home_dir()
         .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let application = find_opencode_desktop_application(&home).ok_or_else(|| {
-        "未检测到 OpenCode Desktop 应用，请重新检测或改用 OpenCode CLI".to_string()
-    })?;
-
     tauri::async_runtime::spawn_blocking(move || {
-        stop_opencode_desktop(&application)?;
-        launch_desktop_agent(&application, "OpenCode Desktop")
+        let target = find_desktop_restart_target(client, &home)?;
+        match client {
+            AgentClient::Codex => stop_codex_desktop(&target)?,
+            AgentClient::OpenCode => {
+                let DesktopAppTarget::Application(path) = &target else {
+                    return Err("OpenCode 桌面安装类型无效".to_string());
+                };
+                stop_opencode_desktop(path)?;
+            }
+            _ => stop_other_desktop(&target, client.name())?,
+        }
+        match &target {
+            DesktopAppTarget::Application(path) => launch_desktop_agent(path, client.name()),
+            #[cfg(target_os = "windows")]
+            DesktopAppTarget::WindowsAppId(app_id) => {
+                launch_windows_store_app(app_id, client.name())
+            }
+        }
     })
     .await
-    .map_err(|error| format!("重启 OpenCode Desktop 任务失败: {error}"))?
+    .map_err(|error| format!("重启桌面应用任务失败: {error}"))?
+}
+
+fn find_desktop_restart_target(
+    client: AgentClient,
+    home: &Path,
+) -> Result<DesktopAppTarget, String> {
+    let target = match client {
+        AgentClient::Codex => find_codex_app_installation(home),
+        AgentClient::OpenCode => {
+            find_opencode_desktop_application(home).map(DesktopAppTarget::Application)
+        }
+        AgentClient::ZCode => {
+            find_zcode_desktop_executable(home).map(DesktopAppTarget::Application)
+        }
+        AgentClient::ClaudeDesktop => {
+            let executable =
+                find_claude_desktop_executable(home).map(DesktopAppTarget::Application);
+            #[cfg(target_os = "windows")]
+            {
+                executable
+                    .or_else(|| find_windows_claude_app_id().map(DesktopAppTarget::WindowsAppId))
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                executable
+            }
+        }
+        _ => None,
+    };
+    target.ok_or_else(|| format!("未检测到 {} 桌面应用，请重新检测", client.name()))
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_claude_app_id() -> Option<String> {
+    let script = "@(Get-StartApps) | Where-Object { $_.AppID -like 'Claude_*!*' -or $_.AppID -like 'Anthropic.Claude_*!*' } | Select-Object -First 1 -ExpandProperty AppID";
+    let mut command = Command::new(windows_powershell_executable());
+    command.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        &windows_powershell_encoded_command(script),
+    ]);
+    configure_background_command(&mut command);
+    let output = command_output_with_timeout(&mut command, Duration::from_secs(5)).ok()??;
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (output.status.success() && !id.is_empty()).then_some(id)
+}
+
+#[cfg(target_os = "windows")]
+fn stop_other_desktop(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    run_windows_desktop_stop_script(&windows_desktop_stop_script(target), label)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_desktop_stop_script(target: &DesktopAppTarget) -> String {
+    let selector = match target {
+        DesktopAppTarget::Application(path) => format!("$targetExecutable = {}\n$targetRoot = $null", windows_powershell_single_quoted_literal(&path_to_string(path))),
+        DesktopAppTarget::WindowsAppId(app_id) => format!(
+            "$targetExecutable = $null\n$packageFamily = {}\n$package = @(Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq $packageFamily }}) | Select-Object -First 1\n$targetRoot = if ($package) {{ $package.InstallLocation }} else {{ $null }}\nif (-not $targetRoot) {{ throw 'Application package directory was not found' }}",
+            windows_powershell_single_quoted_literal(app_id.split('!').next().unwrap_or(app_id))),
+    };
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
+{selector}
+function Get-TargetProcesses {{
+    @(Get-CimInstance Win32_Process | Where-Object {{
+        $_.ExecutablePath -and
+        (($targetExecutable -and [string]::Equals($_.ExecutablePath, $targetExecutable, [System.StringComparison]::OrdinalIgnoreCase)) -or
+         ($targetRoot -and $_.ExecutablePath.StartsWith(($targetRoot.TrimEnd('\') + '\'), [System.StringComparison]::OrdinalIgnoreCase)))
+    }})
+}}
+foreach ($process in @(Get-TargetProcesses)) {{
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+}}
+$deadline = [DateTime]::UtcNow.AddSeconds(5)
+do {{
+    $remaining = @(Get-TargetProcesses)
+    if ($remaining.Count -eq 0) {{ exit 0 }}
+    Start-Sleep -Milliseconds 100
+}} while ([DateTime]::UtcNow -lt $deadline)
+throw "Application did not exit; remaining process IDs: $($remaining.ProcessId -join ', ')"
+"#
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn stop_other_desktop(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    let DesktopAppTarget::Application(path) = target;
+    stop_macos_desktop_application(path, label)
+}
+
+#[cfg(target_os = "linux")]
+fn stop_other_desktop(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    let DesktopAppTarget::Application(path) = target;
+    stop_linux_desktop_application(path, label)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn stop_other_desktop(_target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    Err(format!("当前平台不支持重启 {label}"))
 }
 
 fn resolve_launch_directory(value: Option<&str>, fallback: &Path) -> Result<PathBuf, String> {
@@ -641,16 +842,16 @@ fn launch_codex_desktop(home: &Path) -> Result<(), String> {
     launch_codex_target(&target)
 }
 
-fn launch_codex_target(target: &CodexAppTarget) -> Result<(), String> {
+fn launch_codex_target(target: &DesktopAppTarget) -> Result<(), String> {
     match target {
         #[cfg(target_os = "windows")]
-        CodexAppTarget::WindowsAppId(app_id) => launch_windows_store_app(app_id, "Codex App"),
-        CodexAppTarget::Application(path) => launch_desktop_agent(path, "Codex App"),
+        DesktopAppTarget::WindowsAppId(app_id) => launch_windows_store_app(app_id, "Codex App"),
+        DesktopAppTarget::Application(path) => launch_desktop_agent(path, "Codex App"),
     }
 }
 
 #[cfg(target_os = "windows")]
-fn stop_codex_desktop(target: &CodexAppTarget) -> Result<(), String> {
+fn stop_codex_desktop(target: &DesktopAppTarget) -> Result<(), String> {
     let script = windows_codex_stop_script(target);
     run_windows_desktop_stop_script(&script, "Codex App")
 }
@@ -696,13 +897,13 @@ fn run_windows_desktop_stop_script(script: &str, label: &str) -> Result<(), Stri
 }
 
 #[cfg(target_os = "windows")]
-fn windows_codex_stop_script(target: &CodexAppTarget) -> String {
+fn windows_codex_stop_script(target: &DesktopAppTarget) -> String {
     let selector = match target {
-        CodexAppTarget::Application(path) => format!(
+        DesktopAppTarget::Application(path) => format!(
             "$targetExecutable = {}\n$targetRoot = $null",
             windows_powershell_single_quoted_literal(&path_to_string(path))
         ),
-        CodexAppTarget::WindowsAppId(app_id) => {
+        DesktopAppTarget::WindowsAppId(app_id) => {
             let package_family = app_id.split('!').next().unwrap_or(app_id);
             format!(
                 concat!(
@@ -771,8 +972,8 @@ throw "OpenCode Desktop did not exit; remaining process IDs: $($remaining.Proces
 }
 
 #[cfg(target_os = "macos")]
-fn stop_codex_desktop(target: &CodexAppTarget) -> Result<(), String> {
-    let CodexAppTarget::Application(application) = target;
+fn stop_codex_desktop(target: &DesktopAppTarget) -> Result<(), String> {
+    let DesktopAppTarget::Application(application) = target;
     stop_macos_desktop_application(application, "Codex App")
 }
 
@@ -781,57 +982,87 @@ fn stop_opencode_desktop(application: &Path) -> Result<(), String> {
     stop_macos_desktop_application(application, "OpenCode Desktop")
 }
 
-#[cfg(target_os = "macos")]
-fn stop_macos_desktop_application(application: &Path, label: &str) -> Result<(), String> {
-    let application_bundle = application
+#[cfg(any(target_os = "macos", test))]
+fn desktop_process_ids_from_ps(output: &str, application: &Path) -> Vec<i32> {
+    let bundle = application
         .ancestors()
-        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
-        .unwrap_or(application);
-    let process_name = application_bundle
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| format!("无法识别 {label} 进程名称"))?;
-    let application_name = application_bundle
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or(process_name);
-    let escaped_name = application_name.replace('\\', "\\\\").replace('"', "\\\"");
-    let _ = Command::new("osascript")
-        .args([
-            "-e",
-            &format!("tell application \"{escaped_name}\" to quit"),
-        ])
-        .status();
-    wait_for_unix_process_exit(process_name, label)
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"));
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let split = line.find(char::is_whitespace)?;
+            let pid = line[..split].parse::<i32>().ok()?;
+            if pid <= 0 || pid == std::process::id() as i32 {
+                return None;
+            }
+            let executable = Path::new(line[split..].trim());
+            (executable == application || bundle.is_some_and(|root| executable.starts_with(root)))
+                .then_some(pid)
+        })
+        .collect()
 }
 
 #[cfg(target_os = "macos")]
-fn wait_for_unix_process_exit(process_name: &str, label: &str) -> Result<(), String> {
+fn macos_processes_for_application(application: &Path) -> Result<Vec<i32>, String> {
+    let output = Command::new("ps")
+        .args(["-axww", "-o", "pid=", "-o", "comm="])
+        .output()
+        .map_err(|error| format!("读取桌面应用进程失败: {error}"))?;
+    if !output.status.success() {
+        return Err("读取桌面应用进程失败".to_string());
+    }
+    Ok(desktop_process_ids_from_ps(
+        &String::from_utf8_lossy(&output.stdout),
+        application,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn stop_macos_desktop_application(application: &Path, label: &str) -> Result<(), String> {
+    if macos_processes_for_application(application)?.is_empty() {
+        return Ok(());
+    }
+    let bundle = application
+        .ancestors()
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
+        .unwrap_or(application);
+    let escaped = path_to_string(bundle)
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let mut quit = Command::new("osascript");
+    quit.args(["-e", &format!("tell application \"{escaped}\" to quit")]);
+    let _ = command_output_with_timeout(&mut quit, Duration::from_secs(5));
     for _ in 0..50 {
-        let status = Command::new("pgrep").args(["-x", process_name]).status();
-        if status.is_ok_and(|status| !status.success()) {
+        if macos_processes_for_application(application)?.is_empty() {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
     }
-    let _ = Command::new("pkill")
-        .args(["-KILL", "-x", process_name])
-        .status();
-    thread::sleep(Duration::from_millis(100));
-    let status = Command::new("pgrep")
-        .args(["-x", process_name])
-        .status()
-        .map_err(|error| format!("检查 {label} 进程失败: {error}"))?;
-    if status.success() {
-        Err(format!("{label} 未能完全关闭"))
-    } else {
-        Ok(())
+    for pid in macos_processes_for_application(application)? {
+        if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(format!("关闭 {label} 进程 {pid} 失败: {error}"));
+            }
+        }
     }
+    for _ in 0..10 {
+        if macos_processes_for_application(application)?.is_empty() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err(format!("{label} 未能完全关闭"))
 }
 
 #[cfg(target_os = "linux")]
 fn stop_opencode_desktop(application: &Path) -> Result<(), String> {
+    stop_linux_desktop_application(application, "OpenCode Desktop")
+}
+
+#[cfg(target_os = "linux")]
+fn stop_linux_desktop_application(application: &Path, label: &str) -> Result<(), String> {
     let application = fs::canonicalize(application).unwrap_or_else(|_| application.to_path_buf());
     let processes = linux_processes_for_application(&application);
     let mut signal_error = None;
@@ -868,7 +1099,7 @@ fn stop_opencode_desktop(application: &Path) -> Result<(), String> {
         Err(error)
     } else {
         Err(format!(
-            "OpenCode Desktop 未能完全关闭；剩余进程 ID: {}",
+            "{label} 未能完全关闭；剩余进程 ID: {}",
             remaining
                 .iter()
                 .map(i32::to_string)
@@ -913,8 +1144,11 @@ fn linux_process_matches_application(process_id: i32, application: &Path) -> boo
             .split(|byte| *byte == 0)
             .filter(|argument| !argument.is_empty())
             .map(|argument| Path::new(OsStr::from_bytes(argument)))
-            .any(|argument| {
-                linux_process_path_matches(argument, application)
+            .enumerate()
+            .any(|(index, argument)| {
+                // An unrelated CLI may mention the desktop executable as an input file.
+                // Only argv[0] identifies a launcher; retain Nix wrapper discovery below.
+                (index == 0 && linux_process_path_matches(argument, application))
                     || installation_root.is_some_and(|root| {
                         fs::canonicalize(argument)
                             .ok()
@@ -970,14 +1204,12 @@ fn signal_linux_process(process_id: i32, signal: i32) -> Result<(), String> {
     if error.raw_os_error() == Some(libc::ESRCH) {
         Ok(())
     } else {
-        Err(format!(
-            "关闭 OpenCode Desktop 进程 {process_id} 失败: {error}"
-        ))
+        Err(format!("关闭桌面应用进程 {process_id} 失败: {error}"))
     }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn stop_codex_desktop(_target: &CodexAppTarget) -> Result<(), String> {
+fn stop_codex_desktop(_target: &DesktopAppTarget) -> Result<(), String> {
     Err("当前平台不支持重启 Codex App".to_string())
 }
 
@@ -1326,6 +1558,269 @@ mod tests {
     }
 
     #[test]
+    fn desktop_process_matching_is_scoped_to_the_exact_bundle() {
+        let application = Path::new("/Applications/Claude Desktop.app/Contents/MacOS/Claude");
+        let processes = "10 /Applications/Claude Desktop.app/Contents/MacOS/Claude\n11 /Applications/Claude Desktop.app/Contents/Frameworks/Helper.app/Contents/MacOS/Helper\n12 /Applications/Claude Desktop.app.old/Contents/MacOS/Claude\n13 /Users/test/Claude Desktop.app/Contents/MacOS/Claude\n14 /usr/local/bin/claude\n";
+        assert_eq!(
+            desktop_process_ids_from_ps(processes, application),
+            vec![10, 11]
+        );
+        assert!(desktop_process_ids_from_ps(
+            "bad input\n-1 /opt/desktop",
+            Path::new("/opt/desktop")
+        )
+        .is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_restart_script_handles_paths_and_store_packages_without_name_wide_kills() {
+        for path in [
+            r"C:\Apps\Claude's Desktop\Claude.exe",
+            r"C:\Apps\ZCode\ZCode.exe",
+        ] {
+            let script =
+                windows_desktop_stop_script(&DesktopAppTarget::Application(PathBuf::from(path)));
+            assert!(script.contains(&windows_powershell_single_quoted_literal(path)));
+            assert!(script.contains("[string]::Equals($_.ExecutablePath, $targetExecutable"));
+            assert!(script.contains("$remaining.Count -eq 0"));
+            assert!(!script.contains("taskkill"));
+            assert!(!script.contains("Stop-Process -Name"));
+        }
+        let script = windows_desktop_stop_script(&DesktopAppTarget::WindowsAppId(
+            "Anthropic.Claude_family!App".to_string(),
+        ));
+        assert!(script.contains("$packageFamily = 'Anthropic.Claude_family'"));
+        assert!(script.contains("$_.PackageFamilyName -eq $packageFamily"));
+        assert!(script.contains("$targetRoot.TrimEnd('\\') + '\\'"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "helper launched only by the isolated desktop restart test"]
+    fn desktop_restart_test_process() {
+        if let Some(marker) = env::var_os("CPA_DESKTOP_RESTART_TEST_MARKER") {
+            fs::write(marker, "ready").unwrap();
+            thread::sleep(Duration::from_secs(30));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_stop_waits_for_only_the_selected_installation() {
+        struct Processes {
+            children: Vec<Child>,
+            directory: PathBuf,
+        }
+        impl Drop for Processes {
+            fn drop(&mut self) {
+                for child in &mut self.children {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                let _ = fs::remove_dir_all(&self.directory);
+            }
+        }
+        let directory = env::temp_dir().join(format!(
+            "cpa-desktop-restart-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let executable = env::current_exe().unwrap();
+        let target = directory.join("DesktopTest.exe");
+        fs::copy(&executable, &target).unwrap();
+        let mut processes = Processes {
+            children: Vec::new(),
+            directory,
+        };
+        for (index, application) in [&target, &executable].into_iter().enumerate() {
+            let marker = processes.directory.join(format!("ready-{index}"));
+            let mut command = Command::new(application);
+            command
+                .args([
+                    "--exact",
+                    "agents::launch::tests::desktop_restart_test_process",
+                    "--ignored",
+                ])
+                .env("CPA_DESKTOP_RESTART_TEST_MARKER", &marker)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            configure_background_command(&mut command);
+            processes.children.push(command.spawn().unwrap());
+            for _ in 0..100 {
+                if marker.exists() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            assert!(marker.exists(), "desktop helper did not start");
+        }
+        let installation = DesktopAppTarget::Application(target);
+        stop_other_desktop(&installation, "Test Desktop").unwrap();
+        assert!(processes.children[0].try_wait().unwrap().is_some());
+        assert!(
+            processes.children[1].try_wait().unwrap().is_none(),
+            "unrelated installation must keep running"
+        );
+        // Stopping an installation with no running processes succeeds as well.
+        stop_other_desktop(&installation, "Test Desktop").unwrap();
+    }
+
+    struct HarnessRestartFixture {
+        state: DeepSeekHarnessProcessState,
+        directory: PathBuf,
+    }
+
+    impl Drop for HarnessRestartFixture {
+        fn drop(&mut self) {
+            let _ = stop_managed_deepseek_harness(&self.state);
+            let _ = fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    fn harness_restart_fixture() -> HarnessRestartFixture {
+        let directory = env::temp_dir().join(format!(
+            "cpa-harness-restart-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        #[cfg(windows)]
+        let (executable, arguments) = (windows_powershell_executable(), vec![
+            "-NoLogo".to_string(), "-NoProfile".to_string(), "-NonInteractive".to_string(), "-Command".to_string(),
+            "[IO.File]::AppendAllText((Join-Path (Get-Location).Path 'launches.txt'), ((Get-Location).Path + [Environment]::NewLine)); Start-Sleep -Seconds 60".to_string(),
+        ]);
+        #[cfg(unix)]
+        let (executable, arguments) = (
+            PathBuf::from("/bin/sh"),
+            vec![
+                "-c".to_string(),
+                "pwd >> launches.txt; sleep 60".to_string(),
+            ],
+        );
+        let mut options = deepseek_harness_options("web");
+        options.web_port = Some(0);
+        options.trusted_hosts = vec!["localhost".to_string()];
+        options.patches = vec!["preserve a value with spaces".to_string()];
+        let fixture = HarnessRestartFixture {
+            state: DeepSeekHarnessProcessState::default(),
+            directory,
+        };
+        launch_managed_deepseek_harness(
+            &fixture.state,
+            &executable,
+            &fixture.directory,
+            &arguments,
+            "web",
+            Some(&options),
+        )
+        .unwrap();
+        wait_for_harness_launches(&fixture, 1);
+        fixture
+    }
+
+    fn wait_for_harness_launches(fixture: &HarnessRestartFixture, expected: usize) {
+        for _ in 0..100 {
+            if fs::read_to_string(fixture.directory.join("launches.txt"))
+                .unwrap_or_default()
+                .lines()
+                .count()
+                >= expected
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!("test process did not record launch {expected}");
+    }
+
+    #[test]
+    fn harness_web_restart_preserves_snapshot_and_serializes_stop_and_spawn() {
+        let fixture = harness_restart_fixture();
+        let old_pid = fixture.state.status().unwrap().pid;
+        let snapshot = fixture
+            .state
+            .process
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .launch
+            .clone();
+        let status = restart_managed_deepseek_harness_with(
+            &fixture.state,
+            |child| {
+                assert!(fixture.state.process.try_lock().is_err());
+                terminate_deepseek_harness_process_tree(child)
+            },
+            |executable, directory, arguments| {
+                assert!(fixture.state.process.try_lock().is_err());
+                assert_eq!(executable, snapshot.executable);
+                assert_eq!(directory, snapshot.working_directory);
+                assert_eq!(arguments, snapshot.arguments);
+                spawn_managed_deepseek_harness(executable, directory, arguments)
+            },
+        )
+        .unwrap();
+        assert!(status.running);
+        assert_ne!(status.pid, old_pid);
+        wait_for_harness_launches(&fixture, 2);
+        let launches = fs::read_to_string(fixture.directory.join("launches.txt")).unwrap();
+        let lines = launches.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], lines[1]);
+        let process = fixture.state.process.lock().unwrap();
+        let options = process.as_ref().unwrap().launch.options.as_ref().unwrap();
+        assert_eq!(options.web_port, Some(0));
+        assert_eq!(options.trusted_hosts, vec!["localhost"]);
+        assert_eq!(options.patches, vec!["preserve a value with spaces"]);
+    }
+
+    #[test]
+    fn harness_restart_stop_failure_retains_process_and_does_not_spawn() {
+        let fixture = harness_restart_fixture();
+        let pid = fixture.state.status().unwrap().pid;
+        let result = restart_managed_deepseek_harness_with(
+            &fixture.state,
+            |_| Err("stop failed".to_string()),
+            |_, _, _| panic!("must not spawn after stop failure"),
+        );
+        assert_eq!(result.unwrap_err(), "stop failed");
+        assert_eq!(fixture.state.status().unwrap().pid, pid);
+    }
+
+    #[test]
+    fn harness_restart_spawn_failure_reports_stopped_state() {
+        let fixture = harness_restart_fixture();
+        let result = restart_managed_deepseek_harness_with(
+            &fixture.state,
+            terminate_deepseek_harness_process_tree,
+            |_, _, _| Err("spawn failed".to_string()),
+        );
+        assert_eq!(result.unwrap_err(), "spawn failed");
+        assert!(!fixture.state.status().unwrap().running);
+    }
+
+    #[test]
+    fn harness_restart_rejects_missing_or_non_web_process_without_stopping_it() {
+        assert!(restart_managed_deepseek_harness(&DeepSeekHarnessProcessState::default()).is_err());
+        let fixture = harness_restart_fixture();
+        let pid = fixture.state.status().unwrap().pid;
+        fixture.state.process.lock().unwrap().as_mut().unwrap().mode = "headless".to_string();
+        assert!(restart_managed_deepseek_harness(&fixture.state)
+            .unwrap_err()
+            .contains("Web"));
+        assert_eq!(fixture.state.status().unwrap().pid, pid);
+    }
+
+    #[test]
     fn relative_launch_directory_is_rejected() {
         let error = resolve_launch_directory(Some("relative/project"), Path::new("/fallback"))
             .expect_err("relative path should be rejected");
@@ -1458,6 +1953,12 @@ mod tests {
         *state.process.lock().unwrap() = Some(ManagedDeepSeekHarnessProcess {
             child,
             mode: "test".to_string(),
+            launch: DeepSeekHarnessLaunchSnapshot {
+                executable: PathBuf::new(),
+                working_directory: PathBuf::new(),
+                arguments: Vec::new(),
+                options: None,
+            },
         });
 
         let running = state.status().unwrap();
@@ -1569,13 +2070,13 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn codex_restart_script_is_scoped_to_the_detected_installation() {
-        let executable = CodexAppTarget::Application(PathBuf::from(r"C:\Apps\Codex\Codex.exe"));
+        let executable = DesktopAppTarget::Application(PathBuf::from(r"C:\Apps\Codex\Codex.exe"));
         let executable_script = windows_codex_stop_script(&executable);
         assert!(executable_script.contains(r"C:\Apps\Codex\Codex.exe"));
         assert!(executable_script.contains("Get-CimInstance Win32_Process"));
         assert!(!executable_script.contains("taskkill"));
 
-        let store = CodexAppTarget::WindowsAppId("OpenAI.Codex_123!App".to_string());
+        let store = DesktopAppTarget::WindowsAppId("OpenAI.Codex_123!App".to_string());
         let store_script = windows_codex_stop_script(&store);
         assert!(store_script.contains("OpenAI.Codex_123"));
         assert!(store_script.contains("PackageFamilyName"));
