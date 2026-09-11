@@ -2253,21 +2253,18 @@ struct GithubAsset {
 }
 
 fn main() {
-    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    {
-        let mut args = env::args_os();
-        while let Some(argument) = args.next() {
-            if argument == "--portable-update-helper" {
-                let result = args
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or_else(|| "应用更新助手缺少描述文件".to_string())
-                    .and_then(|path| run_portable_update_helper(&path));
-                if let Err(error) = result {
-                    eprintln!("{error}");
-                }
-                return;
+    let mut args = env::args_os();
+    while let Some(argument) = args.next() {
+        if argument == "--portable-update-helper" {
+            let result = args
+                .next()
+                .map(PathBuf::from)
+                .ok_or_else(|| "应用更新助手缺少描述文件".to_string())
+                .and_then(|path| run_portable_update_helper(&path));
+            if let Err(error) = result {
+                eprintln!("{error}");
             }
+            return;
         }
     }
 
