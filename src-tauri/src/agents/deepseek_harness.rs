@@ -160,6 +160,41 @@ pub(crate) fn harness_api_metadata(item: &Value) -> Option<Value> {
     (!fields.is_empty()).then_some(Value::Object(fields))
 }
 
+pub(crate) fn enrich_harness_context_windows(
+    models: &mut [AgentModelOption],
+    runtime: &[codex_catalog::CodexRuntimeModel],
+    configuration: Option<&str>,
+) -> Result<(), String> {
+    codex_catalog::merge_runtime_context_windows(models, runtime);
+    if let Some(configuration) = configuration {
+        let mut configured =
+            codex_catalog::parse_runtime_models(&json!({"data": models.iter().map(|model| {
+            json!({"id": model.name, "context_window": model.context_window})
+        }).collect::<Vec<_>>()}))?;
+        codex_catalog::apply_configured_context_limits(&mut configured, configuration)?;
+        codex_catalog::merge_runtime_context_windows(models, &configured);
+    }
+    Ok(())
+}
+
+pub(crate) async fn fetch_deepseek_harness_models(
+    config: &GuiConfigFile,
+) -> Result<Vec<AgentModelOption>, String> {
+    let api_key = effective_agent_api_key(config);
+    let (models, runtime, configuration) = tokio::join!(
+        fetch_agent_models(config.port, api_key),
+        fetch_codex_runtime_models(config.port, api_key),
+        fetch_management_config_yaml(config),
+    );
+    let mut models = models?;
+    enrich_harness_context_windows(
+        &mut models,
+        &runtime.unwrap_or_default(),
+        configuration.as_deref().ok(),
+    )?;
+    Ok(models)
+}
+
 fn harness_model_defaults(model: &AgentModelOption, api: &str) -> Profile {
     let mut fields = model
         .harness_metadata
@@ -657,7 +692,7 @@ pub(crate) async fn get_deepseek_harness_model_catalog_editor(
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<HarnessEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
-    let models = fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
+    let models = fetch_deepseek_harness_models(&config).await?;
     let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
@@ -672,7 +707,7 @@ pub(crate) async fn save_deepseek_harness_model_catalog_editor(
     request: HarnessEditorRequest,
 ) -> Result<HarnessEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
-    let models = fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
+    let models = fetch_deepseek_harness_models(&config).await?;
     let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()

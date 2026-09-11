@@ -826,7 +826,11 @@ pub(crate) async fn fetch_prepared_agent_models(
         let runtime_models = fetch_codex_catalog_runtime_models(config).await?;
         prepare_codex_agent_models(&runtime_models)
     } else {
-        let mut models = fetch_agent_models(config.port, api_key).await?;
+        let mut models = if client == AgentClient::DeepSeekHarness {
+            fetch_deepseek_harness_models(config).await?
+        } else {
+            fetch_agent_models(config.port, api_key).await?
+        };
         if agent_uses_cpa_runtime_context_windows(client) {
             let runtime_models = fetch_codex_runtime_models(config.port, api_key).await?;
             codex_catalog::merge_runtime_context_windows(&mut models, &runtime_models);

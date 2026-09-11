@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { harnessDraft, parseHarnessDraft, sameHarnessDraft, updateHarnessDraft } from '../src/services/deepSeekHarnessCatalog';
+import { harnessContextDefault, harnessDraft, parseHarnessDraft, sameHarnessDraft, updateHarnessDraft } from '../src/services/deepSeekHarnessCatalog';
 
 describe('DSH catalog overrides', () => {
+  test('context values use model metadata, provider configuration, then DSH defaults', () => {
+    expect(harnessContextDefault({ contextWindow: 128000 }, { defaultContextWindow: '64000' })).toEqual({ value: 128000, source: 'model' });
+    expect(harnessContextDefault({}, { defaultContextWindow: '64000' })).toEqual({ value: 64000, source: 'provider' });
+    expect(harnessContextDefault({}, {})).toEqual({ value: 262144, source: 'default' });
+    expect(harnessContextDefault({ contextWindow: null }, { defaultContextWindow: '0' })).toEqual({ value: 262144, source: 'default' });
+  });
   test('empty values inherit while explicit false and zero remain overrides', () => {
     const draft = harnessDraft({ timeoutMs: 0, retryPolicy: { mode: 'normal', maxRetries: 0 }, compat: { supportsStore: false } }, 'provider');
     expect(parseHarnessDraft(draft, 'provider', 'openai-completions')).toEqual({ timeoutMs: 0, retryPolicy: { mode: 'normal', maxRetries: 0 }, compat: { supportsStore: false } });

@@ -109,6 +109,45 @@ async fn harness_discovery_uses_authenticated_models_endpoint() {
 }
 
 #[test]
+fn harness_context_enrichment_matches_codex_and_preserves_manual_overrides() {
+    let home = agent_test_home("harness-context-enrichment");
+    let mut models = models();
+    let runtime = codex_catalog::parse_runtime_models(&json!({"models":[
+        {"slug":"VISION","context_window":272000,"max_context_window":872000,"input_modalities":["text"]},
+        {"slug":"text-only","max_context_window":131072,"input_modalities":["text","image"]},
+        {"slug":"unknown","input_modalities":["text","image"]}
+    ]})).unwrap();
+    enrich_harness_context_windows(&mut models, &runtime, None).unwrap();
+    assert_eq!(models[0].context_window, Some(272000));
+    assert_eq!(models[1].context_window, Some(131072));
+    assert_eq!(models[2].context_window, None);
+    assert_eq!(models[1].input_modalities, Some(vec!["text".into()]));
+    assert_eq!(models[2].input_modalities, None);
+    enrich_harness_context_windows(&mut models, &[], Some("codex-api-key:\n  - models:\n      - name: upstream-model\n        alias: vision\n        max-context-length: 64000\n")).unwrap();
+    let snapshot = harness_editor_snapshot(&home, &models, 8317).unwrap();
+    assert_eq!(snapshot.models[0].defaults["contextWindow"], 64000);
+    assert!(snapshot
+        .models
+        .iter()
+        .all(|model| model.configuration.is_empty()));
+    apply(&home, &models);
+    assert_eq!(provider(&home)["models"][0]["contextWindow"], 64000);
+    let mut edit = request(harness_editor_snapshot(&home, &models, 8317).unwrap());
+    edit.models[0]
+        .configuration
+        .insert("contextWindow".into(), json!(96000));
+    save_harness_editor(&home, &models, 8317, edit).unwrap();
+    enrich_harness_context_windows(&mut models, &runtime, None).unwrap();
+    apply(&home, &models);
+    assert_eq!(provider(&home)["models"][0]["contextWindow"], 96000);
+    let mut reset = request(harness_editor_snapshot(&home, &models, 8317).unwrap());
+    reset.models[0].configuration.clear();
+    save_harness_editor(&home, &models, 8317, reset).unwrap();
+    assert_eq!(provider(&home)["models"][0]["contextWindow"], 272000);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn harness_refreshes_api_defaults_and_preserves_catalog_overrides() {
     let home = agent_test_home("harness-catalog-refresh");
     let mut models = models();

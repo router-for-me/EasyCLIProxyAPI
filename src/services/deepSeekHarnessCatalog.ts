@@ -15,6 +15,16 @@ export type HarnessField = {
   exclusiveMin?: number;
 };
 export const harnessSchema = schemaSource as unknown as Record<string, HarnessField[]>;
+export type HarnessContextDefault = { value: number; source: 'model' | 'provider' | 'default' };
+
+export function harnessContextDefault(defaults: HarnessProfile, provider: HarnessDraft): HarnessContextDefault {
+  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+  if (valid(defaults.contextWindow)) return { value: defaults.contextWindow, source: 'model' };
+  const configured = Number(provider.defaultContextWindow);
+  if (valid(configured)) return { value: configured, source: 'provider' };
+  return { value: harnessSchema.provider.find(field => field.name === 'defaultContextWindow')!.default as number, source: 'default' };
+}
+
 export const harnessReasoningLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 export type HarnessEditorModel = { id: string; defaults: HarnessProfile; configuration: HarnessProfile };
 export type HarnessEditorSnapshot = {

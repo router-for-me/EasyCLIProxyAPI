@@ -4,12 +4,32 @@ import { LoaderCircle, RefreshCw, RotateCcw, Search, Settings2, X } from 'lucide
 import { useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import {
-  harnessDraft, harnessReasoningLevels, harnessSchema, isHarnessRecord, parseHarnessDraft, sameHarnessDraft, updateHarnessDraft,
-  type HarnessDraft, type HarnessEditorSnapshot, type HarnessProfile,
+  harnessContextDefault, harnessDraft, harnessReasoningLevels, harnessSchema, isHarnessRecord, parseHarnessDraft, sameHarnessDraft, updateHarnessDraft,
+  type HarnessContextDefault, type HarnessDraft, type HarnessEditorSnapshot, type HarnessProfile,
 } from '../services/deepSeekHarnessCatalog';
 
-function HarnessFields({ group, draft, defaults = {}, prefix = '', api, onChange }: {
+function HarnessContextWindowInput({ label, value, inherited, onChange }: {
+  label: string; value?: string; inherited: HarnessContextDefault; onChange: (value: string) => void;
+}) {
+  const { t } = useI18n();
+  const [editing, setEditing] = useState<string | null>(null);
+  return <div className="harness-context-window">
+    <label><span>{label}{value !== undefined ? <small className="harness-override">{t('agents.catalog.customized')}</small> : null}</span>
+      <input aria-label={label} type="number" min={1} step={1} value={editing ?? value ?? String(inherited.value)}
+        onFocus={event => setEditing(event.currentTarget.value)}
+        onChange={event => { setEditing(event.currentTarget.value); onChange(event.currentTarget.value); }}
+        onBlur={() => setEditing(null)} />
+    </label>
+    <div className="harness-context-source">
+      <small>{t(`agents.harness.contextSource.${value !== undefined ? 'custom' : inherited.source}`)}</small>
+      {value !== undefined ? <button type="button" className="secondary-button" onClick={() => { setEditing(null); onChange(''); }}>{t('agents.harness.resetContext')}</button> : null}
+    </div>
+  </div>;
+}
+
+function HarnessFields({ group, draft, defaults = {}, prefix = '', api, contextDefault, onChange }: {
   group: string; draft: HarnessDraft; defaults?: HarnessProfile; prefix?: string; api: string;
+  contextDefault?: HarnessContextDefault;
   onChange: (next: HarnessDraft) => void;
 }) {
   const { t } = useI18n();
@@ -20,6 +40,9 @@ function HarnessFields({ group, draft, defaults = {}, prefix = '', api, onChange
     const supplied = defaults[field.name] ?? field.default;
     const automatic = `${t('agents.harness.auto')}${supplied === undefined ? '' : ` (${typeof supplied === 'string' ? supplied : JSON.stringify(supplied)})`}`;
     const set = (next: string) => onChange(updateHarnessDraft(draft, key, next));
+    if (field.name === 'contextWindow' || field.name === 'defaultContextWindow') {
+      return <HarnessContextWindowInput key={key} label={label(field.name)} value={draft[key]} inherited={contextDefault ?? harnessContextDefault({}, {})} onChange={set} />;
+    }
     if (field.apis && !field.apis.includes(api) && !value) return null;
     if (field.group) {
       const customized = Object.keys(draft).some(k => k.startsWith(`${key}.`));
@@ -155,7 +178,7 @@ export function DeepSeekHarnessCatalogDialog({ onClose, onSaved }: { onClose: ()
           {snapshot && (active || selected === null) ? <>
             <div className="codex-catalog-model-heading"><div><h3>{active ? active.id : t('agents.harness.provider')}</h3><span>{t('agents.harness.inheritHint')}</span></div><button className="secondary-button" onClick={() => { if (active) setDrafts(current => ({ ...current, [active.id]: {} })); else setProvider({}); changed(); }}><RotateCcw size={14} />{t('agents.harness.reset')}</button></div>
             {active ? <p className="codex-catalog-hint" role="note">{t('agents.harness.apiInput', { value: Array.isArray(active.defaults.input) ? active.defaults.input.join(', ') : t('agents.harness.unknown') })}</p> : <p className="codex-catalog-hint">{t('agents.harness.managedConnection', { url: api === 'anthropic-messages' ? snapshot.baseUrl.replace(/\/v1$/, '') : snapshot.baseUrl })}</p>}
-            <HarnessFields key={active?.id ?? 'provider'} group={active ? 'model' : 'provider'} draft={active ? drafts[active.id] ?? {} : provider} defaults={active?.defaults} api={api} onChange={next => { if (active) setDrafts(current => ({ ...current, [active.id]: next })); else setProvider(next); changed(); }} />
+            <HarnessFields key={active?.id ?? 'provider'} group={active ? 'model' : 'provider'} draft={active ? drafts[active.id] ?? {} : provider} defaults={active?.defaults} api={api} contextDefault={harnessContextDefault(active?.defaults ?? {}, active ? provider : {})} onChange={next => { if (active) setDrafts(current => ({ ...current, [active.id]: next })); else setProvider(next); changed(); }} />
           </> : null}
         </fieldset></main>
       </div>

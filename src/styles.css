@@ -13860,3 +13860,9 @@ body.table-col-resizing * {
 .harness-catalog-dialog .secondary-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 .harness-catalog-form small { font-weight: 400; }
 .harness-catalog-form { margin-top: 12px; }
+
+.harness-context-window { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.harness-context-window > label { display: grid; gap: 8px; font-size: var(--font-size-label); font-weight: 600; }
+.harness-context-window > label > span { display: flex; flex-wrap: wrap; gap: 6px; }
+.harness-context-source { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.harness-context-source > button { padding: 4px 8px; font-size: 12px; }
