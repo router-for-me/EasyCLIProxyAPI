@@ -1,6 +1,7 @@
 use super::*;
 
 mod agent_configuration;
+mod deepseek_harness_catalog;
 mod agent_paths;
 mod agent_state;
 mod agent_transactions;

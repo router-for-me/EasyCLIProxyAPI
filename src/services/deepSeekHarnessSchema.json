@@ -1,0 +1,80 @@
+{
+  "sources": [
+    "https://deepseek-harness.github.io/deepseek-harness/guide/providers",
+    "https://deepseek-harness.github.io/deepseek-harness/reference/config-catalog#deepseek-ai-dsh-llm-pi-ai",
+    "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm/src/retry-policy.ts"
+  ],
+  "model": [
+    {"name":"name","kind":"string"},
+    {"name":"contextWindow","kind":"integer","min":1},
+    {"name":"maxTokens","kind":"integer","min":1},
+    {"name":"input","kind":"modalities"},
+    {"name":"reasoningEfforts","kind":"reasoning","example":{"off":null,"low":"low","high":"high"}},
+    {"name":"compat","kind":"group","group":"compat"}
+  ],
+  "provider": [
+    {"name":"displayName","kind":"string","default":"EasyCLIProxyAPI"},
+    {"name":"api","kind":"enum","values":["openai-completions","openai-responses","anthropic-messages"],"default":"openai-completions"},
+    {"name":"defaultContextWindow","kind":"integer","min":1,"default":262144},
+    {"name":"defaultMaxTokens","kind":"integer","min":1,"default":32768},
+    {"name":"defaultInput","kind":"modalities","default":["text"]},
+    {"name":"reasoning","kind":"enum","values":["off","minimal","low","medium","high","xhigh","max"]},
+    {"name":"thinkingBudgets","kind":"group","group":"thinkingBudgets"},
+    {"name":"cacheRetention","kind":"enum","values":["none","short","long"]},
+    {"name":"transport","kind":"enum","values":["sse","websocket","websocket-cached","auto"]},
+    {"name":"timeoutMs","kind":"integer","min":0},
+    {"name":"websocketConnectTimeoutMs","kind":"integer","min":0},
+    {"name":"streamIdleTimeoutMs","kind":"number","exclusiveMin":0,"max":2147483647,"default":300000},
+    {"name":"maxRequestImageBytes","kind":"integer","min":1,"default":20971520},
+    {"name":"requestImagePixelBudget","kind":"integer","min":1,"default":4194304},
+    {"name":"requestImageMaxBytes","kind":"integer","min":1,"default":1048576},
+    {"name":"headers","kind":"headers","example":{"X-Custom-Header":"value"}},
+    {"name":"retryPolicy","kind":"group","group":"retryPolicy"},
+    {"name":"compat","kind":"group","group":"compat"}
+  ],
+  "thinkingBudgets": [
+    {"name":"minimal","kind":"number"},
+    {"name":"low","kind":"number"},
+    {"name":"medium","kind":"number"},
+    {"name":"high","kind":"number"}
+  ],
+  "retryPolicy": [
+    {"name":"mode","kind":"enum","values":["normal","always"],"default":"normal","required":true},
+    {"name":"maxRetries","kind":"integer","min":0,"default":5},
+    {"name":"retryableCodes","kind":"strings","default":["EMPTY_RESPONSE","RATE_LIMIT","SERVER","TIMEOUT","TRANSPORT"]},
+    {"name":"backoff","kind":"group","group":"backoff"}
+  ],
+  "backoff": [
+    {"name":"initialDelayMs","kind":"number","exclusiveMin":0,"max":2147483647,"default":500},
+    {"name":"maxDelayMs","kind":"number","exclusiveMin":0,"max":2147483647,"default":10000},
+    {"name":"jitterRatio","kind":"number","min":0,"max":1,"default":0.1}
+  ],
+  "compat": [
+    {"name":"supportsStore","kind":"boolean","apis":["openai-completions"]},
+    {"name":"supportsDeveloperRole","kind":"boolean","apis":["openai-completions","openai-responses"]},
+    {"name":"supportsReasoningEffort","kind":"boolean","apis":["openai-completions"]},
+    {"name":"supportsUsageInStreaming","kind":"boolean","apis":["openai-completions"]},
+    {"name":"supportsFinishReason","kind":"boolean","apis":["openai-completions"]},
+    {"name":"maxTokensField","kind":"enum","values":["max_completion_tokens","max_tokens"],"apis":["openai-completions"]},
+    {"name":"requiresToolResultName","kind":"boolean","apis":["openai-completions"]},
+    {"name":"requiresAssistantAfterToolResult","kind":"boolean","apis":["openai-completions"]},
+    {"name":"requiresThinkingAsText","kind":"boolean","apis":["openai-completions"]},
+    {"name":"requiresReasoningContentOnAssistantMessages","kind":"boolean","apis":["openai-completions"]},
+    {"name":"thinkingFormat","kind":"enum","values":["openai","deepseek","openrouter","together","baseten","zai","qwen","chat-template","qwen-chat-template","string-thinking","ant-ling"],"apis":["openai-completions"]},
+    {"name":"chatTemplateKwargs","kind":"kwargs","example":{"enable_thinking":{"$var":"thinking.enabled"}},"apis":["openai-completions"]},
+    {"name":"chatTemplateArgs","kind":"kwargs","example":{"reasoning_effort":{"$var":"thinking.effort","omitWhenOff":true}},"apis":["openai-completions"]},
+    {"name":"supportsThinkingTokenBudget","kind":"boolean","apis":["openai-completions"]},
+    {"name":"thinkingTokenBudgetField","kind":"enum","values":["thinking_token_budget","thinking_budget","thinking_budget_tokens"],"apis":["openai-completions"]},
+    {"name":"vllmPriority","kind":"integer","apis":["openai-completions"]},
+    {"name":"supportsMaxOutputTokens","kind":"boolean","apis":["openai-responses"]},
+    {"name":"supportsStrictMode","kind":"boolean","apis":["openai-completions","openai-responses"]},
+    {"name":"cacheControlFormat","kind":"enum","values":["anthropic"],"apis":["openai-completions"]},
+    {"name":"supportsLongCacheRetention","kind":"boolean","apis":["openai-completions","openai-responses","anthropic-messages"]},
+    {"name":"supportsEagerToolInputStreaming","kind":"boolean","apis":["anthropic-messages"]},
+    {"name":"supportsCacheControlOnTools","kind":"boolean","apis":["anthropic-messages"]},
+    {"name":"supportsTemperature","kind":"boolean","apis":["anthropic-messages"]},
+    {"name":"forceAdaptiveThinking","kind":"boolean","apis":["anthropic-messages"]},
+    {"name":"allowEmptySignature","kind":"boolean","apis":["anthropic-messages"]},
+    {"name":"supportsStrictTools","kind":"boolean","apis":["anthropic-messages"]}
+  ]
+}

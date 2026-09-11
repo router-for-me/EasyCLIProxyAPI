@@ -322,6 +322,13 @@ pub(crate) fn build_deepseek_harness_models(
                         .map_err(|error| format!("序列化 Harness 模型上下文失败: {error}"))?,
                 );
             }
+            if let Some(input) = model.input_modalities {
+                entry.insert(
+                    yaml_key("input"),
+                    serde_norway::to_value(input)
+                        .map_err(|_| "序列化 Harness 模型输入类型失败")?,
+                );
+            }
             Ok(serde_norway::Value::Mapping(entry))
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -334,7 +341,21 @@ pub(crate) fn build_deepseek_harness_settings(
     model: &str,
     models: &[AgentModelOption],
 ) -> Result<String, String> {
-    let published_models = build_deepseek_harness_models(models, model)?;
+    build_deepseek_harness_catalog_settings(
+        existing,
+        base_url,
+        model,
+        models,
+        &mut DeepSeekHarnessCatalogState::default(),
+    )
+}
+
+pub(crate) fn render_deepseek_harness_settings(
+    existing: Option<&str>,
+    base_url: &str,
+    model: &str,
+    published_models: serde_norway::Value,
+) -> Result<String, String> {
     render_agent_yaml_mapping_update(existing, "DeepSeek Harness settings", |root| {
         let llm = root
             .entry(yaml_key("llm-pi-ai"))
@@ -369,6 +390,8 @@ pub(crate) fn build_deepseek_harness_settings(
             .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
             .as_mapping_mut()
             .ok_or_else(|| "DeepSeek Harness agent-default-model 必须是映射".to_string())?;
+        let same_model = selection.get(yaml_key("provider")).and_then(serde_norway::Value::as_str) == Some(DEEPSEEK_HARNESS_PROVIDER_ID)
+            && selection.get(yaml_key("model")).and_then(serde_norway::Value::as_str) == Some(model);
         selection.insert(
             yaml_key("provider"),
             serde_norway::Value::String(DEEPSEEK_HARNESS_PROVIDER_ID.to_string()),
@@ -377,7 +400,7 @@ pub(crate) fn build_deepseek_harness_settings(
             yaml_key("model"),
             serde_norway::Value::String(model.to_string()),
         );
-        selection.remove(yaml_key("reasoningEffort"));
+        if !same_model { selection.remove(yaml_key("reasoningEffort")); }
         Ok(())
     })
 }
@@ -693,6 +716,8 @@ pub(crate) fn ordered_agent_models(
         ordered.push(selected.clone());
     } else {
         ordered.push(AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: selected_model.to_string(),
             alias: None,
             is_alias: false,

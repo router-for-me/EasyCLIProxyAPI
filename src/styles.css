@@ -13828,3 +13828,35 @@ body.table-col-resizing * {
   flex: 0 0 42px;
   padding: 0;
 }
+
+.harness-catalog-dialog .codex-catalog-sidebar { grid-template-rows: auto auto minmax(0,1fr) auto; }
+.harness-editor-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.harness-provider-button { flex-shrink: 0; justify-content: flex-start; }
+.harness-provider-button.active { border-color: var(--theme-bd5e31); }
+.harness-catalog-form > label > span { display: flex; flex-wrap: wrap; gap: 6px; overflow-wrap: anywhere; }
+.harness-catalog-form small, .harness-reasoning small { color: var(--theme-716b61); font-size: 12px; line-height: 1.6; }
+.harness-override { font-weight: 400; }
+.harness-catalog-group { grid-column: 1 / -1; border-top: 1px solid var(--theme-d5d2cb); padding-top: 14px; min-width: 0; }
+.harness-catalog-group > summary { cursor: pointer; font-size: 13px; font-weight: 600; padding: 4px 0; }
+.harness-catalog-group > button { margin-top: 12px; }
+.harness-reasoning { grid-column: 1 / -1; display: grid; gap: 10px; }
+.harness-reasoning > label { display: grid; gap: 8px; font-size: 12px; font-weight: 600; }
+.harness-reasoning-levels { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 16px; }
+.harness-reasoning-levels > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.harness-reasoning-levels label { display: flex; align-items: center; gap: 6px; flex: 0 0 75px; font-size: 12px; }
+.harness-reasoning-levels input:not([type=checkbox]) { min-width: 0; width: 100%; }
+.harness-catalog-form textarea { font-family: var(--font-mono, monospace); }
+@media (max-width: 640px) { .harness-reasoning-levels { grid-template-columns: 1fr; } }
+
+@media (max-width: 760px) {
+  .harness-catalog-dialog .codex-catalog-body { grid-template-rows: 210px minmax(0,1fr); }
+  .harness-catalog-dialog .codex-catalog-sidebar { grid-template-rows: auto auto minmax(0,1fr); }
+  .harness-catalog-dialog .harness-provider-button { grid-column: 1 / -1; }
+  .harness-catalog-dialog .codex-catalog-search { grid-column: 1; grid-row: 2; }
+  .harness-catalog-dialog .codex-catalog-reload { grid-column: 2; grid-row: 2; }
+  .harness-catalog-dialog .codex-catalog-models { grid-row: 3; }
+}
+
+.harness-catalog-dialog .secondary-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.harness-catalog-form small { font-weight: 400; }
+.harness-catalog-form { margin-top: 12px; }

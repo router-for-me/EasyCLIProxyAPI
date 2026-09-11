@@ -181,6 +181,17 @@ fn commit_config_transaction(
     }
     let mut previous = before.clone();
     let mut target = after.clone();
+    if client == "deepseek-harness" && matches!(source, "template" | "restore") {
+        let state_path = deepseek_harness_catalog_state_path(paths)?;
+        let state_before = read_agent_bytes(&state_path)?;
+        let state_after = if source == "template" {
+            Some(deepseek_harness_template_catalog_state(after)?)
+        } else {
+            None
+        };
+        previous.push((state_path.clone(), state_before));
+        target.push((state_path, state_after));
+    }
     if client == "claude-desktop" {
         let state_path = desktop_mapping_path(paths)?;
         let state_before = read_agent_bytes(&state_path)?;
@@ -382,7 +393,7 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
             "claude-desktop" => &["name", "contextWindow", "supports1m", "prefer1m"],
             "opencode" | "zcode" => &["name"],
             "openclaw" => &["id", "name", "alias"],
-            "deepseek-harness" => &["id", "name", "contextWindow"],
+            "deepseek-harness" => &["id", "name", "contextWindow", "input", "maxTokens", "reasoningEfforts", "compat"],
             "kimi-code" => &[
                 "provider",
                 "model",
@@ -553,7 +564,7 @@ fn validate_unmanaged_preserved(
         }
         if client == "deepseek-harness" {
             if path == &paths[0] {
-                for key in ["displayName", "apiKeyEnv", "api", "baseURL", "models"] {
+                for key in ["apiKeyEnv", "baseURL", "models"].into_iter().chain(harness_fields("provider")) {
                     set(
                         &mut value,
                         &[

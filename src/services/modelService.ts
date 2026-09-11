@@ -8,6 +8,7 @@ export type ModelOption = {
   alias?: string;
   isAlias?: boolean;
   contextWindow?: number;
+  inputModalities?: Array<'text' | 'image'>;
   thinking?: Record<string, unknown>;
 };
 export type ModelProvider = 'gemini' | 'codex' | 'claude' | 'openai';

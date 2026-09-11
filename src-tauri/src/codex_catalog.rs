@@ -519,6 +519,8 @@ fn prepare_catalog_with_customizations(
     let models = entries
         .iter()
         .map(|entry| AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: string_value(&entry.value, "slug"),
             alias: optional_map_string(&entry.value, "display_name").filter(|display| {
                 !display.eq_ignore_ascii_case(&string_value(&entry.value, "slug"))
@@ -681,7 +683,7 @@ fn enable_fast_mode(model: &mut Map<String, Value>) {
     );
 }
 
-fn parse_modalities(value: &Value) -> Option<Vec<String>> {
+pub(crate) fn parse_modalities(value: &Value) -> Option<Vec<String>> {
     let raw = value
         .get("input_modalities")
         .or_else(|| value.get("inputModalities"))
@@ -1070,18 +1072,24 @@ mod tests {
     fn runtime_context_windows_override_generic_model_metadata() {
         let mut models = vec![
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "GPT-Test".to_string(),
                 alias: None,
                 is_alias: false,
                 context_window: Some(200_000),
             },
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "unmatched".to_string(),
                 alias: None,
                 is_alias: false,
                 context_window: Some(128_000),
             },
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "max-only".to_string(),
                 alias: None,
                 is_alias: false,

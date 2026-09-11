@@ -635,6 +635,8 @@ pub(crate) fn fresh_agent_contents(
     model: &str,
 ) -> Result<Vec<String>, String> {
     let models = [AgentModelOption {
+        input_modalities: None,
+        harness_metadata: None,
         name: model.to_string(),
         alias: None,
         is_alias: false,
@@ -1445,6 +1447,9 @@ pub(crate) fn apply_agent_configuration_with_oauth(
     model: &str,
     options: AgentConfigurationOptions<'_>,
 ) -> Result<AgentConfigActionResult, String> {
+    if client == AgentClient::DeepSeekHarness {
+        return apply_deepseek_harness_configuration(home, port, api_key, model, options.models);
+    }
     let before = config_images(&config_paths(client.id(), home)?)?;
     validate_config_images(&before)?;
     let mappings = options.claude_desktop_model_mappings;
@@ -1469,6 +1474,8 @@ pub(crate) fn reset_agent_configuration_to_default(
         api_key,
         model,
         models: &[AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: model.to_string(),
             alias: None,
             is_alias: false,

@@ -25,6 +25,8 @@ fn models() -> Vec<AgentModelOption> {
     ["gpt-one", "gpt-two"]
         .into_iter()
         .map(|name| AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: name.into(),
             alias: None,
             is_alias: false,

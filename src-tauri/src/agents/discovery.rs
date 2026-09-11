@@ -3855,7 +3855,11 @@ pub(crate) fn inspect_deepseek_harness_config(
                 .map(str::to_string)
         })
         .flatten();
-    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
+    let expected_base = if provider.and_then(|p| yaml_mapping_value(p, "api")).and_then(serde_norway::Value::as_str) == Some("anthropic-messages") {
+        managed_core_loopback_origin(port)
+    } else {
+        format!("{}/v1", managed_core_loopback_origin(port))
+    };
     let credentials_layout_supported = deepseek_harness_credentials_layout_supported(&credentials);
     let credential = yaml_mapping_value(&credentials, "refs")
         .and_then(serde_norway::Value::as_mapping)
@@ -3882,7 +3886,7 @@ pub(crate) fn inspect_deepseek_harness_config(
         && provider
             .and_then(|provider| yaml_mapping_value(provider, "api"))
             .and_then(serde_norway::Value::as_str)
-            == Some("openai-completions")
+            .is_some_and(|api| matches!(api, "openai-completions" | "openai-responses" | "anthropic-messages"))
         && provider
             .and_then(|provider| yaml_mapping_value(provider, "baseURL"))
             .and_then(serde_norway::Value::as_str)

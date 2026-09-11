@@ -12,6 +12,15 @@ localStorage.setItem('cpa-gui.agent-selected-client.v1', params.get('client') ||
 const ids = ['claude-code','claude-desktop','codex','opencode','openclaw','hermes','deepseek-harness','zcode','kimi-code','grok-build','pi'];
 let count=0; let backupCount=0; const backups:any[]=[]; let currentModel=params.has('fresh')?null:'gpt-one';
 let currentOauth=false; const currentMappings:Record<string,any>={};
+let harnessProvider:Record<string,unknown>={};
+const harnessConfigurations:Record<string,Record<string,unknown>>={};
+let harnessRevision=1;
+const harnessModels=[
+ {id:'gpt-one',defaults:{input:['text','image'],contextWindow:128000}},
+ {id:'gpt-two',defaults:{input:['text']}},
+ {id:'unknown-model',defaults:{}},
+];
+const harnessSnapshot=()=>({revision:String(harnessRevision),provider:harnessProvider,baseUrl:'http://127.0.0.1:8317/v1',defaultModel:currentModel,configured:!!currentModel,models:harnessModels.map(m=>({...m,configuration:harnessConfigurations[m.id]??{}}))});
 let harnessStatus={running:params.has('running'),pid:params.has('running')?100:null as number|null,mode:params.has('running')?params.get('harness-mode')||'web':null as string|null};
 let appliedCount=0;
 const calls:any[]=[];(window as any).fixtureCalls=calls;
@@ -22,7 +31,10 @@ mockIPC(async (cmd,args:any) => {
  if(cmd==='plugin:event|listen') return 1;
  if(cmd==='plugin:event|unlisten'||cmd==='set_app_locale') return null;
  if(cmd==='get_agent_config_statuses'||cmd==='refresh_agent_config_statuses') return ids.map(id=>({id,name:id,supportedPlatform:true,installed:!params.has('not-installed'),pluginInstalled:!params.has('no-plugin'),launchTargets:params.has('not-installed')?[]:['claude-desktop','zcode'].includes(id)?[{id:'app',label:id,detail:'test desktop'}]:['codex','opencode'].includes(id)&&!params.has('cli-only')?[...(params.has('app-only')?[]:[{id:'cli',label:'CLI',detail:'test CLI'}]),{id:'app',label:'APP',detail:'test desktop'}]:[{id:'cli',label:'CLI',detail:'test CLI'}],version:'1.0',cliVersion:'1.0',appVersion:null,pluginVersion:'1.0',configValid:params.get('state')!=='invalid',connectionState:params.get('state') || (currentModel?'configured':'not-configured'),configured:!!currentModel,configurationSynchronized:!!currentModel,currentModel,oauthConfiguration:id==='codex'&&currentOauth,modificationEnabled:!!currentModel,modificationState:currentModel?'applied':'unconfigured',backupAvailable:false,appliedModel:currentModel,claudeCodeModelMappings:id==='claude-code'?currentMappings[id]??null:null,claudeDesktopModelMappings:id==='claude-desktop'?currentMappings[id]??null:null,warnings:[],error:null}));
- if(cmd==='get_agent_models') return [{name:'gpt-one'},{name:'gpt-two'}];
+ if(cmd==='get_agent_models') {
+   if(args.client==='deepseek-harness')return harnessModels.map(m=>({name:m.id,inputModalities:m.defaults.input}));
+   return [{name:'gpt-one'},{name:'gpt-two'}];
+ }
  if(cmd==='list_codex_sessions') {
    const {offset,limit}=args.request;
    const sessionIds:string[]=[...(window as any).fixtureSessionIds];
@@ -63,6 +75,15 @@ mockIPC(async (cmd,args:any) => {
  if(cmd==='preview_agent_config_template') return {revision:'template1',files:['C:/test/.codex/config.toml','C:/test/.codex/auth.json','C:/test/.codex/models.json']};
  if(cmd==='apply_agent_config_template') {currentModel=args.model;return {outcome:'updated'};}
  if(cmd==='check_pi_provider_update') return {installedVersion:'1.0',latestVersion:params.has('update')?'1.1':'1.0',updateAvailable:params.has('update')};
+ if(cmd==='get_deepseek_harness_model_catalog_editor')return harnessSnapshot();
+ if(cmd==='save_deepseek_harness_model_catalog_editor') {
+   if((window as any).fixtureFailHarnessSave)throw new Error('模拟模型配置保存失败');
+   if((window as any).fixtureStaleHarnessSave)throw new Error('DSH_MODEL_CATALOG_CHANGED');
+   if((window as any).fixtureDeferHarnessSave)await new Promise<void>(resolve=>{(window as any).fixtureFinishHarnessSave=resolve;});
+   harnessProvider=args.request.provider;
+   for(const m of args.request.models)harnessConfigurations[m.id]=m.configuration;
+   harnessRevision++;return harnessSnapshot();
+ }
  if(cmd==='get_codex_model_catalog_editor') return {models:[],hiddenModels:[],customizations:{}};
  if(cmd==='check_codex_oauth_login')return null;
  throw new Error('Unhandled fixture command: '+cmd);

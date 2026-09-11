@@ -1173,8 +1173,15 @@ pub(crate) async fn update_agent_config(
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
 ) -> Result<AgentConfigActionResult, String> {
-    apply_agent_config(app, gui_config_state, client, model, oauth_configuration,
-        claude_code_model_mappings, claude_desktop_model_mappings).await
+    apply_agent_config(
+        app,
+        gui_config_state,
+        client,
+        model,
+        oauth_configuration,
+        claude_code_model_mappings,
+        claude_desktop_model_mappings,
+    ).await
 }
 
 pub(crate) fn validate_agent_can_enable(
@@ -1224,11 +1231,18 @@ pub(crate) fn resolve_available_agent_model(
 pub(crate) fn parse_agent_model_options(
     payload: &serde_json::Value,
 ) -> Result<Vec<AgentModelOption>, String> {
-    let source = payload
-        .as_array()
+    let object_models = payload.get("models").and_then(serde_json::Value::as_object).map(|models| {
+        models.iter().map(|(id, value)| {
+            let mut entry = value.as_object().cloned().unwrap_or_default();
+            entry.entry("id").or_insert(serde_json::json!(id));
+            serde_json::Value::Object(entry)
+        }).collect::<Vec<_>>()
+    });
+    let source = payload.as_array()
         .or_else(|| payload.get("data").and_then(serde_json::Value::as_array))
         .or_else(|| payload.get("models").and_then(serde_json::Value::as_array))
-        .ok_or_else(|| "本机模型列表响应缺少 data 或 models 数组".to_string())?;
+        .or(object_models.as_ref())
+        .ok_or_else(|| "本机模型列表响应缺少 data 数组或 models 目录".to_string())?;
     let mut models = Vec::new();
     for item in source {
         let name = if let Some(name) = item.as_str() {
@@ -1241,7 +1255,7 @@ pub(crate) fn parse_agent_model_options(
                 .trim()
                 .to_string()
         };
-        let display_name = ["display_name", "displayName"]
+        let display_name = ["display_name", "displayName", "name"]
             .into_iter()
             .find_map(|key| item.get(key).and_then(serde_json::Value::as_str))
             .map(str::trim)
@@ -1270,14 +1284,18 @@ pub(crate) fn parse_agent_model_options(
         ]
         .into_iter()
         .find_map(|key| item.get(key).and_then(json_positive_u64));
+        let input_modalities = codex_catalog::parse_modalities(item).or_else(|| {
+            codex_catalog::parse_modalities(&serde_json::json!({"input_modalities": item.get("input")}))
+        });
+        let harness_metadata = harness_api_metadata(item);
 
         if let Some(model_alias) = model_alias {
             if keep_original {
-                append_agent_model_option(&mut models, &name, display_name, false, context_window);
+                append_agent_model_option(&mut models, &name, display_name, false, context_window, input_modalities.clone(), harness_metadata.clone());
             }
-            append_agent_model_option(&mut models, &model_alias, Some(name), true, context_window);
+            append_agent_model_option(&mut models, &model_alias, Some(name), true, context_window, input_modalities, harness_metadata);
         } else {
-            append_agent_model_option(&mut models, &name, display_name, false, context_window);
+            append_agent_model_option(&mut models, &name, display_name, false, context_window, input_modalities, harness_metadata);
         }
     }
     Ok(models)
@@ -1289,6 +1307,8 @@ pub(crate) fn append_agent_model_option(
     alias: Option<String>,
     is_alias: bool,
     context_window: Option<u64>,
+    input_modalities: Option<Vec<String>>,
+    harness_metadata: Option<serde_json::Value>,
 ) {
     let name = name.trim();
     if name.is_empty()
@@ -1304,6 +1324,8 @@ pub(crate) fn append_agent_model_option(
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case(name))
         .map(str::to_string);
     models.push(AgentModelOption {
+        input_modalities,
+        harness_metadata,
         name: name.to_string(),
         alias,
         is_alias,

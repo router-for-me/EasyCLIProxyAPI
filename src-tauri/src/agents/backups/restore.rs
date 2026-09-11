@@ -63,6 +63,8 @@ fn desktop_restore_models(plan: &RestorePlan) -> Result<Option<Vec<AgentModelOpt
             .into_iter()
             .zip([&mappings.opus, &mappings.sonnet, &mappings.haiku])
             .map(|(route, source)| AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: source.clone(),
                 alias: None,
                 is_alias: source != route

@@ -128,24 +128,32 @@ fn claude_code_role_mappings_drive_settings() {
     };
     let models = vec![
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: "gpt-opus-base".to_string(),
             alias: None,
             is_alias: false,
             context_window: Some(1_000_000),
         },
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: mappings.opus.clone(),
             alias: Some("gpt-opus-base".to_string()),
             is_alias: true,
             context_window: Some(128_000),
         },
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: mappings.sonnet.clone(),
             alias: None,
             is_alias: false,
             context_window: Some(272_000),
         },
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: mappings.haiku.clone(),
             alias: None,
             is_alias: false,
@@ -188,12 +196,16 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
     };
     let models = vec![
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: "custom-pro".to_string(),
             alias: Some("Custom Pro".to_string()),
             is_alias: false,
             context_window: Some(200_000),
         },
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: "custom-flash".to_string(),
             alias: Some("Custom Flash".to_string()),
             is_alias: false,
@@ -251,6 +263,8 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
 #[test]
 fn claude_desktop_keeps_original_context_when_1m_is_off() {
     let models = vec![AgentModelOption {
+        input_modalities: None,
+        harness_metadata: None,
         name: "runtime-model".to_string(),
         alias: None,
         is_alias: false,
@@ -574,18 +588,24 @@ fn claude_desktop_profile_keeps_non_claude_models_internal() {
     };
     let models = vec![
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: mappings.opus.clone(),
             alias: None,
             is_alias: false,
             context_window: Some(1_000_000),
         },
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: mappings.sonnet.clone(),
             alias: None,
             is_alias: false,
             context_window: Some(272_000),
         },
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: mappings.haiku.clone(),
             alias: None,
             is_alias: false,
@@ -1358,30 +1378,40 @@ fn agent_model_list_parser_exposes_aliases_as_selectable_model_ids() {
         models,
         vec![
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "gpt-5".to_string(),
                 alias: Some("GPT 5".to_string()),
                 is_alias: false,
                 context_window: Some(272_000),
             },
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "claude-sonnet".to_string(),
                 alias: None,
                 is_alias: false,
                 context_window: Some(1_000_000),
             },
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "claude-sonnet-xhigh".to_string(),
                 alias: Some("claude-sonnet".to_string()),
                 is_alias: true,
                 context_window: Some(1_000_000),
             },
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "visible-alias".to_string(),
                 alias: Some("hidden-original".to_string()),
                 is_alias: true,
                 context_window: Some(128_000),
             },
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "deepseek-chat".to_string(),
                 alias: None,
                 is_alias: false,
@@ -1483,12 +1513,16 @@ agent-default-model:
 "#;
     let models = vec![
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: "gpt-selected".to_string(),
             alias: Some("Selected Model".to_string()),
             is_alias: false,
             context_window: Some(272_000),
         },
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: "gpt-other".to_string(),
             alias: None,
             is_alias: false,
@@ -2067,12 +2101,16 @@ fn claude_desktop_uses_selected_alias_directly_with_original_context() {
     };
     let models = vec![
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: "gpt-original".to_string(),
             alias: None,
             is_alias: false,
             context_window: Some(1_000_000),
         },
         AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: "gpt-high".to_string(),
             alias: Some("gpt-original".to_string()),
             is_alias: true,
@@ -2306,6 +2344,8 @@ fn codex_model_list_is_empty_when_cpa_has_no_writable_models() {
 #[test]
 fn agent_model_validation_only_accepts_models_in_current_list() {
     let models = vec![AgentModelOption {
+        input_modalities: None,
+        harness_metadata: None,
         name: "gpt-5.4".to_string(),
         alias: Some("GPT 5.4".to_string()),
         is_alias: false,

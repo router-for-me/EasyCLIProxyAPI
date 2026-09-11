@@ -63,6 +63,7 @@ import type { ModelOption } from '../services/modelService';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
+import { DeepSeekHarnessCatalogDialog } from './DeepSeekHarnessCatalogDialog';
 import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
 import { AgentConfigManagementPanel, AgentConfigurationFeedback, AgentRunControls } from './AgentControls';
 
@@ -753,6 +754,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [launchDirectoryDialogOpen, setLaunchDirectoryDialogOpen] = useState(false);
   const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
+  const [harnessCatalogDialogOpen, setHarnessCatalogDialogOpen] = useState(false);
   const [launchDirectory, setLaunchDirectory] = useState('');
   const [launchDirectoryTarget, setLaunchDirectoryTarget] = useState<AgentLaunchTarget | null>(null);
   const [launchDirectoryError, setLaunchDirectoryError] = useState('');
@@ -1326,6 +1328,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         claudeModelMappingsDirtyRef.current[selected] = false;
       }
       await reloadStatusesAfterAction();
+      if (isDeepSeekHarnessClient) await loadModels('deepseek-harness');
       setOauthConfigurationDraft(null);
       setConfigurationNotice(t(result.outcome === 'unchanged' ? 'agents.backup.unchanged' : 'agents.backup.updated'));
       onConfigurationApplied?.();
@@ -1686,6 +1689,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </button>
   ) : null;
 
+  const harnessCatalogButton = isDeepSeekHarnessClient ? (
+    <button type="button" className="secondary-button agent-codex-catalog-button"
+      onClick={() => setHarnessCatalogDialogOpen(true)} disabled={busy || configurationWriteBlocked}>
+      <SlidersHorizontal size={16} />{t('agents.harness.button')}
+    </button>
+  ) : null;
+
   return (
     <section className={`page management-page agents-page${embedded ? ' agents-page-embedded' : ''}`}>
       <header className="management-header">
@@ -1796,7 +1806,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               {selected === 'claude-desktop' && !activeStatus?.claudeDesktopModelMappings ? <p className="agent-inline-message warning">{t('agents.backup.mappingRequired')}</p> : null}
               <div className="agent-minimal-field">
-                <label htmlFor="embedded-agent-model">{t('agents.useModel')}</label>
+                <label htmlFor="embedded-agent-model">{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</label>
                 <AgentModelPicker
                   models={isClaudeModelMappingClient ? claudeMappingModels : models}
                   value={isClaudeModelMappingClient ? claudeModelMappingsDraft.sonnet : selectedModel}
@@ -1806,8 +1816,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   onChange={selectEmbeddedModel}
                   onRefresh={refreshModels}
                 />
-                {codexCatalogButton}
+                {codexCatalogButton}{harnessCatalogButton}
               </div>
+
+              {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
 
               <div className="agent-minimal-actions">
                 <button
@@ -1894,7 +1906,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               {!isClaudeModelMappingClient ? (
                 <section className="agent-core-setting-section agent-model-section">
                   <div className="agent-section-heading">
-                    <div><strong>{t('agents.useModel')}</strong></div>
+                    <div><strong>{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</strong></div>
                   </div>
                   <AgentModelPicker
                     models={models}
@@ -1914,6 +1926,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       {modelHint}
                     </span>
                   ) : null}
+                  {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
+                  {harnessCatalogButton}
                   {selected === 'codex' ? (
                     <div className="agent-codex-options">
                       <div className="agent-auth-method">
@@ -2140,6 +2154,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         setConfigurationNotice(t('agents.backup.restored'));
       }} /> : null}
 
+      {harnessCatalogDialogOpen ? (
+        <DeepSeekHarnessCatalogDialog onClose={() => setHarnessCatalogDialogOpen(false)}
+          onSaved={async () => { await loadModels('deepseek-harness', selectedModel); await loadStatuses(true); }} />
+      ) : null}
       {codexCatalogDialogOpen ? (
         <CodexModelCatalogDialog
           onClose={() => setCodexCatalogDialogOpen(false)}

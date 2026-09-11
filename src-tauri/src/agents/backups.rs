@@ -410,6 +410,13 @@ pub(crate) fn desktop_mapping_path(paths: &[PathBuf]) -> Result<PathBuf, String>
         .join("current-mapping.json"))
 }
 
+pub(crate) fn deepseek_harness_catalog_state_path(paths: &[PathBuf]) -> Result<PathBuf, String> {
+    Ok(agent_data_directory(paths)?
+        .join("agents/deepseek-harness")
+        .join(path_identity(paths))
+        .join("catalog-state.json"))
+}
+
 fn profile_models_hash(images: &Images) -> Option<String> {
     let (path, bytes) = images.get(2)?;
     let profile = parse(path, text(bytes.as_deref()).ok()?).ok()?;
@@ -452,6 +459,9 @@ pub(crate) fn current_desktop_mappings(home: &Path) -> Option<ClaudeDesktopModel
 }
 
 pub(crate) fn mapping_revision(client: &str, paths: &[PathBuf]) -> Result<String, String> {
+    if client == "deepseek-harness" {
+        return Ok(image_hash(read_agent_bytes(&deepseek_harness_catalog_state_path(paths)?)?.as_deref()));
+    }
     if client != "claude-desktop" {
         return Ok(String::new());
     }

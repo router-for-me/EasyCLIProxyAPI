@@ -1121,7 +1121,12 @@ struct AgentModelOption {
     is_alias: bool,
     #[serde(default)]
     context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input_modalities: Option<Vec<String>>,
+    #[serde(skip)]
+    harness_metadata: Option<serde_json::Value>,
 }
+
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2521,6 +2526,8 @@ fn main() {
             uninstall_pi_provider,
             check_codex_oauth_login,
             update_codex_model_catalog,
+            get_deepseek_harness_model_catalog_editor,
+            save_deepseek_harness_model_catalog_editor,
             get_codex_model_catalog_editor,
             save_codex_model_catalog_editor,
             get_thinking_aliases,
