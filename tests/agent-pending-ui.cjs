@@ -60,6 +60,10 @@ const assert = require('node:assert/strict');
       }
       await expectPending(true);
       await page.evaluate(() => window.fixtureRemount());
+      if (!query.includes('client=pi')) {
+        assert.equal(await page.getByRole('tab', { name: '配置管理', exact: true }).getAttribute('aria-selected'), 'true');
+      }
+      await core();
       await ready(); await expectPending(true);
       await apply();
       await selectModel(original); await expectPending(true);

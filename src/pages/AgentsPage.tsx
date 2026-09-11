@@ -320,6 +320,31 @@ const agentSubpages: AgentSubpageDefinition[] = [
 
 const DEFAULT_AGENT_SUBPAGE: AgentSubpageId = 'core';
 
+type AgentViewState = {
+  subpage: AgentSubpageId;
+  connectionHelpOpen: boolean;
+  configurationError: string;
+  configurationNotice: string;
+  clearNotice: string;
+  launchError: string;
+};
+
+const DEFAULT_AGENT_VIEW_STATE: AgentViewState = {
+  subpage: DEFAULT_AGENT_SUBPAGE,
+  connectionHelpOpen: false,
+  configurationError: '',
+  configurationNotice: '',
+  clearNotice: '',
+  launchError: '',
+};
+
+// Keep navigation and feedback for this app session, including when the page unmounts.
+// The compact view has no session manager, so it keeps its own navigation history.
+let agentViewStateCache: Record<'full' | 'embedded', Partial<Record<AgentClientId, AgentViewState>>> = {
+  full: {},
+  embedded: {},
+};
+
 const AGENT_MODEL_SELECTIONS_KEY = 'cpa-gui.agent-model-selections.v1';
 const AGENT_SELECTED_CLIENT_KEY = 'cpa-gui.agent-selected-client.v1';
 const AGENT_LAUNCH_DIRECTORY_HISTORY_KEY = 'cpa-gui.agent-launch-directory-history.v1';
@@ -670,7 +695,30 @@ type AgentsPageProps = {
 export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsPageProps = {}) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
-  const [activeSubpage, setActiveSubpage] = useState<AgentSubpageId>(DEFAULT_AGENT_SUBPAGE);
+  const [viewStateByClient, setViewStateByClient] = useState(() => agentViewStateCache);
+  const viewMode = embedded ? 'embedded' : 'full';
+  const viewState = viewStateByClient[viewMode][selected] ?? DEFAULT_AGENT_VIEW_STATE;
+  const activeSubpage = viewState.subpage === 'sessions' && (embedded || selected !== 'codex')
+    ? DEFAULT_AGENT_SUBPAGE : viewState.subpage;
+  const updateViewState = (patch: Partial<AgentViewState>) => {
+    setViewStateByClient((current) => {
+      const next = {
+        ...current,
+        [viewMode]: {
+          ...current[viewMode],
+          [selected]: { ...(current[viewMode][selected] ?? DEFAULT_AGENT_VIEW_STATE), ...patch },
+        },
+      };
+      agentViewStateCache = next;
+      return next;
+    });
+  };
+  const setActiveSubpage = (subpage: AgentSubpageId) => updateViewState({ subpage });
+  const { connectionHelpOpen, configurationError, configurationNotice, clearNotice, launchError } = viewState;
+  const setConfigurationError = (configurationError: string) => updateViewState({ configurationError });
+  const setConfigurationNotice = (configurationNotice: string) => updateViewState({ configurationNotice });
+  const setClearNotice = (clearNotice: string) => updateViewState({ clearNotice });
+  const setLaunchError = (launchError: string) => updateViewState({ launchError });
   const [statuses, setStatuses] = useState<AgentConfigStatus[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelByClient, setModelByClient] = useState<Partial<Record<AgentClientId, string>>>(
@@ -697,17 +745,12 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [detectionError, setDetectionError] = useState('');
   const [modelError, setModelError] = useState('');
   const [modelSelectionError, setModelSelectionError] = useState('');
-  const [configurationError, setConfigurationError] = useState('');
-  const [configurationNotice, setConfigurationNotice] = useState('');
   const [backupsOpen, setBackupsOpen] = useState(false);
-  const [connectionHelpOpen, setConnectionHelpOpen] = useState(false);
   const [defaultError, setDefaultError] = useState('');
   const [templatePreview, setTemplatePreview] = useState<{ revision: string; files: string[] } | null>(null);
   const [defaultConfirmOpen, setDefaultConfirmOpen] = useState(false);
   const [clearError, setClearError] = useState('');
-  const [clearNotice, setClearNotice] = useState('');
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
-  const [launchError, setLaunchError] = useState('');
   const [launchDirectoryDialogOpen, setLaunchDirectoryDialogOpen] = useState(false);
   const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
   const [launchDirectory, setLaunchDirectory] = useState('');
@@ -868,18 +911,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   }, [selected]);
 
   useEffect(() => {
-    setActiveSubpage(DEFAULT_AGENT_SUBPAGE);
     setModelSelectionError('');
-    setConfigurationError('');
-    setConfigurationNotice('');
     setBackupsOpen(false);
-    setConnectionHelpOpen(false);
     setDefaultError('');
     setDefaultConfirmOpen(false);
     setClearError('');
-    setClearNotice('');
     setClearConfirmOpen(false);
-    setLaunchError('');
+    setCodexCatalogDialogOpen(false);
     setLaunchDirectoryDialogOpen(false);
     setLaunchDirectoryTarget(null);
     setLaunchDirectoryError('');
@@ -1690,10 +1728,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   type="button"
                   className={selected === agent.id ? 'active' : ''}
                   key={agent.id}
-                  onClick={() => {
-                    setActiveSubpage(DEFAULT_AGENT_SUBPAGE);
-                    setSelected(agent.id);
-                  }}
+                  onClick={() => setSelected(agent.id)}
                   disabled={busy}
                 >
                   <span className="agent-client-icon"><AgentMark definition={agent} /></span>
@@ -1884,7 +1919,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       <div className="agent-auth-method">
                         <div className="agent-signin-label"><label htmlFor="agent-connection-method">{t('agents.modify.authMethod')}</label>
                           <button type="button" className="agent-signin-help-toggle" aria-expanded={connectionHelpOpen} aria-controls="agent-signin-hint"
-                            onClick={() => setConnectionHelpOpen((open) => !open)}>
+                            onClick={() => updateViewState({ connectionHelpOpen: !connectionHelpOpen })}>
                             {t(connectionHelpOpen ? 'agents.modify.authHelpHide' : 'agents.modify.authHelpShow')}
                             <ChevronDown size={14} aria-hidden="true" />
                           </button>
