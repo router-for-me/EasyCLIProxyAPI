@@ -52,6 +52,7 @@ type TimelinePoint = {
 };
 
 type UsageOverview = {
+  eventCounts?: Record<string, number>;
   totalRequests: number;
   successCount: number;
   failureCount: number;
@@ -90,6 +91,12 @@ type UsageAnalysis = {
 };
 
 type UsageRecord = {
+  generate: boolean;
+  executor_type: string;
+  accounting?: {
+    quality?: string; kind?: string; transport?: string; stream?: boolean; session_id?: string; generation_id?: string; attempt_id?: string;
+    valuation?: { status: string; cost?: number | null; reason?: string; source?: string };
+  };
   id: string;
   timestamp: string;
   latency_ms: number;
@@ -127,6 +134,7 @@ type UsageEventPage = {
 };
 
 type ModelPrice = {
+  provider: string; baseUrl: string;
   model: string;
   prompt: number;
   completion: number;
@@ -177,6 +185,7 @@ type ModelPriceSyncResult = {
 };
 
 type UsageQuery = {
+  endpoint?: string; transport?: string; kind?: string;
   start?: string;
   end?: string;
   model?: string;
@@ -280,6 +289,9 @@ export function UsageRecordsPage() {
   const [customEnd, setCustomEnd] = useState('');
   const [model, setModel] = useState('');
   const [provider, setProvider] = useState('');
+  const [endpoint, setEndpoint] = useState('');
+  const [transport, setTransport] = useState('');
+  const [kind, setKind] = useState('');
   const [source, setSource] = useState('');
   const [apiKeyHash, setApiKeyHash] = useState('');
   const [result, setResult] = useState('all');
@@ -321,13 +333,16 @@ export function UsageRecordsPage() {
         ...nextTimeQuery,
         model: model || undefined,
         provider: provider || undefined,
+        endpoint: endpoint || undefined,
+        transport: transport || undefined,
+        kind: kind || undefined,
         source: source || undefined,
         api_key_hash: apiKeyHash || undefined,
         failed: result === 'failed' ? true : result === 'success' ? false : undefined,
         canceled: result === 'canceled' ? true : result === 'failed' ? false : undefined,
       } satisfies UsageQuery,
     };
-  }, [apiKeyHash, customEnd, customStart, model, provider, range, result, source]);
+  }, [apiKeyHash, customEnd, customStart, model, provider, endpoint, transport, kind, range, result, source]);
 
   const executeLoadData = useCallback(
     async (quiet = false) => {
@@ -352,7 +367,7 @@ export function UsageRecordsPage() {
             statusRequest,
             optionsRequest,
             invoke<UsageOverview>('get_usage_overview', { query }),
-            model || provider || source || apiKeyHash || result !== 'all'
+            model || provider || endpoint || transport || kind || source || apiKeyHash || result !== 'all'
               ? invoke<UsageAnalysis>('get_usage_analysis', { query })
               : optionsRequest,
           ]);
@@ -396,7 +411,7 @@ export function UsageRecordsPage() {
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [activeTab, buildQueries, page, pageSize, model, provider, source, apiKeyHash, result]
+    [activeTab, buildQueries, page, pageSize, model, provider, endpoint, transport, kind, source, apiKeyHash, result]
   );
 
   const loadData = useCallback(
@@ -448,12 +463,15 @@ export function UsageRecordsPage() {
   };
 
   const hasActiveFilters = Boolean(
-    model || provider || source || apiKeyHash || (result && result !== 'all') || range === 'custom'
+    model || provider || endpoint || transport || kind || source || apiKeyHash || (result && result !== 'all') || range === 'custom'
   );
 
   const resetFilters = () => {
     setModel('');
     setProvider('');
+    setEndpoint('');
+    setTransport('');
+    setKind('');
     setSource('');
     setApiKeyHash('');
     setResult('all');
@@ -608,6 +626,22 @@ export function UsageRecordsPage() {
               </select>
             </label>
 
+            <label className="usage-filter-item">
+              <span className="usage-filter-label">{t('usage.column.endpoint')}</span>
+              <input aria-label={t('usage.column.endpoint')} placeholder={t('usage.filter.endpointPlaceholder')} value={endpoint} onChange={e => changeFilter(setEndpoint, e.currentTarget.value)} />
+            </label>
+            <label className="usage-filter-item">
+              <span className="usage-filter-label">{t('usage.column.transport')}</span>
+              <select aria-label={t('usage.column.transport')} value={transport} onChange={e => changeFilter(setTransport,e.currentTarget.value)}>
+                <option value="">—</option><option value="http">{t('usage.transport.http')}</option><option value="sse">{t('usage.transport.sse')}</option><option value="websocket">WebSocket</option>
+              </select>
+            </label>
+            <label className="usage-filter-item">
+              <span className="usage-filter-label">{t('usage.column.kind')}</span>
+              <select aria-label={t('usage.column.kind')} value={kind} onChange={e => changeFilter(setKind,e.currentTarget.value)}>
+                <option value="">—</option>{['attempt','tool','health_check','management_call','prewarm','unmeasured'].map(k => <option key={k} value={k}>{k}</option>)}
+              </select>
+            </label>
             <label className="usage-filter-item">
               <span className="usage-filter-label">
                 <Terminal size={13} />
@@ -884,6 +918,8 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
 
   return (
     <div className="usage-overview-layout">
+      <p className="usage-accounting-note">{t('usage.accounting.note')}</p>
+      {overview.eventCounts ? <div className="panel usage-event-counts">{Object.entries(overview.eventCounts).map(([kind, count]) => <span key={kind}>{kind}: <strong>{compactNumber(count)}</strong>{' · '}</span>)}</div> : null}
       <div className="usage-stat-grid">
         {cards.map(({ label, value, meta, metaTitle }) => (
           <article className="panel usage-stat-card" key={label}>
@@ -1107,6 +1143,7 @@ function CategoryPanel({
 }
 
 type EventColumnKey =
+  | 'endpoint' | 'transport' | 'accounting' | 'cost' | 'kind'
   | 'time'
   | 'model'
   | 'provider'
@@ -1132,6 +1169,11 @@ type EventColumnDef = {
 };
 
 const EVENT_COLUMNS: readonly EventColumnDef[] = [
+  { key: 'endpoint', labelKey: 'usage.column.endpoint', defaultWidth: 210, minWidth: 120, align: 'left' },
+  { key: 'transport', labelKey: 'usage.column.transport', defaultWidth: 110, minWidth: 80, align: 'center' },
+  { key: 'kind', labelKey: 'usage.column.kind', defaultWidth: 130, minWidth: 80, align: 'center' },
+  { key: 'accounting', labelKey: 'usage.column.accounting', defaultWidth: 130, minWidth: 80, align: 'center' },
+  { key: 'cost', labelKey: 'usage.column.cost', defaultWidth: 130, minWidth: 80, align: 'center' },
   { key: 'time', labelKey: 'usage.column.time', defaultWidth: 150, minWidth: 110, align: 'center' },
   { key: 'model', labelKey: 'usage.column.model', defaultWidth: 190, minWidth: 120, align: 'center' },
   { key: 'input', labelKey: 'usage.column.input', defaultWidth: 84, minWidth: 60, align: 'center' },
@@ -1343,9 +1385,14 @@ function UsageEventCell({
   columnKey: EventColumnKey;
   noRemarkLabel: string;
 }) {
-  const { formatDate } = useI18n();
+  const { t, formatDate } = useI18n();
 
   switch (columnKey) {
+    case 'endpoint': return <td title={record.endpoint}>{record.endpoint || '—'}</td>;
+    case 'transport': return <td>{record.accounting?.transport ? record.accounting.transport.toUpperCase() : record.executor_type?.toLowerCase().includes('websocket') || record.endpoint?.includes('/realtime') ? 'WebSocket' : record.accounting?.stream === true ? t('usage.transport.sse') : record.accounting?.stream === false ? t('usage.transport.http') : '—'}</td>;
+    case 'kind': return <td title={[record.accounting?.generation_id,record.accounting?.attempt_id,record.accounting?.session_id].filter(Boolean).join(' / ')}>{record.accounting?.kind || (record.generate === false ? t('usage.kind.prewarm') : t('usage.kind.legacy'))}</td>;
+    case 'accounting': return <td title={record.accounting?.valuation?.reason}>{record.accounting?.quality || t('usage.kind.legacy')}</td>;
+    case 'cost': { const v=record.accounting?.valuation; return <td title={v?.reason || v?.source}>{typeof v?.cost === 'number' ? `${formatUsd(v.cost)} (${v.status})` : '—'}</td>; }
     case 'time':
       return (
         <td className="usage-td-time align-center" title={formatDate(record.timestamp)}>
@@ -1812,6 +1859,7 @@ function EventsView({
 }
 
 type PriceDraft = {
+  provider: string; baseUrl: string;
   model: string;
   prompt: string;
   completion: string;
@@ -1821,6 +1869,7 @@ type PriceDraft = {
 };
 
 const emptyPriceDraft = (): PriceDraft => ({
+  provider: '', baseUrl: '',
   model: '',
   prompt: '',
   completion: '',
@@ -1829,6 +1878,7 @@ const emptyPriceDraft = (): PriceDraft => ({
   cacheCreation: '',
 });
 const priceDraftFor = (model = '', price?: ModelPrice | null): PriceDraft => ({
+  provider: price?.provider ?? '', baseUrl: price?.baseUrl ?? '',
   model,
   prompt: price ? String(price.prompt) : '',
   completion: price ? String(price.completion) : '',
@@ -1839,7 +1889,8 @@ const priceDraftFor = (model = '', price?: ModelPrice | null): PriceDraft => ({
 
 const parsePrice = (value: string) => {
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error('Prices must be finite non-negative numbers');
+  return parsed;
 };
 
 const priceUnit = (value: number | undefined) => (Number.isFinite(value) ? `$${Number(value).toFixed(4)}` : '—');
@@ -1877,9 +1928,10 @@ function PricingView({
       await invoke('save_usage_model_price', {
         price: {
           model: draft.model.trim(),
+          provider: draft.provider.trim(), baseUrl: draft.baseUrl.trim(),
           prompt: parsePrice(draft.prompt),
           completion: parsePrice(draft.completion),
-          cache: draft.cache.trim() ? parsePrice(draft.cache) : parsePrice(draft.prompt),
+          cache: draft.cache.trim() ? parsePrice(draft.cache) : 0,
           cacheRead: parsePrice(draft.cacheRead),
           cacheCreation: parsePrice(draft.cacheCreation),
           promptConfigured: draft.prompt.trim() !== '',
@@ -1901,10 +1953,10 @@ function PricingView({
     }
   };
 
-  const deletePrice = async (model: string) => {
+  const deletePrice = async (model: string, price: ModelPrice) => {
     if (!await askConfirmation({ title: t('common.delete'), message: t('usage.pricing.deleteConfirm', { model }), confirmText: t('common.delete'), variant: 'danger' })) return;
     try {
-      await invoke('delete_usage_model_price', { model });
+      await invoke('delete_usage_model_price', { model, provider: price.provider, baseUrl: price.baseUrl });
       setMessage(t('usage.pricing.deleted'));
       await onChanged();
     } catch (deleteError) {
@@ -1968,7 +2020,9 @@ function PricingView({
 
       {draft ? (
         <div className="usage-price-editor">
-          <label>
+          <label><span>{t('usage.pricing.providerScope')}</span><input value={draft.provider} onChange={e => setDraft({ ...draft, provider:e.currentTarget.value })} /></label>
+              <label><span>{t('usage.pricing.upstreamScope')}</span><input value={draft.baseUrl} onChange={e => setDraft({ ...draft, baseUrl:e.currentTarget.value })} /></label>
+              <label>
             <span>{t('usage.pricing.model')}</span>
             <input
               value={draft.model}
@@ -2058,9 +2112,9 @@ function PricingView({
             </thead>
             <tbody>
               {visibleRows.map((row) => (
-                <tr key={row.model}>
+                <tr key={`${row.model}|${row.price?.provider}|${row.price?.baseUrl}`}>
                   <td>
-                    <strong>{row.model}</strong>
+                    <strong>{row.model}</strong><small>{[row.price?.provider,row.price?.baseUrl].filter(Boolean).join(' · ')}</small>
                   </td>
                   <td>{compactNumber(row.requests)}</td>
                   <td>{compactNumber(row.totalTokens)}</td>
@@ -2102,7 +2156,7 @@ function PricingView({
                           type="button"
                           className="icon-button danger"
                           title={t('common.delete')}
-                          onClick={() => void deletePrice(row.model)}
+                          onClick={() => void deletePrice(row.model, row.price!)}
                         >
                           <Trash2 size={14} />
                         </button>

@@ -1,3 +1,5 @@
+mod accounting;
+mod multimodal;
 mod resp;
 
 #[cfg(target_os = "macos")]
@@ -40,7 +42,7 @@ const USAGE_FAILURE_MIGRATION_KEY: &str = "failure_details_v4";
 const USAGE_EVENT_KEY_MIGRATION_KEY: &str = "event_key_v5";
 const USAGE_UPDATED_EVENT: &str = "usage-records-updated";
 const USAGE_SCHEMA_VERSION: u8 = 1;
-const USAGE_DATABASE_SCHEMA_VERSION: i64 = 5;
+const USAGE_DATABASE_SCHEMA_VERSION: i64 = 6;
 const MAX_USAGE_FAILURE_BODY_CHARS: usize = 2_000;
 const USAGE_QUEUE_BATCH_SIZE: usize = 500;
 const USAGE_INBOX_PROCESS_LIMIT: usize = 500;
@@ -48,7 +50,6 @@ const USAGE_INBOX_MAX_ATTEMPTS: i64 = 5;
 const USAGE_SUBSCRIBE_RETRY_SECONDS: u64 = 30;
 const SQLITE_BUSY_TIMEOUT_SECONDS: u64 = 5;
 const TOKENS_PER_PRICE_UNIT: f64 = 1_000_000.0;
-const LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const BUNDLED_MODEL_PRICE_CATALOG: &str = include_str!("../resources/model_prices.json");
 const MODEL_PRICE_SYNC_URL: &str =
     "https://raw.githubusercontent.com/router-for-me/EasyCLIProxyAPI/main/src-tauri/resources/model_prices.json";
@@ -160,6 +161,8 @@ struct UsageTokenStats {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct UsageRecord {
+    #[serde(default)]
+    accounting: Value,
     id: String,
     timestamp: String,
     #[serde(default)]
@@ -214,7 +217,7 @@ pub(crate) struct UsageRecord {
     api_key_remark: String,
     #[serde(default)]
     request_id: String,
-    #[serde(default = "default_usage_generate", skip_serializing)]
+    #[serde(default = "default_usage_generate")]
     generate: bool,
     #[serde(default, skip_serializing)]
     cached_tokens: u64,
@@ -241,6 +244,12 @@ struct LegacyUsageInboxFile {
 #[derive(Clone, Default, Deserialize)]
 pub(crate) struct UsageQuery {
     #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    transport: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
     start: Option<String>,
     #[serde(default)]
     end: Option<String>,
@@ -265,6 +274,7 @@ pub(crate) struct UsageQuery {
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UsageOverview {
+    event_counts: Value,
     total_requests: u64,
     success_count: u64,
     failure_count: u64,
@@ -299,6 +309,10 @@ pub(crate) struct UsageRepairResult {
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelPrice {
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    base_url: String,
     model: String,
     prompt: f64,
     completion: f64,
@@ -340,10 +354,6 @@ struct CostTokens {
     output: u64,
     cache_read: u64,
     cache_creation: u64,
-    long_input: u64,
-    long_output: u64,
-    long_cache_read: u64,
-    long_cache_creation: u64,
 }
 
 #[derive(Default, Serialize)]
@@ -380,6 +390,8 @@ pub(crate) struct ModelPriceSyncResult {
 }
 
 struct UsageCostGroup {
+    accounting: Value,
+    timestamp: String,
     model: String,
     alias: String,
     service_tier: String,
@@ -1166,6 +1178,10 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS scoped_model_prices (
+                provider TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, price_json TEXT NOT NULL,
+                PRIMARY KEY(provider, base_url, model)
+            );
             CREATE TABLE IF NOT EXISTS model_prices (
                 model TEXT PRIMARY KEY NOT NULL,
                 prompt_per_1m REAL NOT NULL DEFAULT 0,
@@ -1185,6 +1201,7 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|error| format!("初始化 SQLite 使用记录结构失败: {error}"))?;
     ensure_usage_failure_columns(connection)?;
+    migrate_usage_accounting_columns(connection)?;
     connection
         .execute(
             "CREATE INDEX IF NOT EXISTS idx_usage_events_canceled_timestamp ON usage_events(canceled, timestamp_ms DESC)",
@@ -1194,6 +1211,51 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
     connection
         .pragma_update(None, "user_version", USAGE_DATABASE_SCHEMA_VERSION)
         .map_err(|error| format!("更新 SQLite 使用记录版本失败: {error}"))
+}
+
+fn migrate_usage_accounting_columns(connection: &Connection) -> Result<(), String> {
+    // A savepoint also works when an older migration already owns a transaction.
+    connection
+        .execute_batch("SAVEPOINT usage_accounting_columns")
+        .map_err(|error| format!("Begin accounting migration: {error}"))?;
+    let result = (|| -> rusqlite::Result<()> {
+        let mut statement = connection.prepare("PRAGMA table_info(usage_events)")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        for (name, definition) in [
+            ("accounting_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("event_id", "TEXT NOT NULL DEFAULT ''"),
+        ] {
+            if !columns.iter().any(|column| column == name) {
+                connection.execute_batch(&format!(
+                    "ALTER TABLE usage_events ADD COLUMN {name} {definition}"
+                ))?;
+            }
+        }
+        // This equality makes repairing an interrupted older migration idempotent.
+        connection.execute_batch("UPDATE usage_events SET output_tokens = output_tokens + reasoning_tokens
+            WHERE (lower(provider) IN ('gemini','antigravity','vertex') OR lower(executor_type) LIKE '%gemini%' OR lower(executor_type) LIKE '%antigravity%')
+            AND reasoning_tokens > 0 AND total_tokens = input_tokens + output_tokens + reasoning_tokens;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_event_id ON usage_events(event_id) WHERE event_id != '';")?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => connection
+            .execute_batch("RELEASE usage_accounting_columns")
+            .map_err(|error| format!("Commit accounting migration: {error}")),
+        Err(error) => {
+            connection
+                .execute_batch(
+                    "ROLLBACK TO usage_accounting_columns; RELEASE usage_accounting_columns",
+                )
+                .map_err(|rollback| {
+                    format!("Accounting migration failed: {error}; rollback failed: {rollback}")
+                })?;
+            Err(format!("Migrate usage accounting: {error}"))
+        }
+    }
 }
 
 fn ensure_usage_failure_columns(connection: &Connection) -> Result<(), String> {
@@ -1305,7 +1367,7 @@ fn open_usage_database_at(root: &Path) -> Result<Connection, String> {
         .pragma_update(None, "foreign_keys", "ON")
         .map_err(|error| format!("启用 SQLite foreign keys 失败: {error}"))?;
     connection
-        .pragma_update(None, "synchronous", "NORMAL")
+        .pragma_update(None, "synchronous", "FULL")
         .map_err(|error| format!("设置 SQLite synchronous 模式失败: {error}"))?;
     Ok(connection)
 }
@@ -1417,6 +1479,7 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
     };
 
     let mut retry_seconds = 1_u64;
+    let mut next_journal_check = tokio::time::Instant::now();
     let mut subscription: Option<UsageSubscription> = None;
     let mut subscribe_retry_at = tokio::time::Instant::now();
     let mut next_inbox_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60 * 60);
@@ -1486,6 +1549,29 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
             retry_seconds = 1;
             wait_or_cancel(&token, 1).await;
             continue;
+        }
+
+        if tokio::time::Instant::now() >= next_journal_check {
+            match collect_usage_journal(&root, &config).await {
+                Ok(Some(saved)) => {
+                    subscription = None;
+                    publish_collected_records(
+                        &app,
+                        saved,
+                        "Durable usage journal: committed and acknowledged",
+                    );
+                    wait_or_cancel(&token, 1).await;
+                    continue;
+                }
+                Ok(None) => {
+                    next_journal_check = tokio::time::Instant::now() + Duration::from_secs(30);
+                }
+                Err(error) => {
+                    set_collector_error(&app, error);
+                    wait_or_cancel(&token, 1).await;
+                    continue;
+                }
+            }
         }
 
         if subscription.is_none() && tokio::time::Instant::now() >= subscribe_retry_at {
@@ -1605,6 +1691,51 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
             }
         }
     }
+}
+
+async fn collect_usage_journal(
+    root: &Path,
+    config: &GuiConfigFile,
+) -> Result<Option<usize>, String> {
+    let client = management_http_client()?;
+    let response = client
+        .get(management_endpoint(config, "usage-journal")?)
+        .header("Authorization", management_authorization(config)?)
+        .query(&[("count", USAGE_QUEUE_BATCH_SIZE)])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response
+        .error_for_status()
+        .map_err(|e| format!("Durable usage journal unavailable: {e}"))?;
+    let items: Vec<Value> = response.json().await.map_err(|e| e.to_string())?;
+    let ids = items
+        .iter()
+        .map(|v| {
+            v["event_id"]
+                .as_str()
+                .map(str::to_string)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "Journal event is missing event_id".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // A replay must be harmless even if the ACK response is lost.
+    let saved = persist_queue_items_from_source(root, "durable_journal", items, config)?;
+    if !ids.is_empty() {
+        client
+            .post(management_endpoint(config, "usage-journal/ack")?)
+            .header("Authorization", management_authorization(config)?)
+            .json(&serde_json::json!({"event_ids":ids}))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| format!("Usage committed locally; ACK will retry: {e}"))?;
+    }
+    Ok(Some(saved))
 }
 
 async fn backfill_usage_queue(root: &Path, config: &GuiConfigFile) -> Result<usize, String> {
@@ -1763,6 +1894,7 @@ fn enqueue_usage_raw_messages(
     let messages = messages
         .into_iter()
         .filter(|message| !is_ignorable_usage_message(message))
+        .map(accounting::redact_credentials)
         .collect::<Vec<_>>();
     if messages.is_empty() {
         return Ok(0);
@@ -2053,17 +2185,18 @@ fn insert_usage_records_in_transaction(
                 generate, cached_tokens, collector_source,
                 input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
                 cache_creation_tokens, total_tokens, canceled, failure_status,
-                failure_body, created_at
+                failure_body, created_at, accounting_json, event_id
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
                 ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
                 ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30,
-                ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40
-            )
+                ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42
+            ) ON CONFLICT(event_id) WHERE event_id != '' DO NOTHING
             "#,
         )
         .map_err(|error| format!("准备 SQLite 使用记录写入失败: {error}"))?;
     let created_at = Local::now().to_rfc3339();
+    let prices = load_model_prices(transaction)?;
     let mut inserted = 0_usize;
     for record in records {
         let api_group_key = if !record.api_group_key.trim().is_empty() {
@@ -2082,19 +2215,27 @@ fn insert_usage_records_in_transaction(
             .cache_read_tokens
             .saturating_add(record.tokens.cache_creation_tokens);
         let input_before_invariant = record.tokens.input_tokens;
-        let input_tokens = if cache_components > input_before_invariant {
-            input_before_invariant.saturating_add(cache_components)
-        } else {
-            input_before_invariant
-        };
-        let total_tokens = if record.tokens.total_tokens == 0
-            || record.tokens.total_tokens
-                == input_before_invariant.saturating_add(record.tokens.output_tokens)
-        {
-            input_tokens.saturating_add(record.tokens.output_tokens)
-        } else {
-            record.tokens.total_tokens
-        };
+        let input_tokens = input_before_invariant;
+        let total_tokens = record.tokens.total_tokens;
+        let mut accounting = record.accounting.clone();
+        if !accounting.is_object() {
+            accounting = serde_json::json!({});
+        }
+        // Freeze known estimates; unpriced legacy records can still acquire a tariff.
+        let mut valuation = accounting::snapshot(record, &prices);
+        if record.provider.eq_ignore_ascii_case("xai") && accounting["cost_scope"] == "operation" {
+            if let (Some(id), Some(cost)) = (
+                accounting["billing_id"].as_str(),
+                valuation["cost"].as_f64(),
+            ) {
+                let previous: f64 = transaction.query_row("SELECT COALESCE(MAX(CAST(json_extract(accounting_json,'$.cost_usd') AS REAL)),0) FROM usage_events WHERE provider=?1 AND json_extract(accounting_json,'$.billing_id')=?2", params![record.provider,id],|row|row.get(0)).map_err(|e|e.to_string())?;
+                valuation["cost"] = serde_json::json!((cost - previous).max(0.0));
+                valuation["cumulative_cost"] = serde_json::json!(cost);
+            }
+        }
+        if valuation["cost"].is_number() {
+            accounting["valuation"] = valuation;
+        }
         let cached_tokens = record.cached_tokens.max(cache_components);
         let collector_source = if record.collector_source.trim().is_empty() {
             "legacy_json"
@@ -2148,6 +2289,8 @@ fn insert_usage_records_in_transaction(
                     i64::from(record.failure_status),
                     record.failure_body,
                     created_at,
+                    serde_json::to_string(&accounting).unwrap_or_else(|_| "{}".to_string()),
+                    accounting["event_id"].as_str().unwrap_or(""),
                 ])
                 .map_err(|error| format!("写入 SQLite 使用记录失败: {error}"))?,
         );
@@ -2165,11 +2308,11 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
     let request_id = string_field(object, "request_id")
         .ok_or_else(|| "CPA 使用记录必须包含 request_id".to_string())?;
     let api_key = string_field(object, "api_key").unwrap_or_default();
-    let api_key_hash = hash_text(&api_key);
+    let api_key_hash = string_field(object, "api_key_hash").unwrap_or_else(|| hash_text(&api_key));
     let api_key_remark = config
         .api_keys
         .iter()
-        .find(|entry| entry.key == api_key)
+        .find(|entry| entry.key == api_key || hash_text(&entry.key) == api_key_hash)
         .map(|entry| entry.remark.clone())
         .unwrap_or_default();
     let provider = string_field(object, "provider").unwrap_or_default();
@@ -2214,20 +2357,12 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
             .saturating_add(tokens.cache_read_tokens)
             .saturating_add(tokens.cache_creation_tokens);
     }
-    let input_before_invariant = tokens.input_tokens;
-    if cache_components > input_before_invariant {
-        tokens.input_tokens = input_before_invariant.saturating_add(cache_components);
-        if tokens.total_tokens == 0
-            || tokens.total_tokens == input_before_invariant.saturating_add(tokens.output_tokens)
-        {
-            tokens.total_tokens = tokens.input_tokens.saturating_add(tokens.output_tokens);
-        }
-    }
     if tokens.total_tokens == 0
         || (claude_excludes_cache && tokens.total_tokens == raw_total_without_cache)
     {
         tokens.total_tokens = tokens.input_tokens.saturating_add(tokens.output_tokens);
     }
+    let accounting = accounting::normalize_accounting(&value, &mut tokens);
     let id = request_id.clone();
     let endpoint = string_field(object, "endpoint").unwrap_or_default();
     let failed = object
@@ -2261,6 +2396,7 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
         api_key_hash.clone()
     };
     Ok(UsageRecord {
+        accounting,
         id,
         timestamp,
         latency_ms: u64_field(object, "latency_ms"),
@@ -2286,7 +2422,8 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
         endpoint,
         auth_type: string_field(object, "auth_type").unwrap_or_default(),
         api_key_hash,
-        api_key_display: mask_api_key(&api_key),
+        api_key_display: string_field(object, "api_key_display")
+            .unwrap_or_else(|| mask_api_key(&api_key)),
         api_key_remark,
         request_id,
         generate,
@@ -2356,6 +2493,26 @@ fn build_usage_filter(query: &UsageQuery) -> UsageSqlFilter {
         params.push(SqlValue::Integer(end));
     }
     add_text_filter(&mut clauses, &mut params, "model", query.model.as_deref());
+    add_text_filter(
+        &mut clauses,
+        &mut params,
+        "endpoint",
+        query.endpoint.as_deref(),
+    );
+    add_text_filter(
+        &mut clauses,
+        &mut params,
+        "json_extract(accounting_json, '$.kind')",
+        query.kind.as_deref(),
+    );
+    if let Some(transport) = query.transport.as_deref() {
+        match transport {
+            "websocket" => clauses.push("(json_extract(accounting_json, '$.transport') = 'websocket' OR lower(executor_type) LIKE '%websocket%')".to_string()),
+            "sse" => clauses.push("(json_extract(accounting_json, '$.transport') = 'sse' OR (json_extract(accounting_json, '$.transport') IS NULL AND json_extract(accounting_json, '$.stream') = 1 AND lower(executor_type) NOT LIKE '%websocket%'))".to_string()),
+            "http" => clauses.push("(json_extract(accounting_json, '$.transport') = 'http' OR (json_extract(accounting_json, '$.transport') IS NULL AND json_extract(accounting_json, '$.stream') = 0 AND lower(executor_type) NOT LIKE '%websocket%'))".to_string()),
+            _ => {},
+        }
+    }
     add_text_filter(
         &mut clauses,
         &mut params,
@@ -2536,7 +2693,26 @@ fn load_usage_overview(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("读取 SQLite 使用趋势失败: {error}"))?;
 
+    let mut event_counts = serde_json::Map::new();
+    let mut counts_statement = connection.prepare(&format!(
+        "SELECT COALESCE(NULLIF(json_extract(accounting_json,'$.kind'),''),'legacy'), COUNT(*) FROM usage_events{} GROUP BY 1", filter.clause
+    )).map_err(|error| format!("Prepare usage kind counts: {error}"))?;
+    let counts = counts_statement
+        .query_map(params_from_iter(filter.params.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|error| format!("Count usage kinds: {error}"))?;
+    for count in counts {
+        let (kind, count) = count.map_err(|error| error.to_string())?;
+        event_counts.insert(kind, serde_json::json!(count));
+    }
+    let generations: i64 = connection.query_row(&format!(
+        "SELECT COUNT(DISTINCT CASE WHEN generate != 0 AND COALESCE(json_extract(accounting_json,'$.kind'),'attempt')='attempt' THEN NULLIF(json_extract(accounting_json,'$.generation_id'),'') END) FROM usage_events{}", filter.clause
+    ), params_from_iter(filter.params.iter()), |row| row.get(0)).map_err(|error| format!("Count logical generations: {error}"))?;
+    event_counts.insert("logical_generations".into(), serde_json::json!(generations));
+
     let mut overview = UsageOverview {
+        event_counts: Value::Object(event_counts),
         total_requests: from_sql_i64(summary.0),
         success_count: from_sql_i64(summary.1),
         failure_count: from_sql_i64(summary.2),
@@ -2603,13 +2779,9 @@ fn load_usage_cost_groups(
             COALESCE(SUM(output_tokens), 0),
             COALESCE(SUM(cache_read_tokens), 0),
             COALESCE(SUM(cache_creation_tokens), 0),
-            COALESCE(SUM(CASE WHEN input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} THEN input_tokens ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} THEN output_tokens ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} THEN cache_read_tokens ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} THEN cache_creation_tokens ELSE 0 END), 0),
-            COALESCE(SUM(total_tokens), 0)
+            COALESCE(SUM(total_tokens), 0), accounting_json, timestamp
         FROM usage_events{}
-        GROUP BY model, alias, service_tier, response_service_tier, executor_type, provider, auth_type
+        GROUP BY id
         "#,
         filter.clause
     );
@@ -2619,6 +2791,8 @@ fn load_usage_cost_groups(
     let groups = statement
         .query_map(params_from_iter(filter.params.iter()), |row| {
             Ok(UsageCostGroup {
+                accounting: serde_json::from_str(&row.get::<_, String>(13)?).unwrap_or_default(),
+                timestamp: row.get(14)?,
                 model: row.get(0)?,
                 alias: row.get(1)?,
                 service_tier: row.get(2)?,
@@ -2632,12 +2806,8 @@ fn load_usage_cost_groups(
                     output: from_sql_i64(row.get(9)?),
                     cache_read: from_sql_i64(row.get(10)?),
                     cache_creation: from_sql_i64(row.get(11)?),
-                    long_input: from_sql_i64(row.get(12)?),
-                    long_output: from_sql_i64(row.get(13)?),
-                    long_cache_read: from_sql_i64(row.get(14)?),
-                    long_cache_creation: from_sql_i64(row.get(15)?),
                 },
-                total_tokens: from_sql_i64(row.get(16)?),
+                total_tokens: from_sql_i64(row.get(12)?),
             })
         })
         .map_err(|error| format!("查询使用成本失败: {error}"))?
@@ -2650,77 +2820,25 @@ fn sum_usage_cost(groups: &[UsageCostGroup], prices: &HashMap<String, ModelPrice
     let mut total_cost = 0.0;
     let mut priced_requests = 0_u64;
     for group in groups {
-        let Some((model, price)) = resolve_model_price(&group.model, &group.alias, prices) else {
-            continue;
-        };
-        let identity = format!(
-            "{} {} {}",
-            group.executor_type, group.provider, group.auth_type
-        )
-        .to_ascii_lowercase();
-        let service_tier =
-            if identity.contains("codex") || group.response_service_tier.trim().is_empty() {
-                group.service_tier.as_str()
-            } else {
-                group.response_service_tier.as_str()
-            };
-        total_cost += cost_for_price(model, service_tier, &group.tokens, &price);
-        priced_requests = priced_requests.saturating_add(group.requests);
+        if let Some(cost) = accounting::estimate(group, prices)["cost"].as_f64() {
+            total_cost += cost;
+            priced_requests = priced_requests.saturating_add(group.requests);
+        }
     }
     (total_cost, priced_requests)
 }
 
+#[cfg(test)]
 fn cost_for_price(model: &str, service_tier: &str, tokens: &CostTokens, price: &ModelPrice) -> f64 {
-    let price = enriched_model_price(model, price);
-    let short_cost = cost_for_token_segment(
-        tokens.input.saturating_sub(tokens.long_input),
-        tokens.output.saturating_sub(tokens.long_output),
-        tokens.cache_read.saturating_sub(tokens.long_cache_read),
-        tokens
-            .cache_creation
-            .saturating_sub(tokens.long_cache_creation),
-        &price,
-        1.0,
-        1.0,
-    );
-    let long_cost = cost_for_token_segment(
-        tokens.long_input,
-        tokens.long_output,
-        tokens.long_cache_read,
-        tokens.long_cache_creation,
-        &price,
-        2.0,
-        1.5,
-    );
-    let tier = service_tier.trim().to_ascii_lowercase();
-    let multiplier = if tokens.long_input > 0 && matches!(tier.as_str(), "priority" | "fast") {
-        1.0
-    } else {
-        match tier.as_str() {
-            "flex" | "batch" => 0.5,
-            "priority" | "fast" => service_tier_multiplier(model),
-            _ => 1.0,
-        }
-    };
-    (short_cost + long_cost) * multiplier
-}
-
-fn cost_for_token_segment(
-    input: u64,
-    output: u64,
-    cache_read: u64,
-    cache_creation: u64,
-    price: &ModelPrice,
-    input_multiplier: f64,
-    output_multiplier: f64,
-) -> f64 {
-    let prompt = input.saturating_sub(cache_read.saturating_add(cache_creation));
-    ((prompt as f64 * price.prompt
-        + cache_read as f64 * price.cache_read
-        + cache_creation as f64 * price.cache_creation)
-        * input_multiplier
-        + output as f64 * price.completion * output_multiplier)
-        / TOKENS_PER_PRICE_UNIT
+    accounting::tariff_cost(
+        &normalized_model_tail(model),
+        service_tier,
+        tokens,
+        price,
+        &serde_json::json!({}),
+        "2026-09-12T12:00:00Z",
+    )
+    .unwrap_or(0.0)
 }
 
 fn official_model_price(model: &str) -> Option<ModelPrice> {
@@ -2753,12 +2871,14 @@ fn parse_model_price_catalog(
     if catalog.models.is_empty() {
         return Err("模型价格文件不包含任何模型".to_string());
     }
-    let _catalog_updated_at = catalog.updated_at;
+    let catalog_updated_at = catalog.updated_at;
     let mut prices = HashMap::with_capacity(catalog.models.len());
     for (model, entry) in catalog.models {
         let cache_read = entry.cache_read_per_1_m.unwrap_or(0.0);
         let cache_creation = entry.cache_creation_per_1_m.unwrap_or(0.0);
         let price = ModelPrice {
+            provider: String::new(),
+            base_url: String::new(),
             model: model.trim().to_string(),
             prompt: entry.input_per_1_m,
             completion: entry.output_per_1_m,
@@ -2770,7 +2890,7 @@ fn parse_model_price_catalog(
             cache_read_configured: entry.cache_read_per_1_m.is_some(),
             cache_creation_configured: entry.cache_creation_per_1_m.is_some(),
             source: source.to_string(),
-            source_model_id: String::new(),
+            source_model_id: catalog_updated_at.clone(),
             updated_at_ms,
         };
         validate_model_price(&price)?;
@@ -2788,7 +2908,11 @@ fn find_model_price<'a>(
     }
     let case_insensitive = prices
         .iter()
-        .filter(|(key, _)| key.eq_ignore_ascii_case(model))
+        .filter(|(key, price)| {
+            price.provider.is_empty()
+                && price.base_url.is_empty()
+                && key.eq_ignore_ascii_case(model)
+        })
         .collect::<Vec<_>>();
     if case_insensitive.len() == 1 {
         return Some(case_insensitive[0].1);
@@ -2796,22 +2920,28 @@ fn find_model_price<'a>(
     let tail = canonical_model_tail(model);
     let exact_tail = prices
         .iter()
-        .filter(|(key, _)| canonical_model_tail(key) == tail)
+        .filter(|(key, price)| {
+            price.provider.is_empty()
+                && price.base_url.is_empty()
+                && canonical_model_tail(key) == tail
+        })
         .collect::<Vec<_>>();
     if exact_tail.len() == 1 {
         return Some(exact_tail[0].1);
     }
-    let normalized_tail = normalized_model_tail(model);
-    prices
-        .iter()
-        .filter_map(|(key, price)| {
-            let key_tail = normalized_model_tail(key);
-            normalized_tail
-                .starts_with(&format!("{key_tail}-"))
-                .then_some((key_tail.len(), price))
-        })
-        .max_by_key(|(length, _)| *length)
-        .map(|(_, price)| price)
+    // Only known reasoning suffixes may inherit a model tariff. Snapshots and
+    // media variants need an explicit entry; arbitrary prefix matching is unsafe.
+    let normalized = normalized_model_tail(model);
+    for suffix in [
+        "-none", "-minimal", "-low", "-medium", "-high", "-xhigh", "-max",
+    ] {
+        if let Some(base) = normalized.strip_suffix(suffix) {
+            if let Some(price) = prices.get(base) {
+                return Some(price);
+            }
+        }
+    }
+    None
 }
 
 fn resolve_model_price<'a>(
@@ -2824,7 +2954,11 @@ fn resolve_model_price<'a>(
             continue;
         }
         if let Some(price) = find_model_price(prices, candidate) {
-            return Some((model, price.clone()));
+            // An unknown upstream model must not inherit a different model's
+            // official tariff through its requested alias (notably image tools).
+            if candidate == model || price.source == "manual" {
+                return Some((candidate, price.clone()));
+            }
         }
     }
     None
@@ -2840,47 +2974,11 @@ fn enriched_model_price(model: &str, price: &ModelPrice) -> ModelPrice {
             price.completion = official.completion;
         }
     }
-    if !price.cache_read_configured && price.cache_read <= 0.0 {
-        price.cache_read = if price.cache > 0.0 {
-            price.cache
-        } else {
-            price.prompt * 0.1
-        };
-    }
-    if !price.cache_creation_configured && price.cache_creation <= 0.0 {
-        price.cache_creation = price.prompt
-            * if is_model_family(model, "gpt-5.6") {
-                1.25
-            } else {
-                1.0
-            };
+    if !price.cache_read_configured && price.cache > 0.0 {
+        price.cache_read = price.cache;
+        price.cache_read_configured = true;
     }
     price
-}
-
-fn is_model_family(model: &str, family: &str) -> bool {
-    let normalized = model
-        .trim()
-        .to_ascii_lowercase()
-        .rsplit('/')
-        .next()
-        .unwrap_or_default()
-        .to_string();
-    normalized == family || normalized.starts_with(&format!("{family}-"))
-}
-
-fn service_tier_multiplier(model: &str) -> f64 {
-    if is_model_family(model, "gpt-5.5") {
-        2.5
-    } else if is_model_family(model, "gpt-5.6")
-        || is_model_family(model, "gpt-5.4")
-        || is_model_family(model, "gpt-5.4-mini")
-        || is_model_family(model, "gpt-5.3-codex")
-    {
-        2.0
-    } else {
-        1.0
-    }
 }
 
 fn load_model_prices(connection: &Connection) -> Result<HashMap<String, ModelPrice>, String> {
@@ -2900,6 +2998,8 @@ fn load_model_prices(connection: &Connection) -> Result<HashMap<String, ModelPri
     let prices = statement
         .query_map([], |row| {
             Ok(ModelPrice {
+                provider: String::new(),
+                base_url: String::new(),
                 model: row.get(0)?,
                 prompt: row.get(1)?,
                 completion: row.get(2)?,
@@ -2919,6 +3019,9 @@ fn load_model_prices(connection: &Connection) -> Result<HashMap<String, ModelPri
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("读取模型价格失败: {error}"))?;
     for price in prices {
+        if price.source == "github" && price.source_model_id.as_str() < "2026-09-12" {
+            continue;
+        }
         if price.source != "litellm" {
             if let Some(existing) = merged
                 .keys()
@@ -2930,7 +3033,57 @@ fn load_model_prices(connection: &Connection) -> Result<HashMap<String, ModelPri
             merged.insert(price.model.clone(), price);
         }
     }
+    let mut scoped = connection
+        .prepare("SELECT price_json FROM scoped_model_prices")
+        .map_err(|e| e.to_string())?;
+    for item in scoped
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+    {
+        let price: ModelPrice =
+            serde_json::from_str(&item.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        merged.insert(model_price_key(&price), price);
+    }
     Ok(merged)
+}
+
+fn model_price_key(price: &ModelPrice) -> String {
+    if price.provider.is_empty() && price.base_url.is_empty() {
+        price.model.clone()
+    } else {
+        format!("{} | {} | {}", price.provider, price.base_url, price.model)
+    }
+}
+
+fn price_for_group(
+    group: &UsageCostGroup,
+    prices: &HashMap<String, ModelPrice>,
+) -> Option<ModelPrice> {
+    let base_url = group.accounting["base_url"]
+        .as_str()
+        .unwrap_or("")
+        .trim_end_matches('/');
+    for candidate in [&group.model, &group.alias] {
+        if let Some(price) = prices
+            .values()
+            .filter(|p| {
+                p.source == "manual"
+                    && (!p.provider.is_empty() || !p.base_url.is_empty())
+                    && p.model.eq_ignore_ascii_case(candidate)
+                    && (p.provider.is_empty() || p.provider.eq_ignore_ascii_case(&group.provider))
+                    && (p.base_url.is_empty() || p.base_url.trim_end_matches('/') == base_url)
+            })
+            .max_by_key(|p| {
+                (
+                    u8::from(!p.base_url.is_empty()),
+                    u8::from(!p.provider.is_empty()),
+                )
+            })
+        {
+            return Some(price.clone());
+        }
+    }
+    resolve_model_price(&group.model, &group.alias, prices).map(|(_, p)| p)
 }
 
 fn validate_model_price(price: &ModelPrice) -> Result<(), String> {
@@ -2953,6 +3106,11 @@ fn validate_model_price(price: &ModelPrice) -> Result<(), String> {
 
 fn upsert_model_price(connection: &Connection, price: &ModelPrice) -> Result<(), String> {
     validate_model_price(price)?;
+    if !price.provider.is_empty() || !price.base_url.is_empty() {
+        connection.execute("INSERT INTO scoped_model_prices(provider,base_url,model,price_json) VALUES(?1,?2,?3,?4) ON CONFLICT(provider,base_url,model) DO UPDATE SET price_json=excluded.price_json",
+            params![price.provider,price.base_url,price.model,serde_json::to_string(price).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
+        return Ok(());
+    }
     connection
         .execute(
             r#"
@@ -3012,12 +3170,15 @@ fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<Usa
     let mut total_cost = 0.0;
     for group in &groups {
         total_requests = total_requests.saturating_add(group.requests);
-        let entry = rows
-            .entry(group.model.clone())
-            .or_insert_with(|| UsagePriceRow {
-                model: group.model.clone(),
-                ..UsagePriceRow::default()
-            });
+        let group_price = price_for_group(group, &prices);
+        let row_key = group_price
+            .as_ref()
+            .map(model_price_key)
+            .unwrap_or_else(|| group.model.clone());
+        let entry = rows.entry(row_key).or_insert_with(|| UsagePriceRow {
+            model: group.model.clone(),
+            ..UsagePriceRow::default()
+        });
         entry.requests = entry.requests.saturating_add(group.requests);
         entry.input_tokens = entry.input_tokens.saturating_add(group.tokens.input);
         entry.output_tokens = entry.output_tokens.saturating_add(group.tokens.output);
@@ -3029,27 +3190,18 @@ fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<Usa
             .saturating_add(group.tokens.cache_creation);
         entry.total_tokens = entry.total_tokens.saturating_add(group.total_tokens);
 
-        if let Some((model, price)) = resolve_model_price(&group.model, &group.alias, &prices) {
-            let identity = format!(
-                "{} {} {}",
-                group.executor_type, group.provider, group.auth_type
-            )
-            .to_ascii_lowercase();
-            let service_tier =
-                if identity.contains("codex") || group.response_service_tier.trim().is_empty() {
-                    group.service_tier.as_str()
-                } else {
-                    group.response_service_tier.as_str()
-                };
-            let cost = cost_for_price(model, service_tier, &group.tokens, &price);
-            entry.estimated_cost += cost;
+        if let Some(price) = price_for_group(group, &prices) {
             entry.price = Some(price);
+        }
+        if let Some(cost) = accounting::estimate(group, &prices)["cost"].as_f64() {
+            entry.estimated_cost += cost;
             total_cost += cost;
             priced_requests = priced_requests.saturating_add(group.requests);
         }
     }
+
     for price in prices.values() {
-        rows.entry(price.model.clone())
+        rows.entry(model_price_key(price))
             .or_insert_with(|| UsagePriceRow {
                 model: price.model.clone(),
                 price: Some(price.clone()),
@@ -3076,6 +3228,8 @@ fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<Usa
 #[tauri::command]
 pub(crate) async fn save_usage_model_price(mut price: ModelPrice) -> Result<(), String> {
     price.model = price.model.trim().to_string();
+    price.provider = price.provider.trim().to_ascii_lowercase();
+    price.base_url = price.base_url.trim().trim_end_matches('/').to_string();
     price.source = "manual".to_string();
     price.source_model_id.clear();
     price.updated_at_ms = Local::now().timestamp_millis();
@@ -3083,9 +3237,18 @@ pub(crate) async fn save_usage_model_price(mut price: ModelPrice) -> Result<(), 
 }
 
 #[tauri::command]
-pub(crate) async fn delete_usage_model_price(model: String) -> Result<(), String> {
+pub(crate) async fn delete_usage_model_price(
+    model: String,
+    provider: Option<String>,
+    base_url: Option<String>,
+) -> Result<(), String> {
     run_usage_task(move || {
         let connection = open_usage_database()?;
+        let provider = provider.unwrap_or_default(); let base_url = base_url.unwrap_or_default();
+        if !provider.is_empty() || !base_url.is_empty() {
+            connection.execute("DELETE FROM scoped_model_prices WHERE provider=?1 AND base_url=?2 AND model=?3",params![provider,base_url,model]).map_err(|e|e.to_string())?;
+            return Ok(());
+        }
         connection
             .execute(
                 "DELETE FROM model_prices WHERE model = ?1 COLLATE NOCASE",
@@ -3122,10 +3285,13 @@ pub(crate) async fn sync_usage_model_prices(
         None => None,
     };
     let now = Local::now().timestamp_millis();
-    let (remote_prices, used_builtin) = match remote_content
-        .as_deref()
-        .and_then(|content| parse_model_price_catalog(content, "github", now).ok())
-    {
+    let (remote_prices, used_builtin) = match remote_content.as_deref().and_then(|content| {
+        let catalog: ModelPriceCatalog = serde_json::from_str(content).ok()?;
+        if catalog.updated_at.as_str() < "2026-09-12" {
+            return None;
+        }
+        parse_model_price_catalog(content, "github", now).ok()
+    }) {
         Some(prices) => (prices, false),
         None => (bundled_model_prices()?, true),
     };
@@ -3160,10 +3326,6 @@ pub(crate) async fn sync_usage_model_prices(
             transaction
                 .commit()
                 .map_err(|error| format!("提交模型价格更新失败: {error}"))?;
-        } else {
-            connection
-                .execute("DELETE FROM model_prices WHERE source = 'github'", [])
-                .map_err(|error| format!("恢复软件内置模型价格失败: {error}"))?;
         }
 
         let filter = build_usage_filter(&query);
@@ -3436,7 +3598,7 @@ fn load_usage_events(
     let sql = format!(
         r#"
         SELECT
-            event_key, timestamp, latency_ms, ttft_ms, source, auth_index, failed,
+            CAST(id AS TEXT), timestamp, latency_ms, ttft_ms, source, auth_index, failed,
             provider, model, alias, reasoning_effort, service_tier,
             response_service_tier, executor_type, endpoint, auth_type,
             api_key_hash, api_key_display, api_key_remark, request_id,
@@ -3444,7 +3606,7 @@ fn load_usage_events(
             cached_tokens, collector_source,
             input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
             cache_creation_tokens, total_tokens, canceled, failure_status,
-            failure_body
+            failure_body, accounting_json
         FROM usage_events{}
         ORDER BY timestamp_ms DESC, id DESC
         LIMIT ? OFFSET ?
@@ -3462,7 +3624,14 @@ fn load_usage_events(
         .map_err(|error| format!("查询 SQLite 使用事件失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("读取 SQLite 使用事件失败: {error}"))?;
+    let prices = load_model_prices(connection)?;
     for item in &mut items {
+        if !item.accounting.is_object() {
+            item.accounting = serde_json::json!({});
+        }
+        if item.accounting.get("valuation").is_none() {
+            item.accounting["valuation"] = accounting::snapshot(item, &prices);
+        }
         item.source_display = usage_source_display(config, &item.provider, &item.source);
     }
     Ok(UsageEventPage {
@@ -3476,6 +3645,7 @@ fn load_usage_events(
 
 fn usage_record_from_row(row: &Row<'_>) -> rusqlite::Result<UsageRecord> {
     Ok(UsageRecord {
+        accounting: serde_json::from_str(&row.get::<_, String>(36)?).unwrap_or_default(),
         id: row.get(0)?,
         timestamp: row.get(1)?,
         latency_ms: from_sql_i64(row.get(2)?),
@@ -3658,6 +3828,16 @@ fn usage_source_display(config: &GuiConfigFile, provider: &str, source: &str) ->
     let source = source.trim();
     if source.is_empty() {
         return "未知来源".to_string();
+    }
+    if let Some(hash) = source.strip_prefix("sha256:") {
+        if let Some(entry) = config
+            .api_access_remarks
+            .iter()
+            .find(|entry| entry.api_key_hash == hash && !entry.remark.is_empty())
+        {
+            return entry.remark.clone();
+        }
+        return format!("sha256:{}", hash.chars().take(12).collect::<String>());
     }
     if let Some(remark) = config.api_access_remark_for_source(provider, source) {
         return remark.to_string();
@@ -3991,6 +4171,7 @@ mod tests {
 
     fn sample_record(id: &str, timestamp: &str, model: &str) -> UsageRecord {
         UsageRecord {
+            accounting: serde_json::json!({}),
             id: id.to_string(),
             timestamp: timestamp.to_string(),
             latency_ms: 100,
@@ -4227,7 +4408,7 @@ mod tests {
     }
 
     #[test]
-    fn enforces_cache_input_invariant_for_unknown_producers() {
+    fn marks_inconsistent_cache_without_inventing_input_tokens() {
         let record = normalize_usage_record(
             serde_json::json!({
                 "provider": "custom",
@@ -4242,9 +4423,9 @@ mod tests {
             &GuiConfigFile::default(),
         )
         .unwrap();
-        assert_eq!(record.tokens.input_tokens, 700);
-        assert_eq!(record.tokens.total_tokens, 720);
-        assert!(record.tokens.cache_read_tokens <= record.tokens.input_tokens);
+        assert_eq!(record.tokens.input_tokens, 100);
+        assert_eq!(record.tokens.total_tokens, 120);
+        assert_eq!(record.accounting["quality"], "inconsistent");
     }
 
     #[test]
@@ -5033,7 +5214,7 @@ mod tests {
         assert_eq!(overview.priced_requests, 1);
         assert_eq!(analysis.models[0].key, "gpt-5.6-terra");
         assert_eq!(events.total, 1);
-        assert_eq!(events.items[0].id, "request-2");
+        assert_eq!(events.items[0].request_id, "request-2");
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
@@ -5108,19 +5289,16 @@ mod tests {
             ..CostTokens::default()
         };
         let standard = cost_for_price("openai/gpt-5.6-terra", "default", &standard_tokens, &terra);
-        assert!((standard - 13.69).abs() < 0.000001);
+        assert!((standard - 21.38).abs() < 0.000001);
 
         let long_tokens = CostTokens {
             input: 300_000,
             output: 200_000,
             cache_read: 100_000,
-            long_input: 300_000,
-            long_output: 200_000,
-            long_cache_read: 100_000,
             ..CostTokens::default()
         };
         let long_priority = cost_for_price("gpt-5.6-terra", "priority", &long_tokens, &terra);
-        assert!((long_priority - 4.44).abs() < 0.000001);
+        assert!((long_priority - 8.88).abs() < 0.000001);
         assert!(official_model_price("unpriced-model").is_none());
     }
 
@@ -5195,3 +5373,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "usage/integrity_tests.rs"]
+mod integrity_tests;

@@ -1,6 +1,8 @@
+import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { describe, expect, it } from 'bun:test';
 import {
   buildProviderHealthProbe,
+  checkProviderHealthProbe,
   mergeProviderHealthModels,
   primaryProviderHealthCredential,
   runProviderModelHealthChecks,
@@ -92,9 +94,12 @@ describe('API 接入健康检测', () => {
     expect(JSON.parse(probe.data)).toEqual({
       model: 'gpt-test',
       messages: [{ role: 'user', content: 'hi' }],
+      max_completion_tokens: 16,
       stream: true,
+      stream_options: { include_usage: true },
     });
     expect(probe.protocol).toBe('openai-chat');
+    expect(probe.baseUrl).toBe('https://openrouter.example/api/v1');
   });
 
   it('为非 v1 的 OpenAI 兼容版本前缀保留原始版本号', () => {
@@ -173,6 +178,7 @@ describe('API 接入健康检测', () => {
     expect(JSON.parse(probe.data)).toEqual({
       model: 'gpt-5-codex',
       input: 'hi',
+      max_output_tokens: 16,
       stream: true,
     });
     expect(probe.protocol).toBe('openai-responses');
@@ -187,7 +193,7 @@ describe('API 接入健康检测', () => {
     );
 
     expect(probe.url).toBe(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?alt=sse',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
     );
     expect(probe.header['x-goog-api-key']).toBe('gemini-key');
     expect(probe.protocol).toBe('gemini');
@@ -216,3 +222,20 @@ describe('API 接入健康检测', () => {
   });
 
 });
+
+ it('passes provider and upstream tariff scope through the actual IPC call', async () => {
+   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+   Object.defineProperty(globalThis, 'window', {value:{}, configurable:true});
+   let captured: any;
+   try {
+     mockIPC((command, args) => { expect(command).toBe('provider_health_probe'); captured=args; return {responseLatencyMs:10}; });
+     const result = await checkProviderHealthProbe('openai', 'https://custom.example/v1', 'gpt-5.4', 'test-only-key');
+     expect(result.success).toBe(true);
+     expect(captured.request.provider).toBe('openai');
+     expect(captured.request.baseUrl).toBe('https://custom.example/v1');
+   } finally {
+     clearMocks();
+     if (original) Object.defineProperty(globalThis, 'window', original);
+     else Reflect.deleteProperty(globalThis, 'window');
+   }
+ });
