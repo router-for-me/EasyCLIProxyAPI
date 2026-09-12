@@ -680,6 +680,9 @@ fn linked_configuration_and_backup_directories_are_rejected() {
         fs::read_to_string(outside.0.join("config.toml")).unwrap(),
         "custom='outside'"
     );
+    #[cfg(unix)]
+    fs::remove_file(link).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(link).unwrap();
     let data = agent_data_directory(&paths).unwrap();
     fs::create_dir_all(&data).unwrap();
@@ -687,6 +690,9 @@ fn linked_configuration_and_backup_directories_are_rejected() {
     assert!(create_backup("codex", &home.0).is_err());
     assert!(list_backups("codex", &home.0).is_err());
     assert!(delete_backup("codex", &home.0, "1").is_err());
+    #[cfg(unix)]
+    fs::remove_file(data.join("backups")).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(data.join("backups")).unwrap();
 }
 

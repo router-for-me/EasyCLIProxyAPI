@@ -15,6 +15,10 @@ static PROVIDER_HEALTH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::c
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderHealthProbeRequest {
+    #[serde(default)]
+    provider: String,
+    #[serde(default)]
+    base_url: String,
     url: String,
     header: HashMap<String, String>,
     data: String,
@@ -38,6 +42,11 @@ pub(crate) struct ProviderHealthProbeResponse {
 
 #[derive(Default)]
 struct ProviderHealthUsageTokens {
+    observed: bool,
+    raw_usage: serde_json::Value,
+    cache_creation_tokens: u64,
+    cache_creation_5m_tokens: u64,
+    cache_creation_1h_tokens: u64,
     input_tokens: u64,
     output_tokens: u64,
     reasoning_tokens: u64,
@@ -185,50 +194,78 @@ pub(crate) fn provider_health_stream_has_terminal_success(protocol: &str, bytes:
 
 fn provider_health_usage_tokens(protocol: &str, bytes: &[u8]) -> ProviderHealthUsageTokens {
     let mut tokens = ProviderHealthUsageTokens::default();
-    if protocol != "gemini" {
-        return tokens;
-    }
     let text = String::from_utf8_lossy(bytes);
-    for line in text.lines() {
-        let line = line.trim();
-        let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line);
-        let Some(usage) = serde_json::from_str::<serde_json::Value>(data)
-            .ok()
-            .and_then(|value| value.get("usageMetadata").cloned())
-        else {
-            continue;
+    let values = serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .into_iter()
+        .chain(text.lines().filter_map(|line| {
+            let data = line.trim().strip_prefix("data:")?.trim();
+            serde_json::from_str::<serde_json::Value>(data).ok()
+        }));
+    let mut merged = serde_json::Map::new();
+    for value in values {
+        let node = match protocol {
+            "gemini" => value.get("usageMetadata"),
+            "openai-responses" => value
+                .pointer("/response/usage")
+                .or_else(|| value.get("usage")),
+            "claude" => value
+                .pointer("/message/usage")
+                .or_else(|| value.get("usage")),
+            _ => value.get("usage"),
         };
-        tokens.input_tokens = tokens.input_tokens.max(
-            usage
-                .get("promptTokenCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default(),
-        );
-        tokens.output_tokens = tokens.output_tokens.max(
-            usage
-                .get("candidatesTokenCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default(),
-        );
-        tokens.reasoning_tokens = tokens.reasoning_tokens.max(
-            usage
-                .get("thoughtsTokenCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default(),
-        );
-        tokens.cache_read_tokens = tokens.cache_read_tokens.max(
-            usage
-                .get("cachedContentTokenCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default(),
-        );
-        tokens.total_tokens = tokens.total_tokens.max(
-            usage
-                .get("totalTokenCount")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default(),
-        );
+        if let Some(node) = node.and_then(serde_json::Value::as_object) {
+            tokens.observed = true;
+            for (key, value) in node {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
     }
+    let raw = serde_json::Value::Object(merged);
+    let number = |paths: &[&str]| {
+        paths
+            .iter()
+            .find_map(|p| raw.pointer(p).and_then(serde_json::Value::as_u64))
+            .unwrap_or(0)
+    };
+    tokens.input_tokens = number(&["/prompt_tokens", "/input_tokens", "/promptTokenCount"]);
+    tokens.output_tokens = number(&[
+        "/completion_tokens",
+        "/output_tokens",
+        "/candidatesTokenCount",
+    ]);
+    tokens.reasoning_tokens = number(&[
+        "/completion_tokens_details/reasoning_tokens",
+        "/output_tokens_details/reasoning_tokens",
+        "/output_tokens_details/thinking_tokens",
+        "/thoughtsTokenCount",
+    ]);
+    tokens.cache_read_tokens = number(&[
+        "/prompt_tokens_details/cached_tokens",
+        "/input_tokens_details/cached_tokens",
+        "/cache_read_input_tokens",
+        "/cachedContentTokenCount",
+    ]);
+    tokens.cache_creation_tokens = number(&[
+        "/cache_creation_input_tokens",
+        "/input_tokens_details/cache_creation_tokens",
+    ]);
+    tokens.cache_creation_5m_tokens = number(&["/cache_creation/ephemeral_5m_input_tokens"]);
+    tokens.cache_creation_1h_tokens = number(&["/cache_creation/ephemeral_1h_input_tokens"]);
+    tokens.total_tokens = number(&["/total_tokens", "/totalTokenCount"]);
+    if tokens.total_tokens == 0 && tokens.observed {
+        tokens.total_tokens = tokens.input_tokens.saturating_add(tokens.output_tokens);
+        if protocol == "gemini" {
+            tokens.total_tokens = tokens.total_tokens.saturating_add(tokens.reasoning_tokens);
+        }
+        if protocol == "claude" {
+            tokens.total_tokens = tokens
+                .total_tokens
+                .saturating_add(tokens.cache_read_tokens)
+                .saturating_add(tokens.cache_creation_tokens);
+        }
+    }
+    tokens.raw_usage = raw;
     tokens
 }
 
@@ -242,23 +279,48 @@ fn provider_health_usage_provider(protocol: &str) -> &str {
     }
 }
 
-fn persist_provider_health_success(
+fn persist_provider_health_outcome(
     app: &tauri::AppHandle,
     request: &ProviderHealthProbeRequest,
     endpoint: &str,
     latency_ms: u64,
     ttft_ms: Option<u64>,
     received: &[u8],
+    failure: Option<&str>,
+    status: u16,
 ) {
     let tokens = provider_health_usage_tokens(&request.protocol, received);
+    let ticks = tokens.raw_usage["cost_in_usd_ticks"].as_u64();
+    let cost_usd = ticks.map(|n| format!("{}.{:010}", n / 10_000_000_000, n % 10_000_000_000));
+    let provider = if reqwest::Url::parse(&request.url)
+        .ok()
+        .is_some_and(|u| u.host_str() == Some("api.x.ai"))
+    {
+        "xai"
+    } else if request.provider.is_empty() {
+        provider_health_usage_provider(&request.protocol)
+    } else {
+        &request.provider
+    };
     let event = serde_json::json!({
         "timestamp": Local::now().to_rfc3339(),
         "latency_ms": latency_ms,
         "ttft_ms": ttft_ms,
-        "source": request.source.as_str(),
+        "source": if request.auth_index.is_empty() { &request.base_url } else { &request.auth_index },
+        "api_key": request.source.as_str(),
         "auth_index": request.auth_index.as_str(),
-        "failed": false,
-        "provider": provider_health_usage_provider(&request.protocol),
+        "failed": failure.is_some(),
+        "fail": {"status_code":status, "body":failure.unwrap_or("")},
+        "usage_observed": tokens.observed,
+        "usage_complete": failure.is_none(),
+        "raw_usage": tokens.raw_usage,
+        "kind": "health_check",
+        "stream": true,
+        "base_url": request.base_url.as_str(),
+        "cache_creation_5m_tokens": tokens.cache_creation_5m_tokens,
+        "cache_creation_1h_tokens": tokens.cache_creation_1h_tokens,
+        "provider": provider,
+        "cost_usd": cost_usd,
         "model": request.model.as_str(),
         "executor_type": "DesktopProviderHealthCheck",
         "endpoint": endpoint,
@@ -268,6 +330,7 @@ fn persist_provider_health_success(
             "output_tokens": tokens.output_tokens,
             "reasoning_tokens": tokens.reasoning_tokens,
             "cache_read_tokens": tokens.cache_read_tokens,
+            "cache_creation_tokens": tokens.cache_creation_tokens,
             "total_tokens": tokens.total_tokens,
         },
     });
@@ -339,63 +402,79 @@ pub(crate) async fn provider_health_probe(
     }
 
     let started_at = Instant::now();
-    let response = client
-        .post(url)
-        .headers(headers)
-        .body(request.data.clone())
-        .send()
-        .await
-        .map_err(|error| format!("健康检测请求失败: {error}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let detail = response.text().await.unwrap_or_default();
-        let detail = detail.trim();
-        return Err(if detail.is_empty() {
-            format!("上游返回 HTTP {}", status.as_u16())
-        } else {
-            format!("上游返回 HTTP {}: {}", status.as_u16(), detail)
-        });
-    }
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !provider_health_content_type_is_streaming(&content_type) {
-        return Err("上游未返回流式响应，无法测量首字延迟".to_string());
-    }
-
-    let mut stream = response.bytes_stream();
     let mut received = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| format!("读取健康检测流失败: {error}"))?;
-        if received.len().saturating_add(chunk.len()) > MAX_PROVIDER_HEALTH_STREAM_BYTES {
-            return Err("健康检测在限制范围内未收到模型首字".to_string());
+    let mut first_token = None;
+    let mut status_code = 0;
+    let result = async {
+        let response = client
+            .post(url)
+            .headers(headers)
+            .body(request.data.clone())
+            .send()
+            .await
+            .map_err(|error| format!("Health request failed: {error}"))?;
+        status_code = response.status().as_u16();
+        if !response.status().is_success() {
+            return Err(format!(
+                "Upstream HTTP {}: {}",
+                status_code,
+                response.text().await.unwrap_or_default()
+            ));
         }
-        received.extend_from_slice(&chunk);
-        let elapsed_ms = started_at.elapsed().as_millis().max(1) as u64;
-        if provider_health_stream_has_text(&request.protocol, &received) {
-            persist_provider_health_success(
-                &app,
-                &request,
-                &endpoint,
-                elapsed_ms,
-                Some(elapsed_ms),
-                &received,
-            );
-            return Ok(ProviderHealthProbeResponse {
-                first_token_latency_ms: Some(elapsed_ms),
-                response_latency_ms: elapsed_ms,
-            });
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| format!("Health stream failed: {error}"))?;
+            if received.len().saturating_add(chunk.len()) > MAX_PROVIDER_HEALTH_STREAM_BYTES {
+                return Err(
+                    "Health response exceeded capture limit; usage is incomplete".to_string(),
+                );
+            }
+            received.extend_from_slice(&chunk);
+            if first_token.is_none()
+                && provider_health_stream_has_text(&request.protocol, &received)
+            {
+                first_token = Some(started_at.elapsed().as_millis().max(1) as u64);
+            }
         }
-        if provider_health_stream_has_terminal_success(&request.protocol, &received) {
-            persist_provider_health_success(&app, &request, &endpoint, elapsed_ms, None, &received);
-            return Ok(ProviderHealthProbeResponse {
-                first_token_latency_ms: None,
-                response_latency_ms: elapsed_ms,
-            });
+        if first_token.is_none()
+            && !provider_health_stream_has_terminal_success(&request.protocol, &received)
+        {
+            return Err("Health response contained no model output".to_string());
         }
+        Ok(ProviderHealthProbeResponse {
+            first_token_latency_ms: first_token,
+            response_latency_ms: started_at.elapsed().as_millis().max(1) as u64,
+        })
     }
-    Err("健康检测未收到模型首字".to_string())
+    .await;
+    persist_provider_health_outcome(
+        &app,
+        &request,
+        &endpoint,
+        started_at.elapsed().as_millis().max(1) as u64,
+        first_token,
+        &received,
+        result.as_ref().err().map(String::as_str),
+        status_code,
+    );
+    result
+}
+
+#[cfg(test)]
+mod accounting_tests {
+    use super::*;
+    #[test]
+    fn health_chat_usage_is_not_lost() {
+        let tokens = provider_health_usage_tokens(
+            "openai-chat",
+            br#"data: {"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110}}"#,
+        );
+        assert_eq!(tokens.total_tokens, 110);
+    }
+    #[test]
+    fn health_claude_merges_start_and_delta_usage() {
+        let tokens = provider_health_usage_tokens("claude", b"data: {\"message\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":1}}}\n\ndata: {\"usage\":{\"output_tokens\":10}}\n\n");
+        assert_eq!(tokens.input_tokens, 100);
+        assert_eq!(tokens.output_tokens, 10);
+    }
 }

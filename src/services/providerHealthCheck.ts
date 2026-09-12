@@ -5,6 +5,8 @@ export const PROVIDER_HEALTH_TIMEOUT_MS = 15_000;
 export const PROVIDER_HEALTH_CONCURRENCY = 4;
 
 export type ProviderHealthProbe = {
+  provider: ModelProvider;
+  baseUrl: string;
   url: string;
   header: Record<string, string>;
   data: string;
@@ -109,6 +111,8 @@ export function buildProviderHealthProbe(
     ? model.trim().replace(/^models\//i, '')
     : model.trim();
   const metadata = {
+    provider,
+    baseUrl: baseUrl.trim() || defaultBaseUrl(provider),
     model: normalizedModel,
     source: key,
     authIndex: authIndex.trim(),
@@ -120,7 +124,7 @@ export function buildProviderHealthProbe(
     else if (authIndex) setHeaderIfMissing(headers, 'x-goog-api-key', '$TOKEN$');
     return {
       ...metadata,
-      url: `${root}/v1beta/models/${encodeURIComponent(normalizedModel)}:generateContent?alt=sse`,
+      url: `${root}/v1beta/models/${encodeURIComponent(normalizedModel)}:streamGenerateContent?alt=sse`,
       header: headers,
       protocol: 'gemini',
       data: JSON.stringify({
@@ -162,6 +166,7 @@ export function buildProviderHealthProbe(
       data: JSON.stringify({
         model: normalizedModel,
         input: 'hi',
+        max_output_tokens: 16,
         stream: true,
       }),
     };
@@ -175,7 +180,9 @@ export function buildProviderHealthProbe(
     data: JSON.stringify({
       model: normalizedModel,
       messages: [{ role: 'user', content: 'hi' }],
+      max_completion_tokens: 16,
       stream: true,
+      stream_options: { include_usage: true },
     }),
   };
 }
