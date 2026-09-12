@@ -74,6 +74,7 @@ import {
   apiAccessRecordIdentityFromRecord,
   apiAccessRecordIdentityFor,
   apiAccessRecordIdentityKey,
+  apiQuotaErrorMessage,
   loadApiAccessRecords,
   resolveApiAccessBalanceUrls,
   saveApiAccessBalanceEndpoint,
@@ -287,8 +288,9 @@ export const providerRecordsFromConfig = (
 
 export const loadProviderRecords = async (
   getConfig: (path: string) => Promise<unknown> = managementApi.get,
+  onProtocolError?: (protocol: ProviderSection, error: unknown) => void,
 ): Promise<Record<ProviderSection, Record<string, unknown>[]>> => (
-  await loadApiAccessRecords(getConfig)
+  await loadApiAccessRecords(getConfig, onProtocolError)
 );
 
 const rowFromRecord = (
@@ -849,8 +851,12 @@ export function ApiAccessPage() {
     if (showLoading) setLoading(true);
     setError('');
     try {
-      const nextRecords = await loadProviderRecords();
+      const failures: string[] = [];
+      const nextRecords = await loadProviderRecords(managementApi.get, (protocol, requestError) => {
+        failures.push(`${t(definitionFor(protocol).labelKey)}: ${apiQuotaErrorMessage(requestError)}`);
+      });
       setRecords(nextRecords);
+      if (failures.length > 0) setError(t('apiAccess.error.partialLoad', { errors: failures.join('; ') }));
       const recordEntries = (Object.entries(nextRecords) as [ProviderSection, Record<string, unknown>[]][])
         .flatMap(([section, items]) => items.map((record) => ({ section, record })));
       const identities = recordEntries.map(({ section, record }) => apiAccessRecordIdentityFromRecord(section, record));

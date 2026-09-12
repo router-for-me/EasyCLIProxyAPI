@@ -66,6 +66,18 @@ export const managementApi = {
   openAuthFilesDirectory: () => invoke<void>('open_auth_files_directory'),
 };
 
+export const managementApiErrorDetails = (error: unknown): { status: number; message: string } | null => {
+  const message = error instanceof Error ? error.message : String(error);
+  // management_request returns format_management_error's HTTP status in this prefix.
+  const match = /^管理 API 错误 \((\d{3})\)(?::\s*([\s\S]*))?$/.exec(message.trim());
+  return match ? { status: Number(match[1]), message: match[2] ?? '' } : null;
+};
+
+export const isManagementAuthenticationError = (error: unknown): boolean => {
+  const status = managementApiErrorDetails(error)?.status;
+  return status === 401 || status === 403;
+};
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

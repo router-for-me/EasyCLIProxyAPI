@@ -232,6 +232,7 @@ export const jaOverrides = {
   'quota.api.balanceUrl.conflict': '残高 URL の対応プロバイダーが推論 URL と異なります',
   'quota.api.balanceUrl.unsupported': '残高 URL は対応プロバイダーのホスト、または対応する推論プロバイダーと組み合わせたループバック URL にしてください',
   'quota.api.error.invalidProvider': 'API 接続タイプが無効です',
+  'quota.api.error.managementHttp': '管理 API リクエストに失敗しました（HTTP {status}）',
   'quota.api.error.invalidIdentity': 'API 接続レコード識別子が無効です',
   'quota.api.error.invalidUrl': '残高照会 URL が無効です',
   'quota.api.error.insecureUrl': '残高照会 URL は安全な HTTP(S) アドレスである必要があります',

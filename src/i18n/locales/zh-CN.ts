@@ -218,6 +218,7 @@ export const zhCN = {
   'quota.api.balanceUrl.conflict': '余额 URL 所属的支持提供商与推理 URL 不同',
   'quota.api.balanceUrl.unsupported': '余额 URL 必须使用支持的提供商主机，或与支持的推理提供商配合使用回环地址',
   'quota.api.error.invalidProvider': 'API 接入类型无效',
+  'quota.api.error.managementHttp': '管理 API 请求失败（HTTP {status}）',
   'quota.api.error.invalidIdentity': 'API 接入记录标识无效',
   'quota.api.error.invalidUrl': '余额查询 URL 无效',
   'quota.api.error.insecureUrl': '余额查询 URL 必须是安全的 HTTP(S) 地址',

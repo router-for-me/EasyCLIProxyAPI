@@ -17,6 +17,7 @@ import {
   saveApiQuotaBalanceUrl,
   validateBalanceUrl,
   flattenApiQuotaRecords,
+  withApiQuotaBalanceUrl,
   parseDeepSeekQuota,
   parseNovitaQuota,
   parseOpenRouterQuota,
@@ -30,7 +31,9 @@ import {
   pruneQuotaCache,
   pruneQuotaCacheNamespace,
   updateQuotaCache,
+  refreshQuotaCacheEntries,
 } from '../src/services/quotaCache';
+import type { QuotaState } from '../src/services/quotaService';
 
 const success = (body: unknown) => ({ status_code: 200, body });
 
@@ -104,6 +107,16 @@ describe('API quota hostname adapters', () => {
     expect(apiQuotaErrorMessage('api_balance.invalid_url')).toBe('余额查询 URL 无效');
     expect(apiQuotaErrorMessage(new Error('api_balance.invalid_base_url'))).toBe('API 接入 Base URL 无效');
     expect(apiQuotaErrorMessage('unexpected error')).toBe('unexpected error');
+  });
+
+  it.each([
+    ['zh-CN', '管理 API 请求失败（HTTP 500）'],
+    ['zh-TW', '管理 API 請求失敗（HTTP 500）'],
+    ['en', 'Management API request failed (HTTP 500)'],
+    ['ja', '管理 API リクエストに失敗しました（HTTP 500）'],
+  ] as const)('localizes management failures in %s while preserving the server detail', (locale, expected) => {
+    expect(apiQuotaErrorMessage(new Error('管理 API 错误 (500): upstream unavailable'), locale)).toBe(`${expected}: upstream unavailable`);
+    expect(apiQuotaErrorMessage('管理 API 错误 (500)', locale)).toBe(expected);
   });
 
   it('validates secure balance URLs and rejects conflicting supported vendors', () => {
@@ -342,9 +355,9 @@ describe('API quota source discovery and requests', () => {
   it('short-circuits OAuth loading when API source loading rejects', async () => {
     let oauthLoaded = false;
     await expect(loadQuotaSourceStages(
-      async () => { throw new Error('management 401'); },
+      async () => { throw new Error('管理 API 错误 (401): invalid management key'); },
       async () => { oauthLoaded = true; },
-    )).rejects.toThrow('management 401');
+    )).rejects.toThrow('(401)');
     expect(oauthLoaded).toBe(false);
   });
 
@@ -375,13 +388,13 @@ describe('API quota source discovery and requests', () => {
     const paths: string[] = [];
     get.mockImplementation(async (path) => {
       paths.push(path);
-      if (path === '/config') throw new Error('management 401');
+      if (path === '/config') throw new Error('管理 API 错误 (401): invalid management key');
       return { files: [] };
     });
     await expect(loadQuotaSourceStages(
       discoverApiQuotaSources,
       async () => { await managementApi.get('/auth-files'); },
-    )).rejects.toThrow('management 401');
+    )).rejects.toThrow('(401)');
     expect(paths).toEqual(['/config']);
     expect(post).not.toHaveBeenCalled();
   });
@@ -442,6 +455,114 @@ describe('API quota source discovery and requests', () => {
       expect(calls.at(-1)?.url).toBe(endpoint);
       expect(calls.at(-1)?.header).toEqual({ Authorization: 'Bearer direct-secret', Accept: 'application/json' });
     }
+  });
+});
+
+describe('quota loading failure isolation', () => {
+  it('keeps healthy API sources and loads OAuth after a provider returns 500', async () => {
+    const paths: string[] = [];
+    let oauthLoaded = false;
+    const result = await loadQuotaSourceStages(
+      () => discoverApiQuotaSources(async (path) => {
+        paths.push(path);
+        if (path === '/config') return {};
+        if (path === '/claude-api-key') throw new Error('管理 API 错误 (500): unavailable');
+        return { [path.slice(1)]: [{ 'api-key': 'test-key', 'base-url': 'https://api.deepseek.com/v1' }] };
+      }, async (queries) => queries.map(() => null)),
+      async () => { oauthLoaded = true; },
+    );
+    expect(oauthLoaded).toBe(true);
+    expect(paths.at(-1)).toBe('/gemini-api-key');
+    expect(result.sources).toHaveLength(3);
+    expect(result.failedProtocols).toEqual(['claude-api-key']);
+    expect(result.errors?.join(' ')).toContain('HTTP 500');
+  });
+
+  it.each([401, 403])('stops all later reads if authentication expires with %s', async (status) => {
+    const paths: string[] = [];
+    let oauthLoaded = false;
+    await expect(loadQuotaSourceStages(
+      () => discoverApiQuotaSources(async (path) => {
+        paths.push(path);
+        if (path === '/config') return {};
+        throw `管理 API 错误 (${status}): denied`;
+      }, async () => []),
+      async () => { oauthLoaded = true; },
+    )).rejects.toContain(`(${status})`);
+    expect(oauthLoaded).toBe(false);
+    expect(paths).toEqual(['/config', '/codex-api-key']);
+  });
+
+  it('still loads OAuth when the config endpoint has a non-authentication failure', async () => {
+    let oauthLoaded = false;
+    const result = await loadQuotaSourceStages(
+      async () => { throw new Error('管理 API 错误 (500): unavailable'); },
+      async () => { oauthLoaded = true; },
+    );
+    expect(oauthLoaded).toBe(true);
+    expect(result.errors?.[0]).toContain('HTTP 500');
+  });
+
+  it('isolates malformed balance metadata while retaining other saved endpoints and OAuth', async () => {
+    let oauthLoaded = false;
+    const result = await loadQuotaSourceStages(
+      () => discoverApiQuotaSources(async (path) => path === '/openai-compatibility' ? {
+        'openai-compatibility': [
+          { name: 'bad', 'base-url': 'invalid', 'api-key-entries': [{ 'api-key': 'bad-key' }] },
+          { name: 'healthy', 'base-url': 'https://custom.example/v1', 'api-key-entries': [{ 'api-key': 'good-key' }] },
+        ],
+      } : {}, async (queries) => {
+        if (queries.some((query) => query.recordName === 'bad')) throw 'api_balance.invalid_base_url';
+        return queries.map(() => 'https://api.deepseek.com/user/balance');
+      }),
+      async () => { oauthLoaded = true; },
+    );
+    expect(oauthLoaded).toBe(true);
+    expect(result.sources[0].configurationError).toBeTruthy();
+    expect(result.sources[1].configurationError).toBeUndefined();
+    expect(result.sources[1].adapter?.endpoint).toBe('https://api.deepseek.com/user/balance');
+    expect(result.errors).toHaveLength(1);
+  });
+});
+
+describe('balance endpoint cache invalidation', () => {
+  const sharedSources = () => flattenApiQuotaRecords('openai-compatibility', [{
+    name: 'Shared', 'base-url': 'https://custom.example/v1',
+    'api-key-entries': [{ 'api-key': 'first-key' }, { 'api-key': 'second-key' }],
+  }]);
+  const oldEndpoint = 'https://api.deepseek.com/user/balance';
+  const newEndpoint = 'https://openrouter.ai/api/v1/credits';
+
+  it('invalidates every key after rereading a record with a changed balance endpoint', async () => {
+    let endpoint = oldEndpoint;
+    const discover = () => discoverApiQuotaSources(async (path) => path === '/openai-compatibility'
+      ? { 'openai-compatibility': [{ name: 'Shared', 'base-url': 'https://custom.example/v1',
+        'api-key-entries': [{ 'api-key': 'first-key' }, { 'api-key': 'second-key' }] }] }
+      : {}, async (queries) => queries.map(() => endpoint));
+    const before = (await discover()).sources;
+    updateQuotaCache(Object.fromEntries(before.map((source) => [apiQuotaCacheKey(source), { status: 'success', rows: [], plan: 'old' }])));
+    endpoint = newEndpoint;
+    const after = (await discover()).sources;
+    pruneQuotaCacheNamespace('api-quota::', new Set(after.map(apiQuotaCacheKey)));
+    expect(after.map((source) => source.id)).toEqual(before.map((source) => source.id));
+    expect(after.map(apiQuotaCacheKey)).not.toEqual(before.map(apiQuotaCacheKey));
+    expect(getQuotaCacheSnapshot()).toEqual({});
+  });
+
+  it('rejects an old response after saving a new endpoint and preserves the new response', async () => {
+    const source = sharedSources()[0];
+    const oldSource = withApiQuotaBalanceUrl(source, oldEndpoint);
+    const newSource = withApiQuotaBalanceUrl(source, newEndpoint);
+    let completeOld!: (result: QuotaState) => void;
+    const pending = refreshQuotaCacheEntries([{ key: apiQuotaCacheKey(oldSource),
+      query: () => new Promise((resolve) => { completeOld = resolve; }) }]);
+    pruneQuotaCacheNamespace('api-quota::', new Set([apiQuotaCacheKey(newSource)]));
+    await refreshQuotaCacheEntries([{ key: apiQuotaCacheKey(newSource),
+      query: async () => ({ status: 'success', rows: [], plan: 'new' }) }]);
+    completeOld({ status: 'success', rows: [], plan: 'old' });
+    await pending;
+    expect(getQuotaCacheSnapshot()[apiQuotaCacheKey(oldSource)]).toBeUndefined();
+    expect(getQuotaCacheSnapshot()[apiQuotaCacheKey(newSource)]?.plan).toBe('new');
   });
 });
 

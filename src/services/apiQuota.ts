@@ -1,13 +1,15 @@
 import {
   apiCallErrorMessage,
   isRecord,
+  isManagementAuthenticationError,
   managementApi,
+  managementApiErrorDetails,
   readBoolean,
   readString,
   responseList,
 } from './managementApi';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentLocale, translate } from '../i18n';
+import { getCurrentLocale, translate, type AppLocale } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import type { QuotaAmount, QuotaRow, QuotaState } from './quotaService';
 import { API_QUOTA_CACHE_PREFIX } from './quotaCache';
@@ -50,6 +52,7 @@ export type ApiQuotaSource = {
 export type ApiQuotaDiscovery = {
   sources: ApiQuotaSource[];
   failedProtocols: ApiQuotaProtocol[];
+  errors?: string[];
 };
 
 export type ApiAccessRecordIdentity = {
@@ -515,8 +518,13 @@ export const flattenApiQuotaRecords = (
   ));
 };
 
-export const apiQuotaCacheKey = (source: Pick<ApiQuotaSource, 'id'>) =>
-  `${API_QUOTA_CACHE_PREFIX}${source.id}`;
+export const apiQuotaCacheKey = (source: Pick<ApiQuotaSource, 'id' | 'adapter' | 'balanceUrl'>) =>
+  `${API_QUOTA_CACHE_PREFIX}${source.id}::${hashIdentity(source.adapter?.endpoint ?? source.balanceUrl)}`;
+
+export const withApiQuotaBalanceUrl = (source: ApiQuotaSource, balanceUrl: string): ApiQuotaSource => {
+  const resolved = resolveApiQuotaAdapter(source.baseUrl, balanceUrl);
+  return { ...source, balanceUrl: resolved.value, adapter: resolved.adapter, configurationError: resolved.error };
+};
 
 export const apiAccessRecordIdentityFor = (
   source: Pick<ApiQuotaSource, 'protocol' | 'recordName' | 'baseUrl' | 'recordApiKeys'>,
@@ -555,10 +563,14 @@ const apiQuotaBackendErrorKeys: Partial<Record<string, MessageKey>> = {
   'api_balance.invalid_base_url': 'quota.api.error.invalidBaseUrl',
 };
 
-export const apiQuotaErrorMessage = (error: unknown): string => {
+export const apiQuotaErrorMessage = (error: unknown, locale: AppLocale = getCurrentLocale()): string => {
   const message = error instanceof Error ? error.message : String(error);
+  const httpError = managementApiErrorDetails(error);
+  if (httpError) {
+    return [translate(locale, 'quota.api.error.managementHttp', { status: httpError.status }), httpError.message].filter(Boolean).join(': ');
+  }
   const key = apiQuotaBackendErrorKeys[message];
-  return key ? apiQuotaText(key) : message;
+  return key ? translate(locale, key) : message;
 };
 
 export const resolveApiAccessBalanceUrls = async (
@@ -608,14 +620,21 @@ export const apiQuotaSourcesFromConfig = (config: unknown): ApiQuotaDiscovery =>
 
 export async function loadApiAccessRecords(
   get: (path: string) => Promise<unknown> = managementApi.get,
+  onProtocolError?: (protocol: ApiQuotaProtocol, error: unknown) => void,
 ): Promise<Record<ApiQuotaProtocol, Record<string, unknown>[]>> {
   await get('/config');
   const records = {} as Record<ApiQuotaProtocol, Record<string, unknown>[]>;
   for (const definition of apiQuotaSections) {
-    const response = await get(`/${definition.protocol}`);
-    records[definition.protocol] = Array.isArray(response)
-      ? response.filter(isRecord)
-      : responseList(response, definition.responseKey);
+    try {
+      const response = await get(`/${definition.protocol}`);
+      records[definition.protocol] = Array.isArray(response)
+        ? response.filter(isRecord)
+        : responseList(response, definition.responseKey);
+    } catch (error) {
+      if (!onProtocolError || isManagementAuthenticationError(error)) throw error;
+      records[definition.protocol] = [];
+      onProtocolError(definition.protocol, error);
+    }
   }
   return records;
 }
@@ -624,21 +643,43 @@ export async function discoverApiQuotaSources(
   get: (path: string) => Promise<unknown> = managementApi.get,
   resolveBalanceUrls: (queries: ApiAccessRecordIdentity[]) => Promise<Array<string | null>> = resolveApiAccessBalanceUrls,
 ): Promise<ApiQuotaDiscovery> {
-  const records = await loadApiAccessRecords(get);
+  const failedProtocols: ApiQuotaProtocol[] = [];
+  const errors: string[] = [];
+  const records = await loadApiAccessRecords(get, (protocol, error) => {
+    failedProtocols.push(protocol);
+    errors.push(`${apiQuotaProtocolLabel(protocol)}: ${apiQuotaErrorMessage(error)}`);
+  });
   const discovery = apiQuotaSourcesFromRecords(records);
-  const balanceUrls = discovery.sources.length > 0
-    ? await resolveBalanceUrls(discovery.sources.map(apiAccessRecordIdentityFor))
-    : [];
+  const queries = discovery.sources.map(apiAccessRecordIdentityFor);
+  let balanceUrls: Array<string | null> = [];
+  const metadataErrors = new Map<string, string>();
+  try {
+    if (queries.length > 0) balanceUrls = await resolveBalanceUrls(queries);
+  } catch {
+    // A malformed record must not hide unrelated credentials or discard their saved endpoints.
+    const resolvedByIdentity = new Map<string, string | null>();
+    for (const query of queries) {
+      const identity = apiAccessRecordIdentityKey(query);
+      if (resolvedByIdentity.has(identity) || metadataErrors.has(identity)) continue;
+      try {
+        resolvedByIdentity.set(identity, (await resolveBalanceUrls([query]))[0] ?? null);
+      } catch (error) {
+        const message = apiQuotaErrorMessage(error);
+        metadataErrors.set(identity, message);
+        errors.push(message);
+      }
+    }
+    balanceUrls = queries.map((query) => resolvedByIdentity.get(apiAccessRecordIdentityKey(query)) ?? null);
+  }
   return {
     ...discovery,
+    failedProtocols,
+    errors,
     sources: discovery.sources.map((source, index) => {
-      const balanceUrl = balanceUrls[index] ?? '';
-      const resolvedAdapter = resolveApiQuotaAdapter(source.baseUrl, balanceUrl);
+      const resolvedSource = withApiQuotaBalanceUrl(source, balanceUrls[index] ?? '');
       return {
-        ...source,
-        balanceUrl: resolvedAdapter.value,
-        adapter: resolvedAdapter.adapter,
-        configurationError: resolvedAdapter.error,
+        ...resolvedSource,
+        configurationError: metadataErrors.get(apiAccessRecordIdentityKey(queries[index])) ?? resolvedSource.configurationError,
       };
     }),
   };
@@ -649,7 +690,13 @@ export async function loadQuotaSourceStages(
   loadOAuthSources: () => Promise<void>,
   onApiSources?: (discovery: ApiQuotaDiscovery) => void | Promise<void>,
 ): Promise<ApiQuotaDiscovery> {
-  const apiSources = await loadApiSources();
+  let apiSources: ApiQuotaDiscovery;
+  try {
+    apiSources = await loadApiSources();
+  } catch (error) {
+    if (isManagementAuthenticationError(error)) throw error;
+    apiSources = { sources: [], failedProtocols: [], errors: [apiQuotaErrorMessage(error)] };
+  }
   await onApiSources?.(apiSources);
   await loadOAuthSources();
   return apiSources;

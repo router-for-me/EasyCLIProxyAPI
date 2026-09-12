@@ -219,6 +219,7 @@ export const en: Record<MessageKey, string> = {
   'quota.api.balanceUrl.conflict': 'The balance URL belongs to a different supported provider than the inference URL',
   'quota.api.balanceUrl.unsupported': 'The balance URL must use a supported provider host or a loopback URL with a supported inference provider',
   'quota.api.error.invalidProvider': 'Invalid API Access provider type',
+  'quota.api.error.managementHttp': 'Management API request failed (HTTP {status})',
   'quota.api.error.invalidIdentity': 'Invalid API Access record identifier',
   'quota.api.error.invalidUrl': 'Invalid balance query URL',
   'quota.api.error.insecureUrl': 'The balance query URL must be a secure HTTP(S) address',

@@ -14,6 +14,9 @@ import kimiIcon from '../assets/icons/kimi-light.svg';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import {
   apiQuotaCacheKey,
+  apiQuotaErrorMessage,
+  apiAccessRecordIdentityFor,
+  apiAccessRecordIdentityKey,
   apiQuotaProtocolLabel,
   apiQuotaSourceLabel,
   countApiQuotaSources,
@@ -23,6 +26,7 @@ import {
   saveApiQuotaBalanceUrl,
   isApiQuotaSourceQueryable,
   queryApiQuotaSource,
+  withApiQuotaBalanceUrl,
   type ApiQuotaSource,
   type ApiQuotaVendor,
 } from '../services/apiQuota';
@@ -41,11 +45,10 @@ import {
 } from '../services/quotaService';
 import {
   API_QUOTA_CACHE_PREFIX,
-  captureQuotaCacheGeneration,
-  commitQuotaCacheIfCurrent,
   getQuotaCacheSnapshot,
   pruneQuotaCache,
   pruneQuotaCacheNamespace,
+  refreshQuotaCacheEntries,
   updateQuotaCache,
   useQuotaCache,
 } from '../services/quotaCache';
@@ -74,13 +77,13 @@ export const apiAccessIconForQuotaSource = (
   return deepSeekAccess ? deepseekIcon : openaiIcon;
 };
 
-const REFRESH_CONCURRENCY = 4;
-
 export function QuotaPage() {
   const { locale, t } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const [files, setFiles] = useState<AuthFile[]>([]);
   const [apiSources, setApiSources] = useState<ApiQuotaSource[]>([]);
+  const apiSourcesRef = useRef(apiSources);
+  const sourceLoadRevision = useRef(0);
   const quotas = useQuotaCache();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -90,8 +93,23 @@ export function QuotaPage() {
   const [balanceEditorSaving, setBalanceEditorSaving] = useState(false);
   const querying = Object.values(quotas).some((quota) => quota.status === 'loading');
 
-  const loadOAuthFiles = useCallback(async () => {
+  const applyApiSources = useCallback((sources: ApiQuotaSource[]) => {
+    apiSourcesRef.current = sources;
+    setApiSources(sources);
+    pruneQuotaCacheNamespace(API_QUOTA_CACHE_PREFIX, new Set(sources.map(apiQuotaCacheKey)));
+    updateQuotaCache((current) => {
+      const next = { ...current };
+      sources.forEach((source) => {
+        const key = apiQuotaCacheKey(source);
+        if (!next[key]) next[key] = idleQuota();
+      });
+      return next;
+    });
+  }, []);
+
+  const loadOAuthFiles = useCallback(async (isCurrent: () => boolean) => {
     const payload = await managementApi.get('/auth-files');
+    if (!isCurrent()) return;
     const allFiles = dedupeAuthFiles(responseList(payload, 'files'));
     const nextFiles = allFiles.filter((file) => !readBoolean(file, 'disabled') && providerForFile(file));
     setFiles(nextFiles);
@@ -108,70 +126,59 @@ export function QuotaPage() {
   }, []);
 
   const loadSources = useCallback(async () => {
+    const revision = ++sourceLoadRevision.current;
     setLoading(true);
     setError('');
     try {
-      await loadQuotaSourceStages(discoverApiQuotaSources, loadOAuthFiles, (apiResult) => {
-        setApiSources(apiResult.sources);
-        const validApiKeys = new Set(apiResult.sources.map(apiQuotaCacheKey));
-        pruneQuotaCacheNamespace('api-quota::', validApiKeys);
-        updateQuotaCache((current) => {
-          const next = { ...current };
-          apiResult.sources.forEach((source) => {
-            const key = apiQuotaCacheKey(source);
-            if (!next[key]) next[key] = idleQuota();
-          });
-          return next;
-        });
+      await loadQuotaSourceStages(discoverApiQuotaSources, () => loadOAuthFiles(() => sourceLoadRevision.current === revision), (apiResult) => {
+        if (sourceLoadRevision.current !== revision) return;
+        applyApiSources(apiResult.sources);
+        if (apiResult.errors?.length) {
+          setError(`${t('quota.api.partialLoad')}: ${apiResult.errors.join('; ')}`);
+        }
       });
     } catch (requestError) {
-      setError(String(requestError));
-      setLoading(false);
-      return;
+      if (sourceLoadRevision.current === revision) setError(apiQuotaErrorMessage(requestError));
+    } finally {
+      if (sourceLoadRevision.current === revision) setLoading(false);
     }
-    setLoading(false);
-  }, [loadOAuthFiles]);
+  }, [applyApiSources, loadOAuthFiles, t]);
 
   useEffect(() => {
     void loadSources();
+    return () => { sourceLoadRevision.current += 1; };
   }, [loadSources]);
 
   const refreshOne = useCallback(async (file: AuthFile) => {
     const key = quotaKey(file);
-    if (getQuotaCacheSnapshot()[key]?.status === 'loading') return;
-    const cacheGeneration = captureQuotaCacheGeneration();
-    updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
-    const result = await loadQuota(file);
-    commitQuotaCacheIfCurrent(cacheGeneration, () => {
-      updateQuotaCache((current) => ({ ...current, [key]: result }));
-    });
+    await refreshQuotaCacheEntries([{ key, query: () => loadQuota(file) }]);
   }, []);
 
   const refreshApiOne = useCallback(async (source: ApiQuotaSource) => {
     const key = apiQuotaCacheKey(source);
-    if (getQuotaCacheSnapshot()[key]?.status === 'loading') return;
-    const cacheGeneration = captureQuotaCacheGeneration(API_QUOTA_CACHE_PREFIX);
-    updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
-    const result = await queryApiQuotaSource(source);
-    commitQuotaCacheIfCurrent(cacheGeneration, () => {
-      updateQuotaCache((current) => ({ ...current, [key]: result }));
-    }, API_QUOTA_CACHE_PREFIX);
+    await refreshQuotaCacheEntries([{ key, query: () => queryApiQuotaSource(source) }]);
   }, []);
 
   const saveBalanceUrl = useCallback(async (source: ApiQuotaSource, value: string) => {
     setBalanceEditorSaving(true);
     setBalanceEditorError('');
     try {
-      await saveApiQuotaBalanceUrl(source, value);
-      updateQuotaCache((current) => ({ ...current, [apiQuotaCacheKey(source)]: idleQuota() }));
-      await loadSources();
+      const balanceUrl = await saveApiQuotaBalanceUrl(source, value);
+      const identity = apiAccessRecordIdentityKey(apiAccessRecordIdentityFor(source));
+      sourceLoadRevision.current += 1;
+      applyApiSources(apiSourcesRef.current.map((current) => (
+        apiAccessRecordIdentityKey(apiAccessRecordIdentityFor(current)) === identity
+          ? withApiQuotaBalanceUrl(current, balanceUrl)
+          : current
+      )));
+      setLoading(false);
       setBalanceEditorSource(null);
     } catch (saveError) {
       setBalanceEditorError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
       setBalanceEditorSaving(false);
     }
-  }, [loadSources]);
+  }, [applyApiSources]);
 
   const resetCodexQuota = useCallback(async (file: AuthFile, quota: QuotaState) => {
     setError('');
@@ -195,35 +202,13 @@ export function QuotaPage() {
     if (Object.values(getQuotaCacheSnapshot()).some((quota) => quota.status === 'loading')) return;
     setRefreshing(true);
     setError('');
-    const cacheGeneration = captureQuotaCacheGeneration();
     const refreshableApiSources = apiSources.filter(isApiQuotaSourceQueryable);
-    const targets: Array<
-      | { kind: 'oauth'; file: AuthFile }
-      | { kind: 'api'; source: ApiQuotaSource }
-    > = [
-      ...files.map((file) => ({ kind: 'oauth' as const, file })),
-      ...refreshableApiSources.map((source) => ({ kind: 'api' as const, source })),
+    const targets = [
+      ...files.map((file) => ({ key: quotaKey(file), query: () => loadQuota(file) })),
+      ...refreshableApiSources.map((source) => ({ key: apiQuotaCacheKey(source), query: () => queryApiQuotaSource(source) })),
     ];
-    updateQuotaCache((current) => ({
-      ...current,
-      ...Object.fromEntries(targets.map((target) => {
-        const key = target.kind === 'oauth' ? quotaKey(target.file) : apiQuotaCacheKey(target.source);
-        return [key, { ...current[key], status: 'loading', rows: [] }];
-      })),
-    }));
     try {
-      for (let index = 0; index < targets.length; index += REFRESH_CONCURRENCY) {
-        const batch = targets.slice(index, index + REFRESH_CONCURRENCY);
-        await Promise.all(batch.map(async (target) => {
-          const key = target.kind === 'oauth' ? quotaKey(target.file) : apiQuotaCacheKey(target.source);
-          const result = target.kind === 'oauth'
-            ? await loadQuota(target.file)
-            : await queryApiQuotaSource(target.source);
-          commitQuotaCacheIfCurrent(cacheGeneration, () => {
-            updateQuotaCache((current) => ({ ...current, [key]: result }));
-          });
-        }));
-      }
+      await refreshQuotaCacheEntries(targets);
     } finally {
       setRefreshing(false);
     }
