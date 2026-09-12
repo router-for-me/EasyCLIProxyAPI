@@ -224,6 +224,8 @@ export async function checkProviderHealthProbe(
       responseLatencyMs: number;
     }>('provider_health_probe', {
       request: {
+        provider: probe.provider,
+        baseUrl: probe.baseUrl,
         protocol: probe.protocol,
         timeoutMs,
         data: probe.data,

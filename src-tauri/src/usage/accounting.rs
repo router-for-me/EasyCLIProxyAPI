@@ -134,11 +134,26 @@ pub(super) fn estimate(group: &UsageCostGroup, prices: &HashMap<String, ModelPri
         return unknown("tariff_missing");
     };
     let model = normalized_model_tail(&price.model);
-    let tier = if group.response_service_tier.trim().is_empty() {
+    let mut tier: &str = if group.response_service_tier.trim().is_empty() {
         &group.service_tier
     } else {
         &group.response_service_tier
     };
+    if model.starts_with("claude-") && price.source != "manual" {
+        let raw = &group.accounting["raw_usage"];
+        // Anthropic Priority is a negotiated commitment, not OpenAI Fast mode.
+        if tier.eq_ignore_ascii_case("priority") || raw["service_tier"] == "priority" {
+            return unknown("tariff_dimensions_missing");
+        }
+        if let Some(speed) = raw["speed"].as_str() {
+            if !matches!(speed, "fast" | "standard") || speed == "fast" && tier == "batch" {
+                return unknown("tariff_dimensions_missing");
+            }
+            if tier != "batch" {
+                tier = speed;
+            }
+        }
+    }
     let Some(cost) = tariff_cost(
         &model,
         tier,
@@ -160,6 +175,11 @@ pub(super) fn tariff_cost(
     a: &Value,
     timestamp: &str,
 ) -> Option<f64> {
+    let regional = if price.source == "manual" {
+        1.0
+    } else {
+        regional_multiplier(model, tier, a)?
+    };
     if price.source != "manual" && multimodal::supported(model) {
         let raw = &a["raw_usage"];
         if raw["unpriced_server_tools"] == true
@@ -170,7 +190,8 @@ pub(super) fn tariff_cost(
         {
             return None;
         }
-        return multimodal::cost(model, &tier.trim().to_ascii_lowercase(), t, &a["raw_usage"]);
+        return multimodal::cost(model, &tier.trim().to_ascii_lowercase(), t, &a["raw_usage"])
+            .map(|cost| cost * regional);
     }
     let price = enriched_model_price(model, price);
     if t.cache_read > 0 && !price.cache_read_configured && price.cache <= 0.0
@@ -398,8 +419,71 @@ pub(super) fn tariff_cost(
     {
         cost *= 1.1;
     }
+    cost *= regional;
     cost += tool_cost;
     cost.is_finite().then_some(cost)
+}
+
+// Only processing regions incur this premium; storage-only regions do not.
+// Sources: OpenAI pricing and Your data model/endpoint support (2026-09-12).
+fn regional_multiplier(model: &str, tier: &str, a: &Value) -> Option<f64> {
+    let host = reqwest::Url::parse(a["base_url"].as_str().unwrap_or(""))
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        .unwrap_or_default();
+    if !matches!(
+        host.as_str(),
+        "us.api.openai.com" | "eu.api.openai.com" | "ae.api.openai.com"
+    ) {
+        return Some(1.0);
+    }
+    if host == "eu.api.openai.com" && model == "gpt-6-astra" && matches!(tier, "fast" | "priority")
+    {
+        return None;
+    }
+    let recent = matches!(
+        model,
+        "gpt-6-astra"
+            | "gpt-5.6"
+            | "gpt-5.6-sol"
+            | "gpt-5.6-terra"
+            | "gpt-5.6-luna"
+            | "gpt-5.5"
+            | "gpt-5.5-pro"
+            | "gpt-5.4"
+            | "gpt-5.4-pro"
+            | "gpt-5.4-mini"
+            | "gpt-5.4-nano"
+    );
+    if recent {
+        if host == "ae.api.openai.com"
+            && !matches!(model, "gpt-5.6-luna" | "gpt-5.5" | "gpt-5.5-pro")
+        {
+            return None;
+        }
+        return Some(1.1);
+    }
+    if matches!(
+        model,
+        "gpt-5.3-codex"
+            | "gpt-5.2"
+            | "gpt-5.2-codex"
+            | "gpt-5.2-pro"
+            | "gpt-5.1"
+            | "gpt-5"
+            | "gpt-5-mini"
+            | "gpt-5-nano"
+            | "gpt-4.1"
+            | "gpt-4.1-mini"
+            | "gpt-4.1-nano"
+            | "gpt-4o"
+            | "gpt-4o-mini"
+            | "o3"
+            | "o4-mini"
+    ) {
+        return Some(1.0);
+    }
+    None
 }
 
 pub(super) fn snapshot(record: &UsageRecord, prices: &HashMap<String, ModelPrice>) -> Value {

@@ -403,3 +403,97 @@ fn inbox_does_not_persist_legacy_or_probe_credentials() {
         1
     );
 }
+
+#[test]
+fn accounting_migration_recovers_a_partially_added_schema() {
+    let c = db(vec![record("gemini-2.5-pro", 100, 20)]);
+    c.execute_batch("DROP INDEX idx_usage_event_id; ALTER TABLE usage_events DROP COLUMN event_id; UPDATE usage_events SET provider='gemini', output_tokens=10, reasoning_tokens=10;").unwrap();
+    initialize_usage_schema(&c).unwrap();
+    initialize_usage_schema(&c).unwrap();
+    assert!(usage_table_columns(&c, "usage_events")
+        .unwrap()
+        .contains("event_id"));
+    assert_eq!(
+        c.query_row("SELECT output_tokens FROM usage_events", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        20
+    );
+}
+
+#[test]
+fn accounting_migration_rolls_back_columns_when_data_update_fails() {
+    let c = db(vec![record("gemini-2.5-pro", 100, 20)]);
+    c.execute_batch("DROP INDEX idx_usage_event_id; ALTER TABLE usage_events DROP COLUMN event_id; ALTER TABLE usage_events DROP COLUMN accounting_json; UPDATE usage_events SET provider='gemini', output_tokens=10, reasoning_tokens=10; CREATE TRIGGER fail_accounting_update BEFORE UPDATE OF output_tokens ON usage_events BEGIN SELECT RAISE(ABORT, 'injected migration failure'); END;").unwrap();
+    assert!(initialize_usage_schema(&c).is_err());
+    let columns = usage_table_columns(&c, "usage_events").unwrap();
+    assert!(!columns.contains("accounting_json") && !columns.contains("event_id"));
+    c.execute_batch("DROP TRIGGER fail_accounting_update;")
+        .unwrap();
+    initialize_usage_schema(&c).unwrap();
+}
+
+#[test]
+fn claude_actual_speed_controls_the_tariff() {
+    let mut v = record("claude-opus-5", 1000, 1000);
+    v["raw_usage"] = json!({"speed":"fast"});
+    check(cost(vec![v]), 0.06);
+    let mut v = record("claude-opus-4-6", 1000, 1000);
+    v["service_tier"] = json!("fast");
+    v["raw_usage"] = json!({"speed":"standard"});
+    check(cost(vec![v]), 0.03);
+}
+#[test]
+fn claude_priority_commitment_does_not_use_fast_prices() {
+    let mut v = record("claude-opus-5", 1000, 1000);
+    v["response_service_tier"] = json!("priority");
+    let c = db(vec![v]);
+    assert_eq!(
+        load_usage_pricing(&c, &UsageQuery::default())
+            .unwrap()
+            .priced_requests,
+        0
+    );
+}
+#[test]
+fn regional_processing_uplift_excludes_storage_only_regions_and_manual_rates() {
+    let mut v = record("gpt-5.6-sol", 1000, 1000);
+    v["base_url"] = json!("https://eu.api.openai.com/v1");
+    check(cost(vec![v.clone()]), 0.0264);
+    v["base_url"] = json!("https://jp.api.openai.com/v1");
+    check(cost(vec![v]), 0.024);
+}
+
+#[test]
+fn durable_inbox_flushes_wal_before_acknowledgement() {
+    let root = std::env::temp_dir().join(format!("usage-ack-durability-{}", unique_file_stamp()));
+    let c = open_usage_database_at(&root).unwrap();
+    let sync: i64 = c.query_row("PRAGMA synchronous", [], |r| r.get(0)).unwrap();
+    drop(c);
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(sync, 2, "ACK requires synchronous FULL, not NORMAL");
+}
+
+#[test]
+fn overview_distinguishes_events_from_billable_generation_groups() {
+    let mut attempt = record("gpt-5.4", 100, 10);
+    attempt["kind"] = json!("attempt");
+    attempt["generation_id"] = json!("generation-1");
+    let retry = attempt.clone();
+    let mut tool = attempt.clone();
+    tool["kind"] = json!("tool");
+    let mut warm = attempt.clone();
+    warm["kind"] = json!("prewarm");
+    warm["generate"] = json!(false);
+    warm["generation_id"] = json!("local-prewarm");
+    let mut health = attempt.clone();
+    health["kind"] = json!("health_check");
+    health["generate"] = json!(false);
+    let c = db(vec![attempt, retry, tool, warm, health]);
+    let overview = load_usage_overview(&c, &UsageQuery::default()).unwrap();
+    assert_eq!(overview.total_requests, 5);
+    assert_eq!(overview.event_counts["attempt"], 2);
+    assert_eq!(overview.event_counts["tool"], 1);
+    assert_eq!(overview.event_counts["prewarm"], 1);
+    assert_eq!(overview.event_counts["logical_generations"], 1);
+}

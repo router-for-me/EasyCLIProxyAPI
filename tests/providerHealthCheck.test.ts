@@ -1,6 +1,8 @@
+import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { describe, expect, it } from 'bun:test';
 import {
   buildProviderHealthProbe,
+  checkProviderHealthProbe,
   mergeProviderHealthModels,
   primaryProviderHealthCredential,
   runProviderModelHealthChecks,
@@ -220,3 +222,20 @@ describe('API 接入健康检测', () => {
   });
 
 });
+
+ it('passes provider and upstream tariff scope through the actual IPC call', async () => {
+   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+   Object.defineProperty(globalThis, 'window', {value:{}, configurable:true});
+   let captured: any;
+   try {
+     mockIPC((command, args) => { expect(command).toBe('provider_health_probe'); captured=args; return {responseLatencyMs:10}; });
+     const result = await checkProviderHealthProbe('openai', 'https://custom.example/v1', 'gpt-5.4', 'test-only-key');
+     expect(result.success).toBe(true);
+     expect(captured.request.provider).toBe('openai');
+     expect(captured.request.baseUrl).toBe('https://custom.example/v1');
+   } finally {
+     clearMocks();
+     if (original) Object.defineProperty(globalThis, 'window', original);
+     else Reflect.deleteProperty(globalThis, 'window');
+   }
+ });

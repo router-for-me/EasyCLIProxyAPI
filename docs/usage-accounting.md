@@ -47,3 +47,11 @@ Only a 404 enables legacy queue fallback; a journal storage/network/ACK error re
 Native tests cover the original arithmetic reproductions, context boundaries, tier modifiers, Claude TTL, Gemini thinking/audio, image/realtime modalities, reported media cost, repeated polling, replay IDs, endpoint/transport filters, provider-specific manual rates, price snapshots, unknown usage/price dimensions, and credential redaction. Health parser tests cover final stream usage. New regressions were first observed failing, then fixed.
 
 The complete Rust test suite, Bun test suite and TypeScript/Vite build pass locally. On macOS, use a real directory for `TMPDIR`: existing backup tests intentionally reject symlink paths such as `/var`. Their symlink cleanup now uses the correct Unix operation while retaining Windows junction handling.
+
+## Independent review corrections
+
+Schema migration uses an atomic savepoint and repairs partially added accounting columns. The local inbox uses SQLite `synchronous=FULL`: a durable ACK must follow a flushed WAL commit, not merely a NORMAL-mode commit that could be lost on power failure. Overview counters are populated by event kind; logical generation counts deduplicate attempts and exclude prewarms/tools/probes.
+
+Direct health probes pass provider/base URL through IPC, preserve actual response tiers, and require a terminal response instead of treating the first text delta as proof of completeness. Error bodies are captured through the same bounded reader; aborted streams are partial. DeepSeek cache-hit and Gemini tool-input counters retain their provider semantics.
+
+Claude's actual `usage.speed` controls Fast pricing, including standard-speed fallback. Anthropic Priority commitments have no inferred Fast tariff. Eligible OpenAI US/EU processing endpoints receive the documented regional uplift; storage-only regions do not. Unsupported regional combinations remain unknown, and manual tariffs do not receive an extra automatic uplift. Sources: [Claude Fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode), [OpenAI data residency support](https://developers.openai.com/api/docs/guides/your-data#api-endpoint-tool-and-model-support), and the pricing sources above.

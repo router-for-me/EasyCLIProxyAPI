@@ -1201,13 +1201,7 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|error| format!("初始化 SQLite 使用记录结构失败: {error}"))?;
     ensure_usage_failure_columns(connection)?;
-    let columns = usage_table_columns(connection, "usage_events")?;
-    if !columns.contains("accounting_json") {
-        connection.execute_batch("ALTER TABLE usage_events ADD COLUMN accounting_json TEXT NOT NULL DEFAULT '{}'; ALTER TABLE usage_events ADD COLUMN event_id TEXT NOT NULL DEFAULT ''; UPDATE usage_events SET output_tokens = output_tokens + reasoning_tokens WHERE (lower(provider) IN ('gemini','antigravity','vertex') OR lower(executor_type) LIKE '%gemini%' OR lower(executor_type) LIKE '%antigravity%') AND reasoning_tokens > 0 AND total_tokens = input_tokens + output_tokens + reasoning_tokens;")
-            .map_err(|error| format!("Migrate usage accounting: {error}"))?;
-    }
-    connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_event_id ON usage_events(event_id) WHERE event_id != ''", [])
-        .map_err(|error| format!("Index usage identity: {error}"))?;
+    migrate_usage_accounting_columns(connection)?;
     connection
         .execute(
             "CREATE INDEX IF NOT EXISTS idx_usage_events_canceled_timestamp ON usage_events(canceled, timestamp_ms DESC)",
@@ -1217,6 +1211,51 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
     connection
         .pragma_update(None, "user_version", USAGE_DATABASE_SCHEMA_VERSION)
         .map_err(|error| format!("更新 SQLite 使用记录版本失败: {error}"))
+}
+
+fn migrate_usage_accounting_columns(connection: &Connection) -> Result<(), String> {
+    // A savepoint also works when an older migration already owns a transaction.
+    connection
+        .execute_batch("SAVEPOINT usage_accounting_columns")
+        .map_err(|error| format!("Begin accounting migration: {error}"))?;
+    let result = (|| -> rusqlite::Result<()> {
+        let mut statement = connection.prepare("PRAGMA table_info(usage_events)")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        for (name, definition) in [
+            ("accounting_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("event_id", "TEXT NOT NULL DEFAULT ''"),
+        ] {
+            if !columns.iter().any(|column| column == name) {
+                connection.execute_batch(&format!(
+                    "ALTER TABLE usage_events ADD COLUMN {name} {definition}"
+                ))?;
+            }
+        }
+        // This equality makes repairing an interrupted older migration idempotent.
+        connection.execute_batch("UPDATE usage_events SET output_tokens = output_tokens + reasoning_tokens
+            WHERE (lower(provider) IN ('gemini','antigravity','vertex') OR lower(executor_type) LIKE '%gemini%' OR lower(executor_type) LIKE '%antigravity%')
+            AND reasoning_tokens > 0 AND total_tokens = input_tokens + output_tokens + reasoning_tokens;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_event_id ON usage_events(event_id) WHERE event_id != '';")?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => connection
+            .execute_batch("RELEASE usage_accounting_columns")
+            .map_err(|error| format!("Commit accounting migration: {error}")),
+        Err(error) => {
+            connection
+                .execute_batch(
+                    "ROLLBACK TO usage_accounting_columns; RELEASE usage_accounting_columns",
+                )
+                .map_err(|rollback| {
+                    format!("Accounting migration failed: {error}; rollback failed: {rollback}")
+                })?;
+            Err(format!("Migrate usage accounting: {error}"))
+        }
+    }
 }
 
 fn ensure_usage_failure_columns(connection: &Connection) -> Result<(), String> {
@@ -1328,7 +1367,7 @@ fn open_usage_database_at(root: &Path) -> Result<Connection, String> {
         .pragma_update(None, "foreign_keys", "ON")
         .map_err(|error| format!("启用 SQLite foreign keys 失败: {error}"))?;
     connection
-        .pragma_update(None, "synchronous", "NORMAL")
+        .pragma_update(None, "synchronous", "FULL")
         .map_err(|error| format!("设置 SQLite synchronous 模式失败: {error}"))?;
     Ok(connection)
 }
@@ -2654,7 +2693,26 @@ fn load_usage_overview(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("读取 SQLite 使用趋势失败: {error}"))?;
 
+    let mut event_counts = serde_json::Map::new();
+    let mut counts_statement = connection.prepare(&format!(
+        "SELECT COALESCE(NULLIF(json_extract(accounting_json,'$.kind'),''),'legacy'), COUNT(*) FROM usage_events{} GROUP BY 1", filter.clause
+    )).map_err(|error| format!("Prepare usage kind counts: {error}"))?;
+    let counts = counts_statement
+        .query_map(params_from_iter(filter.params.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|error| format!("Count usage kinds: {error}"))?;
+    for count in counts {
+        let (kind, count) = count.map_err(|error| error.to_string())?;
+        event_counts.insert(kind, serde_json::json!(count));
+    }
+    let generations: i64 = connection.query_row(&format!(
+        "SELECT COUNT(DISTINCT CASE WHEN generate != 0 AND COALESCE(json_extract(accounting_json,'$.kind'),'attempt')='attempt' THEN NULLIF(json_extract(accounting_json,'$.generation_id'),'') END) FROM usage_events{}", filter.clause
+    ), params_from_iter(filter.params.iter()), |row| row.get(0)).map_err(|error| format!("Count logical generations: {error}"))?;
+    event_counts.insert("logical_generations".into(), serde_json::json!(generations));
+
     let mut overview = UsageOverview {
+        event_counts: Value::Object(event_counts),
         total_requests: from_sql_i64(summary.0),
         success_count: from_sql_i64(summary.1),
         failure_count: from_sql_i64(summary.2),
