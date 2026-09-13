@@ -19,6 +19,7 @@ static CATALOG_STATE: OnceLock<Result<RwLock<CatalogState>, String>> = OnceLock:
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CodexRuntimeModel {
     pub(crate) slug: String,
+    canonical_model_id: Option<String>,
     display_name: Option<String>,
     description: Option<String>,
     context_window: Option<u64>,
@@ -185,6 +186,7 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
 
         let make_runtime_model = |slug: &str, display_name: Option<String>| CodexRuntimeModel {
             slug: slug.to_string(),
+            canonical_model_id: optional_string(value, &["canonical_model_id"]),
             display_name,
             description: description.clone(),
             context_window,
@@ -448,7 +450,11 @@ fn prepare_catalog_with_customizations(
         if key.is_empty() {
             continue;
         }
-        if let Some(template) = sources.templates.get(&key) {
+        let template = sources.templates.get(&key).or_else(|| {
+            runtime.canonical_model_id.as_deref()
+                .and_then(|id| sources.templates.get(&normalize_id(id)))
+        });
+        if let Some(template) = template {
             let mut value = template.value.clone();
             value.insert("slug".to_string(), Value::String(runtime.slug.clone()));
             value.insert(
@@ -673,6 +679,12 @@ fn disable_fallback_capabilities(model: &mut Map<String, Value>) {
 
 fn runtime_capability_fields(value: &Value) -> Map<String, Value> {
     let mut fields = Map::new();
+    if let Some(visibility) = optional_string(value, &["visibility"])
+        .map(|visibility| visibility.to_ascii_lowercase())
+        .filter(|visibility| matches!(visibility.as_str(), "list" | "hide"))
+    {
+        fields.insert("visibility".into(), Value::String(visibility));
+    }
     if let Some(limit) = positive_u64_field(
         value,
         &["max_tokens", "max_completion_tokens", "max_output_tokens"],
@@ -710,6 +722,11 @@ fn runtime_capability_fields(value: &Value) -> Map<String, Value> {
 
 fn apply_runtime_capability_fields(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
     model.extend(runtime.capabilities.clone());
+    // The canonical identity chooses trusted instructions, not the capabilities
+    // of this route. Explicit runtime restrictions apply to native templates too.
+    if let Some(modalities) = &runtime.input_modalities {
+        model.insert("input_modalities".into(), serde_json::json!(modalities));
+    }
     if let Some(levels) = runtime
         .capabilities
         .get("supported_reasoning_levels")
@@ -925,6 +942,83 @@ mod tests {
 
     fn runtime(payload: Value) -> Vec<CodexRuntimeModel> {
         parse_runtime_models(&payload).unwrap()
+    }
+
+    #[test]
+    fn routing_alias_preserves_explicit_structured_instructions() {
+        let messages = serde_json::json!({"instructions_template":"Native {{personality}}", "instructions_variables":{"personality":"precise"}, "multi_agent":{"test":"retained"}});
+        let models = runtime(serde_json::json!({"models":[{
+            "slug":"personal/provider/A", "canonical_model_id":"A",
+            "base_instructions":"Native base", "model_messages":messages,
+            "include_plugin_usage_instructions":true, "include_apps_usage_instructions":true,
+            "include_skills_usage_instructions":false
+        }]}));
+        let mut sources = test_sources();
+        let template = &mut sources.templates.get_mut("a").unwrap().value;
+        template.insert("base_instructions".into(), Value::from("Native base"));
+        template.insert("model_messages".into(), messages.clone());
+        template.insert("include_plugin_usage_instructions".into(), Value::Bool(true));
+        template.insert("include_apps_usage_instructions".into(), Value::Bool(true));
+        template.insert("include_skills_usage_instructions".into(), Value::Bool(false));
+        let output = output_models(&prepare_catalog_with_sources(&models, &sources).unwrap());
+        assert_eq!(output[0]["slug"], "personal/provider/A");
+        assert_eq!(output[0]["base_instructions"], "Native base");
+        assert_eq!(output[0]["model_messages"], messages);
+        assert_eq!(output[0]["include_plugin_usage_instructions"], true);
+        assert_eq!(output[0]["include_apps_usage_instructions"], true);
+        assert_eq!(output[0]["include_skills_usage_instructions"], false);
+    }
+
+    #[test]
+    fn canonical_alias_overlays_route_modalities_and_visibility_without_changing_prompts() {
+        let mut sources = test_sources();
+        let template = &mut sources.templates.get_mut("a").unwrap().value;
+        template.insert(
+            "input_modalities".into(),
+            serde_json::json!(["text", "image"]),
+        );
+        template.insert("visibility".into(), Value::from("hide"));
+        template.insert(
+            "model_messages".into(),
+            serde_json::json!({"instructions_template":"Trusted instructions"}),
+        );
+        let models = runtime(serde_json::json!({"models":[
+            {"slug":"personal/text-only", "canonical_model_id":"A", "display_name":"P · Text",
+             "input_modalities":["text"], "visibility":"list", "base_instructions":"Untrusted"},
+            {"slug":"personal/hidden", "canonical_model_id":"A", "visibility":"hide"},
+            {"slug":"personal/unspecified", "canonical_model_id":"A"}
+        ]}));
+        let output = output_models(&prepare_catalog_with_sources(&models, &sources).unwrap());
+        let find = |id: &str| output.iter().find(|model| model["slug"] == id).unwrap();
+        let restricted = find("personal/text-only");
+        assert_eq!(restricted["input_modalities"], serde_json::json!(["text"]));
+        assert_eq!(restricted["visibility"], "list");
+        assert_eq!(restricted["display_name"], "P · Text");
+        assert_eq!(restricted["base_instructions"], "Known A");
+        assert_eq!(
+            restricted["model_messages"]["instructions_template"],
+            "Trusted instructions"
+        );
+        assert_eq!(find("personal/hidden")["visibility"], "hide");
+        assert_eq!(
+            find("personal/unspecified")["input_modalities"],
+            serde_json::json!(["text", "image"])
+        );
+        assert_eq!(find("personal/unspecified")["visibility"], "hide");
+    }
+
+    #[test]
+    fn canonical_template_requires_explicit_identity_and_ignores_remote_instructions() {
+        let models = runtime(serde_json::json!({"models":[
+            {"slug":"personal/provider/A", "canonical_model_id":"A"},
+            {"slug":"unrelated/A"},
+            {"slug":"another", "base_instructions":"Explicit replacement"}
+        ]}));
+        let output = output_models(&prepare_catalog_with_sources(&models, &test_sources()).unwrap());
+        let find = |id: &str| output.iter().find(|m| m["slug"] == id).unwrap();
+        assert_eq!(find("personal/provider/A")["base_instructions"], "Known A");
+        assert_ne!(find("unrelated/A")["base_instructions"], "Known A");
+        assert_ne!(find("another")["base_instructions"], "Explicit replacement");
     }
 
     fn output_models(catalog: &PreparedCodexCatalog) -> Vec<Map<String, Value>> {
