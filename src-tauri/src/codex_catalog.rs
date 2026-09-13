@@ -26,6 +26,7 @@ pub(crate) struct CodexRuntimeModel {
     context_source: &'static str,
     input_modalities: Option<Vec<String>>,
     default_reasoning_level: Option<String>,
+    capabilities: Map<String, Value>,
     hidden: bool,
 }
 
@@ -96,6 +97,7 @@ pub(crate) fn is_managed_model_field(field: &str) -> bool {
                 )
                 .map(String::as_str)
                 .chain(customizations::EDITABLE_FIELDS)
+                .chain(["max_tokens"])
                 .map(str::to_string)
                 .collect()
         })
@@ -196,6 +198,7 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
             },
             input_modalities: input_modalities.clone(),
             default_reasoning_level: default_reasoning_level.clone(),
+            capabilities: runtime_capability_fields(value),
             hidden,
         };
 
@@ -452,7 +455,7 @@ fn prepare_catalog_with_customizations(
             value.insert("slug".to_string(), Value::String(runtime.slug.clone()));
             value.insert(
                 "display_name".to_string(),
-                Value::String(runtime.slug.clone()),
+                Value::String(runtime.display_name.clone().unwrap_or_else(|| runtime.slug.clone())),
             );
             apply_runtime_context_windows(&mut value, runtime);
             enable_fast_mode(&mut value);
@@ -477,6 +480,9 @@ fn prepare_catalog_with_customizations(
     }
 
     for entry in &mut entries {
+        if let Some(runtime) = runtime_models.iter().find(|runtime| runtime.slug == string_value(&entry.value, "slug")) {
+            apply_runtime_capability_fields(&mut entry.value, runtime);
+        }
         customizations::apply_customizations(&mut entry.value, customizations)?;
     }
 
@@ -521,6 +527,7 @@ fn prepare_catalog_with_customizations(
         .map(|entry| AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: string_value(&entry.value, "slug"),
             alias: optional_map_string(&entry.value, "display_name").filter(|display| {
                 !display.eq_ignore_ascii_case(&string_value(&entry.value, "slug"))
@@ -666,6 +673,83 @@ fn disable_fallback_capabilities(model: &mut Map<String, Value>) {
     model.insert("upgrade".to_string(), Value::Null);
     model.insert("availability_nux".to_string(), Value::Null);
     model.remove("minimal_client_version");
+}
+
+fn runtime_capability_fields(value: &Value) -> Map<String, Value> {
+    let mut fields = Map::new();
+    if let Some(limit) = positive_u64_field(
+        value,
+        &["max_tokens", "max_completion_tokens", "max_output_tokens"],
+    ) {
+        fields.insert("max_tokens".into(), Value::from(limit));
+    }
+    if let Some(levels) = value
+        .get("supported_reasoning_levels")
+        .and_then(Value::as_array)
+    {
+        let levels = levels
+            .iter()
+            .filter_map(|level| {
+                let effort = level
+                    .as_str()
+                    .or_else(|| level.get("effort").and_then(Value::as_str))?;
+                is_allowed_reasoning_level(effort).then(|| serde_json::json!({
+                "effort": effort,
+                "description": level.get("description").and_then(Value::as_str).unwrap_or(effort)
+            }))
+            })
+            .collect::<Vec<_>>();
+        fields.insert("supported_reasoning_levels".into(), Value::Array(levels));
+    }
+    if let Some(tiers) = value.get("service_tiers").and_then(Value::as_array) {
+        let tiers = tiers
+            .iter()
+            .filter(|tier| tier.get("id").and_then(Value::as_str).is_some())
+            .cloned()
+            .collect();
+        fields.insert("service_tiers".into(), Value::Array(tiers));
+    }
+    fields
+}
+
+fn apply_runtime_capability_fields(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
+    model.extend(runtime.capabilities.clone());
+    if let Some(levels) = runtime
+        .capabilities
+        .get("supported_reasoning_levels")
+        .and_then(Value::as_array)
+    {
+        let default = runtime
+            .default_reasoning_level
+            .as_deref()
+            .filter(|default| levels.iter().any(|level| level["effort"] == *default))
+            .or_else(|| levels.first().and_then(|level| level["effort"].as_str()));
+        model.insert(
+            "default_reasoning_level".into(),
+            default.map(Value::from).unwrap_or(Value::Null),
+        );
+    }
+    if let Some(tiers) = runtime
+        .capabilities
+        .get("service_tiers")
+        .and_then(Value::as_array)
+    {
+        let fast = tiers.iter().any(|tier| tier["id"] == "priority");
+        model.insert(
+            "additional_speed_tiers".into(),
+            if fast {
+                serde_json::json!(["fast"])
+            } else {
+                serde_json::json!([])
+            },
+        );
+        if !tiers
+            .iter()
+            .any(|tier| Some(&tier["id"]) == model.get("default_service_tier"))
+        {
+            model.insert("default_service_tier".into(), Value::Null);
+        }
+    }
 }
 
 fn enable_fast_mode(model: &mut Map<String, Value>) {
@@ -1074,6 +1158,7 @@ mod tests {
             AgentModelOption {
                 input_modalities: None,
                 harness_metadata: None,
+            catalog_metadata: None,
                 name: "GPT-Test".to_string(),
                 alias: None,
                 is_alias: false,
@@ -1082,6 +1167,7 @@ mod tests {
             AgentModelOption {
                 input_modalities: None,
                 harness_metadata: None,
+            catalog_metadata: None,
                 name: "unmatched".to_string(),
                 alias: None,
                 is_alias: false,
@@ -1090,6 +1176,7 @@ mod tests {
             AgentModelOption {
                 input_modalities: None,
                 harness_metadata: None,
+            catalog_metadata: None,
                 name: "max-only".to_string(),
                 alias: None,
                 is_alias: false,
@@ -1230,23 +1317,19 @@ mod tests {
             }
         }
         assert_eq!(model["slug"], "a");
-        assert_eq!(model["display_name"], "a");
+        assert_eq!(model["display_name"], "Overwrite");
         assert_eq!(model["nested"]["unknown"], true);
         assert_eq!(model["context_window"], 1);
         assert_eq!(model["max_context_window"], 1);
         assert_eq!(
             model["service_tiers"],
-            serde_json::json!([{
-                "id": "priority",
-                "name": "Fast",
-                "description": "1.5x speed, increased usage"
-            }])
+            serde_json::json!([])
         );
-        assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
+        assert_eq!(model["additional_speed_tiers"], serde_json::json!([]));
     }
 
     #[test]
-    fn known_template_uses_runtime_slug_as_display_name() {
+    fn known_template_preserves_runtime_display_name_without_changing_route() {
         let runtime = runtime(serde_json::json!({"models":[{
             "id":"A",
             "display_name":"Friendly A"
@@ -1255,11 +1338,11 @@ mod tests {
         let model = &output_models(&catalog)[0];
 
         assert_eq!(model["slug"], "A");
-        assert_eq!(model["display_name"], "A");
+        assert_eq!(model["display_name"], "Friendly A");
     }
 
     #[test]
-    fn known_template_preserves_its_reasoning_levels_and_default() {
+    fn known_template_honors_explicit_runtime_reasoning_levels() {
         let mut sources = test_sources();
         let template = &mut sources.templates.get_mut("a").unwrap().value;
         template.insert(
@@ -1282,8 +1365,8 @@ mod tests {
         let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
         let model = &output_models(&catalog)[0];
 
-        assert_eq!(model["default_reasoning_level"], "medium");
-        assert_eq!(reasoning_efforts(model), ["low", "medium", "max"]);
+        assert_eq!(model["default_reasoning_level"], "high");
+        assert_eq!(reasoning_efforts(model), ["low", "high"]);
     }
 
     #[test]
@@ -1336,12 +1419,12 @@ mod tests {
         let catalog = prepare_catalog_with_sources(&runtime, &test_sources()).unwrap();
         let model = &output_models(&catalog)[0];
         assert_eq!(model["display_name"], "C");
-        assert!(reasoning_efforts(model).is_empty());
+        assert_eq!(reasoning_efforts(model), ["low", "high"]);
         assert_eq!(model["context_window"], 200_000);
         assert_eq!(model["max_context_window"], 200_000);
         assert_eq!(model["input_modalities"], serde_json::json!(["image"]));
         assert_eq!(model["supports_image_detail_original"], false);
-        assert_eq!(model["default_reasoning_level"], Value::Null);
+        assert_eq!(model["default_reasoning_level"], "high");
         assert_eq!(model["visibility"], "hide");
         assert_eq!(
             model["base_instructions"],
@@ -1350,11 +1433,7 @@ mod tests {
         assert_eq!(model["supports_search_tool"], false);
         assert_eq!(
             model["service_tiers"],
-            serde_json::json!([{
-                "id": "priority",
-                "name": "Fast",
-                "description": "1.5x speed, increased usage"
-            }])
+            serde_json::json!([{"id":"priority"}])
         );
         assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
     }
@@ -1515,7 +1594,7 @@ mod tests {
     }
 
     #[test]
-    fn fallback_does_not_invent_reasoning_capabilities_from_runtime_metadata() {
+    fn fallback_uses_supported_runtime_effort_when_default_is_invalid() {
         let runtime = runtime(serde_json::json!({"models":[{
             "id":"C",
             "supported_reasoning_levels":["xhigh"],
@@ -1530,8 +1609,8 @@ mod tests {
         assert_eq!(model["web_search_tool_type"], "text");
         assert_eq!(model["availability_nux"], Value::Null);
         assert_eq!(model["upgrade"], Value::Null);
-        assert_eq!(model["default_reasoning_level"], Value::Null);
-        assert!(reasoning_efforts(model).is_empty());
+        assert_eq!(model["default_reasoning_level"], "xhigh");
+        assert_eq!(reasoning_efforts(model), ["xhigh"]);
     }
 
     #[test]

@@ -27,6 +27,7 @@ fn models() -> Vec<AgentModelOption> {
         .map(|name| AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: name.into(),
             alias: None,
             is_alias: false,
