@@ -103,6 +103,7 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("max-retry-credentials = 0"));
     assert!(content.contains("max-retry-interval = 30"));
     assert!(content.contains("streaming-bootstrap-retries = 0"));
+    assert!(content.contains("api-access-order-scheduling = false"));
 }
 
 #[test]
@@ -199,4 +200,19 @@ fn physical_window_size_uses_display_scale_and_ignores_minimized_sizes() {
     );
     assert!(logical_window_size_from_physical(&tauri::PhysicalSize::new(0, 0), 1.0).is_none());
     assert!(logical_window_size_from_physical(&physical_size, 0.0).is_none());
+}
+
+#[test]
+fn api_access_order_scheduling_defaults_off_and_round_trips() {
+    let legacy = toml::from_str::<GuiConfigFile>("port = 8317\n").unwrap();
+    assert!(!legacy.api_access_order_scheduling);
+
+    let config = GuiConfigFile {
+        api_access_order_scheduling: true,
+        ..GuiConfigFile::default()
+    };
+    let content = toml::to_string_pretty(&config).unwrap();
+    assert!(content.contains("api-access-order-scheduling = true"));
+    let restored = toml::from_str::<GuiConfigFile>(&content).unwrap();
+    assert!(restored.api_access_order_scheduling);
 }

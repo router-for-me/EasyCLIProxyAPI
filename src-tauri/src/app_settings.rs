@@ -38,6 +38,23 @@ pub(crate) fn get_gui_settings(
 }
 
 #[tauri::command]
+pub(crate) fn get_api_access_order_scheduling(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<bool, String> {
+    let config = gui_config_state.snapshot()?;
+    Ok(config.api_access_order_scheduling)
+}
+
+#[tauri::command]
+pub(crate) fn set_api_access_order_scheduling(
+    enabled: bool,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<bool, String> {
+    gui_config_state.set_api_access_order_scheduling(enabled)?;
+    Ok(enabled)
+}
+
+#[tauri::command]
 pub(crate) fn resolve_api_access_remarks(
     queries: Vec<ApiAccessRemarkQuery>,
     gui_config_state: tauri::State<'_, GuiConfigState>,

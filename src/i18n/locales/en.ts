@@ -1135,6 +1135,10 @@ export const en: Record<MessageKey, string> = {
   'apiAccess.notice.deleted': 'Connection deleted',
   'apiAccess.notice.enabled': 'Connection enabled',
   'apiAccess.notice.disabled': 'Connection disabled',
+  'apiAccess.orderScheduling': 'Schedule by list order',
+  'apiAccess.orderSchedulingHint':
+    'When enabled, dragging a connection writes its list position into the priority field, so the core fails over strictly from top to bottom within this category. Existing priorities of untouched connections are overwritten on the next drag. Turning it off does not clear written priorities.',
+  'apiAccess.orderSchedulingApplied': 'Priorities synced from the current list order',
   'apiAccess.title': 'API Access',
   'apiAccess.count': '{count} connections',
   'apiAccess.add': 'Add',
