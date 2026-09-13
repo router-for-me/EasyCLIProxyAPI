@@ -12,7 +12,7 @@ export class AppErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('EasyCLIProxyAPI 渲染异常', error, info.componentStack);
+    console.error('EasyCLIProxyAPI render exception', error, info.componentStack);
   }
 
   render() {

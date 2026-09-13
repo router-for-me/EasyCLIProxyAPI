@@ -3650,14 +3650,14 @@ fn api_key_category_label(remark: String, display: String) -> String {
     } else if !display.is_empty() {
         mask_api_key(&display)
     } else {
-        "未记录密钥".to_string()
+        "Unrecorded Key".to_string()
     }
 }
 
 fn usage_source_display(config: &GuiConfigFile, provider: &str, source: &str) -> String {
     let source = source.trim();
     if source.is_empty() {
-        return "未知来源".to_string();
+        return "Unknown Source".to_string();
     }
     if let Some(remark) = config.api_access_remark_for_source(provider, source) {
         return remark.to_string();

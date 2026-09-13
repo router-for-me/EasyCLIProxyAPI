@@ -170,9 +170,9 @@ pub(crate) async fn check_app_update(
     let unsupported_reason = if auto_update_supported {
         None
     } else if portable_support != Some(true) {
-        Some("当前程序不是支持自动升级的便携版，请手动下载首个支持版本".to_string())
+        Some("Current application is not a portable build supporting automatic updates; please download manually".to_string())
     } else {
-        Some("更新清单不包含当前平台或架构".to_string())
+        Some("Update manifest does not include current platform or architecture".to_string())
     };
 
     let pending = if update_available && auto_update_supported {
@@ -244,7 +244,7 @@ pub(crate) async fn fetch_portable_update_manifest(
             Err(error) => failures.push(format!("{}: {error}", candidate.display_name())),
         }
     }
-    Err(format!("所有软件版本检测源均失败: {}", failures.join("; ")))
+    Err(format!("All application version check sources failed: {}", failures.join("; ")))
 }
 
 pub(crate) async fn fetch_portable_update_manifest_from_gitcode(
@@ -291,11 +291,11 @@ pub(crate) async fn fetch_portable_update_manifest_url(
 }
 
 pub(crate) fn configured_gitcode_gui_repository() -> Option<&'static str> {
-    configured_gitcode_repository(option_env!("GITCODE_GUI_REPOSITORY"))
+    configured_gitcode_repository(option_env!("GITCODE_GUI_REPOSITORY").or(Some("lzt404/EasyCLIProxyAPI")))
 }
 
 pub(crate) fn configured_gitcode_core_repository() -> Option<&'static str> {
-    configured_gitcode_repository(option_env!("GITCODE_CORE_REPOSITORY"))
+    configured_gitcode_repository(option_env!("GITCODE_CORE_REPOSITORY").or(Some("lzt404/CLIProxyAPI")))
 }
 
 pub(crate) fn configured_gitcode_repository(
@@ -1072,7 +1072,7 @@ pub(crate) async fn download_portable_update_archive(
             Err(error) => failures.push(error),
         }
     }
-    Err(format!("所有应用更新下载源均失败: {}", failures.join("; ")))
+    Err(format!("All application update download sources failed: {}", failures.join("; ")))
 }
 
 pub(crate) fn portable_update_download_urls(

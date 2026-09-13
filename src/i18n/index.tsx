@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { en, ja, zhCN, zhTW, type MessageKey, type MessageVariables } from './resources';
 
 export type AppLocale = 'zh-CN' | 'zh-TW' | 'ja' | 'en';
+export type { MessageKey };
 
 export const languageOptions: ReadonlyArray<{
   value: AppLocale;

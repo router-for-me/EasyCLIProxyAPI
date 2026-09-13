@@ -93,6 +93,7 @@ type ProviderDefinition = {
   openAi: boolean;
 };
 
+
 type ProviderRow = {
   section: ProviderSection;
   index: number;

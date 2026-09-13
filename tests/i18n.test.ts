@@ -125,4 +125,15 @@ describe('i18n', () => {
       expect(translate(locale, 'usage.stat.tokens')).toMatch(/tokens?/i);
     }
   });
+
+  it('translates easy mode keys in English with 100% English coverage', () => {
+    expect(translate('en', 'easyMode.subtitle')).toBe('Streamlined Agent and Model Setup Guide');
+    expect(translate('en', 'easyMode.guide.button')).toBe('Walkthrough');
+    expect(translate('en', 'easyMode.oauth.loggedInCount', { count: 3 })).toBe('3 account(s) signed in');
+    expect(translate('en', 'apiAccess.provider.openaiCompatibility')).toBe('OpenAI Compatible');
+
+    const chineseRegex = /[\u4e00-\u9fa5]/;
+    const chineseEntries = Object.entries(en).filter(([, value]) => chineseRegex.test(value));
+    expect(chineseEntries).toEqual([]);
+  });
 });
