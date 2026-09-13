@@ -366,6 +366,7 @@ fn workbuddy_switch_refreshes_retained_credentials_and_metadata() {
             context_window: Some(128_000),
             input_modalities: Some(vec!["text".into(), "image".into()]),
             harness_metadata: None,
+            catalog_metadata: None,
         }],
     )
     .unwrap();
@@ -437,6 +438,7 @@ fn workbuddy_metadata_and_model_extensions_survive_reapply() {
             context_window: Some(128_000),
             input_modalities: Some(vec!["text".into(), "image".into()]),
             harness_metadata: None,
+            catalog_metadata: None,
         }],
     )
     .unwrap();
