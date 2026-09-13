@@ -1,5 +1,114 @@
 use super::*;
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApiAccessRecordIdentityInput {
+    pub(crate) provider_section: String,
+    pub(crate) record_name: String,
+    pub(crate) base_url: String,
+    pub(crate) api_keys: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ApiAccessBalanceEndpointUpdate {
+    pub(crate) previous_identity: Option<ApiAccessRecordIdentityInput>,
+    pub(crate) next_identity: Option<ApiAccessRecordIdentityInput>,
+    pub(crate) balance_url: String,
+}
+
+fn api_access_record_identity_input(
+    input: &ApiAccessRecordIdentityInput,
+) -> Result<(String, String), String> {
+    Ok((
+        input.provider_section.trim().to_string(),
+        api_access_record_identity(
+            &input.provider_section,
+            &input.record_name,
+            &input.base_url,
+            &input.api_keys,
+        )?,
+    ))
+}
+
+#[tauri::command]
+pub(crate) fn resolve_api_access_balance_urls(
+    queries: Vec<ApiAccessRecordIdentityInput>,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<Vec<Option<String>>, String> {
+    let config = gui_config_state.snapshot()?;
+    queries
+        .iter()
+        .map(|query| {
+            let (provider_section, record_identity) = api_access_record_identity_input(query)?;
+            Ok(config
+                .api_balance_endpoints
+                .iter()
+                .find(|entry| {
+                    entry.provider_section == provider_section
+                        && entry.record_identity == record_identity
+                })
+                .map(|entry| entry.balance_url.clone()))
+        })
+        .collect()
+}
+
+pub(crate) fn apply_api_access_balance_endpoint_update(
+    config: &mut GuiConfigFile,
+    update: &ApiAccessBalanceEndpointUpdate,
+) -> Result<(), String> {
+    let previous = update
+        .previous_identity
+        .as_ref()
+        .map(api_access_record_identity_input)
+        .transpose()?;
+    let next = update
+        .next_identity
+        .as_ref()
+        .map(api_access_record_identity_input)
+        .transpose()?;
+    let balance_url = update.balance_url.trim().to_string();
+    if let Some((provider_section, record_identity)) = next.as_ref() {
+        if !balance_url.is_empty() {
+            validate_gui_api_balance_endpoint(&GuiApiBalanceEndpoint {
+                provider_section: provider_section.clone(),
+                record_identity: record_identity.clone(),
+                balance_url: balance_url.clone(),
+            })?;
+        }
+    }
+    config.api_balance_endpoints.retain(|entry| {
+        let previous_match = previous.as_ref().is_some_and(|(section, identity)| {
+            entry.provider_section == *section && entry.record_identity == *identity
+        });
+        let next_match = next.as_ref().is_some_and(|(section, identity)| {
+            entry.provider_section == *section && entry.record_identity == *identity
+        });
+        !previous_match && !next_match
+    });
+    if let Some((provider_section, record_identity)) = next.as_ref() {
+        if !balance_url.is_empty() {
+            config.api_balance_endpoints.push(GuiApiBalanceEndpoint {
+                provider_section: provider_section.clone(),
+                record_identity: record_identity.clone(),
+                balance_url: reqwest::Url::parse(&balance_url)
+                    .map_err(|_| API_BALANCE_INVALID_URL.to_string())?
+                    .to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn save_api_access_balance_endpoint(
+    update: ApiAccessBalanceEndpointUpdate,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<(), String> {
+    gui_config_state.update(|config| apply_api_access_balance_endpoint_update(config, &update))?;
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn health_check() -> &'static str {
     "EasyCLIProxyAPI Rust backend is ready"

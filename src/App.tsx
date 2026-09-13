@@ -6,6 +6,7 @@ import {
   Check,
   ChevronUp,
   ExternalLink,
+  Gauge,
   History,
   House,
   Languages,
@@ -29,6 +30,7 @@ import { OAuthManagementPage } from './pages/ManagementPages';
 import { AgentsPage } from './pages/AgentsPage';
 import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
+import { QuotaPage } from './pages/QuotaPage';
 import { languageOptions, useI18n } from './i18n';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
@@ -75,6 +77,12 @@ const pages = [
     component: ApiAccessPage,
   },
   {
+    id: 'quota',
+    labelKey: 'app.nav.quota',
+    icon: Gauge,
+    component: QuotaPage,
+  },
+  {
     id: 'usage-records',
     labelKey: 'app.nav.usageRecords',
     icon: History,
@@ -87,6 +95,8 @@ const pages = [
     component: AgentsPage,
   },
 ] as const;
+
+export const appPageIds = pages.map((page) => page.id);
 
 type PageId = (typeof pages)[number]['id'];
 type WindowsCloseAction = 'exit' | 'minimize-to-tray';

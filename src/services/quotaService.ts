@@ -22,9 +22,16 @@ export type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
 export type QuotaRow = {
   label: string;
   remainingPercent: number | null;
+  amount?: QuotaAmount;
   reset?: string;
   resetAtMs?: number;
   detail?: string;
+};
+export type QuotaAmount = {
+  remaining: number | null;
+  used: number | null;
+  total: number | null;
+  unit: string;
 };
 export type QuotaState = {
   status: QuotaStatus;

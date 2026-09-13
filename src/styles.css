@@ -9119,46 +9119,119 @@ body.table-col-resizing * {
   font-size: var(--font-size-label);
 }
 
-.quota-group-list {
+.quota-page-heading > div:first-child {
   display: grid;
-  gap: 18px;
+  gap: 5px;
 }
 
-.quota-provider-group {
+.quota-source-sections {
   display: grid;
-  gap: 10px;
+  gap: 26px;
+  margin-top: 18px;
 }
 
-.quota-group-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.quota-source-section {
+  display: grid;
   gap: 12px;
-  color: var(--theme-7a746c);
-  font-size: var(--font-size-label);
 }
 
-.quota-group-heading > div {
-  display: flex;
+.quota-source-section-heading {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 11px;
 }
 
-.quota-group-heading h2 {
+.quota-source-section-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 9px;
+}
+
+.quota-oauth-section .quota-source-section-icon {
+  background: var(--theme-f1ecfb);
+  color: var(--theme-654f91);
+}
+
+.quota-api-section .quota-source-section-icon {
+  background: var(--theme-eef7f0);
+  color: var(--theme-2f6b3a);
+}
+
+.quota-source-section-heading h2 {
   margin: 0;
   color: var(--theme-2d2a26);
   font-size: var(--font-size-panel-title);
 }
 
-.quota-group-heading .provider-logo {
-  width: 24px;
-  height: 24px;
+.quota-source-section-heading > span {
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-label);
 }
 
-.real-quota-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+.quota-source-badge {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: var(--font-size-meta);
+  white-space: nowrap;
+}
+
+.quota-source-badge.oauth {
+  background: var(--theme-f5f1ff);
+  color: var(--theme-654f91);
+}
+
+.quota-source-badge.api {
+  background: var(--theme-eef7f0);
+  color: var(--theme-2f6b3a);
+}
+
+.quota-page .real-quota-card {
   gap: 12px;
+  padding: 14px;
+}
+
+.quota-credential-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quota-api-section .real-quota-card {
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.quota-balance-url-dialog {
+  width: min(560px, 100%);
+  height: auto;
+  grid-template-rows: none;
+  gap: 16px;
+}
+
+.quota-balance-url-source,
+.quota-balance-url-notice {
+  margin: 0;
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-body);
+}
+
+.quota-balance-url-notice {
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--theme-f4f2ec);
+}
+
+.api-balance-url-hint {
+  display: block;
+  margin: -4px 0 10px;
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
 }
 
 .real-quota-card {
@@ -9178,6 +9251,27 @@ body.table-col-resizing * {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.real-quota-card-header .quota-card-copy {
+  flex: 1 1 auto;
+}
+
+.real-quota-card-header .quota-card-title-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.real-quota-card-header .quota-source-badge {
+  padding: 3px 6px;
+  font-size: var(--font-size-meta);
+}
+
+.quota-card-provider-logo {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
 }
 
 .real-quota-card-header .quota-card-actions {
@@ -9319,6 +9413,31 @@ body.table-col-resizing * {
 
 .real-quota-row > div:first-child strong {
   color: var(--theme-2d2a26);
+}
+
+.quota-amount-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--theme-f4f2ec);
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
+}
+
+.quota-amount-summary span {
+  white-space: nowrap;
+}
+
+.quota-amount-summary strong {
+  color: var(--theme-2d2a26);
+}
+
+.quota-api-section .quota-amount-summary span:first-child strong {
+  margin-left: 2px;
+  font-size: var(--font-size-panel-title);
 }
 
 .real-quota-track {
@@ -9966,12 +10085,17 @@ body.table-col-resizing * {
 
   .oauth-grid,
   .quota-grid,
-  .quota-summary-grid {
+  .quota-summary-grid,
+  .quota-credential-grid {
     grid-template-columns: 1fr;
   }
 
-  .real-quota-grid {
-    grid-template-columns: 1fr;
+  .quota-source-section-heading {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .quota-source-section-heading > span {
+    grid-column: 2;
   }
 
   .real-provider-row {
@@ -13567,7 +13691,7 @@ body.table-col-resizing * {
   .oauth-grid,
   .quota-grid,
   .quota-summary-grid,
-  .real-quota-grid,
+  .quota-credential-grid,
   .auth-filter-grid {
     grid-template-columns: 1fr;
   }

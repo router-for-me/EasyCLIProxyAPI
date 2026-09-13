@@ -34,9 +34,92 @@ pub(crate) fn validate_api_access_provider_section(section: &str) -> Result<(), 
     }
 }
 
+pub(crate) const API_BALANCE_INVALID_PROVIDER: &str = "api_balance.invalid_provider";
+pub(crate) const API_BALANCE_INVALID_IDENTITY: &str = "api_balance.invalid_identity";
+pub(crate) const API_BALANCE_INVALID_URL: &str = "api_balance.invalid_url";
+pub(crate) const API_BALANCE_INSECURE_URL: &str = "api_balance.insecure_url";
+pub(crate) const API_BALANCE_INVALID_RECORD_NAME: &str = "api_balance.invalid_record_name";
+pub(crate) const API_BALANCE_INVALID_BASE_URL: &str = "api_balance.invalid_base_url";
+
+pub(crate) fn validate_gui_api_balance_endpoint(
+    endpoint: &GuiApiBalanceEndpoint,
+) -> Result<(), String> {
+    validate_api_access_provider_section(&endpoint.provider_section)
+        .map_err(|_| API_BALANCE_INVALID_PROVIDER.to_string())?;
+    if endpoint.record_identity.len() != 64
+        || !endpoint
+            .record_identity
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(API_BALANCE_INVALID_IDENTITY.to_string());
+    }
+    let value = endpoint.balance_url.trim();
+    if value.is_empty() || value.chars().count() > 2048 || value.chars().any(char::is_control) {
+        return Err(API_BALANCE_INVALID_URL.to_string());
+    }
+    let parsed = reqwest::Url::parse(value).map_err(|_| API_BALANCE_INVALID_URL.to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+        || (parsed.scheme() == "http" && !is_loopback_host(parsed.host_str().unwrap_or_default()))
+    {
+        return Err(API_BALANCE_INSECURE_URL.to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn api_access_key_hash(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| sha256_bytes(value.as_bytes()))
+}
+
+pub(crate) fn api_access_record_identity(
+    provider_section: &str,
+    record_name: &str,
+    base_url: &str,
+    api_keys: &[String],
+) -> Result<String, String> {
+    validate_api_access_provider_section(provider_section)
+        .map_err(|_| API_BALANCE_INVALID_PROVIDER.to_string())?;
+    let record_name = record_name.trim();
+    if record_name.chars().count() > 512 || record_name.chars().any(char::is_control) {
+        return Err(API_BALANCE_INVALID_RECORD_NAME.to_string());
+    }
+    let base_url = base_url.trim();
+    if base_url.chars().count() > 2048 || base_url.chars().any(char::is_control) {
+        return Err(API_BALANCE_INVALID_BASE_URL.to_string());
+    }
+    let normalized_base_url = if base_url.is_empty() {
+        String::new()
+    } else {
+        let parsed =
+            reqwest::Url::parse(base_url).map_err(|_| API_BALANCE_INVALID_BASE_URL.to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return Err(API_BALANCE_INVALID_BASE_URL.to_string());
+        }
+        parsed.to_string()
+    };
+    let mut key_hashes = api_keys
+        .iter()
+        .filter_map(|key| api_access_key_hash(key))
+        .collect::<Vec<_>>();
+    key_hashes.sort_unstable();
+    key_hashes.dedup();
+    let material = [
+        provider_section.trim(),
+        record_name,
+        &normalized_base_url,
+        &key_hashes.join("\u{0}"),
+    ]
+    .join("\u{0}");
+    Ok(sha256_bytes(material.as_bytes()))
 }
 
 pub(crate) fn usage_provider_section(provider: &str) -> Option<&'static str> {
@@ -1602,6 +1685,34 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
     if config.api_keys != original_api_keys {
         changed = true;
     }
+    let original_balance_endpoints = config.api_balance_endpoints.clone();
+    config.api_balance_endpoints = config
+        .api_balance_endpoints
+        .iter()
+        .filter_map(|entry| {
+            validate_gui_api_balance_endpoint(entry).ok().map(|_| {
+                let mut normalized = entry.clone();
+                normalized.provider_section = normalized.provider_section.trim().to_string();
+                normalized.record_identity = normalized.record_identity.trim().to_ascii_lowercase();
+                normalized.balance_url = reqwest::Url::parse(normalized.balance_url.trim())
+                    .ok()
+                    .map(|url| url.to_string())
+                    .unwrap_or_default();
+                normalized
+            })
+        })
+        .fold(Vec::new(), |mut entries, entry| {
+            if !entries.iter().any(|existing: &GuiApiBalanceEndpoint| {
+                existing.provider_section == entry.provider_section
+                    && existing.record_identity == entry.record_identity
+            }) {
+                entries.push(entry);
+            }
+            entries
+        });
+    if config.api_balance_endpoints != original_balance_endpoints {
+        changed = true;
+    }
     let proxy_url = config.proxy_url.trim().to_string();
     if config.proxy_url != proxy_url {
         config.proxy_url = proxy_url;
@@ -1820,6 +1931,25 @@ pub(crate) fn write_gui_config_to_path(
         "api-access-remarks",
         Item::Value(Value::Array(api_access_remarks)),
     );
+    let mut api_balance_endpoints = Array::new();
+    for entry in &config.api_balance_endpoints {
+        let mut table = InlineTable::new();
+        table.insert(
+            "provider-section",
+            Value::from(entry.provider_section.as_str()),
+        );
+        table.insert(
+            "record-identity",
+            Value::from(entry.record_identity.as_str()),
+        );
+        table.insert("balance-url", Value::from(entry.balance_url.as_str()));
+        api_balance_endpoints.push(Value::InlineTable(table));
+    }
+    set_codex_table_item(
+        root,
+        "api-balance-endpoints",
+        Item::Value(Value::Array(api_balance_endpoints)),
+    );
 
     let content = document.to_string();
     toml::from_str::<GuiConfigFile>(&content)
@@ -1850,6 +1980,9 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
     for entry in &config.api_keys {
         validate_core_api_key(&entry.key)?;
         validate_api_key_remark(&entry.remark)?;
+    }
+    for entry in &config.api_balance_endpoints {
+        validate_gui_api_balance_endpoint(entry)?;
     }
     for entry in &config.api_access_remarks {
         validate_api_access_provider_section(&entry.provider_section)?;

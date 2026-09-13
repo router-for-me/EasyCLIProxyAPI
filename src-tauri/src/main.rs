@@ -628,6 +628,7 @@ struct GuiConfigFile {
     #[serde(deserialize_with = "deserialize_gui_api_keys")]
     api_keys: Vec<GuiApiKeyEntry>,
     api_access_remarks: Vec<GuiApiAccessRemark>,
+    api_balance_endpoints: Vec<GuiApiBalanceEndpoint>,
     management_secret_key: String,
     debug: bool,
     commercial_mode: bool,
@@ -863,6 +864,14 @@ struct GuiApiAccessRemark {
     remark: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct GuiApiBalanceEndpoint {
+    provider_section: String,
+    record_identity: String,
+    balance_url: String,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ApiAccessRemarkQuery {
@@ -920,6 +929,7 @@ impl Default for GuiConfigFile {
             auth_dir: DEFAULT_AUTH_DIR.to_string(),
             api_keys: vec![default_api_key_entry()],
             api_access_remarks: Vec::new(),
+            api_balance_endpoints: Vec::new(),
             // Populated with an OS-generated secret while loading the GUI
             // configuration. Core hashes the value written into config.yaml.
             management_secret_key: String::new(),
@@ -2503,7 +2513,9 @@ fn main() {
             get_core_status,
             get_gui_settings,
             resolve_api_access_remarks,
+            resolve_api_access_balance_urls,
             save_api_access_remark,
+            save_api_access_balance_endpoint,
             set_app_locale,
             resolve_windows_close_request,
             get_software_settings,
