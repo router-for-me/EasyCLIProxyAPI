@@ -385,6 +385,7 @@ mod tests {
 
     fn runtime_model(slug: &str) -> CodexRuntimeModel {
         CodexRuntimeModel {
+            canonical_model_id: None,
             slug: slug.to_string(),
             display_name: None,
             description: None,
