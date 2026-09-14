@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{LazyLock, Mutex},
@@ -403,6 +403,15 @@ struct UsageCostGroup {
 
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct UsageTimelineModel {
+    key: String,
+    label: String,
+    tokens: u64,
+    requests: u64,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct UsageTimelinePoint {
     hour: String,
     requests: u64,
@@ -410,6 +419,7 @@ struct UsageTimelinePoint {
     failure: u64,
     canceled: u64,
     tokens: u64,
+    models: Vec<UsageTimelineModel>,
 }
 
 #[derive(Default, Serialize)]
@@ -2640,34 +2650,71 @@ fn load_usage_overview(
         r#"
         SELECT
             local_hour,
+            COALESCE(NULLIF(TRIM(model), ''), 'unknown'),
             COUNT(*),
             COALESCE(SUM(CASE WHEN failed = 0 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN failed != 0 AND canceled = 0 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN canceled != 0 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(total_tokens), 0)
         FROM usage_events{}
-        GROUP BY local_hour
-        ORDER BY local_hour ASC
+        GROUP BY local_hour, 2
+        ORDER BY local_hour ASC, 2 ASC
         "#,
         filter.clause
     );
     let mut statement = connection
         .prepare(&timeline_sql)
         .map_err(|error| format!("准备 SQLite 使用趋势查询失败: {error}"))?;
-    let timeline = statement
+    let timeline_rows = statement
         .query_map(params_from_iter(filter.params.iter()), |row| {
-            Ok(UsageTimelinePoint {
-                hour: row.get(0)?,
-                requests: from_sql_i64(row.get(1)?),
-                success: from_sql_i64(row.get(2)?),
-                failure: from_sql_i64(row.get(3)?),
-                canceled: from_sql_i64(row.get(4)?),
-                tokens: from_sql_i64(row.get(5)?),
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                from_sql_i64(row.get(2)?),
+                from_sql_i64(row.get(3)?),
+                from_sql_i64(row.get(4)?),
+                from_sql_i64(row.get(5)?),
+                from_sql_i64(row.get(6)?),
+            ))
         })
         .map_err(|error| format!("查询 SQLite 使用趋势失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("读取 SQLite 使用趋势失败: {error}"))?;
+    let mut grouped = BTreeMap::<String, UsageTimelinePoint>::new();
+    for (hour, model, requests, success, failure, canceled, tokens) in timeline_rows {
+        let point = grouped.entry(hour.clone()).or_insert_with(|| UsageTimelinePoint {
+            hour,
+            ..UsageTimelinePoint::default()
+        });
+        point.requests = point.requests.saturating_add(requests);
+        point.success = point.success.saturating_add(success);
+        point.failure = point.failure.saturating_add(failure);
+        point.canceled = point.canceled.saturating_add(canceled);
+        point.tokens = point.tokens.saturating_add(tokens);
+        if let Some(existing) = point.models.iter_mut().find(|item| item.key == model) {
+            existing.requests = existing.requests.saturating_add(requests);
+            existing.tokens = existing.tokens.saturating_add(tokens);
+        } else {
+            point.models.push(UsageTimelineModel {
+                key: model.clone(),
+                label: model,
+                tokens,
+                requests,
+            });
+        }
+    }
+    let timeline = grouped
+        .into_values()
+        .map(|mut point| {
+            point.models.sort_by(|left, right| {
+                right
+                    .tokens
+                    .cmp(&left.tokens)
+                    .then_with(|| left.key.cmp(&right.key))
+            });
+            point
+        })
+        .collect::<Vec<_>>();
 
     let mut overview = UsageOverview {
         total_requests: from_sql_i64(summary.0),
@@ -5483,6 +5530,10 @@ mod tests {
         assert_eq!(overview.cache_hit_rate, 0.2);
         assert!((overview.estimated_cost - 0.0002564).abs() < 0.0000001);
         assert_eq!(overview.priced_requests, 1);
+        assert_eq!(overview.timeline.len(), 1);
+        assert_eq!(overview.timeline[0].models.len(), 1);
+        assert_eq!(overview.timeline[0].models[0].key, "gpt-5.6-terra");
+        assert!(overview.timeline[0].tokens > 0);
         assert_eq!(analysis.models[0].key, "gpt-5.6-terra");
         assert_eq!(events.total, 1);
         assert_eq!(events.items[0].id, "request-2");

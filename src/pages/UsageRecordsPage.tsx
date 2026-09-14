@@ -1,5 +1,5 @@
 import { useConfirmation } from '../components/ConfirmationDialog';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -31,6 +31,18 @@ import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
+import {
+  OTHER_TREND_MODEL_KEY,
+  buildUsageTrendSeries,
+  formatTrendAxisLabel,
+  formatTrendRangeLabel,
+  niceCeiling,
+  selectTrendAxisLabels,
+  smoothAreaPath,
+  smoothLinePath,
+  stackModelTokens,
+  type UsageTimelinePoint,
+} from '../services/usageTrend';
 import { createRefreshScheduler } from '../services/refreshScheduler';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
@@ -43,14 +55,7 @@ type CollectorStatus = {
   totalRecords: number;
 };
 
-type TimelinePoint = {
-  hour: string;
-  requests: number;
-  success: number;
-  failure: number;
-  canceled: number;
-  tokens: number;
-};
+type TimelinePoint = UsageTimelinePoint;
 
 type UsageOverview = {
   totalRequests: number;
@@ -288,6 +293,7 @@ export function UsageRecordsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [status, setStatus] = useState<CollectorStatus | null>(null);
   const [overview, setOverview] = useState<UsageOverview | null>(null);
+  const [overviewRange, setOverviewRange] = useState<Pick<UsageQuery, 'start' | 'end'>>({});
   const [analysis, setAnalysis] = useState<UsageAnalysis>(emptyAnalysis);
   const [optionsAnalysis, setOptionsAnalysis] = useState<UsageAnalysis>(emptyAnalysis);
   const [events, setEvents] = useState<UsageEventPage | null>(null);
@@ -346,6 +352,7 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           setOptionsAnalysis(nextOptions);
           setOverview(nextOverview);
+          setOverviewRange(timeQuery);
         } else if (activeTab === 'analysis') {
           const [nextStatus, nextOptions, nextOverview, nextAnalysis] = await Promise.all([
             statusRequest,
@@ -359,6 +366,7 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           setOptionsAnalysis(nextOptions);
           setOverview(nextOverview);
+          setOverviewRange(timeQuery);
           setAnalysis(nextAnalysis);
         } else if (activeTab === 'events') {
           const [nextStatus, nextOptions, nextEvents] = await Promise.all([
@@ -702,7 +710,7 @@ export function UsageRecordsPage() {
         </div>
       ) : null}
 
-      {activeTab === 'overview' && overview ? <OverviewView overview={overview} /> : null}
+      {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
       {activeTab === 'analysis' ? <AnalysisView analysis={analysis} overview={overview} /> : null}
       {activeTab === 'events' && events ? (
         <EventsView
@@ -790,7 +798,7 @@ function UsageDataManagementView() {
   );
 }
 
-function OverviewView({ overview }: { overview: UsageOverview }) {
+function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pick<UsageQuery, 'start' | 'end'> }) {
   const { t } = useI18n();
   const cards = [
     {
@@ -895,10 +903,9 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
         <div className="usage-section-heading">
           <div>
             <strong>{t('usage.trend.title')}</strong>
-            <span>{t('usage.trend.description')}</span>
           </div>
         </div>
-        {overview.timeline.length ? <UsageTrend points={overview.timeline} /> : <UsageEmpty />}
+        {overview.timeline.length ? <UsageTrend points={overview.timeline} range={range} /> : <UsageEmpty />}
       </section>
       <section className="panel usage-health-panel">
         <div className="usage-section-heading">
@@ -944,57 +951,401 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
   );
 }
 
-function UsageTrend({ points }: { points: TimelinePoint[] }) {
-  const { t } = useI18n();
-  const recent = points.slice(-48);
-  const max = Math.max(...recent.map((point) => point.requests), 1);
-  const totalTokens = recent.reduce((sum, point) => sum + point.tokens, 0);
-  const totalReqs = recent.reduce((sum, point) => sum + point.requests, 0);
+function UsageTrend({
+  points,
+  range,
+}: {
+  points: TimelinePoint[];
+  range?: Pick<UsageQuery, 'start' | 'end'>;
+}) {
+  const { t, locale } = useI18n();
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [hiddenModels, setHiddenModels] = useState<string[]>([]);
 
-  const pointsCoords = recent.map((point, index) => {
-    const x = recent.length <= 1 ? 50 : (index * 100) / (recent.length - 1);
-    const y = 28 - (point.requests * 24) / max;
-    return { x, y, point };
-  });
+  const series = useMemo(
+    () => buildUsageTrendSeries(points, range),
+    [points, range?.start, range?.end],
+  );
 
-  const polyline = pointsCoords.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-  const areaPath =
-    pointsCoords.length > 0
-      ? `M 0,32 L ${pointsCoords[0].x.toFixed(1)},${pointsCoords[0].y.toFixed(1)} ` +
-        pointsCoords.map((p) => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ') +
-        ` L 100,32 Z`
-      : '';
+  const hiddenKeys = useMemo(() => new Set(hiddenModels), [hiddenModels]);
+  const visibleModels = useMemo(
+    () => series.models.filter((model) => !hiddenKeys.has(model.key)),
+    [hiddenKeys, series.models],
+  );
+
+  useEffect(() => {
+    setHoveredIndex(null);
+    setHiddenModels((current) => current.filter((key) => series.models.some((model) => model.key === key)));
+  }, [series.bucket, series.models, series.points[0]?.hour, series.points[series.points.length - 1]?.hour]);
+
+  const count = series.points.length;
+
+  const chart = useMemo(() => {
+    if (count === 0) {
+      return {
+        maxTokens: 1,
+        stacked: [],
+        areaLayers: [],
+        totalLinePath: '',
+        labelIndexes: [],
+        compactSameDay: false,
+        baseY: 146,
+        PT: 8,
+        UH: 138,
+      };
+    }
+
+    const stacked = series.points.map((point) => stackModelTokens(point, series.models, hiddenKeys));
+    const maxTokens = niceCeiling(Math.max(1, ...stacked.map((layers) => layers[layers.length - 1]?.y1 ?? 0)));
+
+    const VIEWBOX_W = 1000;
+    const PT = 8;
+    const PB = 8;
+    const UH = 154 - PT - PB;
+    const baseY = PT + UH;
+
+    const calcY = (val: number) => (maxTokens > 0 ? baseY - (val / maxTokens) * UH : baseY);
+    const calcX = (idx: number) => (count <= 1 ? VIEWBOX_W / 2 : (idx / (count - 1)) * VIEWBOX_W);
+
+    const areaLayers = visibleModels.map((model) => {
+      let topPoints: { x: number; y: number }[];
+      let bottomPoints: { x: number; y: number }[];
+
+      if (count <= 1) {
+        const y1 = calcY(stacked[0]?.find((l) => l.key === model.key)?.y1 ?? 0);
+        const y0 = calcY(stacked[0]?.find((l) => l.key === model.key)?.y0 ?? 0);
+        topPoints = [{ x: 0, y: y1 }, { x: VIEWBOX_W, y: y1 }];
+        bottomPoints = [{ x: 0, y: y0 }, { x: VIEWBOX_W, y: y0 }];
+      } else {
+        topPoints = series.points.map((_, idx) => ({
+          x: calcX(idx),
+          y: calcY(stacked[idx]?.find((l) => l.key === model.key)?.y1 ?? 0),
+        }));
+        bottomPoints = series.points.map((_, idx) => ({
+          x: calcX(idx),
+          y: calcY(stacked[idx]?.find((l) => l.key === model.key)?.y0 ?? 0),
+        }));
+      }
+
+      const areaPath = smoothAreaPath(topPoints, bottomPoints);
+      const linePath = smoothLinePath(topPoints);
+      const hasTokens = stacked.some((layers) => (layers.find((l) => l.key === model.key)?.tokens ?? 0) > 0);
+
+      return {
+        model,
+        areaPath,
+        linePath,
+        hasTokens,
+      };
+    });
+
+    let totalPoints: { x: number; y: number }[];
+    if (count <= 1) {
+      const topY = calcY(stacked[0]?.[stacked[0]?.length - 1]?.y1 ?? 0);
+      totalPoints = [{ x: 0, y: topY }, { x: VIEWBOX_W, y: topY }];
+    } else {
+      totalPoints = series.points.map((_, idx) => ({
+        x: calcX(idx),
+        y: calcY(stacked[idx]?.[stacked[idx]?.length - 1]?.y1 ?? 0),
+      }));
+    }
+    const totalLinePath = smoothLinePath(totalPoints);
+
+    const labelIndexes = selectTrendAxisLabels(count, count > 36 ? 5 : 4);
+    const compactSameDay =
+      count > 1 &&
+      series.points[0].start.toDateString() === series.points[count - 1].start.toDateString();
+
+    return {
+      maxTokens,
+      stacked,
+      areaLayers,
+      totalLinePath,
+      labelIndexes,
+      compactSameDay,
+      baseY,
+      PT,
+      UH,
+    };
+  }, [count, hiddenKeys, series, visibleModels]);
+
+  if (count === 0) {
+    return <UsageEmpty />;
+  }
+
+  const modelLabel = (key: string, fallback: string) =>
+    key === OTHER_TREND_MODEL_KEY ? t('usage.trend.other') : fallback;
+
+  const bucketLabel = t(`usage.trend.bucket.${series.bucket}` as MessageKey);
+
+  const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || count === 0) return;
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const idx = Math.round(ratio * (count - 1));
+    setHoveredIndex(idx);
+  };
+
+  const handlePointerLeave = () => {
+    setHoveredIndex(null);
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (count === 0) return;
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      setHoveredIndex((prev) => (prev == null || prev <= 0 ? count - 1 : prev - 1));
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      setHoveredIndex((prev) => (prev == null || prev >= count - 1 ? 0 : prev + 1));
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setHoveredIndex(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setHoveredIndex(count - 1);
+    } else if (e.key === 'Escape') {
+      setHoveredIndex(null);
+    }
+  };
+
+  const active = hoveredIndex != null && hoveredIndex >= 0 && hoveredIndex < count ? series.points[hoveredIndex] : null;
+  const activeStacked = hoveredIndex != null && chart.stacked[hoveredIndex] ? chart.stacked[hoveredIndex] : [];
+  const activePercent = count <= 1 ? 50 : ((hoveredIndex ?? 0) / (count - 1)) * 100;
+  const activeViewboxX = count <= 1 ? 500 : ((hoveredIndex ?? 0) / (count - 1)) * 1000;
+  const activeLayers = [...activeStacked]
+    .filter((l) => l.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens);
+  const activeTotal = activeStacked[activeStacked.length - 1]?.y1 ?? 0;
+
+  const srText = active
+    ? `${formatTrendRangeLabel(active, locale, series.bucket)}: ${compactNumber(activeTotal)} ${t('usage.unit.tokens')}`
+    : '';
 
   return (
     <div className="usage-trend-wrapper">
-      <div className="usage-trend-header-meta">
-        <span className="usage-trend-chip">
-          <strong>{compactNumber(totalReqs)}</strong> {t('usage.unit.requests')}
-        </span>
-        <span className="usage-trend-chip">
-          <strong>{compactNumber(totalTokens)}</strong> {t('usage.unit.tokens')}
-        </span>
-      </div>
-      <div className="usage-trend">
-        <svg viewBox="0 0 100 32" preserveAspectRatio="none" aria-label={t('usage.trend.aria')}>
-          <defs>
-            <linearGradient id="usageTrendGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--theme-3f6f98)" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="var(--theme-3f6f98)" stopOpacity="0.02" />
-            </linearGradient>
-          </defs>
-          <line x1="0" y1="8" x2="100" y2="8" stroke="var(--theme-eeeae2)" strokeDasharray="2,2" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1="18" x2="100" y2="18" stroke="var(--theme-eeeae2)" strokeDasharray="2,2" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1="28" x2="100" y2="28" stroke="var(--theme-eeeae2)" strokeDasharray="2,2" vectorEffect="non-scaling-stroke" />
-          {areaPath ? <path d={areaPath} fill="url(#usageTrendGrad)" /> : null}
-          <polyline points={polyline} fill="none" vectorEffect="non-scaling-stroke" />
-        </svg>
-        <div className="usage-trend-labels">
-          <span>{recent[0]?.hour ?? ''}</span>
-          {recent.length > 2 ? <span>{recent[Math.floor(recent.length / 2)]?.hour ?? ''}</span> : null}
-          <span>{recent[recent.length - 1]?.hour ?? ''}</span>
+      <div className="usage-trend-toolbar">
+        <div className="usage-trend-legend" role="group" aria-label={t('usage.trend.aria')}>
+          {series.models.map((model) => {
+            const isHidden = hiddenKeys.has(model.key);
+            return (
+              <button
+                type="button"
+                key={model.key}
+                className={`usage-trend-legend-item${isHidden ? ' is-hidden' : ''}${model.star ? ' is-star' : ''}`}
+                aria-pressed={!isHidden}
+                onClick={() =>
+                  setHiddenModels((current) =>
+                    current.includes(model.key)
+                      ? current.filter((key) => key !== model.key)
+                      : [...current, model.key],
+                  )
+                }
+              >
+                <span className="usage-trend-swatch" style={{ background: model.color }} />
+                <span>{modelLabel(model.key, model.label)}</span>
+                {model.star ? <em>{t('usage.trend.star')}</em> : null}
+              </button>
+            );
+          })}
+        </div>
+        <div className="usage-trend-header-meta">
+          <span className="usage-trend-chip">
+            <strong>{compactNumber(series.totals.tokens)}</strong> {t('usage.unit.tokens')}
+          </span>
+          <span className="usage-trend-chip">{bucketLabel}</span>
         </div>
       </div>
+
+      <div className="usage-trend-chart">
+        <div className="usage-trend-y-axis" aria-hidden="true">
+          <span>{compactNumber(chart.maxTokens)}</span>
+          <span>{compactNumber(Math.round(chart.maxTokens / 2))}</span>
+          <span>0</span>
+        </div>
+
+        <div
+          className="usage-trend-plot"
+          tabIndex={0}
+          role="region"
+          aria-label={t('usage.trend.aria')}
+          onPointerMove={handlePointerMove}
+          onPointerLeave={handlePointerLeave}
+          onKeyDown={handleKeyDown}
+        >
+          <svg
+            viewBox="0 0 1000 154"
+            preserveAspectRatio="none"
+            className="usage-trend-svg"
+          >
+            <defs>
+              {visibleModels.map((model) => (
+                <linearGradient
+                  key={`grad-${model.key}`}
+                  id={`trend-grad-${model.key.replace(/[^a-zA-Z0-9_-]+/g, '-')}`}
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
+                  <stop
+                    offset="0%"
+                    stopColor={model.color}
+                    stopOpacity={model.star ? 0.38 : 0.28}
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor={model.color}
+                    stopOpacity={model.star ? 0.14 : 0.08}
+                  />
+                </linearGradient>
+              ))}
+            </defs>
+
+            <line
+              x1="0"
+              y1={chart.PT}
+              x2="1000"
+              y2={chart.PT}
+              className="usage-trend-grid"
+            />
+            <line
+              x1="0"
+              y1={chart.PT + chart.UH / 2}
+              x2="1000"
+              y2={chart.PT + chart.UH / 2}
+              className="usage-trend-grid"
+            />
+            <line
+              x1="0"
+              y1={chart.baseY}
+              x2="1000"
+              y2={chart.baseY}
+              className="usage-trend-baseline"
+            />
+
+            {chart.areaLayers.map((layer) => {
+              if (!layer.hasTokens || !layer.areaPath) return null;
+              return (
+                <g key={layer.model.key} className={`usage-trend-layer${layer.model.star ? ' is-star' : ''}`}>
+                  <path
+                    d={layer.areaPath}
+                    fill={`url(#trend-grad-${layer.model.key.replace(/[^a-zA-Z0-9_-]+/g, '-')})`}
+                    className="usage-trend-area"
+                  />
+                  <path
+                    d={layer.linePath}
+                    fill="none"
+                    stroke={layer.model.color}
+                    strokeWidth={layer.model.star ? 1.8 : 1.4}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    vectorEffect="non-scaling-stroke"
+                    className="usage-trend-line"
+                  />
+                </g>
+              );
+            })}
+
+            {chart.totalLinePath ? (
+              <path
+                d={chart.totalLinePath}
+                fill="none"
+                stroke="var(--theme-3f6f98)"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                vectorEffect="non-scaling-stroke"
+                className="usage-trend-total-line"
+              />
+            ) : null}
+
+            {active && hoveredIndex != null ? (
+              <g className="usage-trend-active-mark">
+                <line
+                  x1={activeViewboxX}
+                  y1={chart.PT}
+                  x2={activeViewboxX}
+                  y2={chart.baseY}
+                  className="usage-trend-cursor-line"
+                />
+                {activeLayers.map((layer) => {
+                  const model = series.models.find((m) => m.key === layer.key);
+                  const dotY = chart.baseY - (layer.y1 / chart.maxTokens) * chart.UH;
+                  return (
+                    <circle
+                      key={layer.key}
+                      cx={activeViewboxX}
+                      cy={dotY}
+                      r="3.5"
+                      fill="var(--theme-fffdf8)"
+                      stroke={model?.color ?? '#3b82f6'}
+                      strokeWidth="2"
+                      vectorEffect="non-scaling-stroke"
+                      className="usage-trend-dot"
+                    />
+                  );
+                })}
+              </g>
+            ) : null}
+          </svg>
+
+          {active && hoveredIndex != null ? (
+            <div
+              className={`usage-trend-tooltip${activePercent > 62 ? ' is-left' : ' is-right'}`}
+              style={{ left: `${activePercent}%` }}
+            >
+              <div className="usage-trend-tooltip-header">
+                <strong>{formatTrendRangeLabel(active, locale, series.bucket)}</strong>
+                <span className="usage-trend-tooltip-total">
+                  {compactNumber(activeTotal)} {t('usage.trend.tooltip.tokens')}
+                </span>
+              </div>
+              {activeLayers.length > 0 ? (
+                <div className="usage-trend-tooltip-list">
+                  {activeLayers.map((layer) => {
+                    const model = series.models.find((m) => m.key === layer.key);
+                    return (
+                      <div key={layer.key} className="usage-trend-tooltip-row">
+                        <span className="usage-trend-swatch" style={{ background: model?.color }} />
+                        <span className="usage-trend-tooltip-label">
+                          {modelLabel(layer.key, model?.label ?? layer.key)}
+                          {model?.star ? <em>{t('usage.trend.star')}</em> : null}
+                        </span>
+                        <b>{compactNumber(layer.tokens)}</b>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="usage-trend-tooltip-empty">{t('usage.unit.tokens')}: 0</div>
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="usage-trend-x-axis" aria-hidden="true">
+          {chart.labelIndexes.map((idx) => {
+            const point = series.points[idx];
+            if (!point) return null;
+            const left = count <= 1 ? 50 : (idx / (count - 1)) * 100;
+            const posClass = idx === 0 ? 'is-start' : idx === count - 1 ? 'is-end' : 'is-mid';
+            return (
+              <span
+                key={`axis-${point.hour}-${idx}`}
+                className={posClass}
+                style={{ left: `${left}%` }}
+              >
+                {formatTrendAxisLabel(point, series.bucket, locale, { compactSameDay: chart.compactSameDay })}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      <span className="sr-only" aria-live="polite">
+        {srText}
+      </span>
     </div>
   );
 }
