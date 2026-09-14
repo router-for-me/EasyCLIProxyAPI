@@ -361,6 +361,7 @@ fn normalize_management_oauth_provider(provider: &str) -> Result<String, String>
     let key = match key.as_str() {
         "claude" | "anthropic" => "anthropic".to_string(),
         "anti-gravity" => "antigravity".to_string(),
+        "cognition" => "devin".to_string(),
         "grok" | "x-ai" | "x.ai" => "xai".to_string(),
         other => other.to_string(),
     };
@@ -375,7 +376,7 @@ fn normalize_management_oauth_provider(provider: &str) -> Result<String, String>
 }
 
 fn management_oauth_uses_webui_callback(provider_key: &str) -> bool {
-    matches!(provider_key, "codex" | "anthropic" | "antigravity" | "xai")
+    matches!(provider_key, "codex" | "anthropic" | "antigravity" | "xai" | "devin")
 }
 
 async fn read_management_json<T>(response: reqwest::Response) -> Result<T, String>
@@ -458,6 +459,15 @@ fn format_management_error(status: u16, body: &str) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn devin_oauth_uses_the_management_callback_flow() {
+        for provider in ["Devin", " cognition "] {
+            let key = normalize_management_oauth_provider(provider).unwrap();
+            assert_eq!(key, "devin");
+            assert!(management_oauth_uses_webui_callback(&key));
+        }
+    }
 
     #[test]
     fn core_logs_follow_the_default_auth_directory() {

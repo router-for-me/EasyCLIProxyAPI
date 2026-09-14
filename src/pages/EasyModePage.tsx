@@ -45,6 +45,7 @@ import claudeIcon from "../assets/icons/claude.svg";
 import antigravityIcon from "../assets/icons/antigravity.svg";
 import kimiIcon from "../assets/icons/kimi-light.svg";
 import grokIcon from "../assets/icons/grok.svg";
+import devinIcon from "../assets/icons/devin.svg";
 import openaiIcon from "../assets/icons/openai-light.svg";
 import deepseekIcon from "../assets/icons/deepseek.svg";
 import geminiIcon from "../assets/icons/gemini.svg";
@@ -52,7 +53,7 @@ import geminiIcon from "../assets/icons/gemini.svg";
 type AuthMethod = "oauth" | "api";
 type SetupStep = 1 | 2;
 
-type OAuthProviderId = "codex" | "claude" | "antigravity" | "kimi" | "xai";
+type OAuthProviderId = "codex" | "claude" | "antigravity" | "kimi" | "xai" | "devin";
 
 type OAuthProviderInfo = {
   id: OAuthProviderId;
@@ -67,6 +68,7 @@ const oauthProviders: OAuthProviderInfo[] = [
   { id: "antigravity", name: "Antigravity OAuth", icon: antigravityIcon, descriptionKey: "easyMode.oauth.providerDesc.antigravity" },
   { id: "kimi", name: "Kimi OAuth", icon: kimiIcon, descriptionKey: "easyMode.oauth.providerDesc.kimi" },
   { id: "xai", name: "xAI OAuth", icon: grokIcon, descriptionKey: "easyMode.oauth.providerDesc.xai" },
+  { id: "devin", name: "Devin OAuth", icon: devinIcon, descriptionKey: "easyMode.oauth.providerDesc.devin" },
 ];
 
 type ApiSection = "openai-compatibility" | "deepseek" | "claude" | "gemini" | "codex";
@@ -212,7 +214,7 @@ export function EasyModePage({
     const norm = providerId === "claude" ? "claude" : providerId === "codex" ? "codex" : providerId;
     return authFiles.some((f) => {
       const p = readString(f, "provider", "type").toLowerCase();
-      return p.includes(norm) || (norm === "codex" && p.includes("openai")) || (norm === "claude" && p.includes("anthropic"));
+      return (norm === "devin" && p === "cognition") || p.includes(norm) || (norm === "codex" && p.includes("openai")) || (norm === "claude" && p.includes("anthropic"));
     });
   };
 
@@ -833,7 +835,7 @@ export function EasyModePage({
                     >
                       <div className="simple-mode-provider-card-head">
                         <div className="simple-mode-provider-logo">
-                          <img src={provider.icon} alt="" />
+                          <img src={provider.icon} alt="" className={provider.id === "devin" ? "devin-logo" : undefined} />
                         </div>
                         <div className="simple-mode-provider-copy">
                           <strong>{provider.name}</strong>

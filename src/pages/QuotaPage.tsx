@@ -8,6 +8,7 @@ import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
+import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import { managementApi, readBoolean, responseList } from '../services/managementApi';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
@@ -38,10 +39,11 @@ const providerMeta: Record<QuotaProvider, { label: string; icon: string }> = {
   codex: { label: 'Codex', icon: codexIcon },
   kimi: { label: 'Kimi', icon: kimiIcon },
   xai: { label: 'xAI', icon: grokIcon },
+  devin: { label: 'Devin', icon: devinIcon },
   antigravity: { label: 'Antigravity', icon: antigravityIcon },
 };
 
-const providerOrder: QuotaProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi'];
+const providerOrder: QuotaProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin'];
 const REFRESH_CONCURRENCY = 4;
 
 export function QuotaPage() {
@@ -177,7 +179,7 @@ export function QuotaPage() {
         <div className="quota-group-list">
           {grouped.map(([provider, items]) => (
             <section className="quota-provider-group" key={provider}>
-              <div className="quota-group-heading"><div><img src={providerMeta[provider].icon} alt="" className="provider-logo" /><h2>{providerMeta[provider].label}</h2></div><span>{t(items.length === 1 ? 'quota.credentials.one' : 'quota.credentials.other', { count: items.length })}</span></div>
+              <div className="quota-group-heading"><div><img src={providerMeta[provider].icon} alt="" className={provider === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} /><h2>{providerMeta[provider].label}</h2></div><span>{t(items.length === 1 ? 'quota.credentials.one' : 'quota.credentials.other', { count: items.length })}</span></div>
               <div className="real-quota-grid">{items.map(({ file, quota }) => <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' ? () => void resetCodexQuota(file, quota) : undefined} />)}</div>
             </section>
           ))}
@@ -216,6 +218,7 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
         {quota.subscriptionActiveUntil ? <span>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span> : null}
         <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
       </div> : null}
+      {quota.status === 'success' && provider === 'devin' && quota.subscriptionActiveUntil ? <div className="quota-reset-credit-summary"><span>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span></div> : null}
       {quota.status === 'success' ? <div className="quota-row-list">{quota.rows.map((row, index) => {
         const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
         return <div className="real-quota-row" key={`${row.label}-${index}`}>

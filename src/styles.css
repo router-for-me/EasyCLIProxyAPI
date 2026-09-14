@@ -3310,6 +3310,10 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+:root[data-theme='dark'] .devin-logo {
+  filter: invert(1);
+}
+
 .provider-logo {
   width: 38px;
   height: 38px;

@@ -699,3 +699,25 @@ fn edit_model_alias_rejects_missing_and_ambiguous_aliases() {
     let content = "oauth-model-alias:\n  codex:\n    - name: model-a\n      alias: shared\n  claude:\n    - name: model-b\n      alias: shared\n";
     assert!(resolve_model_alias_edit_source(content, "shared", &[]).is_err());
 }
+
+#[test]
+fn devin_aliases_use_the_devin_channel_without_unsupported_overrides() {
+    assert_eq!(normalize_oauth_alias_channel("cognition"), Some("devin"));
+    let available_models = test_agent_models(&["devin/swe-2"]);
+    let mut definitions = test_oauth_definition_set("devin", &["devin/swe-2"]);
+    definitions.models[0].reasoning_levels = vec!["medium".to_string(), "high".to_string()];
+    let definitions = vec![definitions];
+    let sources = resolved_oauth_alias_sources("{}\n", &definitions, &available_models, AliasSourceCapability::Base).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].source.kind, "devin-oauth");
+    let rendered = add_model_alias_to_yaml("{}\n", &sources[0], "swe-2", "", false).unwrap();
+    assert!(rendered.contains("devin:"), "{rendered}");
+    assert!(rendered.contains("name: devin/swe-2"), "{rendered}");
+    assert!(rendered.contains("alias: swe-2"), "{rendered}");
+    assert!(!rendered.contains("payload:"), "{rendered}");
+    let edited = model_alias_edit_context(&rendered, "swe-2", &definitions).unwrap();
+    assert!(edited.source.reasoning_levels.is_empty());
+    for capability in [AliasSourceCapability::Reasoning, AliasSourceCapability::Fast] {
+        assert!(resolved_oauth_alias_sources("{}\n", &definitions, &available_models, capability).unwrap().is_empty());
+    }
+}

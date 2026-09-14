@@ -168,6 +168,7 @@ export const thinkingAliasSourceKindLabel = (kind: string) => {
   if (kind === 'vertex-oauth') return 'Vertex OAuth';
   if (kind === 'kimi-oauth') return 'Kimi OAuth';
   if (kind === 'xai-oauth') return 'xAI OAuth';
+  if (kind === 'devin-oauth') return 'Devin OAuth';
   if (kind === 'codex-api') return 'Codex API';
   if (kind === 'claude-api') return 'Claude API';
   if (kind === 'gemini-api') return 'Gemini API';

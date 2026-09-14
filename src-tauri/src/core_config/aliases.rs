@@ -12,7 +12,7 @@ pub(crate) struct OAuthAliasChannel {
     pub(crate) force_mapping: bool,
 }
 
-pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
+pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 8] = [
     OAuthAliasChannel {
         key: "vertex",
         provider: "Vertex OAuth",
@@ -64,6 +64,15 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
         kind: "kimi-oauth",
         protocol: "openai",
         supports_reasoning: true,
+        supports_fast: false,
+        force_mapping: false,
+    },
+    OAuthAliasChannel {
+        key: "devin",
+        provider: "Devin OAuth",
+        kind: "devin-oauth",
+        protocol: "interactions",
+        supports_reasoning: false,
         supports_fast: false,
         force_mapping: false,
     },
@@ -126,6 +135,7 @@ pub(crate) fn normalize_oauth_alias_channel(value: &str) -> Option<&'static str>
         "claude" | "anthropic" => Some("claude"),
         "codex" => Some("codex"),
         "kimi" | "moonshot" => Some("kimi"),
+        "devin" | "cognition" => Some("devin"),
         "xai" | "x-ai" | "grok" => Some("xai"),
         _ => None,
     }

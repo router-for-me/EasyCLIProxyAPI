@@ -205,7 +205,7 @@ pub(crate) fn resolve_model_alias_edit_source(
     if let ThinkingAliasSourceLocation::Oauth { channel, .. } = source.location {
         if let Some(model) = definitions
             .iter()
-            .filter(|set| set.channel.key == channel)
+            .filter(|set| set.channel.key == channel && set.channel.supports_reasoning)
             .flat_map(|set| &set.models)
             .find(|model| model.id.eq_ignore_ascii_case(&source.source.model))
         {

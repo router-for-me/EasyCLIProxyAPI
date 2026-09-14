@@ -22,6 +22,7 @@ import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import grokIcon from '../assets/icons/grok.svg';
+import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import vertexIcon from '../assets/icons/vertex.svg';
 import {
@@ -88,6 +89,7 @@ const providerIcons: Record<string, string> = {
   kimi: kimiIcon,
   vertex: vertexIcon,
   xai: grokIcon,
+  devin: devinIcon,
 };
 
 const providerName = (file: AuthFile) => {
@@ -95,11 +97,13 @@ const providerName = (file: AuthFile) => {
   if (value === 'anthropic') return 'Claude';
   if (value === 'anti-gravity') return 'Antigravity';
   if (value === 'xai') return 'xAI';
+  if (value === 'cognition') return 'Devin';
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : translate(getCurrentLocale(), 'authFiles.unknownProvider');
 };
 
 const providerKey = (file: AuthFile) => {
   const value = readString(file, 'provider', 'type', 'account_type').toLowerCase();
+  if (value === 'cognition') return 'devin';
   return value === 'anthropic' ? 'claude' : value === 'anti-gravity' ? 'antigravity' : value;
 };
 
@@ -531,7 +535,7 @@ export function AuthFileManagementPage() {
               const priority = parseAuthFilePriority(file.priority) ?? 0;
               return (
                 <article className={`real-auth-file-row ${disabled ? 'disabled' : ''}`} key={`${name}-${readString(file, 'auth_index', 'authIndex')}`}>
-                  <img src={icon} alt="" className="provider-logo" />
+                  <img src={icon} alt="" className={providerKey(file) === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} />
                   <div className="auth-file-main">
                     <div className="auth-file-title"><strong title={name}>{name}</strong><span className={`state-pill ${disabled ? 'error' : readBoolean(file, 'unavailable') ? 'error' : 'success'}`} title={readString(file, 'status_message', 'statusMessage') || undefined}>{statusText(file)}</span></div>
                     <span>{providerName(file)}{readString(file, 'email', 'account', 'label') ? ` · ${readString(file, 'email', 'account', 'label')}` : ''}</span>

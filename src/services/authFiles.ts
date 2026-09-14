@@ -29,6 +29,7 @@ export const normalizeAuthFilePriorityInput = (value: string): number | null => 
 
 const normalizeOAuthProvider = (value: string) => {
   const provider = value.trim().toLowerCase();
+  if (provider === 'cognition') return 'devin';
   if (provider === 'anthropic') return 'claude';
   if (provider === 'openai') return 'codex';
   return provider;
