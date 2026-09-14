@@ -6,7 +6,7 @@ export const decodeQuotaToken = (value: unknown): Record<string, unknown> | null
   try {
     const parsed = JSON.parse(value);
     if (isRecord(parsed)) return parsed;
-  } catch { /* Try the JWT payload next. */ }
+  } catch {  }
   const segment = value.trim().split('.')[1];
   if (!segment) return null;
   try {

@@ -1,3 +1,4 @@
+import { MessageNotice } from './appNotice';
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -486,9 +487,7 @@ function AppContent() {
               {t('app.close.description')}
             </p>
             {windowsClosePrompt.error ? (
-              <div className="close-dialog-error" role="alert">
-                {windowsClosePrompt.error}
-              </div>
+              <MessageNotice message={windowsClosePrompt.error} onDismiss={() => setWindowsClosePrompt(current => current ? { ...current, error: null } : current)} />
             ) : null}
             <label className="close-dialog-remember">
               <input

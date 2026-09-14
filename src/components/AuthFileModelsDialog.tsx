@@ -1,3 +1,4 @@
+import { MessageNotice } from '../appNotice';
 import { useEffect, useState } from 'react';
 import { Check, Copy, LoaderCircle, Search, X } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -62,7 +63,7 @@ export function AuthFileModelsDialog({ name, onClose }: AuthFileModelsDialogProp
             <div className="model-discovery-message"><LoaderCircle size={20} className="spin" />{t('authFiles.models.loading')}</div>
           ) : (
             <div className="model-discovery-results">
-              <div>{error ? <div className="model-discovery-inline-error" role="alert">{error}</div> : null}</div>
+              <MessageNotice message={error} onDismiss={() => setError('')} />
               {visibleModels.length === 0 ? (
                 <div className="model-discovery-message">{t(models.length ? 'authFiles.models.noMatch' : 'authFiles.models.viewEmpty')}</div>
               ) : (

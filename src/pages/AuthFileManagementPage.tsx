@@ -1,7 +1,7 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { AuthFileModelsDialog } from '../components/AuthFileModelsDialog';
 import {
   Check,
@@ -113,7 +113,7 @@ const statusText = (file: AuthFile) => {
   return readString(file, 'status') || translate(getCurrentLocale(), 'authFiles.status.ready');
 };
 
-function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
+function AuthFileQuotaSummary({ quota, name }: { quota: QuotaState; name: string }) {
   const { locale, t } = useI18n();
   const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
   if (quota.status === 'loading') {
@@ -128,7 +128,7 @@ function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
     return (
       <div className="auth-file-quota error" title={quota.error}>
         <span>{t('authFiles.quota.failed')}</span>
-        {quota.error ? <small>{quota.error}</small> : null}
+        <MessageNotice message={quota.error ? name + ': ' + quota.error : null} />
       </div>
     );
   }
@@ -154,7 +154,7 @@ function AuthFileQuotaSummary({ quota }: { quota: QuotaState }) {
       ) : null}
       {quota.resetCreditsApplicable !== undefined ? <span className="auth-file-quota-credit">{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</span> : null}
       {quota.subscriptionActiveUntil ? <span className="auth-file-quota-credit">{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span> : null}
-      {quota.resetCreditsError ? <small>{t('quota.resetCreditsWarning', { error: quota.resetCreditsError })}</small> : null}
+      <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
       {quota.resetCreditsEarliestExpiry ? (
         <span className="auth-file-quota-credit">{t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) })}</span>
       ) : null}
@@ -499,8 +499,8 @@ export function AuthFileManagementPage() {
         </div>
       </header>
 
-      {error ? <div className="management-alert error">{error}</div> : null}
-      <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
+      {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
+      <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
 
       <section className="panel auth-files-panel real-auth-files-panel">
         <div className="management-toolbar auth-files-toolbar">
@@ -550,8 +550,8 @@ export function AuthFileManagementPage() {
                     <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button`} onClick={() => void toggleStatus(file)} disabled={busy}>{disabled ? t('common.enable') : t('common.disable')}</button>
                     <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.delete')}><Trash2 size={16} /></button>
                   </div>
-                  {quotaProviderForFile(file) && quotas[quotaKey(file)]?.status !== 'idle' ? <AuthFileQuotaSummary quota={quotas[quotaKey(file)] ?? idleQuota()} /> : null}
-                  <QuotaActionFeedback quota={quotas[quotaKey(file)] ?? idleQuota()} />
+                  {quotaProviderForFile(file) && quotas[quotaKey(file)]?.status !== 'idle' ? <AuthFileQuotaSummary quota={quotas[quotaKey(file)] ?? idleQuota()} name={name} /> : null}
+                  <QuotaActionFeedback quota={quotas[quotaKey(file)] ?? idleQuota()} name={name} />
                 </article>
               );
             })}
@@ -655,8 +655,8 @@ export function AuthFileManagementPage() {
               ) : (
                 <div className="model-discovery-results">
                   <div>
-                    {oauthModelError ? <div className="model-discovery-inline-error" role="alert">{oauthModelError}</div> : null}
-                    {oauthModelSettings?.catalogError ? <div className="model-discovery-inline-error" role="status">{t('authFiles.models.catalogUnavailable')}</div> : null}
+                    {oauthModelError ? <MessageNotice message={oauthModelError} onDismiss={() => setOauthModelError('')} /> : null}
+                    {oauthModelSettings?.catalogError ? <MessageNotice tone="info" message={t('authFiles.models.catalogUnavailable')} /> : null}
                   </div>
                   {visibleOauthModels.length === 0 ? (
                     <div className="model-discovery-message"><strong>{oauthModels.length ? t('authFiles.models.noMatch') : t('authFiles.models.empty')}</strong></div>

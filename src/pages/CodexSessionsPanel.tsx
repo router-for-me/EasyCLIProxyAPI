@@ -1,3 +1,4 @@
+import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -6,7 +7,6 @@ import {
   ArrowRight,
   Archive,
   Database,
-  Info,
   LoaderCircle,
   RefreshCw,
   ScanSearch,
@@ -41,7 +41,6 @@ type DeleteConfirmation = {
 
 const PAGE_SIZE = 50;
 
-// Retain the user's place across agent/tab navigation; always reload the actual sessions.
 let sessionViewCache = {
   offset: 0,
   selectionMode: false,
@@ -387,13 +386,7 @@ export function CodexSessionsPanel() {
 
       </section>
 
-      {notice ? (
-        <div className={`codex-session-notice ${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}>
-          {notice.kind === 'error' ? <TriangleAlert size={16} /> : notice.kind === 'warning' ? <Info size={16} /> : <ShieldCheck size={16} />}
-          <span>{notice.message}</span>
-          <button type="button" aria-label={t('common.close')} onClick={() => setNotice(null)}><X size={14} /></button>
-        </div>
-      ) : null}
+      <MessageNotice message={notice?.message} tone={notice?.kind === 'warning' ? 'info' : notice?.kind ?? 'info'} onDismiss={() => setNotice(null)} />
 
       <section className="codex-session-list-section">
         <div className="codex-session-list-head">

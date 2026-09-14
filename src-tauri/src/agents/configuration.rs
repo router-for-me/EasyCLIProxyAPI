@@ -439,7 +439,7 @@ fn validate_deepseek_harness_versioned_credentials(
         let Some(key) = key.as_str() else {
             return Err(format!("{label} 顶层字段名必须是字符串"));
         };
-        let _ = key; // Preserve extension fields from the client and other integrations.
+        let _ = key;
     }
     for section in ["refs", "records"] {
         if yaml_mapping_value(root, section).is_some_and(|value| !value.is_mapping()) {
@@ -460,8 +460,6 @@ fn deepseek_harness_credentials_refs_mut<'a>(
         );
     } else {
         validate_deepseek_harness_versioned_credentials(root, label)?;
-        // Repair files written by older EasyCLIProxyAPI builds, which placed
-        // this managed reference beside version/refs/records.
         root.remove(yaml_key(DEEPSEEK_HARNESS_CREDENTIAL));
     }
 
@@ -2982,8 +2980,6 @@ fn build_zcode_config(
         })
         .collect::<serde_json::Map<_, _>>();
     let managed_provider = ensure_json_object_entry(providers, MANAGED_AGENT_PROVIDER_ID);
-    // `npm` is an OpenCode provider field. ZCode treats it as an incompatible
-    // provider definition, so also remove values written by earlier versions.
     managed_provider.remove("npm");
     managed_provider.insert("enabled".to_string(), serde_json::json!(true));
     managed_provider.insert("name".to_string(), serde_json::json!("EasyCLIProxyAPI"));

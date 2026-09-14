@@ -66,7 +66,7 @@ const { mkdirSync } = require('node:fs');
     await page.evaluate(() => { window.fixtureFailFetch = true; });
     await dialog.getByRole('button', { name: 'Refresh', exact: true }).click();
     await ready();
-    assert.match(await dialog.getByRole('alert').innerText(), /Fixture discovery failed/);
+    assert.match(await page.locator('.app-notice-stack').getByRole('alert').innerText(), /Fixture discovery failed/);
     assert.equal(await rows(right).count(), 1, 'Failed refresh keeps selected models');
     await left.getByRole('button', { name: 'Clear search', exact: true }).click();
     await counts(401, 1);

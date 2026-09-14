@@ -1,4 +1,3 @@
-import { createPortal } from 'react-dom';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { ModelSelectionPanel } from '../components/ModelSelectionPanel';
 import {
@@ -74,7 +73,7 @@ import {
 import { modelMatchesRule } from '../services/oauthModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 
 export type ProviderSection =
   | 'gemini-api-key'
@@ -1218,7 +1217,7 @@ export function ApiAccessPage() {
         </div>
       </header>
 
-      {error ? <div className="management-alert error">{error}</div> : null}
+      {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
       <div className="provider-workbench real-provider-workbench">
         <aside className="panel provider-category-panel">
           {providerDefinitions.map((definition) => (
@@ -1353,17 +1352,7 @@ export function ApiAccessPage() {
           onClose={() => setHealthDialogRow(null)}
         />
       ) : null}
-      {typeof document === 'undefined'
-        ? null
-        : createPortal(
-            <InlineNotice
-              key={feedback.revision}
-              notice={feedback.notice}
-              onDismiss={feedback.clearNotice}
-              className="api-access-page-notice"
-            />,
-            document.body,
-          )}
+      <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
     </section>
   );
 }
@@ -1507,7 +1496,7 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
             failed: failedCount,
           })}</span>
           {modelError ? (
-            <small className="error" title={modelError}>{t('apiAccess.health.modelLoadFailed', { error: modelError })}</small>
+            <MessageNotice message={t('apiAccess.health.modelLoadFailed', { error: modelError })} onDismiss={() => setModelError('')} />
           ) : modelLoading ? (
             <small>{t('apiAccess.health.loadingModels')}</small>
           ) : null}
@@ -1644,7 +1633,7 @@ export function ApiProviderDialog({
         event.stopPropagation();
         closeModelDiscovery();
       } else if (event.key === 'Tab') {
-        const controls = Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') ?? []);
+        const controls = Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []);
         const first = controls[0];
         const last = controls[controls.length - 1];
         if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
@@ -1984,7 +1973,7 @@ export function ApiProviderDialog({
               <Plus size={14} />{t('apiAccess.models.add')}
             </button>
           </div>
-          {modelError && !modelDiscoveryOpen ? <small className="model-picker-error">{modelError}</small> : null}
+          {modelError && !modelDiscoveryOpen ? <MessageNotice message={modelError} onDismiss={() => setModelError('')} /> : null}
         </div>
         <label><span>{t('apiAccess.field.priority')}</span><input inputMode="numeric" value={draft.priority} onChange={(event) => updateTextField('priority', event.currentTarget.value.replace(/\D/g, ''))} placeholder={t('common.optional')} /></label>
         <details className="provider-advanced-settings">
@@ -2042,9 +2031,7 @@ export function ApiProviderDialog({
           </div>
         </details>
         {formError ? (
-          <div className="management-alert error api-provider-dialog-error" role="alert">
-            {formError}
-          </div>
+          <MessageNotice message={formError} onDismiss={() => setFormError('')} />
         ) : null}
         <div className="config-dialog-actions two-actions">
           <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
@@ -2069,10 +2056,7 @@ export function ApiProviderDialog({
             </div>
 
             {modelError ? (
-              <div className="model-discovery-inline-error" role="alert">
-                <strong>{t('apiAccess.modelDialog.fetchFailed')}</strong>
-                <span title={modelError}>{modelError}</span>
-              </div>
+              <MessageNotice source="apiAccess.modelDialog.fetchFailed" message={modelError} onDismiss={() => setModelError('')} />
             ) : null}
 
             <div className="model-transfer-panels">

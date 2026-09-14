@@ -1,3 +1,4 @@
+import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, LoaderCircle, RefreshCw, RotateCcw, Search, X } from 'lucide-react';
@@ -170,9 +171,11 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
       setSnapshot(result.snapshot);
       setModels(cloneModels(result.snapshot));
       setDefaultsRestored(false);
-      setNotice(result.synchronizationError
-        ? t('agents.catalog.syncFailed', { error: result.synchronizationError })
-        : t('agents.catalog.saved'));
+      if (result.synchronizationError) {
+        setError(t('agents.catalog.syncFailed', { error: result.synchronizationError }));
+      } else {
+        setNotice(t('agents.catalog.saved'));
+      }
       await onSaved();
     } catch (requestError) {
       const message = String(requestError);
@@ -290,9 +293,9 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
 
         <footer className="codex-catalog-footer">
           <div>
-            {error ? <span className="agent-inline-message error" role="alert">{error}</span> : null}
-            {!error && notice ? <span className="agent-inline-message" role="status">{notice}</span> : null}
-            {!error && !notice ? <span>{dirty ? t('agents.catalog.unsaved') : t('agents.catalog.saveHint')}</span> : null}
+            {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
+            <MessageNotice tone="success" message={!error ? notice : null} onDismiss={() => setNotice('')} />
+            <span>{dirty ? t('agents.catalog.unsaved') : t('agents.catalog.saveHint')}</span>
           </div>
           <div>
             <button type="button" className="secondary-button" onClick={() => void restoreAll()} disabled={loading || saving}>

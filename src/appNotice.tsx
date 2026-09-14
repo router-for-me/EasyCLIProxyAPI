@@ -1,4 +1,5 @@
-import { useCallback, useId, useReducer } from 'react';
+import { useCallback, useEffect, useId, useReducer, useRef, useState } from 'react';
+import { NoticePortal } from './components/NoticePortal';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import { useI18n } from './i18n';
 import type { MessageKey } from './i18n/resources';
@@ -94,4 +95,69 @@ export function InlineNotice({
   );
 }
 
-export const ActionFeedback = InlineNotice;
+export function FloatingNotice(props: InlineNoticeProps) {
+  const { t } = useI18n();
+  const { notice } = props;
+  if (!notice) return null;
+  const message = typeof notice.message === 'string' ? notice.message : t(notice.message.key, notice.message.variables);
+  if (!message.trim()) return null;
+  return <FloatingNoticeInstance key={notice.tone + ':' + message} {...props} notice={notice} />;
+}
+
+function FloatingNoticeInstance({ notice, onDismiss, className }: InlineNoticeProps & { notice: AppNotice }) {
+  const [dismissed, setDismissed] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const entryRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const dismissRef = useRef(onDismiss);
+  useEffect(() => { dismissRef.current = onDismiss; }, [onDismiss]);
+  const dismiss = useCallback(() => {
+    const entry = entryRef.current;
+    if (entry?.contains(document.activeElement)) {
+      const dialog = entry.closest('dialog, [role="dialog"], [role="alertdialog"]');
+      const previous = returnFocusRef.current;
+      const target = previous?.isConnected && !previous.matches(':disabled')
+        && !previous.closest('.app-notice-stack') && (!dialog || dialog.contains(previous))
+        ? previous
+        : Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? [])
+          .find(control => !control.closest('.app-notice-stack') && control.getClientRects().length > 0);
+      target?.focus();
+    }
+    setDismissed(true);
+    dismissRef.current?.();
+  }, []);
+  useEffect(() => {
+    if (dismissed || hovered || focused || notice.tone !== 'success') return;
+    const timer = window.setTimeout(dismiss, 6_000);
+    return () => window.clearTimeout(timer);
+  }, [dismissed, hovered, focused, notice.tone, dismiss]);
+  if (dismissed) return null;
+  return <NoticePortal>
+    <div ref={entryRef} className="app-notice-entry"
+      onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
+      onFocusCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          returnFocusRef.current = event.relatedTarget instanceof HTMLElement ? event.relatedTarget : null;
+        }
+        setFocused(true);
+      }}
+      onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}
+      onKeyDown={(event) => { if (event.key !== 'Tab') event.stopPropagation(); }}
+      onClick={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
+      <InlineNotice notice={notice} onDismiss={dismiss} className={className} />
+    </div>
+  </NoticePortal>;
+}
+
+export function MessageNotice({ message, tone = 'error', onDismiss, source }: {
+  message?: NoticeMessage | null;
+  tone?: NoticeTone;
+  onDismiss?: () => void;
+  source?: MessageKey;
+}) {
+  const owner = useId();
+  return <FloatingNotice notice={message ? { owner, message, tone, source } : null} onDismiss={onDismiss} />;
+}
+
+export const ActionFeedback = FloatingNotice;

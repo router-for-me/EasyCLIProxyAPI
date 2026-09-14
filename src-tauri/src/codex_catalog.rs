@@ -77,8 +77,6 @@ pub(crate) fn validate_embedded_catalog() -> Result<(), String> {
     catalog_state().map(|_| ())
 }
 
-// An omitted managed field means "use the Codex default", not "keep the disk value".
-// Derive ownership from the bundled schemas and editor so optional fields stay in sync.
 pub(crate) fn is_managed_model_field(field: &str) -> bool {
     static FIELDS: OnceLock<HashSet<String>> = OnceLock::new();
     FIELDS
@@ -608,8 +606,6 @@ fn normalize_fallback_model(model: &mut Map<String, Value>) {
     }
 }
 
-// Both official and fallback templates take context defaults from the CPA API.
-// Template values are used only when the API provides no valid context metadata.
 fn apply_runtime_context_windows(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
     if let Some(context_window) = runtime.context_window.or(runtime.max_context_window) {
         let max_context_window = runtime

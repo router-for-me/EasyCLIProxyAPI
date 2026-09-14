@@ -731,8 +731,6 @@ fn yaml_edit_runtime_patch_removes_empty_keys_and_skips_unsupported_sections() {
     assert!(rendered.contains("host: 127.0.0.1"));
     assert!(rendered.contains("port: 8317"));
 
-    // Nested plugin/routing sections are still optional for comment-preserving
-    // runtime patches; missing maps remain unsupported and stay untouched.
     let unsupported = "host: 127.0.0.1\nport: 8317\n";
     let file = unsupported.parse::<yaml_edit::YamlFile>().unwrap();
     let document = file.document().unwrap();

@@ -328,7 +328,6 @@ export const codexResetCreditDetailsFor = (
     .sort((left, right) => left.expiresAtMs - right.expiresAtMs)[0]?.expiresAt;
 
   return {
-    // An empty detail list is not an explicit zero; keep the usage-summary fallback.
     availableCount: availableCount === null
       ? validCredits.length || undefined
       : Math.max(0, Math.floor(availableCount)),

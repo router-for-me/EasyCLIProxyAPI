@@ -1,3 +1,4 @@
+import { MessageNotice } from '../appNotice';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import {
   type KeyboardEvent,
@@ -568,10 +569,8 @@ export function ThinkingAliasesPage() {
   return (
     <section className="page management-page thinking-alias-page">
       {confirmationDialog}
-      <div className="thinking-alias-feedback" aria-live="polite">
-        {error && !editorOpen ? <div className="management-alert error">{error}</div> : null}
-        {!error && notice ? <div className="management-alert success">{notice}</div> : null}
-      </div>
+      <MessageNotice message={error} onDismiss={() => setError('')} />
+      <MessageNotice tone="success" message={!error ? notice : null} onDismiss={() => setNotice('')} />
 
       <header className="management-header">
         <div>
@@ -614,7 +613,7 @@ export function ThinkingAliasesPage() {
             </div>
 
             <div className="thinking-alias-dialog-body">
-            {error ? <div className="management-alert error" role="alert">{error}</div> : null}
+
             <div className="thinking-alias-field thinking-model-field">
             <label htmlFor="thinking-model-search">{t('aliases.originalModel')}</label>
             <div className="thinking-model-picker" ref={modelPickerRef}>

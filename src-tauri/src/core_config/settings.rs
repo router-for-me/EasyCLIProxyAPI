@@ -666,9 +666,6 @@ pub(crate) fn write_bytes_atomically(path: &Path, content: &[u8]) -> Result<(), 
         let mut file = File::create(&temporary_path)?;
         file.write_all(content)?;
         file.sync_all()?;
-        // ReplaceFileW requires the replacement file handle to be closed.
-        // Unix rename permits replacing an open file, so this otherwise only
-        // surfaces on Windows as ERROR_SHARING_VIOLATION (os error 32).
         drop(file);
         replace_file_atomically(&temporary_path, path)
     })();

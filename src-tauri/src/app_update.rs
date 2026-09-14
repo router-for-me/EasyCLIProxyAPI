@@ -894,9 +894,6 @@ pub(crate) async fn download_and_stage_portable_app_update(
                 work_dir: work_dir.clone(),
                 target_version: pending.version.clone(),
             };
-            // Keep the updater inside its signed application bundle. Copying the Mach-O
-            // executable into a temporary directory strips the bundle context Gatekeeper
-            // uses to validate it and can cause macOS to terminate it before it starts.
             let helper_path = macos_update_helper_path(&current_exe);
             launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor).await
         }

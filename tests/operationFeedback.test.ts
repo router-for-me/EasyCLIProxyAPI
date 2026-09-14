@@ -37,20 +37,6 @@ describe('控件自身反馈', () => {
     expect(nonEmptyCalls[0].arguments[1].getText()).toBe("'error'");
   });
 
-  it('API 接入提示固定在右下角，不插入页面布局', () => {
-    const source = readFileSync(new URL('../src/pages/ApiAccessPage.tsx', import.meta.url), 'utf8');
-    expect(source).toContain("import { createPortal } from 'react-dom';");
-    expect(source).toContain('className="api-access-page-notice"');
-    expect(source).toContain('createPortal(');
-    expect(source).toContain('document.body');
-    expect(source).not.toContain('feedbackRow');
-    expect(source.indexOf('createPortal(')).toBeGreaterThan(source.indexOf('provider-workbench real-provider-workbench'));
-    expect(source.slice(source.indexOf('provider-workbench real-provider-workbench'), source.lastIndexOf('createPortal('))).not.toContain('<InlineNotice');
-    const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
-    expect(styles).toMatch(/\.action-feedback\.inline-notice\.api-access-page-notice\s*\{[\s\S]*?position:\s*fixed;/);
-    expect(styles).toMatch(/\.action-feedback\.inline-notice\.api-access-page-notice\s*\{[\s\S]*?right:\s*24px;/);
-    expect(styles).toMatch(/\.action-feedback\.inline-notice\.api-access-page-notice\s*\{[\s\S]*?bottom:\s*24px;/);
-  });
 
   it('凭证文件的启用停用由按钮与状态标签反馈', () => {
     expect(actionCalls('AuthFileManagementPage.tsx', 'toggleStatus', 'showNotice').calls).toHaveLength(0);

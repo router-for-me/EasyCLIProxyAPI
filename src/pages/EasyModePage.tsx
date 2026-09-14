@@ -24,7 +24,7 @@ import {
 import appLogo from "../assets/logo.jpg";
 import { useI18n, languageOptions, type AppLocale } from "../i18n";
 import type { MessageKey } from "../i18n/resources";
-import { InlineNotice, useAppNotice, type NoticeMessage } from "../appNotice";
+import { MessageNotice, FloatingNotice, useAppNotice, type NoticeMessage } from "../appNotice";
 import {
   managementApi,
   readString,
@@ -155,7 +155,6 @@ export function EasyModePage({
   const [guideApiModelsFetched, setGuideApiModelsFetched] = useState(false);
   const [guideAgentConfigured, setGuideAgentConfigured] = useState(false);
 
-  // 新手聚焦指导状态（默认关闭，点击开启）
   const [guideActive, setGuideActive] = useState(false);
   const [guideStep, setGuideStep] = useState<number>(1);
   const [spotlightRect, setSpotlightRect] = useState<{
@@ -454,7 +453,6 @@ export function EasyModePage({
     }
   };
 
-  // 获取当前聚焦点元素 ID (4 个稳定步骤)
   const currentTargetId = (() => {
     if (!guideActive) return null;
     if (activeStep === 1) {
@@ -467,7 +465,6 @@ export function EasyModePage({
     return null;
   })();
 
-  // 计算聚光灯位置
   const updateSpotlightPosition = useCallback(() => {
     if (!guideActive || !currentTargetId) {
       setSpotlightRect(null);
@@ -576,7 +573,6 @@ export function EasyModePage({
         ? hasConnectedSource || guideOAuthCompleted || guideApiSaved
         : guideAgentConfigured;
 
-  // 指引步骤控制
   const handleNextGuideStep = () => {
     if (!guideCanAdvance) return;
     if (guideStep === 1) {
@@ -620,10 +616,8 @@ export function EasyModePage({
 
   return (
     <section className="page simple-mode-page simple-mode-expanded">
-      {/* 全灰色聚焦蒙层 (Dimmed Backdrop) */}
       {guideActive ? <div className="guide-dimmed-overlay" /> : null}
 
-      {/* 顶部全宽导航栏 */}
       <header className="simple-mode-topbar">
         <div className="simple-mode-topbar-left">
           <div className="simple-mode-brand">
@@ -636,7 +630,6 @@ export function EasyModePage({
               <span className="simple-mode-brand-sub">{t("easyMode.brandSub")}</span>
             </div>
           </div>
-          {/* 新手聚焦指导开关 */}
           <button
             type="button"
             className={`simple-mode-guide-toggle simple-mode-highlight-button${guideActive ? " active" : ""}`}
@@ -650,7 +643,6 @@ export function EasyModePage({
         </div>
 
         <div className="simple-mode-topbar-right">
-          {/* 主题切换 */}
           {setTheme ? (
             <div className="simple-mode-theme-group" role="group" aria-label={t("app.theme.label")}>
               <button
@@ -686,7 +678,6 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          {/* 语言选择 */}
           <div className="simple-mode-lang-dropdown">
             <button
               type="button"
@@ -719,7 +710,6 @@ export function EasyModePage({
             ) : null}
           </div>
 
-          {/* 退出新手模式返回常规控制台 */}
           <button
             type="button"
             className="secondary-button simple-mode-exit-btn simple-mode-highlight-button"
@@ -731,7 +721,6 @@ export function EasyModePage({
         </div>
       </header>
 
-      {/* 步骤条进度指示器 */}
       <nav className="simple-mode-step-status" aria-label={t("easyMode.steps.label")}>
         <div className="simple-mode-step-status-heading">
           <span>{t("easyMode.steps.label")}</span>
@@ -775,7 +764,6 @@ export function EasyModePage({
         </div>
       </nav>
 
-      {/* 第一步：接入模型 */}
       {activeStep === 1 ? (
         <section className="panel simple-mode-task">
           <div className="simple-mode-task-heading">
@@ -785,7 +773,6 @@ export function EasyModePage({
             </div>
           </div>
 
-          {/* 连接方式选择卡片 */}
           <div
             id="easy-guide-choice-grid"
             className={`simple-mode-choice-grid${guideActive && guideStep === 1 ? " guide-focus-highlight" : ""}`}
@@ -835,13 +822,12 @@ export function EasyModePage({
             </button>
           </div>
 
-          {/* OAuth 平台列表 */}
           {authMethod === "oauth" ? (
             <div
               id="easy-guide-oauth-box"
               className={`simple-mode-embedded-box${guideActive && guideStep === 2 ? " guide-focus-highlight" : ""}`}
             >
-              <InlineNotice key={oauthFeedback.revision} notice={oauthFeedback.notice} onDismiss={clearOAuthNotice} />
+              <FloatingNotice key={oauthFeedback.revision} notice={oauthFeedback.notice} onDismiss={clearOAuthNotice} />
               <div className="simple-mode-provider-grid">
                 {oauthProviders.map((provider) => {
                   const loggedIn = isOAuthLoggedIn(provider.id);
@@ -897,19 +883,17 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          {/* API 接入表单 */}
           {authMethod === "api" ? (
             <div
               id="easy-guide-api-box"
               className={`simple-mode-embedded-box${guideActive && guideStep === 2 ? " guide-focus-highlight" : ""}`}
             >
-              <InlineNotice key={apiFeedback.revision} notice={apiFeedback.notice} onDismiss={clearApiNotice} />
+              <FloatingNotice key={apiFeedback.revision} notice={apiFeedback.notice} onDismiss={clearApiNotice} />
               {apiTestError ? (
-                <div className="management-alert error" role="alert">{apiTestError}</div>
+                <MessageNotice message={apiTestError} onDismiss={() => setApiTestError("")} />
               ) : null}
 
               <div className="simple-mode-api-form">
-                {/* 平台格式切换 */}
                 <div className="simple-mode-api-platforms">
                   {apiSectionOptions.map((opt) => (
                     <button
@@ -968,7 +952,6 @@ export function EasyModePage({
                   </div>
                 </div>
 
-                {/* 模型拉取与选择 */}
                 <div className="simple-mode-api-model-card">
                   {apiTestedModels.length === 0 ? (
                     <div className="simple-mode-api-model-fetch">
@@ -1058,7 +1041,6 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          {/* 第一步底部操作栏 */}
           <div
             id="easy-guide-footer-action"
             className={`simple-mode-task-footer${guideActive && guideStep === 3 ? " guide-focus-highlight" : ""}`}
@@ -1091,7 +1073,6 @@ export function EasyModePage({
         </section>
       ) : null}
 
-      {/* 第二步：接入智能体 */}
       {activeStep === 2 ? (
         <section
           id="easy-guide-agents-panel"
@@ -1116,7 +1097,6 @@ export function EasyModePage({
         </section>
       ) : null}
 
-      {/* 悬浮指导卡片 */}
       {guideActive && spotlightRect ? (
         <aside
           ref={guideTooltipRef}

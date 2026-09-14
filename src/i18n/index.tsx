@@ -43,7 +43,6 @@ function detectInitialLocale(): AppLocale {
     const saved = window.localStorage.getItem(STORAGE_KEY);
     if (saved) return normalizeLocale(saved);
   } catch {
-    // Storage may be unavailable in a restricted WebView; use the OS language.
   }
   return normalizeLocale(window.navigator.languages?.[0] ?? window.navigator.language);
 }
@@ -83,7 +82,6 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     try {
       window.localStorage.setItem(STORAGE_KEY, locale);
     } catch {
-      // The in-memory locale still works when persistent storage is unavailable.
     }
     void invoke('set_app_locale', { locale }).catch((error) => {
       console.warn('Failed to synchronize the app locale with the native shell', error);

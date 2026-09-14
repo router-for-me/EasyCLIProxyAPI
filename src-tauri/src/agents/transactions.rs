@@ -1,4 +1,3 @@
-//! Configuration transactions use only in-memory rollback images. No backup I/O.
 use super::*;
 use serde_json::Value;
 
@@ -24,7 +23,6 @@ pub(crate) fn config_paths(client: &str, home: &Path) -> Result<Vec<PathBuf>, St
     ))
 }
 
-// Reject links (including Windows junctions) in every existing path component.
 pub(crate) fn validate_config_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute()
         || path
@@ -223,8 +221,6 @@ fn commit_config_transaction(
     if config_images(&all_paths)? != previous {
         return Err("配置已被其他程序修改，请刷新后重试".into());
     }
-    // Check each file again immediately before writing. Track only files this operation touched
-    // so a conflict on a later file cannot roll back someone else's edit to that file.
     let mut attempted = Vec::new();
     let result = (if checked {
         (|| {
@@ -252,12 +248,10 @@ fn commit_config_transaction(
         }
     });
     if result.is_err() {
-        // Do not expose arbitrary writer errors: parsers and external tools may include credentials.
         let rollback = (if checked {
             let mut failed = false;
             for (index, observed) in attempted.into_iter().rev() {
                 let (path, _) = &previous[index];
-                // A file changed after our write: leave that external edit intact.
                 if observed.is_err() || read_agent_bytes(path) != observed {
                     failed = true;
                     continue;
@@ -373,8 +367,6 @@ pub(crate) fn prepare_config_updates(
     Ok(after)
 }
 
-// Model inventories are refreshed from CPA, but matching model entries may have client-specific
-// nested options. Keep those options while allowing unavailable managed models to disappear.
 fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &mut Value) {
     fn fill_missing(before: &Value, after: &mut Value) {
         if let (Some(old), Some(new)) = (before.as_object(), after.as_object_mut()) {
@@ -590,7 +582,6 @@ fn validate_unmanaged_preserved(
                     None,
                 );
                 set(&mut value, &[DEEPSEEK_HARNESS_CREDENTIAL.into()], None);
-                // The credentials format requires version 1 when initially created.
                 if value.get("version") == Some(&serde_json::json!(1)) {
                     set(&mut value, &["version".into()], None);
                 }

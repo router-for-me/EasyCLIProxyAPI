@@ -1,4 +1,3 @@
-//! Generate and validate the entire template before presenting any destructive confirmation.
 use super::*;
 
 #[cfg(test)]
@@ -86,8 +85,6 @@ pub(crate) async fn prepare_desktop_core_update(
     Ok((before, after))
 }
 
-// Management API/parser errors may quote configuration contents. Keep actionable transaction
-// outcomes without forwarding response bodies, YAML source lines or credentials to the UI.
 pub(crate) fn agent_core_error(error: String) -> String {
     if error.contains("自动恢复失败") || error.contains("回滚失败") {
         "内核别名或智能体配置写入失败且回滚失败，请检查当前配置".into()

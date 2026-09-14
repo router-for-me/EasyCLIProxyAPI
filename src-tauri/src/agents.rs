@@ -1,4 +1,3 @@
-//! Agent client discovery, configuration generation, and reversible state management.
 
 use super::*;
 

@@ -1,10 +1,11 @@
+import { MessageNotice } from '../appNotice';
 import { AppWindow, LoaderCircle, Play, RefreshCw, Square, Terminal, Trash2 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
 type LaunchTarget = { id: 'app' | 'cli'; label: string; detail: string };
 
 export function AgentRunControls({
-  name, dualTargets, desktop, targets, enabled, busyAction, harness, onLaunch, onRestart, onStop, onRestartWeb, error,
+  name, dualTargets, desktop, targets, enabled, busyAction, harness, onLaunch, onRestart, onStop, onRestartWeb, error, onErrorDismiss,
 }: {
   name: string;
   dualTargets: boolean;
@@ -18,6 +19,7 @@ export function AgentRunControls({
   onStop: () => void;
   onRestartWeb: () => void;
   error: string;
+  onErrorDismiss?: () => void;
 }) {
   const { t } = useI18n();
   const busy = busyAction !== null;
@@ -56,21 +58,22 @@ export function AgentRunControls({
         {t(busyAction === 'restart-deepseek' ? 'agents.deepseekLaunch.restarting' : 'agents.deepseekLaunch.restart')}
       </button> : null}
     </div>
-    {error ? <span className="agent-inline-message error" role="alert">{error}</span> : null}
+    {error ? <MessageNotice message={error} onDismiss={onErrorDismiss} /> : null}
   </section>;
 }
 
-export function AgentConfigurationFeedback({ pending, notice, error, description }: {
-  pending: boolean; notice: string; error: string; description: string;
+export function AgentConfigurationFeedback({ pending, notice, error, description, status = '', onNoticeDismiss, onErrorDismiss }: {
+  pending: boolean; notice: string; error: string; description: string; status?: string; onNoticeDismiss?: () => void; onErrorDismiss?: () => void;
 }) {
   const { t } = useI18n();
-  if (!pending && !notice && !error && !description) return null;
-  return <div className="agent-save-feedback agent-shared-feedback" aria-live="polite">
-    {pending ? <span className="agent-write-state">{t('agents.modify.pending')}</span> : null}
-    {error ? <span className="agent-inline-message error" role="alert">{error}</span> : null}
-    {notice ? <span className="agent-inline-message">{notice}</span> : null}
-    {description ? <small>{description}</small> : null}
-  </div>;
+  return <>
+    <MessageNotice message={error} onDismiss={onErrorDismiss} />
+    <MessageNotice tone="success" message={!error ? notice : null} onDismiss={onNoticeDismiss} />
+    <div className="agent-save-feedback agent-shared-feedback" aria-live="polite">
+      <span className="agent-write-state">{pending ? t('agents.modify.pending') : status || ' '}</span>
+      <small tabIndex={description ? 0 : undefined}>{description || ' '}</small>
+    </div>
+  </>;
 }
 
 export function AgentConfigManagementPanel({

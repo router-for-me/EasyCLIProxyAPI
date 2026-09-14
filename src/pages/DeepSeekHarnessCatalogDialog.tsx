@@ -1,3 +1,4 @@
+import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { LoaderCircle, RefreshCw, RotateCcw, Search, Settings2, X } from 'lucide-react';
@@ -127,7 +128,7 @@ export function DeepSeekHarnessCatalogDialog({ onClose, onSaved }: { onClose: ()
       if (event.key === 'Escape') { event.stopPropagation(); if (confirmation) setConfirmation(null); else close(); }
       if (event.key === 'Tab') {
         const scope = confirmation ? dialogRef.current?.querySelector('[role="alertdialog"]') : dialogRef.current;
-        const targets = [...(scope?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary') ?? [])].filter(el => el.getClientRects().length);
+        const targets = [...(scope?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]') ?? [])].filter(el => el.getClientRects().length);
         const first = targets[0], last = targets[targets.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -182,7 +183,7 @@ export function DeepSeekHarnessCatalogDialog({ onClose, onSaved }: { onClose: ()
           </> : null}
         </fieldset></main>
       </div>
-      <footer className="codex-catalog-footer"><div aria-live="polite">{error ? <span className="agent-inline-message error" role="alert">{error}</span> : notice ? <span role="status">{notice}</span> : <span>{t(dirty ? 'agents.catalog.unsaved' : 'agents.harness.saveHint')}</span>}</div><div>
+      <footer className="codex-catalog-footer"><div><MessageNotice message={error} onDismiss={() => setError('')} /><MessageNotice tone="success" message={!error ? notice : null} onDismiss={() => setNotice('')} /><span>{t(dirty ? 'agents.catalog.unsaved' : 'agents.harness.saveHint')}</span></div><div>
         <button className="secondary-button" disabled={loading || saving || !snapshot} onClick={() => { setDrafts(Object.fromEntries(snapshot!.models.map(m => [m.id, {}]))); setProvider({}); changed(); }}>{t('agents.catalog.resetAll')}</button>
         <button className="secondary-button" disabled={saving} onClick={close}>{t('common.cancel')}</button><button className="primary-button" disabled={!dirty || loading || saving} onClick={() => void save()}>{saving ? <LoaderCircle size={16} className="spin" /> : null}{t(saving ? 'common.saving' : 'common.save')}</button>
       </div></footer>

@@ -234,7 +234,6 @@ export async function fetchModels(
             if (models.length) return models;
           }
         } catch {
-          // Keep the authenticated request error as the useful failure reason.
         }
       }
     }

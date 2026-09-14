@@ -15,7 +15,7 @@ import geminiIcon from '../assets/icons/gemini.svg';
 import { clientApiProfiles } from '../services/clientAccess';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { FloatingNotice, useAppNotice } from '../appNotice';
 import { VersionManagementPage, displayAppVersion } from './VersionManagementPage';
 
 type CoreProcessCommand = 'start_core_process' | 'stop_core_process' | 'restart_core_process';
@@ -283,7 +283,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               {t('kernel.control.refresh')}
             </button>
           </div>
-          <InlineNotice key={processFeedback.revision} notice={processFeedback.notice} onDismiss={processFeedback.clearNotice} />
+          <FloatingNotice key={processFeedback.revision} notice={processFeedback.notice} onDismiss={processFeedback.clearNotice} />
         </div>
       </div>
 
@@ -331,7 +331,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
           </span>
         </div>
 
-        <InlineNotice key={copyFeedback.revision} notice={copyFeedback.notice} onDismiss={copyFeedback.clearNotice} />
+        <FloatingNotice key={copyFeedback.revision} notice={copyFeedback.notice} onDismiss={copyFeedback.clearNotice} />
         <div className="client-api-grid">
           {apiProfiles.map((profile) => (
             <article key={profile.id} className={`client-api-card ${profile.id}`}>

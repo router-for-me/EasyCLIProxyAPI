@@ -826,10 +826,6 @@ pub(crate) fn claude_desktop_config_paths_from_directories(
 pub(crate) fn claude_desktop_config_paths_from_local_app_data(
     local_app_data: &Path,
 ) -> Vec<PathBuf> {
-    // Claude Desktop may add a channel or version suffix to these directories.
-    // Match cc-switch's resolver so status detection and configuration writes use
-    // the same files as the installed Desktop client rather than only the legacy
-    // fixed `Claude` / `Claude-3p` locations.
     let normal = find_windows_claude_data_directory(local_app_data, false)
         .unwrap_or_else(|| local_app_data.join("Claude"));
     let threep = find_windows_claude_data_directory(local_app_data, true)
@@ -908,9 +904,6 @@ pub(crate) fn inspect_agent_config(
         Err(_) => (false, None, false, false, Some("配置读取或解析失败，请检查文件权限，或使用手动备份恢复、基础配置模板修复".to_string())),
     };
     let executable = find_agent_executable(client, home);
-    // Desktop application executables are not CLIs. Invoking them with
-    // --version can start their GUI and block discovery, so never probe them
-    // directly. ZCode may still expose a separate command-line entry point.
     let cli_version = if client == AgentClient::ZCode {
         find_named_agent_executable(home, &["zcode"])
             .filter(|path| executable.as_ref() != Some(path))
@@ -966,7 +959,6 @@ pub(crate) fn inspect_agent_config(
     }
 
     let configuration_synchronized = agent_configuration_is_synchronized(client, home, configured);
-    // Legacy backup state never participates in current configuration discovery.
 
     AgentConfigStatus {
         id: client.id().to_string(),
@@ -1213,8 +1205,6 @@ pub(crate) fn inspect_agent_managed_config(
     }
 }
 
-// Configuration health and evidence of CPA integration are separate facts.
-// A saved history version alone does not mean the current files still use CPA.
 pub(crate) fn agent_connection_state(configured: bool, valid: bool, managed: Result<bool, String>) -> &'static str {
     if !valid || managed.is_err() { "invalid" }
     else if configured { "configured" }
@@ -1225,7 +1215,6 @@ pub(crate) fn agent_connection_state(configured: bool, valid: bool, managed: Res
 pub(crate) fn agent_has_connection_evidence(client: AgentClient, paths: &[PathBuf]) -> Result<bool, String> {
     let active_marker = agent_has_managed_marker(client, paths)?;
     if active_marker { return Ok(true); }
-    // Recognize partial configurations too, even if the selected provider/model was removed.
     for path in paths {
         let Some(bytes) = read_agent_bytes(path)? else { continue; };
         let content = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
@@ -2020,7 +2009,6 @@ pub(crate) fn read_codex_app_installation_version(
 pub(crate) fn read_zcode_app_version(executable: &Path) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        // Missing version metadata must not cause the desktop app to be launched.
         read_windows_executable_version(executable)
     }
     #[cfg(target_os = "macos")]
@@ -2093,8 +2081,6 @@ pub(crate) fn find_zcode_desktop_executable(home: &Path) -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn find_windows_registered_zcode_executable() -> Option<PathBuf> {
-    // Electron/NSIS permits arbitrary installation directories. Its uninstall
-    // record may omit InstallLocation and point DisplayIcon at an .ico file.
     const DISCOVERY_SCRIPT: &str = r#"
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
@@ -2172,7 +2158,6 @@ pub(crate) fn parse_windows_zcode_discovery_output(output: &str) -> Option<PathB
         let value = if let Some(quoted) = value.strip_prefix('"') {
             quoted.split_once('"')?.0
         } else if kind == "uninstaller" {
-            // Never execute UninstallString; only use its executable's directory.
             let end = value.to_ascii_lowercase().match_indices(".exe").find_map(
                 |(index, extension)| {
                     let end = index + extension.len();
@@ -2381,8 +2366,6 @@ pub(crate) fn read_windows_codex_desktop_version(executable: &Path) -> Option<St
         .and_then(|content| parse_codex_owl_app_version(&content))
         .or_else(|| read_codex_asar_version(&asar))
         .or_else(|| {
-            // Owl's EXE reports the Chromium runtime version, not the Codex
-            // version. Never launch a desktop executable with --version either.
             if owl_ini.exists() || asar.exists() || resources.join("owl-electron-app.json").exists()
             {
                 None
@@ -2417,9 +2400,6 @@ pub(crate) fn parse_codex_owl_app_version(content: &str) -> Option<String> {
 pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
 
-    // ASAR starts with two Chromium pickles: a header-size pickle followed by
-    // a JSON header pickle. Read only the header and the root package.json,
-    // not the hundreds of MB of bundled application code.
     let mut file = fs::File::open(path).ok()?;
     let mut prefix = [0_u8; 16];
     file.read_exact(&mut prefix).ok()?;

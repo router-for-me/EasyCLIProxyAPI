@@ -332,8 +332,6 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
         .as_mapping_mut()
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
 
-    // All roles resolve against the same input. Replacing one old role must not erase
-    // the only source record needed to configure another role.
     let sources = root.clone();
     for (alias, source_model) in [
         (CLAUDE_DESKTOP_OPUS_MODEL_ID, mappings.opus.as_str()),
@@ -654,8 +652,6 @@ fn resolve_claude_desktop_alias_source(
     root: &serde_norway::Mapping,
     source_model: &str,
 ) -> Result<Option<ClaudeDesktopAliasSource>, String> {
-    // Prefer an exact client-visible model. Legacy configurations may only retain
-    // an aliased entry, whose upstream name still identifies its configured source.
     for upstream in [false, true] {
         let matching_model = |model: &serde_norway::Value| {
             let (name, client_model, _) = configured_model_identity(model)?;

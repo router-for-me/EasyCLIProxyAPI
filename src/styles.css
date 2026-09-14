@@ -4477,16 +4477,6 @@ textarea:focus-visible {
   color: var(--theme-2f6b3f);
 }
 
-.action-feedback.inline-notice.api-access-page-notice {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 80;
-  width: min(360px, calc(100vw - 32px));
-  margin: 0;
-  box-shadow: 0 14px 34px rgba(45, 42, 38, 0.18);
-}
-
 .real-provider-workbench {
   grid-template-columns: 240px minmax(0, 1fr);
 }
@@ -7449,6 +7439,16 @@ textarea:focus-visible {
   display: grid;
   place-items: center;
   padding: 20px;
+  border-radius: inherit;
+  isolation: isolate;
+}
+
+/* Blur the backdrop without making it a containing block for fixed notices. */
+.codex-catalog-confirm::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   border-radius: inherit;
   background: rgba(45, 42, 38, 0.35);
   backdrop-filter: blur(2px);
@@ -14039,3 +14039,46 @@ body.table-col-resizing * {
 .harness-context-window > label > span { display: flex; flex-wrap: wrap; gap: 6px; }
 .harness-context-source { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .harness-context-source > button { padding: 4px 8px; font-size: 12px; }
+
+/* Operation feedback is shared across pages and dialogs, outside their layout. */
+.app-notice-stack {
+  position: fixed;
+  right: 24px;
+  bottom: var(--notice-bottom, 24px);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(480px, calc(100vw - 48px));
+  max-height: calc(100vh - var(--notice-bottom, 24px) - 24px);
+  max-height: calc(100dvh - var(--notice-bottom, 24px) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: none;
+}
+.app-notice-entry {
+  flex: none;
+  min-width: 0;
+  pointer-events: auto;
+}
+.app-notice-entry .action-feedback.inline-notice {
+  margin: 0;
+  box-shadow: 0 4px 16px rgba(45, 42, 38, 0.18);
+}
+
+/* Persistent agent state uses reserved rows; transient results float above it. */
+.agent-shared-feedback {
+  grid-template-rows: 20px 36px;
+}
+.agent-shared-feedback > .agent-write-state,
+.agent-shared-feedback > small {
+  min-height: 0;
+  overflow: auto;
+}
+.agent-model-status {
+  display: block;
+  height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

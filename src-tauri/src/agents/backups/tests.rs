@@ -146,7 +146,6 @@ fn codex_catalog_reset_removes_managed_fields_and_preserves_extensions_on_disk()
         .unwrap();
         let defaults = codex_catalog::prepare_catalog(&runtime).unwrap();
         let mut expected: Value = serde_json::from_str(&defaults.json).unwrap();
-        // The editor restores 95% by dropping its override on this official model.
         assert!(expected["models"][0]
             .get("effective_context_window_percent")
             .is_none());
@@ -787,7 +786,6 @@ fn nested_model_options_and_third_party_providers_survive_all_updates() {
             }
             save(path, render(path, &root).unwrap());
         }
-        // Change credentials without reordering the selected model inventory.
         let catalog = catalog("gpt-one");
         let mappings = ClaudeDesktopModelMappings::all("gpt-one");
         apply_agent_configuration_with_oauth(

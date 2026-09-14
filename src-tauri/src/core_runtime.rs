@@ -12,7 +12,6 @@ pub(crate) fn lock_core_operation(
     Ok(guard)
 }
 
-// Own the guard from spawn, including while the management port is starting.
 pub(crate) struct CoreChild {
     child: Child,
     #[cfg(windows)]
@@ -323,7 +322,6 @@ pub(crate) fn pause_core_process_for_install(
     process_state: &CoreProcessState,
 ) -> Result<bool, String> {
     process_state.ensure_active()?;
-    // A process can hold files even when its HTTP port is not responding.
     let was_running = current_core_status(Some(process_state), None)?.running;
     if was_running {
         stop_core_process_inner(process_state)?;
@@ -1036,7 +1034,6 @@ pub(crate) fn core_release_asset_name(version: &str, platform: &CorePlatform) ->
     )
 }
 
-// Download progress and cancellation require the complete transfer context here.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn download_asset(
     client: &reqwest::Client,
@@ -1318,9 +1315,6 @@ pub(crate) fn core_start_stdio(log_path: &Path) -> io::Result<(Stdio, Stdio)> {
         fs::create_dir_all(parent)?;
     }
 
-    // Keep only the current process run so console output cannot grow without
-    // bound across restarts. Both child handles use append mode to avoid their
-    // independent file cursors overwriting each other's output.
     let mut header_file = File::options()
         .write(true)
         .create(true)
@@ -2304,9 +2298,6 @@ pub(crate) fn terminate_process_id(process_id: u32) -> Result<(), String> {
             System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
         };
 
-        // Keep a handle to this process until it is signalled. taskkill exiting
-        // successfully only means termination was requested, not that file
-        // handles have been released.
         let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, process_id) };
         if handle.is_null() {
             let error = io::Error::last_os_error();
@@ -2474,11 +2465,6 @@ fn overlay_directory(source_dir: &Path, target_dir: &Path) -> Result<(), String>
     Ok(())
 }
 
-/// Copies through a sibling temporary file and atomically replaces the target.
-///
-/// In particular, do not change this back to copying over an existing file:
-/// macOS caches code-signature validation by vnode, so in-place updates can
-/// leave an otherwise valid executable permanently rejected with SIGKILL.
 pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -2522,8 +2508,6 @@ pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> 
 
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn rematerialize_core_binary(binary_path: &Path) -> Result<(), String> {
-    // Replacing the path with an identical copy gives it a fresh vnode and
-    // clears the macOS signature-cache state left by older in-place updates.
     copy_core_file_replace(binary_path, binary_path)
 }
 

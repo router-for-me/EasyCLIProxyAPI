@@ -123,7 +123,6 @@ fn legacy_desktop_alias_only_provider_retains_its_source_during_reconfiguration(
         "codex-api-key:\n  - api-key: preserved-key\n    base-url: https://example.test\n    models:\n      - name: model-a\n        alias: {opus}\n        context-length: 123456\n",
         opus = CLAUDE_DESKTOP_OPUS_MODEL_ID,
     );
-    // Older configurations can retain only the aliased entry for the upstream model.
     let result = ensure_claude_desktop_model_aliases_in_yaml(
         &input,
         &ClaudeDesktopModelMappings::all("model-a"),
@@ -169,7 +168,6 @@ fn legacy_desktop_alias_source_is_resolved_before_removing_its_route() {
         "codex-api-key:\n  - api-key: preserved-key\n    models: [{{name: model-a, alias: {opus}}}]\n",
         opus = CLAUDE_DESKTOP_OPUS_MODEL_ID,
     );
-    // Legacy callers and restore previews may have model IDs without is_alias metadata.
     let selected = CLAUDE_DESKTOP_OPUS_MODEL_ID;
     let updated = ensure_claude_desktop_model_aliases_in_yaml(
         &input,

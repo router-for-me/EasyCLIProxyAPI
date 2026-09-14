@@ -19,7 +19,7 @@ describe('quota card rendering', () => {
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>重置额度<\/button>/);
     expect(html).not.toContain('当前没有适用的重置次数');
     expect(html).toContain('当前适用：0 次');
-    expect(html).toContain('temporary failure');
+    expect(html).not.toContain('temporary failure');
     expect(html).toContain('订阅到期');
   });
 
@@ -30,7 +30,7 @@ describe('quota card rendering', () => {
     });
     expect(html).toMatch(/<button[^>]*title="重置额度"[^>]*>重置额度<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>重置额度<\/button>/);
-    expect(html).toContain('temporary failure');
+    expect(html).not.toContain('temporary failure');
   });
 
   it('xAI 付费账号保留额度说明和刷新入口，不显示可用性测试', () => {

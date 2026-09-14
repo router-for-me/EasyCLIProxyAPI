@@ -14,7 +14,7 @@ import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import { useI18n } from '../i18n';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { FloatingNotice, useAppNotice } from '../appNotice';
 import { oauthSubpages, type OAuthSubpage } from '../oauthNavigation';
 import {
   changedOAuthAuthFileNames,
@@ -192,7 +192,6 @@ export function OAuthLoginPage() {
     try {
       window.localStorage.setItem(OAUTH_BROWSER_STORAGE_KEY, selectedBrowser);
     } catch {
-      // Keep the in-memory selection when persistent storage is unavailable.
     }
   }, [selectedBrowser]);
 
@@ -486,7 +485,7 @@ export function OAuthLoginPage() {
         </label>
       </header>
 
-      <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
+      <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
       <div className="oauth-grid">
         {oauthProviders.map((provider) => {
           const state = states[provider.id] ?? { status: 'idle' as const };
@@ -546,17 +545,7 @@ export function OAuthLoginPage() {
                         {t('oauth.submitCallback')}
                       </button>
                     </div>
-                    {state.callbackStatus === 'success' && state.status === 'waiting' ? (
-                      <div className="oauth-inline-status success">{t('oauth.callbackSubmitted')}</div>
-                    ) : null}
-                    {state.callbackStatus === 'error' ? (
-                      <div className="oauth-inline-status error">{t('oauth.callbackFailed', { detail: state.callbackError ? `: ${state.callbackError}` : '' })}</div>
-                    ) : null}
                   </div>
-                ) : null}
-
-                {state.status === 'error' && state.error ? (
-                  <div className="oauth-inline-status error">{state.error}</div>
                 ) : null}
               </div>
 

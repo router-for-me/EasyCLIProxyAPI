@@ -1,3 +1,4 @@
+import { MessageNotice } from '../appNotice';
 import {
   useCallback,
   useEffect,
@@ -339,8 +340,6 @@ const DEFAULT_AGENT_VIEW_STATE: AgentViewState = {
   launchError: '',
 };
 
-// Keep navigation and feedback for this app session, including when the page unmounts.
-// The compact view has no session manager, so it keeps its own navigation history.
 let agentViewStateCache: Record<'full' | 'embedded', Partial<Record<AgentClientId, AgentViewState>>> = {
   full: {},
   embedded: {},
@@ -368,7 +367,6 @@ const writeSelectedAgentClient = (client: AgentClientId) => {
   try {
     window.localStorage.setItem(AGENT_SELECTED_CLIENT_KEY, client);
   } catch {
-    // Keep the current in-memory selection when persistent storage is unavailable.
   }
 };
 
@@ -395,7 +393,6 @@ const writeAgentModelSelections = (
   try {
     window.localStorage.setItem(AGENT_MODEL_SELECTIONS_KEY, JSON.stringify(selections));
   } catch {
-    // Local storage can be unavailable in hardened webviews; the in-memory selection still works.
   }
 };
 
@@ -416,7 +413,6 @@ const writeAgentLaunchDirectoryHistory = (history: AgentLaunchDirectoryHistory) 
   try {
     window.localStorage.setItem(AGENT_LAUNCH_DIRECTORY_HISTORY_KEY, JSON.stringify(history));
   } catch {
-    // Keep the current in-memory history when persistent storage is unavailable.
   }
 };
 
@@ -924,8 +920,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setLaunchDirectoryTarget(null);
     setLaunchDirectoryError('');
     setOauthLoginRequiredAction(null);
-    // Preserve unsaved client-specific configuration while navigating between clients.
-    // Each configuration action decides whether its draft should be retained or cleared.
   }, [selected]);
 
   const activeDefinition = agentDefinitions.find((agent) => agent.id === selected)
@@ -1044,7 +1038,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   };
   const hasPendingChanges = Boolean(formEditBaselineByClient[selected]);
 
-  // Only user edits establish a baseline. Detection and default selections are not edits.
   const trackFormEdit = (nextValues: AgentFormValues) => {
     setConfigurationNotice('');
     setClearNotice('');
@@ -1106,9 +1099,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     'sdk-minimal': t('agents.deepseekLaunch.mode.sdkMinimalDescription'),
     custom: t('agents.deepseekLaunch.mode.customDescription'),
   }[deepSeekHarnessLaunchDraft.mode];
-  const modelHint = modelSelectionError
-    || modelError
-    || (modelLoading
+  const modelHint = (modelLoading
       ? t('agents.model.readingAvailable')
       : models.length === 0
         ? ''
@@ -1713,9 +1704,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         </div>
         <div className="agent-header-actions">
           {detectionError ? (
-            <span className="agent-inline-message error" role="alert" aria-live="polite">
-              {detectionError}
-            </span>
+            <MessageNotice message={detectionError} onDismiss={() => setDetectionError('')} />
           ) : null}
           <button type="button" className="secondary-button compact-button" onClick={() => void refresh()} disabled={loading || busy}>
             <RefreshCw size={16} className={loading ? 'spin' : ''} />
@@ -1794,15 +1783,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </span>
               </div>
 
-              {activeStatus?.error || activeStatus?.warnings.length ? (
-                <div className="agent-minimal-message" aria-live="polite">
-                  {activeStatus.error ? (
-                    <span className="agent-inline-message error" role="alert">{activeStatus.error}</span>
-                  ) : (
-                    <span className="agent-inline-message warning">{activeStatus.warnings.join('；')}</span>
-                  )}
-                </div>
-              ) : null}
+              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
 
               {selected === 'claude-desktop' && !activeStatus?.claudeDesktopModelMappings ? <p className="agent-inline-message warning">{t('agents.backup.mappingRequired')}</p> : null}
               <div className="agent-minimal-field">
@@ -1893,15 +1874,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 )}
               </div>
 
-              {activeStatus?.error || activeStatus?.warnings.length ? (
-                <div className="agent-status-messages" aria-live="polite">
-                  {activeStatus.error ? (
-                    <span className="agent-inline-message error" role="alert">{activeStatus.error}</span>
-                  ) : (
-                    <span className="agent-inline-message warning">{activeStatus.warnings.join('；')}</span>
-                  )}
-                </div>
-              ) : null}
+              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
 
               {!isClaudeModelMappingClient ? (
                 <section className="agent-core-setting-section agent-model-section">
@@ -1917,15 +1890,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     onChange={selectModel}
                     onRefresh={refreshModels}
                   />
-                  {modelHint ? (
-                    <span
-                      className={`agent-model-hint ${modelSelectionError || modelError ? 'error' : ''}`}
-                      role={modelSelectionError || modelError ? 'alert' : undefined}
-                      aria-live="polite"
-                    >
-                      {modelHint}
-                    </span>
-                  ) : null}
+                  <span className="agent-model-hint agent-model-status" title={modelHint} aria-live="polite">{modelHint || ' '}</span>
                   {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
                   {harnessCatalogButton}
                   {selected === 'codex' ? (
@@ -2131,15 +2096,18 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             </div>
           ) : null}
           <AgentConfigurationFeedback pending={hasPendingChanges}
-            notice={configurationNotice || clearNotice || (modelLoading || !activeStatus ? t('agents.modify.checking')
-              : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState') : '')}
-            error={configurationError || modelSelectionError} description={modificationDescription} />
+            notice={configurationNotice || clearNotice}
+            onNoticeDismiss={() => { setConfigurationNotice(''); setClearNotice(''); }}
+            status={modelLoading || !activeStatus ? t('agents.modify.checking')
+              : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState') : ''}
+            onErrorDismiss={() => { setConfigurationError(''); setModelSelectionError(''); setModelError(''); }}
+            error={configurationError || modelSelectionError || modelError} description={modificationDescription} />
           {activeSubpage === 'core' ? <AgentRunControls name={activeDefinition.name} dualTargets={hasIndependentCliAndApp}
             desktop={hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode'}
             targets={activeLaunchTargets} enabled={launchEnabled} busyAction={busyAction}
             harness={isDeepSeekHarnessClient ? deepSeekHarnessProcessStatus : null}
             onLaunch={(target) => void launchAgent(target)} onRestart={() => void restartDesktopApp()}
-            onStop={() => void stopDeepSeekHarness()} onRestartWeb={() => void restartDeepSeekHarness()} error={launchError} /> : null}
+            onStop={() => void stopDeepSeekHarness()} onRestartWeb={() => void restartDeepSeekHarness()} error={launchError} onErrorDismiss={() => setLaunchError('')} /> : null}
         </section>
       </div>
 
@@ -2365,9 +2333,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               </div>
             ) : null}
             {launchDirectoryError ? (
-              <span className="agent-inline-message error" role="alert" aria-live="polite">
-                {launchDirectoryError}
-              </span>
+              <MessageNotice message={launchDirectoryError} onDismiss={() => setLaunchDirectoryError('')} />
             ) : null}
             <div className="config-dialog-actions two-actions">
               <button
@@ -2410,9 +2376,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             </p>
             {templatePreview ? <ul className="agent-template-files">{templatePreview.files.map((file) => <li key={file}><code>{file}</code></li>)}</ul> : null}
             {defaultError ? (
-              <span className="agent-inline-message error" role="alert" aria-live="polite">
-                {defaultError}
-              </span>
+              <MessageNotice message={defaultError} onDismiss={() => setDefaultError('')} />
             ) : null}
             <div className="config-dialog-actions two-actions">
               <button type="button" className="secondary-button" onClick={closeDefaultConfirmation} disabled={busy}>{t('common.cancel')}</button>
@@ -2433,9 +2397,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             </div>
             <p>{t('agents.clear.description')}</p>
             {clearError ? (
-              <span className="agent-inline-message error" role="alert" aria-live="polite">
-                {clearError}
-              </span>
+              <MessageNotice message={clearError} onDismiss={() => setClearError('')} />
             ) : null}
             <div className="config-dialog-actions two-actions">
               <button type="button" className="secondary-button" onClick={closeClearConfirmation} disabled={busy}>{t('common.cancel')}</button>

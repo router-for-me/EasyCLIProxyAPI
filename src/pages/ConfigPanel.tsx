@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { useCoreRuntime, type CoreStatus } from '../coreRuntime';
 import { useI18n } from '../i18n';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { webUiManagementUrl } from '../services/clientAccess';
 import { ThinkingAliasesPage } from './ThinkingAliasesPage';
 
@@ -185,7 +185,7 @@ export function ConfigPanelPage() {
   const tlsFeedback = useAppNotice();
   const softwareFeedback = useAppNotice();
   const renderFeedback = (feedback: ReturnType<typeof useAppNotice>) => (
-    <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
+    <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
   );
   const [activeSubpage, setActiveSubpage] = useState<ConfigSubpage>('general');
   const [portDraft, setPortDraft] = useState('8317');
@@ -1903,9 +1903,8 @@ export function ConfigPanelPage() {
               </div>
             ) : null}
 
-            <div className={`config-tls-message ${tlsError ? 'error' : ''}`} role={tlsError ? 'alert' : undefined}>
-              {tlsError || t('config.tls.restartHint')}
-            </div>
+            <MessageNotice message={tlsError} onDismiss={() => setTlsError('')} />
+            <div className="config-tls-message">{t('config.tls.restartHint')}</div>
             {renderFeedback(tlsFeedback)}
           </div>
         </section>

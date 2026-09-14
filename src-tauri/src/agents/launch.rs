@@ -421,7 +421,6 @@ fn restart_managed_deepseek_harness_with(
     stop: impl FnOnce(&mut Child) -> Result<(), String>,
     spawn: impl FnOnce(&Path, &Path, &[String]) -> Result<Child, String>,
 ) -> Result<DeepSeekHarnessProcessStatus, String> {
-    // Keep the lock across stop and spawn so launch/stop/status cannot interleave.
     let mut process = process_state
         .process
         .lock()
@@ -442,13 +441,11 @@ fn restart_managed_deepseek_harness_with(
         return Err("只有 Web 模式支持重启".to_string());
     }
     let launch = managed.launch.clone();
-    // Validate paths before shutting down a working service.
     if !launch.executable.is_file() || !launch.working_directory.is_dir() {
         return Err("DeepSeek Harness 启动程序或工作目录已不存在".to_string());
     }
     stop(&mut managed.child)?;
     *process = None;
-    // The old process must release its endpoint before the replacement starts.
     ensure_deepseek_harness_web_endpoint_available(launch.options.as_ref())?;
     let child = spawn(
         &launch.executable,
@@ -1146,8 +1143,6 @@ fn linux_process_matches_application(process_id: i32, application: &Path) -> boo
             .map(|argument| Path::new(OsStr::from_bytes(argument)))
             .enumerate()
             .any(|(index, argument)| {
-                // An unrelated CLI may mention the desktop executable as an input file.
-                // Only argv[0] identifies a launcher; retain Nix wrapper discovery below.
                 (index == 0 && linux_process_path_matches(argument, application))
                     || installation_root.is_some_and(|root| {
                         fs::canonicalize(argument)
@@ -1666,7 +1661,6 @@ mod tests {
             processes.children[1].try_wait().unwrap().is_none(),
             "unrelated installation must keep running"
         );
-        // Stopping an installation with no running processes succeeds as well.
         stop_other_desktop(&installation, "Test Desktop").unwrap();
     }
 

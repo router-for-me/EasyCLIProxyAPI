@@ -1,3 +1,4 @@
+import { MessageNotice } from '../appNotice';
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { ArchiveRestore, LoaderCircle, X } from 'lucide-react';
@@ -84,7 +85,7 @@ export function AgentConfigBackupDialog({ client, onClose, onRestored }: {
       <strong>{t(confirmation === 'restore' ? 'agents.backup.restoreConfirm' : 'agents.backup.deleteConfirm', { version: date(selected) })}</strong>
       <p>{t(confirmation === 'restore' ? 'agents.backup.restoreWarning' : 'agents.backup.deleteWarning')}</p>
     </div>}
-    {error && <p className="agent-inline-message error" role="alert">{error}</p>}
+    {error && <MessageNotice message={error} onDismiss={() => setError('')} />}
     <footer>
       <button type="button" className="secondary-button" disabled={busy} onClick={() => confirmation ? setConfirmation(null) : onClose()}>{t('common.cancel')}</button>
       {confirmation ? <button type="button" className="danger-button" disabled={busy} onClick={() => void confirm()}>{t(confirmation === 'restore' ? 'agents.backup.confirmRestore' : 'agents.backup.confirmDelete')}</button> : <>

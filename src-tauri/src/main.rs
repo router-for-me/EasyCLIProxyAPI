@@ -87,8 +87,6 @@ const RELEASE_DOWNLOAD_PREFIX: &str =
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-windows.json";
 #[cfg(target_os = "linux")]
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-linux.json";
-// Legacy macOS clients contain an updater that cannot launch outside its signed app bundle.
-// A separate channel makes those clients fall back to a one-time manual installation.
 #[cfg(target_os = "macos")]
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-darwin-v2.json";
 const APP_RELEASE_DOWNLOAD_PREFIX: &str =
@@ -643,8 +641,6 @@ struct GuiConfigFile {
     download_source: VersionDownloadSource,
     custom_download_mirrors: Vec<String>,
     active_custom_download_mirror: String,
-    // Kept for migration compatibility with configurations written before
-    // multi-source downloads were introduced.
     prefer_gitcode_downloads: bool,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
@@ -920,8 +916,6 @@ impl Default for GuiConfigFile {
             auth_dir: DEFAULT_AUTH_DIR.to_string(),
             api_keys: vec![default_api_key_entry()],
             api_access_remarks: Vec::new(),
-            // Populated with an OS-generated secret while loading the GUI
-            // configuration. Core hashes the value written into config.yaml.
             management_secret_key: String::new(),
             debug: false,
             commercial_mode: false,
@@ -1505,7 +1499,6 @@ struct CoreConfigSettings {
     max_retry_credentials: u32,
     max_retry_interval: u32,
     streaming_bootstrap_retries: u32,
-    // Kept for internal config migration/tests; never exposed to the WebView.
     #[allow(dead_code)]
     #[serde(skip_serializing)]
     management_secret_key: Option<String>,
@@ -2638,8 +2631,6 @@ fn main() {
             }
             app_handle.state::<CoreDownloadState>().cancel();
             let app_handle = app_handle.clone();
-            // Keep the event loop alive while an in-flight operation finishes:
-            // tray/status updates from that operation may need the UI thread.
             tauri::async_runtime::spawn_blocking(move || {
                 let _guard = CORE_OPERATION_LOCK
                     .lock()

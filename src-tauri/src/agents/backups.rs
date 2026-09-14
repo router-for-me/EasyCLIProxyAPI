@@ -1,4 +1,3 @@
-//! Explicit, immutable backups. Legacy history and dated backups are never read or migrated.
 use super::*;
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -78,7 +77,6 @@ pub(crate) struct BackupPreview {
 pub(crate) fn agent_data_directory(paths: &[PathBuf]) -> Result<PathBuf, String> {
     #[cfg(test)]
     {
-        // Tests cannot reach the running application's data or real client configuration.
         let temp = std::env::temp_dir();
         let relative = paths
             .first()
@@ -107,7 +105,6 @@ fn path_identity(paths: &[PathBuf]) -> String {
 }
 
 fn backup_directory(client: &str, paths: &[PathBuf]) -> Result<PathBuf, String> {
-    // Only client IDs returned by config_paths reach here; validate again for internal callers.
     if client != PI_AGENT_ID {
         AgentClient::parse(client)?;
     }
@@ -293,7 +290,6 @@ pub(crate) fn create_backup(client: &str, home: &Path) -> Result<BackupSummary, 
     if config_images(&paths)? != images || mapping_revision(client, &paths)? != state_revision {
         return Err("备份期间配置发生变化，请重试".into());
     }
-    // Raw bytes are deliberately saved even if parsing fails.
     write_version(&paths, &version)?;
     backup_summary(client, &paths, &version.id)
 }
@@ -332,7 +328,6 @@ pub(crate) fn list_backups(client: &str, home: &Path) -> Result<BackupList, Stri
 pub(crate) fn delete_backup(client: &str, home: &Path, id: &str) -> Result<(), String> {
     let paths = config_paths(client, home)?;
     let path = version_path(client, &paths, id)?;
-    // Check parents, then unlink only this entry. A damaged or symlinked package can be deleted safely.
     validate_config_path(&path.parent().ok_or("备份目录无效")?.join(".path-check"))?;
     fs::remove_file(&path).map_err(|_| "删除手动备份失败，请刷新列表后重试".to_string())
 }
@@ -347,7 +342,6 @@ fn preview(
     validate_restorable(&version)?;
     let current = config_images(paths)?;
     let after = backup_images(&version);
-    // Entire package hash binds preview to bytes, existence, paths and Desktop mappings.
     if read_agent_bytes(&version_path(client, paths, id)?)?.as_deref() != Some(&package) {
         return Err("备份在预览期间发生变化，请重新预览".into());
     }

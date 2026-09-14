@@ -121,7 +121,6 @@ describe('agent configuration update action', () => {
       'claude-desktop': false,
     };
 
-    // Switch from Claude Code to Desktop: Desktop still loads its own default.
     expect(resolveAgentModelMappingsDraftSourceForClient(
       drafts,
       'claude-desktop',
@@ -130,7 +129,6 @@ describe('agent configuration update action', () => {
       dirtyByClient['claude-desktop'],
     )).toEqual(desktopFallback);
 
-    // Switch back to Claude Code: its unapplied selection must not be overwritten.
     expect(resolveAgentModelMappingsDraftSourceForClient(
       drafts,
       'claude-code',

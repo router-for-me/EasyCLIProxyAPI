@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
+import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
@@ -301,7 +302,6 @@ export function UsageRecordsPage() {
     try {
       localStorage.setItem(TAB_KEY, activeTab);
     } catch {
-      /* Keep in-memory */
     }
   }, [activeTab]);
 
@@ -309,7 +309,6 @@ export function UsageRecordsPage() {
     try {
       localStorage.setItem(RANGE_KEY, range);
     } catch {
-      /* Keep in-memory */
     }
   }, [range]);
 
@@ -473,7 +472,7 @@ export function UsageRecordsPage() {
 
   return (
     <section className="page management-page usage-records-page">
-      {error ? <div className="management-alert error">{error}</div> : null}
+      {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
 
       <div className="usage-topbar">
         <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
@@ -775,13 +774,10 @@ function UsageDataManagementView() {
         </button>
       </div>
 
-      {error ? <div className="management-alert error">{error}</div> : null}
+      {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
       {result ? (
         <>
-          <div className="management-alert success">
-            <ShieldCheck size={16} aria-hidden="true" />
-            <span>{t('usage.dataManagement.success', { repaired: result.repaired, deleted: result.deleted })}</span>
-          </div>
+          <MessageNotice tone="success" message={t('usage.dataManagement.success', { repaired: result.repaired, deleted: result.deleted })} />
           <div className="usage-data-management-result">
           <div><span>{t('usage.dataManagement.scanned')}</span><strong>{result.scanned.toLocaleString()}</strong></div>
           <div><span>{t('usage.dataManagement.repaired')}</span><strong>{result.repaired.toLocaleString()}</strong></div>
@@ -1189,7 +1185,6 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
       }
     }
   } catch {
-    // fallback to defaults
   }
   return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
 };
@@ -1216,7 +1211,6 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
       }
     }
   } catch {
-    // fallback to defaults
   }
   return initial;
 };
@@ -1858,8 +1852,9 @@ function PricingView({
   const [draft, setDraft] = useState<PriceDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [message, setMessage] = useState('');
-  const [localError, setLocalError] = useState('');
+  const { notice, revision, showNotice, clearNotice } = useAppNotice();
+
+
   const visibleRows = pricing.rows.filter((row) => {
     const keyword = search.trim().toLowerCase();
     return !keyword || row.model.toLowerCase().includes(keyword);
@@ -1867,11 +1862,11 @@ function PricingView({
 
   const savePrice = async () => {
     if (!draft?.model.trim()) {
-      setLocalError(t('usage.pricing.modelRequired'));
+      showNotice({ key: 'usage.pricing.modelRequired' }, 'error');
       return;
     }
     setSaving(true);
-    setLocalError('');
+    clearNotice();
     try {
       await invoke('save_usage_model_price', {
         price: {
@@ -1891,10 +1886,10 @@ function PricingView({
         } satisfies ModelPrice,
       });
       setDraft(null);
-      setMessage(t('usage.pricing.saved'));
+      showNotice({ key: 'usage.pricing.saved' });
       await onChanged();
     } catch (saveError) {
-      setLocalError(String(saveError));
+      showNotice(String(saveError), 'error');
     } finally {
       setSaving(false);
     }
@@ -1902,30 +1897,32 @@ function PricingView({
 
   const deletePrice = async (model: string) => {
     if (!await askConfirmation({ title: t('common.delete'), message: t('usage.pricing.deleteConfirm', { model }), confirmText: t('common.delete'), variant: 'danger' })) return;
+    clearNotice();
     try {
       await invoke('delete_usage_model_price', { model });
-      setMessage(t('usage.pricing.deleted'));
+      showNotice({ key: 'usage.pricing.deleted' });
       await onChanged();
     } catch (deleteError) {
-      setLocalError(String(deleteError));
+      showNotice(String(deleteError), 'error');
     }
   };
 
   const syncPrices = async () => {
     setSyncing(true);
-    setLocalError('');
+    clearNotice();
     try {
       const result = await invoke<ModelPriceSyncResult>('sync_usage_model_prices', { query });
-      setMessage(
-        t('usage.pricing.syncResult', {
+      showNotice({
+        key: 'usage.pricing.syncResult',
+        variables: {
           imported: result.imported,
           skipped: result.skipped,
           unmatched: result.unmatched.length,
-        })
-      );
+        },
+      });
       await onChanged();
     } catch (syncError) {
-      setLocalError(String(syncError));
+      showNotice(String(syncError), 'error');
     } finally {
       setSyncing(false);
     }
@@ -1962,8 +1959,7 @@ function PricingView({
         </div>
       </div>
 
-      {localError ? <div className="management-alert error">{localError}</div> : null}
-      {message ? <div className="management-alert success">{message}</div> : null}
+      <FloatingNotice key={revision} notice={notice} onDismiss={clearNotice} />
 
       {draft ? (
         <div className="usage-price-editor">

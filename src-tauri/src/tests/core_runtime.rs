@@ -172,7 +172,6 @@ fn updating_stops_an_adopted_core_without_a_port_before_replacing_its_config() {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     configure_background_command(&mut command);
-    // Spawn without the GUI's job guard to simulate a previous orphan.
     let mut child = command.spawn().unwrap();
     let output = io::BufReader::new(child.stdout.take().unwrap());
     let ready = output
