@@ -1032,7 +1032,7 @@ function UsageTrend({
 
     const labelIndexes = selectTrendAxisLabels(
       count,
-      series.bucket === '30m' ? count : count > 48 ? 9 : count > 24 ? 8 : 7,
+      count > 48 ? 5 : count > 24 ? 6 : 7,
     );
     const compactSameDay =
       count > 1 &&

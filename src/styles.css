@@ -8174,7 +8174,7 @@ textarea:focus-visible {
   min-height: 0;
   height: 100%;
   grid-template-columns: 36px minmax(0, 1fr);
-  grid-template-rows: minmax(140px, 1fr) 28px;
+  grid-template-rows: minmax(140px, 1fr) 18px;
   column-gap: 8px;
   row-gap: 4px;
 }
@@ -8259,7 +8259,7 @@ textarea:focus-visible {
   position: relative;
   grid-column: 2;
   grid-row: 2;
-  height: 28px;
+  height: 18px;
 }
 
 .usage-trend-x-axis span {
@@ -8283,9 +8283,6 @@ textarea:focus-visible {
   transform: translateX(-100%);
 }
 
-.usage-trend-x-axis span:nth-child(even) {
-  top: 14px;
-}
 
 .usage-trend-tooltip {
   position: absolute;
