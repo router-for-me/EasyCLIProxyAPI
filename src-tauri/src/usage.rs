@@ -2649,7 +2649,16 @@ fn load_usage_overview(
     let timeline_sql = format!(
         r#"
         SELECT
-            local_hour,
+            CASE
+                WHEN timestamp_ms > 0 THEN
+                    strftime('%Y-%m-%d-%H-', datetime(timestamp_ms / 1000, 'unixepoch', 'localtime'))
+                    || CASE
+                        WHEN CAST(strftime('%M', datetime(timestamp_ms / 1000, 'unixepoch', 'localtime')) AS INTEGER) < 30
+                        THEN '00'
+                        ELSE '30'
+                    END
+                ELSE local_hour || '-00'
+            END,
             COALESCE(NULLIF(TRIM(model), ''), 'unknown'),
             COUNT(*),
             COALESCE(SUM(CASE WHEN failed = 0 THEN 1 ELSE 0 END), 0),
@@ -2657,8 +2666,8 @@ fn load_usage_overview(
             COALESCE(SUM(CASE WHEN canceled != 0 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(total_tokens), 0)
         FROM usage_events{}
-        GROUP BY local_hour, 2
-        ORDER BY local_hour ASC, 2 ASC
+        GROUP BY 1, 2
+        ORDER BY 1 ASC, 2 ASC
         "#,
         filter.clause
     );
@@ -5537,6 +5546,26 @@ mod tests {
         assert_eq!(analysis.models[0].key, "gpt-5.6-terra");
         assert_eq!(events.total, 1);
         assert_eq!(events.items[0].id, "request-2");
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn timeline_groups_requests_into_half_hour_buckets() {
+        let root = test_root("sqlite-half-hour");
+        let mut connection = open_test_database(&root);
+        let first = sample_record("half-1", "2026-07-17T20:10:00+08:00", "gpt-a");
+        let second = sample_record("half-2", "2026-07-17T20:40:00+08:00", "gpt-a");
+        insert_usage_records(&mut connection, &[first, second]).unwrap();
+
+        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+        assert_eq!(overview.timeline.len(), 2);
+        assert_ne!(overview.timeline[0].hour, overview.timeline[1].hour);
+        assert!(overview
+            .timeline
+            .iter()
+            .all(|point| point.hour.ends_with("-00") || point.hour.ends_with("-30")));
+        assert_eq!(overview.timeline.iter().map(|point| point.requests).sum::<u64>(), 2);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

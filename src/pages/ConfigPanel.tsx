@@ -25,7 +25,6 @@ import {
   Route,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Power,
   Terminal,
   Trash2,
@@ -2180,7 +2179,6 @@ export function ConfigPanelPage() {
                 onClick={generateApiKey}
                 disabled={keyMutationBusy}
               >
-                <Sparkles size={16} aria-hidden="true" />
                 {t('config.keys.generate')}
               </button>
               <button type="submit" className="primary-button" disabled={keyMutationBusy}>

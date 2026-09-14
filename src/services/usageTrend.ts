@@ -15,7 +15,7 @@ export type UsageTimelinePoint = {
   models?: UsageTimelineModel[];
 };
 
-export type TrendBucket = 'hour' | '3h' | 'day' | 'week' | 'month' | 'year';
+export type TrendBucket = '30m' | 'hour' | '3h' | 'day' | 'week' | 'month' | 'year';
 
 export type PreparedTrendPoint = {
   hour: string;
@@ -34,7 +34,6 @@ export type PreparedTrendModel = {
   label: string;
   tokens: number;
   color: string;
-  star: boolean;
 };
 
 export type PreparedTrendSeries = {
@@ -67,32 +66,37 @@ const MODEL_COLORS = [
 ];
 
 export function parseLocalHourKey(value: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})$/.exec(value.trim());
+  const match = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})(?:-(\d{2}))?$/.exec(value.trim());
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
   const hour = Number(match[4]);
+  const minute = match[5] === undefined ? 0 : Number(match[5]);
   if (
     !Number.isInteger(year)
     || !Number.isInteger(month)
     || !Number.isInteger(day)
     || !Number.isInteger(hour)
+    || !Number.isInteger(minute)
     || month < 1
     || month > 12
     || day < 1
     || day > 31
     || hour < 0
     || hour > 23
+    || minute < 0
+    || minute > 59
   ) {
     return null;
   }
-  const date = new Date(year, month - 1, day, hour, 0, 0, 0);
+  const date = new Date(year, month - 1, day, hour, minute, 0, 0);
   if (
     date.getFullYear() !== year
     || date.getMonth() !== month - 1
     || date.getDate() !== day
     || date.getHours() !== hour
+    || date.getMinutes() !== minute
   ) {
     return null;
   }
@@ -104,7 +108,8 @@ export function formatLocalHourKey(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   const hour = String(date.getHours()).padStart(2, '0');
-  return `${year}-${month}-${day}-${hour}`;
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}-${hour}-${minute}`;
 }
 
 function parseRangeDate(value: string | undefined): Date | null {
@@ -119,6 +124,11 @@ function cloneDate(date: Date): Date {
 
 export function startOfBucket(date: Date, bucket: TrendBucket): Date {
   const next = cloneDate(date);
+  next.setSeconds(0, 0);
+  if (bucket === '30m') {
+    next.setMinutes(next.getMinutes() < 30 ? 0 : 30, 0, 0);
+    return next;
+  }
   next.setMinutes(0, 0, 0);
   if (bucket === 'hour') return next;
   if (bucket === '3h') {
@@ -141,6 +151,10 @@ export function startOfBucket(date: Date, bucket: TrendBucket): Date {
 
 export function addBucket(date: Date, bucket: TrendBucket): Date {
   const next = cloneDate(date);
+  if (bucket === '30m') {
+    next.setMinutes(next.getMinutes() + 30);
+    return next;
+  }
   if (bucket === 'hour') {
     next.setHours(next.getHours() + 1);
     return next;
@@ -171,6 +185,9 @@ export function endOfBucket(start: Date, bucket: TrendBucket): Date {
 
 function estimateBucketCount(start: Date, end: Date, bucket: TrendBucket): number {
   if (end.getTime() <= start.getTime()) return 1;
+  if (bucket === '30m') {
+    return Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (HOUR_MS / 2)));
+  }
   if (bucket === 'hour') {
     return Math.max(1, Math.ceil((end.getTime() - start.getTime()) / HOUR_MS));
   }
@@ -187,7 +204,7 @@ function estimateBucketCount(start: Date, end: Date, bucket: TrendBucket): numbe
   return Math.max(1, count);
 }
 
-const BUCKET_ORDER: TrendBucket[] = ['hour', '3h', 'day', 'week', 'month', 'year'];
+const BUCKET_ORDER: TrendBucket[] = ['30m', 'hour', '3h', 'day', 'week', 'month', 'year'];
 
 export function chooseTrendBucket(start: Date, end: Date): TrendBucket {
   for (const bucket of BUCKET_ORDER) {
@@ -239,20 +256,27 @@ export function niceCeiling(value: number): number {
   return nice * magnitude;
 }
 
-export function trendAxisTicks(max: number): number[] {
-  if (max <= 1) return [0, 1];
-  if (Number.isInteger(max) && max <= 8) {
-    const step = max <= 4 ? 1 : 2;
-    const ticks: number[] = [];
-    for (let value = 0; value <= max; value += step) ticks.push(value);
-    if (ticks[ticks.length - 1] !== max) ticks.push(max);
-    return ticks;
+export function trendAxisTicks(max: number, targetCount = 5): number[] {
+  if (!Number.isFinite(max) || max <= 0) return [0, 1];
+  const parts = Math.max(2, Math.round(targetCount));
+  if (Number.isInteger(max) && max <= parts) {
+    return Array.from({ length: max + 1 }, (_, index) => index);
   }
-  const mid = max / 2;
-  return Number.isInteger(mid) ? [0, mid, max] : [0, max];
+  const rawStep = max / parts;
+  const exponent = Math.floor(Math.log10(rawStep));
+  const magnitude = 10 ** exponent;
+  const normalized = rawStep / magnitude;
+  const nice = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  const step = nice * magnitude;
+  const ticks: number[] = [];
+  for (let value = 0; value < max && ticks.length < 12; value += step) {
+    ticks.push(Number.isInteger(value) ? value : Number(value.toFixed(6)));
+  }
+  if (ticks[ticks.length - 1] !== max) ticks.push(max);
+  return ticks;
 }
 
-export function selectTrendAxisLabels(count: number, maxLabels = 6): number[] {
+export function selectTrendAxisLabels(count: number, maxLabels = 8): number[] {
   if (count <= 0) return [];
   if (count <= maxLabels) return Array.from({ length: count }, (_, index) => index);
   const last = count - 1;
@@ -294,7 +318,7 @@ export function formatTrendAxisLabel(
   locale: string,
   options?: { compactSameDay?: boolean },
 ): string {
-  if (bucket === 'hour' || bucket === '3h') {
+  if (bucket === '30m' || bucket === 'hour' || bucket === '3h') {
     if (options?.compactSameDay) return formatTime(point.start, locale);
     return `${formatMonthDay(point.start, locale)} ${formatTime(point.start, locale)}`;
   }
@@ -386,7 +410,7 @@ export function buildUsageTrendSeries(
   }
 
   if (parsed.length === 0) {
-    return { bucket: 'hour', points: [], totals, peak: null, models: [] };
+    return { bucket: '30m', points: [], totals, peak: null, models: [] };
   }
 
   const rangeStart = parseRangeDate(range?.start);
@@ -396,8 +420,8 @@ export function buildUsageTrendSeries(
   const spanStart = rangeStart
     ? new Date(Math.min(rangeStart.getTime(), first.getTime()))
     : first;
-  const spanEndSource = rangeEnd ?? (rangeStart ? now : new Date(last.getTime() + HOUR_MS));
-  const spanEnd = new Date(Math.max(spanEndSource.getTime(), last.getTime() + HOUR_MS));
+  const spanEndSource = rangeEnd ?? (rangeStart ? now : new Date(last.getTime() + HOUR_MS / 2));
+  const spanEnd = new Date(Math.max(spanEndSource.getTime(), last.getTime() + HOUR_MS / 2));
 
   const bucket = chooseTrendBucket(spanStart, spanEnd);
   const seriesStart = startOfBucket(spanStart, bucket);
@@ -436,7 +460,6 @@ export function buildUsageTrendSeries(
     label: labels.get(key) ?? key,
     tokens,
     color: modelColor(index, key),
-    star: index === 0 && key !== OTHER_MODEL_KEY,
   }));
   if (rest.length) {
     models.push({
@@ -444,7 +467,6 @@ export function buildUsageTrendSeries(
       label: OTHER_MODEL_KEY,
       tokens: rest.reduce((sum, [, tokens]) => sum + tokens, 0),
       color: modelColor(models.length, OTHER_MODEL_KEY),
-      star: models.length === 0,
     });
   }
   const peak = series.reduce<PreparedTrendPoint | null>((best, point) => {

@@ -10,13 +10,13 @@ import {
   History,
   House,
   Languages,
+  Lock,
   LogIn,
   MessageCircle,
   Network,
   PackageOpen,
   ServerCog,
   Settings,
-  Sparkles,
   X,
 } from 'lucide-react';
 import appLogo from './assets/logo.jpg';
@@ -42,7 +42,7 @@ const pages = [
   {
     id: 'easy',
     labelKey: 'app.nav.easy',
-    icon: Sparkles,
+    icon: House,
     component: HomePage,
   },
   {
@@ -52,16 +52,10 @@ const pages = [
     component: HomePage,
   },
   {
-    id: 'versions',
-    labelKey: 'app.nav.versions',
-    icon: PackageOpen,
-    component: VersionManagementPageWrapper,
-  },
-  {
-    id: 'config',
-    labelKey: 'app.nav.config',
-    icon: Settings,
-    component: ConfigPanelPage,
+    id: 'api',
+    labelKey: 'app.nav.api',
+    icon: Network,
+    component: ApiAccessPage,
   },
   {
     id: 'oauth',
@@ -70,10 +64,10 @@ const pages = [
     component: OAuthManagementPage,
   },
   {
-    id: 'api',
-    labelKey: 'app.nav.api',
-    icon: Network,
-    component: ApiAccessPage,
+    id: 'agents',
+    labelKey: 'app.nav.agents',
+    icon: Bot,
+    component: AgentsPage,
   },
   {
     id: 'usage-records',
@@ -82,10 +76,16 @@ const pages = [
     component: UsageRecordsPage,
   },
   {
-    id: 'agents',
-    labelKey: 'app.nav.agents',
-    icon: Bot,
-    component: AgentsPage,
+    id: 'config',
+    labelKey: 'app.nav.config',
+    icon: Settings,
+    component: ConfigPanelPage,
+  },
+  {
+    id: 'versions',
+    labelKey: 'app.nav.versions',
+    icon: PackageOpen,
+    component: VersionManagementPageWrapper,
   },
 ] as const;
 
@@ -309,12 +309,14 @@ function AppContent() {
                     .filter(Boolean)
                     .join(' ')}
                   disabled={locked}
-                  title={locked ? t('app.coreRequired.title') : undefined}
+                  title={locked ? t('app.nav.lockedHint') : undefined}
                   onClick={() => select(page.id)}
                 >
                   <Icon size={17} aria-hidden="true" />
                   <span>{t(page.labelKey)}</span>
-                  {updateIndicator ? (
+                  {locked ? (
+                    <Lock size={13} className="nav-lock-icon" aria-hidden="true" />
+                  ) : updateIndicator ? (
                     <i
                       className={`nav-update-indicator ${updateIndicator}`}
                       title={updateIndicator === 'processing'

@@ -8,19 +8,13 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
-  Clock3,
   Columns3Cog,
   Database,
   FilterX,
-  Key,
-  Layers,
   List,
   Pencil,
   RefreshCw,
   RotateCcw,
-  ShieldCheck,
-  Sparkles,
-  Terminal,
   Trash2,
   TriangleAlert,
   Wrench,
@@ -38,6 +32,7 @@ import {
   formatTrendRangeLabel,
   niceCeiling,
   selectTrendAxisLabels,
+  trendAxisTicks,
   smoothAreaPath,
   smoothLinePath,
   stackModelTokens,
@@ -555,10 +550,7 @@ export function UsageRecordsPage() {
         <div className="usage-filter-row">
           <div className="usage-filter-group">
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Clock3 size={13} />
-                {t('usage.filter.timeRange')}
-              </span>
+              <span className="usage-filter-label">{t('usage.filter.timeRange')}</span>
               <select
                 value={range}
                 onChange={(event) => {
@@ -578,10 +570,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Sparkles size={13} />
-                {t('usage.filter.model')}
-              </span>
+              <span className="usage-filter-label">{t('usage.filter.model')}</span>
               <select
                 value={model}
                 onChange={(event) => changeFilter(setModel, event.currentTarget.value)}
@@ -597,10 +586,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Layers size={13} />
-                {t('usage.column.provider')}
-              </span>
+              <span className="usage-filter-label">{t('usage.column.provider')}</span>
               <select
                 value={provider}
                 onChange={(event) => changeFilter(setProvider, event.currentTarget.value)}
@@ -616,10 +602,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Terminal size={13} />
-                {t('usage.filter.source')}
-              </span>
+              <span className="usage-filter-label">{t('usage.filter.source')}</span>
               <select
                 value={source}
                 onChange={(event) => changeFilter(setSource, event.currentTarget.value)}
@@ -635,10 +618,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Key size={13} />
-                {t('apiAccess.field.key')}
-              </span>
+              <span className="usage-filter-label">{t('apiAccess.field.key')}</span>
               <select
                 value={apiKeyHash}
                 onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)}
@@ -654,10 +634,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <ShieldCheck size={13} />
-                {t('usage.filter.result')}
-              </span>
+              <span className="usage-filter-label">{t('usage.filter.result')}</span>
               <select
                 value={result}
                 onChange={(event) => changeFilter(setResult, event.currentTarget.value)}
@@ -987,6 +964,7 @@ function UsageTrend({
         stacked: [],
         areaLayers: [],
         totalLinePath: '',
+        yTicks: [0, 0.25, 0.5, 0.75, 1],
         labelIndexes: [],
         compactSameDay: false,
         baseY: 146,
@@ -1050,8 +1028,12 @@ function UsageTrend({
       }));
     }
     const totalLinePath = smoothLinePath(totalPoints);
+    const yTicks = trendAxisTicks(maxTokens);
 
-    const labelIndexes = selectTrendAxisLabels(count, count > 36 ? 5 : 4);
+    const labelIndexes = selectTrendAxisLabels(
+      count,
+      series.bucket === '30m' ? count : count > 48 ? 9 : count > 24 ? 8 : 7,
+    );
     const compactSameDay =
       count > 1 &&
       series.points[0].start.toDateString() === series.points[count - 1].start.toDateString();
@@ -1061,6 +1043,7 @@ function UsageTrend({
       stacked,
       areaLayers,
       totalLinePath,
+      yTicks,
       labelIndexes,
       compactSameDay,
       baseY,
@@ -1132,7 +1115,7 @@ function UsageTrend({
               <button
                 type="button"
                 key={model.key}
-                className={`usage-trend-legend-item${isHidden ? ' is-hidden' : ''}${model.star ? ' is-star' : ''}`}
+                className={`usage-trend-legend-item${isHidden ? ' is-hidden' : ''}`}
                 aria-pressed={!isHidden}
                 onClick={() =>
                   setHiddenModels((current) =>
@@ -1144,7 +1127,6 @@ function UsageTrend({
               >
                 <span className="usage-trend-swatch" style={{ background: model.color }} />
                 <span>{modelLabel(model.key, model.label)}</span>
-                {model.star ? <em>{t('usage.trend.star')}</em> : null}
               </button>
             );
           })}
@@ -1159,9 +1141,9 @@ function UsageTrend({
 
       <div className="usage-trend-chart">
         <div className="usage-trend-y-axis" aria-hidden="true">
-          <span>{compactNumber(chart.maxTokens)}</span>
-          <span>{compactNumber(Math.round(chart.maxTokens / 2))}</span>
-          <span>0</span>
+          {[...chart.yTicks].reverse().map((tick, index) => (
+            <span key={`y-${tick}-${index}`}>{compactNumber(tick)}</span>
+          ))}
         </div>
 
         <div
@@ -1191,43 +1173,36 @@ function UsageTrend({
                   <stop
                     offset="0%"
                     stopColor={model.color}
-                    stopOpacity={model.star ? 0.38 : 0.28}
+                    stopOpacity={0.28}
                   />
                   <stop
                     offset="100%"
                     stopColor={model.color}
-                    stopOpacity={model.star ? 0.14 : 0.08}
+                    stopOpacity={0.08}
                   />
                 </linearGradient>
               ))}
             </defs>
 
-            <line
-              x1="0"
-              y1={chart.PT}
-              x2="1000"
-              y2={chart.PT}
-              className="usage-trend-grid"
-            />
-            <line
-              x1="0"
-              y1={chart.PT + chart.UH / 2}
-              x2="1000"
-              y2={chart.PT + chart.UH / 2}
-              className="usage-trend-grid"
-            />
-            <line
-              x1="0"
-              y1={chart.baseY}
-              x2="1000"
-              y2={chart.baseY}
-              className="usage-trend-baseline"
-            />
+            {chart.yTicks.map((tick) => {
+              const y = chart.baseY - (tick / chart.maxTokens) * chart.UH;
+              const isBase = tick === 0;
+              return (
+                <line
+                  key={`grid-${tick}`}
+                  x1="0"
+                  y1={y}
+                  x2="1000"
+                  y2={y}
+                  className={isBase ? 'usage-trend-baseline' : 'usage-trend-grid'}
+                />
+              );
+            })}
 
             {chart.areaLayers.map((layer) => {
               if (!layer.hasTokens || !layer.areaPath) return null;
               return (
-                <g key={layer.model.key} className={`usage-trend-layer${layer.model.star ? ' is-star' : ''}`}>
+                <g key={layer.model.key} className="usage-trend-layer">
                   <path
                     d={layer.areaPath}
                     fill={`url(#trend-grad-${layer.model.key.replace(/[^a-zA-Z0-9_-]+/g, '-')})`}
@@ -1237,7 +1212,7 @@ function UsageTrend({
                     d={layer.linePath}
                     fill="none"
                     stroke={layer.model.color}
-                    strokeWidth={layer.model.star ? 1.8 : 1.4}
+                    strokeWidth={1.4}
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     vectorEffect="non-scaling-stroke"
@@ -1310,7 +1285,6 @@ function UsageTrend({
                         <span className="usage-trend-swatch" style={{ background: model?.color }} />
                         <span className="usage-trend-tooltip-label">
                           {modelLabel(layer.key, model?.label ?? layer.key)}
-                          {model?.star ? <em>{t('usage.trend.star')}</em> : null}
                         </span>
                         <b>{compactNumber(layer.tokens)}</b>
                       </div>

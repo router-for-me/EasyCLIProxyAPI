@@ -39,13 +39,16 @@ describe('usage trend helpers', () => {
     expect(date?.getMonth()).toBe(8);
     expect(date?.getDate()).toBe(14);
     expect(date?.getHours()).toBe(15);
-    expect(formatLocalHourKey(date as Date)).toBe('2026-09-14-15');
+    expect(date?.getMinutes()).toBe(0);
+    expect(formatLocalHourKey(date as Date)).toBe('2026-09-14-15-00');
+    expect(parseLocalHourKey('2026-09-14-15-30')?.getMinutes()).toBe(30);
     expect(parseLocalHourKey('2026-02-30-10')).toBeNull();
   });
 
   test('chooses coarser buckets as the range grows', () => {
     const hourStart = new Date(2026, 8, 14, 12, 0, 0);
-    expect(chooseTrendBucket(hourStart, new Date(2026, 8, 15, 12, 0, 0))).toBe('hour');
+    expect(chooseTrendBucket(hourStart, new Date(2026, 8, 15, 12, 0, 0))).toBe('30m');
+    expect(chooseTrendBucket(new Date(2026, 8, 1, 0, 0, 0), new Date(2026, 8, 4, 0, 0, 0))).toBe('hour');
     expect(chooseTrendBucket(new Date(2026, 8, 1, 0, 0, 0), new Date(2026, 8, 8, 0, 0, 0))).toBe('3h');
     expect(chooseTrendBucket(new Date(2026, 8, 1, 0, 0, 0), new Date(2026, 8, 16, 0, 0, 0))).toBe('day');
     expect(chooseTrendBucket(new Date(2026, 8, 1, 0, 0, 0), new Date(2026, 9, 1, 0, 0, 0))).toBe('day');
@@ -65,17 +68,21 @@ describe('usage trend helpers', () => {
       { start: start.toISOString(), end: end.toISOString() },
     );
 
-    expect(series.bucket).toBe('hour');
+    expect(series.bucket).toBe('30m');
     expect(series.points.map((item) => item.hour)).toEqual([
-      '2026-09-14-10',
-      '2026-09-14-11',
-      '2026-09-14-12',
-      '2026-09-14-13',
+      '2026-09-14-10-00',
+      '2026-09-14-10-30',
+      '2026-09-14-11-00',
+      '2026-09-14-11-30',
+      '2026-09-14-12-00',
+      '2026-09-14-12-30',
+      '2026-09-14-13-00',
+      '2026-09-14-13-30',
     ]);
     expect(series.points[1]).toMatchObject({ requests: 0, tokens: 0 });
-    expect(series.points[2]).toMatchObject({ requests: 1, failure: 1, tokens: 10 });
+    expect(series.points[4]).toMatchObject({ requests: 1, failure: 1, tokens: 10 });
     expect(series.totals).toMatchObject({ requests: 3, tokens: 30, failures: 1 });
-    expect(series.peak?.hour).toBe('2026-09-14-10');
+    expect(series.peak?.hour).toBe('2026-09-14-10-00');
     expect(series.peak?.tokens).toBe(20);
   });
 
@@ -87,15 +94,19 @@ describe('usage trend helpers', () => {
       { start: start.toISOString(), end: end.toISOString() },
     );
 
-    expect(series.bucket).toBe('hour');
+    expect(series.bucket).toBe('30m');
     expect(series.points.map((item) => item.hour)).toEqual([
-      '2026-09-14-08',
-      '2026-09-14-09',
-      '2026-09-14-10',
-      '2026-09-14-11',
+      '2026-09-14-08-00',
+      '2026-09-14-08-30',
+      '2026-09-14-09-00',
+      '2026-09-14-09-30',
+      '2026-09-14-10-00',
+      '2026-09-14-10-30',
+      '2026-09-14-11-00',
+      '2026-09-14-11-30',
     ]);
     expect(series.points[0]).toMatchObject({ requests: 0, tokens: 0 });
-    expect(series.points[2]).toMatchObject({ requests: 2, tokens: 20 });
+    expect(series.points[4]).toMatchObject({ requests: 2, tokens: 20 });
   });
 
   test('aggregates sparse hours into 3-hour buckets', () => {
@@ -175,8 +186,6 @@ describe('usage trend helpers', () => {
       'model-5',
       OTHER_TREND_MODEL_KEY,
     ]);
-    expect(series.models[0].star).toBe(true);
-    expect(series.models[1].star).toBe(false);
     expect(series.models[0].color).not.toBe(series.models[1].color);
     const stacked = stackModelTokens(series.points[0], series.models);
     expect(stacked[0]).toMatchObject({ key: 'model-0', tokens: 80, y0: 0, y1: 80 });
@@ -207,10 +216,11 @@ describe('usage trend helpers', () => {
   test('builds readable axis ticks and labels', () => {
     expect(niceCeiling(0)).toBe(1);
     expect(niceCeiling(12)).toBe(20);
-    expect(trendAxisTicks(20)).toEqual([0, 10, 20]);
-    expect(selectTrendAxisLabels(24, 6)[0]).toBe(0);
-    expect(selectTrendAxisLabels(24, 6).at(-1)).toBe(23);
-    expect(selectTrendAxisLabels(24, 6)).toHaveLength(6);
+    expect(trendAxisTicks(20)).toEqual([0, 5, 10, 15, 20]);
+    expect(trendAxisTicks(5)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(selectTrendAxisLabels(24, 8)[0]).toBe(0);
+    expect(selectTrendAxisLabels(24, 8).at(-1)).toBe(23);
+    expect(selectTrendAxisLabels(24, 8).length).toBeGreaterThanOrEqual(7);
 
     const hourPoint = {
       ...point('2026-09-14-15', 1, 1),
