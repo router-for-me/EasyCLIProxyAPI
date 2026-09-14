@@ -13939,7 +13939,8 @@ body.table-col-resizing * {
 .agent-model-section { grid-column: 1 / -1; }
 .agent-save-bar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 0 0; border-top: 1px solid var(--theme-e3e1db); }
 .agent-save-feedback { display: grid; gap: 6px; min-width: 0; }
-.agent-save-feedback small { color: var(--theme-7a746c); font-size: var(--font-size-meta); }
+.agent-save-bar .agent-save-feedback { flex: 1; }
+.agent-save-feedback small { color: var(--theme-7a746c); font-size: var(--font-size-meta); line-height: var(--line-height-body); overflow-wrap: anywhere; }
 .agent-save-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; min-width: 0; }
 .agent-save-actions button { min-width: 128px; min-height: 40px; }
 .agent-shared-feedback { min-width: 0; }
@@ -14066,15 +14067,6 @@ body.table-col-resizing * {
   box-shadow: 0 4px 16px rgba(45, 42, 38, 0.18);
 }
 
-/* Persistent agent state uses reserved rows; transient results float above it. */
-.agent-shared-feedback {
-  grid-template-rows: 20px 36px;
-}
-.agent-shared-feedback > .agent-write-state,
-.agent-shared-feedback > small {
-  min-height: 0;
-  overflow: auto;
-}
 .agent-model-status {
   display: block;
   height: 20px;

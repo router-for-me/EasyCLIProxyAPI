@@ -1687,6 +1687,12 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </button>
   ) : null;
 
+  const configurationFeedback = <AgentConfigurationFeedback pending={hasPendingChanges}
+    status={modelLoading || !activeStatus ? t('agents.modify.checking')
+      : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState') : ''}
+    description={modificationDescription} />;
+  const configurationErrorMessage = configurationError || modelSelectionError || modelError;
+
   return (
     <section className={`page management-page agents-page${embedded ? ' agents-page-embedded' : ''}`}>
       <header className="management-header">
@@ -1802,19 +1808,21 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
 
-              <div className="agent-minimal-actions">
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={applySelectedConfiguration}
-                  disabled={busy || !canEnable || configurationWriteBlocked}
-                >
-                  {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
-                  {isPiClient
-                    ? activeStatus?.pluginInstalled ? configurationActionLabel : t('agents.pi.install')
-                    : configurationActionLabel}
-                </button>
-
+              <div className="agent-save-bar">
+                {configurationFeedback}
+                <div className="agent-save-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={applySelectedConfiguration}
+                    disabled={busy || !canEnable || configurationWriteBlocked}
+                  >
+                    {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
+                    {isPiClient
+                      ? activeStatus?.pluginInstalled ? configurationActionLabel : t('agents.pi.install')
+                      : configurationActionLabel}
+                  </button>
+                </div>
               </div>
 
             </div>
@@ -1890,7 +1898,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     onChange={selectModel}
                     onRefresh={refreshModels}
                   />
-                  <span className="agent-model-hint agent-model-status" title={modelHint} aria-live="polite">{modelHint || ' '}</span>
+                  {modelHint ? <span className="agent-model-hint agent-model-status" title={modelHint} aria-live="polite">{modelHint}</span> : null}
                   {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
                   {harnessCatalogButton}
                   {selected === 'codex' ? (
@@ -2060,6 +2068,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               ) : null}
 
               <div className="agent-save-bar">
+                {configurationFeedback}
                 {selected === 'claude-desktop' && !activeStatus?.claudeDesktopModelMappings ? <p className="agent-inline-message warning">{t('agents.backup.mappingRequired')}</p> : null}
                 <div className="agent-save-actions">
                   <button type="button" className="primary-button" onClick={applySelectedConfiguration} disabled={busy || !canEnable || configurationWriteBlocked}>
@@ -2095,13 +2104,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 onUninstallPi={() => void uninstallPiProvider()} />
             </div>
           ) : null}
-          <AgentConfigurationFeedback pending={hasPendingChanges}
-            notice={configurationNotice || clearNotice}
-            onNoticeDismiss={() => { setConfigurationNotice(''); setClearNotice(''); }}
-            status={modelLoading || !activeStatus ? t('agents.modify.checking')
-              : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState') : ''}
-            onErrorDismiss={() => { setConfigurationError(''); setModelSelectionError(''); setModelError(''); }}
-            error={configurationError || modelSelectionError || modelError} description={modificationDescription} />
+          {activeSubpage !== 'core' ? configurationFeedback : null}
+          <MessageNotice message={configurationErrorMessage}
+            onDismiss={() => { setConfigurationError(''); setModelSelectionError(''); setModelError(''); }} />
+          <MessageNotice tone="success" message={!configurationErrorMessage ? configurationNotice || clearNotice : null}
+            onDismiss={() => { setConfigurationNotice(''); setClearNotice(''); }} />
           {activeSubpage === 'core' ? <AgentRunControls name={activeDefinition.name} dualTargets={hasIndependentCliAndApp}
             desktop={hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode'}
             targets={activeLaunchTargets} enabled={launchEnabled} busyAction={busyAction}

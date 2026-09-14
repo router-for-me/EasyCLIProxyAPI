@@ -62,18 +62,16 @@ export function AgentRunControls({
   </section>;
 }
 
-export function AgentConfigurationFeedback({ pending, notice, error, description, status = '', onNoticeDismiss, onErrorDismiss }: {
-  pending: boolean; notice: string; error: string; description: string; status?: string; onNoticeDismiss?: () => void; onErrorDismiss?: () => void;
+export function AgentConfigurationFeedback({ pending, description, status = '' }: {
+  pending: boolean; description: string; status?: string;
 }) {
   const { t } = useI18n();
-  return <>
-    <MessageNotice message={error} onDismiss={onErrorDismiss} />
-    <MessageNotice tone="success" message={!error ? notice : null} onDismiss={onNoticeDismiss} />
-    <div className="agent-save-feedback agent-shared-feedback" aria-live="polite">
-      <span className="agent-write-state">{pending ? t('agents.modify.pending') : status || ' '}</span>
-      <small tabIndex={description ? 0 : undefined}>{description || ' '}</small>
-    </div>
-  </>;
+  const state = pending ? t('agents.modify.pending') : status;
+  if (!state && !description) return null;
+  return <div className="agent-save-feedback agent-shared-feedback" aria-live="polite">
+    {state ? <span className="agent-write-state">{state}</span> : null}
+    {description ? <small>{description}</small> : null}
+  </div>;
 }
 
 export function AgentConfigManagementPanel({

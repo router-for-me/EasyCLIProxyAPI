@@ -56,7 +56,11 @@ function Fixture() {
       {mounted && <><FloatingNotice key={first.revision} notice={first.notice} onDismiss={first.clearNotice} />
         <FloatingNotice key={second.revision} notice={second.notice} onDismiss={second.clearNotice} /></>}
       <div data-testid="before">Existing form</div>
-      <AgentConfigurationFeedback pending={agent} notice={agent ? 'Agent saved' : ''} error="" description={agent ? 'Persistent description '.repeat(40) : ''} />
+      <div className="agent-save-bar">
+        <AgentConfigurationFeedback pending={agent} description="" />
+        <div className="agent-save-actions"><button>Apply agent</button></div>
+      </div>
+      <MessageNotice tone="success" message={agent ? 'Agent saved' : ''} />
       {quota && <QuotaActionFeedback name="test.json" quota={{ status: 'success', rows: [], actionResult: { action: 'reset', status: 'refresh-error', error: 'query failed' } }} />}
       <input data-testid="after" defaultValue="Keep focus" />
     </section>
