@@ -637,7 +637,7 @@ textarea:focus-visible {
 
 .sidebar-theme-selector {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   width: 100%;
   padding: 3px;
@@ -658,10 +658,6 @@ textarea:focus-visible {
   font-weight: 700;
   transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
   white-space: nowrap;
-}
-
-.sidebar-theme-selector button:last-child {
-  grid-column: 1 / -1;
 }
 
 .sidebar-theme-selector button:hover {
