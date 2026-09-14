@@ -1894,14 +1894,6 @@ fn set_collector_status(
     });
 }
 
-fn persist_queue_items(
-    root: &Path,
-    items: Vec<Value>,
-    config: &GuiConfigFile,
-) -> Result<usize, String> {
-    persist_queue_items_from_source(root, HTTP_USAGE_QUEUE_SOURCE, items, config)
-}
-
 fn persist_queue_items_from_source(
     root: &Path,
     source: &str,
@@ -4722,8 +4714,9 @@ mod tests {
         let root = test_root("usage-control-messages");
         initialize_usage_storage_at(&root).unwrap();
         let config = GuiConfigFile::default();
-        let inserted = persist_queue_items(
+        let inserted = persist_queue_items_from_source(
             &root,
+            HTTP_USAGE_QUEUE_SOURCE,
             vec![
                 serde_json::json!({"refresh": true}),
                 serde_json::json!({"support_refresh": true}),
@@ -4791,8 +4784,9 @@ mod tests {
         let root = test_root("queue-events-without-generation");
         initialize_usage_storage_at(&root).unwrap();
         let config = GuiConfigFile::default();
-        let inserted = persist_queue_items(
+        let inserted = persist_queue_items_from_source(
             &root,
+            HTTP_USAGE_QUEUE_SOURCE,
             vec![
                 serde_json::json!({
                     "timestamp": "2026-07-29T10:00:00+08:00",
@@ -4856,8 +4850,9 @@ mod tests {
         let root = test_root("usage-failure-details");
         initialize_usage_storage_at(&root).unwrap();
         let config = GuiConfigFile::default();
-        persist_queue_items(
+        persist_queue_items_from_source(
             &root,
+            HTTP_USAGE_QUEUE_SOURCE,
             vec![
                 serde_json::json!({
                     "timestamp": "2026-07-29T10:00:00+08:00",

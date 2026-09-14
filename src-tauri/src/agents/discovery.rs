@@ -3200,17 +3200,6 @@ pub(crate) fn claude_effective_context_window(
     context_window
 }
 
-#[allow(dead_code)]
-pub(crate) fn claude_code_max_context_tokens(
-    mappings: &ClaudeDesktopModelMappings,
-    models: &[AgentModelOption],
-) -> Result<u64, String> {
-    let model = mappings.sonnet.as_str();
-    let context_window = claude_effective_context_window(models, model, mappings.sonnet_1m)
-        .ok_or_else(|| format!("CPA 模型 API 未返回 Claude Code 主模型 {model} 的上下文窗口"))?;
-    Ok(context_window)
-}
-
 pub(crate) fn agent_model_display_name<'a>(
     models: &'a [AgentModelOption],
     model_name: &'a str,

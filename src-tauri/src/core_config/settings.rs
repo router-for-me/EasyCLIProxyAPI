@@ -1667,15 +1667,6 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
     Ok(changed)
 }
 
-#[allow(dead_code)]
-pub(crate) fn write_gui_config_legacy(config: &GuiConfigFile) -> Result<(), String> {
-    validate_gui_config(config)?;
-    let config_path = gui_config_path()?;
-    let content =
-        toml::to_string_pretty(config).map_err(|err| format!("序列化 GUI 配置失败: {err}"))?;
-    write_yaml_if_changed(&config_path, &content).map(|_| ())
-}
-
 pub(crate) fn write_gui_config(config: &GuiConfigFile) -> Result<(), String> {
     write_gui_config_to_path(config, &gui_config_path()?)
 }

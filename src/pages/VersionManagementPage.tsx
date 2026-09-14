@@ -84,7 +84,6 @@ export function VersionManagementPage() {
 
   const {
     status: coreStatus,
-    statusError,
     refreshStatus,
   } = useCoreRuntime();
   const {

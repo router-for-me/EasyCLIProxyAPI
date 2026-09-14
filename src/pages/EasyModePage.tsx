@@ -7,11 +7,9 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Check,
-  CheckCircle2,
   ChevronDown,
   Languages,
   LoaderCircle,
@@ -115,7 +113,6 @@ export function EasyModePage({
   const [activeStep, setActiveStep] = useState<SetupStep>(1);
   const [authMethod, setAuthMethod] = useState<AuthMethod>("oauth");
 
-  const [loadingSources, setLoadingSources] = useState(true);
   const [authFiles, setAuthFiles] = useState<Record<string, unknown>[]>([]);
   const [apiCounts, setApiCounts] = useState<Record<ApiSection, number>>({
     "openai-compatibility": 0,
@@ -124,7 +121,6 @@ export function EasyModePage({
     gemini: 0,
     codex: 0,
   });
-  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
 
   const [oauthLoggingIn, setOauthLoggingIn] = useState<OAuthProviderId | null>(null);
   const oauthFeedback = useAppNotice();
@@ -168,7 +164,6 @@ export function EasyModePage({
   const [langMenuOpen, setLangMenuOpen] = useState(false);
 
   const refreshSourceStatus = useCallback(async () => {
-    setLoadingSources(true);
     try {
       const authFilesPayload = await managementApi.get("/auth-files");
       const files = responseList(authFilesPayload, "files");
@@ -202,8 +197,6 @@ export function EasyModePage({
       setApiCounts(counts);
     } catch (e) {
       console.warn("Failed to refresh source status", e);
-    } finally {
-      setLoadingSources(false);
     }
   }, []);
 

@@ -357,7 +357,6 @@ describe('API 接入配置合并', () => {
 
   it('普通提供商没有模型映射时按真实开放状态初始化勾选', () => {
     const selected = modelSelectionForDiscovery(
-      'codex-api-key',
       [],
       [{ name: 'gpt-5.4' }, { name: 'gpt-image-1.5' }, { name: 'gpt-image-2' }],
       'gpt-image-*',
@@ -368,7 +367,6 @@ describe('API 接入配置合并', () => {
 
   it('普通提供商未限制模型时默认显示全部已开放', () => {
     const selected = modelSelectionForDiscovery(
-      'codex-api-key',
       [],
       [{ name: 'gpt-5.4' }, { name: 'gpt-image-2' }],
       '',
@@ -379,7 +377,6 @@ describe('API 接入配置合并', () => {
 
   it('OpenAI 兼容接入没有已保存模型时默认全选发现的模型', () => {
     const selected = modelSelectionForDiscovery(
-      'openai-compatibility',
       [],
       [{ name: 'model-a' }, { name: 'model-b' }],
       '',

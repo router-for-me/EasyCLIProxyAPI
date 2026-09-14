@@ -214,17 +214,6 @@ enum ParseResult {
     Incomplete,
 }
 
-fn parse_resp_frame(input: &[u8], offset: usize, depth: usize) -> Result<ParseResult, String> {
-    let mut remaining_bulk_bytes = SUBSCRIPTION_LIMITS.max_total_bulk_bytes;
-    parse_resp_frame_with_limits(
-        input,
-        offset,
-        depth,
-        SUBSCRIPTION_LIMITS,
-        &mut remaining_bulk_bytes,
-    )
-}
-
 fn parse_resp_frame_with_limits(
     input: &[u8],
     offset: usize,
@@ -384,7 +373,15 @@ mod tests {
     #[test]
     fn parses_usage_subscription_message() {
         let input = b"*3\r\n$7\r\nmessage\r\n$5\r\nusage\r\n$16\r\n{\"request_id\":1}\r\n";
-        let ParseResult::Complete(value, consumed) = parse_resp_frame(input, 0, 0).unwrap() else {
+        let mut remaining_bulk_bytes = SUBSCRIPTION_LIMITS.max_total_bulk_bytes;
+        let ParseResult::Complete(value, consumed) = parse_resp_frame_with_limits(
+            input,
+            0,
+            0,
+            SUBSCRIPTION_LIMITS,
+            &mut remaining_bulk_bytes,
+        )
+        .unwrap() else {
             panic!("expected complete RESP frame");
         };
         assert_eq!(consumed, input.len());
@@ -396,7 +393,14 @@ mod tests {
 
     #[test]
     fn rejects_oversized_arrays() {
-        let error = match parse_resp_frame(b"*17\r\n", 0, 0) {
+        let mut remaining_bulk_bytes = SUBSCRIPTION_LIMITS.max_total_bulk_bytes;
+        let error = match parse_resp_frame_with_limits(
+            b"*17\r\n",
+            0,
+            0,
+            SUBSCRIPTION_LIMITS,
+            &mut remaining_bulk_bytes,
+        ) {
             Err(error) => error,
             _ => panic!("expected oversized RESP array to fail"),
         };

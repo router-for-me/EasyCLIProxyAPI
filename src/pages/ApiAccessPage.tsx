@@ -423,7 +423,6 @@ export const exclusionsForModelSelection = (
 };
 
 export const modelSelectionForDiscovery = (
-  section: ProviderSection,
   configuredModels: ModelOption[],
   discoveredModels: ModelOption[],
   excludedModelsText: string,
@@ -1773,7 +1772,7 @@ export function ApiProviderDialog({
       setSelectedModelNames((current) =>
         initialized
           ? reconcileModelSelection(models, draft.models, current, 'refresh')
-          : modelSelectionForDiscovery(activeSection, draft.models, models, draft.excludedModelsText ?? ''));
+          : modelSelectionForDiscovery(draft.models, models, draft.excludedModelsText ?? ''));
       discoverySelectionInitializedRef.current = true;
       if (activeCategory === 'deepseek') setModelDiscoveryReady(true);
       if (!models.length) setModelError(t('apiAccess.error.noAvailableModels'));
@@ -1792,7 +1791,7 @@ export function ApiProviderDialog({
       return;
     }
     discoverySelectionInitializedRef.current = false;
-    setSelectedModelNames(modelSelectionForDiscovery(activeSection, draft.models, discoveredModels, draft.excludedModelsText ?? ''));
+    setSelectedModelNames(modelSelectionForDiscovery(draft.models, discoveredModels, draft.excludedModelsText ?? ''));
     setModelDiscoveryOpen(true);
     void discoverModels();
   };
