@@ -1,6 +1,19 @@
 import { easyModeZhCN } from '../easyMode';
 
 export const zhCN = {
+  'usage.filter.endpointPlaceholder': 'POST /v1/responses',
+  'usage.transport.http': 'HTTP',
+  'usage.transport.sse': 'SSE',
+  'usage.kind.prewarm': '预热',
+  'usage.kind.legacy': '历史事件',
+  'usage.pricing.providerScope': '供应商（可选）',
+  'usage.pricing.upstreamScope': '上游基础 URL（可选）',
+  'usage.column.endpoint': '端点',
+  'usage.column.transport': '传输方式',
+  'usage.column.kind': '事件类型',
+  'usage.column.accounting': '计量质量',
+  'usage.column.cost': '事件成本 (USD)',
+  'usage.accounting.note': '计数为用量事件，重试、工具、探测及控制操作分别记录。未知成本不计入总额，不代表免费。已保存估算保留当时费率；历史记录使用可用费率。',
   ...easyModeZhCN,
   'apiAccess.provider.codex': 'Codex API',
   'apiAccess.provider.deepseek': 'DeepSeek',

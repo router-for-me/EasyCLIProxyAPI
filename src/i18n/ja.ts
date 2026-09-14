@@ -2,6 +2,19 @@ import type { MessageKey } from './locales/zh-CN';
 import { easyModeJa } from './easyMode';
 
 export const jaOverrides = {
+  'usage.filter.endpointPlaceholder': 'POST /v1/responses',
+  'usage.transport.http': 'HTTP',
+  'usage.transport.sse': 'SSE',
+  'usage.kind.prewarm': 'ウォームアップ',
+  'usage.kind.legacy': '従来のイベント',
+  'usage.pricing.providerScope': 'プロバイダー（任意）',
+  'usage.pricing.upstreamScope': '上流ベース URL（任意）',
+  'usage.column.endpoint': 'エンドポイント',
+  'usage.column.transport': '転送方式',
+  'usage.column.kind': 'イベント種別',
+  'usage.column.accounting': '使用量の品質',
+  'usage.column.cost': 'イベント費用 (USD)',
+  'usage.accounting.note': '件数は使用量イベントです。再試行、ツール、プローブと制御操作を区別します。不明な費用は無料ではなく合計対象外です。保存済み見積りは当時の料金を保持します。',
   ...easyModeJa,
   'apiAccess.provider.codex': 'Codex API',
   'apiAccess.provider.deepseek': 'DeepSeek',
