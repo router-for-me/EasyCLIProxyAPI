@@ -1,7 +1,7 @@
 import { useId, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Search, X } from 'lucide-react';
 import { useI18n } from '../i18n';
-import type { ModelOption } from '../services/modelService';
+import { modelSearchText, type ModelOption } from '../services/modelService';
 
 type ModelSelectionPanelProps = {
   models: ModelOption[];
@@ -17,7 +17,7 @@ export function ModelSelectionPanel({ models, selected, loading, onMove }: Model
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
   const visibleModels = useMemo(() => models.filter((model) =>
-    `${model.name} ${model.alias ?? ''}`.toLowerCase().includes(query),
+    modelSearchText(model).includes(query),
   ), [models, query]);
   const searchLabel = t(selected ? 'apiAccess.modelDialog.searchSelected' : 'apiAccess.modelDialog.searchUnselected');
 
@@ -63,7 +63,7 @@ export function ModelSelectionPanel({ models, selected, loading, onMove }: Model
               onMove([model], !selected);
             }}
           >
-            <span><strong title={model.name}>{model.name}</strong>{model.alias ? <small title={model.alias}>{model.alias}</small> : null}</span>
+            <span><strong title={model.name}>{model.name}</strong>{model.alias || model.displayName ? <small title={model.alias || model.displayName}>{model.alias || model.displayName}</small> : null}</span>
             {selected ? <X size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />}
           </button>
         )) : (

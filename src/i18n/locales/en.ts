@@ -513,6 +513,7 @@ export const en: Record<MessageKey, string> = {
   'aliases.source.available': 'Models currently available from the core',
   'aliases.error.selectModel': 'Select an original model first',
   'aliases.error.emptyAlias': 'The model alias cannot be empty',
+  'aliases.error.invalidAlias': 'The model alias is invalid and cannot contain whitespace',
   'aliases.error.emptyEffort': 'The reasoning effort cannot be empty',
   'aliases.error.unsupportedEffort': 'This model source has no available reasoning-effort levels',
   'aliases.error.unsupportedFast': 'Fast is only available for Codex API, OpenAI-compatible, and Codex OAuth model sources',

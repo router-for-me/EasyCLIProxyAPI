@@ -512,6 +512,7 @@ export const zhCN = {
   'aliases.source.available': '内核当前可用模型',
   'aliases.error.selectModel': '请先选择原模型',
   'aliases.error.emptyAlias': '别名模型不能为空',
+  'aliases.error.invalidAlias': '别名模型格式无效，不能包含空白字符',
   'aliases.error.emptyEffort': '思考强度不能为空',
   'aliases.error.unsupportedEffort': '该模型来源没有可用的思考强度等级',
   'aliases.error.unsupportedFast': 'Fast 仅支持 Codex API、OpenAI 兼容和 Codex OAuth 模型源',

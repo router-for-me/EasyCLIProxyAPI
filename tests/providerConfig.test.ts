@@ -25,13 +25,83 @@ it('saves non-empty custom model names and removes duplicate or blank entries', 
     baseUrl: 'https://api.example.com',
     priority: '',
     models: [
-      { name: ' custom-model ', alias: ' Custom Alias ' },
+      { name: ' custom-model ', alias: ' custom-alias ' },
       { name: ' ' },
       { name: 'CUSTOM-MODEL', alias: 'duplicate' },
     ],
   });
 
-  expect(result.models).toEqual([{ name: 'custom-model', alias: 'Custom Alias' }]);
+  expect(result.models).toEqual([{ name: 'custom-model', alias: 'custom-alias' }]);
+});
+
+it('does not persist display names as model aliases', () => {
+  const result = buildProviderRecord('codex-api-key', {
+    name: '',
+    apiKey: 'codex-key',
+    baseUrl: 'https://www.loomex.cc',
+    priority: '',
+    models: [
+      { name: 'codex-auto-review', displayName: 'Codex Auto Review' },
+      { name: 'gpt-test', alias: 'review-alias', displayName: 'GPT Test' },
+    ],
+  });
+
+  expect(result.models).toEqual([
+    { name: 'codex-auto-review' },
+    { name: 'gpt-test', alias: 'review-alias' },
+  ]);
+});
+
+it('rejects newly entered aliases that contain whitespace', () => {
+  expect(() => buildProviderRecord('codex-api-key', {
+    name: '',
+    apiKey: 'codex-key',
+    baseUrl: 'https://www.loomex.cc',
+    priority: '',
+    models: [{ name: 'codex-auto-review', alias: 'Codex Auto Review' }],
+  })).toThrow(/空白|whitespace|空白文字/);
+});
+
+it('preserves an existing spaced alias until the user changes it', () => {
+  const result = buildProviderRecord(
+    'codex-api-key',
+    {
+      name: '',
+      apiKey: 'codex-key',
+      baseUrl: 'https://www.loomex.cc',
+      priority: '',
+      models: [{ name: 'codex-auto-review', alias: 'Codex Auto Review' }],
+    },
+    {
+      'api-key': 'codex-key',
+      models: [{ name: 'codex-auto-review', alias: 'Codex Auto Review' }],
+    },
+  );
+
+  expect(result.models).toEqual([
+    { name: 'codex-auto-review', alias: 'Codex Auto Review' },
+  ]);
+});
+
+it('keeps an existing spaced alias when only the letter case changes', () => {
+  const result = buildProviderRecord(
+    'codex-api-key',
+    {
+      name: '',
+      apiKey: 'codex-key',
+      baseUrl: 'https://www.loomex.cc',
+      priority: '',
+      models: [{ name: 'codex-auto-review', alias: 'codex auto review' }],
+    },
+    {
+      'api-key': 'codex-key',
+      models: [{ name: 'codex-auto-review', alias: 'Codex Auto Review' }],
+    },
+  );
+
+  expect(result.models).toEqual([
+    { name: 'codex-auto-review', alias: 'Codex Auto Review' },
+  ]);
 });
 
 it('parses multiline API keys into unique trimmed entries', () => {

@@ -525,6 +525,7 @@ export const jaOverrides = {
   'aliases.source.available': '現在コアで利用可能なモデル',
   'aliases.error.selectModel': '先に元のモデルを選択してください',
   'aliases.error.emptyAlias': 'エイリアスモデル名を入力してください',
+  'aliases.error.invalidAlias': 'エイリアスモデル名に空白文字は使えません',
   'aliases.error.emptyEffort': '推論レベルを入力してください',
   'aliases.error.unsupportedEffort': 'このモデルソースには利用可能な推論レベルがありません',
   'aliases.created': '{alias} を作成し、推論レベルを {effort} に固定しました',
