@@ -1086,7 +1086,7 @@ export const zhCN = {
   "agents.modify.connectionRepair": "当前接入：CPA 配置需要修复",
   "agents.modify.authMethod": "接入方式",
   "agents.modify.authApiKey": "API 密钥",
-  "agents.modify.authOAuth": "OAuth配置方式",
+  "agents.modify.authOAuth": "OAuth 登录方式",
   "agents.modify.matches": "已保存",
   "agents.modify.pending": "待应用",
   "agents.modify.checking": "正在读取配置…",

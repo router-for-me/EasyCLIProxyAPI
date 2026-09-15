@@ -1904,19 +1904,65 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   {selected === 'codex' ? (
                     <div className="agent-codex-options">
                       <div className="agent-auth-method">
-                        <div className="agent-signin-label"><label htmlFor="agent-connection-method">{t('agents.modify.authMethod')}</label>
+                        <div className="agent-signin-label">
+                          <span id="agent-connection-method-label" className="agent-signin-label-title">{t('agents.modify.authMethod')}</span>
                           <button type="button" className="agent-signin-help-toggle" aria-expanded={connectionHelpOpen} aria-controls="agent-signin-hint"
                             onClick={() => updateViewState({ connectionHelpOpen: !connectionHelpOpen })}>
                             {t(connectionHelpOpen ? 'agents.modify.authHelpHide' : 'agents.modify.authHelpShow')}
                             <ChevronDown size={14} aria-hidden="true" />
                           </button>
                         </div>
-                        <select id="agent-connection-method" aria-label={t('agents.modify.authMethod')} aria-describedby={connectionHelpOpen ? "agent-signin-hint" : undefined} value={oauthConfiguration ? 'oauth' : 'apikey'}
-                          onChange={(event) => void changeOauthConfiguration(event.currentTarget.value === 'oauth')}
-                          disabled={busy || loading || modelLoading}>
-                          <option value="apikey">{t('agents.modify.authApiKey')}</option>
-                          <option value="oauth">{t('agents.modify.authOAuth')}</option>
-                        </select>
+                        <div
+                          id="agent-connection-method"
+                          className="agent-auth-segmented"
+                          role="radiogroup"
+                          aria-labelledby="agent-connection-method-label"
+                          aria-describedby={connectionHelpOpen ? "agent-signin-hint" : undefined}
+                          onKeyDown={(event) => {
+                            if (busy || loading || modelLoading) return;
+                            if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                              event.preventDefault();
+                              if (!oauthConfiguration) void changeOauthConfiguration(true);
+                            } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                              event.preventDefault();
+                              if (oauthConfiguration) void changeOauthConfiguration(false);
+                            }
+                          }}
+                        >
+                          <button
+                            type="button"
+                            role="radio"
+                            className={`agent-auth-segmented-button${!oauthConfiguration ? ' active' : ''}`}
+                            aria-checked={!oauthConfiguration}
+                            tabIndex={!oauthConfiguration ? 0 : -1}
+                            disabled={busy || loading || modelLoading}
+                            data-value="apikey"
+                            onClick={() => {
+                              if (oauthConfiguration) {
+                                void changeOauthConfiguration(false);
+                              }
+                            }}
+                          >
+                            {t('agents.modify.authApiKey')}
+                          </button>
+                          <button
+                            type="button"
+                            role="radio"
+                            className={`agent-auth-segmented-button${oauthConfiguration ? ' active' : ''}`}
+                            aria-checked={Boolean(oauthConfiguration)}
+                            tabIndex={oauthConfiguration ? 0 : -1}
+                            disabled={busy || loading || modelLoading}
+                            data-value="oauth"
+                            onClick={() => {
+                              if (!oauthConfiguration) {
+                                void changeOauthConfiguration(true);
+                              }
+                            }}
+                          >
+                            {busyAction === 'oauth-check' ? <LoaderCircle size={14} className="spin" /> : null}
+                            {t('agents.modify.authOAuth')}
+                          </button>
+                        </div>
                       </div>
 
                       {codexCatalogButton}

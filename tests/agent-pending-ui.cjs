@@ -78,10 +78,10 @@ const assert = require('node:assert/strict');
     await page.locator('.agent-list-items button').filter({ hasText: 'Codex' }).click();
     await ready(); await expectPending(true);
     await selectModel('gpt-one'); await expectPending(false);
-    await page.locator('#agent-connection-method').selectOption('oauth');
+    await page.locator('#agent-connection-method [data-value="oauth"]').click();
     await expectPending(true);
     await selectModel('gpt-two');
-    await page.locator('#agent-connection-method').selectOption('apikey');
+    await page.locator('#agent-connection-method [data-value="apikey"]').click();
     await expectPending(true);
     await selectModel('gpt-one'); await expectPending(false);
 
