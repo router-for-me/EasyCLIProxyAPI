@@ -8877,9 +8877,40 @@ textarea:focus-visible {
 .usage-table-top-scrollbar {
   overflow-x: auto;
   overflow-y: hidden;
-  height: 16px;
+  flex: 0 0 18px;
+  height: 18px;
+  min-height: 18px;
   border-bottom: 1px solid var(--theme-e3e1db);
   background: var(--theme-fffdf8);
+}
+
+.usage-table-top-scrollbar::-webkit-scrollbar {
+  height: 16px;
+}
+
+.usage-table-top-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.usage-table-top-scrollbar::-webkit-scrollbar-thumb {
+  min-width: 64px;
+  /* Keep a slim thumb inside a larger draggable area. */
+  border: 5px solid transparent;
+  border-radius: 999px;
+  background: var(--theme-8a847c);
+  background-clip: padding-box;
+  cursor: grab;
+}
+
+.usage-table-top-scrollbar::-webkit-scrollbar-thumb:hover {
+  border-width: 4px 5px;
+  background-color: var(--theme-7a746c);
+}
+
+.usage-table-top-scrollbar::-webkit-scrollbar-thumb:active {
+  border-width: 4px 5px;
+  background-color: var(--theme-7a746c);
+  cursor: grabbing;
 }
 
 .usage-table-top-scrollbar.is-hidden {
