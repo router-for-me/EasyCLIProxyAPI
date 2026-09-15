@@ -76,12 +76,13 @@ export function AgentConfigurationFeedback({ pending, description, status = '' }
 
 export function AgentConfigManagementPanel({
   pi, codex, busyAction, canTemplate, canUpdatePi, canUninstallPi, pluginInstalled, pluginVersion, updateLabel,
-  onBackup, onRestore, onTemplate, onClear, onUpdatePi, onUninstallPi,
+  onBackup, onRestore, onTemplate, onClear, onUpdatePi, onUninstallPi, canClearIntegration, onClearIntegration,
 }: {
   pi: boolean; codex: boolean; busyAction: string | null; canTemplate: boolean;
   canUpdatePi: boolean; canUninstallPi: boolean; pluginInstalled: boolean; pluginVersion: string | null; updateLabel: string;
   onBackup: () => void; onRestore: () => void; onTemplate: () => void; onClear: () => void;
   onUpdatePi: () => void; onUninstallPi: () => void;
+  canClearIntegration: boolean; onClearIntegration: () => void;
 }) {
   const { t } = useI18n();
   const busy = busyAction !== null;
@@ -99,6 +100,16 @@ export function AgentConfigManagementPanel({
       <div><h3>{t('agents.management.template')}</h3><p>{t('agents.management.templateDescription')}</p></div>
       <div className="agent-management-actions">
         <button type="button" className="secondary-button" onClick={onTemplate} disabled={busy || !canTemplate}>{t('agents.modify.default')}</button>
+      </div>
+    </section> : null}
+    {codex ? <section className="agent-management-row agent-management-clear-integration">
+      <div><h3>{t('agents.nativeOAuth.restore')}</h3><p>{t('agents.nativeOAuth.restoreHint')}</p></div>
+      <div className="agent-management-actions">
+        <button type="button" id="agent-clear-integration" className="secondary-button agent-clear-integration"
+          onClick={onClearIntegration} disabled={busy || !canClearIntegration}>
+          {busyAction === 'native-oauth' ? <LoaderCircle size={16} className="spin" /> : null}
+          {t('agents.nativeOAuth.restore')}
+        </button>
       </div>
     </section> : null}
     {codex ? <section className="agent-management-row">

@@ -31,7 +31,7 @@ const assert = require('node:assert/strict');
     };
     const apply = async () => {
       await core();
-      await page.getByRole('button', { name: /^(更新配置|一键接入)$/ }).click();
+      await page.getByRole('button', { name: /^(更新配置|一键接入|应用配置修改)$/ }).click();
       await page.getByText(/^(配置已更新。|配置已是最新，无需写入。)$/).waitFor();
       await expectPending(false);
     };

@@ -432,6 +432,7 @@ pub(crate) fn inspect_pi_provider_status(
         connection_state: agent_connection_state(configured, config_valid, Ok(config_path.is_file() || default_provider_matches)).into(),
         current_model: current_model.clone(),
         oauth_configuration: false,
+        codex_native_oauth: false,
         modification_enabled: configured,
         modification_state: modification_state.to_string(),
         backup_available: false,
@@ -745,7 +746,10 @@ pub(crate) fn codex_auth_file_has_api_key(path: &Path, api_key: &str) -> bool {
 }
 
 pub(crate) fn validate_codex_oauth_login(home: &Path) -> Result<(), String> {
-    validate_codex_oauth_login_at(&codex_configuration_directory(home).join("auth.json"))
+    if validate_codex_oauth_login_at(&codex_configuration_directory(home).join("auth.json")).is_ok() {
+        return Ok(());
+    }
+    available_codex_oauth_auth(home).map(|_| ())
 }
 
 pub(crate) fn validate_codex_oauth_login_at(auth_path: &Path) -> Result<(), String> {
@@ -757,11 +761,12 @@ pub(crate) fn validate_codex_oauth_login_at(auth_path: &Path) -> Result<(), Stri
 }
 
 pub(crate) fn clear_codex_config_files(home: &Path) -> Result<Vec<String>, String> {
-    let paths = config_paths("codex",home)?;
+    let mut paths = config_paths("codex",home)?;
+    paths.push(codex_configuration_directory(home).join(CODEX_NATIVE_OAUTH_STATE_FILE));
     let before = config_images(&paths)?;
     let mut after = before.clone();
     for (path, bytes) in &mut after {
-        if path.file_name().and_then(|v| v.to_str()).is_some_and(|v| v == "auth.json" || v == "config.toml") { *bytes = None; }
+        if path.file_name().and_then(|v| v.to_str()).is_some_and(|v| v == "auth.json" || v == "config.toml" || v == CODEX_NATIVE_OAUTH_STATE_FILE) { *bytes = None; }
     }
     Ok(commit_config("codex", &paths, &before, &after, "clear", None)?.changed_files)
 }
@@ -884,7 +889,12 @@ pub(crate) fn inspect_agent_config(
     let paths = agent_config_paths(client, home);
     let config_exists = paths.iter().any(|path| path.is_file());
     let result = config_paths(client.id(), home)
-        .and_then(|paths| config_images(&paths))
+        .and_then(|mut paths| {
+            if client == AgentClient::Codex && codex_native_oauth_enabled(home)? {
+                paths.retain(|path| path.file_name().and_then(|name| name.to_str()) != Some(CODEX_MODEL_CATALOG_FILE));
+            }
+            config_images(&paths)
+        })
         .and_then(|images| validate_config_images(&images))
         .and_then(|_| inspect_agent_managed_config(client, &paths, port, api_key)).and_then(
         |(configured, model, oauth_configuration)| {
@@ -979,6 +989,7 @@ pub(crate) fn inspect_agent_config(
         connection_state: agent_connection_state(configured, config_valid, agent_has_connection_evidence(client, &paths)).into(),
         current_model: current_model.clone(),
         oauth_configuration,
+        codex_native_oauth: client == AgentClient::Codex && codex_native_oauth_enabled(home).unwrap_or(false),
         modification_enabled: configured,
         modification_state: if !config_valid { "invalid" } else if configured { "applied" } else { "unconfigured" }.into(),
         backup_available: false,

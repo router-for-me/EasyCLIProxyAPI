@@ -15,7 +15,7 @@ const base = 'http://127.0.0.1:1421';
       await page.waitForFunction(() => window.fixtureCalls.some(call => call.cmd === 'get_agent_models')
         && !document.querySelector('.agent-model-trigger')?.disabled);
     };
-    const positions = () => page.locator('.agent-save-bar, .agent-save-actions button, .agent-run-controls').evaluateAll(nodes => nodes.map(node => {
+    const positions = () => page.locator('.agent-save-bar, .agent-save-actions .primary-button, .agent-run-controls').evaluateAll(nodes => nodes.map(node => {
       const rect = node.getBoundingClientRect();
       return [rect.x + scrollX, rect.y + scrollY, rect.width, rect.height];
     }));
@@ -24,7 +24,7 @@ const base = 'http://127.0.0.1:1421';
       assert.ok(geometry[0][3] <= 60, 'The save bar occupies only a button-height row plus padding');
       assert.ok(geometry[2][1] - geometry[0][1] - geometry[0][3] <= 20, 'No blank feedback region separates save and run controls');
       assert.equal(await page.locator('.agent-shared-feedback').count(), 0, 'Empty state feedback does not reserve space');
-      assert.ok(await page.locator('.agent-save-actions button').evaluate(node => node.getBoundingClientRect().width <= 160), 'Save button stays compact in both entry points');
+      assert.ok(await page.locator('.agent-save-actions .primary-button').evaluate(node => node.getBoundingClientRect().width <= 160), 'Save button stays compact in both entry points');
       return geometry;
     };
     fs.mkdirSync('misc', { recursive: true });

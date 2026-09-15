@@ -122,6 +122,7 @@ async fn prepare_template_plan(
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
 ) -> Result<TemplatePlan, String> {
+    if client == "codex" { ensure_codex_cpa_mode(home)?; }
     let paths = config_paths(client, home)?;
     let api_key = effective_agent_api_key(config);
     let (model, mappings, before, after) = if client == PI_AGENT_ID {

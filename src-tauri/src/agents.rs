@@ -3,6 +3,7 @@ use super::*;
 
 mod commands;
 mod configuration;
+mod native_oauth;
 mod discovery;
 mod deepseek_harness;
 mod transactions;
@@ -12,6 +13,7 @@ mod launch;
 mod state;
 pub(crate) use commands::*;
 pub(crate) use configuration::*;
+pub(crate) use native_oauth::*;
 pub(crate) use discovery::*;
 pub(crate) use deepseek_harness::*;
 pub(crate) use transactions::*;

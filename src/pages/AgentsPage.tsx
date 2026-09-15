@@ -102,6 +102,7 @@ type AgentConfigStatus = {
   configurationSynchronized: boolean;
   currentModel: string | null;
   oauthConfiguration: boolean;
+  codexNativeOauth: boolean;
   modificationEnabled: boolean;
   modificationState: AgentModificationState;
   backupAvailable: boolean;
@@ -435,6 +436,7 @@ const listStatusText = (status: AgentConfigStatus | undefined) => {
       : translate(locale, 'agents.list.pluginNotInstalled');
   }
   if (status.modificationState === 'invalid') return translate(locale, 'agents.status.invalid');
+  if (status.id === 'codex' && status.codexNativeOauth) return translate(locale, 'agents.nativeOAuth.status');
   if (status.modificationState === 'applied') return translate(locale, 'agents.list.modified', { model: status.appliedModel ?? '—' });
   return status.version
     ? translate(locale, 'agents.list.installedVersion', { version: status.version })
@@ -736,7 +738,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [loading, setLoading] = useState(true);
   const [modelLoading, setModelLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<
-    'backup' | 'apply' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | 'restart-deepseek' | null
+    'backup' | 'apply' | 'close-config' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'native-oauth' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | 'restart-deepseek' | null
   >(null);
   const busy = busyAction !== null;
   const [detectionError, setDetectionError] = useState('');
@@ -864,7 +866,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
   useEffect(() => {
     if (loading) return;
-    const preferredModel = statuses.find((status) => status.id === selected)?.currentModel ?? '';
+    const status = statuses.find((status) => status.id === selected);
+    const preferredModel = status?.currentModel ?? '';
     void loadModels(selected, preferredModel);
   }, [loadModels, loading, selected]);
 
@@ -925,6 +928,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const activeDefinition = agentDefinitions.find((agent) => agent.id === selected)
     ?? agentDefinitions[0];
   const activeStatus = statuses.find((status) => status.id === selected) ?? null;
+  const nativeOauth = selected === 'codex' && Boolean(activeStatus?.codexNativeOauth);
   const oauthConfiguration = oauthConfigurationDraft
     ?? activeStatus?.oauthConfiguration
     ?? false;
@@ -1027,10 +1031,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   ]);
 
   const connectionState = activeStatus?.connectionState ?? 'invalid';
-  const configurationActionLabel = t(connectionState === 'not-configured' ? 'agents.modify.connect'
+  const appliedModel = activeStatus?.currentModel ?? activeStatus?.appliedModel ?? '';
+  const canCloseCodexConfiguration = selected === 'codex' && !nativeOauth
+    && connectionState === 'configured';
+  const configurationActionLabel = t(nativeOauth ? 'agents.modify.update'
+    : connectionState === 'not-configured' ? selected === 'codex' ? 'agents.modify.apply' : 'agents.modify.connect'
     : connectionState === 'needs-update' ? 'agents.modify.repair' : 'agents.modify.update');
   const configurationWriteBlocked = loading || !activeStatus || connectionState === 'invalid';
-  const appliedModel = activeStatus?.currentModel ?? activeStatus?.appliedModel ?? '';
   const formValues: AgentFormValues = {
     model: isClaudeModelMappingClient ? '' : selectedModel,
     oauthConfiguration: selected === 'codex' && oauthConfiguration,
@@ -1108,6 +1115,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           : t('agents.model.firstSelection', { count: models.length }));
   const modificationDescription = activeStatus?.modificationState === 'invalid'
     ? t('agents.modify.invalid')
+    : nativeOauth ? t('agents.nativeOAuth.activeHint')
     : selected === 'zcode'
       ? t('agents.modify.zcodeRestart')
       : '';
@@ -1271,6 +1279,43 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       return true;
     }
     return false;
+  };
+
+  const clearCodexIntegration = async () => {
+    setBusyAction('native-oauth');
+    setConfigurationError('');
+    setConfigurationNotice('');
+    setClearNotice('');
+    try {
+      await invoke('restore_codex_official_config');
+      setModelError('');
+      setModelSelectionError('');
+      setStatuses((current) => current.map((status) => status.id === 'codex'
+        ? { ...status, codexNativeOauth: true } : status));
+      await reloadStatusesAfterAction();
+      setConfigurationNotice(t('agents.nativeOAuth.restored'));
+    } catch (cause) {
+      setConfigurationError(String(cause));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const closeConfigurationChanges = async () => {
+    setBusyAction('close-config');
+    setConfigurationError('');
+    setConfigurationNotice('');
+    setClearNotice('');
+    try {
+      await invoke<AgentConfigActionResult>('close_codex_config_modification');
+      clearPendingChanges();
+      await reloadStatusesAfterAction();
+      setConfigurationNotice(t('agents.modify.closed'));
+    } catch (cause) {
+      setConfigurationError(String(cause));
+    } finally {
+      setBusyAction(null);
+    }
   };
 
   const changeOauthConfiguration = async (enabled: boolean) => {
@@ -1659,6 +1704,12 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setClearConfirmOpen(false);
   };
 
+  const openClearIntegrationGuide = () => {
+    setOauthLoginRequiredAction(null);
+    setActiveSubpage('management');
+    requestAnimationFrame(() => document.getElementById('agent-clear-integration')?.focus());
+  };
+
   const availableSubpages = agentSubpages.filter(
     (subpage) => (!subpage.clients || subpage.clients.includes(selected)) && (!embedded || subpage.id !== 'sessions'),
   );
@@ -1687,11 +1738,21 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </button>
   ) : null;
 
+  const closeConfigurationButton = canCloseCodexConfiguration ? (
+    <button type="button" className="secondary-button agent-close-configuration"
+      title={t('agents.modify.closeHint')}
+      disabled={busy || configurationWriteBlocked}
+      onClick={() => void closeConfigurationChanges()}>
+      {busyAction === 'close-config' ? <LoaderCircle size={16} className="spin" /> : null}
+      {t('agents.modify.close')}
+    </button>
+  ) : null;
+
   const configurationFeedback = <AgentConfigurationFeedback pending={hasPendingChanges}
     status={modelLoading || !activeStatus ? t('agents.modify.checking')
       : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState') : ''}
     description={modificationDescription} />;
-  const configurationErrorMessage = configurationError || modelSelectionError || modelError;
+  const configurationErrorMessage = configurationError || (!nativeOauth ? modelSelectionError || modelError : '');
 
   return (
     <section className={`page management-page agents-page${embedded ? ' agents-page-embedded' : ''}`}>
@@ -1810,7 +1871,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <div className="agent-save-bar">
                 {configurationFeedback}
-                <div className="agent-save-actions">
+                <div className={`agent-save-actions${selected === 'codex' ? ' agent-codex-save-actions' : ''}`}>
+                  {closeConfigurationButton}
                   <button
                     type="button"
                     className="primary-button"
@@ -2116,8 +2178,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               <div className="agent-save-bar">
                 {configurationFeedback}
                 {selected === 'claude-desktop' && !activeStatus?.claudeDesktopModelMappings ? <p className="agent-inline-message warning">{t('agents.backup.mappingRequired')}</p> : null}
-                <div className="agent-save-actions">
-                  <button type="button" className="primary-button" onClick={applySelectedConfiguration} disabled={busy || !canEnable || configurationWriteBlocked}>
+                <div className={`agent-save-actions${selected === 'codex' ? ' agent-codex-save-actions' : ''}`}>
+                  {closeConfigurationButton}
+                  <button type="button" className="primary-button" onClick={applySelectedConfiguration}
+                    disabled={busy || !canEnable || configurationWriteBlocked}
+                  >
                     {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
                     {isPiClient && !activeStatus?.pluginInstalled ? t('agents.pi.install') : configurationActionLabel}
                   </button>
@@ -2140,12 +2205,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           {activeSubpage === 'management' ? (
             <div id="agent-subpage-panel-management" role="tabpanel" aria-labelledby="agent-subpage-tab-management">
               <AgentConfigManagementPanel pi={isPiClient} codex={selected === 'codex'} busyAction={busyAction}
-                canTemplate={canEnable} canUpdatePi={canEnable && !configurationWriteBlocked && Boolean(activeStatus?.pluginInstalled)}
+                canTemplate={canEnable && !nativeOauth} canUpdatePi={canEnable && !configurationWriteBlocked && Boolean(activeStatus?.pluginInstalled)}
                 canUninstallPi={launchEnabled && Boolean(activeStatus?.pluginInstalled)}
                 pluginInstalled={Boolean(activeStatus?.pluginInstalled)} pluginVersion={activeStatus?.pluginVersion ?? null}
                 updateLabel={piPluginUpdateAvailable ? piPluginUpdateTitle ?? '' : ''}
                 onBackup={() => void createManualBackup()} onRestore={() => setBackupsOpen(true)}
                 onTemplate={() => void openDefaultConfirmation()} onClear={openClearConfirmation}
+                canClearIntegration={!loading && Boolean(activeStatus?.configValid && activeStatus.supportedPlatform)}
+                onClearIntegration={() => void clearCodexIntegration()}
                 onUpdatePi={() => void updatePiProvider()}
                 onUninstallPi={() => void uninstallPiProvider()} />
             </div>
@@ -2470,8 +2537,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               <div><AlertTriangle size={19} /><h2 id="agent-oauth-login-required-title">{t('agents.oauthLoginRequired.title')}</h2></div>
             </div>
             <p>{oauthLoginRequiredDescription}</p>
-            <div className="config-dialog-actions single-action">
-              <button type="button" className="primary-button" onClick={() => setOauthLoginRequiredAction(null)}>{t('agents.oauthLoginRequired.confirm')}</button>
+            <div className={`config-dialog-actions${oauthLoginRequiredAction === 'launch' ? ' single-action' : ''}`}>
+              <button type="button" className={oauthLoginRequiredAction === 'launch' ? 'primary-button' : 'secondary-button'}
+                onClick={() => setOauthLoginRequiredAction(null)}>{t('agents.oauthLoginRequired.confirm')}</button>
+              {oauthLoginRequiredAction !== 'launch' ? (
+                <button type="button" className="primary-button" onClick={openClearIntegrationGuide}>
+                  {t('agents.oauthLoginRequired.openManagement')}
+                </button>
+              ) : null}
             </div>
           </section>
         </div>

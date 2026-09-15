@@ -539,6 +539,11 @@ pub(crate) fn write_agent_configuration_file(
     path: &Path,
     content: &[u8],
 ) -> Result<(), String> {
+    if client == AgentClient::Codex
+        && matches!(path.file_name().and_then(|name| name.to_str()), Some(CODEX_NATIVE_OAUTH_STATE_FILE | "auth.json"))
+    {
+        return write_codex_private_file(path, content);
+    }
     if client == AgentClient::DeepSeekHarness {
         let owner_only = path.file_name().and_then(|name| name.to_str())
             == Some(DEEPSEEK_HARNESS_CREDENTIALS_FILE);
@@ -2661,9 +2666,12 @@ pub(crate) fn build_codex_auth_update(
 ) -> Result<AgentFileUpdate, String> {
     let path = codex_configuration_directory(home).join("auth.json");
     let after = if oauth_configuration {
-        validate_codex_oauth_login_at(&path)?;
-        read_optional_text(&path)?
-            .ok_or_else(|| "Codex OAuth 登录凭据在应用配置前已被删除，请重新登录".to_string())?
+        if validate_codex_oauth_login_at(&path).is_ok() {
+            read_optional_text(&path)?
+                .ok_or_else(|| "Codex OAuth 登录凭据在应用配置前已被删除，请重新登录".to_string())?
+        } else {
+            available_codex_oauth_auth(home)?
+        }
     } else {
         let path_text = read_optional_text(&path)?;
         let mut root = parse_agent_json_object(path_text.as_deref(), "Codex auth.json")?;

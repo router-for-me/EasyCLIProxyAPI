@@ -14468,3 +14468,18 @@ body.table-col-resizing * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.agent-codex-save-actions {
+  flex-wrap: nowrap;
+}
+
+.agent-codex-save-actions .primary-button {
+  width: 128px;
+  flex-shrink: 0;
+}
+
+.agent-codex-save-actions button {
+  width: auto;
+  min-width: 0;
+  padding-inline: 12px;
+}

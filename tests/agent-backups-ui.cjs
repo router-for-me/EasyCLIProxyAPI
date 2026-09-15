@@ -15,10 +15,10 @@ const assert = require('node:assert/strict');
     const choose = async () => { await manage(); await page.getByRole('button', { name: '恢复备份', exact: true }).click(); await page.locator('.agent-backup-columns nav button').first().click(); };
     for (const query of ['fresh', 'embedded&fresh']) {
       await open(query);
-      await page.getByRole('button', { name: '一键接入', exact: true }).click();
+      await page.getByRole('button', { name: '应用配置修改', exact: true }).click();
       await page.getByText('配置已更新。', { exact: true }).waitFor();
-      await page.getByRole('button', { name: '更新配置', exact: true }).click();
-      await page.getByText('配置已是最新，无需写入。', { exact: true }).waitFor();
+      await page.getByRole('button', { name: '关闭配置修改', exact: true }).waitFor();
+      assert.equal((await calls('close_codex_config_modification')).length, 0);
       assert.equal((await calls('create_agent_config_backup')).length, 0);
       await backup();
       assert.deepEqual((await calls('create_agent_config_backup'))[0].args, { client: 'codex' });

@@ -1351,6 +1351,7 @@ pub(crate) fn sync_codex_model_catalog_if_configured(
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+    if codex_native_oauth_enabled(home)? { return Ok(false); }
     let before = config_images(&config_paths(client.id(), home)?)?;
     validate_config_images(&before)?;
     let (configured, current_model, _) =
@@ -1447,6 +1448,9 @@ pub(crate) fn apply_agent_configuration_with_oauth(
     model: &str,
     options: AgentConfigurationOptions<'_>,
 ) -> Result<AgentConfigActionResult, String> {
+    if client == AgentClient::Codex {
+        return apply_codex_cpa_configuration(home, port, api_key, model, options);
+    }
     if client == AgentClient::DeepSeekHarness {
         return apply_deepseek_harness_configuration(home, port, api_key, model, options.models);
     }
