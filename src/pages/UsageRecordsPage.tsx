@@ -297,7 +297,7 @@ export function UsageRecordsPage() {
   const [error, setError] = useState('');
   const requestIdRef = useRef(0);
   const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
-  if (!schedulerRef.current) schedulerRef.current = createRefreshScheduler();
+  if (!schedulerRef.current) schedulerRef.current = createRefreshScheduler(250);
 
   useEffect(() => {
     try {
@@ -429,7 +429,7 @@ export function UsageRecordsPage() {
         else unlisten = stop;
       })
       .catch(() => {});
-    const timer = window.setInterval(refresh, 5_000);
+    const timer = window.setInterval(refresh, 1_000);
     const refreshWhenVisible = () => {
       if (!document.hidden) refresh();
     };
