@@ -56,9 +56,11 @@ import {
   DEEPSEEK_BASE_URL,
   fetchModels,
   mergeModelOptions,
+  modelSearchText,
   modelsFromRecord,
   normalizeBaseUrl,
   reconcileModelSelection,
+  usableModelAlias,
   type ModelOption,
   type ModelProvider,
 } from '../services/modelService';
@@ -381,9 +383,23 @@ const mergeModelRecords = (current: unknown, selected: ModelOption[]) => {
     );
     const next: Record<string, unknown> = isRecord(matched) ? { ...matched } : {};
     next.name = name;
-    const alias = model.alias?.trim();
-    if (alias && alias !== name) next.alias = alias;
-    else delete next.alias;
+    const requested = (model.alias ?? '').trim();
+    const storedAlias = readString(next, 'alias');
+    const alias = usableModelAlias(requested);
+    if (alias && alias !== name) {
+      next.alias = alias;
+    } else if (
+      requested
+      && storedAlias
+      && requested.toLowerCase() === storedAlias.toLowerCase()
+      && requested.toLowerCase() !== name.toLowerCase()
+    ) {
+      next.alias = storedAlias;
+    } else if (requested && requested !== name) {
+      throw new Error(translate(getCurrentLocale(), 'aliases.error.invalidAlias'));
+    } else {
+      delete next.alias;
+    }
     if (model.thinking) next.thinking = { ...model.thinking };
     models.push(next);
     return models;
@@ -1418,9 +1434,7 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
   const visibleModels = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return models;
-    return models.filter((model) =>
-      `${model.name} ${model.alias ?? ''}`.toLowerCase().includes(query),
-    );
+    return models.filter((model) => modelSearchText(model).includes(query));
   }, [models, search]);
 
   const resultValues = Object.values(results);
@@ -1532,8 +1546,8 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
                   <strong title={model.name}>{model.name}</strong>
                   {error
                     ? <small className="error" title={error}>{error}</small>
-                    : model.alias
-                      ? <small title={model.alias}>{model.alias}</small>
+                    : model.alias || model.displayName
+                      ? <small title={model.alias || model.displayName}>{model.alias || model.displayName}</small>
                       : null}
                 </div>
                 <span

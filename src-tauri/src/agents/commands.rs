@@ -498,7 +498,7 @@ pub(crate) async fn get_model_alias_edit_source(
     alias: String,
 ) -> Result<ModelAliasEditContext, String> {
     let config = gui_config_state.snapshot()?;
-    let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
     let content = fetch_management_config_yaml(&config).await?;
     let definitions = fetch_oauth_model_definitions(&config).await;
     model_alias_edit_context(&content, &alias, &definitions)
@@ -519,7 +519,16 @@ pub(crate) async fn create_thinking_alias(
     if source_id.is_empty() {
         return Err("请先选择原模型".to_string());
     }
-    let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
+    let original_alias = original_alias
+        .as_deref()
+        .map(|original| existing_thinking_alias_model_id(original, "别名模型"))
+        .transpose()?;
+    let alias = match original_alias.as_deref() {
+        Some(original) if original.eq_ignore_ascii_case(alias.trim()) => {
+            existing_thinking_alias_model_id(&alias, "别名模型")?
+        }
+        _ => validate_thinking_alias_model_id(&alias, "别名模型")?,
+    };
     let effort = if effort.trim().is_empty() {
         String::new()
     } else {
@@ -594,7 +603,7 @@ pub(crate) async fn delete_thinking_alias(
     oauth_channel: Option<String>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
-    let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
     let content = fetch_management_config_yaml(&config).await?;
     let updated =
         remove_thinking_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?;
@@ -690,7 +699,7 @@ pub(crate) async fn delete_speed_alias(
     oauth_channel: Option<String>,
 ) -> Result<Vec<SpeedAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
-    let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
     let content = fetch_management_config_yaml(&config).await?;
     let updated =
         remove_speed_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?;

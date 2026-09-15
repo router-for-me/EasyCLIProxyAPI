@@ -563,6 +563,39 @@ fn thinking_alias_effort_accepts_provider_defined_levels() {
 }
 
 #[test]
+fn existing_aliases_with_spaces_can_be_loaded_and_deleted() {
+    assert_eq!(
+        existing_thinking_alias_model_id(" Codex Auto Review ", "别名模型").unwrap(),
+        "Codex Auto Review"
+    );
+    assert!(validate_thinking_alias_model_id("Codex Auto Review", "别名模型").is_err());
+    let content = "codex-api-key:\n  - name: provider\n    base-url: https://www.loomex.cc\n    models:\n      - name: codex-auto-review\n        alias: Codex Auto Review\n      - name: keep-me\n";
+    let entries = thinking_aliases_from_yaml(content).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].alias, "Codex Auto Review");
+    assert_eq!(entries[0].source_model, "codex-auto-review");
+    let context = model_alias_edit_context(content, "Codex Auto Review", &[]).unwrap();
+    assert_eq!(context.source.model, "codex-auto-review");
+    let deleted = remove_thinking_alias_from_yaml(content, "Codex Auto Review").unwrap();
+    assert!(thinking_aliases_from_yaml(&deleted).unwrap().is_empty());
+    assert!(deleted.contains("name: keep-me"));
+    assert!(!deleted.contains("Codex Auto Review"));
+    let source = resolve_model_alias_edit_source(content, "Codex Auto Review", &[]).unwrap();
+    let renamed = edit_model_alias_in_yaml(
+        content,
+        "Codex Auto Review",
+        &source,
+        "codex-auto-review-alias",
+        "",
+        false,
+    )
+    .unwrap();
+    let renamed_entries = thinking_aliases_from_yaml(&renamed).unwrap();
+    assert_eq!(renamed_entries.len(), 1);
+    assert_eq!(renamed_entries[0].alias, "codex-auto-review-alias");
+}
+
+#[test]
 fn thinking_alias_removal_keeps_other_models_in_grouped_rule() {
     let input = "oauth-model-alias:\n  codex:\n    - name: gpt-5.5\n      alias: gpt-5.5-xhigh\n      fork: true\n    - name: gpt-5.4\n      alias: gpt-5.4-xhigh\n      fork: true\npayload:\n  override:\n    - models:\n        - name: gpt-5.5-xhigh\n          protocol: codex\n        - name: gpt-5.4-xhigh\n          protocol: codex\n      params:\n        reasoning.effort: xhigh\n";
     let rendered = remove_thinking_alias_from_yaml(input, "gpt-5.5-xhigh").unwrap();

@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { usableModelAlias } from '../services/modelService';
 import {
   ArrowRight,
   BrainCircuit,
@@ -396,6 +397,13 @@ export function ThinkingAliasesPage() {
     const normalizedAlias = alias.trim();
     if (!normalizedAlias) {
       setError(t('aliases.error.emptyAlias'));
+      return;
+    }
+    const keepingExistingAlias = Boolean(
+      editingEntry && editingEntry.alias.trim().toLowerCase() === normalizedAlias.toLowerCase(),
+    );
+    if (!keepingExistingAlias && !usableModelAlias(normalizedAlias)) {
+      setError(t('aliases.error.invalidAlias'));
       return;
     }
     if (fastEnabled && !selectedSource.supportsFast) {

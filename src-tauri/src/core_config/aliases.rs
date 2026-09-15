@@ -185,19 +185,26 @@ pub(crate) async fn fetch_active_oauth_alias_channels(
         .collect())
 }
 
-pub(crate) fn validate_thinking_alias_model_id(value: &str, label: &str) -> Result<String, String> {
+pub(crate) fn existing_thinking_alias_model_id(value: &str, label: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
         return Err(format!("{label}不能为空"));
     }
-    if value.len() > 240
-        || value
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control())
+    if value.len() > 240 || value.chars().any(char::is_control) {
+        return Err(format!("{label}格式无效"));
+    }
+    Ok(value.to_string())
+}
+
+pub(crate) fn validate_thinking_alias_model_id(value: &str, label: &str) -> Result<String, String> {
+    let value = existing_thinking_alias_model_id(value, label)?;
+    if value
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
     {
         return Err(format!("{label}格式无效，不能包含空白字符"));
     }
-    Ok(value.to_string())
+    Ok(value)
 }
 
 pub(crate) fn validate_thinking_alias_effort(value: &str) -> Result<String, String> {
