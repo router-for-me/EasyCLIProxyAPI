@@ -701,7 +701,7 @@ export const en: Record<MessageKey, string> = {
   'config.network.listenHostHint': 'For example, 127.0.0.1, 0.0.0.0, or a LAN IP; changing it restarts a running core',
   'config.network.proxyUrl': 'Proxy URL',
   'config.network.proxyPlaceholder': 'For example, socks5://127.0.0.1:7890',
-  'config.network.proxyHint': 'Supports SOCKS and HTTP protocols',
+  'config.network.proxyHint': 'You can enter a proxy URL. Leave it empty to use the system proxy, or none if none is detected. Supports HTTP and SOCKS.',
   'config.network.sessionAffinity': 'Session Affinity',
   'config.network.sessionAffinityHint': 'Prefer the previously selected credential for the same session',
   'config.network.sessionTtl': 'Session Affinity TTL',

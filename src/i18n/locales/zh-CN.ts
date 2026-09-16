@@ -700,7 +700,7 @@ export const zhCN = {
   'config.network.listenHostHint': '例如 127.0.0.1、0.0.0.0 或局域网 IP；修改后会重启运行中的内核',
   'config.network.proxyUrl': '代理 URL',
   'config.network.proxyPlaceholder': '例如 socks5://127.0.0.1:7890',
-  'config.network.proxyHint': '支持socks协议与http协议',
+  'config.network.proxyHint': '可手动填写；留空则自动读取系统代理，没有就不填。支持 HTTP 与 SOCKS。',
   'config.network.sessionAffinity': '会话粘性路由',
   'config.network.sessionAffinityHint': '同一会话优先复用已选择的凭据',
   'config.network.sessionTtl': '会话粘性 TTL',

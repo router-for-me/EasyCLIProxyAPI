@@ -670,7 +670,7 @@ export const jaOverrides = {
   'config.network.listenHostHint': '例: 127.0.0.1、0.0.0.0、または LAN IP。変更すると実行中のコアが再起動します',
   'config.network.proxyUrl': 'プロキシ URL',
   'config.network.proxyPlaceholder': '例：socks5://127.0.0.1:7890',
-  'config.network.proxyHint': 'SOCKS プロトコルと HTTP プロトコルに対応しています',
+  'config.network.proxyHint': '手動入力できます。空欄の場合はシステムプロキシを使います。未検出なら空欄のままです。HTTP と SOCKS に対応しています。',
   'config.network.sessionAffinity': 'セッションアフィニティ',
   'config.network.sessionAffinityHint': '同じセッションでは以前選択した認証情報を優先します',
   'config.network.sessionTtl': 'セッションアフィニティ TTL',

@@ -716,6 +716,7 @@ pub(crate) async fn fetch_agent_models(
     }
     let tls_enabled = managed_core_tls_enabled();
     let client = reqwest::Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(15))
         .danger_accept_invalid_certs(tls_enabled)
@@ -769,6 +770,7 @@ pub(crate) async fn fetch_codex_runtime_models(
     }
     let tls_enabled = managed_core_tls_enabled();
     let client = reqwest::Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(15))
         .danger_accept_invalid_certs(tls_enabled)

@@ -179,6 +179,7 @@ pub(crate) async fn start_oauth_login(
     provider: String,
     browser: Option<String>,
 ) -> Result<OAuthStartResult, String> {
+    super::network_proxy::prepare_oauth(&app).await;
     let config = gui_config_state.snapshot()?;
     let provider_key = normalize_management_oauth_provider(&provider)?;
     let client = management_http_client()?;

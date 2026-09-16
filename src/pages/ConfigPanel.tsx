@@ -720,7 +720,9 @@ export function ConfigPanelPage() {
     setBusyAction('network');
     try {
       const result = await invoke<CoreConfigSettings>('save_network_endpoint_settings', {
-        settings: { host, port, proxyUrl },
+        settings: networkDraftDirtyRef.current.proxyUrl
+          ? { host, port, proxyUrl }
+          : { host, port },
       });
       clearDraftDirty('host');
       clearDraftDirty('port');

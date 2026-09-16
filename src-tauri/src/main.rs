@@ -12,6 +12,7 @@ mod core_runtime;
 mod desktop_theme;
 mod instance_lock;
 mod management_api;
+mod network_proxy;
 mod oauth_browser;
 mod progress;
 mod provider_health;
@@ -638,6 +639,7 @@ struct GuiConfigFile {
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
+    proxy_override: bool,
     download_source: VersionDownloadSource,
     custom_download_mirrors: Vec<String>,
     active_custom_download_mirror: String,
@@ -928,6 +930,7 @@ impl Default for GuiConfigFile {
             plugins_enabled: false,
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
+            proxy_override: false,
             download_source: VersionDownloadSource::Github,
             custom_download_mirrors: Vec::new(),
             active_custom_download_mirror: String::new(),
@@ -969,6 +972,7 @@ struct GuiConfigPresence {
     plugins_enabled: Option<bool>,
     routing_strategy: Option<String>,
     proxy_url: Option<String>,
+    proxy_override: Option<bool>,
     download_source: Option<VersionDownloadSource>,
     custom_download_mirrors: Option<Vec<String>>,
     active_custom_download_mirror: Option<String>,
@@ -1414,7 +1418,6 @@ struct GuiNetworkSettings {
 struct GuiNetworkRoutingSettings {
     port: u16,
     allow_lan: bool,
-    proxy_url: String,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
     #[serde(default)]
@@ -1430,7 +1433,8 @@ struct GuiNetworkRoutingSettings {
 struct GuiNetworkEndpointSettings {
     host: String,
     port: u16,
-    proxy_url: String,
+    #[serde(default)]
+    proxy_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1954,6 +1958,7 @@ impl GuiConfigState {
             config.allow_lan = settings.allow_lan;
             config.port = settings.port;
             config.proxy_url = settings.proxy_url.clone();
+            config.proxy_override = settings.proxy_override;
             Ok(())
         })
     }
@@ -2121,7 +2126,6 @@ impl GuiConfigState {
             }
             config.plugins_enabled = settings.plugins_enabled;
             config.routing_strategy = settings.routing_strategy.clone();
-            config.proxy_url = settings.proxy_url.clone();
             config.routing_session_affinity = settings.routing_session_affinity;
             config.routing_session_affinity_ttl = settings.routing_session_affinity_ttl.clone();
             config.disable_cooling = settings.disable_cooling;
@@ -2364,6 +2368,9 @@ fn main() {
 
     let app = app
         .setup(move |app| {
+            if let Err(error) = network_proxy::refresh(app.state::<GuiConfigState>().inner()) {
+                eprintln!("读取启动代理设置失败: {error}");
+            }
             if let Err(error) = codex_catalog::validate_embedded_catalog() {
                 eprintln!("Codex 内置模型目录无效: {error}");
             }
@@ -2398,6 +2405,7 @@ fn main() {
                 eprintln!("启动配置文件监控失败: {error}");
             }
 
+            network_proxy::start_monitor(app.handle().clone());
             start_codex_model_catalog_sync(app.handle().clone());
 
             let usage_app = app.handle().clone();

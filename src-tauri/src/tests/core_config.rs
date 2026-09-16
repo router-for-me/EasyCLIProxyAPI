@@ -393,7 +393,7 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
     assert!(config.request_log);
     assert!(config.plugins_enabled);
     assert_eq!(config.routing_strategy, "fill-first");
-    assert_eq!(config.proxy_url, "http://127.0.0.1:8080");
+    assert_eq!(config.proxy_url, "");
     assert!(config.routing_session_affinity);
     assert_eq!(config.routing_session_affinity_ttl, "45m");
     assert_eq!(config.request_retry, 1);
@@ -1130,6 +1130,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         plugins_enabled: true,
         routing_strategy: "fill-first".to_string(),
         proxy_url: "socks5://127.0.0.1:7890".to_string(),
+        proxy_override: true,
         download_source: VersionDownloadSource::Github,
         custom_download_mirrors: Vec::new(),
         active_custom_download_mirror: String::new(),
