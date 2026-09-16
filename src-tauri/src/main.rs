@@ -1401,7 +1401,6 @@ struct PreparedAgentModels {
     codex_catalog: Option<String>,
 }
 
-#[cfg(test)]
 type FileSnapshot = (PathBuf, Option<Vec<u8>>);
 #[cfg(test)]
 type AgentRecordExtension = (AgentModificationRecord, Vec<FileSnapshot>);

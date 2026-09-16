@@ -1648,7 +1648,7 @@ fn deepseek_harness_removal_preserves_other_versioned_credentials() {
     )
     .unwrap();
 
-    let changed = remove_deepseek_harness_managed_configuration(&paths).unwrap();
+    let changed = remove_agent_managed_configuration(AgentClient::DeepSeekHarness, &paths).unwrap();
     let value: serde_norway::Value =
         serde_norway::from_str(&fs::read_to_string(&paths[1]).unwrap()).unwrap();
 
@@ -1677,7 +1677,7 @@ fn deepseek_harness_removal_deletes_semantically_empty_credentials_file() {
     )
     .unwrap();
 
-    let changed = remove_deepseek_harness_managed_configuration(&paths).unwrap();
+    let changed = remove_agent_managed_configuration(AgentClient::DeepSeekHarness, &paths).unwrap();
 
     assert_eq!(changed, vec![path_to_string(&paths[1])]);
     assert!(!paths[1].exists());
