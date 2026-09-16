@@ -103,7 +103,7 @@ export function AgentConfigManagementPanel({
       </div>
     </section> : null}
     {codex ? <section className="agent-management-row agent-management-clear-integration">
-      <div><h3>{t('agents.nativeOAuth.restore')}</h3><p>{t('agents.nativeOAuth.restoreHint')}</p></div>
+      <div><h3>{t('agents.nativeOAuth.restoreTitle')}</h3><p>{t('agents.nativeOAuth.restoreHint')}</p></div>
       <div className="agent-management-actions">
         <button type="button" id="agent-clear-integration" className="secondary-button agent-clear-integration"
           onClick={onClearIntegration} disabled={busy || !canClearIntegration}>
@@ -113,9 +113,9 @@ export function AgentConfigManagementPanel({
       </div>
     </section> : null}
     {!pi ? <section className="agent-management-row">
-      <div><h3>{t(codex ? 'agents.modify.clear' : 'agents.nativeOAuth.restore')}</h3><p>{t(codex ? 'agents.management.clearDescription' : 'agents.clearIntegration.description')}</p></div>
+      <div><h3>{t(codex ? 'agents.modify.clear' : 'agents.clearIntegration.button')}</h3><p>{t(codex ? 'agents.management.clearDescription' : 'agents.clearIntegration.description')}</p></div>
       <div className="agent-management-actions">
-        <button type="button" className="danger-button" onClick={onClear} disabled={busy || (!codex && !canClearIntegration)}><Trash2 size={16} />{t(codex ? 'agents.modify.clear' : 'agents.nativeOAuth.restore')}</button>
+        <button type="button" className="danger-button" onClick={onClear} disabled={busy || (!codex && !canClearIntegration)}><Trash2 size={16} />{t(codex ? 'agents.modify.clear' : 'agents.clearIntegration.button')}</button>
       </div>
     </section> : null}
     {pi ? <section className="agent-management-row">
