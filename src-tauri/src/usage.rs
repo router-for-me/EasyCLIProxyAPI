@@ -3296,13 +3296,9 @@ pub(crate) async fn sync_usage_model_prices(
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30));
     let proxy_url = config.proxy_url.trim();
-    let client = if proxy_url.is_empty() {
-        client_builder.build().ok()
-    } else {
-        apply_configured_proxy(client_builder, proxy_url)
-            .ok()
-            .and_then(|builder| builder.build().ok())
-    };
+    let client = apply_configured_proxy(client_builder, proxy_url)
+        .ok()
+        .and_then(|builder| builder.build().ok());
     let remote_content = match client {
         Some(client) => match client.get(MODEL_PRICE_SYNC_URL).send().await {
             Ok(response) if response.status().is_success() => response.text().await.ok(),
@@ -4377,6 +4373,7 @@ mod tests {
             plugins_enabled: false,
             routing_strategy: "round-robin".to_string(),
             proxy_url: String::new(),
+            proxy_override: false,
             download_source: VersionDownloadSource::Github,
             custom_download_mirrors: Vec::new(),
             active_custom_download_mirror: String::new(),

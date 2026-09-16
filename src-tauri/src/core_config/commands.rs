@@ -98,7 +98,6 @@ pub(crate) fn save_network_routing_settings(
     if settings.port == 0 {
         return Err("端口必须在 1 到 65535 之间".to_string());
     }
-    let proxy_url = normalize_optional_config_string(settings.proxy_url, "代理 URL")?;
     let routing_session_affinity_ttl =
         normalize_optional_config_string(settings.routing_session_affinity_ttl, "会话粘性 TTL")?;
 
@@ -116,7 +115,6 @@ pub(crate) fn save_network_routing_settings(
         "127.0.0.1"
     }
     .to_string();
-    next.proxy_url = proxy_url.clone();
     next.routing_session_affinity = settings.routing_session_affinity;
     next.routing_session_affinity_ttl = routing_session_affinity_ttl.clone();
     next.disable_cooling = settings.disable_cooling;
@@ -157,13 +155,25 @@ pub(crate) fn save_network_endpoint_settings(
     if host.parse::<IpAddr>().is_err() {
         return Err("Listen IP must be a valid IPv4 or IPv6 address".to_string());
     }
-    let proxy_url = normalize_optional_config_string(settings.proxy_url, "Proxy URL")?;
     let previous = gui_config_state.snapshot()?;
     let mut next = previous.clone();
     next.host = host;
     next.allow_lan = !is_loopback_host(&next.host);
     next.port = settings.port;
-    next.proxy_url = proxy_url;
+    if let Some(proxy_url) = settings.proxy_url {
+        let proxy_url = network_proxy::normalize_optional_proxy_url(&proxy_url)?;
+        let detected = if proxy_url.is_empty() {
+            Some(network_proxy::detect())
+        } else {
+            None
+        };
+        next.proxy_override = !proxy_url.is_empty();
+        next.proxy_url = if next.proxy_override {
+            proxy_url
+        } else {
+            detected.unwrap_or_else(network_proxy::detect)
+        };
+    }
     validate_gui_config(&next)?;
     patch_core_network_endpoint_settings(&next)?;
     let config = match gui_config_state.update_network_endpoint(&next) {
@@ -461,19 +471,8 @@ pub(crate) fn set_core_proxy_url(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     proxy_url: String,
 ) -> Result<CoreConfigView, String> {
-    let proxy_url = normalize_optional_config_string(proxy_url, "代理 URL")?;
-    let mut settings = current_core_config_settings(gui_config_state.inner())?;
-    let previous_proxy_url = settings.proxy_url.clone();
-    settings.proxy_url = proxy_url;
-    patch_core_proxy_url(&settings.proxy_url)?;
-    let config = match gui_config_state.sync_core_settings(&settings) {
-        Ok(config) => config,
-        Err(error) => {
-            let rollback_error = patch_core_proxy_url(&previous_proxy_url).err();
-            return Err(config_update_error_with_rollback(error, rollback_error));
-        }
-    };
-    Ok(CoreConfigView::from(&config))
+    network_proxy::set_manual(gui_config_state.inner(), proxy_url)?;
+    Ok(CoreConfigView::from(&gui_config_state.snapshot()?))
 }
 
 #[tauri::command]

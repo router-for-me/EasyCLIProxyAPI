@@ -1230,7 +1230,7 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
             if presence.routing_strategy.is_none() {
                 config.routing_strategy = core_settings.routing_strategy;
             }
-            if presence.proxy_url.is_none() {
+            if presence.proxy_url.is_none() && config.proxy_override {
                 config.proxy_url = core_settings.proxy_url;
             }
             if presence.routing_session_affinity.is_none() {
@@ -1301,6 +1301,10 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     if presence.prefer_gitcode_downloads.is_none() {
         changed = true;
     }
+    changed |= network_proxy::initialize_override(
+        &mut config,
+        presence.proxy_override.is_some(),
+    );
     config.prefer_gitcode_downloads = config.download_source == VersionDownloadSource::Gitcode;
     let management_secret_rotated = ensure_strong_management_secret(&mut config)?;
     changed |= management_secret_rotated;
@@ -1350,7 +1354,6 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.request_log = core_settings.request_log;
     config.plugins_enabled = core_settings.plugins_enabled;
     config.routing_strategy = core_settings.routing_strategy.clone();
-    config.proxy_url = core_settings.proxy_url.clone();
     config.routing_session_affinity = core_settings.routing_session_affinity;
     config.routing_session_affinity_ttl = core_settings.routing_session_affinity_ttl.clone();
     config.disable_cooling = core_settings.disable_cooling;
@@ -1599,7 +1602,16 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
     if config.api_keys != original_api_keys {
         changed = true;
     }
-    let proxy_url = config.proxy_url.trim().to_string();
+    let proxy_url = if config.proxy_override {
+        network_proxy::normalize_optional_proxy_url(&config.proxy_url)?
+    } else {
+        let proxy_url = config.proxy_url.trim().to_string();
+        if proxy_url.is_empty() || network_proxy::normalize_proxy_url(&proxy_url).is_ok() {
+            proxy_url
+        } else {
+            String::new()
+        }
+    };
     if config.proxy_url != proxy_url {
         config.proxy_url = proxy_url;
         changed = true;
@@ -1723,6 +1735,7 @@ pub(crate) fn write_gui_config_to_path(
         ("plugins-enabled", value(config.plugins_enabled)),
         ("routing-strategy", value(config.routing_strategy.as_str())),
         ("proxy-url", value(config.proxy_url.as_str())),
+        ("proxy-override", value(config.proxy_override)),
         ("download-source", value(config.download_source.as_str())),
         (
             "prefer-gitcode-downloads",
@@ -1754,6 +1767,8 @@ pub(crate) fn write_gui_config_to_path(
         set_codex_table_item(root, key, item);
     }
     for key in [
+        "proxy-mode",
+        "proxy-manual-url",
         "codex-session-repair-on-launch",
         "claude-code-working-directory",
         "claude-code-working-directory-prompt-disabled",
@@ -1853,7 +1868,9 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
     }
     validate_strong_management_secret_key(&config.management_secret_key)?;
     validate_routing_strategy(config.routing_strategy.trim())?;
-    if config.proxy_url.chars().any(char::is_control) {
+    if config.proxy_override {
+        network_proxy::normalize_proxy_url(&config.proxy_url)?;
+    } else if config.proxy_url.chars().any(char::is_control) {
         return Err("代理 URL 不能包含控制字符".to_string());
     }
     for url in &config.custom_download_mirrors {

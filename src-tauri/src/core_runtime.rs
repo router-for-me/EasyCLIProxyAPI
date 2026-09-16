@@ -376,6 +376,7 @@ pub(crate) fn start_core_process_with_state(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) -> Result<CoreStatus, String> {
+    network_proxy::refresh(gui_config_state)?;
     let config = gui_config_state.snapshot()?;
     start_core_process_inner(process_state, &config)?;
     if let Err(error) = gui_config_state.set_run_on_startup(true) {
@@ -408,6 +409,7 @@ pub(crate) fn restart_core_process_with_state(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) -> Result<CoreStatus, String> {
+    network_proxy::refresh(gui_config_state)?;
     let config = gui_config_state.snapshot()?;
     if current_core_status(Some(process_state), None)?.running {
         stop_core_process_inner(process_state)?;
@@ -971,11 +973,13 @@ pub(crate) fn apply_configured_proxy(
     proxy_url: &str,
 ) -> Result<reqwest::ClientBuilder, String> {
     let proxy_url = proxy_url.trim();
+    let builder = builder.no_proxy();
     if proxy_url.is_empty() {
         return Ok(builder);
     }
-    let proxy =
-        reqwest::Proxy::all(proxy_url).map_err(|error| format!("代理 URL 无效: {error}"))?;
+    let proxy = reqwest::Proxy::all(proxy_url)
+        .map_err(|_| "代理 URL 无效".to_string())?
+        .no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
     Ok(builder.proxy(proxy))
 }
 
@@ -1387,6 +1391,16 @@ fn start_core_process_once(
         }
     };
     configure_background_command(&mut command);
+    for variable in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        command.env_remove(variable);
+    }
 
     let mut child = match spawn_core_child(command) {
         Ok(child) => child,
@@ -1413,6 +1427,9 @@ pub(crate) fn start_core_process_inner(
     gui_config: &GuiConfigFile,
 ) -> Result<(), String> {
     process_state.ensure_active()?;
+    let mut resolved_config = gui_config.clone();
+    resolved_config.proxy_url = network_proxy::resolve(gui_config);
+    let gui_config = &resolved_config;
     let install_dir = core_install_dir()?;
     if !gui_config.auth_dir.trim().is_empty() {
         let auth_dir = auth_dir_path_for_core(&gui_config.auth_dir, &install_dir);
@@ -1547,10 +1564,6 @@ pub(crate) fn configure_background_command(command: &mut Command) {
 
 pub(crate) fn configure_networked_command(command: &mut Command, proxy_url: &str) {
     let proxy_url = proxy_url.trim();
-    if proxy_url.is_empty() {
-        return;
-    }
-
     for variable in [
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -1559,8 +1572,15 @@ pub(crate) fn configure_networked_command(command: &mut Command, proxy_url: &str
         "https_proxy",
         "all_proxy",
     ] {
-        command.env(variable, proxy_url);
+        if proxy_url.is_empty() {
+            command.env_remove(variable);
+        } else {
+            command.env(variable, proxy_url);
+        }
     }
+    command
+        .env("NO_PROXY", "localhost,127.0.0.1,::1")
+        .env("no_proxy", "localhost,127.0.0.1,::1");
 }
 
 pub(crate) fn stop_core_process_inner(process_state: &CoreProcessState) -> Result<(), String> {

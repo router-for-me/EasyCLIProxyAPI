@@ -147,6 +147,7 @@ fn handle_configuration_file_changes(
                     let mut config = toml::from_str::<GuiConfigFile>(&content)
                         .map_err(|error| format!("解析 GUI 配置失败: {error}"))?;
                     config.allow_lan = !is_loopback_host(&config.host);
+                    config.proxy_url = super::network_proxy::resolve(&config);
                     validate_gui_config(&config)?;
                     Ok(config)
                 })();
