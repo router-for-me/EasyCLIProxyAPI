@@ -11,7 +11,7 @@ const base = 'http://127.0.0.1:1421';
     await page.route('**/*', route => route.request().url().startsWith(base + '/') ? route.continue() : route.abort());
     const errors = [];
     page.on('pageerror', error => errors.push(String(error)));
-    const restore = () => page.getByRole('button', { name: '清除接入', exact: true });
+    const restore = () => page.getByRole('button', { name: '重置登录', exact: true });
     const update = () => page.locator('.agent-save-actions .primary-button');
     const core = () => page.getByRole('tab', { name: '基础配置', exact: true }).click();
     const manage = () => page.getByRole('tab', { name: '配置管理', exact: true }).click();
@@ -187,7 +187,7 @@ const base = 'http://127.0.0.1:1421';
       await oauth().click();
       const dialog = page.getByRole('alertdialog');
       await dialog.waitFor();
-      assert.match(await dialog.innerText(), /配置管理.*清除接入/);
+      assert.match(await dialog.innerText(), /配置管理.*重置登录/);
       assert.equal((await dialog.innerText()).includes('清空配置'), false);
       assert.equal(await page.getByRole('radio', { name: 'API 密钥', exact: true }).getAttribute('aria-checked'), 'true');
       assert.equal((await page.evaluate(() => window.fixtureCalls)).filter(call => ['restore_codex_official_config', 'clear_codex_config', 'update_agent_config'].includes(call.cmd)).length, 0);
@@ -218,11 +218,11 @@ const base = 'http://127.0.0.1:1421';
       assert.equal(await close().count(), 1, 'Other managed clients can also close configuration');
       assert.equal(await restore().count(), 0);
       await manage();
-      assert.equal(await restore().count(), 1, 'Other clients can clear CPA integration in management');
+      assert.equal(await page.getByRole('button', { name: '清除接入', exact: true }).count(), 1, 'Other clients can clear CPA integration in management');
       assert.equal(await page.locator('#agent-clear-integration').count(), 0, 'The official Codex login action remains Codex-only');
     }
 
     assert.deepEqual(errors, []);
-    console.log('PASS: Clear integration in management, missing-login guidance and navigation, login then OAuth reconnect, independent Close/Update, failures, and both layouts at 1280/360px.');
+    console.log('PASS: Reset sign-in in management, missing-login guidance and navigation, login then OAuth reconnect, independent Close/Update, failures, and both layouts at 1280/360px.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
