@@ -389,6 +389,306 @@ fn unwritable_backup_directory_does_not_block_updates_sync_clear_or_templates() 
 }
 
 #[test]
+fn clear_integration_needs_no_backup_and_removes_state_for_each_client() {
+    for client in [
+        AgentClient::ClaudeCode,
+        AgentClient::ClaudeDesktop,
+        AgentClient::OpenCode,
+        AgentClient::OpenClaw,
+        AgentClient::Hermes,
+        AgentClient::DeepSeekHarness,
+        AgentClient::ZCode,
+        AgentClient::KimiCode,
+        AgentClient::GrokBuild,
+    ]
+    .into_iter()
+    .filter(|client| client.supported_platform())
+    {
+        let home = Home::new();
+        let paths = config_paths(client.id(), &home.0).unwrap();
+        apply(&home.0, client, "gpt-one").unwrap();
+        let mut expected = Vec::new();
+        for (path, bytes) in config_images(&paths).unwrap() {
+            let mut value = parse(&path, text(bytes.as_deref()).unwrap()).unwrap();
+            value["user_setting"] = serde_json::json!({"keep": true});
+            save(&path, render(&path, &value).unwrap());
+            expected.push((path, serde_json::json!({"user_setting": {"keep": true}})));
+        }
+        let state = agent_state_path(&paths).unwrap();
+        save(&state, "old state without a usable backup");
+        let extra_state = match client {
+            AgentClient::ClaudeDesktop => Some(desktop_mapping_path(&paths).unwrap()),
+            AgentClient::DeepSeekHarness => {
+                Some(deepseek_harness_catalog_state_path(&paths).unwrap())
+            }
+            _ => None,
+        };
+        if let Some(path) = &extra_state {
+            save(path, "stale state");
+        }
+        let backup = paths[0].with_extension("manual.bak");
+        save(&backup, "keep manual backup");
+        let result = clear_agent_managed_configuration(client, &home.0, 8317).unwrap();
+        assert!(!result.enabled, "{}", client.id());
+        assert!(!state.exists());
+        assert!(extra_state.is_none_or(|path| !path.exists()));
+        assert_eq!(fs::read_to_string(backup).unwrap(), "keep manual backup");
+        assert!(!agent_has_managed_marker(client, &paths).unwrap());
+        for (path, expected) in expected {
+            let value = parse(
+                &path,
+                text(read_agent_bytes(&path).unwrap().as_deref()).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                value["user_setting"],
+                expected["user_setting"],
+                "{}",
+                client.id()
+            );
+        }
+        let result = clear_agent_managed_configuration(client, &home.0, 8317).unwrap();
+        assert!(!result.enabled);
+        assert!(result.changed_files.is_empty(), "{}", client.id());
+        assert!(list_backups(client.id(), &home.0)
+            .unwrap()
+            .versions
+            .is_empty());
+        apply(&home.0, client, "gpt-two").unwrap();
+        assert!(agent_has_managed_marker(client, &paths).unwrap());
+    }
+}
+
+#[test]
+fn clear_integration_removes_claude_model_overrides_but_keeps_custom_settings() {
+    let home = Home::new();
+    let paths = config_paths("claude-code", &home.0).unwrap();
+    let original = serde_json::json!({
+        "permissions": {"allow": ["Read"]},
+        "env": {"KEEP": "yes", "ANTHROPIC_CUSTOM_MODEL_OPTION_2": "user-model"}
+    });
+    save(&paths[0], original.to_string());
+    apply(&home.0, AgentClient::ClaudeCode, "gpt-one").unwrap();
+    clear_agent_managed_configuration(AgentClient::ClaudeCode, &home.0, 8317).unwrap();
+    let result = parse(&paths[0], Some(&fs::read_to_string(&paths[0]).unwrap())).unwrap();
+    assert_eq!(result, original);
+
+    apply(&home.0, AgentClient::ClaudeCode, "gpt-one").unwrap();
+    let mut edited = parse(&paths[0], Some(&fs::read_to_string(&paths[0]).unwrap())).unwrap();
+    edited["model"] = serde_json::json!("user-model");
+    save(&paths[0], edited.to_string());
+    clear_agent_managed_configuration(AgentClient::ClaudeCode, &home.0, 8317).unwrap();
+    assert_eq!(
+        parse(&paths[0], Some(&fs::read_to_string(&paths[0]).unwrap())).unwrap()["model"],
+        "user-model"
+    );
+
+    let external = r#"{"env":{"ANTHROPIC_BASE_URL":"https://api.example.com","ANTHROPIC_AUTH_TOKEN":"other"},"model":"external"}"#;
+    save(&paths[0], external);
+    clear_agent_managed_configuration(AgentClient::ClaudeCode, &home.0, 8317).unwrap();
+    assert_eq!(fs::read_to_string(&paths[0]).unwrap(), external);
+}
+
+#[test]
+fn clear_integration_preserves_claude_settings_for_other_endpoints() {
+    let home = Home::new();
+    let paths = config_paths("claude-code", &home.0).unwrap();
+    for base_url in [
+        "http://localhost:11434",
+        "http://127.0.0.1:11434",
+        "http://127.0.0.1:83170",
+        "http://127.0.0.1:8317/other-proxy",
+        "http://127.0.0.1:8317?route=other",
+        "http://127.0.0.1:8317#other",
+        "http://other:secret@127.0.0.1:8317",
+        "http://127.0.0.1.example.com:8317",
+        "https://127.0.0.1:8317",
+    ] {
+        let original = serde_json::json!({
+            "model": "local-model", "permissions": {"allow": ["Read"]},
+            "env": {"ANTHROPIC_BASE_URL": base_url, "ANTHROPIC_AUTH_TOKEN": "other-key", "ANTHROPIC_MODEL": "local-model"}
+        }).to_string();
+        save(&paths[0], &original);
+        let result =
+            clear_agent_managed_configuration(AgentClient::ClaudeCode, &home.0, 8317).unwrap();
+        assert!(result.changed_files.is_empty(), "{base_url}");
+        assert_eq!(
+            fs::read_to_string(&paths[0]).unwrap(),
+            original,
+            "{base_url}"
+        );
+    }
+}
+
+#[test]
+fn clear_integration_uses_the_configured_claude_endpoint_without_a_backup() {
+    let home = Home::new();
+    let paths = config_paths("claude-code", &home.0).unwrap();
+    for port in [8317, 9527] {
+        // URL parsing accepts the trailing slash without treating another port as CPA.
+        let base_url = format!("http://127.0.0.1:{port}/");
+        save(
+            &paths[0],
+            build_claude_agent_config(
+                Some(r#"{"env":{"KEEP":"yes"}}"#),
+                &base_url,
+                "test-secret",
+                "gpt-one",
+                &models(),
+                None,
+            )
+            .unwrap(),
+        );
+        clear_agent_managed_configuration(AgentClient::ClaudeCode, &home.0, port).unwrap();
+        assert_eq!(
+            parse(&paths[0], Some(&fs::read_to_string(&paths[0]).unwrap())).unwrap(),
+            serde_json::json!({"env":{"KEEP":"yes"}})
+        );
+    }
+    for base_url in ["https://[::1]:9527", "https://192.168.1.10:9527"] {
+        save(
+            &paths[0],
+            build_claude_agent_config(None, base_url, "test-secret", "gpt-one", &models(), None)
+                .unwrap(),
+        );
+        let plan = prepare_claude_code_managed_removal(&paths, base_url).unwrap();
+        assert_eq!(plan, vec![(paths[0].clone(), None)], "{base_url}");
+    }
+}
+
+#[test]
+fn clear_integration_handles_inline_and_mixed_toml_tables() {
+    let examples = [
+        (
+            AgentClient::GrokBuild,
+            r#"# custom settings
+models = { default = "cpa-gui/gpt-one", keep = true }
+model = { "cpa-gui/gpt-one" = { model = "gpt-one", base_url = "http://127.0.0.1:8317/v1", api_key = "test-secret" }, other = { model = "other", api_key = "keep-secret" } }
+"#,
+            serde_json::json!({"models":{"keep":true},"model":{"other":{"model":"other","api_key":"keep-secret"}}}),
+        ),
+        (
+            AgentClient::GrokBuild,
+            r#"# custom settings
+model = { "cpa-gui/gpt-one" = { model = "gpt-one" }, other = { model = "other" } }
+[models]
+default = "other"
+"#,
+            serde_json::json!({"models":{"default":"other"},"model":{"other":{"model":"other"}}}),
+        ),
+        (
+            AgentClient::KimiCode,
+            r#"default_model = "cpa-gui/gpt-one"
+# custom settings
+providers = { "cpa-gui" = { type = "openai", base_url = "http://127.0.0.1:8317/v1", api_key = "test-secret" }, other = { api_key = "keep-secret" } }
+models = { "cpa-gui/gpt-one" = { provider = "cpa-gui", model = "gpt-one" }, other = { provider = "other", model = "other" } }
+"#,
+            serde_json::json!({"providers":{"other":{"api_key":"keep-secret"}},"models":{"other":{"provider":"other","model":"other"}}}),
+        ),
+        (
+            AgentClient::KimiCode,
+            r#"# custom settings
+default_model = "other"
+providers = { "cpa-gui" = { api_key = "test-secret" }, other = { api_key = "keep-secret" } }
+[models."cpa-gui/gpt-one"]
+provider = "cpa-gui"
+model = "gpt-one"
+[models.other]
+provider = "other"
+model = "other"
+"#,
+            serde_json::json!({"default_model":"other","providers":{"other":{"api_key":"keep-secret"}},"models":{"other":{"provider":"other","model":"other"}}}),
+        ),
+    ];
+    for (client, content, expected) in examples {
+        let home = Home::new();
+        let paths = config_paths(client.id(), &home.0).unwrap();
+        save(&paths[0], content);
+        let result = clear_agent_managed_configuration(client, &home.0, 8317).unwrap();
+        assert!(!result.enabled);
+        assert_eq!(result.changed_files, vec![path_to_string(&paths[0])]);
+        let rendered = fs::read_to_string(&paths[0]).unwrap();
+        assert_eq!(parse(&paths[0], Some(&rendered)).unwrap(), expected);
+        assert!(rendered.contains("# custom settings"));
+        assert!(!agent_has_connection_evidence(client, &paths).unwrap());
+        assert!(clear_agent_managed_configuration(client, &home.0, 8317)
+            .unwrap()
+            .changed_files
+            .is_empty());
+    }
+}
+
+#[test]
+fn clear_integration_removes_empty_inline_toml_tables() {
+    for (client, content) in [
+        (
+            AgentClient::GrokBuild,
+            r#"models = { default = "cpa-gui/gpt-one" }
+model = { "cpa-gui/gpt-one" = { model = "gpt-one", api_key = "test-secret" } }
+"#,
+        ),
+        (
+            AgentClient::KimiCode,
+            r#"default_model = "cpa-gui/gpt-one"
+providers = { "cpa-gui" = { api_key = "test-secret" } }
+models = { "cpa-gui/gpt-one" = { provider = "cpa-gui", model = "gpt-one" } }
+"#,
+        ),
+    ] {
+        let home = Home::new();
+        let paths = config_paths(client.id(), &home.0).unwrap();
+        save(&paths[0], content);
+        clear_agent_managed_configuration(client, &home.0, 8317).unwrap();
+        assert!(!paths[0].exists());
+    }
+}
+
+#[test]
+fn clear_integration_rejects_invalid_files_before_writing() {
+    let home = Home::new();
+    let paths = config_paths("deepseek-harness", &home.0).unwrap();
+    apply(&home.0, AgentClient::DeepSeekHarness, "gpt-one").unwrap();
+    save(&paths[1], "refs: [invalid");
+    let before = config_images(&paths).unwrap();
+    assert!(clear_agent_managed_configuration(AgentClient::DeepSeekHarness, &home.0, 8317).is_err());
+    assert_eq!(config_images(&paths).unwrap(), before);
+}
+
+#[test]
+fn clear_integration_rolls_back_config_and_state_together() {
+    let home = Home::new();
+    let paths = config_paths("claude-code", &home.0).unwrap();
+    apply(&home.0, AgentClient::ClaudeCode, "gpt-one").unwrap();
+    let state = agent_state_path(&paths).unwrap();
+    save(&state, "legacy state");
+    let before = config_images(&paths).unwrap();
+    let after = paths.iter().map(|p| (p.clone(), None)).collect();
+    let mut first = true;
+    let error = commit_config_with_writer(
+        "claude-code",
+        &paths,
+        &before,
+        &after,
+        "clear-integration",
+        None,
+        None,
+        &mut |client, images| {
+            write_config_images(client, images)?;
+            if first {
+                first = false;
+                Err("injected failure".into())
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(error.contains("已回滚"));
+    assert_eq!(config_images(&paths).unwrap(), before);
+    assert_eq!(fs::read_to_string(state).unwrap(), "legacy state");
+}
+
+#[test]
 fn partial_writes_and_failed_verification_roll_back_without_persistent_snapshots() {
     let home = Home::new();
     let paths = config_paths("codex", &home.0).unwrap();

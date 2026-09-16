@@ -215,10 +215,11 @@ const base = 'http://127.0.0.1:1421';
     for (const client of ['opencode', 'zcode']) {
       await page.goto(`${base}/tests/fixtures/agent-backups.html?reset-selections&client=${client}`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: '更新配置', exact: true }).waitFor();
-      assert.equal(await close().count(), 0, 'Other clients keep their existing controls');
+      assert.equal(await close().count(), 1, 'Other managed clients can also close configuration');
       assert.equal(await restore().count(), 0);
       await manage();
-      assert.equal(await restore().count(), 0, 'Other clients have no official Codex login action in management');
+      assert.equal(await restore().count(), 1, 'Other clients can clear CPA integration in management');
+      assert.equal(await page.locator('#agent-clear-integration').count(), 0, 'The official Codex login action remains Codex-only');
     }
 
     assert.deepEqual(errors, []);

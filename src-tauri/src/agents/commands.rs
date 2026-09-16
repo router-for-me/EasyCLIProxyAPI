@@ -1124,11 +1124,10 @@ pub(crate) async fn set_agent_config_enabled(
         .path()
         .home_dir()
         .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let config = gui_config_state.snapshot()?;
-    let port = config.port;
-    let api_key = effective_agent_api_key(&config);
-
     if enabled {
+        let config = gui_config_state.snapshot()?;
+        let port = config.port;
+        let api_key = effective_agent_api_key(&config);
         validate_agent_can_enable(client, &home, port, api_key)?;
         let prepared = fetch_prepared_agent_models(client, &config).await?;
         let model =
@@ -1170,11 +1169,14 @@ pub(crate) async fn set_agent_config_enabled(
             )
         }).await
     } else {
+        let config = gui_config_state.snapshot()?;
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
             .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
         let _ = force_restore;
-        Err("停用智能体配置接口已移除；如需整体重置，请使用“基础配置模板”".to_string())
+        let result = clear_agent_managed_configuration(client, &home, config.port)?;
+        app.state::<AgentConfigStatusCache>().clear()?;
+        Ok(result)
     }
 }
 

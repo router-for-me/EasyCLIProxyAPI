@@ -179,7 +179,12 @@ fn commit_config_transaction(
     }
     let mut previous = before.clone();
     let mut target = after.clone();
-    if client == "deepseek-harness" && matches!(source, "template" | "restore") {
+    if source == "clear-integration" {
+        let state_path = agent_state_path(paths)?;
+        previous.push((state_path.clone(), read_agent_bytes(&state_path)?));
+        target.push((state_path, None));
+    }
+    if client == "deepseek-harness" && matches!(source, "template" | "restore" | "clear-integration") {
         let state_path = deepseek_harness_catalog_state_path(paths)?;
         let state_before = read_agent_bytes(&state_path)?;
         let state_after = if source == "template" {
@@ -193,7 +198,9 @@ fn commit_config_transaction(
     if client == "claude-desktop" {
         let state_path = desktop_mapping_path(paths)?;
         let state_before = read_agent_bytes(&state_path)?;
-        let next = if source == "restore" {
+        let next = if source == "clear-integration" {
+            None
+        } else if source == "restore" {
             mappings
         } else {
             mappings.or_else(|| matching_desktop_mappings(paths, after))

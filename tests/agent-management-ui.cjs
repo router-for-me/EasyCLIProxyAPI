@@ -80,6 +80,45 @@ const path = require('node:path');
       await open(mode + 'client=kimi-code');
       assert.equal(await button('重启 App').count(), 0);
 
+      for (const client of ['claude-code', 'claude-desktop', 'opencode', 'openclaw', 'hermes', 'deepseek-harness', 'zcode', 'kimi-code', 'grok-build']) {
+        await open(mode + 'client=' + client);
+        assert.ok(await button('关闭配置修改').isEnabled());
+        await tab('配置管理').click();
+        assert.ok(await button('清除接入').isEnabled());
+        await button('清除接入').click();
+        const dialog = page.getByRole('alertdialog');
+        assert.match(await dialog.innerText(), /保留其他设置/);
+        await button('取消').click();
+        assert.equal((await calls('set_agent_config_enabled')).length, 0);
+        await button('清除接入').click();
+        await button('确认清除接入').click();
+        await dialog.waitFor({ state: 'detached' });
+        assert.deepEqual((await calls('set_agent_config_enabled')).map(call => call.args), [{
+          client, model: '', enabled: false, forceRestore: false,
+          claudeCodeModelMappings: null, claudeDesktopModelMappings: null,
+        }]);
+        assert.equal((await calls('clear_codex_config')).length, 0);
+        await tab('基础配置').click();
+        assert.equal(await button('关闭配置修改').count(), 0);
+        assert.ok(await button('一键接入').isVisible());
+      }
+      await open(mode + 'client=claude-code&state=needs-update');
+      assert.ok(await button('关闭配置修改').isEnabled());
+      await open(mode + 'client=claude-code&no-core&defer-clear');
+      await button('关闭配置修改').click();
+      await page.waitForFunction(() => !!window.fixtureFinishClear);
+      assert.ok(await tab('配置管理').isDisabled());
+      await page.evaluate(() => window.fixtureFinishClear());
+      await button('关闭配置修改').waitFor({ state: 'detached' });
+      await page.getByText('已清除 CPA 接入，请重启 Claude Code。', { exact: true }).waitFor();
+      await open(mode + 'client=claude-code&fail-clear');
+      await tab('配置管理').click();
+      await button('清除接入').click();
+      await button('确认清除接入').click();
+      await page.getByText(/模拟清除失败/).waitFor();
+      assert.ok(await page.getByRole('alertdialog').isVisible());
+      await button('取消').click();
+
       await open(mode + 'client=pi&update');
       assert.equal(await button('卸载 Pi 插件').count(), 0);
       await tab('配置管理').click();

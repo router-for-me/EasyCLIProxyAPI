@@ -112,10 +112,10 @@ export function AgentConfigManagementPanel({
         </button>
       </div>
     </section> : null}
-    {codex ? <section className="agent-management-row">
-      <div><h3>{t('agents.modify.clear')}</h3><p>{t('agents.management.clearDescription')}</p></div>
+    {!pi ? <section className="agent-management-row">
+      <div><h3>{t(codex ? 'agents.modify.clear' : 'agents.nativeOAuth.restore')}</h3><p>{t(codex ? 'agents.management.clearDescription' : 'agents.clearIntegration.description')}</p></div>
       <div className="agent-management-actions">
-        <button type="button" className="danger-button" onClick={onClear} disabled={busy}><Trash2 size={16} />{t('agents.modify.clear')}</button>
+        <button type="button" className="danger-button" onClick={onClear} disabled={busy || (!codex && !canClearIntegration)}><Trash2 size={16} />{t(codex ? 'agents.modify.clear' : 'agents.nativeOAuth.restore')}</button>
       </div>
     </section> : null}
     {pi ? <section className="agent-management-row">

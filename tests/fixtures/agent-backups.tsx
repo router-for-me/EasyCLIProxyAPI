@@ -70,6 +70,12 @@ mockIPC(async (cmd,args:any) => {
  if(cmd==='stop_deepseek_harness_process')return harnessStatus={running:false,pid:null,mode:null};
  if(cmd==='launch_agent')return null;
  if(cmd==='clear_codex_config') { currentModel=null; return []; }
+ if(cmd==='set_agent_config_enabled' && !args.enabled) {
+   if(params.has('fail-clear'))throw new Error('模拟清除失败，已回滚');
+   if(params.has('defer-clear'))await new Promise<void>(resolve=>{(window as any).fixtureFinishClear=resolve;});
+   currentModel=null;delete currentMappings[args.client];
+   return {outcome:'updated',enabled:false,model:null,changedFiles:[],conflictFiles:[]};
+ }
  if(cmd==='uninstall_pi_provider')return null;
  if(['update_agent_config','repair_pi_provider','install_pi_provider','update_pi_provider'].includes(cmd)) {
    count++;if(params.has('fail-apply')&&count===1)throw new Error('模拟配置写入失败');

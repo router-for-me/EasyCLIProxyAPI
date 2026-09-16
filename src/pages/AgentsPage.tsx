@@ -1032,8 +1032,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
   const connectionState = activeStatus?.connectionState ?? 'invalid';
   const appliedModel = activeStatus?.currentModel ?? activeStatus?.appliedModel ?? '';
-  const canCloseCodexConfiguration = selected === 'codex' && !nativeOauth
-    && connectionState === 'configured';
+  const canCloseConfiguration = !isPiClient && !nativeOauth
+    && (connectionState === 'configured' || (selected !== 'codex' && connectionState === 'needs-update'));
   const configurationActionLabel = t(nativeOauth ? 'agents.modify.update'
     : connectionState === 'not-configured' ? selected === 'codex' ? 'agents.modify.apply' : 'agents.modify.connect'
     : connectionState === 'needs-update' ? 'agents.modify.repair' : 'agents.modify.update');
@@ -1307,10 +1307,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setConfigurationNotice('');
     setClearNotice('');
     try {
-      await invoke<AgentConfigActionResult>('close_codex_config_modification');
+      await removeSelectedConfiguration();
       clearPendingChanges();
+      if (isClaudeModelMappingClient) claudeModelMappingsDirtyRef.current[selected] = false;
       await reloadStatusesAfterAction();
-      setConfigurationNotice(t('agents.modify.closed'));
+      setModelSelectionError('');
+      setModelError('');
+      setConfigurationNotice(selected === 'codex' ? t('agents.modify.closed')
+        : t('agents.clearIntegration.success', { name: activeDefinition.name }));
     } catch (cause) {
       setConfigurationError(String(cause));
     } finally {
@@ -1495,15 +1499,29 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     }
   };
 
-  const clearCodexConfiguration = async () => {
+  const removeSelectedConfiguration = () => selected === 'codex'
+    ? invoke<AgentConfigActionResult>('close_codex_config_modification')
+    : invoke<AgentConfigActionResult>('set_agent_config_enabled', {
+      client: selected, model: '', enabled: false, forceRestore: false,
+      claudeCodeModelMappings: null, claudeDesktopModelMappings: null,
+    });
+
+  const clearConfiguration = async () => {
     setBusyAction('clear');
+    setConfigurationError('');
+    setConfigurationNotice('');
     setClearError('');
     setClearNotice('');
     try {
-      await invoke<string[]>('clear_codex_config');
+      if (selected === 'codex') await invoke<string[]>('clear_codex_config');
+      else await removeSelectedConfiguration();
       clearPendingChanges();
+      if (isClaudeModelMappingClient) claudeModelMappingsDirtyRef.current[selected] = false;
       setClearConfirmOpen(false);
-      setClearNotice(t('agents.clear.success'));
+      setModelSelectionError('');
+      setModelError('');
+      setClearNotice(selected === 'codex' ? t('agents.clear.success')
+        : t('agents.clearIntegration.success', { name: activeDefinition.name }));
       await reloadStatusesAfterAction();
       setOauthConfigurationDraft(null);
     } catch (requestError) {
@@ -1738,9 +1756,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </button>
   ) : null;
 
-  const closeConfigurationButton = canCloseCodexConfiguration ? (
+  const closeConfigurationButton = canCloseConfiguration ? (
     <button type="button" className="secondary-button agent-close-configuration"
-      title={t('agents.modify.closeHint')}
+      title={t(selected === 'codex' ? 'agents.modify.closeHint' : 'agents.clearIntegration.description')}
       disabled={busy || configurationWriteBlocked}
       onClick={() => void closeConfigurationChanges()}>
       {busyAction === 'close-config' ? <LoaderCircle size={16} className="spin" /> : null}
@@ -1871,7 +1889,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <div className="agent-save-bar">
                 {configurationFeedback}
-                <div className={`agent-save-actions${selected === 'codex' ? ' agent-codex-save-actions' : ''}`}>
+                <div className={`agent-save-actions${!isPiClient ? ' agent-codex-save-actions' : ''}`}>
                   {closeConfigurationButton}
                   <button
                     type="button"
@@ -2178,7 +2196,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               <div className="agent-save-bar">
                 {configurationFeedback}
                 {selected === 'claude-desktop' && !activeStatus?.claudeDesktopModelMappings ? <p className="agent-inline-message warning">{t('agents.backup.mappingRequired')}</p> : null}
-                <div className={`agent-save-actions${selected === 'codex' ? ' agent-codex-save-actions' : ''}`}>
+                <div className={`agent-save-actions${!isPiClient ? ' agent-codex-save-actions' : ''}`}>
                   {closeConfigurationButton}
                   <button type="button" className="primary-button" onClick={applySelectedConfiguration}
                     disabled={busy || !canEnable || configurationWriteBlocked}
@@ -2513,17 +2531,17 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         <div className="config-dialog-backdrop">
           <section className="config-dialog agent-restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="agent-clear-title">
             <div className="config-dialog-heading">
-              <div><AlertTriangle size={19} /><h2 id="agent-clear-title">{t('agents.clear.title')}</h2></div>
+              <div><AlertTriangle size={19} /><h2 id="agent-clear-title">{selected === 'codex' ? t('agents.clear.title') : t('agents.clearIntegration.title', { name: activeDefinition.name })}</h2></div>
             </div>
-            <p>{t('agents.clear.description')}</p>
+            <p>{t(selected === 'codex' ? 'agents.clear.description' : 'agents.clearIntegration.description')}</p>
             {clearError ? (
               <MessageNotice message={clearError} onDismiss={() => setClearError('')} />
             ) : null}
             <div className="config-dialog-actions two-actions">
               <button type="button" className="secondary-button" onClick={closeClearConfirmation} disabled={busy}>{t('common.cancel')}</button>
-              <button type="button" className="danger-button" onClick={() => void clearCodexConfiguration()} disabled={busy}>
+              <button type="button" className="danger-button" onClick={() => void clearConfiguration()} disabled={busy}>
                 {busyAction === 'clear' ? <LoaderCircle size={16} className="spin" /> : <Trash2 size={16} />}
-                {t('agents.clear.confirm')}
+                {t(selected === 'codex' ? 'agents.clear.confirm' : 'agents.clearIntegration.confirm')}
               </button>
             </div>
           </section>
