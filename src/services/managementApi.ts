@@ -57,6 +57,9 @@ export const managementApi = {
     options: ManagementRequestOptions = {},
   ) => request<T>('DELETE', path, options),
   uploadAuthFile: async (file: File) => {
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error(getCurrentLocale().startsWith('zh') ? '凭证文件大小不能超过 10MB' : 'Credential file size cannot exceed 10MB');
+    }
     const data = Array.from(new Uint8Array(await file.arrayBuffer()));
     return invoke<ManagementJson>('upload_auth_file', {
       name: file.name,
