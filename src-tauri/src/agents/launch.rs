@@ -746,57 +746,9 @@ fn find_desktop_restart_target(
 }
 
 #[cfg(target_os = "windows")]
-fn find_windows_claude_app_id() -> Option<String> {
-    let script = "@(Get-StartApps) | Where-Object { $_.AppID -like 'Claude_*!*' -or $_.AppID -like 'Anthropic.Claude_*!*' } | Select-Object -First 1 -ExpandProperty AppID";
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-EncodedCommand",
-        &windows_powershell_encoded_command(script),
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, Duration::from_secs(5)).ok()??;
-    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (output.status.success() && !id.is_empty()).then_some(id)
-}
-
-#[cfg(target_os = "windows")]
 fn stop_other_desktop(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
-    run_windows_desktop_stop_script(&windows_desktop_stop_script(target), label)
-}
-
-#[cfg(target_os = "windows")]
-fn windows_desktop_stop_script(target: &DesktopAppTarget) -> String {
-    let selector = match target {
-        DesktopAppTarget::Application(path) => format!("$targetExecutable = {}\n$targetRoot = $null", windows_powershell_single_quoted_literal(&path_to_string(path))),
-        DesktopAppTarget::WindowsAppId(app_id) => format!(
-            "$targetExecutable = $null\n$packageFamily = {}\n$package = @(Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq $packageFamily }}) | Select-Object -First 1\n$targetRoot = if ($package) {{ $package.InstallLocation }} else {{ $null }}\nif (-not $targetRoot) {{ throw 'Application package directory was not found' }}",
-            windows_powershell_single_quoted_literal(app_id.split('!').next().unwrap_or(app_id))),
-    };
-    format!(
-        r#"$ErrorActionPreference = 'Stop'
-{selector}
-function Get-TargetProcesses {{
-    @(Get-CimInstance Win32_Process | Where-Object {{
-        $_.ExecutablePath -and
-        (($targetExecutable -and [string]::Equals($_.ExecutablePath, $targetExecutable, [System.StringComparison]::OrdinalIgnoreCase)) -or
-         ($targetRoot -and $_.ExecutablePath.StartsWith(($targetRoot.TrimEnd('\') + '\'), [System.StringComparison]::OrdinalIgnoreCase)))
-    }})
-}}
-foreach ($process in @(Get-TargetProcesses)) {{
-    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-}}
-$deadline = [DateTime]::UtcNow.AddSeconds(5)
-do {{
-    $remaining = @(Get-TargetProcesses)
-    if ($remaining.Count -eq 0) {{ exit 0 }}
-    Start-Sleep -Milliseconds 100
-}} while ([DateTime]::UtcNow -lt $deadline)
-throw "Application did not exit; remaining process IDs: $($remaining.ProcessId -join ', ')"
-"#
-    )
+    let (executable, install_root) = windows_desktop_stop_target(target)?;
+    stop_windows_matching_processes(executable.as_deref(), install_root.as_deref(), &[], label)
 }
 
 #[cfg(target_os = "macos")]
@@ -849,122 +801,22 @@ fn launch_codex_target(target: &DesktopAppTarget) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn stop_codex_desktop(target: &DesktopAppTarget) -> Result<(), String> {
-    let script = windows_codex_stop_script(target);
-    run_windows_desktop_stop_script(&script, "Codex App")
-}
-
-#[cfg(target_os = "windows")]
-fn stop_opencode_desktop(application: &Path) -> Result<(), String> {
-    let script = windows_opencode_stop_script(application);
-    run_windows_desktop_stop_script(&script, "OpenCode Desktop")
-}
-
-#[cfg(target_os = "windows")]
-fn run_windows_desktop_stop_script(script: &str, label: &str) -> Result<(), String> {
-    let encoded = windows_powershell_encoded_command(script);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded,
-    ]);
-    configure_background_command(&mut command);
-    let output = command
-        .output()
-        .map_err(|error| format!("关闭 {label} 失败: {error}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    })
-    .trim()
-    .to_string();
-    Err(if detail.is_empty() {
-        format!("{label} 未能完全关闭")
-    } else {
-        format!("关闭 {label} 失败: {detail}")
-    })
-}
-
-#[cfg(target_os = "windows")]
-fn windows_codex_stop_script(target: &DesktopAppTarget) -> String {
-    let selector = match target {
-        DesktopAppTarget::Application(path) => format!(
-            "$targetExecutable = {}\n$targetRoot = $null",
-            windows_powershell_single_quoted_literal(&path_to_string(path))
-        ),
-        DesktopAppTarget::WindowsAppId(app_id) => {
-            let package_family = app_id.split('!').next().unwrap_or(app_id);
-            format!(
-                concat!(
-                    "$targetExecutable = $null\n",
-                    "$packageFamily = {}\n",
-                    "$package = @(Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq $packageFamily }}) | Select-Object -First 1\n",
-                    "$targetRoot = if ($package) {{ $package.InstallLocation }} else {{ $null }}\n",
-                    "if (-not $targetRoot) {{ throw 'Codex App package directory was not found' }}"
-                ),
-                windows_powershell_single_quoted_literal(package_family)
-            )
-        }
-    };
-    format!(
-        r#"$ErrorActionPreference = 'Stop'
-{selector}
-function Get-CodexAppProcesses {{
-    @(Get-CimInstance Win32_Process | Where-Object {{
-        $_.Name -in @('ChatGPT.exe', 'Codex.exe') -and
-        $_.ExecutablePath -and
-        (($targetExecutable -and [string]::Equals($_.ExecutablePath, $targetExecutable, [System.StringComparison]::OrdinalIgnoreCase)) -or
-         ($targetRoot -and $_.ExecutablePath.StartsWith(($targetRoot.TrimEnd('\') + '\'), [System.StringComparison]::OrdinalIgnoreCase)))
-    }})
-}}
-$processes = @(Get-CodexAppProcesses)
-foreach ($process in $processes) {{
-    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-}}
-$deadline = [DateTime]::UtcNow.AddSeconds(5)
-do {{
-    $remaining = @(Get-CodexAppProcesses)
-    if ($remaining.Count -eq 0) {{ exit 0 }}
-    Start-Sleep -Milliseconds 100
-}} while ([DateTime]::UtcNow -lt $deadline)
-throw "Codex App did not exit; remaining process IDs: $($remaining.ProcessId -join ', ')"
-"#
+    let (executable, install_root) = windows_desktop_stop_target(target)?;
+    stop_windows_matching_processes(
+        executable.as_deref(),
+        install_root.as_deref(),
+        &["ChatGPT.exe", "Codex.exe"],
+        "Codex App",
     )
 }
 
 #[cfg(target_os = "windows")]
-fn windows_opencode_stop_script(application: &Path) -> String {
-    let target_executable = windows_powershell_single_quoted_literal(&path_to_string(application));
-    format!(
-        r#"$ErrorActionPreference = 'Stop'
-$targetExecutable = {target_executable}
-function Get-OpenCodeDesktopProcesses {{
-    @(Get-CimInstance Win32_Process | Where-Object {{
-        $_.Name -eq 'OpenCode.exe' -and
-        $_.ExecutablePath -and
-        [string]::Equals($_.ExecutablePath, $targetExecutable, [System.StringComparison]::OrdinalIgnoreCase)
-    }})
-}}
-$processes = @(Get-OpenCodeDesktopProcesses)
-foreach ($process in $processes) {{
-    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-}}
-$deadline = [DateTime]::UtcNow.AddSeconds(5)
-do {{
-    $remaining = @(Get-OpenCodeDesktopProcesses)
-    if ($remaining.Count -eq 0) {{ exit 0 }}
-    Start-Sleep -Milliseconds 100
-}} while ([DateTime]::UtcNow -lt $deadline)
-throw "OpenCode Desktop did not exit; remaining process IDs: $($remaining.ProcessId -join ', ')"
-"#
+fn stop_opencode_desktop(application: &Path) -> Result<(), String> {
+    stop_windows_matching_processes(
+        Some(application),
+        None,
+        &["OpenCode.exe"],
+        "OpenCode Desktop",
     )
 }
 
@@ -1283,42 +1135,9 @@ fn launch_windows_store_app(app_id: &str, label: &str) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn launch_windows_claude_store_app() -> Result<(), String> {
-    const SCRIPT: &str = r#"
-$ErrorActionPreference = 'Stop'
-$appId = @(Get-StartApps) |
-    Where-Object {
-        $_.AppID -like 'Claude_*!*' -or
-        $_.AppID -like 'Anthropic.Claude_*!*'
-    } |
-    Select-Object -First 1 -ExpandProperty AppID
-if (-not $appId) { throw 'Claude Desktop app entry was not found' }
-Start-Process "shell:AppsFolder\$appId"
-"#;
-    let encoded = windows_powershell_encoded_command(SCRIPT);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded,
-    ]);
-    configure_background_command(&mut command);
-    let output = command
-        .output()
-        .map_err(|error| format!("启动 Claude Desktop 失败: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(if detail.is_empty() {
-            "未找到可启动的 Claude Desktop 应用".to_string()
-        } else {
-            format!("启动 Claude Desktop 失败: {detail}")
-        })
-    }
+    let app_id = find_windows_claude_app_id()
+        .ok_or_else(|| "未找到可启动的 Claude Desktop 应用".to_string())?;
+    launch_windows_store_app(&app_id, "Claude Desktop")
 }
 
 #[cfg(target_os = "macos")]
@@ -1569,25 +1388,40 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn desktop_restart_script_handles_paths_and_store_packages_without_name_wide_kills() {
-        for path in [
-            r"C:\Apps\Claude's Desktop\Claude.exe",
-            r"C:\Apps\ZCode\ZCode.exe",
-        ] {
-            let script =
-                windows_desktop_stop_script(&DesktopAppTarget::Application(PathBuf::from(path)));
-            assert!(script.contains(&windows_powershell_single_quoted_literal(path)));
-            assert!(script.contains("[string]::Equals($_.ExecutablePath, $targetExecutable"));
-            assert!(script.contains("$remaining.Count -eq 0"));
-            assert!(!script.contains("taskkill"));
-            assert!(!script.contains("Stop-Process -Name"));
-        }
-        let script = windows_desktop_stop_script(&DesktopAppTarget::WindowsAppId(
-            "Anthropic.Claude_family!App".to_string(),
+    fn desktop_restart_matching_is_scoped_to_the_exact_installation() {
+        let claude = PathBuf::from(r"C:\Apps\Claude's Desktop\Claude.exe");
+        assert!(windows_process_matches_stop_target(
+            &claude,
+            Some(&claude),
+            None,
+            &[],
         ));
-        assert!(script.contains("$packageFamily = 'Anthropic.Claude_family'"));
-        assert!(script.contains("$_.PackageFamilyName -eq $packageFamily"));
-        assert!(script.contains("$targetRoot.TrimEnd('\\') + '\\'"));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Apps\Claude's Desktop.old\Claude.exe"),
+            Some(&claude),
+            None,
+            &[],
+        ));
+        let zcode = PathBuf::from(r"C:\Apps\ZCode\ZCode.exe");
+        assert!(windows_process_matches_stop_target(
+            &zcode,
+            Some(&zcode),
+            None,
+            &[]
+        ));
+        let store_root = PathBuf::from(r"C:\Program Files\WindowsApps\Anthropic.Claude_family");
+        assert!(windows_process_matches_stop_target(
+            &store_root.join("Claude.exe"),
+            None,
+            Some(&store_root),
+            &[],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Program Files\WindowsApps\Other\Claude.exe"),
+            None,
+            Some(&store_root),
+            &[],
+        ));
     }
 
     #[cfg(windows)]
@@ -2063,29 +1897,52 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn codex_restart_script_is_scoped_to_the_detected_installation() {
-        let executable = DesktopAppTarget::Application(PathBuf::from(r"C:\Apps\Codex\Codex.exe"));
-        let executable_script = windows_codex_stop_script(&executable);
-        assert!(executable_script.contains(r"C:\Apps\Codex\Codex.exe"));
-        assert!(executable_script.contains("Get-CimInstance Win32_Process"));
-        assert!(!executable_script.contains("taskkill"));
-
-        let store = DesktopAppTarget::WindowsAppId("OpenAI.Codex_123!App".to_string());
-        let store_script = windows_codex_stop_script(&store);
-        assert!(store_script.contains("OpenAI.Codex_123"));
-        assert!(store_script.contains("PackageFamilyName"));
+    fn codex_restart_matching_is_scoped_to_the_detected_installation() {
+        let executable = PathBuf::from(r"C:\Apps\Codex\Codex.exe");
+        assert!(windows_process_matches_stop_target(
+            &executable,
+            Some(&executable),
+            None,
+            &["ChatGPT.exe", "Codex.exe"],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Apps\Codex\helper.exe"),
+            Some(&executable),
+            None,
+            &["ChatGPT.exe", "Codex.exe"],
+        ));
+        let store_root = PathBuf::from(r"C:\Program Files\WindowsApps\OpenAI.Codex_123");
+        assert!(windows_process_matches_stop_target(
+            &store_root.join("ChatGPT.exe"),
+            None,
+            Some(&store_root),
+            &["ChatGPT.exe", "Codex.exe"],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Program Files\WindowsApps\Other\ChatGPT.exe"),
+            None,
+            Some(&store_root),
+            &["ChatGPT.exe", "Codex.exe"],
+        ));
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn opencode_restart_script_is_scoped_to_the_detected_installation() {
+    fn opencode_restart_matching_is_scoped_to_the_detected_installation() {
         let application = PathBuf::from(
             r"C:\Users\tester\AppData\Local\Programs\@opencode-aidesktop\OpenCode.exe",
         );
-        let script = windows_opencode_stop_script(&application);
-        assert!(script.contains(application.to_string_lossy().as_ref()));
-        assert!(script.contains("$_.Name -eq 'OpenCode.exe'"));
-        assert!(script.contains("Get-CimInstance Win32_Process"));
-        assert!(!script.contains("taskkill"));
+        assert!(windows_process_matches_stop_target(
+            &application,
+            Some(&application),
+            None,
+            &["OpenCode.exe"],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Users\tester\AppData\Local\Programs\other\OpenCode.exe"),
+            Some(&application),
+            None,
+            &["OpenCode.exe"],
+        ));
     }
 }
