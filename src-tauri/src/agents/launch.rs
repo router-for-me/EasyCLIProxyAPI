@@ -31,6 +31,14 @@ fn macos_iterm2_installed() -> bool {
             .is_some_and(|home| home.join("Applications/iTerm.app").is_dir())
 }
 
+#[cfg(target_os = "macos")]
+fn macos_ghostty_installed() -> bool {
+    Path::new("/Applications/Ghostty.app").is_dir()
+        || env::var_os("HOME")
+            .map(PathBuf::from)
+            .is_some_and(|home| home.join("Applications/Ghostty.app").is_dir())
+}
+
 #[cfg(target_os = "linux")]
 fn linux_terminal_definitions() -> &'static [(
     &'static str,
@@ -68,6 +76,9 @@ pub(crate) fn available_agent_terminals() -> Vec<AgentTerminalOption> {
         options.push(terminal_option("terminal", "Terminal"));
         if macos_iterm2_installed() {
             options.push(terminal_option("iterm2", "iTerm2"));
+        }
+        if macos_ghostty_installed() {
+            options.push(terminal_option("ghostty", "Ghostty"));
         }
     }
     #[cfg(target_os = "windows")]
@@ -1357,6 +1368,11 @@ fn launch_cli_agent(
     let script = if terminal == "iterm2" {
         format!(
             "tell application \"iTerm2\"\nactivate\nset newWindow to (create window with default profile)\ntell current session of newWindow\nwrite text \"{}\"\nend tell\nend tell",
+            command_line.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    } else if terminal == "ghostty" {
+        format!(
+            "tell application \"Ghostty\"\nactivate\nset surfaceConfig to new surface configuration\nset initial input of surfaceConfig to \"{}\\n\"\nnew window with configuration surfaceConfig\nend tell",
             command_line.replace('\\', "\\\\").replace('"', "\\\"")
         )
     } else if matches!(terminal, "auto" | "terminal") {
