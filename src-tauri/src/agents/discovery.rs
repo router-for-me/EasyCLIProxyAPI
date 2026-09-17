@@ -101,18 +101,15 @@ pub(crate) fn opencode_config_path_from_environment(
 }
 
 pub(crate) fn kimi_code_home(home: &Path) -> PathBuf {
-    agent_configuration_environment("KIMI_CODE_HOME")
-        .unwrap_or_else(|| home.join(".kimi-code"))
+    agent_configuration_environment("KIMI_CODE_HOME").unwrap_or_else(|| home.join(".kimi-code"))
 }
 
 pub(crate) fn grok_build_home(home: &Path) -> PathBuf {
-    agent_configuration_environment("GROK_HOME")
-        .unwrap_or_else(|| home.join(".grok"))
+    agent_configuration_environment("GROK_HOME").unwrap_or_else(|| home.join(".grok"))
 }
 
 pub(crate) fn deepseek_harness_home(home: &Path) -> PathBuf {
-    agent_configuration_environment("DSH_HOME")
-        .unwrap_or_else(|| home.join(".dsh"))
+    agent_configuration_environment("DSH_HOME").unwrap_or_else(|| home.join(".dsh"))
 }
 
 pub(crate) fn read_deepseek_harness_profile_version(home: &Path) -> Option<String> {
@@ -137,8 +134,7 @@ pub(crate) fn read_package_json_version(path: &Path) -> Option<String> {
 }
 
 pub(crate) fn pi_agent_directory(home: &Path) -> PathBuf {
-    agent_configuration_environment("PI_CODING_AGENT_DIR")
-        .unwrap_or_else(|| home.join(".pi/agent"))
+    agent_configuration_environment("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi/agent"))
 }
 
 pub(crate) fn pi_provider_config_path(home: &Path) -> PathBuf {
@@ -429,7 +425,12 @@ pub(crate) fn inspect_pi_provider_status(
         config_valid,
         configured,
         configuration_synchronized: configured,
-        connection_state: agent_connection_state(configured, config_valid, Ok(config_path.is_file() || default_provider_matches)).into(),
+        connection_state: agent_connection_state(
+            configured,
+            config_valid,
+            Ok(config_path.is_file() || default_provider_matches),
+        )
+        .into(),
         current_model: current_model.clone(),
         oauth_configuration: false,
         codex_native_oauth: false,
@@ -461,7 +462,9 @@ pub(crate) fn install_pi_provider_inner(
     let settings_path = pi_provider_settings_path(home);
     let mut changed_files = Vec::new();
     if !pi_provider_package_installed(home)? {
-        config_package_operation(home, "plugin-install", || install_pi_package(executable, home, proxy_url))?;
+        config_package_operation(home, "plugin-install", || {
+            install_pi_package(executable, home, proxy_url)
+        })?;
         changed_files.push(path_to_string(&settings_path));
     }
 
@@ -485,7 +488,9 @@ pub(crate) fn repair_pi_provider_inner(
     }
     let config_path = pi_provider_config_path(home);
     let settings_path = pi_provider_settings_path(home);
-    let _guard = AGENT_CONFIG_FILE_LOCK.lock().map_err(|_| "配置文件锁已损坏")?;
+    let _guard = AGENT_CONFIG_FILE_LOCK
+        .lock()
+        .map_err(|_| "配置文件锁已损坏")?;
     let before = config_images(&config_paths(PI_AGENT_ID, home)?)?;
     validate_config_images(&before)?;
     if !pi_provider_package_installed(home)? {
@@ -510,10 +515,24 @@ pub(crate) fn repair_pi_provider_inner(
         )
     })?;
     let rendered_settings = build_pi_provider_settings(&settings, default_model)?;
-    config_updates(PI_AGENT_ID, home, &before, &[
-        AgentFileUpdate { path: config_path, after: rendered },
-        AgentFileUpdate { path: settings_path, after: rendered_settings },
-    ], "update", Some(default_model.to_string()), None)
+    config_updates(
+        PI_AGENT_ID,
+        home,
+        &before,
+        &[
+            AgentFileUpdate {
+                path: config_path,
+                after: rendered,
+            },
+            AgentFileUpdate {
+                path: settings_path,
+                after: rendered_settings,
+            },
+        ],
+        "update",
+        Some(default_model.to_string()),
+        None,
+    )
 }
 
 pub(crate) fn update_pi_provider_inner(
@@ -527,7 +546,9 @@ pub(crate) fn update_pi_provider_inner(
     if !pi_provider_package_installed(home)? {
         return Err("Pi CLIProxyAPI provider 插件尚未安装".to_string());
     }
-    config_package_operation(home, "plugin-update", || update_pi_package(executable, home, proxy_url))?;
+    config_package_operation(home, "plugin-update", || {
+        update_pi_package(executable, home, proxy_url)
+    })?;
     let mut result = repair_pi_provider_inner(home, port, api_key, default_model)?;
     result.outcome = "updated".to_string();
     Ok(result)
@@ -546,7 +567,9 @@ pub(crate) fn uninstall_pi_provider_inner(
             Vec::new(),
         ));
     }
-    config_package_operation(home, "plugin-remove", || remove_pi_package(executable, home))?;
+    config_package_operation(home, "plugin-remove", || {
+        remove_pi_package(executable, home)
+    })?;
     Ok(action_result(
         "removed",
         false,
@@ -689,8 +712,7 @@ pub(crate) fn remove_pi_package(executable: &Path, home: &Path) -> Result<(), St
 }
 
 pub(crate) fn codex_configuration_directory(home: &Path) -> PathBuf {
-    agent_configuration_environment("CODEX_HOME")
-        .unwrap_or_else(|| home.join(".codex"))
+    agent_configuration_environment("CODEX_HOME").unwrap_or_else(|| home.join(".codex"))
 }
 
 pub(crate) fn current_codex_oauth_configuration(home: &Path) -> Result<bool, String> {
@@ -746,7 +768,8 @@ pub(crate) fn codex_auth_file_has_api_key(path: &Path, api_key: &str) -> bool {
 }
 
 pub(crate) fn validate_codex_oauth_login(home: &Path) -> Result<(), String> {
-    if validate_codex_oauth_login_at(&codex_configuration_directory(home).join("auth.json")).is_ok() {
+    if validate_codex_oauth_login_at(&codex_configuration_directory(home).join("auth.json")).is_ok()
+    {
         return Ok(());
     }
     available_codex_oauth_auth(home).map(|_| ())
@@ -761,12 +784,16 @@ pub(crate) fn validate_codex_oauth_login_at(auth_path: &Path) -> Result<(), Stri
 }
 
 pub(crate) fn clear_codex_config_files(home: &Path) -> Result<Vec<String>, String> {
-    let mut paths = config_paths("codex",home)?;
+    let mut paths = config_paths("codex", home)?;
     paths.push(codex_configuration_directory(home).join(CODEX_NATIVE_OAUTH_STATE_FILE));
     let before = config_images(&paths)?;
     let mut after = before.clone();
     for (path, bytes) in &mut after {
-        if path.file_name().and_then(|v| v.to_str()).is_some_and(|v| v == "auth.json" || v == "config.toml" || v == CODEX_NATIVE_OAUTH_STATE_FILE) { *bytes = None; }
+        if path.file_name().and_then(|v| v.to_str()).is_some_and(|v| {
+            v == "auth.json" || v == "config.toml" || v == CODEX_NATIVE_OAUTH_STATE_FILE
+        }) {
+            *bytes = None;
+        }
     }
     Ok(commit_config("codex", &paths, &before, &after, "clear", None)?.changed_files)
 }
@@ -891,13 +918,16 @@ pub(crate) fn inspect_agent_config(
     let result = config_paths(client.id(), home)
         .and_then(|mut paths| {
             if client == AgentClient::Codex && codex_native_oauth_enabled(home)? {
-                paths.retain(|path| path.file_name().and_then(|name| name.to_str()) != Some(CODEX_MODEL_CATALOG_FILE));
+                paths.retain(|path| {
+                    path.file_name().and_then(|name| name.to_str())
+                        != Some(CODEX_MODEL_CATALOG_FILE)
+                });
             }
             config_images(&paths)
         })
         .and_then(|images| validate_config_images(&images))
-        .and_then(|_| inspect_agent_managed_config(client, &paths, port, api_key)).and_then(
-        |(configured, model, oauth_configuration)| {
+        .and_then(|_| inspect_agent_managed_config(client, &paths, port, api_key))
+        .and_then(|(configured, model, oauth_configuration)| {
             if client == AgentClient::Codex && configured {
                 let model = model
                     .as_deref()
@@ -905,13 +935,21 @@ pub(crate) fn inspect_agent_config(
                 validate_codex_catalog_file(&paths[0], model)?;
             }
             Ok((configured, model, oauth_configuration))
-        },
-    );
+        });
     let (configured, current_model, oauth_configuration, config_valid, error) = match result {
         Ok((configured, model, oauth_configuration)) => {
             (configured, model, oauth_configuration, true, None)
         }
-        Err(_) => (false, None, false, false, Some("配置读取或解析失败，请检查文件权限，或使用手动备份恢复、基础配置模板修复".to_string())),
+        Err(_) => (
+            false,
+            None,
+            false,
+            false,
+            Some(
+                "配置读取或解析失败，请检查文件权限，或使用手动备份恢复、基础配置模板修复"
+                    .to_string(),
+            ),
+        ),
     };
     let executable = find_agent_executable(client, home);
     let cli_version = if client == AgentClient::ZCode {
@@ -986,18 +1024,33 @@ pub(crate) fn inspect_agent_config(
         config_valid,
         configured,
         configuration_synchronized,
-        connection_state: agent_connection_state(configured, config_valid, agent_has_connection_evidence(client, &paths)).into(),
+        connection_state: agent_connection_state(
+            configured,
+            config_valid,
+            agent_has_connection_evidence(client, &paths),
+        )
+        .into(),
         current_model: current_model.clone(),
         oauth_configuration,
-        codex_native_oauth: client == AgentClient::Codex && codex_native_oauth_enabled(home).unwrap_or(false),
+        codex_native_oauth: client == AgentClient::Codex
+            && codex_native_oauth_enabled(home).unwrap_or(false),
         modification_enabled: configured,
-        modification_state: if !config_valid { "invalid" } else if configured { "applied" } else { "unconfigured" }.into(),
+        modification_state: if !config_valid {
+            "invalid"
+        } else if configured {
+            "applied"
+        } else {
+            "unconfigured"
+        }
+        .into(),
         backup_available: false,
         applied_model: current_model,
         claude_code_model_mappings: (client == AgentClient::ClaudeCode)
             .then(|| inspect_claude_code_model_mappings(&paths[0]).ok().flatten())
             .flatten(),
-        claude_desktop_model_mappings: (client == AgentClient::ClaudeDesktop).then(|| current_desktop_mappings(home)).flatten(),
+        claude_desktop_model_mappings: (client == AgentClient::ClaudeDesktop)
+            .then(|| current_desktop_mappings(home))
+            .flatten(),
         warnings,
         error,
     }
@@ -1216,33 +1269,84 @@ pub(crate) fn inspect_agent_managed_config(
     }
 }
 
-pub(crate) fn agent_connection_state(configured: bool, valid: bool, managed: Result<bool, String>) -> &'static str {
-    if !valid || managed.is_err() { "invalid" }
-    else if configured { "configured" }
-    else if managed == Ok(true) { "needs-update" }
-    else { "not-configured" }
+pub(crate) fn agent_connection_state(
+    configured: bool,
+    valid: bool,
+    managed: Result<bool, String>,
+) -> &'static str {
+    if !valid || managed.is_err() {
+        "invalid"
+    } else if configured {
+        "configured"
+    } else if managed == Ok(true) {
+        "needs-update"
+    } else {
+        "not-configured"
+    }
 }
 
-pub(crate) fn agent_has_connection_evidence(client: AgentClient, paths: &[PathBuf]) -> Result<bool, String> {
+pub(crate) fn agent_has_connection_evidence(
+    client: AgentClient,
+    paths: &[PathBuf],
+) -> Result<bool, String> {
     let active_marker = agent_has_managed_marker(client, paths)?;
-    if active_marker { return Ok(true); }
+    if active_marker {
+        return Ok(true);
+    }
     for path in paths {
-        let Some(bytes) = read_agent_bytes(path)? else { continue; };
+        let Some(bytes) = read_agent_bytes(path)? else {
+            continue;
+        };
         let content = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
         let value: serde_json::Value = match path.extension().and_then(|v| v.to_str()) {
-            Some("toml") => serde_json::to_value(toml::from_str::<toml::Value>(content).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
+            Some("toml") => serde_json::to_value(
+                toml::from_str::<toml::Value>(content).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?,
             Some("yaml" | "yml") => serde_yaml::from_str(content).map_err(|e| e.to_string())?,
             _ => json5::from_str(content).map_err(|e| e.to_string())?,
         };
-        let provider_present = ["/provider/cpa-gui", "/model_providers/cpa-gui", "/providers/cpa-gui", "/models/providers/cpa-gui"]
-            .iter().any(|pointer| value.pointer(pointer).is_some());
-        let selected = ["/model_provider", "/model", "/model/main", "/model/provider", "/default_model", "/models/default", "/agents/defaults/model/primary"]
-            .iter().filter_map(|pointer| value.pointer(pointer).and_then(serde_json::Value::as_str))
-            .any(|model| model == MANAGED_AGENT_PROVIDER_ID || model.starts_with(&format!("{MANAGED_AGENT_PROVIDER_ID}/")));
-        let catalog = client == AgentClient::Codex && value.get("model_catalog_json").and_then(serde_json::Value::as_str) == Some(CODEX_MODEL_CATALOG_FILE);
-        let hermes_provider = client == AgentClient::Hermes && value.get("custom_providers").and_then(serde_json::Value::as_array)
-            .is_some_and(|items| items.iter().any(|item| item.get("name").and_then(serde_json::Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)));
-        if provider_present || selected || catalog || hermes_provider { return Ok(true); }
+        let provider_present = [
+            "/provider/cpa-gui",
+            "/model_providers/cpa-gui",
+            "/providers/cpa-gui",
+            "/models/providers/cpa-gui",
+        ]
+        .iter()
+        .any(|pointer| value.pointer(pointer).is_some());
+        let selected = [
+            "/model_provider",
+            "/model",
+            "/model/main",
+            "/model/provider",
+            "/default_model",
+            "/models/default",
+            "/agents/defaults/model/primary",
+        ]
+        .iter()
+        .filter_map(|pointer| value.pointer(pointer).and_then(serde_json::Value::as_str))
+        .any(|model| {
+            model == MANAGED_AGENT_PROVIDER_ID
+                || model.starts_with(&format!("{MANAGED_AGENT_PROVIDER_ID}/"))
+        });
+        let catalog = client == AgentClient::Codex
+            && value
+                .get("model_catalog_json")
+                .and_then(serde_json::Value::as_str)
+                == Some(CODEX_MODEL_CATALOG_FILE);
+        let hermes_provider = client == AgentClient::Hermes
+            && value
+                .get("custom_providers")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item.get("name").and_then(serde_json::Value::as_str)
+                            == Some(MANAGED_AGENT_PROVIDER_ID)
+                    })
+                });
+        if provider_present || selected || catalog || hermes_provider {
+            return Ok(true);
+        }
     }
     Ok(false)
 }
@@ -2024,9 +2128,9 @@ pub(crate) fn read_zcode_app_version(executable: &Path) -> Option<String> {
     }
     #[cfg(target_os = "macos")]
     {
-        let application = executable.ancestors().find(|path| {
-            path.extension().and_then(|value| value.to_str()) == Some("app")
-        })?;
+        let application = executable
+            .ancestors()
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))?;
         read_macos_app_version(application)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -2090,121 +2194,6 @@ pub(crate) fn find_zcode_desktop_executable(home: &Path) -> Option<PathBuf> {
     }
 }
 
-#[cfg(target_os = "windows")]
-pub(crate) fn find_windows_registered_zcode_executable() -> Option<PathBuf> {
-    const DISCOVERY_SCRIPT: &str = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$ProgressPreference = 'SilentlyContinue'
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-$registryRoots = @(
-    'HKCU:\Software\Microsoft\Windows\CurrentVersion',
-    'HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion',
-    'HKLM:\Software\Microsoft\Windows\CurrentVersion',
-    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion'
-)
-$candidates = @(
-    foreach ($root in $registryRoots) {
-        $appPath = Get-Item -LiteralPath "$root\App Paths\ZCode.exe"
-        if ($appPath) {
-            $value = $appPath.GetValue('')
-            if ($value) { @{ kind = 'executable'; value = [string]$value } }
-        }
-        foreach ($key in (Get-ChildItem -LiteralPath "$root\Uninstall")) {
-            $entry = Get-ItemProperty -LiteralPath $key.PSPath
-            if ($entry.DisplayName -notmatch '^ZCode(?:$|[\s(])') { continue }
-            if ($entry.InstallLocation) {
-                @{ kind = 'directory'; value = [string]$entry.InstallLocation }
-            }
-            if ($entry.DisplayIcon) {
-                @{ kind = 'icon'; value = [string]$entry.DisplayIcon }
-            }
-            if ($entry.UninstallString) {
-                @{ kind = 'uninstaller'; value = [string]$entry.UninstallString }
-            }
-        }
-    }
-    $shortcutRoots = @(
-        [Environment]::GetFolderPath('Programs'),
-        [Environment]::GetFolderPath('CommonPrograms'),
-        [Environment]::GetFolderPath('DesktopDirectory'),
-        [Environment]::GetFolderPath('CommonDesktopDirectory')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
-    $shell = New-Object -ComObject WScript.Shell
-    foreach ($root in $shortcutRoots) {
-        foreach ($file in (Get-ChildItem -LiteralPath $root -Filter '*ZCode*.lnk' -Recurse)) {
-            $target = $shell.CreateShortcut($file.FullName).TargetPath
-            if ($target -and [System.IO.Path]::GetFileName($target) -ieq 'ZCode.exe') {
-                @{ kind = 'executable'; value = [string]$target }
-            }
-        }
-    }
-)
-ConvertTo-Json -InputObject $candidates -Compress
-"#;
-    let encoded_command = windows_powershell_encoded_command(DISCOVERY_SCRIPT);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    parse_windows_zcode_discovery_output(&String::from_utf8_lossy(&output.stdout))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_zcode_discovery_output(output: &str) -> Option<PathBuf> {
-    let candidates: Vec<serde_json::Value> = serde_json::from_str(output.trim()).ok()?;
-    candidates.into_iter().find_map(|candidate| {
-        let kind = candidate.get("kind")?.as_str()?;
-        let value = candidate.get("value")?.as_str()?.trim();
-        let value = if let Some(quoted) = value.strip_prefix('"') {
-            quoted.split_once('"')?.0
-        } else if kind == "uninstaller" {
-            let end = value.to_ascii_lowercase().match_indices(".exe").find_map(
-                |(index, extension)| {
-                    let end = index + extension.len();
-                    (value[end..].is_empty() || value[end..].starts_with(char::is_whitespace))
-                        .then_some(end)
-                },
-            )?;
-            &value[..end]
-        } else if kind == "icon" {
-            value
-                .rsplit_once(',')
-                .filter(|(_, index)| index.trim().parse::<i32>().is_ok())
-                .map(|(path, _)| path.trim())
-                .unwrap_or(value)
-        } else {
-            value
-        };
-        let path = PathBuf::from(value);
-        if !path.is_absolute() {
-            return None;
-        }
-        let executable = match kind {
-            "executable" => path,
-            "directory" => path.join("ZCode.exe"),
-            "icon" | "uninstaller" => path.parent()?.join("ZCode.exe"),
-            _ => return None,
-        };
-        (executable
-            .file_name()?
-            .to_str()?
-            .eq_ignore_ascii_case("ZCode.exe")
-            && executable.is_file())
-        .then_some(executable)
-    })
-}
-
 #[cfg(target_os = "macos")]
 pub(crate) fn read_macos_app_version(application: &Path) -> Option<String> {
     let info_plist = application.join("Contents/Info.plist");
@@ -2256,16 +2245,6 @@ pub(crate) fn windows_explorer_executable() -> PathBuf {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn windows_registry_executable() -> PathBuf {
-    let executable = windows_system_root().join("System32/reg.exe");
-    if executable.is_file() {
-        executable
-    } else {
-        PathBuf::from("reg.exe")
-    }
-}
-
-#[cfg(target_os = "windows")]
 pub(crate) fn windows_command_processor() -> PathBuf {
     env::var_os("ComSpec")
         .map(PathBuf::from)
@@ -2275,96 +2254,16 @@ pub(crate) fn windows_command_processor() -> PathBuf {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn find_windows_codex_app_installation(home: &Path) -> Option<DesktopAppTarget> {
-    find_windows_registered_codex_app_installation()
+    find_windows_codex_app_executable(home)
+        .map(DesktopAppTarget::Application)
+        .or_else(find_windows_registered_codex_app_installation)
         .or_else(|| find_windows_codex_app_id_via_registry().map(DesktopAppTarget::WindowsAppId))
-        .or_else(|| find_windows_codex_app_executable(home).map(DesktopAppTarget::Application))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn read_windows_claude_desktop_store_version() -> Option<String> {
-    const VERSION_SCRIPT: &str = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$package = @(Get-AppxPackage) |
-    Where-Object {
-        $_.Name -eq 'Claude' -or
-        $_.Name -like 'Anthropic.Claude*' -or
-        $_.PackageFamilyName -match '^(Claude|Anthropic\.Claude)_'
-    } |
-    Select-Object -First 1
-if ($package -and $package.Version) {
-    Write-Output "VERSION:$($package.Version)"
-}
-"#;
-
-    let encoded_command = windows_powershell_encoded_command(VERSION_SCRIPT);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    parse_windows_claude_desktop_version_output(&String::from_utf8_lossy(&output.stdout))
 }
 
 #[cfg(target_os = "windows")]
 pub(crate) fn read_windows_codex_store_version(app_id: &str) -> Option<String> {
-    let script = windows_codex_store_executable_script(app_id)?;
-    let encoded_command = windows_powershell_encoded_command(&script);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    match parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout))? {
-        DesktopAppTarget::Application(path) => read_windows_codex_desktop_version(&path),
-        DesktopAppTarget::WindowsAppId(_) => None,
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_codex_store_executable_script(app_id: &str) -> Option<String> {
-    let (family, application) = app_id.split_once('!')?;
-    if family.is_empty() || application.is_empty() {
-        return None;
-    }
-    let family = windows_powershell_single_quoted_literal(family);
-    let application = windows_powershell_single_quoted_literal(application);
-    Some(format!(
-        r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$ProgressPreference = 'SilentlyContinue'
-$package = Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq {family} }} |
-    Sort-Object {{ [version]$_.Version }} -Descending | Select-Object -First 1
-if ($package) {{
-    $manifest = Get-AppxPackageManifest -Package $package.PackageFullName
-    $application = @($manifest.Package.Applications.Application) |
-        Where-Object {{ $_.Id -eq {application} }} | Select-Object -First 1
-    if ($application.Executable -and $package.InstallLocation) {{
-        $path = Join-Path $package.InstallLocation $application.Executable
-        if (Test-Path -LiteralPath $path -PathType Leaf) {{ Write-Output "EXE:$path" }}
-    }}
-}}
-"#
-    ))
+    find_windows_codex_store_executable(app_id)
+        .and_then(|path| read_windows_codex_desktop_version(&path))
 }
 
 #[cfg(target_os = "windows")]
@@ -2448,230 +2347,8 @@ pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn find_windows_registered_codex_app_installation() -> Option<DesktopAppTarget> {
-    const DISCOVERY_SCRIPT: &str = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$ProgressPreference = 'SilentlyContinue'
-$startApps = @(Get-StartApps)
-$appId = $startApps |
-    Where-Object {
-        $_.AppID -like 'OpenAI.Codex_*!*' -or
-        $_.AppID -like 'OpenAI.CodexBeta_*!*' -or
-        $_.AppID -like 'OpenAI.ChatGPT_*!*'
-    } |
-    Select-Object -First 1 -ExpandProperty AppID
-if ($appId) {
-    Write-Output "APPID:$appId"
-    exit 0
-}
-
-$packages = @(Get-AppxPackage) |
-    Where-Object {
-        $_.Name -in @('OpenAI.Codex', 'OpenAI.CodexBeta', 'OpenAI.ChatGPT') -or
-        $_.PackageFamilyName -match '^OpenAI\.(Codex|CodexBeta|ChatGPT)_'
-    }
-foreach ($package in $packages) {
-    $manifest = Get-AppxPackageManifest -Package $package.PackageFullName
-    $application = @($manifest.Package.Applications.Application) |
-        Where-Object { $_.Id } |
-        Select-Object -First 1
-    if ($application -and $package.PackageFamilyName) {
-        Write-Output "APPID:$($package.PackageFamilyName)!$($application.Id)"
-        exit 0
-    }
-}
-
-$appPathKeys = @(
-    'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe',
-    'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe',
-    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe'
-)
-foreach ($key in $appPathKeys) {
-    if (-not (Test-Path -LiteralPath $key)) { continue }
-    $candidate = (Get-Item -LiteralPath $key).GetValue('')
-    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-        Write-Output "EXE:$candidate"
-        exit 0
-    }
-}
-
-$shortcutRoots = @(
-    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
-    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
-)
-$shell = New-Object -ComObject WScript.Shell
-foreach ($shortcutFile in (Get-ChildItem -LiteralPath $shortcutRoots -Filter '*.lnk' -Recurse)) {
-    $shortcut = $shell.CreateShortcut($shortcutFile.FullName)
-    $target = $shortcut.TargetPath
-    if (-not $target -or -not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
-    $fileName = [System.IO.Path]::GetFileName($target)
-    if ($fileName -ieq 'Codex.exe' -and $target -match '(?i)\\(bin|node_modules|\.vscode\\extensions)\\') {
-        continue
-    }
-    if ($fileName -ieq 'ChatGPT.exe' -or $fileName -ieq 'Codex.exe') {
-        Write-Output "EXE:$target"
-        exit 0
-    }
-}
-"#;
-
-    let encoded_command = windows_powershell_encoded_command(DISCOVERY_SCRIPT);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout)).and_then(
-        |target| match &target {
-            DesktopAppTarget::Application(path) if !path.is_file() => None,
-            _ => Some(target),
-        },
-    )
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_powershell_encoded_command(script: &str) -> String {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    let bytes = script
-        .encode_utf16()
-        .flat_map(|unit| unit.to_le_bytes())
-        .collect::<Vec<_>>();
-    STANDARD.encode(bytes)
-}
-
-#[cfg(target_os = "windows")]
 pub(crate) fn windows_powershell_single_quoted_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn read_windows_executable_version(path: &Path) -> Option<String> {
-    let path = windows_powershell_single_quoted_literal(&path_to_string(path));
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$item = Get-Item -LiteralPath {path}
-$version = $item.VersionInfo.ProductVersion
-if ($version) {{
-    Write-Output "VERSION:$version"
-}}
-"#
-    );
-    let encoded_command = windows_powershell_encoded_command(&script);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    parse_windows_codex_version_output(&String::from_utf8_lossy(&output.stdout))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_codex_app_discovery_output(output: &str) -> Option<DesktopAppTarget> {
-    output.lines().find_map(|line| {
-        let line = line.trim();
-        if let Some(app_id) = line.strip_prefix("APPID:").map(str::trim) {
-            return (!app_id.is_empty()).then(|| DesktopAppTarget::WindowsAppId(app_id.to_string()));
-        }
-        line.strip_prefix("EXE:")
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .map(|path| DesktopAppTarget::Application(PathBuf::from(path)))
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_claude_desktop_version_output(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("VERSION:")
-            .and_then(normalize_detected_agent_version)
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_codex_version_output(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("VERSION:")
-            .and_then(normalize_detected_agent_version)
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn find_windows_codex_app_id_via_registry() -> Option<String> {
-    const PACKAGES_KEY: &str = r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
-    for package_name in ["OpenAI.Codex_", "OpenAI.CodexBeta_", "OpenAI.ChatGPT_"] {
-        let mut command = Command::new(windows_registry_executable());
-        command.args(["query", PACKAGES_KEY, "/f", package_name, "/k", "/s"]);
-        configure_background_command(&mut command);
-        let Ok(Some(output)) =
-            command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT)
-        else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        if let Some(app_id) =
-            parse_windows_codex_app_id_from_registry(&String::from_utf8_lossy(&output.stdout))
-        {
-            return Some(app_id);
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_codex_app_id_from_registry(output: &str) -> Option<String> {
-    const PACKAGE_MARKER: &str = "\\AppModel\\Repository\\Packages\\";
-    output.lines().find_map(|line| {
-        let line = line.trim();
-        let (_, package_full_name) = line.split_once(PACKAGE_MARKER)?;
-        if package_full_name.contains('\\') {
-            return None;
-        }
-        windows_codex_app_id_from_package_full_name(package_full_name)
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_codex_app_id_from_package_full_name(
-    package_full_name: &str,
-) -> Option<String> {
-    let package_name = package_full_name.split('_').next()?.trim();
-    if !matches!(
-        package_name,
-        "OpenAI.Codex" | "OpenAI.CodexBeta" | "OpenAI.ChatGPT"
-    ) {
-        return None;
-    }
-    let publisher_id = package_full_name.rsplit('_').next()?.trim();
-    if publisher_id.is_empty() || publisher_id == package_name {
-        return None;
-    }
-    Some(format!("{package_name}_{publisher_id}!App"))
 }
 
 #[cfg(target_os = "windows")]
@@ -3835,7 +3512,11 @@ pub(crate) fn inspect_deepseek_harness_config(
                 .map(str::to_string)
         })
         .flatten();
-    let expected_base = if provider.and_then(|p| yaml_mapping_value(p, "api")).and_then(serde_norway::Value::as_str) == Some("anthropic-messages") {
+    let expected_base = if provider
+        .and_then(|p| yaml_mapping_value(p, "api"))
+        .and_then(serde_norway::Value::as_str)
+        == Some("anthropic-messages")
+    {
         managed_core_loopback_origin(port)
     } else {
         format!("{}/v1", managed_core_loopback_origin(port))
@@ -3866,7 +3547,12 @@ pub(crate) fn inspect_deepseek_harness_config(
         && provider
             .and_then(|provider| yaml_mapping_value(provider, "api"))
             .and_then(serde_norway::Value::as_str)
-            .is_some_and(|api| matches!(api, "openai-completions" | "openai-responses" | "anthropic-messages"))
+            .is_some_and(|api| {
+                matches!(
+                    api,
+                    "openai-completions" | "openai-responses" | "anthropic-messages"
+                )
+            })
         && provider
             .and_then(|provider| yaml_mapping_value(provider, "baseURL"))
             .and_then(serde_norway::Value::as_str)

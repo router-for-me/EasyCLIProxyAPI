@@ -121,6 +121,16 @@ fn zcode_windows_finds_custom_installations_from_registered_paths() {
 
 #[cfg(target_os = "windows")]
 #[test]
+fn zcode_windows_display_name_matches_installer_variants() {
+    assert!(windows_display_name_matches_zcode("ZCode"));
+    assert!(windows_display_name_matches_zcode("ZCode (64-bit)"));
+    assert!(windows_display_name_matches_zcode("ZCode Desktop"));
+    assert!(!windows_display_name_matches_zcode("ZCodeHelper"));
+    assert!(!windows_display_name_matches_zcode("MyZCode"));
+}
+
+#[cfg(target_os = "windows")]
+#[test]
 fn zcode_windows_skips_stale_and_unrelated_registration_entries() {
     let home = agent_test_home("zcode-stale-registration");
     let unrelated = home.join("Uninstall ZCode.exe");
