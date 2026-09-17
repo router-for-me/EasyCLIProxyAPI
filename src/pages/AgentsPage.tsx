@@ -1850,7 +1850,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </span>
               </div>
 
-              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
+              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join(getCurrentLocale().startsWith('zh') ? '；' : '; ')} tone={activeStatus?.error ? 'error' : 'info'} />
 
               {selected === 'claude-desktop' && !activeStatus?.claudeDesktopModelMappings ? <p className="agent-inline-message warning">{t('agents.backup.mappingRequired')}</p> : null}
               <div className="agent-minimal-field">
@@ -1944,7 +1944,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 )}
               </div>
 
-              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
+              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join(getCurrentLocale().startsWith('zh') ? '；' : '; ')} tone={activeStatus?.error ? 'error' : 'info'} />
 
               {!isClaudeModelMappingClient ? (
                 <section className="agent-core-setting-section agent-model-section">

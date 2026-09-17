@@ -2477,14 +2477,23 @@ pub(crate) fn truncate_for_error(value: &str) -> String {
 
 pub(crate) fn open_external_url_inner(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
     let url = url.trim();
+    let is_en = app
+        .try_state::<crate::GuiConfigState>()
+        .and_then(|s| s.snapshot().ok())
+        .map(|c| c.locale.starts_with("en"))
+        .unwrap_or(false);
+
     if url.is_empty() {
-        return Err("链接为空".to_string());
+        return Err(if is_en { "URL is empty".to_string() } else { "链接为空".to_string() });
     }
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("只允许打开 http/https 链接".to_string());
+        return Err(if is_en { "Only http/https links are allowed".to_string() } else { "只允许打开 http/https 链接".to_string() });
+    }
+    if url.chars().any(char::is_control) {
+        return Err(if is_en { "URL contains invalid control characters".to_string() } else { "链接包含无效控制字符".to_string() });
     }
 
     app.opener()
         .open_url(url, None::<&str>)
-        .map_err(|err| format!("打开浏览器失败: {err}"))
+        .map_err(|err| if is_en { format!("Failed to open browser: {err}") } else { format!("打开浏览器失败: {err}") })
 }

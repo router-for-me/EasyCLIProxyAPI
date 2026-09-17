@@ -15,7 +15,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
-import { useI18n } from '../i18n';
+import { getCurrentLocale, useI18n } from '../i18n';
 import {
   codexSessionPageCounts,
   retainVisibleCodexSessionIds,
@@ -106,7 +106,7 @@ export function CodexSessionsPanel() {
       setPage(result);
       setSelectedIds((current) => retainVisibleCodexSessionIds(current, result.sessions));
       if (!silent && result.warnings.length > 0) {
-        setNotice({ kind: 'warning', message: result.warnings.join('；') });
+        setNotice({ kind: 'warning', message: result.warnings.join(getCurrentLocale().startsWith('zh') ? '；' : '; ') });
       }
       return result;
     } catch (error) {
@@ -159,10 +159,11 @@ export function CodexSessionsPanel() {
 
   const requestDelete = (targets: CodexSessionSummary[]) => {
     if (targets.length === 0) return;
+    const isCjk = getCurrentLocale().startsWith('zh') || getCurrentLocale() === 'ja';
     const preview = targets
       .slice(0, 6)
       .map((session) => session.title || session.id)
-      .join('、');
+      .join(isCjk ? '、' : ', ');
     const extra = Math.max(0, targets.length - 6);
     setDeleteConfirmation({
       ids: targets.map((session) => session.id),
@@ -194,7 +195,7 @@ export function CodexSessionsPanel() {
       const backupPaths = result.results
         .map((item) => item.backupPath)
         .filter((path): path is string => Boolean(path));
-      const details = [...partial, ...failed].map((item) => `${item.sessionId}: ${item.message}`).join('；');
+      const details = [...partial, ...failed].map((item) => `${item.sessionId}: ${item.message}`).join(getCurrentLocale().startsWith('zh') ? '；' : '; ');
       setNotice({
         kind: failed.length > 0 ? (result.deletedCount > 0 ? 'warning' : 'error') : partial.length > 0 ? 'warning' : 'success',
         message: t('agents.sessions.deleteResult', {
@@ -228,7 +229,7 @@ export function CodexSessionsPanel() {
         }),
       ];
       if (result.encryptedContentWarning) messages.push(result.encryptedContentWarning);
-      if (result.warnings.length > 0) messages.push(result.warnings.join('；'));
+      if (result.warnings.length > 0) messages.push(result.warnings.join(getCurrentLocale().startsWith('zh') ? '；' : '; '));
       if (result.backupPath) messages.push(t('agents.sessions.backupAt', { path: result.backupPath }));
       setNotice({
         kind: result.encryptedContentWarning || result.warnings.length > 0 ? 'warning' : 'success',
