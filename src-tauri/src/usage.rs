@@ -4742,6 +4742,7 @@ mod tests {
         config.api_access_remarks.push(crate::GuiApiAccessRemark {
             provider_section: "codex-api-key".to_string(),
             api_key_hash: hash_text(key),
+            record_hash: String::new(),
             remark: "生产环境".to_string(),
         });
 
@@ -4753,6 +4754,28 @@ mod tests {
         assert_eq!(
             usage_source_display(&config, "codex", "account@example.com"),
             "account@example.com"
+        );
+    }
+
+    #[test]
+    fn usage_source_masks_shared_keys_with_different_record_remarks() {
+        let key = "sk-1234567890abcdefghijklmnopqrstuvwxyz";
+        let mut config = GuiConfigFile::default();
+        for (record_hash, remark) in [
+            ("a".repeat(64), "生产环境"),
+            ("b".repeat(64), "测试环境"),
+        ] {
+            config.api_access_remarks.push(crate::GuiApiAccessRemark {
+                provider_section: "codex-api-key".to_string(),
+                api_key_hash: hash_text(key),
+                record_hash,
+                remark: remark.to_string(),
+            });
+        }
+
+        assert_eq!(
+            usage_source_display(&config, "codex", key),
+            "sk-1••••wxyz"
         );
     }
 

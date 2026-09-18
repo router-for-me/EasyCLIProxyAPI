@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  apiAccessRemarkLocatorFromRecord,
   applyProviderRemarkIdentity,
   applyProviderPreset,
   buildProviderRecord,
@@ -11,6 +12,7 @@ import {
   parseProviderApiKeys,
   providerCategoryMatchesRecord,
   providerRecordWithDisabledState,
+  providerRemarkIdentity,
   providerSectionOrder,
   reorderProviderRecords,
   resolveProviderRecordIndex,
@@ -137,6 +139,25 @@ it('preserves aliases added in advanced settings when saving an API connection',
 
 it('parses multiline API keys into unique trimmed entries', () => {
   expect(parseProviderApiKeys(' key-a\n\nkey-b\r\nkey-a ')).toEqual(['key-a', 'key-b']);
+});
+
+it('keeps remark identities separate for records that share an API key', () => {
+  const first = apiAccessRemarkLocatorFromRecord('codex-api-key', {
+    'api-key': 'shared-key',
+    'base-url': 'https://first.example/v1',
+  });
+  const second = apiAccessRemarkLocatorFromRecord('codex-api-key', {
+    'api-key': 'shared-key',
+    'base-url': 'https://second.example/v1',
+  });
+
+  expect(first.apiKeys).toEqual(second.apiKeys);
+  expect(first.baseUrl).not.toBe(second.baseUrl);
+  expect(providerRemarkIdentity('codex-api-key', first))
+    .not.toBe(providerRemarkIdentity('codex-api-key', second));
+  expect(providerRemarkIdentity('codex-api-key', first)).toBe(
+    providerRemarkIdentity('codex-api-key', { ...first, apiKeys: [...first.apiKeys] }),
+  );
 });
 
 describe('API 接入配置合并', () => {

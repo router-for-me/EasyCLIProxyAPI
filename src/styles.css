@@ -8129,9 +8129,12 @@ textarea:focus-visible {
 .usage-overview-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
-  grid-template-rows: auto minmax(180px, 1fr);
+  grid-template-rows: auto minmax(250px, 1fr);
   gap: 14px;
   align-items: stretch;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .usage-stat-grid {

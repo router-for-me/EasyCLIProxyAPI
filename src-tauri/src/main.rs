@@ -860,22 +860,34 @@ struct GuiApiKeyEntry {
 struct GuiApiAccessRemark {
     provider_section: String,
     api_key_hash: String,
+    #[serde(default)]
+    record_hash: String,
     remark: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ApiAccessRemarkQuery {
-    provider_section: String,
+struct ApiAccessRemarkLocator {
+    provider_name: String,
+    base_url: String,
     api_keys: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiAccessRemarkQuery {
+    provider_section: String,
+    #[serde(flatten)]
+    locator: ApiAccessRemarkLocator,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ApiAccessRemarkUpdate {
     provider_section: String,
-    previous_api_keys: Vec<String>,
-    api_keys: Vec<String>,
+    previous_records: Vec<ApiAccessRemarkLocator>,
+    records: Vec<ApiAccessRemarkLocator>,
+    all_records: Vec<ApiAccessRemarkLocator>,
     remark: String,
 }
 

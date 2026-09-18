@@ -57,19 +57,28 @@ impl GuiConfigFile {
     ) -> Option<&str> {
         let hash = api_access_key_hash(source)?;
         let preferred_section = usage_provider_section(provider);
-        self.api_access_remarks
-            .iter()
-            .find(|entry| {
-                preferred_section == Some(entry.provider_section.as_str())
+        let resolve = |section: Option<&str>| {
+            let mut resolved: Option<Option<&str>> = None;
+            for entry in self.api_access_remarks.iter().filter(|entry| {
+                section.is_none_or(|section| entry.provider_section == section)
                     && entry.api_key_hash == hash
-                    && !entry.remark.is_empty()
-            })
-            .or_else(|| {
-                self.api_access_remarks
-                    .iter()
-                    .find(|entry| entry.api_key_hash == hash && !entry.remark.is_empty())
-            })
-            .map(|entry| entry.remark.as_str())
+            }) {
+                let candidate = (!entry.remark.is_empty()).then_some(entry.remark.as_str());
+                match resolved {
+                    None => resolved = Some(candidate),
+                    Some(current) if current == candidate => {}
+                    Some(_) => return Some(None),
+                }
+            }
+            resolved
+        };
+
+        if let Some(section) = preferred_section {
+            if let Some(remark) = resolve(Some(section)) {
+                return remark;
+            }
+        }
+        resolve(None).flatten()
     }
 }
 
@@ -1815,6 +1824,9 @@ pub(crate) fn write_gui_config_to_path(
             Value::from(entry.provider_section.as_str()),
         );
         table.insert("api-key-hash", Value::from(entry.api_key_hash.as_str()));
+        if !entry.record_hash.is_empty() {
+            table.insert("record-hash", Value::from(entry.record_hash.as_str()));
+        }
         table.insert("remark", Value::from(entry.remark.as_str()));
         api_access_remarks.push(Value::InlineTable(table));
     }
@@ -1863,6 +1875,15 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
                 .all(|character| character.is_ascii_hexdigit())
         {
             return Err("API 接入备注的密钥指纹无效".to_string());
+        }
+        if !entry.record_hash.is_empty()
+            && (entry.record_hash.len() != 64
+                || !entry
+                    .record_hash
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit()))
+        {
+            return Err("API 接入备注的条目指纹无效".to_string());
         }
         validate_api_key_remark(&entry.remark)?;
     }

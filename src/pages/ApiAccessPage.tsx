@@ -112,6 +112,12 @@ type ProviderRow = {
   remark: string;
 };
 
+export type ApiAccessRemarkLocator = {
+  providerName: string;
+  baseUrl: string;
+  apiKeys: string[];
+};
+
 const providerDragId = (
   row: Pick<ProviderRow, 'section' | 'name' | 'apiKey' | 'baseUrl'>,
 ) => {
@@ -321,8 +327,28 @@ const rowFromRecord = (
   };
 };
 
-const providerRemarkIdentity = (section: ProviderSection, apiKeys: string[]) =>
-  `${section}\u0000${apiKeys.join('\u0000')}`;
+export const providerRemarkIdentity = (
+  section: ProviderSection,
+  locator: ApiAccessRemarkLocator,
+) => JSON.stringify([section, locator.providerName, locator.baseUrl, locator.apiKeys]);
+
+export const apiAccessRemarkLocatorFromRecord = (
+  section: ProviderSection,
+  record: Record<string, unknown>,
+): ApiAccessRemarkLocator => {
+  const row = rowFromRecord(section, record, 0);
+  return {
+    providerName: readString(record, 'name'),
+    baseUrl: row.baseUrl,
+    apiKeys: row.apiKeys,
+  };
+};
+
+const apiAccessRemarkLocatorFromRow = (row: ProviderRow): ApiAccessRemarkLocator => ({
+  providerName: readString(row.record, 'name'),
+  baseUrl: row.baseUrl,
+  apiKeys: row.apiKeys,
+});
 
 const providerHealthIdentity = (row: ProviderRow) => [
   row.section,
@@ -922,12 +948,12 @@ export function ApiAccessPage() {
     void invoke<string[]>('resolve_api_access_remarks', {
       queries: providerRows.map((row) => ({
         providerSection: row.section,
-        apiKeys: row.apiKeys,
+        ...apiAccessRemarkLocatorFromRow(row),
       })),
     }).then((remarks) => {
       if (disposed) return;
       setApiAccessRemarks(Object.fromEntries(providerRows.map((row, index) => [
-        providerRemarkIdentity(row.section, row.apiKeys),
+        providerRemarkIdentity(row.section, apiAccessRemarkLocatorFromRow(row)),
         remarks[index] ?? '',
       ])));
     }).catch(() => {
@@ -947,7 +973,9 @@ export function ApiAccessPage() {
           name: activeCategory === 'deepseek'
             ? t('apiAccess.provider.deepseek')
             : row.name,
-          remark: apiAccessRemarks[providerRemarkIdentity(row.section, row.apiKeys)] ?? '',
+          remark: apiAccessRemarks[
+            providerRemarkIdentity(row.section, apiAccessRemarkLocatorFromRow(row))
+          ] ?? '',
         }))
         .filter((row) => providerCategoryMatchesRecord(activeCategory, row.record, activeSection))
         .filter((row) => {
@@ -1107,8 +1135,13 @@ export function ApiAccessPage() {
       await invoke('save_api_access_remark', {
         update: {
           providerSection: activeSection,
-          previousApiKeys: editingRow?.apiKeys ?? [],
-          apiKeys: parsedApiKeys,
+          previousRecords: editingRow ? [apiAccessRemarkLocatorFromRow(editingRow)] : [],
+          records: recordsToSave.map((record) => (
+            apiAccessRemarkLocatorFromRecord(activeSection, record)
+          )),
+          allRecords: nextList.map((record) => (
+            apiAccessRemarkLocatorFromRecord(activeSection, record)
+          )),
           remark: draftToSave.remark,
         },
       });
@@ -1135,11 +1168,16 @@ export function ApiAccessPage() {
           query: { 'api-key': row.apiKey, 'base-url': row.baseUrl },
         });
       }
+      const latestConfig = await managementApi.get('/config');
+      const remainingRecords = sectionRecordsFromConfig(latestConfig, row.section);
       await invoke('save_api_access_remark', {
         update: {
           providerSection: row.section,
-          previousApiKeys: row.apiKeys,
-          apiKeys: [],
+          previousRecords: [apiAccessRemarkLocatorFromRow(row)],
+          records: [],
+          allRecords: remainingRecords.map((record) => (
+            apiAccessRemarkLocatorFromRecord(row.section, record)
+          )),
           remark: '',
         },
       });
