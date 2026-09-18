@@ -39,6 +39,7 @@ import {
   type UsageTimelinePoint,
 } from '../services/usageTrend';
 import { createRefreshScheduler } from '../services/refreshScheduler';
+import { usageViewScopeKey } from '../services/usageViewScope';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
@@ -309,6 +310,7 @@ export function UsageRecordsPage() {
   const [pricing, setPricing] = useState<UsagePricing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [loadedScopeKey, setLoadedScopeKey] = useState('');
   const requestIdRef = useRef(0);
   const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
   if (!schedulerRef.current) schedulerRef.current = createRefreshScheduler(250);
@@ -342,6 +344,32 @@ export function UsageRecordsPage() {
       } satisfies UsageQuery,
     };
   }, [apiKeyHash, customEnd, customStart, model, provider, range, result, source]);
+
+  const scopeKey = useMemo(() => usageViewScopeKey({
+    tab: activeTab,
+    range,
+    customStart,
+    customEnd,
+    model,
+    provider,
+    source,
+    apiKeyHash,
+    result,
+    page,
+    pageSize,
+  }), [
+    activeTab,
+    apiKeyHash,
+    customEnd,
+    customStart,
+    model,
+    page,
+    pageSize,
+    provider,
+    range,
+    result,
+    source,
+  ]);
 
   const executeLoadData = useCallback(
     async (quiet = false) => {
@@ -405,6 +433,7 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           setOptionsAnalysis(nextOptions);
         }
+        setLoadedScopeKey(scopeKey);
         setError('');
       } catch (requestError) {
         if (requestId === requestIdRef.current) setError(String(requestError));
@@ -412,7 +441,7 @@ export function UsageRecordsPage() {
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [activeTab, buildQueries, page, pageSize, model, provider, source, apiKeyHash, result]
+    [activeTab, buildQueries, page, pageSize, model, provider, source, apiKeyHash, result, scopeKey]
   );
 
   const loadData = useCallback(
@@ -481,12 +510,16 @@ export function UsageRecordsPage() {
   };
 
   const collectorTone = status?.state === 'error' ? 'error' : status?.state === 'collecting' ? 'success' : '';
+  const hasCurrentSnapshot = loadedScopeKey === scopeKey;
   const showInitialLoading =
-    loading &&
-    ((activeTab === 'overview' && !overview) ||
-      (activeTab === 'analysis' && !overview) ||
-      (activeTab === 'events' && !events) ||
-      (activeTab === 'pricing' && !pricing));
+    activeTab !== 'data-management' &&
+    !error &&
+    (!hasCurrentSnapshot ||
+      (loading &&
+        ((activeTab === 'overview' && !overview) ||
+          (activeTab === 'analysis' && !overview) ||
+          (activeTab === 'events' && !events) ||
+          (activeTab === 'pricing' && !pricing))));
 
   return (
     <section className="page management-page usage-records-page">
@@ -702,9 +735,9 @@ export function UsageRecordsPage() {
         </div>
       ) : null}
 
-      {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
-      {activeTab === 'analysis' ? <AnalysisView analysis={analysis} overview={overview} /> : null}
-      {activeTab === 'events' && events ? (
+      {hasCurrentSnapshot && activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
+      {hasCurrentSnapshot && activeTab === 'analysis' ? <AnalysisView analysis={analysis} overview={overview} /> : null}
+      {hasCurrentSnapshot && activeTab === 'events' && events ? (
         <EventsView
           events={events}
           pageSize={pageSize}
@@ -715,7 +748,7 @@ export function UsageRecordsPage() {
           }}
         />
       ) : null}
-      {activeTab === 'pricing' && pricing ? (
+      {hasCurrentSnapshot && activeTab === 'pricing' && pricing ? (
         <PricingView pricing={pricing} query={buildQueries().query} onChanged={() => loadData(true)} />
       ) : null}
       {activeTab === 'data-management' ? <UsageDataManagementView /> : null}
