@@ -170,6 +170,13 @@ type UsageRepairResult = {
   backupPath: string | null;
 };
 
+type UsageStorageSettings = {
+  maxDatabaseSizeMb: number;
+  databaseSizeBytes: number;
+  totalRecords: number;
+  deletedRecords: number;
+};
+
 type ModelPriceSyncResult = {
   imported: number;
   skipped: number;
@@ -239,6 +246,13 @@ const rangeQuery = (range: UsageRange, customStart: string, customEnd: string): 
 };
 
 const compactNumber = (value: number) => formatUsageNumber(value, getCurrentLocale());
+
+const formatStorageBytes = (value: number) => {
+  const bytes = Number.isFinite(value) ? Math.max(0, value) : 0;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+};
 
 const formatUsd = (amount: number) => {
   if (!Number.isFinite(amount) || amount <= 0) return '$0.00';
@@ -715,6 +729,57 @@ function UsageDataManagementView() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<UsageRepairResult | null>(null);
   const [error, setError] = useState('');
+  const [storage, setStorage] = useState<UsageStorageSettings | null>(null);
+  const [limitDraft, setLimitDraft] = useState('0');
+  const [loadingLimit, setLoadingLimit] = useState(true);
+  const [savingLimit, setSavingLimit] = useState(false);
+  const [storageNotice, setStorageNotice] = useState('');
+
+  useEffect(() => {
+    let disposed = false;
+    invoke<UsageStorageSettings>('get_usage_storage_settings')
+      .then((next) => {
+        if (disposed) return;
+        setStorage(next);
+        setLimitDraft(String(next.maxDatabaseSizeMb));
+      })
+      .catch((requestError) => {
+        if (!disposed) setError(String(requestError));
+      })
+      .finally(() => {
+        if (!disposed) setLoadingLimit(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const saveStorageLimit = async () => {
+    const normalized = limitDraft.trim();
+    const maxDatabaseSizeMb = Number(normalized);
+    if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(maxDatabaseSizeMb)) {
+      setError(t('usage.dataManagement.storageInvalid'));
+      return;
+    }
+    setSavingLimit(true);
+    setError('');
+    setStorageNotice('');
+    try {
+      const next = await invoke<UsageStorageSettings>('save_usage_storage_settings', { maxDatabaseSizeMb });
+      setStorage(next);
+      setLimitDraft(String(next.maxDatabaseSizeMb));
+      setStorageNotice(t(
+        next.deletedRecords > 0
+          ? 'usage.dataManagement.storageSavedWithCleanup'
+          : 'usage.dataManagement.storageSaved',
+        { deleted: next.deletedRecords.toLocaleString() },
+      ));
+    } catch (requestError) {
+      setError(String(requestError));
+    } finally {
+      setSavingLimit(false);
+    }
+  };
 
   const repair = async () => {
     if (!await askConfirmation({ title: t('usage.dataManagement.title'), message: t('usage.dataManagement.confirm') })) return;
@@ -724,6 +789,8 @@ function UsageDataManagementView() {
     try {
       const next = await invoke<UsageRepairResult>('repair_usage_cache_records');
       setResult(next);
+      const nextStorage = await invoke<UsageStorageSettings>('get_usage_storage_settings');
+      setStorage(nextStorage);
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -745,10 +812,48 @@ function UsageDataManagementView() {
         <span className="usage-data-management-badge">{t('usage.dataManagement.manualBadge')}</span>
       </div>
 
-      <div className="usage-data-management-notice">
-        <TriangleAlert size={17} aria-hidden="true" />
-        <span>{t('usage.dataManagement.notice')}</span>
+      <div className="usage-data-management-action usage-storage-limit-action">
+        <div>
+          <strong>{t('usage.dataManagement.storageTitle')}</strong>
+          <span>{t('usage.dataManagement.storageDescription')}</span>
+          {storage ? (
+            <small>
+              {t('usage.dataManagement.storageCurrent', {
+                size: formatStorageBytes(storage.databaseSizeBytes),
+                records: compactNumber(storage.totalRecords),
+              })}
+            </small>
+          ) : null}
+        </div>
+        <div className="usage-storage-limit-editor">
+          <label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              inputMode="numeric"
+              value={limitDraft}
+              disabled={loadingLimit || savingLimit}
+              onChange={(event) => setLimitDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !loadingLimit && !savingLimit) void saveStorageLimit();
+              }}
+              aria-label={t('usage.dataManagement.storageInput')}
+            />
+            <span>{t('usage.dataManagement.storageUnit')}</span>
+          </label>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void saveStorageLimit()}
+            disabled={loadingLimit || savingLimit}
+          >
+            {savingLimit ? t('usage.dataManagement.storageSaving') : t('usage.dataManagement.storageSave')}
+          </button>
+        </div>
       </div>
+
+      {storageNotice ? <MessageNotice tone="success" message={storageNotice} onDismiss={() => setStorageNotice('')} /> : null}
 
       <div className="usage-data-management-action">
         <div>

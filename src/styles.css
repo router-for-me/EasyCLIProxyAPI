@@ -9348,7 +9348,7 @@ body.table-col-resizing * {
 }
 
 .usage-data-management-heading p,
-.usage-data-management-action span {
+.usage-data-management-action > div:first-child > span {
   display: block;
   margin: 6px 0 0;
   color: var(--theme-716b61);
@@ -9363,24 +9363,57 @@ body.table-col-resizing * {
   font-size: 12px;
 }
 
-.usage-data-management-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 22px 0;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--theme-c77b30) 28%, var(--theme-d8d4cc));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--theme-c77b30) 8%, transparent);
-  color: var(--theme-716b61);
-  font-size: 13px;
-}
-
 .usage-data-management-action {
+  margin-top: 22px;
   padding: 16px;
   border: 1px solid var(--theme-d8d4cc);
   border-radius: 12px;
   background: var(--theme-f8f5ee);
+}
+
+.usage-data-management-action + .usage-data-management-action {
+  margin-top: 12px;
+}
+
+.usage-storage-limit-action small {
+  display: block;
+  margin-top: 7px;
+  color: var(--theme-8a847c);
+  font-size: 12px;
+}
+
+.usage-storage-limit-editor {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-storage-limit-editor label {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--theme-d8d4cc);
+  border-radius: 7px;
+  background: var(--theme-fffdf8);
+}
+
+.usage-storage-limit-editor input {
+  width: 104px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: right;
+}
+
+.usage-storage-limit-editor input:focus {
+  box-shadow: none;
+}
+
+.usage-storage-limit-editor label > span {
+  padding: 0 10px 0 4px;
+  color: var(--theme-716b61);
+  font-size: 12px;
 }
 
 .usage-data-management-result {
@@ -10823,6 +10856,21 @@ body.table-col-resizing * {
 
   .usage-data-management-action .primary-button {
     width: 100%;
+  }
+
+  .usage-storage-limit-editor {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-storage-limit-editor label {
+    width: 100%;
+  }
+
+  .usage-storage-limit-editor input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
   }
 
   .panel-heading {
@@ -14379,6 +14427,21 @@ body.table-col-resizing * {
 
   .usage-data-management-action .primary-button {
     width: 100%;
+  }
+
+  .usage-storage-limit-editor {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-storage-limit-editor label {
+    width: 100%;
+  }
+
+  .usage-storage-limit-editor input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
   }
 
   .usage-custom-range {

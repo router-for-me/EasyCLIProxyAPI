@@ -44,6 +44,7 @@ const LEGACY_JSON_MIGRATION_KEY: &str = "legacy_json_v1";
 const USAGE_DATABASE_MIGRATION_KEY: &str = "keeper_v3";
 const USAGE_FAILURE_MIGRATION_KEY: &str = "failure_details_v4";
 const USAGE_EVENT_KEY_MIGRATION_KEY: &str = "event_key_v5";
+const USAGE_DATABASE_MAX_MB_KEY: &str = "max_database_size_mb";
 const USAGE_UPDATED_EVENT: &str = "usage-records-updated";
 const USAGE_SCHEMA_VERSION: u8 = 1;
 const USAGE_DATABASE_SCHEMA_VERSION: i64 = 5;
@@ -56,6 +57,7 @@ const USAGE_QUEUE_KEY: &str = "usage";
 const LEGACY_USAGE_QUEUE_KEY: &str = "queue";
 const HTTP_USAGE_QUEUE_SOURCE: &str = "http_pull:usage_queue";
 const SQLITE_BUSY_TIMEOUT_SECONDS: u64 = 5;
+const BYTES_PER_MB: u64 = 1024 * 1024;
 const TOKENS_PER_PRICE_UNIT: f64 = 1_000_000.0;
 const LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const BUNDLED_MODEL_PRICE_CATALOG: &str = include_str!("../resources/model_prices.json");
@@ -103,6 +105,19 @@ struct UsageInboxRow {
     source: String,
     raw_message: String,
     attempt_count: i64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct UsagePersistOutcome {
+    inserted: usize,
+    deleted: u64,
+}
+
+impl UsagePersistOutcome {
+    fn add(&mut self, other: Self) {
+        self.inserted = self.inserted.saturating_add(other.inserted);
+        self.deleted = self.deleted.saturating_add(other.deleted);
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -305,6 +320,15 @@ pub(crate) struct UsageRepairResult {
     backup_path: Option<String>,
 }
 
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UsageStorageSettings {
+    max_database_size_mb: u64,
+    database_size_bytes: u64,
+    total_records: u64,
+    deleted_records: u64,
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelPrice {
@@ -487,9 +511,13 @@ impl UsageCollectorState {
         }
     }
 
-    fn increment_total_records(&self, added: usize) {
+    fn apply_record_changes(&self, inserted: usize, deleted: u64) {
         if let Ok(mut inner) = self.inner.lock() {
-            inner.status.total_records = inner.status.total_records.saturating_add(added as u64);
+            inner.status.total_records = inner
+                .status
+                .total_records
+                .saturating_add(inserted as u64)
+                .saturating_sub(deleted);
         }
     }
 
@@ -579,12 +607,44 @@ fn initialize_usage_storage_at(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("启用 SQLite WAL 失败: {error}"))?;
     migrate_usage_database(&mut connection, root)?;
     migrate_legacy_json_storage(&mut connection, root)?;
-    cleanup_usage_inbox(&connection, Local::now())
+    cleanup_usage_inbox(&connection, Local::now())?;
+    enforce_usage_database_limit(&connection).map(|_| ())
 }
 
 #[tauri::command]
 pub(crate) async fn repair_usage_cache_records() -> Result<UsageRepairResult, String> {
     run_usage_task(|| repair_usage_cache_records_at(&usage_root_dir()?)).await
+}
+
+#[tauri::command]
+pub(crate) async fn get_usage_storage_settings() -> Result<UsageStorageSettings, String> {
+    run_usage_task(|| {
+        let root = usage_root_dir()?;
+        let connection = open_usage_database_at(&root)?;
+        load_usage_storage_settings(&connection, &root, 0)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn save_usage_storage_settings(
+    app: tauri::AppHandle,
+    max_database_size_mb: u64,
+) -> Result<UsageStorageSettings, String> {
+    let settings = run_usage_task(move || {
+        let root = usage_root_dir()?;
+        let connection = open_usage_database_at(&root)?;
+        save_usage_database_limit(&connection, max_database_size_mb)?;
+        let deleted = enforce_usage_database_limit(&connection)?;
+        load_usage_storage_settings(&connection, &root, deleted)
+    })
+    .await?;
+    app.state::<UsageCollectorState>()
+        .set_total_records(settings.total_records);
+    if settings.deleted_records > 0 {
+        let _ = app.emit(USAGE_UPDATED_EVENT, Local::now().to_rfc3339());
+    }
+    Ok(settings)
 }
 
 fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, String> {
@@ -1329,6 +1389,198 @@ fn open_usage_database_at(root: &Path) -> Result<Connection, String> {
     Ok(connection)
 }
 
+fn load_usage_database_limit(connection: &Connection) -> Result<u64, String> {
+    let value = connection
+        .query_row(
+            "SELECT value FROM usage_metadata WHERE key = ?1",
+            params![USAGE_DATABASE_MAX_MB_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("读取使用记录数据库大小限制失败: {error}"))?;
+    value
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|error| format!("使用记录数据库大小限制无效: {error}"))
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(0))
+}
+
+fn save_usage_database_limit(
+    connection: &Connection,
+    max_database_size_mb: u64,
+) -> Result<(), String> {
+    max_database_size_mb
+        .checked_mul(BYTES_PER_MB)
+        .ok_or_else(|| "使用记录数据库大小限制过大".to_string())?;
+    connection
+        .execute(
+            r#"INSERT INTO usage_metadata (key, value) VALUES (?1, ?2)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value"#,
+            params![USAGE_DATABASE_MAX_MB_KEY, max_database_size_mb.to_string()],
+        )
+        .map(|_| ())
+        .map_err(|error| format!("保存使用记录数据库大小限制失败: {error}"))
+}
+
+fn usage_database_active_bytes(connection: &Connection) -> Result<u64, String> {
+    let page_size = connection
+        .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("读取使用记录数据库页大小失败: {error}"))?;
+    let page_count = connection
+        .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("读取使用记录数据库页数失败: {error}"))?;
+    let free_pages = connection
+        .query_row("PRAGMA freelist_count", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("读取使用记录数据库空闲页数失败: {error}"))?;
+    page_count
+        .saturating_sub(free_pages)
+        .checked_mul(page_size)
+        .ok_or_else(|| "使用记录数据库大小溢出".to_string())
+}
+
+fn usage_database_allocated_bytes(connection: &Connection) -> Result<u64, String> {
+    let page_size = connection
+        .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("读取使用记录数据库页大小失败: {error}"))?;
+    let page_count = connection
+        .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("读取使用记录数据库页数失败: {error}"))?;
+    page_count
+        .checked_mul(page_size)
+        .ok_or_else(|| "使用记录数据库大小溢出".to_string())
+}
+
+fn usage_database_file_bytes(database_path: &Path) -> Result<u64, String> {
+    let mut wal_path = database_path.as_os_str().to_os_string();
+    wal_path.push("-wal");
+    let paths = [database_path.to_path_buf(), PathBuf::from(wal_path)];
+    let mut total = 0_u64;
+    for path in paths {
+        match fs::metadata(&path) {
+            Ok(metadata) => total = total.saturating_add(metadata.len()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "读取使用记录数据库文件大小失败 {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn usage_database_disk_bytes(root: &Path) -> Result<u64, String> {
+    usage_database_file_bytes(&root.join(USAGE_DATABASE_FILE))
+}
+
+fn usage_database_connection_disk_bytes(connection: &Connection) -> Result<u64, String> {
+    let path = connection
+        .path()
+        .ok_or_else(|| "无法读取使用记录数据库文件路径".to_string())?;
+    usage_database_file_bytes(Path::new(path))
+}
+
+fn truncate_usage_database_wal(connection: &Connection) {
+    let _ = connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    });
+}
+
+fn load_usage_storage_settings(
+    connection: &Connection,
+    root: &Path,
+    deleted_records: u64,
+) -> Result<UsageStorageSettings, String> {
+    let total_records = connection
+        .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
+            row.get::<_, u64>(0)
+        })
+        .map_err(|error| format!("统计使用记录数量失败: {error}"))?;
+    Ok(UsageStorageSettings {
+        max_database_size_mb: load_usage_database_limit(connection)?,
+        database_size_bytes: usage_database_disk_bytes(root)?,
+        total_records,
+        deleted_records,
+    })
+}
+
+fn enforce_usage_database_limit(connection: &Connection) -> Result<u64, String> {
+    let max_database_size_mb = load_usage_database_limit(connection)?;
+    if max_database_size_mb == 0 {
+        return Ok(0);
+    }
+    let max_bytes = max_database_size_mb
+        .checked_mul(BYTES_PER_MB)
+        .ok_or_else(|| "使用记录数据库大小限制过大".to_string())?;
+
+    if usage_database_connection_disk_bytes(connection)? <= max_bytes {
+        return Ok(0);
+    }
+    truncate_usage_database_wal(connection);
+    let allocated_bytes = usage_database_allocated_bytes(connection)?;
+    if allocated_bytes <= max_bytes {
+        return Ok(0);
+    }
+
+    let inbox_deleted = connection
+        .execute(
+            "DELETE FROM usage_inbox WHERE status IN ('processed', 'decode_failed', 'discarded')",
+            [],
+        )
+        .map_err(|error| format!("清理使用记录临时数据失败: {error}"))?;
+    let mut active_bytes = usage_database_active_bytes(connection)?;
+    let mut deleted_records = 0_u64;
+
+    while active_bytes > max_bytes {
+        let total_records = connection
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
+                row.get::<_, u64>(0)
+            })
+            .map_err(|error| format!("统计待清理使用记录失败: {error}"))?;
+        if total_records == 0 {
+            break;
+        }
+        let excess = active_bytes.saturating_sub(max_bytes);
+        let estimated = ((total_records as u128 * excess as u128)
+            .saturating_add(active_bytes.saturating_sub(1) as u128)
+            / active_bytes.max(1) as u128) as u64;
+        let batch = estimated.max(1).min(total_records).min(i64::MAX as u64) as i64;
+        let deleted = connection
+            .execute(
+                r#"DELETE FROM usage_events
+                   WHERE id IN (
+                       SELECT id FROM usage_events
+                       ORDER BY timestamp_ms ASC, id ASC
+                       LIMIT ?1
+                   )"#,
+                params![batch],
+            )
+            .map_err(|error| format!("删除最旧使用记录失败: {error}"))?
+            as u64;
+        if deleted == 0 {
+            break;
+        }
+        deleted_records = deleted_records.saturating_add(deleted);
+        active_bytes = usage_database_active_bytes(connection)?;
+    }
+
+    if allocated_bytes > max_bytes || inbox_deleted > 0 || deleted_records > 0 {
+        connection
+            .execute_batch("VACUUM;")
+            .map_err(|error| format!("回收使用记录数据库空间失败: {error}"))?;
+        truncate_usage_database_wal(connection);
+    }
+    Ok(deleted_records)
+}
+
 fn migrate_legacy_json_storage(connection: &mut Connection, root: &Path) -> Result<(), String> {
     let migrated = connection
         .query_row(
@@ -1536,10 +1788,11 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
             let recovered = open_usage_database_at(&root)
                 .and_then(|mut connection| process_usage_inbox(&mut connection, &config));
             match recovered {
-                Ok(saved) if saved > 0 => {
+                Ok(outcome) if outcome.inserted > 0 || outcome.deleted > 0 => {
+                    let saved = outcome.inserted;
                     let collected_at = Local::now().to_rfc3339();
                     app.state::<UsageCollectorState>()
-                        .increment_total_records(saved);
+                        .apply_record_changes(outcome.inserted, outcome.deleted);
                     set_collector_status(
                         &app,
                         "collecting",
@@ -1586,10 +1839,11 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
                     subscription_config = Some((config.port, config.management_secret_key.clone()));
                     set_collector_status(&app, "collecting", "已连接 CPA usage 实时订阅", None);
                     match backfill_usage_queue(&root, &config, &mut redis_queue).await {
-                        Ok(saved) => {
+                        Ok(outcome) => {
+                            let saved = outcome.inserted;
                             publish_collected_records(
                                 &app,
-                                saved,
+                                outcome,
                                 &format!("实时订阅已连接，补录 {saved} 条队列记录"),
                             );
                             retry_seconds = 1;
@@ -1634,10 +1888,11 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
                         payload,
                         &config,
                     ) {
-                        Ok(saved) => {
+                        Ok(outcome) => {
+                            let saved = outcome.inserted;
                             publish_collected_records(
                                 &app,
-                                saved,
+                                outcome,
                                 &format!("实时订阅已保存 {saved} 条新记录"),
                             );
                             retry_seconds = 1;
@@ -1692,10 +1947,11 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
                     batch.messages,
                     &config,
                 ) {
-                    Ok(saved) => {
+                    Ok(outcome) => {
+                        let saved = outcome.inserted;
                         publish_collected_records(
                             &app,
-                            saved,
+                            outcome,
                             &format!("{source_label}已保存 {saved} 条新记录"),
                         );
                         retry_seconds = 1;
@@ -1720,27 +1976,27 @@ async fn backfill_usage_queue(
     root: &Path,
     config: &GuiConfigFile,
     redis_queue: &mut RedisUsageQueueSource,
-) -> Result<usize, String> {
-    let mut saved_total = 0_usize;
+) -> Result<UsagePersistOutcome, String> {
+    let mut outcome = UsagePersistOutcome::default();
     loop {
         match redis_queue.pull(config).await {
             Ok(batch) => {
                 let fetched = batch.messages.len();
                 if fetched == 0 {
-                    return Ok(saved_total);
+                    return Ok(outcome);
                 }
-                saved_total = saved_total.saturating_add(persist_raw_usage_messages_from_source(
+                outcome.add(persist_raw_usage_messages_from_source(
                     root,
                     &batch.source,
                     batch.messages,
                     config,
                 )?);
                 if fetched < USAGE_QUEUE_BATCH_SIZE {
-                    return Ok(saved_total);
+                    return Ok(outcome);
                 }
             }
             Err(redis_error) => {
-                return backfill_http_usage_queue(root, config, saved_total)
+                return backfill_http_usage_queue(root, config, outcome)
                     .await
                     .map_err(|http_error| {
                         format!("补录队列失败（Redis: {redis_error}; HTTP: {http_error}）")
@@ -1753,31 +2009,32 @@ async fn backfill_usage_queue(
 async fn backfill_http_usage_queue(
     root: &Path,
     config: &GuiConfigFile,
-    mut saved_total: usize,
-) -> Result<usize, String> {
+    mut outcome: UsagePersistOutcome,
+) -> Result<UsagePersistOutcome, String> {
     loop {
         let messages = fetch_usage_queue_raw(config).await?;
         let fetched = messages.len();
         if fetched == 0 {
-            return Ok(saved_total);
+            return Ok(outcome);
         }
-        saved_total = saved_total.saturating_add(persist_raw_usage_messages_from_source(
+        outcome.add(persist_raw_usage_messages_from_source(
             root,
             HTTP_USAGE_QUEUE_SOURCE,
             messages,
             config,
         )?);
         if fetched < USAGE_QUEUE_BATCH_SIZE {
-            return Ok(saved_total);
+            return Ok(outcome);
         }
     }
 }
 
-fn publish_collected_records(app: &tauri::AppHandle, saved: usize, message: &str) {
+fn publish_collected_records(app: &tauri::AppHandle, outcome: UsagePersistOutcome, message: &str) {
+    let saved = outcome.inserted;
     let collected_at = Local::now().to_rfc3339();
-    if saved > 0 {
+    if saved > 0 || outcome.deleted > 0 {
         app.state::<UsageCollectorState>()
-            .increment_total_records(saved);
+            .apply_record_changes(saved, outcome.deleted);
     }
     set_collector_status(
         app,
@@ -1805,9 +2062,9 @@ pub(crate) fn persist_local_usage_event(
     }
     let config = app.state::<GuiConfigState>().snapshot()?;
     let root = usage_root_dir()?;
-    let saved = persist_queue_items_from_source(&root, collector_source, vec![value], &config)?;
-    publish_collected_records(app, saved, "已保存桌面健康检测使用记录");
-    Ok(saved)
+    let outcome = persist_queue_items_from_source(&root, collector_source, vec![value], &config)?;
+    publish_collected_records(app, outcome, "已保存桌面健康检测使用记录");
+    Ok(outcome.inserted)
 }
 
 async fn wait_or_cancel(token: &CancellationToken, seconds: u64) {
@@ -1909,7 +2166,7 @@ fn persist_queue_items_from_source(
     source: &str,
     items: Vec<Value>,
     config: &GuiConfigFile,
-) -> Result<usize, String> {
+) -> Result<UsagePersistOutcome, String> {
     let mut connection = open_usage_database_at(root)?;
     enqueue_usage_queue_items(&mut connection, source, items)?;
     process_usage_inbox(&mut connection, config)
@@ -2009,7 +2266,7 @@ fn persist_raw_usage_message_from_source(
     source: &str,
     raw_message: String,
     config: &GuiConfigFile,
-) -> Result<usize, String> {
+) -> Result<UsagePersistOutcome, String> {
     persist_raw_usage_messages_from_source(root, source, vec![raw_message], config)
 }
 
@@ -2018,7 +2275,7 @@ fn persist_raw_usage_messages_from_source(
     source: &str,
     raw_messages: Vec<String>,
     config: &GuiConfigFile,
-) -> Result<usize, String> {
+) -> Result<UsagePersistOutcome, String> {
     let mut connection = open_usage_database_at(root)?;
     enqueue_usage_raw_messages(&mut connection, source, raw_messages)?;
     process_usage_inbox(&mut connection, config)
@@ -2027,10 +2284,10 @@ fn persist_raw_usage_messages_from_source(
 fn process_usage_inbox(
     connection: &mut Connection,
     config: &GuiConfigFile,
-) -> Result<usize, String> {
+) -> Result<UsagePersistOutcome, String> {
     let rows = list_processable_usage_inbox(connection, USAGE_INBOX_PROCESS_LIMIT)?;
     if rows.is_empty() {
-        return Ok(0);
+        return Ok(UsagePersistOutcome::default());
     }
     let mut valid_rows = Vec::with_capacity(rows.len());
     let mut records = Vec::with_capacity(rows.len());
@@ -2048,7 +2305,10 @@ fn process_usage_inbox(
         }
     }
     if records.is_empty() {
-        return Ok(0);
+        return Ok(UsagePersistOutcome {
+            inserted: 0,
+            deleted: enforce_usage_database_limit(connection)?,
+        });
     }
 
     let persist_result = (|| -> Result<usize, String> {
@@ -2077,7 +2337,10 @@ fn process_usage_inbox(
         Ok(inserted)
     })();
     match persist_result {
-        Ok(inserted) => Ok(inserted),
+        Ok(inserted) => Ok(UsagePersistOutcome {
+            inserted,
+            deleted: enforce_usage_database_limit(connection)?,
+        }),
         Err(error) => {
             mark_usage_inbox_process_failed(connection, &valid_rows, &error)?;
             Err(error)
@@ -4067,12 +4330,15 @@ mod tests {
     }
 
     #[test]
-    fn collector_total_records_are_cached_and_incremented() {
+    fn collector_total_records_apply_insertions_and_retention_deletions() {
         let state = UsageCollectorState::default();
         state.set_total_records(40);
-        state.increment_total_records(2);
+        state.apply_record_changes(4, 2);
 
         assert_eq!(state.status().unwrap().total_records, 42);
+
+        state.apply_record_changes(0, 100);
+        assert_eq!(state.status().unwrap().total_records, 0);
     }
 
     fn test_root(name: &str) -> PathBuf {
@@ -4115,6 +4381,86 @@ mod tests {
     fn open_test_database(root: &Path) -> Connection {
         initialize_usage_storage_at(root).unwrap();
         open_usage_database_at(root).unwrap()
+    }
+
+    #[test]
+    fn usage_database_limit_defaults_to_unlimited_and_persists() {
+        let root = test_root("database-limit-persistence");
+        let connection = open_test_database(&root);
+
+        assert_eq!(load_usage_database_limit(&connection).unwrap(), 0);
+        save_usage_database_limit(&connection, 128).unwrap();
+        drop(connection);
+
+        let connection = open_usage_database_at(&root).unwrap();
+        assert_eq!(load_usage_database_limit(&connection).unwrap(), 128);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn usage_database_limit_removes_oldest_records_after_collection() {
+        let root = test_root("database-limit-retention");
+        let mut connection = open_test_database(&root);
+        save_usage_database_limit(&connection, 1).unwrap();
+
+        let payload = "x".repeat(8 * 1024);
+        let transaction = connection.transaction().unwrap();
+        for timestamp_ms in 0_i64..512 {
+            transaction
+                .execute(
+                    r#"INSERT INTO usage_events (
+                           event_key, timestamp, timestamp_ms, local_hour, model,
+                           failure_body, created_at
+                       ) VALUES (?1, ?2, ?3, '2026-01-01T00', 'retention-test', ?4, ?2)"#,
+                    params![
+                        format!("retention-{timestamp_ms}"),
+                        format!("2026-01-01T00:00:{timestamp_ms:03}Z"),
+                        timestamp_ms,
+                        payload,
+                    ],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+
+        enqueue_usage_queue_items(
+            &mut connection,
+            "retention-test",
+            vec![serde_json::json!({
+                "timestamp": "2026-09-18T12:00:00+08:00",
+                "request_id": "newest-retained-record",
+                "model": "retention-test",
+                "tokens": { "input_tokens": 1, "output_tokens": 1 }
+            })],
+        )
+        .unwrap();
+        let outcome = process_usage_inbox(&mut connection, &GuiConfigFile::default()).unwrap();
+
+        assert_eq!(outcome.inserted, 1);
+        assert!(outcome.deleted > 0);
+        let (remaining, oldest_timestamp, newest_record): (u64, i64, u64) = connection
+            .query_row(
+                r#"SELECT COUNT(*), MIN(timestamp_ms),
+                          SUM(CASE WHEN request_id = 'newest-retained-record' THEN 1 ELSE 0 END)
+                   FROM usage_events"#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert!(remaining > 0);
+        assert!(remaining < 513);
+        assert!(oldest_timestamp > 0);
+        assert_eq!(newest_record, 1);
+        assert!(usage_database_active_bytes(&connection).unwrap() <= BYTES_PER_MB);
+        assert!(usage_database_disk_bytes(&root).unwrap() <= BYTES_PER_MB);
+
+        let settings = load_usage_storage_settings(&connection, &root, outcome.deleted).unwrap();
+        assert_eq!(settings.max_database_size_mb, 1);
+        assert_eq!(settings.total_records, remaining);
+        assert_eq!(settings.deleted_records, outcome.deleted);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -4782,7 +5128,7 @@ mod tests {
             &config,
         )
         .unwrap();
-        assert_eq!(inserted, 1);
+        assert_eq!(inserted.inserted, 1);
         let connection = open_usage_database_at(&root).unwrap();
         let inbox_count = connection
             .query_row("SELECT COUNT(*) FROM usage_inbox", [], |row| {
@@ -4825,7 +5171,7 @@ mod tests {
                 row.get::<_, String>(0)
             })
             .unwrap();
-        assert_eq!(inserted, 0);
+        assert_eq!(inserted.inserted, 0);
         assert_eq!(event_count, 0);
         assert_eq!(status, "decode_failed");
         drop(connection);
@@ -4883,7 +5229,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(inserted, 2);
+        assert_eq!(inserted.inserted, 2);
         assert_eq!(events.total, 2);
         assert!(events.items.iter().all(|event| !event.failed));
         assert!(events
@@ -5225,7 +5571,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(inserted, 1);
+        assert_eq!(inserted.inserted, 1);
         assert_eq!(event_count, 1);
         assert_eq!(processed_count, 1);
         assert_eq!(failed_count, 1);
@@ -5259,7 +5605,7 @@ mod tests {
         .unwrap();
 
         let inserted = process_usage_inbox(&mut connection, &GuiConfigFile::default()).unwrap();
-        assert_eq!(inserted, 2);
+        assert_eq!(inserted.inserted, 2);
         let event_count = connection
             .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
                 row.get::<_, i64>(0)
