@@ -2,6 +2,7 @@ export function createRefreshScheduler(minIntervalMs = 1_000) {
   type Task = () => Promise<void>;
   type Completion = { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void };
   let running = false;
+  let foregroundTasks = 0;
   let completedAt = -Infinity;
   let pending: Task | null = null;
   let urgent = false;
@@ -9,7 +10,7 @@ export function createRefreshScheduler(minIntervalMs = 1_000) {
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const pump = () => {
-    if (running || !pending) return;
+    if (running || foregroundTasks > 0 || !pending) return;
     if (timer !== null) clearTimeout(timer);
     timer = null;
     const delay = urgent ? 0 : Math.max(0, minIntervalMs - (performance.now() - completedAt));
@@ -38,6 +39,22 @@ export function createRefreshScheduler(minIntervalMs = 1_000) {
   };
 
   return {
+    async runForeground(task: Task): Promise<void> {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      pending = null;
+      urgent = false;
+      completion?.resolve();
+      completion = null;
+      foregroundTasks += 1;
+      try {
+        await task();
+      } finally {
+        foregroundTasks -= 1;
+        completedAt = performance.now();
+        pump();
+      }
+    },
     schedule(task: Task, immediate = false): Promise<void> {
       pending = task;
       urgent ||= immediate;

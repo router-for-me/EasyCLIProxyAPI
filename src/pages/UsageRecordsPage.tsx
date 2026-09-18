@@ -404,6 +404,7 @@ export function UsageRecordsPage() {
   const loadData = useCallback(
     (quiet = false, immediate = !quiet) => {
       if (!quiet) setLoading(true);
+      if (!quiet) return schedulerRef.current!.runForeground(() => executeLoadData(false));
       return schedulerRef.current!.schedule(() => executeLoadData(quiet), immediate);
     },
     [executeLoadData],
