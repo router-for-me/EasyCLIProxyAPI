@@ -456,7 +456,7 @@ export const en: Record<MessageKey, string> = {
   'usage.token.reasoning': 'Reasoning',
   'usage.token.cacheRead': 'Cache Read',
   'usage.token.cacheCreation': 'Cache Creation',
-  'usage.trend.aria': 'Token trend chart. Hover or use arrow keys to inspect each bucket and model.',
+  'usage.trend.aria': 'Stacked token bar chart. Hover or use arrow keys to inspect each time interval and model.',
   'usage.trend.bucket.30m': 'Shown every 30 minutes',
   'usage.trend.bucket.hour': 'Shown by hour',
   'usage.trend.bucket.3h': 'Grouped every 3 hours',

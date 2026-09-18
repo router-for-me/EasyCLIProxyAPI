@@ -28,13 +28,13 @@ import { formatUsageNumber } from '../services/usageNumber';
 import {
   OTHER_TREND_MODEL_KEY,
   buildUsageTrendSeries,
+  findTrendPointIndex,
   formatTrendAxisLabel,
   formatTrendRangeLabel,
   niceCeiling,
-  selectTrendAxisLabels,
   trendAxisTicks,
-  smoothAreaPath,
-  smoothLinePath,
+  trendTimeAxisTicks,
+  trendTimePosition,
   stackModelTokens,
   type UsageTimelinePoint,
 } from '../services/usageTrend';
@@ -882,7 +882,7 @@ function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pi
             <strong>{t('usage.trend.title')}</strong>
           </div>
         </div>
-        {overview.timeline.length ? <UsageTrend points={overview.timeline} range={range} /> : <UsageEmpty />}
+        <UsageTrend points={overview.timeline} range={range} />
       </section>
       <section className="panel usage-health-panel">
         <div className="usage-section-heading">
@@ -938,6 +938,8 @@ function UsageTrend({
   const { t, locale } = useI18n();
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [hiddenModels, setHiddenModels] = useState<string[]>([]);
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [plotWidth, setPlotWidth] = useState(800);
 
   const series = useMemo(
     () => buildUsageTrendSeries(points, range),
@@ -945,11 +947,6 @@ function UsageTrend({
   );
 
   const hiddenKeys = useMemo(() => new Set(hiddenModels), [hiddenModels]);
-  const visibleModels = useMemo(
-    () => series.models.filter((model) => !hiddenKeys.has(model.key)),
-    [hiddenKeys, series.models],
-  );
-
   useEffect(() => {
     setHoveredIndex(null);
     setHiddenModels((current) => current.filter((key) => series.models.some((model) => model.key === key)));
@@ -957,24 +954,17 @@ function UsageTrend({
 
   const count = series.points.length;
 
-  const chart = useMemo(() => {
-    if (count === 0) {
-      return {
-        maxTokens: 1,
-        stacked: [],
-        areaLayers: [],
-        totalLinePath: '',
-        yTicks: [0, 0.25, 0.5, 0.75, 1],
-        labelIndexes: [],
-        compactSameDay: false,
-        baseY: 146,
-        PT: 8,
-        UH: 138,
-      };
-    }
+  useEffect(() => {
+    const plot = plotRef.current;
+    if (!plot) return;
+    const observer = new ResizeObserver(([entry]) => setPlotWidth(entry.contentRect.width));
+    observer.observe(plot);
+    return () => observer.disconnect();
+  }, [count > 0]);
 
+  const chart = useMemo(() => {
     const stacked = series.points.map((point) => stackModelTokens(point, series.models, hiddenKeys));
-    const maxTokens = niceCeiling(Math.max(1, ...stacked.map((layers) => layers[layers.length - 1]?.y1 ?? 0)));
+    const maxTokens = niceCeiling(stacked.reduce((max, layers) => Math.max(max, layers[layers.length - 1]?.y1 ?? 0), 1));
 
     const VIEWBOX_W = 1000;
     const PT = 8;
@@ -983,74 +973,44 @@ function UsageTrend({
     const baseY = PT + UH;
 
     const calcY = (val: number) => (maxTokens > 0 ? baseY - (val / maxTokens) * UH : baseY);
-    const calcX = (idx: number) => (count <= 1 ? VIEWBOX_W / 2 : (idx / (count - 1)) * VIEWBOX_W);
-
-    const areaLayers = visibleModels.map((model) => {
-      let topPoints: { x: number; y: number }[];
-      let bottomPoints: { x: number; y: number }[];
-
-      if (count <= 1) {
-        const y1 = calcY(stacked[0]?.find((l) => l.key === model.key)?.y1 ?? 0);
-        const y0 = calcY(stacked[0]?.find((l) => l.key === model.key)?.y0 ?? 0);
-        topPoints = [{ x: 0, y: y1 }, { x: VIEWBOX_W, y: y1 }];
-        bottomPoints = [{ x: 0, y: y0 }, { x: VIEWBOX_W, y: y0 }];
-      } else {
-        topPoints = series.points.map((_, idx) => ({
-          x: calcX(idx),
-          y: calcY(stacked[idx]?.find((l) => l.key === model.key)?.y1 ?? 0),
-        }));
-        bottomPoints = series.points.map((_, idx) => ({
-          x: calcX(idx),
-          y: calcY(stacked[idx]?.find((l) => l.key === model.key)?.y0 ?? 0),
-        }));
-      }
-
-      const areaPath = smoothAreaPath(topPoints, bottomPoints);
-      const linePath = smoothLinePath(topPoints);
-      const hasTokens = stacked.some((layers) => (layers.find((l) => l.key === model.key)?.tokens ?? 0) > 0);
-
+    const start = series.points[0]?.start ?? new Date(0);
+    const end = series.points[count - 1]?.end ?? start;
+    const bars = series.points.map((point, index) => {
+      const left = trendTimePosition(point.start, start, end) * VIEWBOX_W;
+      const right = trendTimePosition(point.end, start, end) * VIEWBOX_W;
+      const gap = Math.min((right - left) * 0.2, 6);
       return {
-        model,
-        areaPath,
-        linePath,
-        hasTokens,
+        x: left + gap / 2,
+        width: right - left - gap,
+        center: (left + right) / 2,
+        layers: stacked[index].filter((layer) => layer.tokens > 0).map((layer) => ({
+          ...layer,
+          y: calcY(layer.y1),
+          height: (layer.tokens / maxTokens) * UH,
+          color: series.models.find((model) => model.key === layer.key)?.color,
+        })),
       };
     });
-
-    let totalPoints: { x: number; y: number }[];
-    if (count <= 1) {
-      const topY = calcY(stacked[0]?.[stacked[0]?.length - 1]?.y1 ?? 0);
-      totalPoints = [{ x: 0, y: topY }, { x: VIEWBOX_W, y: topY }];
-    } else {
-      totalPoints = series.points.map((_, idx) => ({
-        x: calcX(idx),
-        y: calcY(stacked[idx]?.[stacked[idx]?.length - 1]?.y1 ?? 0),
-      }));
-    }
-    const totalLinePath = smoothLinePath(totalPoints);
     const yTicks = trendAxisTicks(maxTokens);
-
-    const labelIndexes = selectTrendAxisLabels(
-      count,
-      count > 48 ? 5 : count > 24 ? 6 : 7,
-    );
-    const compactSameDay =
-      count > 1 &&
-      series.points[0].start.toDateString() === series.points[count - 1].start.toDateString();
+    const compactSameDay = start.toDateString() === end.toDateString();
+    const timeTicks = trendTimeAxisTicks(start, end, plotWidth, compactSameDay ? 64 : 112);
+    const showAxisTime = timeTicks.length > 1 && timeTicks[1].getTime() - timeTicks[0].getTime() < 24 * 60 * 60 * 1000;
 
     return {
       maxTokens,
       stacked,
-      areaLayers,
-      totalLinePath,
+      bars,
+      start,
+      end,
       yTicks,
-      labelIndexes,
+      timeTicks,
       compactSameDay,
+      showAxisTime,
       baseY,
       PT,
       UH,
     };
-  }, [count, hiddenKeys, series, visibleModels]);
+  }, [count, hiddenKeys, series, plotWidth]);
 
   if (count === 0) {
     return <UsageEmpty />;
@@ -1065,7 +1025,8 @@ function UsageTrend({
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0 || count === 0) return;
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const idx = Math.round(ratio * (count - 1));
+    const time = new Date(chart.start.getTime() + ratio * (chart.end.getTime() - chart.start.getTime()));
+    const idx = findTrendPointIndex(series.points, time);
     setHoveredIndex(idx);
   };
 
@@ -1094,8 +1055,8 @@ function UsageTrend({
 
   const active = hoveredIndex != null && hoveredIndex >= 0 && hoveredIndex < count ? series.points[hoveredIndex] : null;
   const activeStacked = hoveredIndex != null && chart.stacked[hoveredIndex] ? chart.stacked[hoveredIndex] : [];
-  const activePercent = count <= 1 ? 50 : ((hoveredIndex ?? 0) / (count - 1)) * 100;
-  const activeViewboxX = count <= 1 ? 500 : ((hoveredIndex ?? 0) / (count - 1)) * 1000;
+  const activeViewboxX = chart.bars[hoveredIndex ?? 0]?.center ?? 0;
+  const activePercent = activeViewboxX / 10;
   const activeLayers = [...activeStacked]
     .filter((l) => l.tokens > 0)
     .sort((a, b) => b.tokens - a.tokens);
@@ -1141,12 +1102,15 @@ function UsageTrend({
 
       <div className="usage-trend-chart">
         <div className="usage-trend-y-axis" aria-hidden="true">
-          {[...chart.yTicks].reverse().map((tick, index) => (
-            <span key={`y-${tick}-${index}`}>{compactNumber(tick)}</span>
+          {chart.yTicks.map((tick) => (
+            <span key={tick} style={{ top: `${((chart.baseY - (tick / chart.maxTokens) * chart.UH) / 154) * 100}%` }}>
+              {compactNumber(tick)}
+            </span>
           ))}
         </div>
 
         <div
+          ref={plotRef}
           className="usage-trend-plot"
           tabIndex={0}
           role="region"
@@ -1160,30 +1124,6 @@ function UsageTrend({
             preserveAspectRatio="none"
             className="usage-trend-svg"
           >
-            <defs>
-              {visibleModels.map((model) => (
-                <linearGradient
-                  key={`grad-${model.key}`}
-                  id={`trend-grad-${model.key.replace(/[^a-zA-Z0-9_-]+/g, '-')}`}
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
-                  <stop
-                    offset="0%"
-                    stopColor={model.color}
-                    stopOpacity={0.28}
-                  />
-                  <stop
-                    offset="100%"
-                    stopColor={model.color}
-                    stopOpacity={0.08}
-                  />
-                </linearGradient>
-              ))}
-            </defs>
-
             {chart.yTicks.map((tick) => {
               const y = chart.baseY - (tick / chart.maxTokens) * chart.UH;
               const isBase = tick === 0;
@@ -1199,41 +1139,20 @@ function UsageTrend({
               );
             })}
 
-            {chart.areaLayers.map((layer) => {
-              if (!layer.hasTokens || !layer.areaPath) return null;
-              return (
-                <g key={layer.model.key} className="usage-trend-layer">
-                  <path
-                    d={layer.areaPath}
-                    fill={`url(#trend-grad-${layer.model.key.replace(/[^a-zA-Z0-9_-]+/g, '-')})`}
-                    className="usage-trend-area"
+            {chart.bars.map((bar, index) => (
+              <g key={series.points[index].hour} className={`usage-trend-bar${index === hoveredIndex ? ' is-active' : ''}`}>
+                {bar.layers.map((layer) => (
+                  <rect
+                    key={layer.key}
+                    x={bar.x}
+                    y={layer.y}
+                    width={bar.width}
+                    height={layer.height}
+                    fill={layer.color}
                   />
-                  <path
-                    d={layer.linePath}
-                    fill="none"
-                    stroke={layer.model.color}
-                    strokeWidth={1.4}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    vectorEffect="non-scaling-stroke"
-                    className="usage-trend-line"
-                  />
-                </g>
-              );
-            })}
-
-            {chart.totalLinePath ? (
-              <path
-                d={chart.totalLinePath}
-                fill="none"
-                stroke="var(--theme-3f6f98)"
-                strokeWidth="1.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                vectorEffect="non-scaling-stroke"
-                className="usage-trend-total-line"
-              />
-            ) : null}
+                ))}
+              </g>
+            ))}
 
             {active && hoveredIndex != null ? (
               <g className="usage-trend-active-mark">
@@ -1244,23 +1163,6 @@ function UsageTrend({
                   y2={chart.baseY}
                   className="usage-trend-cursor-line"
                 />
-                {activeLayers.map((layer) => {
-                  const model = series.models.find((m) => m.key === layer.key);
-                  const dotY = chart.baseY - (layer.y1 / chart.maxTokens) * chart.UH;
-                  return (
-                    <circle
-                      key={layer.key}
-                      cx={activeViewboxX}
-                      cy={dotY}
-                      r="3.5"
-                      fill="var(--theme-fffdf8)"
-                      stroke={model?.color ?? '#3b82f6'}
-                      strokeWidth="2"
-                      vectorEffect="non-scaling-stroke"
-                      className="usage-trend-dot"
-                    />
-                  );
-                })}
               </g>
             ) : null}
           </svg>
@@ -1299,18 +1201,20 @@ function UsageTrend({
         </div>
 
         <div className="usage-trend-x-axis" aria-hidden="true">
-          {chart.labelIndexes.map((idx) => {
-            const point = series.points[idx];
-            if (!point) return null;
-            const left = count <= 1 ? 50 : (idx / (count - 1)) * 100;
-            const posClass = idx === 0 ? 'is-start' : idx === count - 1 ? 'is-end' : 'is-mid';
+          {chart.timeTicks.map((date, index) => {
+            const left = trendTimePosition(date, chart.start, chart.end) * 100;
+            const posClass = index === 0 ? 'is-start' : index === chart.timeTicks.length - 1 ? 'is-end' : 'is-mid';
             return (
               <span
-                key={`axis-${point.hour}-${idx}`}
+                key={date.getTime()}
                 className={posClass}
                 style={{ left: `${left}%` }}
+                title={date.toLocaleString(locale)}
               >
-                {formatTrendAxisLabel(point, series.bucket, locale, { compactSameDay: chart.compactSameDay })}
+                {formatTrendAxisLabel({ start: date }, series.bucket, locale, {
+                  compactSameDay: chart.compactSameDay,
+                  showTime: chart.showAxisTime,
+                })}
               </span>
             );
           })}

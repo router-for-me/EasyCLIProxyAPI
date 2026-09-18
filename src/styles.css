@@ -8313,18 +8313,20 @@ textarea:focus-visible {
 }
 
 .usage-trend-y-axis {
+  position: relative;
   grid-column: 1;
   grid-row: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-end;
-  padding: 2px 0;
   color: var(--theme-8a847c);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   user-select: none;
+}
+
+.usage-trend-y-axis span {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
 }
 
 .usage-trend-plot {
@@ -8363,17 +8365,13 @@ textarea:focus-visible {
   vector-effect: non-scaling-stroke;
 }
 
-.usage-trend-area {
-  transition: opacity 0.2s ease;
+.usage-trend-bar {
+  opacity: 0.8;
+  transition: opacity 0.15s ease;
 }
 
-.usage-trend-line {
-  vector-effect: non-scaling-stroke;
-}
-
-.usage-trend-total-line {
-  opacity: 0.5;
-  vector-effect: non-scaling-stroke;
+.usage-trend-bar.is-active {
+  opacity: 1;
 }
 
 .usage-trend-cursor-line {
@@ -8381,10 +8379,6 @@ textarea:focus-visible {
   stroke-dasharray: 3 2;
   stroke-width: 1;
   opacity: 0.65;
-  vector-effect: non-scaling-stroke;
-}
-
-.usage-trend-dot {
   vector-effect: non-scaling-stroke;
 }
 

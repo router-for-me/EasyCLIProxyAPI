@@ -468,7 +468,7 @@ export const jaOverrides = {
   'usage.token.reasoning': '推論',
   'usage.token.cacheRead': 'キャッシュ読み取り',
   'usage.token.cacheCreation': 'キャッシュ作成',
-  'usage.trend.aria': 'Token の推移図。マウスまたは矢印キーで各時間帯とモデルの内訳を確認できます。',
+  'usage.trend.aria': 'Token の積み上げ棒グラフ。マウスまたは矢印キーで各時間帯とモデルの内訳を確認できます。',
   'usage.trend.bucket.30m': '30 分ごとに表示',
   'usage.trend.bucket.hour': '1 時間ごとに表示',
   'usage.trend.bucket.3h': '3 時間ごとに集計',

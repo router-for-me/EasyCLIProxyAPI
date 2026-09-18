@@ -455,7 +455,7 @@ export const zhCN = {
   'usage.token.reasoning': '思考',
   'usage.token.cacheRead': '缓存读取',
   'usage.token.cacheCreation': '缓存创建',
-  'usage.trend.aria': 'Token 趋势图，可悬停或用方向键查看各时段和模型明细',
+  'usage.trend.aria': 'Token 堆叠柱形图，可悬停或用方向键查看各时段和模型明细',
   'usage.trend.bucket.30m': '按 30 分钟展示',
   'usage.trend.bucket.hour': '按小时展示',
   'usage.trend.bucket.3h': '按 3 小时聚合',

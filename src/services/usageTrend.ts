@@ -50,9 +50,6 @@ export type PreparedTrendSeries = {
   models: PreparedTrendModel[];
 };
 
-export type ChartPoint = { x: number; y: number };
-
-const MAX_POINTS = 96;
 const MAX_VISIBLE_MODELS = 6;
 const OTHER_MODEL_KEY = '__other__';
 const HOUR_MS = 60 * 60 * 1000;
@@ -183,33 +180,14 @@ export function endOfBucket(start: Date, bucket: TrendBucket): Date {
   return addBucket(start, bucket);
 }
 
-function estimateBucketCount(start: Date, end: Date, bucket: TrendBucket): number {
-  if (end.getTime() <= start.getTime()) return 1;
-  if (bucket === '30m') {
-    return Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (HOUR_MS / 2)));
-  }
-  if (bucket === 'hour') {
-    return Math.max(1, Math.ceil((end.getTime() - start.getTime()) / HOUR_MS));
-  }
-  if (bucket === '3h') {
-    return Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (3 * HOUR_MS)));
-  }
-  let count = 0;
-  let cursor = startOfBucket(start, bucket);
-  const limit = startOfBucket(end, bucket);
-  while (cursor.getTime() <= limit.getTime() && count <= MAX_POINTS + 2) {
-    count += 1;
-    cursor = addBucket(cursor, bucket);
-  }
-  return Math.max(1, count);
-}
-
-const BUCKET_ORDER: TrendBucket[] = ['30m', 'hour', '3h', 'day', 'week', 'month', 'year'];
-
 export function chooseTrendBucket(start: Date, end: Date): TrendBucket {
-  for (const bucket of BUCKET_ORDER) {
-    if (estimateBucketCount(start, end, bucket) <= MAX_POINTS) return bucket;
-  }
+  const hours = Math.max(0, end.getTime() - start.getTime()) / HOUR_MS;
+  if (hours <= 6) return '30m';
+  if (hours <= 48) return 'hour';
+  if (hours <= 72) return '3h';
+  if (hours <= 24 * 90) return 'day';
+  if (hours <= 24 * 366 * 2) return 'week';
+  if (hours <= 24 * 366 * 10) return 'month';
   return 'year';
 }
 
@@ -276,16 +254,38 @@ export function trendAxisTicks(max: number, targetCount = 5): number[] {
   return ticks;
 }
 
-export function selectTrendAxisLabels(count: number, maxLabels = 8): number[] {
-  if (count <= 0) return [];
-  if (count <= maxLabels) return Array.from({ length: count }, (_, index) => index);
-  const last = count - 1;
-  const indexes = new Set<number>([0, last]);
-  const inner = maxLabels - 2;
-  for (let step = 1; step <= inner; step += 1) {
-    indexes.add(Math.round((last * step) / (inner + 1)));
+export function trendTimePosition(date: Date, start: Date, end: Date): number {
+  const span = end.getTime() - start.getTime();
+  if (span <= 0) return 0;
+  return Math.max(0, Math.min(1, (date.getTime() - start.getTime()) / span));
+}
+
+export function trendTimeAxisTicks(start: Date, end: Date, width: number, labelWidth = 88): Date[] {
+  const span = end.getTime() - start.getTime();
+  if (span <= 0) return [start];
+  // Choose a readable time interval from the selected duration and available space.
+  const minStep = span * labelWidth / Math.max(labelWidth, width);
+  const steps = [1 / 60, 5 / 60, 15 / 60, 0.5, 1, 2, 3, 6, 12, 24, 48, 72, 168, 336, 720, 2160, 4380, 8760];
+  const step = steps.map((hours) => hours * HOUR_MS).find((value) => value >= minStep)
+    ?? niceCeiling(minStep / (8760 * HOUR_MS)) * 8760 * HOUR_MS;
+  const ticks = [start];
+  const monthStep = step >= 720 * HOUR_MS ? Math.max(1, Math.round(step / (730 * HOUR_MS))) : 0;
+  let cursor = monthStep ? startOfBucket(start, 'month') : start;
+  while (true) {
+    cursor = cloneDate(cursor);
+    if (monthStep) cursor.setMonth(cursor.getMonth() + monthStep);
+    else cursor.setTime(cursor.getTime() + step);
+    if (cursor.getTime() > end.getTime() - minStep) break;
+    if (cursor.getTime() >= start.getTime() + minStep) ticks.push(cursor);
   }
-  return [...indexes].sort((left, right) => left - right);
+  ticks.push(end);
+  return ticks;
+}
+
+export function findTrendPointIndex(points: PreparedTrendPoint[], time: Date): number {
+  if (!points.length) return -1;
+  const index = points.findIndex((point) => time.getTime() < point.end.getTime());
+  return index < 0 ? points.length - 1 : index;
 }
 
 function sameCalendarDay(left: Date, right: Date): boolean {
@@ -313,12 +313,12 @@ function formatYear(date: Date, locale: string): string {
 }
 
 export function formatTrendAxisLabel(
-  point: PreparedTrendPoint,
+  point: Pick<PreparedTrendPoint, 'start'>,
   bucket: TrendBucket,
   locale: string,
-  options?: { compactSameDay?: boolean },
+  options?: { compactSameDay?: boolean; showTime?: boolean },
 ): string {
-  if (bucket === '30m' || bucket === 'hour' || bucket === '3h') {
+  if (options?.showTime || bucket === '30m' || bucket === 'hour' || bucket === '3h') {
     if (options?.compactSameDay) return formatTime(point.start, locale);
     return `${formatMonthDay(point.start, locale)} ${formatTime(point.start, locale)}`;
   }
@@ -329,15 +329,17 @@ export function formatTrendAxisLabel(
 }
 
 export function formatTrendRangeLabel(
-  point: PreparedTrendPoint,
+  point: Pick<PreparedTrendPoint, 'start' | 'end'>,
   locale: string,
   bucket: TrendBucket = 'hour',
 ): string {
   const start = point.start;
-  const end = new Date(Math.max(start.getTime(), point.end.getTime() - 1));
-  if (bucket === 'year') return formatYear(start, locale);
-  if (bucket === 'month') return formatYearMonth(start, locale);
-  if (bucket === 'day') {
+  const end = point.end;
+  const completeBucket = start.getTime() === startOfBucket(start, bucket).getTime()
+    && end.getTime() === endOfBucket(start, bucket).getTime();
+  if (bucket === 'year' && completeBucket) return formatYear(start, locale);
+  if (bucket === 'month' && completeBucket) return formatYearMonth(start, locale);
+  if (bucket === 'day' && completeBucket) {
     const withYear = start.getFullYear() !== new Date().getFullYear();
     return new Intl.DateTimeFormat(locale, {
       year: withYear ? 'numeric' : undefined,
@@ -345,14 +347,15 @@ export function formatTrendRangeLabel(
       day: 'numeric',
     }).format(start);
   }
-  if (bucket === 'week') {
-    const withYear = start.getFullYear() !== end.getFullYear();
+  if (bucket === 'week' && completeBucket) {
+    const lastDay = new Date(end.getTime() - 1);
+    const withYear = start.getFullYear() !== lastDay.getFullYear();
     const formatter = new Intl.DateTimeFormat(locale, {
       year: withYear ? 'numeric' : undefined,
       month: 'numeric',
       day: 'numeric',
     });
-    return `${formatter.format(start)}-${formatter.format(end)}`;
+    return `${formatter.format(start)}-${formatter.format(lastDay)}`;
   }
   const sameDay = sameCalendarDay(start, end);
   const dayPart = formatMonthDay(start, locale);
@@ -371,10 +374,16 @@ export function buildUsageTrendSeries(
   now = new Date(),
 ): PreparedTrendSeries {
   const labels = new Map<string, string>();
+  const rangeStart = parseRangeDate(range?.start);
+  const rangeEnd = parseRangeDate(range?.end);
   const parsed = points
     .map((point) => {
       const start = parseLocalHourKey(point.hour);
       if (!start) return null;
+      // The backend filters requests before grouping them into half-hour slots.
+      // Keep the partial slot overlapping the start, and the inclusive end slot.
+      if (rangeStart && addBucket(start, '30m').getTime() <= rangeStart.getTime()) return null;
+      if (rangeEnd && start.getTime() > rangeEnd.getTime()) return null;
       const models: Record<string, number> = {};
       for (const model of point.models ?? []) {
         const key = (model.key || model.label || '').trim() || 'unknown';
@@ -409,19 +418,17 @@ export function buildUsageTrendSeries(
     }
   }
 
-  if (parsed.length === 0) {
+  if (parsed.length === 0 && !rangeStart) {
     return { bucket: '30m', points: [], totals, peak: null, models: [] };
   }
 
-  const rangeStart = parseRangeDate(range?.start);
-  const rangeEnd = parseRangeDate(range?.end);
-  const first = parsed[0].start;
-  const last = parsed[parsed.length - 1].start;
-  const spanStart = rangeStart
-    ? new Date(Math.min(rangeStart.getTime(), first.getTime()))
-    : first;
-  const spanEndSource = rangeEnd ?? (rangeStart ? now : new Date(last.getTime() + HOUR_MS / 2));
-  const spanEnd = new Date(Math.max(spanEndSource.getTime(), last.getTime() + HOUR_MS / 2));
+  const first = parsed[0]?.start ?? rangeStart!;
+  const last = parsed[parsed.length - 1]?.start ?? first;
+  const spanStart = rangeStart ?? first;
+  const spanEnd = rangeEnd ?? (rangeStart ? now : addBucket(last, '30m'));
+  if (spanEnd.getTime() <= spanStart.getTime()) {
+    return { bucket: '30m', points: [], totals: emptyTotals(), peak: null, models: [] };
+  }
 
   const bucket = chooseTrendBucket(spanStart, spanEnd);
   const seriesStart = startOfBucket(spanStart, bucket);
@@ -429,16 +436,15 @@ export function buildUsageTrendSeries(
 
   const buckets = new Map<number, PreparedTrendPoint>();
   let cursor = cloneDate(seriesStart);
-  let guard = 0;
-  while (cursor.getTime() <= seriesEnd.getTime() && guard <= 400) {
+  while (cursor.getTime() <= seriesEnd.getTime()) {
     buckets.set(cursor.getTime(), emptyPoint(cloneDate(cursor), bucket));
     cursor = addBucket(cursor, bucket);
-    guard += 1;
   }
 
   for (const point of parsed) {
-    const key = startOfBucket(point.start, bucket).getTime();
-    const current = buckets.get(key) ?? emptyPoint(startOfBucket(point.start, bucket), bucket);
+    const time = new Date(Math.max(spanStart.getTime(), Math.min(point.start.getTime(), spanEnd.getTime() - 1)));
+    const key = startOfBucket(time, bucket).getTime();
+    const current = buckets.get(key)!;
     current.requests += point.requests;
     current.success += point.success;
     current.failure += point.failure;
@@ -450,7 +456,11 @@ export function buildUsageTrendSeries(
     buckets.set(key, current);
   }
 
-  const series = [...buckets.values()].sort((left, right) => left.start.getTime() - right.start.getTime());
+  const series = [...buckets.values()].map((point) => ({
+    ...point,
+    start: new Date(Math.max(point.start.getTime(), spanStart.getTime())),
+    end: new Date(Math.min(point.end.getTime(), spanEnd.getTime())),
+  }));
   const ranked = [...modelTotals.entries()]
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
   const visible = ranked.slice(0, MAX_VISIBLE_MODELS);
@@ -494,62 +504,6 @@ export function stackModelTokens(
     cursor += tokens;
     return { key: model.key, tokens, y0, y1: cursor };
   });
-}
-
-function monotoneTangents(points: ChartPoint[]): number[] {
-  const count = points.length;
-  const delta = Array.from({ length: Math.max(0, count - 1) }, () => 0);
-  const tangent = Array.from({ length: count }, () => 0);
-  for (let index = 0; index < count - 1; index += 1) {
-    const dx = points[index + 1].x - points[index].x;
-    delta[index] = dx === 0 ? 0 : (points[index + 1].y - points[index].y) / dx;
-  }
-  if (count > 0) tangent[0] = delta[0] ?? 0;
-  if (count > 1) tangent[count - 1] = delta[count - 2] ?? 0;
-  for (let index = 1; index < count - 1; index += 1) {
-    tangent[index] = delta[index - 1] * delta[index] <= 0 ? 0 : (delta[index - 1] + delta[index]) / 2;
-  }
-  for (let index = 0; index < count - 1; index += 1) {
-    if (delta[index] === 0) {
-      tangent[index] = 0;
-      tangent[index + 1] = 0;
-      continue;
-    }
-    const alpha = tangent[index] / delta[index];
-    const beta = tangent[index + 1] / delta[index];
-    const square = alpha * alpha + beta * beta;
-    if (square > 9) {
-      const scale = 3 / Math.sqrt(square);
-      tangent[index] = scale * alpha * delta[index];
-      tangent[index + 1] = scale * beta * delta[index];
-    }
-  }
-  return tangent;
-}
-
-export function smoothLinePath(points: ChartPoint[]): string {
-  if (points.length === 0) return '';
-  if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
-  if (points.length === 2) {
-    return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)} L ${points[1].x.toFixed(2)} ${points[1].y.toFixed(2)}`;
-  }
-  const tangent = monotoneTangents(points);
-  let path = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const start = points[index];
-    const end = points[index + 1];
-    const dx = (end.x - start.x) / 3;
-    path += ` C ${(start.x + dx).toFixed(2)} ${(start.y + tangent[index] * dx).toFixed(2)} ${(end.x - dx).toFixed(2)} ${(end.y - tangent[index + 1] * dx).toFixed(2)} ${end.x.toFixed(2)} ${end.y.toFixed(2)}`;
-  }
-  return path;
-}
-
-export function smoothAreaPath(top: ChartPoint[], bottom: ChartPoint[]): string {
-  if (!top.length || top.length !== bottom.length) return '';
-  const topPath = smoothLinePath(top);
-  const bottomPath = smoothLinePath([...bottom].reverse());
-  if (!topPath || !bottomPath) return '';
-  return `${topPath} ${bottomPath.replace(/^M /, 'L ')} Z`;
 }
 
 export const OTHER_TREND_MODEL_KEY = OTHER_MODEL_KEY;
