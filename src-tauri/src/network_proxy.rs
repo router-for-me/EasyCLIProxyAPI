@@ -47,6 +47,7 @@ fn parse_detected_proxy(value: &str) -> Result<String, String> {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn parse_env_proxy(name: &str, value: &str) -> Result<String, String> {
     let value = value.trim().trim_matches('\'').trim_matches('"');
     if value.is_empty() {

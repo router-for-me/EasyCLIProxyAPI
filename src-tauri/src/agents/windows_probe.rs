@@ -337,16 +337,6 @@ pub(crate) fn parse_windows_zcode_registration(kind: &str, value: &str) -> Optio
     .then_some(executable)
 }
 
-pub(crate) fn parse_windows_zcode_discovery_output(output: &str) -> Option<PathBuf> {
-    let candidates: Vec<serde_json::Value> = serde_json::from_str(output.trim()).ok()?;
-    candidates.into_iter().find_map(|candidate| {
-        parse_windows_zcode_registration(
-            candidate.get("kind")?.as_str()?,
-            candidate.get("value")?.as_str()?,
-        )
-    })
-}
-
 pub(crate) fn find_windows_registered_zcode_executable() -> Option<PathBuf> {
     collect_windows_zcode_registrations()
         .into_iter()
@@ -637,65 +627,6 @@ pub(crate) fn read_windows_claude_desktop_store_version() -> Option<String> {
     find_windows_appx_packages(&["Claude", "Anthropic.Claude"])
         .into_iter()
         .find_map(|package| normalize_detected_agent_version(&package.version))
-}
-
-pub(crate) fn parse_windows_claude_desktop_version_output(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("VERSION:")
-            .and_then(normalize_detected_agent_version)
-    })
-}
-
-pub(crate) fn parse_windows_codex_version_output(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("VERSION:")
-            .and_then(normalize_detected_agent_version)
-    })
-}
-
-pub(crate) fn parse_windows_codex_app_discovery_output(output: &str) -> Option<DesktopAppTarget> {
-    output.lines().find_map(|line| {
-        let line = line.trim();
-        if let Some(app_id) = line.strip_prefix("APPID:").map(str::trim) {
-            return (!app_id.is_empty())
-                .then(|| DesktopAppTarget::WindowsAppId(app_id.to_string()));
-        }
-        line.strip_prefix("EXE:")
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .map(|path| DesktopAppTarget::Application(PathBuf::from(path)))
-    })
-}
-
-pub(crate) fn parse_windows_codex_app_id_from_registry(output: &str) -> Option<String> {
-    const PACKAGE_MARKER: &str = "\\AppModel\\Repository\\Packages\\";
-    output.lines().find_map(|line| {
-        let line = line.trim();
-        let (_, package_full_name) = line.split_once(PACKAGE_MARKER)?;
-        if package_full_name.contains('\\') {
-            return None;
-        }
-        windows_codex_app_id_from_package_full_name(package_full_name)
-    })
-}
-
-pub(crate) fn windows_codex_app_id_from_package_full_name(
-    package_full_name: &str,
-) -> Option<String> {
-    let package_name = package_name_from_full_name(package_full_name)?;
-    if !matches!(
-        package_name,
-        "OpenAI.Codex" | "OpenAI.CodexBeta" | "OpenAI.ChatGPT"
-    ) {
-        return None;
-    }
-    let publisher_id = publisher_id_from_full_name(package_full_name)?;
-    if publisher_id == package_name {
-        return None;
-    }
-    Some(format!("{package_name}_{publisher_id}!App"))
 }
 
 pub(crate) fn find_windows_codex_app_id_via_registry() -> Option<String> {

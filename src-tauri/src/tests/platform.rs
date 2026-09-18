@@ -62,58 +62,6 @@ fn app_locale_normalization_has_a_stable_chinese_fallback() {
 
 #[cfg(target_os = "windows")]
 #[test]
-fn windows_chatgpt_discovery_parser_accepts_registered_app_and_executable() {
-    let app = parse_windows_codex_app_discovery_output("APPID:OpenAI.Codex_2p2nqsd0c76g0!App\r\n")
-        .unwrap();
-    match app {
-        DesktopAppTarget::WindowsAppId(app_id) => {
-            assert_eq!(app_id, "OpenAI.Codex_2p2nqsd0c76g0!App");
-        }
-        DesktopAppTarget::Application(_) => panic!("expected Store application ID"),
-    }
-
-    let executable = parse_windows_codex_app_discovery_output(
-        "warning\r\nEXE:C:\\Program Files\\OpenAI\\ChatGPT\\ChatGPT.exe\r\n",
-    )
-    .unwrap();
-    match executable {
-        DesktopAppTarget::Application(path) => {
-            assert_eq!(
-                path,
-                PathBuf::from(r"C:\Program Files\OpenAI\ChatGPT\ChatGPT.exe")
-            );
-        }
-        DesktopAppTarget::WindowsAppId(_) => panic!("expected desktop executable"),
-    }
-
-    assert!(parse_windows_codex_app_discovery_output("MSEdgePWA:ChatGPT\r\n").is_none());
-    assert_eq!(
-        parse_windows_claude_desktop_version_output("VERSION:1.2.3\r\n").as_deref(),
-        Some("1.2.3")
-    );
-    assert_eq!(
-        parse_windows_codex_version_output("VERSION:26.901.51231\r\n").as_deref(),
-        Some("26.901.51231")
-    );
-
-    let registry_output = r"HKEY_CURRENT_USER\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages\OpenAI.Codex_26.715.4045.0_x64__2p2nqsd0c76g0";
-    assert_eq!(
-        parse_windows_codex_app_id_from_registry(registry_output).as_deref(),
-        Some("OpenAI.Codex_2p2nqsd0c76g0!App")
-    );
-    assert_eq!(
-        windows_codex_app_id_from_package_full_name("OpenAI.ChatGPT_1.2.3.4_arm64__2p2nqsd0c76g0")
-            .as_deref(),
-        Some("OpenAI.ChatGPT_2p2nqsd0c76g0!App")
-    );
-    assert!(windows_codex_app_id_from_package_full_name(
-        "Microsoft.MicrosoftEdge_1.0.0.0_x64__8wekyb3d8bbwe"
-    )
-    .is_none());
-}
-
-#[cfg(target_os = "windows")]
-#[test]
 fn codex_owl_version_uses_app_metadata_not_package_or_runtime_version() {
     assert_eq!(
         parse_codex_owl_app_version(
