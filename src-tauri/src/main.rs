@@ -164,9 +164,11 @@ const PI_AGENT_SETTINGS_FILE: &str = "settings.json";
 const CODEX_MODEL_CATALOG_FILE: &str = "cpa-gui-model-catalog.json";
 const CODEX_OAUTH_LOGIN_REQUIRED_ERROR: &str = "CODEX_OAUTH_LOGIN_REQUIRED";
 const CLAUDE_DESKTOP_PROFILE_ID: &str = "00000000-0000-4000-8000-000000831700";
-const CLAUDE_DESKTOP_OPUS_MODEL_ID: &str = "claude-opus-5";
-const CLAUDE_DESKTOP_SONNET_MODEL_ID: &str = "claude-sonnet-4-6";
-const CLAUDE_DESKTOP_HAIKU_MODEL_ID: &str = "claude-haiku-4-5";
+const CLAUDE_DESKTOP_OPUS_MODEL_ID: &str = "claude-opus-5-cpa";
+const CLAUDE_DESKTOP_SONNET_MODEL_ID: &str = "claude-sonnet-5-cpa";
+const CLAUDE_DESKTOP_HAIKU_MODEL_ID: &str = "claude-haiku-4-5-cpa";
+const LEGACY_CLAUDE_DESKTOP_MODEL_IDS: [&str; 3] =
+    ["claude-opus-5", "claude-sonnet-4-6", "claude-haiku-4-5"];
 const MANAGED_CLAUDE_OPUS_ALIAS_DISPLAY_NAME: &str = "EasyCLIProxyAPI managed Claude Opus mapping";
 const MANAGED_CLAUDE_SONNET_ALIAS_DISPLAY_NAME: &str =
     "EasyCLIProxyAPI managed Claude Sonnet mapping";
@@ -1131,8 +1133,13 @@ struct AgentModelOption {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClaudeDesktopModelMappings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    desktop_models: Option<Vec<ClaudeDesktopModelMapping>>,
+    #[serde(default)]
     opus: String,
+    #[serde(default)]
     sonnet: String,
+    #[serde(default)]
     haiku: String,
     #[serde(default)]
     opus_1m: bool,
@@ -1148,6 +1155,41 @@ struct ClaudeDesktopModelMappings {
     disable_auto_compact: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeDesktopModelMapping {
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    alias: String,
+    #[serde(default)]
+    context_1m: bool,
+}
+
+impl ClaudeDesktopModelMapping {
+    fn model_id(&self) -> &str {
+        if self.alias.trim().is_empty() {
+            self.model.trim()
+        } else {
+            self.alias.trim()
+        }
+    }
+
+    fn source_or_alias(&self) -> &str {
+        if self.model.trim().is_empty() {
+            self.alias.trim()
+        } else {
+            self.model.trim()
+        }
+    }
+
+    fn has_mapping(&self) -> bool {
+        !self.model.trim().is_empty()
+            && !self.alias.trim().is_empty()
+            && !self.model.trim().eq_ignore_ascii_case(self.alias.trim())
+    }
+}
+
 fn default_claude_code_max_context_tokens() -> u64 {
     DEFAULT_CLAUDE_CONTEXT_WINDOW
 }
@@ -1159,6 +1201,7 @@ fn default_claude_auto_compact_pct() -> u8 {
 impl ClaudeDesktopModelMappings {
     fn all(model: &str) -> Self {
         Self {
+            desktop_models: None,
             opus: model.to_string(),
             sonnet: model.to_string(),
             haiku: model.to_string(),

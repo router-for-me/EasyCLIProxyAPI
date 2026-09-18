@@ -799,6 +799,50 @@ fn pi_template_only_writes_configuration_and_package_references() {
 }
 
 #[test]
+fn desktop_setup_repairs_legacy_names_without_changing_other_profiles() {
+    if !AgentClient::ClaudeDesktop.supported_platform() {
+        return;
+    }
+    let home = Home::new();
+    let paths = config_paths("claude-desktop", &home.0).unwrap();
+    let legacy_id = "fbd7eef8-4705-47c7-a5a7-a44b2952afe1";
+    let named_id = "d186251a-0529-4dc7-bab8-81f391d975ce";
+    let initial = serde_json::json!({
+        "appliedId": legacy_id,
+        "custom": {"keep": true},
+        "entries": [
+            {"id": legacy_id, "custom": [1, 2]},
+            {"id": named_id, "name": "My gateway", "custom": true}
+        ]
+    });
+    save(&paths[3], initial.to_string());
+    let other_profile = paths[3].parent().unwrap().join(format!("{legacy_id}.json"));
+    let other_content = "{\"inferenceGatewayBaseUrl\":\"https://example.test\"}\n";
+    save(&other_profile, other_content);
+
+    apply(&home.0, AgentClient::ClaudeDesktop, "gpt-one").unwrap();
+    let repaired: Value = serde_json::from_slice(&fs::read(&paths[3]).unwrap()).unwrap();
+    assert!(repaired["entries"].as_array().unwrap().iter().all(|entry| {
+        entry["id"].is_string() && entry["name"].is_string()
+    }));
+    assert_eq!(repaired["entries"][0]["name"], format!("Configuration {legacy_id}"));
+    assert_eq!(repaired["entries"][0]["custom"], initial["entries"][0]["custom"]);
+    assert_eq!(repaired["entries"][1], initial["entries"][1]);
+    assert_eq!(repaired["custom"], initial["custom"]);
+    assert_eq!(fs::read_to_string(other_profile).unwrap(), other_content);
+
+    let before = config_images(&paths).unwrap();
+    apply(&home.0, AgentClient::ClaudeDesktop, "gpt-one").unwrap();
+    assert_eq!(before, config_images(&paths).unwrap());
+    for index in [0, 1] {
+        let mut changed = repaired.clone();
+        changed["entries"][index]["name"] = serde_json::json!("Unexpected rename");
+        let updates = vec![AgentFileUpdate { path: paths[3].clone(), after: changed.to_string() }];
+        assert!(prepare_config_updates("claude-desktop", &paths, &before, &updates, false).is_err());
+    }
+}
+
+#[test]
 fn desktop_current_mapping_survives_backup_deletion_and_rejects_unreliable_profile() {
     if !AgentClient::ClaudeDesktop.supported_platform() {
         return;
@@ -813,7 +857,7 @@ fn desktop_current_mapping_survives_backup_deletion_and_rejects_unreliable_profi
         .0
         .revision;
     apply(&home.0, AgentClient::ClaudeDesktop, "gpt-two").unwrap();
-    assert_eq!(original, config_images(&paths).unwrap());
+    assert_ne!(original, config_images(&paths).unwrap());
     assert_ne!(
         revision,
         preview("claude-desktop", &paths, &backup.id)
@@ -857,6 +901,7 @@ fn desktop_model_extensions_do_not_resurrect_disabled_one_million_context_flags(
     .unwrap();
     let mut value: Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
     value["inferenceModels"][0]["custom"] = serde_json::json!({"keep":true});
+    value["inferenceModels"][0]["contextWindow"] = serde_json::json!(1_000_000);
     save(&paths[2], value.to_string());
     let next_mappings = ClaudeDesktopModelMappings::all("gpt-one");
     apply_agent_configuration_with_oauth(
@@ -870,6 +915,7 @@ fn desktop_model_extensions_do_not_resurrect_disabled_one_million_context_flags(
     .unwrap();
     let value: Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
     assert_eq!(value["inferenceModels"][0]["custom"]["keep"], true);
+    assert!(value["inferenceModels"][0].get("contextWindow").is_none());
     assert!(value["inferenceModels"][0].get("supports1m").is_none());
     assert!(value["inferenceModels"][0].get("prefer1m").is_none());
 }

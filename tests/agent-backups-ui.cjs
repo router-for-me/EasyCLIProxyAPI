@@ -65,7 +65,7 @@ const assert = require('node:assert/strict');
     assert.ok(await page.locator('.agent-backup-modal').evaluate(el => el.scrollWidth <= el.clientWidth));
     await page.screenshot({ path: process.env.TEMP + '/agent-backups-narrow.png', fullPage: true });
     await open('client=claude-desktop');
-    await page.getByText('没有可靠的 Claude Desktop 模型映射，请重新选择模型。', { exact: true }).waitFor();
+    await page.locator('.agent-desktop-model-row').nth(2).waitFor();
     assert.ok(await page.getByRole('button', { name: '更新配置', exact: true }).isDisabled());
     for (const query of ['client=pi', 'embedded&client=pi']) {
       await page.goto('http://localhost:1421/tests/fixtures/agent-backups.html?' + query);

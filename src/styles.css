@@ -6827,6 +6827,98 @@ textarea:focus-visible {
   box-shadow: 0 1px 2px rgba(45, 42, 38, 0.04);
 }
 
+.agent-desktop-models {
+  grid-column: 1 / -1;
+}
+
+.agent-desktop-models > .agent-section-heading button {
+  width: auto;
+  margin-top: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.agent-desktop-model-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-desktop-model-row {
+  padding: 10px;
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.agent-desktop-model-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.agent-desktop-model-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  font-size: var(--font-size-label);
+  color: var(--theme-5f5a53);
+}
+
+.agent-desktop-model-actions {
+  height: 44px;
+}
+
+.agent-desktop-model-notice {
+  margin: 0;
+  color: var(--theme-8a847c);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+
+.agent-desktop-help-dialog {
+  grid-template-rows: auto;
+  align-content: start;
+  width: min(600px, calc(100vw - 32px));
+  height: fit-content;
+  max-height: calc(100vh - 32px);
+  margin: auto;
+  overflow: auto;
+}
+
+.agent-desktop-help-dialog::backdrop {
+  background: rgba(45, 42, 38, 0.42);
+  backdrop-filter: blur(3px);
+}
+
+.agent-desktop-help-list {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--theme-5f5a53);
+  font-size: var(--font-size-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.agent-desktop-help-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 700px) {
+  .agent-desktop-models > .agent-section-heading { flex-wrap: wrap; }
+  .agent-desktop-models > .agent-section-heading > .agent-section-heading-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 520px) {
+  .agent-desktop-model-fields { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .agent-desktop-model-actions { height: 34px; justify-self: end; }
+}
+
 .agent-claude-desktop-mapping-row:has(.agent-claude-context-toggle input:checked) {
   border-color: rgba(128, 105, 173, 0.48);
   box-shadow: 0 0 0 2px rgba(128, 105, 173, 0.08);
@@ -6977,6 +7069,43 @@ textarea:focus-visible {
   gap: 2px;
 }
 
+.agent-model-editable-trigger input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--font-size-body);
+}
+
+.agent-model-editable-trigger:focus-within {
+  border-color: var(--theme-8069ad);
+  box-shadow: 0 0 0 2px rgba(128, 105, 173, 0.14);
+}
+
+.agent-model-editable-trigger:has(input:disabled) {
+  cursor: not-allowed;
+  background: var(--theme-f4f1ea);
+  opacity: 0.62;
+}
+
+.agent-model-editable-trigger > button {
+  width: 20px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--theme-8a847c);
+}
+
+.agent-model-picker.open .agent-model-editable-trigger > button > svg {
+  transform: rotate(180deg);
+}
+
 .agent-model-trigger strong,
 .agent-model-trigger small {
   overflow: hidden;
@@ -7014,6 +7143,10 @@ textarea:focus-visible {
   border-radius: 8px;
   background: var(--theme-fffdf8);
   box-shadow: 0 14px 34px rgba(45, 42, 38, 0.2);
+}
+
+.agent-model-dropdown-editable {
+  grid-template-rows: minmax(0, 1fr) 28px;
 }
 
 .agent-model-search {

@@ -340,13 +340,28 @@ struct DesktopRestoreFixture {
 
 impl DesktopRestoreFixture {
     fn new() -> Self {
+        Self::build(false)
+    }
+
+    fn build(custom: bool) -> Self {
+        Self::build_with_direct_model(custom, false)
+    }
+
+    fn build_with_direct_model(custom: bool, direct: bool) -> Self {
         let home = super::support::agent_test_home("desktop-restore");
         let models = super::support::test_agent_models(&["model-a", "model-b"]);
         let initial = "openai-compatibility:\n  - name: provider\n    models: [{name: model-a}, {name: model-b}]\n";
         let mut id = None;
         let mut core_versions = Vec::new();
         for name in ["model-a", "model-b"] {
-            let mappings = ClaudeDesktopModelMappings::all(name);
+            let mut mappings = ClaudeDesktopModelMappings::all(name);
+            if custom {
+                mappings.desktop_models = Some(vec![ClaudeDesktopModelMapping {
+                    model: name.into(),
+                    alias: if direct && name == "model-a" { String::new() } else { format!("claude-sonnet-4-6-{name}") }, context_1m: true,
+                }]);
+                mappings.sonnet = mappings.desktop_models.as_ref().unwrap()[0].source_or_alias().to_string();
+            }
             core_versions.push(
                 ensure_claude_desktop_model_aliases_in_yaml(initial, &mappings, &models).unwrap(),
             );
@@ -404,6 +419,142 @@ async fn desktop_backup_restore_updates_core_routes_and_mapping_metadata() {
     );
     let (persisted, _) = core.finish();
     assert_eq!(persisted, yaml_json(&fixture.core_a));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_legacy_backup_restores_the_routes_referenced_by_its_profile() {
+    for source in ["claude-sonnet-test", LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1]] {
+        let fixture = DesktopRestoreFixture::new();
+        let paths = agent_config_paths(AgentClient::ClaudeDesktop, &fixture.home);
+        let before = config_images(&paths).unwrap();
+        let mut after = before.clone();
+        let mut profile: serde_json::Value = serde_json::from_slice(after[2].1.as_ref().unwrap()).unwrap();
+        profile["inferenceModels"] = serde_json::json!(LEGACY_CLAUDE_DESKTOP_MODEL_IDS
+            .map(|name| serde_json::json!({"name": name})));
+        after[2].1 = Some(serde_json::to_vec(&profile).unwrap());
+        let mappings = ClaudeDesktopModelMappings::all(source);
+        commit_config_with_mappings("claude-desktop", &paths, &before, &after,
+            "update", Some(source.into()), Some(mappings.clone())).unwrap();
+        let backup = create_backup("claude-desktop", &fixture.home).unwrap();
+        for routes_exist in [false, true] {
+            let initial = format!("{}claude-api-key:\n  - models: [{{name: {source}}}]\n", fixture.core_b);
+            let mut initial = yaml_json(&initial);
+            if routes_exist {
+                for route in LEGACY_CLAUDE_DESKTOP_MODEL_IDS {
+                    if route != source {
+                        initial["claude-api-key"][0]["models"].as_array_mut().unwrap()
+                            .push(serde_json::json!({
+                                "name": source,
+                                "alias": route,
+                                "display-name": managed_claude_alias_display_name(route).unwrap(),
+                            }));
+                    }
+                }
+            }
+            let core = MockCore::new(&serde_norway::to_string(&initial).unwrap(), Failure::None);
+            let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &backup.id)
+                .await.unwrap();
+            let revision = plan.preview.revision.clone();
+            execute_restore_plan(&core.config, plan, &revision).await.unwrap();
+            assert_eq!(config_images(&paths).unwrap(), after);
+            assert_eq!(current_desktop_mappings(&fixture.home).unwrap(), mappings);
+            let (persisted, _) = core.finish();
+            let models = persisted["claude-api-key"][0]["models"].as_array().unwrap();
+            for route in LEGACY_CLAUDE_DESKTOP_MODEL_IDS {
+                assert!(models.iter().any(|model| model["name"] == source
+                    && model.get("alias").unwrap_or(&model["name"]) == route), "missing {route}: {persisted}");
+            }
+            assert!(models.iter().any(|model| model["name"] == source && model.get("alias").is_none()));
+            assert!(persisted["openai-compatibility"][0]["models"].as_array().unwrap()
+                .iter().all(|model| model.get("alias").is_none()));
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_backup_keeps_a_direct_legacy_id_alongside_a_new_family_route() {
+    let fixture = DesktopRestoreFixture::new();
+    let paths = agent_config_paths(AgentClient::ClaudeDesktop, &fixture.home);
+    let before = config_images(&paths).unwrap();
+    let mut after = before.clone();
+    let direct = LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0];
+    let mut profile: serde_json::Value = serde_json::from_slice(after[2].1.as_ref().unwrap()).unwrap();
+    profile["inferenceModels"] = serde_json::json!([
+        {"name": CLAUDE_DESKTOP_OPUS_MODEL_ID, "labelOverride": "gpt-one"},
+        {"name": direct},
+        {"name": CLAUDE_DESKTOP_HAIKU_MODEL_ID, "labelOverride": "gpt-two"},
+    ]);
+    after[2].1 = Some(serde_json::to_vec(&profile).unwrap());
+    let mappings = ClaudeDesktopModelMappings {
+        opus: "gpt-one".into(),
+        sonnet: direct.into(),
+        haiku: "gpt-two".into(),
+        ..ClaudeDesktopModelMappings::all("")
+    };
+    commit_config_with_mappings("claude-desktop", &paths, &before, &after,
+        "update", Some(direct.into()), Some(mappings)).unwrap();
+    let backup = create_backup("claude-desktop", &fixture.home).unwrap();
+    let initial = format!("openai-compatibility:\n  - name: provider\n    models: [{{name: gpt-one}}, {{name: gpt-two}}, {{name: {direct}}}]\n");
+    let core = MockCore::new(&initial, Failure::None);
+    let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &backup.id)
+        .await.unwrap();
+    let revision = plan.preview.revision.clone();
+    execute_restore_plan(&core.config, plan, &revision).await.unwrap();
+    assert_eq!(config_images(&paths).unwrap(), after);
+    let (persisted, _) = core.finish();
+    let models = persisted["openai-compatibility"][0]["models"].as_array().unwrap();
+    assert!(models.iter().any(|model| model["name"] == direct && model.get("alias").is_none()));
+    for (alias, source) in [(CLAUDE_DESKTOP_OPUS_MODEL_ID, "gpt-one"), (CLAUDE_DESKTOP_HAIKU_MODEL_ID, "gpt-two")] {
+        assert!(models.iter().any(|model| model["name"] == source && model["alias"] == alias));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_custom_backup_restores_aliases_profile_and_mapping_metadata() {
+    let fixture = DesktopRestoreFixture::build(true);
+    let core = MockCore::new(&fixture.core_b, Failure::None);
+    let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
+        .await.unwrap();
+    assert!(plan.preview.differences.iter().any(|difference|
+        difference.field == "modelMappings.claude-sonnet-4-6-model-a"));
+    assert!(plan.preview.differences.iter().any(|difference|
+        difference.field == "modelMappings.claude-sonnet-4-6-model-b"));
+    let revision = plan.preview.revision.clone();
+    execute_restore_plan(&core.config, plan, &revision).await.unwrap();
+    let mappings = current_desktop_mappings(&fixture.home).unwrap();
+    let entries = mappings.desktop_models.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].model, "model-a");
+    assert_eq!(entries[0].alias, "claude-sonnet-4-6-model-a");
+    assert!(entries[0].context_1m);
+    let paths = agent_config_paths(AgentClient::ClaudeDesktop, &fixture.home);
+    let profile: serde_json::Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    assert_eq!(profile["inferenceModels"][0]["name"], entries[0].alias);
+    assert_eq!(profile["inferenceModels"][0]["labelOverride"], "model-a");
+    let (persisted, _) = core.finish();
+    assert_eq!(persisted, yaml_json(&fixture.core_a));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_direct_model_backup_restores_without_an_alias_route() {
+    let fixture = DesktopRestoreFixture::build_with_direct_model(true, true);
+    let core = MockCore::new(&fixture.core_b, Failure::None);
+    let plan = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
+        .await.unwrap();
+    let revision = plan.preview.revision.clone();
+    execute_restore_plan(&core.config, plan, &revision).await.unwrap();
+    let mappings = current_desktop_mappings(&fixture.home).unwrap();
+    let entry = &mappings.desktop_models.as_ref().unwrap()[0];
+    assert!(entry.alias.is_empty());
+    assert_eq!(entry.model, "model-a");
+    assert_eq!(mappings.sonnet, entry.model);
+    let paths = agent_config_paths(AgentClient::ClaudeDesktop, &fixture.home);
+    let profile: serde_json::Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    assert_eq!(profile["inferenceModels"][0]["name"], entry.model);
+    assert_eq!(profile["inferenceModels"][0]["labelOverride"], entry.model);
+    let (persisted, _) = core.finish();
+    assert_eq!(persisted, yaml_json(&fixture.core_a));
+    assert!(!persisted.to_string().contains("\"alias\""));
 }
 
 #[tokio::test(flavor = "current_thread")]

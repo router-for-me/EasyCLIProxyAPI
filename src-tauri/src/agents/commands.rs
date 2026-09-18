@@ -960,6 +960,27 @@ pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> boo
     )
 }
 
+fn resolve_claude_desktop_source_model(models: &[AgentModelOption], value: &str) -> Result<String, String> {
+    let model = validate_agent_model(value)?;
+    Ok(models.iter().find(|entry| entry.name.eq_ignore_ascii_case(&model))
+        .map(|entry| entry.name.clone()).unwrap_or(model))
+}
+
+pub(crate) fn resolve_agent_configuration_model(
+    client: AgentClient,
+    models: &[AgentModelOption],
+    model: &str,
+    desktop_mappings: Option<&ClaudeDesktopModelMappings>,
+) -> Result<String, String> {
+    if client == AgentClient::ClaudeDesktop {
+        if let Some(entries) = desktop_mappings.and_then(|mappings| mappings.desktop_models.as_ref()) {
+            validate_claude_desktop_entries(entries)?;
+            return resolve_claude_desktop_source_model(models, entries[0].source_or_alias());
+        }
+    }
+    resolve_available_agent_model(models, &validate_agent_model(model)?)
+}
+
 pub(crate) fn resolve_claude_desktop_model_mappings(
     client: AgentClient,
     models: &[AgentModelOption],
@@ -969,10 +990,26 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
     if client != AgentClient::ClaudeDesktop {
         return Ok(None);
     }
-    let requested = requested.ok_or("请重新选择 Claude Desktop 的模型映射")?;
+    let mut requested = requested.ok_or("请重新配置 Claude Desktop 的模型与别名")?;
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
+    if let Some(entries) = requested.desktop_models.as_mut() {
+        validate_claude_desktop_entries(entries)?;
+        for entry in entries.iter_mut() {
+            entry.model = resolve_claude_desktop_source_model(models, entry.source_or_alias())?;
+            entry.alias = if entry.alias.trim().eq_ignore_ascii_case(&entry.model) {
+                String::new()
+            } else {
+                entry.alias.trim().to_string()
+            };
+        }
+        requested.sonnet = entries[0].source_or_alias().to_string();
+        requested.opus.clear();
+        requested.haiku.clear();
+        return Ok(Some(requested));
+    }
     Ok(Some(ClaudeDesktopModelMappings {
+        desktop_models: None,
         opus: resolve(&requested.opus)?,
         sonnet: resolve(&requested.sonnet)?,
         haiku: resolve(&requested.haiku)?,
@@ -1009,6 +1046,7 @@ pub(crate) fn resolve_claude_code_model_mappings(
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
     Ok(Some(ClaudeDesktopModelMappings {
+        desktop_models: None,
         opus: resolve(&requested.opus)?,
         sonnet: resolve(&requested.sonnet)?,
         haiku: resolve(&requested.haiku)?,
@@ -1061,7 +1099,9 @@ pub(crate) async fn apply_agent_config(
     }
     validate_agent_can_enable(client, &home, config.port, api_key)?;
     let prepared = fetch_prepared_agent_models(client, &config).await?;
-    let model = resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
+    let model = resolve_agent_configuration_model(
+        client, &prepared.models, &model, claude_desktop_model_mappings.as_ref(),
+    )?;
     let claude_code_model_mappings = resolve_claude_code_model_mappings(
         client,
         &prepared.models,
@@ -1130,8 +1170,9 @@ pub(crate) async fn set_agent_config_enabled(
         let api_key = effective_agent_api_key(&config);
         validate_agent_can_enable(client, &home, port, api_key)?;
         let prepared = fetch_prepared_agent_models(client, &config).await?;
-        let model =
-            resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
+        let model = resolve_agent_configuration_model(
+            client, &prepared.models, &model, claude_desktop_model_mappings.as_ref(),
+        )?;
         let claude_code_model_mappings = resolve_claude_code_model_mappings(
             client,
             &prepared.models,
@@ -1380,7 +1421,13 @@ pub(crate) fn mark_configured_agent_model_aliases(
             let configured_models = configured_models
                 .as_sequence()
                 .ok_or_else(|| format!("{section}.models 必须是数组"))?;
-            mark_agent_model_aliases_from_sequence(models, configured_models);
+            for configured in configured_models {
+                if configured_model_identity(configured).is_some_and(|(_, client_model, _)| {
+                    configured_provider_model_is_enabled(provider, &client_model)
+                }) {
+                    mark_agent_model_aliases_from_sequence(models, std::slice::from_ref(configured));
+                }
+            }
         }
     }
 

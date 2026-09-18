@@ -17,7 +17,7 @@ const path = require('node:path');
       await page.goto('http://localhost:1421/tests/fixtures/agent-backups.html?reset-selections&' + query);
       await page.waitForFunction(() => {
         const refresh = document.querySelector('.agent-header-actions button');
-        return refresh && !refresh.disabled && document.querySelector('.agent-model-trigger')
+        return refresh && !refresh.disabled && document.querySelector('.agent-model-trigger, .agent-desktop-models')
           && window.fixtureCalls.some(call => call.cmd === 'get_agent_models');
       });
     };

@@ -779,26 +779,48 @@ pub(crate) fn build_claude_desktop_profile(
     let mappings = mappings
         .cloned()
         .unwrap_or_else(|| ClaudeDesktopModelMappings::all(model));
-    let inference_models = vec![
-        claude_desktop_inference_model(
-            CLAUDE_DESKTOP_OPUS_MODEL_ID,
-            &mappings.opus,
-            mappings.opus_1m,
-            models,
-        ),
-        claude_desktop_inference_model(
-            CLAUDE_DESKTOP_SONNET_MODEL_ID,
-            &mappings.sonnet,
-            mappings.sonnet_1m,
-            models,
-        ),
-        claude_desktop_inference_model(
-            CLAUDE_DESKTOP_HAIKU_MODEL_ID,
-            &mappings.haiku,
-            mappings.haiku_1m,
-            models,
-        ),
-    ];
+    let inference_models = if let Some(entries) = &mappings.desktop_models {
+        validate_claude_desktop_entries(entries)?;
+        let mut families = HashSet::new();
+        entries
+            .iter()
+            .map(|entry| {
+                let mut value = claude_desktop_inference_model(
+                    entry.model_id(),
+                    entry.source_or_alias(),
+                    entry.context_1m,
+                    models,
+                );
+                value["name"] = serde_json::json!(entry.model_id());
+                value["labelOverride"] = serde_json::json!(entry.source_or_alias());
+                if let Some(tier) = claude_desktop_family_tier(entry.model_id()) {
+                    value["isFamilyDefault"] = serde_json::json!(families.insert(tier));
+                }
+                value
+            })
+            .collect()
+    } else {
+        vec![
+            claude_desktop_inference_model(
+                CLAUDE_DESKTOP_OPUS_MODEL_ID,
+                &mappings.opus,
+                mappings.opus_1m,
+                models,
+            ),
+            claude_desktop_inference_model(
+                CLAUDE_DESKTOP_SONNET_MODEL_ID,
+                &mappings.sonnet,
+                mappings.sonnet_1m,
+                models,
+            ),
+            claude_desktop_inference_model(
+                CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+                &mappings.haiku,
+                mappings.haiku_1m,
+                models,
+            ),
+        ]
+    };
     let mut deduplicated_models = Vec::<serde_json::Value>::with_capacity(inference_models.len());
     for entry in inference_models {
         let Some(name) = entry.get("name").and_then(serde_json::Value::as_str) else {
@@ -831,35 +853,55 @@ pub(crate) fn claude_desktop_inference_model(
     enable_1m: bool,
     models: &[AgentModelOption],
 ) -> serde_json::Value {
-    let selected = models
-        .iter()
-        .find(|model| model.name.eq_ignore_ascii_case(source_model));
-    let direct_alias = selected.is_some_and(|model| model.is_alias);
-    let context_window = claude_effective_context_window(models, source_model, enable_1m);
+    let use_source = claude_desktop_uses_source_directly(source_model, models);
     let mut entry = serde_json::Map::new();
     entry.insert(
         "name".to_string(),
-        serde_json::json!(if direct_alias {
+        serde_json::json!(if use_source {
             source_model
         } else {
             route_model
         }),
     );
-    if let Some(context_window) = context_window {
-        entry.insert(
-            "contextWindow".to_string(),
-            serde_json::json!(context_window),
-        );
-        if enable_1m {
-            entry.insert("supports1m".to_string(), serde_json::json!(true));
-            entry.insert("prefer1m".to_string(), serde_json::json!(true));
-        }
+    if !use_source {
+        entry.insert("labelOverride".to_string(), serde_json::json!(source_model));
+    }
+    if let Some(tier) = claude_desktop_family_tier(route_model) {
+        entry.insert("anthropicFamilyTier".to_string(), serde_json::json!(tier));
+        entry.insert("isFamilyDefault".to_string(), serde_json::json!(true));
+    }
+    if enable_1m {
+        entry.insert("supports1m".to_string(), serde_json::json!(true));
+        entry.insert("prefer1m".to_string(), serde_json::json!(true));
     }
     serde_json::Value::Object(entry)
 }
 
+pub(crate) fn claude_desktop_family_tier(route_model: &str) -> Option<&'static str> {
+    let lowered = route_model.to_ascii_lowercase();
+    if lowered.starts_with("claude-opus-") || lowered.contains("-opus-")
+        || route_model.eq_ignore_ascii_case(CLAUDE_DESKTOP_OPUS_MODEL_ID)
+        || route_model.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0])
+    {
+        Some("opus")
+    } else if lowered.starts_with("claude-sonnet-") || lowered.contains("-sonnet-")
+        || route_model.eq_ignore_ascii_case(CLAUDE_DESKTOP_SONNET_MODEL_ID)
+        || route_model.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1])
+    {
+        Some("sonnet")
+    } else if lowered.starts_with("claude-haiku-") || lowered.contains("-haiku-")
+        || route_model.eq_ignore_ascii_case(CLAUDE_DESKTOP_HAIKU_MODEL_ID)
+        || route_model.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2])
+    {
+        Some("haiku")
+    } else {
+        None
+    }
+}
+
 pub(crate) fn build_claude_desktop_meta(existing: Option<&str>) -> Result<String, String> {
     let mut root = parse_agent_json_object(existing, "Claude Desktop 配置索引")?;
+    repair_claude_desktop_meta_names(&mut root);
     let entries = ensure_json_array_entry(&mut root, "entries");
     let mut managed_entry = None;
     let mut retained_entries = Vec::with_capacity(entries.len());
@@ -887,6 +929,21 @@ pub(crate) fn build_claude_desktop_meta(existing: Option<&str>) -> Result<String
         serde_json::json!(CLAUDE_DESKTOP_PROFILE_ID),
     );
     render_agent_json(root, "Claude Desktop 配置索引")
+}
+
+pub(crate) fn repair_claude_desktop_meta_names(root: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(entries) = root.get_mut("entries").and_then(serde_json::Value::as_array_mut) else {
+        return;
+    };
+    for entry in entries {
+        let Some(id) = entry.get("id").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if entry.get("name").and_then(serde_json::Value::as_str).is_none() {
+            let name = format!("Configuration {id}");
+            entry["name"] = serde_json::json!(name);
+        }
+    }
 }
 
 pub(crate) fn clear_agent_managed_configuration(

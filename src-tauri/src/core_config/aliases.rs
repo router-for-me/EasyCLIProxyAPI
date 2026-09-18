@@ -342,6 +342,26 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
     models: &[AgentModelOption],
     oauth_model_definitions: &[OAuthModelDefinitions],
 ) -> Result<String, String> {
+    ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml(
+        content,
+        mappings,
+        models,
+        oauth_model_definitions,
+        [
+            CLAUDE_DESKTOP_OPUS_MODEL_ID,
+            CLAUDE_DESKTOP_SONNET_MODEL_ID,
+            CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+        ],
+    )
+}
+
+pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml(
+    content: &str,
+    mappings: &ClaudeDesktopModelMappings,
+    models: &[AgentModelOption],
+    oauth_model_definitions: &[OAuthModelDefinitions],
+    routes: [&str; 3],
+) -> Result<String, String> {
     let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
     let mut updated = document.get().clone();
@@ -350,11 +370,76 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
 
     let sources = root.clone();
+    if let Some(entries) = &mappings.desktop_models {
+        validate_claude_desktop_entries(entries)?;
+        let managed_aliases = managed_claude_desktop_aliases(&sources);
+        for entry in entries {
+            if !entry.has_mapping() {
+                continue;
+            }
+            let occupied = configured_model_client_identity(&sources, &entry.alias).is_some()
+                || models
+                    .iter()
+                    .any(|model| model.name.eq_ignore_ascii_case(&entry.alias));
+            let unmanaged_collision = claude_desktop_configured_models(&sources)
+                .into_iter()
+                .any(|model| {
+                    configured_model_identity(model).is_some_and(|(_, alias, _)| {
+                        alias.eq_ignore_ascii_case(&entry.alias)
+                            && !is_managed_claude_model_alias(model, &alias)
+                    })
+                });
+            if unmanaged_collision
+                || (occupied && !managed_aliases.iter()
+                    .any(|alias| alias.eq_ignore_ascii_case(&entry.alias)))
+            {
+                return Err(format!("别名 {} 已被其他模型使用，请更换别名", entry.alias));
+            }
+        }
+        for alias in managed_aliases {
+            if !entries.iter().any(|entry| entry.source_or_alias().eq_ignore_ascii_case(&alias)) {
+                remove_managed_claude_model_alias(root, &alias)?;
+            }
+        }
+        for entry in entries {
+            if entry.has_mapping() {
+                ensure_claude_desktop_model_alias(
+                    root,
+                    &sources,
+                    &entry.model,
+                    &entry.alias,
+                    oauth_model_definitions,
+                )?;
+            }
+        }
+        if *root == sources {
+            return Ok(content.to_string());
+        }
+        return render_updated_core_yaml(&mut document, updated);
+    }
+    for alias in managed_claude_desktop_aliases(&sources) {
+        if !is_claude_desktop_route_id(&alias)
+            && ![&mappings.opus, &mappings.sonnet, &mappings.haiku]
+                .iter()
+                .any(|model| model.eq_ignore_ascii_case(&alias))
+        {
+            remove_managed_claude_model_alias(root, &alias)?;
+        }
+    }
     for (alias, source_model) in [
-        (CLAUDE_DESKTOP_OPUS_MODEL_ID, mappings.opus.as_str()),
-        (CLAUDE_DESKTOP_SONNET_MODEL_ID, mappings.sonnet.as_str()),
-        (CLAUDE_DESKTOP_HAIKU_MODEL_ID, mappings.haiku.as_str()),
+        (routes[0], mappings.opus.as_str()),
+        (routes[1], mappings.sonnet.as_str()),
+        (routes[2], mappings.haiku.as_str()),
     ] {
+        if let Some(paired_alias) = paired_claude_desktop_alias(alias) {
+            remove_managed_claude_model_alias(root, paired_alias)?;
+        }
+        if claude_desktop_uses_source_directly(source_model, models) {
+            if !source_model.eq_ignore_ascii_case(alias) {
+                remove_managed_claude_model_alias(root, alias)?;
+            }
+            continue;
+        }
         let direct_alias = models
             .iter()
             .any(|model| model.name.eq_ignore_ascii_case(source_model) && model.is_alias);
@@ -372,7 +457,100 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
             )?;
         }
     }
+    if *root == sources {
+        return Ok(content.to_string());
+    }
     render_updated_core_yaml(&mut document, updated)
+}
+
+pub(crate) fn validate_claude_desktop_entries(
+    entries: &[ClaudeDesktopModelMapping],
+) -> Result<(), String> {
+    if entries.is_empty() {
+        return Err("请至少添加一个 Claude Desktop 模型".into());
+    }
+    let mut ids = HashSet::new();
+    for entry in entries {
+        validate_agent_model(entry.source_or_alias())?;
+        if entry.source_or_alias().chars().any(char::is_whitespace) {
+            return Err("原模型 ID 不能包含空白字符".into());
+        }
+        let alias = entry.alias.trim();
+        if !alias.is_empty() && !alias.eq_ignore_ascii_case(entry.source_or_alias()) && !valid_claude_desktop_alias(alias) {
+            return Err(format!("Claude Desktop 别名 {alias} 必须以 claude- 开头，只能包含小写字母、数字、连字符和小数点，且不能包含 gpt、grok、gemini、deepseek 等其他模型系列名称"));
+        }
+        let id = entry.model_id();
+        if !ids.insert(id.to_ascii_lowercase()) {
+            return Err(format!("Claude Desktop 模型 ID 重复: {id}"));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn valid_claude_desktop_alias(alias: &str) -> bool {
+    claude_desktop_alias_has_valid_syntax(alias) && !claude_desktop_has_other_model_family(alias)
+}
+
+fn claude_desktop_alias_has_valid_syntax(alias: &str) -> bool {
+    alias.len() <= 128
+        && alias.strip_prefix("claude-").is_some_and(|rest| {
+            !rest.is_empty()
+                && rest.split(['-', '.']).all(|part| {
+                    !part.is_empty()
+                        && part.bytes().all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+                })
+        })
+}
+
+fn claude_desktop_has_other_model_family(name: &str) -> bool {
+    static OTHER_MODEL_FAMILY: LazyLock<regex::Regex> = LazyLock::new(|| {
+        let rules: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/services/claudeDesktopModelRules.json"
+        ))
+        .expect("valid bundled Claude Desktop model rules");
+        regex::RegexBuilder::new(
+            rules["otherModelFamilyPattern"]
+                .as_str()
+                .expect("Claude Desktop model-family pattern"),
+        )
+        .unicode(false)
+        .build()
+        .expect("valid Claude Desktop model-family pattern")
+    });
+    OTHER_MODEL_FAMILY.is_match(&name.to_ascii_lowercase())
+}
+
+fn claude_desktop_configured_models(root: &serde_norway::Mapping) -> Vec<&serde_norway::Value> {
+    let mut models = Vec::new();
+    for section in MODEL_ALIAS_CONFIG_SECTIONS {
+        for provider in yaml_mapping_value(root, section)
+            .and_then(serde_norway::Value::as_sequence)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(entries) = provider.as_mapping()
+                .and_then(|provider| yaml_mapping_value(provider, "models"))
+                .and_then(serde_norway::Value::as_sequence)
+            {
+                models.extend(entries);
+            }
+        }
+    }
+    if let Some(channels) = yaml_mapping_value(root, "oauth-model-alias")
+        .and_then(serde_norway::Value::as_mapping)
+    {
+        for entries in channels.values().filter_map(serde_norway::Value::as_sequence) {
+            models.extend(entries);
+        }
+    }
+    models
+}
+
+pub(crate) fn managed_claude_desktop_aliases(root: &serde_norway::Mapping) -> Vec<String> {
+    claude_desktop_configured_models(root).into_iter().filter_map(|model| {
+        let (_, alias, _) = configured_model_identity(model)?;
+        is_managed_claude_model_alias(model, &alias).then_some(alias)
+    }).collect::<BTreeSet<_>>().into_iter().collect()
 }
 
 #[cfg(test)]
@@ -388,6 +566,9 @@ pub(crate) fn remove_managed_claude_model_aliases_in_yaml(content: &str) -> Resu
         CLAUDE_DESKTOP_OPUS_MODEL_ID,
         CLAUDE_DESKTOP_SONNET_MODEL_ID,
         CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0],
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1],
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2],
     ] {
         changed |= remove_managed_claude_model_alias(root, alias)?;
     }
@@ -451,10 +632,7 @@ pub(crate) fn remove_existing_claude_model_alias(
                 .as_sequence_mut()
                 .ok_or_else(|| format!("{section}.models 必须是数组"))?;
             let before = models.len();
-            models.retain(|model| {
-                configured_model_identity(model)
-                    .is_none_or(|(_, client_model, _)| !client_model.eq_ignore_ascii_case(alias))
-            });
+            models.retain(|model| !occupies_claude_client_alias(model, alias));
             changed |= models.len() != before;
         }
     }
@@ -485,8 +663,7 @@ pub(crate) fn remove_oauth_claude_model_alias(
             if managed_only {
                 !is_managed_claude_model_alias(entry, alias)
             } else {
-                configured_model_identity(entry)
-                    .is_none_or(|(_, client_model, _)| !client_model.eq_ignore_ascii_case(alias))
+                !occupies_claude_client_alias(entry, alias)
             }
         });
         if entries.len() != before {
@@ -507,15 +684,92 @@ pub(crate) fn remove_oauth_claude_model_alias(
 }
 
 pub(crate) fn managed_claude_alias_display_name(alias: &str) -> Option<&'static str> {
-    if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_OPUS_MODEL_ID) {
+    if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_OPUS_MODEL_ID)
+        || alias.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0])
+    {
         Some(MANAGED_CLAUDE_OPUS_ALIAS_DISPLAY_NAME)
-    } else if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_SONNET_MODEL_ID) {
+    } else if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_SONNET_MODEL_ID)
+        || alias.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1])
+    {
         Some(MANAGED_CLAUDE_SONNET_ALIAS_DISPLAY_NAME)
-    } else if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_HAIKU_MODEL_ID) {
+    } else if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_HAIKU_MODEL_ID)
+        || alias.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2])
+    {
         Some(MANAGED_CLAUDE_HAIKU_ALIAS_DISPLAY_NAME)
+    } else if claude_desktop_alias_has_valid_syntax(alias) {
+        Some("EasyCLIProxyAPI managed Claude Desktop mapping")
     } else {
         None
     }
+}
+
+pub(crate) fn claude_desktop_uses_source_directly(
+    source_model: &str,
+    models: &[AgentModelOption],
+) -> bool {
+    models
+        .iter()
+        .any(|model| model.name.eq_ignore_ascii_case(source_model) && model.is_alias)
+        || is_claude_native_model_id(source_model)
+}
+
+pub(crate) fn is_claude_native_model_id(name: &str) -> bool {
+    let name = name.trim();
+    if name.is_empty() || claude_desktop_has_other_model_family(name) {
+        return false;
+    }
+    let lowered = name.to_ascii_lowercase();
+    if lowered.starts_with("claude-")
+        || lowered.starts_with("anthropic.")
+        || lowered.contains("anthropic/")
+    {
+        return true;
+    }
+    ["opus", "sonnet", "haiku", "fable", "mythos"]
+        .into_iter()
+        .any(|family| {
+            lowered == family
+                || lowered
+                    .strip_prefix(&format!("{family}-"))
+                    .is_some_and(|rest| {
+                        !rest.is_empty()
+                            && rest
+                                .chars()
+                                .all(|ch| ch.is_ascii_digit() || ch == '.')
+                    })
+        })
+}
+
+pub(crate) fn is_claude_desktop_route_id(name: &str) -> bool {
+    claude_desktop_route_pairs()
+        .iter()
+        .any(|(current, legacy)| current.eq_ignore_ascii_case(name) || legacy.eq_ignore_ascii_case(name))
+}
+
+fn claude_desktop_route_pairs() -> [(&'static str, &'static str); 3] {
+    [
+        (CLAUDE_DESKTOP_OPUS_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0]),
+        (CLAUDE_DESKTOP_SONNET_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1]),
+        (CLAUDE_DESKTOP_HAIKU_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2]),
+    ]
+}
+
+fn paired_claude_desktop_alias(alias: &str) -> Option<&'static str> {
+    claude_desktop_route_pairs().into_iter().find_map(|(current, legacy)| {
+        if alias.eq_ignore_ascii_case(current) {
+            Some(legacy)
+        } else if alias.eq_ignore_ascii_case(legacy) {
+            Some(current)
+        } else {
+            None
+        }
+    })
+}
+
+fn occupies_claude_client_alias(model: &serde_norway::Value, alias: &str) -> bool {
+    configured_model_identity(model).is_some_and(|(source, client_model, _)| {
+        client_model.eq_ignore_ascii_case(alias) && !source.eq_ignore_ascii_case(&client_model)
+    })
 }
 
 pub(crate) fn is_managed_claude_model_alias(model: &serde_norway::Value, alias: &str) -> bool {
@@ -547,9 +801,7 @@ pub(crate) fn configured_managed_claude_alias_matches(
             .into_iter()
             .flatten()
             .filter_map(serde_norway::Value::as_mapping)
-            .filter(|provider| {
-                yaml_mapping_value(provider, "disabled") != Some(&serde_norway::Value::Bool(true))
-            })
+            .filter(|provider| configured_provider_model_is_enabled(provider, alias))
             .filter_map(|provider| yaml_mapping_value(provider, "models"))
             .filter_map(serde_norway::Value::as_sequence)
             .flatten()
@@ -575,7 +827,7 @@ pub(crate) fn ensure_claude_desktop_model_alias(
     if configured_managed_claude_alias_matches(root, alias, source_model) {
         return Ok(());
     }
-    let source = resolve_claude_desktop_alias_source(sources, source_model)?;
+    let source = resolve_claude_desktop_alias_source(sources, source_model, alias)?;
     if let Some(source) = source {
         remove_existing_claude_model_alias(root, alias)?;
         append_claude_desktop_model_alias(root, source, alias)?;
@@ -665,9 +917,49 @@ enum ClaudeDesktopAliasSource {
     },
 }
 
+pub(crate) fn configured_provider_model_is_enabled(provider: &serde_norway::Mapping, model: &str) -> bool {
+    if yaml_mapping_value(provider, "disabled") == Some(&serde_norway::Value::Bool(true)) {
+        return false;
+    }
+    let model = model.trim().to_lowercase();
+    !yaml_mapping_value(provider, "excluded-models")
+        .and_then(serde_norway::Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_norway::Value::as_str)
+        .any(|pattern| {
+            let pattern = pattern.trim().to_lowercase();
+            if pattern.is_empty() {
+                return false;
+            }
+            let Some((prefix, rest)) = pattern.split_once('*') else {
+                return pattern == model;
+            };
+            let Some(mut remaining) = model.strip_prefix(prefix) else {
+                return false;
+            };
+            let mut parts = rest.rsplitn(2, '*');
+            let suffix = parts.next().unwrap_or_default();
+            let Some(middle) = remaining.strip_suffix(suffix) else {
+                return false;
+            };
+            remaining = middle;
+            if let Some(parts) = parts.next() {
+                for part in parts.split('*').filter(|part| !part.is_empty()) {
+                    let Some(index) = remaining.find(part) else {
+                        return false;
+                    };
+                    remaining = &remaining[index + part.len()..];
+                }
+            }
+            true
+        })
+}
+
 fn resolve_claude_desktop_alias_source(
     root: &serde_norway::Mapping,
     source_model: &str,
+    alias: &str,
 ) -> Result<Option<ClaudeDesktopAliasSource>, String> {
     for upstream in [false, true] {
         let matching_model = |model: &serde_norway::Value| {
@@ -691,7 +983,7 @@ fn resolve_claude_desktop_alias_source(
                 let Some(provider) = provider.as_mapping() else {
                     continue;
                 };
-                if yaml_mapping_value(provider, "disabled") == Some(&serde_norway::Value::Bool(true)) {
+                if !configured_provider_model_is_enabled(provider, alias) {
                     continue;
                 }
                 let Some(models) = yaml_mapping_value(provider, "models") else {
@@ -700,7 +992,13 @@ fn resolve_claude_desktop_alias_source(
                 let models = models
                     .as_sequence()
                     .ok_or_else(|| format!("{section}.models 必须是数组"))?;
-                if let Some(model) = models.iter().find_map(matching_model) {
+                if let Some(model) = models.iter().find_map(|model| {
+                    let (_, client_model, _) = configured_model_identity(model)?;
+                    if !configured_provider_model_is_enabled(provider, &client_model) {
+                        return None;
+                    }
+                    matching_model(model)
+                }) {
                     return Ok(Some(ClaudeDesktopAliasSource::Provider {
                         section,
                         provider_index,

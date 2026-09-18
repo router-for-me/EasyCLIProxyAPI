@@ -33,11 +33,16 @@ fn local_restore_plan(client: &str, home: &Path, id: &str) -> Result<RestorePlan
     })
 }
 
-fn desktop_restore_models(plan: &RestorePlan) -> Result<Option<Vec<AgentModelOption>>, String> {
+fn desktop_restore_configuration(
+    plan: &RestorePlan,
+) -> Result<Option<(ClaudeDesktopModelMappings, Vec<AgentModelOption>)>, String> {
     if plan.version.client != "claude-desktop" {
         return Ok(None);
     }
-    if !desktop_profile_needs_mapping(&plan.after)? {
+    if !desktop_profile_needs_mapping(&plan.after)?
+        && plan.version.mappings.as_ref()
+            .and_then(|m| m.desktop_models.as_ref()).is_none()
+    {
         return Ok(None);
     }
     let (path, bytes) = &plan.after[2];
@@ -49,30 +54,56 @@ fn desktop_restore_models(plan: &RestorePlan) -> Result<Option<Vec<AgentModelOpt
         .flatten()
         .filter_map(|m| m.get("name").and_then(Value::as_str))
         .collect::<Vec<_>>();
-    let routes = [
-        CLAUDE_DESKTOP_OPUS_MODEL_ID,
-        CLAUDE_DESKTOP_SONNET_MODEL_ID,
-        CLAUDE_DESKTOP_HAIKU_MODEL_ID,
-    ];
-    let mappings =
-        plan.version.mappings.as_ref().ok_or(
+    let mut mappings = plan.version.mappings.as_ref().ok_or(
             "此备份版本缺少 Claude Desktop 模型映射，无法安全恢复内核路由，请重新配置模型",
-        )?;
-    Ok(Some(
-        routes
-            .into_iter()
-            .zip([&mappings.opus, &mappings.sonnet, &mappings.haiku])
-            .map(|(route, source)| AgentModelOption {
-                input_modalities: None,
-                harness_metadata: None,
-                name: source.clone(),
-                alias: None,
-                is_alias: source != route
-                    && names.iter().any(|name| name.eq_ignore_ascii_case(source)),
-                context_window: None,
-            })
-            .collect(),
-    ))
+        )?.clone();
+    if mappings.desktop_models.is_none() {
+        let roles = [
+            (CLAUDE_DESKTOP_OPUS_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0], &mappings.opus, mappings.opus_1m),
+            (CLAUDE_DESKTOP_SONNET_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1], &mappings.sonnet, mappings.sonnet_1m),
+            (CLAUDE_DESKTOP_HAIKU_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2], &mappings.haiku, mappings.haiku_1m),
+        ];
+        let mut entries = Vec::<ClaudeDesktopModelMapping>::new();
+        for id in names {
+            let Some((_, _, source, context_1m)) = roles.iter()
+                .find(|(_, _, source, _)| source.eq_ignore_ascii_case(id))
+                .or_else(|| roles.iter().find(|(current, legacy, _, _)| {
+                    current.eq_ignore_ascii_case(id) || legacy.eq_ignore_ascii_case(id)
+                }))
+            else {
+                return Err("此备份中的模型 ID 缺少对应来源，无法安全恢复内核路由".into());
+            };
+            if let Some(existing) = entries.iter_mut()
+                .find(|entry| entry.model_id().eq_ignore_ascii_case(id))
+            {
+                existing.context_1m |= *context_1m;
+            } else {
+                entries.push(ClaudeDesktopModelMapping {
+                    model: source.to_string(),
+                    alias: if source.eq_ignore_ascii_case(id) {
+                        String::new()
+                    } else {
+                        id.into()
+                    },
+                    context_1m: *context_1m,
+                });
+            }
+        }
+        mappings.desktop_models = Some(entries);
+    }
+    let entries = mappings.desktop_models.as_ref().ok_or("缺少备份模型映射")?;
+    validate_claude_desktop_entries(entries)?;
+    let models = entries.iter()
+        .map(|entry| AgentModelOption {
+            name: entry.source_or_alias().to_string(),
+            alias: None,
+            is_alias: false,
+            context_window: None,
+            input_modalities: None,
+            harness_metadata: None,
+        })
+        .collect();
+    Ok(Some((mappings, models)))
 }
 
 fn attach_core_restore(
@@ -84,14 +115,31 @@ fn attach_core_restore(
         serde_norway::from_str::<serde_norway::Value>(&before).map_err(|e| e.to_string())?;
     let target =
         serde_norway::from_str::<serde_norway::Value>(&after).map_err(|e| e.to_string())?;
-    for route in [
+    let mut routes = vec![
         CLAUDE_DESKTOP_OPUS_MODEL_ID,
         CLAUDE_DESKTOP_SONNET_MODEL_ID,
         CLAUDE_DESKTOP_HAIKU_MODEL_ID,
-    ] {
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0],
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1],
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2],
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+    for root in [&original, &target]
+        .into_iter()
+        .filter_map(serde_norway::Value::as_mapping)
+    {
+        for alias in managed_claude_desktop_aliases(root) {
+            if !routes.contains(&alias) {
+                routes.push(alias);
+            }
+        }
+    }
+    for route in routes {
         let source = |root: &serde_norway::Value| {
             root.as_mapping()
-                .and_then(|root| configured_model_client_identity(root, route))
+                .and_then(|root| configured_model_client_identity(root, &route))
                 .map(|(source, _)| source)
         };
         let old = source(&original);
@@ -125,18 +173,22 @@ pub(crate) async fn prepare_restore_plan(
     id: &str,
 ) -> Result<RestorePlan, String> {
     let mut plan = local_restore_plan(client, home, id)?;
-    if let Some(models) = desktop_restore_models(&plan)? {
-        let mappings = plan.version.mappings.as_ref().ok_or("缺少备份模型映射")?;
+    if let Some((mappings, models)) = desktop_restore_configuration(&plan)? {
         let before = fetch_management_config_yaml(config)
             .await
             .map_err(agent_core_error)?;
-        let after = match ensure_claude_desktop_model_aliases_in_yaml(&before, mappings, &models) {
+        let after = match ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
+            &before,
+            &mappings,
+            &models,
+            &[],
+        ) {
             Ok(after) => after,
             Err(_) => {
                 let definitions = fetch_oauth_model_definitions(config).await;
                 ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
                     &before,
-                    mappings,
+                    &mappings,
                     &models,
                     &definitions,
                 )
@@ -226,15 +278,13 @@ pub(super) fn desktop_profile_needs_mapping(images: &Images) -> Result<bool, Str
         .flatten()
         .filter_map(|model| model.get("name").and_then(Value::as_str))
         .collect::<Vec<_>>();
-    let routes = [
-        CLAUDE_DESKTOP_OPUS_MODEL_ID,
-        CLAUDE_DESKTOP_SONNET_MODEL_ID,
-        CLAUDE_DESKTOP_HAIKU_MODEL_ID,
-    ];
-    if !names
-        .iter()
-        .any(|name| routes.iter().any(|route| route.eq_ignore_ascii_case(name)))
-    {
+    let labeled_mapping = profile.get("inferenceModels").and_then(Value::as_array)
+        .into_iter().flatten().any(|entry| {
+            let name = entry.get("name").and_then(Value::as_str);
+            let label = entry.get("labelOverride").and_then(Value::as_str);
+            matches!((name, label), (Some(name), Some(label)) if name != label)
+        });
+    if !labeled_mapping && !names.iter().any(|name| is_claude_desktop_route_id(name)) {
         return Ok(false);
     }
     Ok(true)

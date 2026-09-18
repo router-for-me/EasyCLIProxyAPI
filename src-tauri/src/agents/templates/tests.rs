@@ -16,6 +16,24 @@ fn core_failure_messages_expose_outcomes_without_secret_source_text() {
     }
 }
 
+#[test]
+fn core_failure_messages_distinguish_alias_and_configuration_failures() {
+    for (detail, expected) in [
+        ("别名 claude-sonnet-5 已被其他模型使用，请更换别名 secret-token", "请切换其他别名"),
+        ("无法确定模型 private-model 的 CPA 配置来源，无法创建 Claude Desktop 别名 secret-token", "有效接入来源"),
+        ("更新后的内核配置与预期值不一致（路径: secret-token），已拒绝写入", "格式兼容性校验失败"),
+        ("验证更新后的内核配置失败: secret-token", "原配置未写入"),
+        ("解析内核 YAML 配置失败: secret-token", "YAML 配置格式无效"),
+        ("管理 API 错误 (401): secret-token", "认证失败"),
+        ("管理 API 错误 (403): secret-token", "认证失败"),
+    ] {
+        let rendered = agent_core_error(detail.into());
+        assert!(rendered.contains(expected), "{rendered}");
+        assert!(!rendered.contains("secret-token"));
+        assert!(!rendered.contains("private-model"));
+    }
+}
+
 #[tokio::test]
 async fn template_confirmation_is_bound_to_files_and_generated_content() {
     let home = std::env::temp_dir().join(format!(

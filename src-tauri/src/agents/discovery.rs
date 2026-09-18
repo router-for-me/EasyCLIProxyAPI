@@ -2801,6 +2801,7 @@ pub(crate) fn inspect_claude_code_model_mappings(
         .and_then(serde_json::Value::as_str)
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
     Ok(Some(ClaudeDesktopModelMappings {
+        desktop_models: None,
         opus,
         sonnet,
         haiku,
@@ -2926,6 +2927,7 @@ pub(crate) fn claude_code_model_settings(
     mappings: &ClaudeDesktopModelMappings,
 ) -> ClaudeDesktopModelMappings {
     ClaudeDesktopModelMappings {
+        desktop_models: None,
         opus: claude_code_model_setting(&mappings.opus, mappings.opus_1m),
         sonnet: claude_code_model_setting(&mappings.sonnet, mappings.sonnet_1m),
         haiku: claude_code_model_setting(&mappings.haiku, mappings.haiku_1m),

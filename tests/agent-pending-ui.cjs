@@ -16,7 +16,8 @@ const assert = require('node:assert/strict');
     };
     const ready = () => page.waitForFunction(() => {
       const button = document.querySelector('.agent-model-trigger');
-      return button && !button.disabled && !button.textContent.includes('加载');
+      return button ? !button.disabled && !button.textContent.includes('加载')
+        : document.querySelector('.agent-desktop-models') && window.fixtureCalls.some(call => call.cmd === 'get_agent_models');
     });
     const open = async query => {
       await page.goto('http://localhost:1421/tests/fixtures/agent-backups.html?reset-selections&' + query);

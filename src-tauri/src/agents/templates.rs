@@ -92,6 +92,21 @@ pub(crate) fn agent_core_error(error: String) -> String {
         "内核别名或智能体配置写入失败，已恢复原配置，请检查连接和模型映射后重试".into()
     } else if error.contains("配置已变化") {
         "内核配置已变化，请重新预览后重试".into()
+    } else if error.contains("已被其他模型使用") {
+        "模型别名已被其他模型占用，请切换其他别名后重试".into()
+    } else if error.contains("无法确定模型") && error.contains("CPA 配置来源") {
+        "无法找到原模型的有效接入来源，请确认接入已启用且未屏蔽原模型或别名，刷新模型列表后重试".into()
+    } else if error.starts_with("更新后的内核配置与预期值不一致")
+        || error.starts_with("验证更新后的内核配置失败")
+    {
+        "内核配置格式兼容性校验失败，已取消别名同步，原配置未写入".into()
+    } else if error.starts_with("解析内核 YAML 配置失败") {
+        "内核 YAML 配置格式无效，请检查配置格式后重试".into()
+    } else if error.starts_with("管理 API 错误 (401)")
+        || error.starts_with("管理 API 错误 (403)")
+        || error.starts_with("管理接口不可用")
+    {
+        "内核管理接口认证失败，请检查管理密钥后重试".into()
     } else {
         "内核模型别名同步失败，请检查内核连接和模型映射".into()
     }
@@ -137,7 +152,9 @@ async fn prepare_template_plan(
     } else {
         let parsed = AgentClient::parse(client)?;
         let prepared = fetch_prepared_agent_models(parsed, config).await?;
-        let model = resolve_available_agent_model(&prepared.models, &validate_agent_model(model)?)?;
+        let model = resolve_agent_configuration_model(
+            parsed, &prepared.models, model, claude_desktop_model_mappings.as_ref(),
+        )?;
         let code_mappings = resolve_claude_code_model_mappings(
             parsed,
             &prepared.models,

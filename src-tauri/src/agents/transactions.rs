@@ -389,7 +389,7 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
     fn merge_entry(client: &str, before: &Value, after: &mut Value) {
         let mut extensions = before.clone();
         let owned: &[&str] = match client {
-            "claude-desktop" => &["name", "contextWindow", "supports1m", "prefer1m"],
+            "claude-desktop" => &["name", "labelOverride", "anthropicFamilyTier", "isFamilyDefault", "contextWindow", "supports1m", "prefer1m"],
             "opencode" | "zcode" => &["name"],
             "openclaw" => &["id", "name", "alias"],
             "deepseek-harness" => &["id", "name", "contextWindow", "input", "maxTokens", "reasoningEfforts", "compat"],
@@ -549,6 +549,11 @@ fn validate_unmanaged_preserved(
 ) -> Result<(), String> {
     let project = |value: &Value| -> Result<Value, String> {
         let mut value = value.clone();
+        if client == "claude-desktop" && paths.get(3).is_some_and(|p| p == path) {
+            if let Some(root) = value.as_object_mut() {
+                repair_claude_desktop_meta_names(root);
+            }
+        }
         if client == "claude-code" {
             if let Some(env) = value.get_mut("env").and_then(Value::as_object_mut) {
                 env.retain(|key, _| {
