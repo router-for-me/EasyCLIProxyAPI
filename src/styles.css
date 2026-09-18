@@ -2350,6 +2350,32 @@ textarea:focus-visible {
   color: var(--theme-777067);
 }
 
+.config-proxy-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.config-proxy-heading > .config-network-label {
+  min-width: 0;
+  color: var(--theme-39352f);
+  font-size: var(--font-size-body);
+  font-weight: 700;
+}
+
+.config-proxy-system-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+
 .config-network-input {
   width: 100%;
   height: 38px;
@@ -8129,7 +8155,7 @@ textarea:focus-visible {
 .usage-overview-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
-  grid-template-rows: auto minmax(250px, 1fr);
+  grid-template-rows: auto minmax(280px, 1fr);
   gap: 14px;
   align-items: stretch;
   overflow-x: hidden;
