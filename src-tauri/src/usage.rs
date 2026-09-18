@@ -647,6 +647,26 @@ pub(crate) async fn save_usage_storage_settings(
     Ok(settings)
 }
 
+#[tauri::command]
+pub(crate) async fn shrink_usage_database(
+    app: tauri::AppHandle,
+    target_database_size_mb: u64,
+) -> Result<UsageStorageSettings, String> {
+    let settings = run_usage_task(move || {
+        let root = usage_root_dir()?;
+        let connection = open_usage_database_at(&root)?;
+        let deleted = shrink_usage_database_to_mb(&connection, target_database_size_mb)?;
+        load_usage_storage_settings(&connection, &root, deleted)
+    })
+    .await?;
+    app.state::<UsageCollectorState>()
+        .set_total_records(settings.total_records);
+    if settings.deleted_records > 0 {
+        let _ = app.emit(USAGE_UPDATED_EVENT, Local::now().to_rfc3339());
+    }
+    Ok(settings)
+}
+
 fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, String> {
     let mut connection = open_usage_database_at(root)?;
     let candidate_count: i64 = connection
@@ -1520,7 +1540,23 @@ fn enforce_usage_database_limit(connection: &Connection) -> Result<u64, String> 
     let max_bytes = max_database_size_mb
         .checked_mul(BYTES_PER_MB)
         .ok_or_else(|| "使用记录数据库大小限制过大".to_string())?;
+    prune_usage_database_to_bytes(connection, max_bytes)
+}
 
+fn shrink_usage_database_to_mb(
+    connection: &Connection,
+    target_database_size_mb: u64,
+) -> Result<u64, String> {
+    if target_database_size_mb == 0 {
+        return Err("数据库瘦身目标必须大于 0 MB".to_string());
+    }
+    let target_bytes = target_database_size_mb
+        .checked_mul(BYTES_PER_MB)
+        .ok_or_else(|| "数据库瘦身目标过大".to_string())?;
+    prune_usage_database_to_bytes(connection, target_bytes)
+}
+
+fn prune_usage_database_to_bytes(connection: &Connection, max_bytes: u64) -> Result<u64, String> {
     if usage_database_connection_disk_bytes(connection)? <= max_bytes {
         return Ok(0);
     }
@@ -4389,11 +4425,47 @@ mod tests {
         let connection = open_test_database(&root);
 
         assert_eq!(load_usage_database_limit(&connection).unwrap(), 0);
+        assert!(shrink_usage_database_to_mb(&connection, 0).is_err());
         save_usage_database_limit(&connection, 128).unwrap();
         drop(connection);
 
         let connection = open_usage_database_at(&root).unwrap();
         assert_eq!(load_usage_database_limit(&connection).unwrap(), 128);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn one_time_database_shrink_keeps_the_automatic_limit() {
+        let root = test_root("one-time-database-shrink");
+        let mut connection = open_test_database(&root);
+        save_usage_database_limit(&connection, 128).unwrap();
+
+        let payload = "x".repeat(8 * 1024);
+        let transaction = connection.transaction().unwrap();
+        for timestamp_ms in 0_i64..320 {
+            transaction
+                .execute(
+                    r#"INSERT INTO usage_events (
+                           event_key, timestamp, timestamp_ms, local_hour,
+                           failure_body, created_at
+                       ) VALUES (?1, ?2, ?3, '2026-01-01T00', ?4, ?2)"#,
+                    params![
+                        format!("one-time-shrink-{timestamp_ms}"),
+                        format!("2026-01-01T00:00:{timestamp_ms:03}Z"),
+                        timestamp_ms,
+                        payload,
+                    ],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+
+        let deleted = shrink_usage_database_to_mb(&connection, 1).unwrap();
+
+        assert!(deleted > 0);
+        assert_eq!(load_usage_database_limit(&connection).unwrap(), 128);
+        assert!(usage_database_disk_bytes(&root).unwrap() <= BYTES_PER_MB);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

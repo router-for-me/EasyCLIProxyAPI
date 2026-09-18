@@ -2651,6 +2651,7 @@ fn main() {
             usage::get_usage_storage_settings,
             usage::repair_usage_cache_records,
             usage::save_usage_storage_settings,
+            usage::shrink_usage_database,
             usage::save_usage_model_price,
             usage::delete_usage_model_price,
             usage::sync_usage_model_prices,

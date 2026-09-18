@@ -733,6 +733,8 @@ function UsageDataManagementView() {
   const [limitDraft, setLimitDraft] = useState('0');
   const [loadingLimit, setLoadingLimit] = useState(true);
   const [savingLimit, setSavingLimit] = useState(false);
+  const [shrinkDraft, setShrinkDraft] = useState('');
+  const [shrinking, setShrinking] = useState(false);
   const [storageNotice, setStorageNotice] = useState('');
 
   useEffect(() => {
@@ -781,6 +783,40 @@ function UsageDataManagementView() {
     }
   };
 
+  const shrinkDatabase = async () => {
+    const normalized = shrinkDraft.trim();
+    const targetDatabaseSizeMb = Number(normalized);
+    if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(targetDatabaseSizeMb) || targetDatabaseSizeMb <= 0) {
+      setError(t('usage.dataManagement.shrinkInvalid'));
+      return;
+    }
+    const confirmed = await askConfirmation({
+      title: t('usage.dataManagement.shrinkConfirmTitle'),
+      message: t('usage.dataManagement.shrinkConfirm', { size: targetDatabaseSizeMb }),
+    });
+    if (!confirmed) return;
+    setShrinking(true);
+    setError('');
+    setStorageNotice('');
+    try {
+      const next = await invoke<UsageStorageSettings>('shrink_usage_database', { targetDatabaseSizeMb });
+      setStorage(next);
+      setStorageNotice(t(
+        next.deletedRecords > 0
+          ? 'usage.dataManagement.shrinkSuccess'
+          : 'usage.dataManagement.shrinkNoCleanup',
+        {
+          deleted: next.deletedRecords.toLocaleString(),
+          size: formatStorageBytes(next.databaseSizeBytes),
+        },
+      ));
+    } catch (requestError) {
+      setError(String(requestError));
+    } finally {
+      setShrinking(false);
+    }
+  };
+
   const repair = async () => {
     if (!await askConfirmation({ title: t('usage.dataManagement.title'), message: t('usage.dataManagement.confirm') })) return;
     setRunning(true);
@@ -804,10 +840,7 @@ function UsageDataManagementView() {
       <div className="usage-data-management-heading">
         <div>
           <Wrench size={20} aria-hidden="true" />
-          <div>
-            <h2>{t('usage.dataManagement.title')}</h2>
-            <p>{t('usage.dataManagement.description')}</p>
-          </div>
+          <h2>{t('usage.dataManagement.title')}</h2>
         </div>
         <span className="usage-data-management-badge">{t('usage.dataManagement.manualBadge')}</span>
       </div>
@@ -828,15 +861,14 @@ function UsageDataManagementView() {
         <div className="usage-storage-limit-editor">
           <label>
             <input
-              type="number"
-              min="0"
-              step="1"
+              type="text"
               inputMode="numeric"
+              pattern="[0-9]*"
               value={limitDraft}
-              disabled={loadingLimit || savingLimit}
+              disabled={loadingLimit || savingLimit || shrinking || running}
               onChange={(event) => setLimitDraft(event.currentTarget.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !loadingLimit && !savingLimit) void saveStorageLimit();
+                if (event.key === 'Enter' && !loadingLimit && !savingLimit && !shrinking && !running) void saveStorageLimit();
               }}
               aria-label={t('usage.dataManagement.storageInput')}
             />
@@ -846,9 +878,41 @@ function UsageDataManagementView() {
             type="button"
             className="primary-button"
             onClick={() => void saveStorageLimit()}
-            disabled={loadingLimit || savingLimit}
+            disabled={loadingLimit || savingLimit || shrinking || running}
           >
             {savingLimit ? t('usage.dataManagement.storageSaving') : t('usage.dataManagement.storageSave')}
+          </button>
+        </div>
+      </div>
+
+      <div className="usage-data-management-action">
+        <div>
+          <strong>{t('usage.dataManagement.shrinkTitle')}</strong>
+          <span>{t('usage.dataManagement.shrinkDescription')}</span>
+        </div>
+        <div className="usage-storage-limit-editor">
+          <label>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={shrinkDraft}
+              disabled={savingLimit || shrinking || running}
+              onChange={(event) => setShrinkDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !savingLimit && !shrinking && !running) void shrinkDatabase();
+              }}
+              aria-label={t('usage.dataManagement.shrinkInput')}
+            />
+            <span>{t('usage.dataManagement.storageUnit')}</span>
+          </label>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void shrinkDatabase()}
+            disabled={savingLimit || shrinking || running}
+          >
+            {shrinking ? t('usage.dataManagement.shrinking') : t('usage.dataManagement.shrinkRun')}
           </button>
         </div>
       </div>
@@ -860,7 +924,7 @@ function UsageDataManagementView() {
           <strong>{t('usage.dataManagement.actionTitle')}</strong>
           <span>{t('usage.dataManagement.actionDescription')}</span>
         </div>
-        <button type="button" className="primary-button" onClick={() => void repair()} disabled={running}>
+        <button type="button" className="primary-button" onClick={() => void repair()} disabled={running || savingLimit || shrinking}>
           {running ? t('usage.dataManagement.running') : t('usage.dataManagement.run')}
         </button>
       </div>

@@ -9399,7 +9399,9 @@ body.table-col-resizing * {
 }
 
 .usage-storage-limit-editor input {
-  width: 104px;
+  width: 168px;
+  min-height: 40px;
+  padding: 0 12px;
   border: 0;
   background: transparent;
   box-shadow: none;
