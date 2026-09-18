@@ -1489,6 +1489,8 @@ struct GuiNetworkEndpointSettings {
     port: u16,
     #[serde(default)]
     proxy_url: Option<String>,
+    #[serde(default)]
+    proxy_override: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -1589,6 +1591,7 @@ struct CoreConfigView {
     plugins_enabled: bool,
     routing_strategy: String,
     proxy_url: String,
+    proxy_override: bool,
     routing_session_affinity: bool,
     routing_session_affinity_ttl: String,
     disable_cooling: bool,
@@ -1974,6 +1977,7 @@ impl GuiConfigState {
             .map_err(|_| "GUI 配置状态锁已损坏".to_string())?;
         let mut config = current.clone();
         apply_core_settings_to_gui_config(&mut config, settings);
+        apply_external_core_proxy_override(&mut config, settings)?;
         sanitize_gui_config(&mut config)?;
         validate_gui_config(&config)?;
         *current = config.clone();
@@ -2143,13 +2147,29 @@ impl GuiConfigState {
     }
 
     fn sync_core_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_with_api_key(settings, None)
+        self.sync_core_settings_internal(settings, None, false)
+    }
+
+    fn sync_core_settings_external(
+        &self,
+        settings: &CoreConfigSettings,
+    ) -> Result<GuiConfigFile, String> {
+        self.sync_core_settings_internal(settings, None, true)
     }
 
     fn sync_core_settings_with_api_key(
         &self,
         settings: &CoreConfigSettings,
         added_api_key: Option<GuiApiKeyEntry>,
+    ) -> Result<GuiConfigFile, String> {
+        self.sync_core_settings_internal(settings, added_api_key, false)
+    }
+
+    fn sync_core_settings_internal(
+        &self,
+        settings: &CoreConfigSettings,
+        added_api_key: Option<GuiApiKeyEntry>,
+        apply_external_proxy: bool,
     ) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.api_keys = merge_core_api_keys_with_gui_metadata(
@@ -2187,6 +2207,9 @@ impl GuiConfigState {
             config.max_retry_credentials = settings.max_retry_credentials;
             config.max_retry_interval = settings.max_retry_interval;
             config.streaming_bootstrap_retries = settings.streaming_bootstrap_retries;
+            if apply_external_proxy {
+                apply_external_core_proxy_override(config, settings)?;
+            }
             Ok(())
         })
     }
@@ -2277,6 +2300,7 @@ impl From<&GuiConfigFile> for CoreConfigView {
             plugins_enabled: config.plugins_enabled,
             routing_strategy: config.routing_strategy.clone(),
             proxy_url: config.proxy_url.clone(),
+            proxy_override: config.proxy_override,
             routing_session_affinity: config.routing_session_affinity,
             routing_session_affinity_ttl: config.routing_session_affinity_ttl.clone(),
             disable_cooling: config.disable_cooling,

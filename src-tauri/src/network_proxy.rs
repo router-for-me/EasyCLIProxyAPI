@@ -492,11 +492,10 @@ pub(crate) fn initialize_override(config: &mut GuiConfigFile, had_override: bool
     if had_override {
         return false;
     }
-    if config.proxy_override {
-        config.proxy_override = false;
-        return true;
-    }
-    false
+    // Before proxy-override existed, every non-empty proxy-url was explicitly
+    // entered by the user. Preserve that choice when migrating the config.
+    config.proxy_override = !config.proxy_url.trim().is_empty();
+    true
 }
 
 pub(crate) fn normalize_optional_proxy_url(value: &str) -> Result<String, String> {
@@ -877,11 +876,18 @@ mod tests {
         };
         assert!(!initialize_override(&mut leftover, true));
         assert!(leftover.proxy_override);
+        let mut legacy = GuiConfigFile {
+            proxy_url: "http://127.0.0.1:7890".into(),
+            ..GuiConfigFile::default()
+        };
+        assert!(initialize_override(&mut legacy, false));
+        assert!(legacy.proxy_override);
+        assert_eq!(resolve(&legacy), "http://127.0.0.1:7890");
         let mut auto = GuiConfigFile {
             proxy_url: "http://127.0.0.1:7890".into(),
             ..GuiConfigFile::default()
         };
-        assert!(!initialize_override(&mut auto, false));
+        assert!(!initialize_override(&mut auto, true));
         assert!(!auto.proxy_override);
         assert_eq!(resolve(&auto), detect());
         assert_eq!(normalize_optional_proxy_url("").unwrap(), "");

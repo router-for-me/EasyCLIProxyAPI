@@ -404,6 +404,40 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
 }
 
 #[test]
+fn external_core_proxy_changes_become_manual_overrides() {
+    let settings_with_proxy = |proxy_url: &str| {
+        let input = format!("proxy-url: \"{proxy_url}\"\n");
+        let document = serde_norway::from_str::<serde_norway::Value>(&input).unwrap();
+        core_config_settings_from_value(&document).unwrap()
+    };
+
+    let detected_url = "http://127.0.0.1:7890";
+    let mut unchanged = GuiConfigFile {
+        proxy_url: detected_url.to_string(),
+        proxy_override: false,
+        ..GuiConfigFile::default()
+    };
+    apply_external_core_proxy_override(&mut unchanged, &settings_with_proxy(detected_url)).unwrap();
+    assert!(!unchanged.proxy_override);
+
+    let mut custom = unchanged.clone();
+    apply_external_core_proxy_override(
+        &mut custom,
+        &settings_with_proxy("socks5://127.0.0.1:1080"),
+    )
+    .unwrap();
+    assert!(custom.proxy_override);
+    assert_eq!(custom.proxy_url, "socks5://127.0.0.1:1080");
+
+    let mut direct = unchanged;
+    apply_external_core_proxy_override(&mut direct, &settings_with_proxy("")).unwrap();
+    assert!(direct.proxy_override);
+    assert!(direct.proxy_url.is_empty());
+    ensure_strong_management_secret(&mut direct).unwrap();
+    assert!(validate_gui_config(&direct).is_ok());
+}
+
+#[test]
 fn example_api_keys_are_not_persisted_as_gui_settings() {
     let input = "api-keys:\n  - your-api-key-1\n  - real-key\nremote-management:\n  secret-key: plain-management-secret\nplugins:\n  enabled: true\nrouting:\n  strategy: fill-first\n";
     let document = serde_norway::from_str::<serde_norway::Value>(input).unwrap();

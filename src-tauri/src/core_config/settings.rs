@@ -1152,6 +1152,7 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     if core_is_newer && !gui_parse_failed {
         if let Ok(core_settings) = read_installed_core_config_settings() {
             apply_core_settings_to_gui_config(&mut config, &core_settings);
+            apply_external_core_proxy_override(&mut config, &core_settings)?;
             changed = true;
         }
     }
@@ -1239,8 +1240,9 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
             if presence.routing_strategy.is_none() {
                 config.routing_strategy = core_settings.routing_strategy;
             }
-            if presence.proxy_url.is_none() && config.proxy_override {
+            if presence.proxy_url.is_none() {
                 config.proxy_url = core_settings.proxy_url;
+                config.proxy_override = !config.proxy_url.trim().is_empty();
             }
             if presence.routing_session_affinity.is_none() {
                 config.routing_session_affinity = core_settings.routing_session_affinity;
@@ -1370,6 +1372,20 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.max_retry_credentials = core_settings.max_retry_credentials;
     config.max_retry_interval = core_settings.max_retry_interval;
     config.streaming_bootstrap_retries = core_settings.streaming_bootstrap_retries;
+}
+
+pub(crate) fn apply_external_core_proxy_override(
+    config: &mut GuiConfigFile,
+    core_settings: &CoreConfigSettings,
+) -> Result<(), String> {
+    if core_settings.proxy_url == config.proxy_url {
+        return Ok(());
+    }
+    config.proxy_url = network_proxy::normalize_optional_proxy_url(&core_settings.proxy_url)?;
+    // Changes made directly in the core YAML are user choices. Persist them as
+    // manual overrides so the system-proxy monitor does not revert them.
+    config.proxy_override = true;
+    Ok(())
 }
 
 pub(crate) fn default_api_key_entry() -> GuiApiKeyEntry {
@@ -1890,7 +1906,7 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
     validate_strong_management_secret_key(&config.management_secret_key)?;
     validate_routing_strategy(config.routing_strategy.trim())?;
     if config.proxy_override {
-        network_proxy::normalize_proxy_url(&config.proxy_url)?;
+        network_proxy::normalize_optional_proxy_url(&config.proxy_url)?;
     } else if config.proxy_url.chars().any(char::is_control) {
         return Err("代理 URL 不能包含控制字符".to_string());
     }

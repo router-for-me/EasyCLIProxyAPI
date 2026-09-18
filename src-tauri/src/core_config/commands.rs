@@ -160,18 +160,20 @@ pub(crate) fn save_network_endpoint_settings(
     next.host = host;
     next.allow_lan = !is_loopback_host(&next.host);
     next.port = settings.port;
-    if let Some(proxy_url) = settings.proxy_url {
-        let proxy_url = network_proxy::normalize_optional_proxy_url(&proxy_url)?;
-        let detected = if proxy_url.is_empty() {
-            Some(network_proxy::detect())
-        } else {
-            None
-        };
-        next.proxy_override = !proxy_url.is_empty();
+    if settings.proxy_url.is_some() || settings.proxy_override.is_some() {
+        let proxy_url = network_proxy::normalize_optional_proxy_url(
+            settings.proxy_url.as_deref().unwrap_or(&next.proxy_url),
+        )?;
+        // Explicit mode selection lets an empty manual URL mean direct access.
+        // Calls from older frontends keep the legacy behavior where an empty URL
+        // means following the system proxy.
+        next.proxy_override = settings
+            .proxy_override
+            .unwrap_or_else(|| !proxy_url.is_empty());
         next.proxy_url = if next.proxy_override {
             proxy_url
         } else {
-            detected.unwrap_or_else(network_proxy::detect)
+            network_proxy::detect()
         };
     }
     validate_gui_config(&next)?;

@@ -194,7 +194,7 @@ fn handle_configuration_file_changes(
                     if preserve_invalid_gui_file {
                         gui_state.replace_core_settings_external(&settings)?;
                     } else {
-                        gui_state.sync_core_settings(&settings)?;
+                        gui_state.sync_core_settings_external(&settings)?;
                     }
                     cache.clear()?;
                     Ok(())
