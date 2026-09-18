@@ -372,18 +372,34 @@ export const stripResponseFields = (record: Record<string, unknown>) => {
 
 const mergeModelRecords = (current: unknown, selected: ModelOption[]) => {
   const existing = Array.isArray(current) ? current : [];
+  const consumedExistingIndexes = new Set<number>();
+  const selectedNames = new Set<string>();
   const seen = new Set<string>();
-  return selected.reduce<Record<string, unknown>[]>((models, model) => {
+  const models = selected.reduce<Record<string, unknown>[]>((result, model) => {
     const name = model.name.trim();
     const key = name.toLowerCase();
-    if (!name || seen.has(key)) return models;
+    if (!name || seen.has(key)) return result;
     seen.add(key);
-    const matched = existing.find(
-      (item) => isRecord(item) && readString(item, 'name').toLowerCase() === name.toLowerCase(),
-    );
+    selectedNames.add(key);
+    const requested = (model.alias ?? '').trim();
+    const requestedAlias = requested.toLowerCase();
+    let matchedIndex = existing.findIndex((item, index) => (
+      !consumedExistingIndexes.has(index)
+      && isRecord(item)
+      && readString(item, 'name').toLowerCase() === key
+      && readString(item, 'alias').toLowerCase() === requestedAlias
+    ));
+    if (matchedIndex < 0) {
+      matchedIndex = existing.findIndex((item, index) => (
+        !consumedExistingIndexes.has(index)
+        && isRecord(item)
+        && readString(item, 'name').toLowerCase() === key
+      ));
+    }
+    if (matchedIndex >= 0) consumedExistingIndexes.add(matchedIndex);
+    const matched = matchedIndex >= 0 ? existing[matchedIndex] : undefined;
     const next: Record<string, unknown> = isRecord(matched) ? { ...matched } : {};
     next.name = name;
-    const requested = (model.alias ?? '').trim();
     const storedAlias = readString(next, 'alias');
     const alias = usableModelAlias(requested);
     if (alias && alias !== name) {
@@ -401,9 +417,20 @@ const mergeModelRecords = (current: unknown, selected: ModelOption[]) => {
       delete next.alias;
     }
     if (model.thinking) next.thinking = { ...model.thinking };
-    models.push(next);
-    return models;
+    result.push(next);
+    return result;
   }, []);
+
+  existing.forEach((item, index) => {
+    if (
+      consumedExistingIndexes.has(index)
+      || !isRecord(item)
+      || !selectedNames.has(readString(item, 'name').toLowerCase())
+    ) return;
+    models.push({ ...item });
+  });
+
+  return models;
 };
 
 export const exclusionsForModelSelection = (

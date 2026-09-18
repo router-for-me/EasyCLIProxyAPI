@@ -17,6 +17,7 @@ import {
   sectionRecordsFromConfig,
   stripResponseFields,
 } from '../src/pages/ApiAccessPage';
+import { modelsFromRecord } from '../src/services/modelService';
 
 it('saves non-empty custom model names and removes duplicate or blank entries', () => {
   const result = buildProviderRecord('openai-compatibility', {
@@ -102,6 +103,36 @@ it('keeps an existing spaced alias when only the letter case changes', () => {
   expect(result.models).toEqual([
     { name: 'codex-auto-review', alias: 'Codex Auto Review' },
   ]);
+});
+
+it('preserves aliases added in advanced settings when saving an API connection', () => {
+  const current = {
+    'api-key': 'codex-key',
+    'base-url': 'https://foobar.com/v1',
+    headers: { 'User-Agent': '$User-Agent' },
+    models: [
+      { name: 'gpt-5.6-luna' },
+      {
+        name: 'gpt-5.6-luna',
+        alias: 'claude-sonnet-5-luna',
+        custom: { keep: true },
+      },
+    ],
+  };
+  const result = buildProviderRecord(
+    'codex-api-key',
+    {
+      name: '',
+      apiKey: 'codex-key',
+      baseUrl: 'https://foobar.com/v1',
+      priority: '',
+      models: modelsFromRecord(current.models),
+      headersText: 'User-Agent: $User-Agent',
+    },
+    current,
+  );
+
+  expect(result.models).toEqual(current.models);
 });
 
 it('parses multiline API keys into unique trimmed entries', () => {
