@@ -180,6 +180,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const currentVersion = coreStatus?.currentVersion ?? '';
   const coreInstalled = Boolean(coreStatus?.installed);
   const coreRunning = Boolean(coreStatus?.running);
+  const coreReady = Boolean(coreStatus?.ready);
   const coreProcessBusy = processBusy || Boolean(coreStatus?.starting);
 
   const statusTone = statusError ? 'error' : coreRunning ? 'success' : 'neutral';
@@ -326,8 +327,8 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               )}
             </div>
           </div>
-          <span className={`state-pill ${coreRunning ? 'success' : 'neutral'}`}>
-            {coreRunning ? t('kernel.access.connectable') : t('kernel.access.waiting')}
+          <span className={`state-pill ${coreReady ? 'success' : 'neutral'}`}>
+            {coreReady ? t('kernel.access.connectable') : t('kernel.access.waiting')}
           </span>
         </div>
 

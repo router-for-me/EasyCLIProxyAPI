@@ -135,7 +135,7 @@ function AppContent() {
   const languageMenuRef = useRef<HTMLDivElement>(null);
   const languageButtonRef = useRef<HTMLButtonElement>(null);
   const { status } = useCoreRuntime();
-  const coreRunning = Boolean(status?.running);
+  const coreReady = Boolean(status?.ready);
   const activePage = pages.find((page) => page.id === active) ?? pages[0];
   const ActivePage = activePage.component;
   const selectedLanguage = languageOptions.find((option) => option.value === locale)
@@ -149,10 +149,10 @@ function AppContent() {
       : '',
   ].filter(Boolean).join(' · ');
   useEffect(() => {
-    if (!canOpenAppPage(active, coreRunning)) {
+    if (!canOpenAppPage(active, coreReady)) {
       setActive('home');
     }
-  }, [active, coreRunning]);
+  }, [active, coreReady]);
 
   useEffect(() => {
     if (!languageMenuOpen) return undefined;
@@ -230,7 +230,7 @@ function AppContent() {
   }, [windowsClosePrompt]);
 
   const select = (pageId: PageId) => {
-    if (!canOpenAppPage(pageId, coreRunning)) {
+    if (!canOpenAppPage(pageId, coreReady)) {
       return;
     }
     setActive(pageId);
@@ -294,7 +294,7 @@ function AppContent() {
           <nav className="nav-section" aria-label={t('app.navigation')}>
             {pages.filter((page) => page.id !== 'easy').map((page) => {
               const Icon = page.icon;
-              const locked = !canOpenAppPage(page.id, coreRunning);
+              const locked = !canOpenAppPage(page.id, coreReady);
               const updateIndicator = page.id === 'versions'
                 ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
                 : null;
@@ -437,7 +437,7 @@ function AppContent() {
 
         <div className="workspace">
           <main className="content">
-            {isAlwaysAvailablePage(activePage.id) || coreRunning ? (
+            {isAlwaysAvailablePage(activePage.id) || coreReady ? (
               activePage.id === 'easy' ? (
                 <EasyModePage
                   onExit={() => select('home')}

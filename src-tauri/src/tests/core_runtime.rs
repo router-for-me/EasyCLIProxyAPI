@@ -195,9 +195,10 @@ fn updating_stops_an_adopted_core_without_a_port_before_replacing_its_config() {
 
     assert!(ready);
     assert!(
-        !status.running,
-        "the orphan has no listening management port"
+        status.running,
+        "the tracked orphan remains a running process without a listening management port"
     );
+    assert!(!status.ready, "the orphan is not management-ready");
     assert!(
         locked_result.is_err(),
         "the orphan must hold a real Windows file lock"
@@ -364,6 +365,44 @@ fn core_process_state_tracks_and_releases_adopted_processes() {
         vec![std::process::id()]
     );
     assert_eq!(state.managed_pid(), None);
+}
+
+#[test]
+fn tracked_core_stays_running_when_a_management_port_probe_misses() {
+    let state = CoreProcessState::new(false);
+    let binary_path = env::current_exe().unwrap();
+    let process_id = std::process::id();
+    state
+        .adopt_process_ids(&binary_path, vec![process_id])
+        .unwrap();
+
+    // Port zero cannot be the configured management endpoint. This models a
+    // transient failed health probe while the tracked process is still alive.
+    let status = current_core_status(Some(&state), Some(0)).unwrap();
+    state.clear_adopted_processes().unwrap();
+
+    assert!(status.running);
+    assert!(!status.ready);
+    assert_eq!(status.process_id, Some(process_id));
+}
+
+#[test]
+fn tracked_core_is_ready_when_its_management_port_accepts_connections() {
+    let state = CoreProcessState::new(false);
+    let binary_path = env::current_exe().unwrap();
+    let process_id = std::process::id();
+    state
+        .adopt_process_ids(&binary_path, vec![process_id])
+        .unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let status = current_core_status(Some(&state), Some(port)).unwrap();
+    state.clear_adopted_processes().unwrap();
+
+    assert!(status.running);
+    assert!(status.ready);
+    assert_eq!(status.process_id, Some(process_id));
 }
 
 #[test]

@@ -465,7 +465,10 @@ export function UsageRecordsPage() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     const refresh = () => {
-      if (!disposed && !document.hidden) void loadData(true, true);
+      // WebView2 may classify an unfocused or occluded window on another monitor
+      // as hidden. Keep usage refreshes independent of Page Visibility so both
+      // record events and the fallback poll continue to update the current view.
+      if (!disposed) void loadData(true, true);
     };
     listen('usage-records-updated', refresh)
       .then((stop) => {

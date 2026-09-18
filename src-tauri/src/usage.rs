@@ -1790,7 +1790,7 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
     let mut next_inbox_cleanup_at = tokio::time::Instant::now() + Duration::from_secs(60 * 60);
     let mut next_inbox_recovery_at = tokio::time::Instant::now();
     let mut next_core_check_at = tokio::time::Instant::now();
-    let mut core_running = false;
+    let mut core_ready = false;
     loop {
         if token.is_cancelled() {
             return;
@@ -1852,17 +1852,17 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
         }
         if tokio::time::Instant::now() >= next_core_check_at {
             let process_state = app.state::<CoreProcessState>();
-            core_running = current_core_status(Some(process_state.inner()), Some(config.port))
-                .map(|status| status.running)
+            core_ready = current_core_status(Some(process_state.inner()), Some(config.port))
+                .map(|status| status.ready)
                 .unwrap_or(false);
             next_core_check_at = tokio::time::Instant::now() + Duration::from_secs(2);
         }
-        if !core_running {
+        if !core_ready {
             subscription = None;
             subscription_config = None;
             redis_queue = RedisUsageQueueSource::default();
             subscribe_retry_at = tokio::time::Instant::now();
-            set_collector_status(&app, "waiting-core", "等待内核启动", None);
+            set_collector_status(&app, "waiting-core", "等待内核就绪", None);
             retry_seconds = 1;
             wait_or_cancel(&token, 1).await;
             continue;

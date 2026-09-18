@@ -436,6 +436,7 @@ struct CorePlatform {
 struct CoreStatus {
     installed: bool,
     running: bool,
+    ready: bool,
     starting: bool,
     managed: bool,
     process_id: Option<u32>,

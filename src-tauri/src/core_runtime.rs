@@ -1227,7 +1227,12 @@ pub(crate) fn current_core_status(
             .and_then(|path| find_core_process_ids(path).first().copied()),
         None => None,
     };
-    let running = process_id.is_some() && management_port_open.unwrap_or(true);
+    // A tracked process remains running even if a single management-port probe
+    // times out. The port probe is still required before discovering an
+    // untracked process, but using it to override a known live PID makes the UI
+    // oscillate between running and stopped while continuing to show that PID.
+    let running = process_id.is_some();
+    let ready = running && management_port_open.unwrap_or(true);
     let current_version = read_core_metadata(&install_dir).map(|metadata| metadata.version);
 
     let message = if starting {
@@ -1243,6 +1248,7 @@ pub(crate) fn current_core_status(
     Ok(CoreStatus {
         installed,
         running,
+        ready,
         starting,
         managed: managed_pid.is_some(),
         process_id,
@@ -1260,7 +1266,15 @@ pub(crate) fn is_management_port_open(port: u16) -> bool {
     let Ok(address) = core_management_address(&listen_host, port) else {
         return false;
     };
-    TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok()
+    for attempt in 0..3 {
+        if TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok() {
+            return true;
+        }
+        if attempt < 2 {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    false
 }
 
 fn core_management_address(listen_host: &str, port: u16) -> Result<SocketAddr, String> {
