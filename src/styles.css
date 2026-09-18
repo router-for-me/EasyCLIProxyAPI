@@ -8246,13 +8246,6 @@ textarea:focus-visible {
   flex-wrap: wrap;
 }
 
-.usage-trend-header-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
 .usage-trend-legend-item {
   display: inline-flex;
   align-items: center;
@@ -8284,22 +8277,6 @@ textarea:focus-visible {
   border-radius: 2px;
   flex-shrink: 0;
   display: inline-block;
-}
-
-.usage-trend-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: var(--theme-f4f1ea);
-  color: var(--theme-7a746c);
-  font-size: 11px;
-}
-
-.usage-trend-chip strong {
-  color: var(--theme-2d2a26);
-  font-weight: 600;
 }
 
 .usage-trend-chart {

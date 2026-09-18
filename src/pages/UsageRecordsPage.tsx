@@ -1020,8 +1020,6 @@ function UsageTrend({
   const modelLabel = (key: string, fallback: string) =>
     key === OTHER_TREND_MODEL_KEY ? t('usage.trend.other') : fallback;
 
-  const bucketLabel = t(`usage.trend.bucket.${series.bucket}` as MessageKey);
-
   const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0 || count === 0) return;
@@ -1092,12 +1090,6 @@ function UsageTrend({
               </button>
             );
           })}
-        </div>
-        <div className="usage-trend-header-meta">
-          <span className="usage-trend-chip">
-            <strong>{compactNumber(series.totals.tokens)}</strong> {t('usage.unit.tokens')}
-          </span>
-          <span className="usage-trend-chip">{bucketLabel}</span>
         </div>
       </div>
 
