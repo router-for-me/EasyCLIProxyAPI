@@ -1,8 +1,14 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
+import { AuthFileQuotaPanel } from '../components/AuthFileQuotaPanel';
+import { AuthFileSettingsDialog } from '../components/AuthFileSettingsDialog';
+import { useCodexQuotaReset } from '../components/useCodexQuotaReset';
+import './AuthFileManagementPage.css';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { AuthFileModelsDialog } from '../components/AuthFileModelsDialog';
+import { AuthFileRequestStatus } from '../components/AuthFileRequestStatus';
+import { AuthFileHealthStatus } from '../components/AuthFileHealthStatus';
 import {
   Check,
   Copy,
@@ -10,7 +16,6 @@ import {
   FolderOpen,
   Import,
   LoaderCircle,
-  Pencil,
   RefreshCw,
   Search,
   Settings2,
@@ -34,12 +39,10 @@ import {
   responseList,
 } from '../services/managementApi';
 import {
-  formatQuotaTimestamp,
   idleQuota,
   loadQuota,
   providerForFile as quotaProviderForFile,
   quotaKey,
-  type QuotaState,
 } from '../services/quotaService';
 import {
   captureQuotaCacheGeneration,
@@ -53,7 +56,6 @@ import {
   authFileName,
   dedupeAuthFiles,
   isRuntimeOnlyAuthFile,
-  normalizeAuthFilePriorityInput,
   parseAuthFilePriority,
 } from '../services/authFiles';
 import {
@@ -70,16 +72,8 @@ import {
   type OAuthModelTarget,
 } from '../services/oauthModelSettings';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
-import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 
 type AuthFile = Record<string, unknown>;
-
-type PriorityEditor = {
-  fileName: string;
-  originalPriority: number;
-  value: string;
-  error: string;
-};
 
 const providerIcons: Record<string, string> = {
   antigravity: antigravityIcon,
@@ -111,75 +105,26 @@ const fileName = authFileName;
 
 const isRuntimeOnly = isRuntimeOnlyAuthFile;
 
-const statusText = (file: AuthFile) => {
-  if (readBoolean(file, 'disabled')) return translate(getCurrentLocale(), 'authFiles.status.disabled');
-  if (readBoolean(file, 'unavailable')) return translate(getCurrentLocale(), 'authFiles.status.unavailable');
-  return readString(file, 'status') || translate(getCurrentLocale(), 'authFiles.status.ready');
-};
-
-function AuthFileQuotaSummary({ quota, name }: { quota: QuotaState; name: string }) {
-  const { locale, t } = useI18n();
-  const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
-  if (quota.status === 'loading') {
-    return (
-      <div className="auth-file-quota loading">
-        <LoaderCircle size={13} className="spin" />
-        <span>{t('authFiles.quota.loading')}</span>
-      </div>
-    );
-  }
-  if (quota.status === 'error') {
-    return (
-      <div className="auth-file-quota error" title={quota.error}>
-        <span>{t('authFiles.quota.failed')}</span>
-        <MessageNotice message={quota.error ? name + ': ' + quota.error : null} />
-      </div>
-    );
-  }
-  if (quota.status !== 'success') return null;
-
-  return (
-    <div className="auth-file-quota" aria-label={t('authFiles.quota.aria')}>
-      {quota.plan ? <span className="auth-file-quota-plan">{quota.plan}</span> : null}
-      {quota.rows.length > 0 ? quota.rows.map((row, index) => {
-        const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
-        const detail = [row.detail, reset].filter(Boolean).join(' · ');
-        return (
-          <span className="auth-file-quota-item" key={`${row.label}-${index}`} title={detail || undefined}>
-            <span>{row.label}</span>
-            <strong>{row.remainingPercent === null ? '—' : `${Math.round(row.remainingPercent)}%`}</strong>
-            {reset ? <small>{reset}</small> : null}
-            {row.remainingPercent === null && row.detail ? <small>{row.detail}</small> : null}
-          </span>
-        );
-      }) : <span className="auth-file-quota-empty">{t('authFiles.quota.empty')}</span>}
-      {quota.resetCredits !== undefined ? (
-        <span className="auth-file-quota-credit">{t('authFiles.quota.resets', { count: quota.resetCredits })}</span>
-      ) : null}
-      {quota.resetCreditsApplicable !== undefined ? <span className="auth-file-quota-credit">{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</span> : null}
-      {quota.subscriptionActiveUntil ? <span className="auth-file-quota-credit">{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span> : null}
-      <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
-      {quota.resetCreditsEarliestExpiry ? (
-        <span className="auth-file-quota-credit">{t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) })}</span>
-      ) : null}
-    </div>
-  );
-}
-
 export function AuthFileManagementPage() {
   const { t } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
-  const [files, setFiles] = useState<AuthFile[]>([]);
+  const [fileSnapshot, setFileSnapshot] = useState<{
+    files: AuthFile[];
+    receivedAtMs: number;
+    observedAt?: string;
+  }>({ files: [], receivedAtMs: 0 });
+  const { files, receivedAtMs, observedAt } = fileSnapshot;
   const [filter, setFilter] = useState('');
   const [providerFilter, setProviderFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled' | 'runtime'>('all');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const resetCodexQuota = useCodexQuotaReset(askConfirmation, setError);
   const feedback = useAppNotice();
   const { showNotice } = feedback;
   const [copied, setCopied] = useState('');
-  const [priorityEditor, setPriorityEditor] = useState<PriorityEditor | null>(null);
+  const [settingsName, setSettingsName] = useState<string | null>(null);
   const [oauthModelTarget, setOauthModelTarget] = useState<OAuthModelTarget | null>(null);
   const [oauthModelSettings, setOauthModelSettings] = useState<OAuthModelSettings | null>(null);
   const [oauthExcludedRulesText, setOauthExcludedRulesText] = useState('');
@@ -208,7 +153,7 @@ export function AuthFileManagementPage() {
     try {
       const payload = await managementApi.get('/auth-files');
       const nextFiles = dedupeAuthFiles(responseList(payload, 'files'));
-      setFiles(nextFiles);
+      setFileSnapshot({ files: nextFiles, receivedAtMs: Date.now(), observedAt: readString(payload, 'observed_at') });
       const validQuotaKeys = new Set(nextFiles.map(quotaKey));
       pruneQuotaCache(validQuotaKeys);
       updateQuotaCache((current) => {
@@ -265,13 +210,6 @@ export function AuthFileManagementPage() {
     } finally {
       if (oauthModelRequestRef.current === requestId) setOauthModelLoading(false);
     }
-  };
-
-  const openOauthModels = (file: AuthFile) => {
-    const name = readString(file, 'name');
-    const provider = providerKey(file);
-    if (!name || !provider || isRuntimeOnly(file)) return;
-    return openOauthModelSettings({ scope: 'credential', name, provider, label: providerName(file) });
   };
 
   const saveOauthModels = async () => {
@@ -385,51 +323,6 @@ export function AuthFileManagementPage() {
     }
   };
 
-  const openPriorityEditor = (file: AuthFile) => {
-    const priority = parseAuthFilePriority(file.priority);
-    setPriorityEditor({
-      fileName: fileName(file),
-      originalPriority: priority ?? 0,
-      value: priority === undefined || priority === 0 ? '' : String(priority),
-      error: '',
-    });
-  };
-
-  const closePriorityEditor = () => {
-    if (!busy) setPriorityEditor(null);
-  };
-
-  const savePriority = async () => {
-    if (!priorityEditor || busy) return;
-    const priority = normalizeAuthFilePriorityInput(priorityEditor.value);
-    if (priority === null) {
-      setPriorityEditor((current) => current
-        ? { ...current, error: t('authFiles.priority.invalid') }
-        : current);
-      return;
-    }
-    if (priority === priorityEditor.originalPriority) {
-      setPriorityEditor(null);
-      return;
-    }
-
-    const name = priorityEditor.fileName;
-    setBusy(true);
-    setError('');
-    try {
-      await managementApi.patch('/auth-files/fields', { name, priority });
-      setPriorityEditor(null);
-      showNotice({ key: 'authFiles.priority.updated', variables: { name } });
-      await loadFiles();
-    } catch (requestError) {
-      setPriorityEditor((current) => current
-        ? { ...current, error: String(requestError) }
-        : current);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const deleteFile = async (file: AuthFile) => {
     const name = fileName(file);
     if (isRuntimeOnly(file)) {
@@ -527,35 +420,39 @@ export function AuthFileManagementPage() {
         ) : visibleFiles.length === 0 ? (
           <div className="management-empty"><FileDown size={24} /><strong>{files.length ? t('authFiles.empty.filtered') : t('authFiles.empty.none')}</strong><span>{files.length ? t('authFiles.empty.tryFilter') : t('authFiles.empty.upload')}</span></div>
         ) : (
-          <div className="real-auth-file-list">
+          <div className="auth-file-card-grid">
             {visibleFiles.map((file) => {
               const name = fileName(file);
               const icon = providerIcons[providerKey(file)] ?? geminiIcon;
               const disabled = readBoolean(file, 'disabled');
               const priority = parseAuthFilePriority(file.priority) ?? 0;
+              const identity = readString(file, 'email', 'project_id', 'label');
+              const note = readString(file, 'note');
+              const quota = quotas[quotaKey(file)] ?? idleQuota();
               return (
-                <article className={`real-auth-file-row ${disabled ? 'disabled' : ''}`} key={`${name}-${readString(file, 'auth_index', 'authIndex')}`}>
-                  <img src={icon} alt="" className={providerKey(file) === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} />
-                  <div className="auth-file-main">
-                    <div className="auth-file-title"><strong title={name}>{name}</strong><span className={`state-pill ${disabled ? 'error' : readBoolean(file, 'unavailable') ? 'error' : 'success'}`} title={readString(file, 'status_message', 'statusMessage') || undefined}>{statusText(file)}</span></div>
-                    <span>{providerName(file)}{readString(file, 'email', 'account', 'label') ? ` · ${readString(file, 'email', 'account', 'label')}` : ''}</span>
-                  </div>
-                  <div className="auth-file-meta">
-                    <span>{readNumber(file, 'size') === null ? t('authFiles.unknownSize') : `${Math.ceil((readNumber(file, 'size') ?? 0) / 1024)} KB`}</span>
-                    <span>{formatDate(file.modtime ?? file.updated_at ?? file.last_refresh)}</span>
+                <article className={`auth-file-card ${disabled ? 'is-disabled' : ''}`} key={`${name}-${readString(file, 'auth_index', 'authIndex')}`}>
+                  <header className={`auth-card-header ${identity ? '' : 'filename-only'}`}>
+                    <img src={icon} alt="" className={providerKey(file) === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} />
+                    <div className="auth-card-identity"><span className="auth-card-provider">{providerName(file)}</span><strong title={identity || name}>{identity || name}</strong></div>
                     {isRuntimeOnly(file) ? <span className="state-pill">{t('authFiles.runtime')}</span> : null}
+                  </header>
+                  {identity ? <p className="auth-card-filename">{name}</p> : null}
+                  <AuthFileHealthStatus file={file} receivedAtMs={receivedAtMs} observedAt={observedAt} />
+                  <AuthFileRequestStatus file={file} />
+                  {quotaProviderForFile(file) ? <AuthFileQuotaPanel quota={quota} file={file} disabled={busy || disabled} onRefresh={() => void refreshQuota(file)} onReset={quotaProviderForFile(file) === 'codex' ? () => void resetCodexQuota(file, quota) : undefined} /> : null}
+                  <QuotaActionFeedback quota={quota} name={name} />
+                  <div className="auth-card-meta">
+                    <span>{t('authFiles.priority.button', { priority })} · {readNumber(file, 'size') === null ? t('authFiles.unknownSize') : `${Math.ceil((readNumber(file, 'size') ?? 0) / 1024)} KB`}</span>
+                    <span>{formatDate(file.modtime ?? file.updated_at ?? file.last_refresh)}</span>
                   </div>
-                  <div className="auth-file-actions">
-                    {quotaProviderForFile(file) && !disabled ? <button type="button" className="secondary-button compact-button" onClick={() => void refreshQuota(file)} disabled={busy || quotas[quotaKey(file)]?.status === 'loading'}>{quotas[quotaKey(file)]?.status === 'loading' ? t('authFiles.quota.querying') : quotas[quotaKey(file)]?.status === 'success' ? t('authFiles.quota.refresh') : t('authFiles.quota.fetch')}</button> : null}
-                    {providerKey(file) ? <button type="button" className="secondary-button compact-button" onClick={() => setModelViewName(name)} disabled={busy || disabled} title={t('authFiles.models.viewTitle')}>{t('authFiles.models.button')}</button> : null}
-                    {providerKey(file) ? <button type="button" className="secondary-button compact-button" onClick={() => void openOauthModels(file)} disabled={busy || disabled || oauthModelSaving || isRuntimeOnly(file) || !readString(file, 'name')} title={t(isRuntimeOnly(file) ? 'authFiles.models.runtimeUnsupported' : 'authFiles.models.settings')}>{t('authFiles.models.excludeButton')}</button> : null}
-                    <button type="button" className="secondary-button compact-button auth-file-priority-button" onClick={() => openPriorityEditor(file)} disabled={busy || disabled} title={t('authFiles.priority.hint')}><Pencil size={14} />{t('authFiles.priority.button', { priority })}</button>
-                    <button type="button" className="icon-button quiet" onClick={() => void copyName(name)} disabled={busy || disabled} title={t('authFiles.copyName')}>{copied === name ? <Check size={16} /> : <Copy size={16} />}</button>
-                    <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button`} onClick={() => void toggleStatus(file)} disabled={busy}>{disabled ? t('common.enable') : t('common.disable')}</button>
-                    <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.delete')}><Trash2 size={16} /></button>
-                  </div>
-                  {quotaProviderForFile(file) && quotas[quotaKey(file)]?.status !== 'idle' ? <AuthFileQuotaSummary quota={quotas[quotaKey(file)] ?? idleQuota()} name={name} /> : null}
-                  <QuotaActionFeedback quota={quotas[quotaKey(file)] ?? idleQuota()} name={name} />
+                  {note ? <div className="auth-card-note"><span>{t('authFiles.settings.note')}</span><p title={note}>{note}</p></div> : null}
+                  <footer className="auth-card-actions">
+                    <button type="button" className="secondary-button compact-button" onClick={() => setSettingsName(name)} disabled={busy || isRuntimeOnly(file) || !readString(file, 'name')} title={t(isRuntimeOnly(file) ? 'authFiles.settings.runtime' : 'authFiles.settings.title')}><Settings2 size={14} />{t('authFiles.settings.button')}</button>
+                    {providerKey(file) ? <button type="button" className="secondary-button compact-button" onClick={() => setModelViewName(name)} disabled={busy} title={t('authFiles.models.viewTitle')}>{t('authFiles.models.button')}</button> : null}
+                    <button type="button" className="icon-button quiet" onClick={() => void copyName(name)} disabled={busy} title={t('authFiles.copyName')}>{copied === name ? <Check size={15} /> : <Copy size={15} />}</button>
+                    <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`} onClick={() => void toggleStatus(file)} disabled={busy}>{disabled ? t('common.enable') : t('common.disable')}</button>
+                    <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.delete')}><Trash2 size={15} /></button>
+                  </footer>
                 </article>
               );
             })}
@@ -564,53 +461,11 @@ export function AuthFileManagementPage() {
       </section>
       {runtimeCount > 0 ? <p className="page-footnote">{t('authFiles.runtimeFootnote', { count: runtimeCount })}</p> : null}
 
-      {priorityEditor ? (
-        <div className="config-dialog-backdrop" onMouseDown={(event) => event.currentTarget === event.target && closePriorityEditor()}>
-          <form
-            className="config-dialog auth-priority-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="auth-priority-title"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void savePriority();
-            }}
-          >
-            <div className="config-dialog-heading">
-              <div><Pencil size={19} /><h2 id="auth-priority-title">{t('authFiles.priority.title')}</h2></div>
-              <button type="button" className="icon-button quiet" onClick={closePriorityEditor} disabled={busy} title={t('common.close')}><X size={18} /></button>
-            </div>
-            <div className="auth-priority-target" title={priorityEditor.fileName}>{priorityEditor.fileName}</div>
-            <label className="auth-priority-field" htmlFor="auth-file-priority-input">
-              <span>{t('authFiles.priority.label')}</span>
-              <input
-                id="auth-file-priority-input"
-                autoFocus
-                type="text"
-                inputMode="numeric"
-                value={priorityEditor.value}
-                placeholder={t('authFiles.priority.placeholder')}
-                disabled={busy}
-                aria-invalid={Boolean(priorityEditor.error)}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  setPriorityEditor((current) => current
-                    ? { ...current, value, error: '' }
-                    : current);
-                }}
-              />
-              <small>{t('authFiles.priority.hint')}</small>
-            </label>
-            <div className={`config-form-message ${priorityEditor.error ? 'error' : ''}`} role={priorityEditor.error ? 'alert' : undefined}>
-              {priorityEditor.error || ' '}
-            </div>
-            <div className="config-dialog-actions two-actions">
-              <button type="button" className="secondary-button" onClick={closePriorityEditor} disabled={busy}>{t('common.cancel')}</button>
-              <button type="submit" className="primary-button" disabled={busy}>{busy ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{busy ? t('common.saving') : t('common.save')}</button>
-            </div>
-          </form>
-        </div>
-      ) : null}
+      {settingsName ? <AuthFileSettingsDialog key={settingsName} name={settingsName} onClose={() => setSettingsName(null)} onSaved={() => {
+        showNotice({ key: 'authFiles.settings.updated', variables: { name: settingsName } });
+        setSettingsName(null);
+        void loadFiles(false);
+      }} /> : null}
 
       {modelViewName ? <AuthFileModelsDialog name={modelViewName} onClose={() => setModelViewName(null)} /> : null}
 

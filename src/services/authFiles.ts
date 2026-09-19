@@ -111,6 +111,7 @@ const mergeDuplicateAuthFiles = (entries: AuthFileRecord[]) => {
   const merged = { ...sorted[0] };
   sorted.slice(1).forEach((entry) => {
     Object.entries(entry).forEach(([key, value]) => {
+      if (key === 'cooldowns' && Object.prototype.hasOwnProperty.call(merged, key)) return;
       if (!hasMeaningfulValue(merged[key]) && hasMeaningfulValue(value)) merged[key] = value;
     });
   });

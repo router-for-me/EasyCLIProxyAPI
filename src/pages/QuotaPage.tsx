@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
-import { canResetCodexQuota, resetCodexQuotaWithConfirmation } from '../services/quotaActions';
+import { canResetCodexQuota } from '../services/quotaActions';
+import { useCodexQuotaReset } from '../components/useCodexQuotaReset';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
@@ -47,7 +48,7 @@ const providerOrder: QuotaProvider[] = ['claude', 'antigravity', 'codex', 'xai',
 const REFRESH_CONCURRENCY = 4;
 
 export function QuotaPage() {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const [files, setFiles] = useState<AuthFile[]>([]);
   const quotas = useQuotaCache();
@@ -96,23 +97,7 @@ export function QuotaPage() {
     });
   }, [t]);
 
-  const resetCodexQuota = useCallback(async (file: AuthFile, quota: QuotaState) => {
-    setError('');
-    try {
-      await resetCodexQuotaWithConfirmation(file, () => askConfirmation({
-        title: t('quota.reset'),
-        message: t('quota.confirm.title', { name: fileName(file) }),
-        confirmText: t('quota.confirm.button'),
-        details: [
-          { label: t('quota.resetCredits'), value: String(quota.resetCredits ?? '—') },
-          { label: t('quota.earliestExpiry'), value: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) },
-        ],
-        warning: t('quota.confirm.warning'),
-      }));
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : String(requestError));
-    }
-  }, [askConfirmation, locale, t]);
+  const resetCodexQuota = useCodexQuotaReset(askConfirmation, setError);
 
   const refreshAll = useCallback(async () => {
     if (Object.values(getQuotaCacheSnapshot()).some((quota) => quota.status === 'loading')) return;
