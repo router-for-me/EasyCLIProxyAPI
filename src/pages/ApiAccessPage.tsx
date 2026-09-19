@@ -116,10 +116,11 @@ export type ApiAccessRemarkLocator = {
   providerName: string;
   baseUrl: string;
   apiKeys: string[];
+  configIdentity?: string;
 };
 
-const providerDragId = (
-  row: Pick<ProviderRow, 'section' | 'name' | 'apiKey' | 'baseUrl'>,
+export const providerDragId = (
+  row: Pick<ProviderRow, 'section' | 'index' | 'name' | 'apiKey' | 'baseUrl'>,
 ) => {
   const identity = `${row.section}\u0000${row.name}\u0000${row.apiKey}\u0000${row.baseUrl}`;
   let hash = 2166136261;
@@ -127,7 +128,7 @@ const providerDragId = (
     hash ^= identity.charCodeAt(index);
     hash = Math.imul(hash, 16777619);
   }
-  return `${row.section}:${(hash >>> 0).toString(36)}`;
+  return `${row.section}:${(hash >>> 0).toString(36)}:${row.index}`;
 };
 
 function SortableProviderRow({
@@ -330,7 +331,7 @@ const rowFromRecord = (
 export const providerRemarkIdentity = (
   section: ProviderSection,
   locator: ApiAccessRemarkLocator,
-) => JSON.stringify([section, locator.providerName, locator.baseUrl, locator.apiKeys]);
+) => JSON.stringify([section, locator.providerName, locator.baseUrl, locator.apiKeys, locator.configIdentity ?? '']);
 
 export const apiAccessRemarkLocatorFromRecord = (
   section: ProviderSection,
@@ -341,14 +342,12 @@ export const apiAccessRemarkLocatorFromRecord = (
     providerName: readString(record, 'name'),
     baseUrl: row.baseUrl,
     apiKeys: row.apiKeys,
+    configIdentity: providerRemarkConfigIdentity(record),
   };
 };
 
-const apiAccessRemarkLocatorFromRow = (row: ProviderRow): ApiAccessRemarkLocator => ({
-  providerName: readString(row.record, 'name'),
-  baseUrl: row.baseUrl,
-  apiKeys: row.apiKeys,
-});
+const apiAccessRemarkLocatorFromRow = (row: ProviderRow): ApiAccessRemarkLocator =>
+  apiAccessRemarkLocatorFromRecord(row.section, row.record);
 
 const providerHealthIdentity = (row: ProviderRow) => [
   row.section,
@@ -395,6 +394,52 @@ export const stripResponseFields = (record: Record<string, unknown>) => {
   }
   return next;
 };
+
+const normalizeProviderIdentity = (value: unknown): unknown => {
+  if (value == null || value === '') return undefined;
+  if (Array.isArray(value)) return value.length ? value.map(normalizeProviderIdentity) : undefined;
+  if (isRecord(value)) {
+    const entries = Object.keys(value).sort().flatMap((key) => {
+      const normalized = normalizeProviderIdentity(value[key]);
+      return normalized === undefined ? [] : [[key, normalized]];
+    });
+    return entries.length ? Object.fromEntries(entries) : undefined;
+  }
+  return value;
+};
+
+const providerConfigIdentity = (record: Record<string, unknown>) => {
+  const config = stripResponseFields(record);
+  if (config.priority === 0) delete config.priority;
+  if (config.websockets === false) delete config.websockets;
+  if (config.disabled === false) delete config.disabled;
+  return JSON.stringify(normalizeProviderIdentity(config) ?? {});
+};
+
+const providerRemarkConfigIdentity = (record: Record<string, unknown>) => {
+  const config = stripResponseFields(record);
+  for (const key of ['name', 'api-key', 'apiKey', 'api-key-entries', 'base-url', 'baseUrl', 'disabled']) {
+    delete config[key];
+  }
+  if (Array.isArray(config['excluded-models'])) {
+    config['excluded-models'] = config['excluded-models'].filter((model) => String(model).trim() !== '*');
+  }
+  return providerConfigIdentity(config);
+};
+
+export const hasDuplicateProviderRecord = (
+  section: ProviderSection,
+  records: Record<string, unknown>[],
+  candidates: Record<string, unknown>[],
+  targetIndex = -1,
+) => records.some((record, index) => index !== targetIndex && candidates.some((candidate) => {
+  if (definitionFor(section).openAi) return readString(record, 'name') === readString(candidate, 'name');
+  if (section === 'gemini-api-key') {
+    return readString(record, 'api-key', 'apiKey') === readString(candidate, 'api-key', 'apiKey')
+      && readString(record, 'base-url', 'baseUrl') === readString(candidate, 'base-url', 'baseUrl');
+  }
+  return providerConfigIdentity(record) === providerConfigIdentity(candidate);
+}));
 
 const mergeModelRecords = (current: unknown, selected: ModelOption[]) => {
   const existing = Array.isArray(current) ? current : [];
@@ -797,7 +842,7 @@ const providerIdentityMatches = (
 export type ProviderRecordIdentity = Pick<
   ProviderRow,
   'section' | 'index' | 'name' | 'apiKey' | 'baseUrl'
->;
+> & Partial<Pick<ProviderRow, 'record'>>;
 
 const providerPrimaryIdentityMatches = (
   row: ProviderRecordIdentity,
@@ -810,8 +855,29 @@ export const resolveProviderRecordIndex = (
   records: Record<string, unknown>[],
   row: ProviderRecordIdentity,
 ) => {
-  const exactIndex = records.findIndex((record) => providerIdentityMatches(row, record));
-  if (exactIndex >= 0) return exactIndex;
+  if (row.record) {
+    const identity = providerConfigIdentity(row.record);
+    const matches = records.flatMap((record, index) => (
+      providerConfigIdentity(record) === identity ? [index] : []
+    ));
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) return matches.includes(row.index) ? row.index : -1;
+
+    const withoutBaseUrl = (record: Record<string, unknown>) => {
+      const { 'base-url': _baseUrl, baseUrl: _camelBaseUrl, ...rest } = record;
+      return providerConfigIdentity(rest);
+    };
+    const defaultUrlMatches = records.flatMap((record, index) => (
+      providerPrimaryIdentityMatches(row, record)
+      && (!readString(record, 'base-url', 'baseUrl') || !row.baseUrl)
+      && withoutBaseUrl(record) === withoutBaseUrl(row.record!) ? [index] : []
+    ));
+    return defaultUrlMatches.length === 1 ? defaultUrlMatches[0] : -1;
+  }
+
+  const exactMatches = records.flatMap((record, index) => providerIdentityMatches(row, record) ? [index] : []);
+  if (exactMatches.length === 1) return exactMatches[0];
+  if (exactMatches.length > 1) return -1;
 
   const indexedRecord = records[row.index];
   if (indexedRecord && providerPrimaryIdentityMatches(row, indexedRecord)) {
@@ -1106,16 +1172,6 @@ export function ApiAccessPage() {
         currentRecord = current[targetIndex];
       }
 
-      const duplicate = current.some((record, index) => {
-        if (index === targetIndex) return false;
-        if (definition.openAi) return readString(record, 'name') === preparedDraft.name.trim();
-        return parsedApiKeys.some((apiKey) => (
-          readString(record, 'api-key', 'apiKey').trim() === apiKey
-          && readString(record, 'base-url', 'baseUrl').trim() === baseUrl
-        ));
-      });
-      if (duplicate) throw new Error(t('apiAccess.error.duplicate'));
-
       const recordsToSave = definition.openAi
         ? [buildProviderRecord(activeSection, draftToSave, currentRecord)]
         : parsedApiKeys.map((apiKey) => buildProviderRecord(
@@ -1123,6 +1179,9 @@ export function ApiAccessPage() {
           { ...draftToSave, apiKey },
           currentRecord,
         ));
+      if (hasDuplicateProviderRecord(activeSection, current, recordsToSave, targetIndex)) {
+        throw new Error(t('apiAccess.error.duplicate'));
+      }
       nextList = editingRow
         ? [
           ...current.slice(0, targetIndex),
@@ -1161,15 +1220,12 @@ export function ApiAccessPage() {
     setBusy(true);
     setError('');
     try {
-      if (definitionFor(row.section).openAi) {
-        await managementApi.delete('/openai-compatibility', { query: { name: row.name } });
-      } else {
-        await managementApi.delete(`/${row.section}`, {
-          query: { 'api-key': row.apiKey, 'base-url': row.baseUrl },
-        });
-      }
       const latestConfig = await managementApi.get('/config');
-      const remainingRecords = sectionRecordsFromConfig(latestConfig, row.section);
+      const current = sectionRecordsFromConfig(latestConfig, row.section);
+      const targetIndex = resolveProviderRecordIndex(current, row);
+      if (targetIndex < 0) throw new Error(t('apiAccess.error.stale'));
+      const remainingRecords = current.filter((_, index) => index !== targetIndex).map(stripResponseFields);
+      await managementApi.put(`/${row.section}`, remainingRecords);
       await invoke('save_api_access_remark', {
         update: {
           providerSection: row.section,

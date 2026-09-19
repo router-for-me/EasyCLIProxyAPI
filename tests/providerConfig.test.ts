@@ -5,12 +5,14 @@ import {
   applyProviderPreset,
   buildProviderRecord,
   createProviderDraft,
+  hasDuplicateProviderRecord,
   DEEPSEEK_BASE_URL,
   exclusionsForModelSelection,
   modelSelectionForDiscovery,
   parseProviderHeaders,
   parseProviderApiKeys,
   providerCategoryMatchesRecord,
+  providerDragId,
   providerRecordWithDisabledState,
   providerRemarkIdentity,
   providerSectionOrder,
@@ -20,6 +22,85 @@ import {
   stripResponseFields,
 } from '../src/pages/ApiAccessPage';
 import { modelsFromRecord } from '../src/services/modelService';
+
+describe('shared-credential provider entries (#276)', () => {
+  const first = {
+    'api-key': 'shared-key',
+    'base-url': 'https://claude.example.test',
+    priority: 10,
+    models: [{ name: 'upstream-a', alias: 'claude-a' }],
+  };
+  const second = {
+    ...first, priority: 1, models: [{ name: 'upstream-b', alias: 'claude-b' }],
+  };
+  const row = (record: Record<string, unknown>, index: number) => ({
+    section: 'claude-api-key' as const, index, name: 'Claude',
+    apiKey: 'shared-key', baseUrl: first['base-url'], record,
+  });
+
+  it('allows different model mappings, aliases, priorities and routing settings', () => {
+    for (const candidate of [
+      second,
+      { ...first, priority: 1 },
+      { ...first, models: [{ name: 'upstream-a', alias: 'claude-other' }] },
+      { ...first, prefix: 'team-b' },
+      { ...first, headers: { 'X-Team': 'b' } },
+      { ...first, 'disable-cooling': false },
+      { ...first, 'request-retry': 0 },
+      { ...first, weight: 0 },
+    ]) {
+      expect(hasDuplicateProviderRecord('claude-api-key', [first], [candidate])).toBe(false);
+    }
+  });
+
+  it('still rejects identical configurations, ignoring runtime IDs and empty defaults', () => {
+    const persisted = { ...first, 'auth-index': 'runtime-only', headers: {}, prefix: '', cloak: null };
+    const candidate = buildProviderRecord('claude-api-key', {
+      ...createProviderDraft('claude-api-key'), apiKey: 'shared-key',
+      baseUrl: first['base-url'], priority: '10', models: first.models,
+    });
+    expect(hasDuplicateProviderRecord('claude-api-key', [persisted], [candidate])).toBe(true);
+    expect(hasDuplicateProviderRecord('claude-api-key', [persisted], [candidate], 0)).toBe(false);
+    expect(hasDuplicateProviderRecord('claude-api-key', [first], [second, candidate])).toBe(true);
+    expect(hasDuplicateProviderRecord('openai-compatibility', [{ name: 'same' }], [{ name: 'same', models: first.models }])).toBe(true);
+    expect(hasDuplicateProviderRecord('gemini-api-key', [first], [second])).toBe(true);
+    expect(hasDuplicateProviderRecord('codex-api-key', [first], [second])).toBe(false);
+  });
+
+  it('locates the second entry for edit/toggle/delete, even after an external reorder', () => {
+    const selected = row({ ...second, 'auth-index': 'runtime-second' }, 1);
+    expect(resolveProviderRecordIndex([first, second], selected)).toBe(1);
+    expect(resolveProviderRecordIndex([second, first], selected)).toBe(0);
+    expect(resolveProviderRecordIndex([first], selected)).toBe(-1);
+    expect(resolveProviderRecordIndex([first, { ...second, priority: 5 }], selected)).toBe(-1);
+  });
+
+  it('retains default URL compatibility without guessing among sibling records', () => {
+    const { 'base-url': _base, ...withoutBase } = second;
+    expect(resolveProviderRecordIndex([first, withoutBase], row(second, 1))).toBe(1);
+    expect(resolveProviderRecordIndex([first, withoutBase, { ...withoutBase }], row(second, 1))).toBe(-1);
+  });
+
+  it('uses distinct drag IDs and reorders only the intended entries', () => {
+    const firstRow = row(first, 0);
+    const secondRow = row(second, 1);
+    expect(providerDragId(firstRow)).not.toBe(providerDragId(secondRow));
+    expect(reorderProviderRecords([first, second], [firstRow, secondRow], secondRow, firstRow)).toEqual([second, first]);
+  });
+
+  it('keeps remarks separate and stable through enable/disable and property ordering', () => {
+    const firstLocator = apiAccessRemarkLocatorFromRecord('claude-api-key', first);
+    const secondLocator = apiAccessRemarkLocatorFromRecord('claude-api-key', second);
+    expect(providerRemarkIdentity('claude-api-key', firstLocator))
+      .not.toBe(providerRemarkIdentity('claude-api-key', secondLocator));
+    const disabled = providerRecordWithDisabledState('claude-api-key', first, true);
+    expect(apiAccessRemarkLocatorFromRecord('claude-api-key', disabled)).toEqual(firstLocator);
+    expect(apiAccessRemarkLocatorFromRecord('claude-api-key', {
+      models: first.models, priority: 10, 'base-url': first['base-url'], 'api-key': first['api-key'],
+      'auth-index': 'runtime', websockets: false,
+    })).toEqual(firstLocator);
+  });
+});
 
 it('saves non-empty custom model names and removes duplicate or blank entries', () => {
   const result = buildProviderRecord('openai-compatibility', {

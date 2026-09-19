@@ -87,6 +87,10 @@ fn api_access_locator_identity(
         identity.extend_from_slice(&(hash.len() as u64).to_be_bytes());
         identity.extend_from_slice(hash.as_bytes());
     }
+    if !locator.config_identity.is_empty() {
+        identity.extend_from_slice(&(locator.config_identity.len() as u64).to_be_bytes());
+        identity.extend_from_slice(locator.config_identity.as_bytes());
+    }
     Some((sha256_bytes(&identity), api_key_hashes))
 }
 
@@ -117,6 +121,12 @@ fn resolve_api_access_remark(
     }
     if exact_found {
         return Ok(exact_remark);
+    }
+
+    if !query.locator.config_identity.is_empty() {
+        let mut legacy_query = query.clone();
+        legacy_query.locator.config_identity.clear();
+        return resolve_api_access_remark(config, &legacy_query);
     }
 
     Ok(api_key_hashes
@@ -160,28 +170,30 @@ fn apply_api_access_remark_update(
         .map(|(record_hash, _)| record_hash.clone())
         .collect::<HashSet<_>>();
     let provider_section = update.provider_section;
-    let legacy_entries = config
-        .api_access_remarks
+    let legacy_migrations = update
+        .all_records
         .iter()
-        .filter(|entry| entry.provider_section == provider_section && entry.record_hash.is_empty())
-        .cloned()
-        .collect::<Vec<_>>();
-    let legacy_migrations = all_records
-        .iter()
-        .filter_map(|(record_hash, api_key_hashes)| {
-            let remark = api_key_hashes.iter().find_map(|api_key_hash| {
-                legacy_entries
-                    .iter()
-                    .find(|entry| entry.api_key_hash == *api_key_hash)
-                    .map(|entry| entry.remark.clone())
-            })?;
-            Some((record_hash.clone(), api_key_hashes.clone(), remark))
+        .filter_map(|locator| {
+            let (record_hash, api_key_hashes) =
+                api_access_locator_identity(&provider_section, locator)?;
+            let remark = resolve_api_access_remark(
+                config,
+                &ApiAccessRemarkQuery {
+                    provider_section: provider_section.clone(),
+                    locator: locator.clone(),
+                },
+            )
+            .ok()?;
+            Some((record_hash, api_key_hashes, remark))
         })
         .collect::<Vec<_>>();
 
     config.api_access_remarks.retain(|entry| {
         entry.provider_section != provider_section
             || (!entry.record_hash.is_empty()
+                && all_records
+                    .iter()
+                    .any(|(hash, _)| *hash == entry.record_hash)
                 && !record_hashes_to_replace.contains(&entry.record_hash))
     });
     let mut inserted_record_hashes = config
@@ -236,6 +248,7 @@ mod tests {
             provider_name: String::new(),
             base_url: base_url.to_string(),
             api_keys: api_keys.iter().map(|key| (*key).to_string()).collect(),
+            config_identity: String::new(),
         }
     }
 
@@ -397,6 +410,86 @@ mod tests {
             .api_access_remarks
             .iter()
             .all(|entry| !entry.record_hash.is_empty()));
+    }
+
+    #[test]
+    fn shared_credentials_keep_separate_config_remarks_and_migrate_old_records() {
+        let mut config = GuiConfigFile::default();
+        let legacy = locator("https://api.example/v1", &["shared-key"]);
+        apply_api_access_remark_update(
+            &mut config,
+            update(
+                Vec::new(),
+                vec![legacy.clone()],
+                vec![legacy.clone()],
+                "original",
+            ),
+        )
+        .unwrap();
+
+        let mut first = legacy.clone();
+        first.config_identity = r#"{"models":[{"name":"a"}],"priority":10}"#.into();
+        let mut second = legacy.clone();
+        second.config_identity = r#"{"models":[{"name":"b"}],"priority":1}"#.into();
+        assert_eq!(
+            resolve_api_access_remark(&config, &query(first.clone())).unwrap(),
+            "original"
+        );
+
+        apply_api_access_remark_update(
+            &mut config,
+            update(
+                Vec::new(),
+                vec![second.clone()],
+                vec![first.clone(), second.clone()],
+                "second",
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_api_access_remark(&config, &query(first.clone())).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            resolve_api_access_remark(&config, &query(second.clone())).unwrap(),
+            "second"
+        );
+        assert_eq!(config.api_access_remarks.len(), 2);
+
+        let mut edited = second.clone();
+        edited.config_identity = r#"{"models":[{"name":"edited"}],"priority":2}"#.into();
+        apply_api_access_remark_update(
+            &mut config,
+            update(
+                vec![second],
+                vec![edited.clone()],
+                vec![first.clone(), edited.clone()],
+                "",
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_api_access_remark(&config, &query(edited.clone())).unwrap(),
+            ""
+        );
+        assert_eq!(
+            resolve_api_access_remark(&config, &query(first.clone())).unwrap(),
+            "original"
+        );
+
+        apply_api_access_remark_update(
+            &mut config,
+            update(vec![edited], Vec::new(), vec![first.clone()], ""),
+        )
+        .unwrap();
+        assert_eq!(config.api_access_remarks.len(), 1);
+        assert_eq!(
+            resolve_api_access_remark(&config, &query(first)).unwrap(),
+            "original"
+        );
+        assert!(!toml::to_string(&config.api_access_remarks[0])
+            .unwrap()
+            .contains("shared-key"));
     }
 
     #[test]

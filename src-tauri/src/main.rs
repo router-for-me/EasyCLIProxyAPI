@@ -876,6 +876,8 @@ struct ApiAccessRemarkLocator {
     provider_name: String,
     base_url: String,
     api_keys: Vec<String>,
+    #[serde(default)]
+    config_identity: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
