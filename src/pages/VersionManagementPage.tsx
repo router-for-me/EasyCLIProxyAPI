@@ -16,6 +16,7 @@ import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
+import { AppReleaseNotes } from '../components/AppReleaseNotes';
 
 export type CoreInstallResult = {
   version: string;
@@ -319,9 +320,9 @@ export function VersionManagementPage() {
     setCancellingInstall(false);
   };
 
-  const openAppRelease = async () => {
+  const openAppRelease = async (url = appUpdate?.releaseUrl || APP_RELEASE_URL) => {
     try {
-      await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
+      await invoke('open_external_url', { url });
     } catch (error) {
       showNotice({ key: 'kernel.error.openUpdate', variables: { error: String(error) } }, 'error');
     }
@@ -711,6 +712,13 @@ export function VersionManagementPage() {
           </div>
         </article>
         </div>
+        <AppReleaseNotes
+          key={appUpdate?.latestVersion ?? 'pending'}
+          info={appUpdate}
+          checking={checkingAppUpdate}
+          failed={Boolean(appUpdateError)}
+          onOpenUrl={openAppRelease}
+        />
       </section>
 
       {customMirrorDialogOpen ? (

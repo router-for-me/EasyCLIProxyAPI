@@ -12,13 +12,15 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Download, RefreshCw } from 'lucide-react';
-import { getCurrentLocale, translate, useI18n } from './i18n';
+import { getCurrentLocale, translate, useI18n, type AppLocale } from './i18n';
 
 export type AppUpdateInfo = {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
   releaseUrl: string;
+  releaseNotes: Partial<Record<AppLocale, string>> | null;
+  publishedAt: string;
   autoUpdateSupported: boolean;
   downloadSizeBytes: number | null;
   unsupportedReason: string | null;

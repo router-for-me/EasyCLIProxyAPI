@@ -1124,7 +1124,8 @@ textarea:focus-visible {
 }
 
 .version-source-row,
-.version-list-item {
+.version-list-item,
+.app-release-notes {
   border: 1px solid var(--theme-e3e1db);
   border-radius: 14px;
   background: var(--theme-fffdf8);
@@ -1380,6 +1381,180 @@ textarea:focus-visible {
   font-weight: 600;
   border-radius: 9px;
   white-space: nowrap;
+}
+
+.app-release-notes {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-release-notes-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 20px 26px;
+}
+
+.app-release-notes-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.app-release-notes-heading h2 {
+  margin: 0;
+  font-size: var(--font-size-panel-title);
+}
+
+.app-release-notes-heading svg {
+  flex: none;
+  color: var(--theme-7a746c);
+}
+
+.app-release-notes-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: none;
+  min-height: 32px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--theme-6d6760);
+  font-size: var(--font-size-meta);
+  cursor: pointer;
+}
+
+.app-release-notes-toggle:hover {
+  color: var(--theme-2d2a26);
+}
+
+.app-release-notes-toggle .is-expanded {
+  transform: rotate(180deg);
+}
+
+.app-release-notes-body {
+  padding: 0 26px 20px;
+}
+
+.app-release-notes-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--theme-e8e5dc);
+}
+
+.app-release-notes-meta strong {
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-panel-title);
+  overflow-wrap: anywhere;
+}
+
+.app-release-notes-latest {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--theme-dce8df);
+  color: var(--theme-2f6b3f);
+  font-size: var(--font-size-meta);
+}
+
+.app-release-notes-meta time {
+  margin-left: auto;
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
+}
+
+.app-release-notes-markdown {
+  display: grid;
+  grid-template-columns: minmax(44px, auto) minmax(0, 1fr);
+  align-items: start;
+  gap: 18px 22px;
+  margin-top: 20px;
+  color: var(--theme-2d2a26);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+
+.app-release-notes-markdown > * {
+  grid-column: 2;
+  min-width: 0;
+  margin: 0;
+}
+
+.app-release-notes-markdown > .release-notes-category {
+  grid-column: 1;
+  max-width: 160px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: var(--theme-faf9f5);
+  color: var(--theme-6d6760);
+  font-size: var(--font-size-meta);
+  font-weight: 600;
+  text-align: center;
+}
+
+.app-release-notes-markdown > .release-notes-subtitle {
+  grid-column: 1 / -1;
+}
+
+.app-release-notes-markdown ul,
+.app-release-notes-markdown ol {
+  padding-left: 20px;
+}
+
+.app-release-notes-markdown li + li {
+  margin-top: 7px;
+}
+
+.app-release-notes-markdown li p {
+  margin: 5px 0;
+}
+
+.app-release-notes-markdown a {
+  color: var(--theme-3f6f98);
+  text-decoration: underline;
+}
+
+.app-release-notes-markdown pre {
+  white-space: pre-wrap;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--theme-faf9f5);
+}
+
+.app-release-notes-markdown blockquote {
+  border-left: 3px solid var(--theme-e3e1db);
+  padding-left: 14px;
+  color: var(--theme-6d6760);
+}
+
+.app-release-notes-empty {
+  margin: 18px 0 0;
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-body);
+}
+
+.app-release-notes-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 26px;
+  border-top: 1px solid var(--theme-e8e5dc);
+  background: var(--theme-faf9f5);
+}
+
+@media (max-width: 640px) {
+  .app-release-notes-heading { padding: 16px; }
+  .app-release-notes-body { padding: 0 16px 16px; }
+  .app-release-notes-footer { padding: 10px 16px; }
+  .app-release-notes-markdown { gap: 14px 12px; }
+  .app-release-notes-markdown > .release-notes-category { max-width: 80px; }
+  .app-release-notes-meta time { width: 100%; margin-left: 0; }
 }
 
 .client-api-panel {

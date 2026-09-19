@@ -3,6 +3,28 @@ use super::*;
 pub(crate) const PORTABLE_UPDATE_HELPER_ACK_FILE: &str = "update-helper-started.ack";
 const PORTABLE_UPDATE_HELPER_START_TIMEOUT: Duration = Duration::from_secs(10);
 
+pub(crate) fn deserialize_release_notes<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    // Untagged legacy text and invalid entries cannot identify a translation.
+    // Treat them as unavailable instead of failing the entire version check.
+    let mut notes = HashMap::new();
+    if let Some(translations) = value.as_object() {
+        for locale in ["zh-CN", "zh-TW", "en", "ja"] {
+            if let Some(text) = translations.get(locale).and_then(|value| value.as_str()) {
+                if !text.trim().is_empty() {
+                    notes.insert(locale.to_string(), text.to_string());
+                }
+            }
+        }
+    }
+    Ok(notes)
+}
+
 #[tauri::command]
 pub(crate) fn get_version_source_settings(
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -204,6 +226,8 @@ pub(crate) async fn check_app_update(
         latest_version,
         update_available,
         release_url: manifest.release_url,
+        release_notes: manifest.release_notes,
+        published_at: manifest.published_at,
         auto_update_supported,
         download_size_bytes: asset.map(|value| value.size_bytes),
         unsupported_reason,

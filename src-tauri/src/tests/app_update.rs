@@ -79,6 +79,7 @@ fn portable_update_test_manifest(version: &str) -> PortableUpdateManifest {
         schema_version: 1,
         version: version.to_string(),
         published_at: "2026-07-24T00:00:00.000Z".to_string(),
+        release_notes: HashMap::new(),
         release_url: format!(
             "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/v{version}"
         ),
@@ -95,6 +96,40 @@ fn portable_update_test_manifest(version: &str) -> PortableUpdateManifest {
         .into_iter()
         .collect(),
         full_assets: None,
+    }
+}
+
+#[test]
+fn portable_update_manifest_uses_only_explicit_locale_release_notes() {
+    let mut value = serde_json::json!({
+        "schemaVersion": 1,
+        "version": "1.2.3",
+        "publishedAt": "2026-09-19T00:00:00Z",
+        "releaseUrl": "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/v1.2.3",
+        "assets": {}
+    });
+    let legacy: PortableUpdateManifest = serde_json::from_value(value.clone()).unwrap();
+    assert!(legacy.release_notes.is_empty());
+    value["releaseNotes"] = serde_json::json!({
+        "zh-CN": "## 新增\n\n- 更新说明。\n",
+        "en": "## Added\n\n- Release notes.\n",
+        "ja": null,
+        "zh-TW": "  ",
+        "fr": "Unsupported locale"
+    });
+    let with_notes: PortableUpdateManifest = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(
+        with_notes.release_notes.get("zh-CN").map(String::as_str),
+        Some("## 新增\n\n- 更新说明。\n")
+    );
+    assert_eq!(with_notes.release_notes.len(), 2);
+    assert!(with_notes.release_notes.contains_key("en"));
+    assert!(!with_notes.release_notes.contains_key("ja"));
+    assert!(!with_notes.release_notes.contains_key("zh-TW"));
+    for unlocalized in [serde_json::Value::Null, serde_json::json!("Legacy notes")] {
+        value["releaseNotes"] = unlocalized;
+        let unavailable: PortableUpdateManifest = serde_json::from_value(value.clone()).unwrap();
+        assert!(unavailable.release_notes.is_empty());
     }
 }
 

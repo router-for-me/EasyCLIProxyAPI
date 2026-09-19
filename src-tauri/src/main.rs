@@ -51,7 +51,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env, fs,
     fs::File,
     io::{self, Read, Seek, SeekFrom, Write},
@@ -460,6 +460,8 @@ struct AppUpdateInfo {
     latest_version: String,
     update_available: bool,
     release_url: String,
+    release_notes: HashMap<String, String>,
+    published_at: String,
     auto_update_supported: bool,
     download_size_bytes: Option<u64>,
     unsupported_reason: Option<String>,
@@ -472,6 +474,8 @@ struct PortableUpdateManifest {
     version: String,
     published_at: String,
     release_url: String,
+    #[serde(default, deserialize_with = "deserialize_release_notes")]
+    release_notes: HashMap<String, String>,
     assets: std::collections::HashMap<String, PortableUpdateAsset>,
     #[serde(default)]
     full_assets: Option<std::collections::HashMap<String, PortableUpdateAsset>>,

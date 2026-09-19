@@ -32,6 +32,9 @@ test('macOS manifest CLI publishes both update channels', async () => {
       );
     }
     const script = fileURLToPath(new URL('../scripts/manifest.mjs', import.meta.url));
+    const notes = { 'zh-CN': '## 新增\n\n- 软件更新说明。\n', en: '## Added\n\n- Release notes.\n' };
+    const notesPath = join(root, 'release-notes.json');
+    await writeFile(notesPath, JSON.stringify(notes), 'utf8');
     const result = spawnSync('node', [
       script,
       '--directory',
@@ -42,6 +45,8 @@ test('macOS manifest CLI publishes both update channels', async () => {
       'router-for-me/EasyCLIProxyAPI',
       '--tag',
       'v1.2.3',
+      '--release-notes',
+      notesPath,
     ], { encoding: 'utf8' });
 
     expect(result.status).toBe(0);
@@ -53,6 +58,8 @@ test('macOS manifest CLI publishes both update channels', async () => {
       await readFile(join(root, 'portable-update-darwin.json'), 'utf8'),
     );
     expect(legacy).toEqual(primary);
+    expect(primary.releaseNotes).toEqual(notes);
+    expect(primary.releaseNotes.ja).toBeUndefined();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
