@@ -387,7 +387,10 @@ fn codex_apply_close_restores_original_login_and_preserves_user_edits() {
         Some("https://example.test/edited")
     );
     assert!(restored.get("model_catalog_json").is_none());
-    assert!(restored.get("model_providers").is_none());
+    assert_eq!(
+        restored["model_providers"][MANAGED_AGENT_PROVIDER_ID]["base_url"].as_str(),
+        Some("http://127.0.0.1:8317/v1")
+    );
     let auth: serde_json::Value = serde_json::from_str(&home.read("auth.json")).unwrap();
     assert_eq!(auth["tokens"]["refresh_token"], "new-refresh");
     assert_eq!(auth["custom"], "edited");
@@ -423,7 +426,10 @@ fn codex_close_existing_cpa_without_recovery_record_removes_managed_fields() {
     assert_eq!(home.config()["approval_policy"].as_str(), Some("never"));
     assert!(home.config().get("model_provider").is_none());
     assert!(home.config().get("model_catalog_json").is_none());
-    assert!(home.config().get("model_providers").is_none());
+    assert_eq!(
+        home.config()["model_providers"][MANAGED_AGENT_PROVIDER_ID]["base_url"].as_str(),
+        Some("http://127.0.0.1:8317/v1")
+    );
     assert!(!home.path("auth.json").exists());
 }
 
@@ -435,7 +441,17 @@ fn codex_close_restores_preexisting_api_provider_and_key() {
     let original = home.config();
     apply_cpa(&home, false).unwrap();
     close_codex_configuration(&home.0).unwrap();
-    assert_eq!(home.config(), original);
+    let restored = home.config();
+    assert_eq!(restored["model_provider"], original["model_provider"]);
+    assert_eq!(restored["model"], original["model"]);
+    assert_eq!(
+        restored["model_providers"]["other"],
+        original["model_providers"]["other"]
+    );
+    assert_eq!(
+        restored["model_providers"][MANAGED_AGENT_PROVIDER_ID]["base_url"].as_str(),
+        Some("http://127.0.0.1:8317/v1")
+    );
     assert!(codex_auth_file_has_api_key(
         &home.path("auth.json"),
         "original-key"

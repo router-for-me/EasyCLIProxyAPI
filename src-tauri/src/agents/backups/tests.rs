@@ -490,6 +490,87 @@ fn clear_integration_removes_claude_model_overrides_but_keeps_custom_settings() 
 }
 
 #[test]
+fn claude_code_subagent_model_survives_update_close_and_reconnect() {
+    let home = Home::new();
+    let paths = config_paths("claude-code", &home.0).unwrap();
+    apply(&home.0, AgentClient::ClaudeCode, "gpt-one").unwrap();
+
+    let mut connected = parse(
+        &paths[0],
+        Some(&fs::read_to_string(&paths[0]).unwrap()),
+    )
+    .unwrap();
+    connected["env"]["CLAUDE_CODE_SUBAGENT_MODEL"] =
+        serde_json::json!("user-subagent-model");
+    save(&paths[0], render(&paths[0], &connected).unwrap());
+
+    apply(&home.0, AgentClient::ClaudeCode, "gpt-two").unwrap();
+    let updated = parse(
+        &paths[0],
+        Some(&fs::read_to_string(&paths[0]).unwrap()),
+    )
+    .unwrap();
+    assert_eq!(
+        updated["env"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+        "user-subagent-model"
+    );
+
+    clear_agent_managed_configuration(AgentClient::ClaudeCode, &home.0, 8317).unwrap();
+    let closed = parse(
+        &paths[0],
+        Some(&fs::read_to_string(&paths[0]).unwrap()),
+    )
+    .unwrap();
+    assert_eq!(
+        closed["env"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+        "user-subagent-model"
+    );
+    assert!(closed.get("model").is_none());
+    assert!(closed["env"].get("ANTHROPIC_BASE_URL").is_none());
+
+    apply(&home.0, AgentClient::ClaudeCode, "gpt-one").unwrap();
+    let reconnected = parse(
+        &paths[0],
+        Some(&fs::read_to_string(&paths[0]).unwrap()),
+    )
+    .unwrap();
+    assert_eq!(
+        reconnected["env"]["CLAUDE_CODE_SUBAGENT_MODEL"],
+        "user-subagent-model"
+    );
+}
+
+#[test]
+fn claude_desktop_cowork_hosts_survive_update_close_and_reconnect() {
+    if !AgentClient::ClaudeDesktop.supported_platform() {
+        return;
+    }
+    let home = Home::new();
+    let paths = config_paths("claude-desktop", &home.0).unwrap();
+    apply(&home.0, AgentClient::ClaudeDesktop, "gpt-one").unwrap();
+
+    let mut connected: Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    connected["coworkEgressAllowedHosts"] = serde_json::json!(["*"]);
+    save(&paths[2], connected.to_string());
+
+    apply(&home.0, AgentClient::ClaudeDesktop, "gpt-two").unwrap();
+    let updated: Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    assert_eq!(updated["coworkEgressAllowedHosts"], serde_json::json!(["*"]));
+
+    clear_agent_managed_configuration(AgentClient::ClaudeDesktop, &home.0, 8317).unwrap();
+    let closed: Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    assert_eq!(closed["coworkEgressAllowedHosts"], serde_json::json!(["*"]));
+    assert!(closed.get("inferenceGatewayBaseUrl").is_none());
+
+    apply(&home.0, AgentClient::ClaudeDesktop, "gpt-one").unwrap();
+    let reconnected: Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    assert_eq!(
+        reconnected["coworkEgressAllowedHosts"],
+        serde_json::json!(["*"])
+    );
+}
+
+#[test]
 fn clear_integration_preserves_claude_settings_for_other_endpoints() {
     let home = Home::new();
     let paths = config_paths("claude-code", &home.0).unwrap();

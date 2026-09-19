@@ -184,7 +184,10 @@ fn codex_disable_keeps_user_configuration_added_after_enable() {
     assert!(restored.get("model_provider").is_none());
     assert!(restored.get("model").is_none());
     assert!(restored.get("model_catalog_json").is_none());
-    assert!(restored.get("model_providers").is_none());
+    assert_eq!(
+        restored["model_providers"][MANAGED_AGENT_PROVIDER_ID]["base_url"].as_str(),
+        Some("http://127.0.0.1:8317/v1")
+    );
     assert!(!codex_model_catalog_path(&home).exists());
     fs::remove_dir_all(home).unwrap();
 }
@@ -310,12 +313,19 @@ fn legacy_agent_backup_restores_even_when_gui_port_changed() {
     assert!(agent_has_managed_marker(AgentClient::Codex, std::slice::from_ref(&path)).unwrap());
     let result = disable_agent_modification(AgentClient::Codex, &home, 8317, false).unwrap();
     assert_eq!(result.outcome, "disabled");
-    assert_eq!(fs::read(&path).unwrap(), original);
+    let restored: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(restored["approval_policy"].as_str(), Some("never"));
+    assert!(restored.get("model_provider").is_none());
+    assert!(restored.get("model").is_none());
+    assert_eq!(
+        restored["model_providers"][MANAGED_AGENT_PROVIDER_ID]["base_url"].as_str(),
+        Some("http://127.0.0.1:9999/v1")
+    );
     fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
-fn legacy_generated_only_agent_config_is_removed_without_backup() {
+fn legacy_generated_only_codex_config_keeps_a_dormant_provider_without_backup() {
     let home = agent_test_home("legacy-generated");
     let path = home.join(".codex/config.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -333,7 +343,13 @@ fn legacy_generated_only_agent_config_is_removed_without_backup() {
 
     let result = disable_agent_modification(AgentClient::Codex, &home, 8317, false).unwrap();
     assert_eq!(result.outcome, "disabled");
-    assert!(!path.exists());
+    let restored: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(restored.get("model_provider").is_none());
+    assert!(restored.get("model").is_none());
+    assert_eq!(
+        restored["model_providers"][MANAGED_AGENT_PROVIDER_ID]["base_url"].as_str(),
+        Some("http://127.0.0.1:8317/v1")
+    );
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -398,7 +414,14 @@ fn updating_legacy_codex_state_adds_catalog_without_replacing_original_backup() 
     assert!(auth_path.is_file());
 
     disable_agent_modification(AgentClient::Codex, &home, 8317, false).unwrap();
-    assert_eq!(fs::read(&path).unwrap(), original_config);
+    let restored: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(restored["approval_policy"].as_str(), Some("never"));
+    assert!(restored.get("model_provider").is_none());
+    assert!(restored.get("model").is_none());
+    assert_eq!(
+        restored["model_providers"][MANAGED_AGENT_PROVIDER_ID]["base_url"].as_str(),
+        Some("http://127.0.0.1:8317/v1")
+    );
     assert_eq!(fs::read(&catalog_path).unwrap(), original_catalog);
     assert!(!auth_path.exists());
     fs::remove_dir_all(home).unwrap();

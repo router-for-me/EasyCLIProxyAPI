@@ -543,7 +543,6 @@ fn claude_desktop_version_three_state_can_be_closed_safely() {
     assert!(threep.get("deploymentMode").is_none());
     assert_eq!(threep["keep"], "threep");
     for key in [
-        "coworkEgressAllowedHosts",
         "disableDeploymentModeChooser",
         "inferenceGatewayApiKey",
         "inferenceGatewayAuthScheme",
@@ -553,6 +552,10 @@ fn claude_desktop_version_three_state_can_be_closed_safely() {
     ] {
         assert!(profile.get(key).is_none(), "managed key remains: {key}");
     }
+    assert_eq!(
+        profile["coworkEgressAllowedHosts"],
+        serde_json::json!(["127.0.0.1"])
+    );
     assert_eq!(profile["keep"], "profile");
     assert!(meta.get("appliedId").is_none());
     assert_eq!(meta["keep"], "meta");
@@ -798,9 +801,10 @@ name = "Other"
     assert_eq!(codex["approval_policy"].as_str(), Some("never"));
     assert!(codex.get("model_provider").is_none());
     assert!(codex.get("model").is_none());
-    assert!(codex["model_providers"]
-        .get(MANAGED_AGENT_PROVIDER_ID)
-        .is_none());
+    assert_eq!(
+        codex["model_providers"][MANAGED_AGENT_PROVIDER_ID]["base_url"].as_str(),
+        Some("http://127.0.0.1:8317/v1")
+    );
     assert_eq!(
         codex["model_providers"]["other"]["name"].as_str(),
         Some("Other")
@@ -1561,8 +1565,22 @@ fn codex_connection_evidence_survives_port_key_and_partial_config_changes() {
     assert!(!inspect_codex_agent_config(&paths[0],8317,"old-key").unwrap().0);
     assert!(agent_has_connection_evidence(AgentClient::Codex, &paths).unwrap());
     fs::write(&paths[0], "[model_providers.cpa-gui]\nbase_url = 'http://127.0.0.1:1234/v1'\n").unwrap();
-    assert!(agent_has_connection_evidence(AgentClient::Codex, &paths).unwrap());
+    assert!(!agent_has_connection_evidence(AgentClient::Codex, &paths).unwrap());
     fs::write(&paths[0], "{{broken").unwrap();
     assert!(agent_has_connection_evidence(AgentClient::Codex, &paths).is_err());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn provider_only_connection_evidence_remains_actionable_for_non_codex_agents() {
+    let home = agent_test_home("provider-only-connection-evidence");
+    let paths = agent_config_paths(AgentClient::OpenCode, &home);
+    fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+    fs::write(
+        &paths[0],
+        r#"{"provider":{"cpa-gui":{"name":"EasyCLIProxyAPI"}}}"#,
+    )
+    .unwrap();
+    assert!(agent_has_connection_evidence(AgentClient::OpenCode, &paths).unwrap());
     fs::remove_dir_all(home).unwrap();
 }

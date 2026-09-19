@@ -6,6 +6,222 @@ mod tests;
 
 pub(crate) type Images = Vec<(PathBuf, Option<Vec<u8>>)>;
 
+const AGENT_INTEGRATION_STATE_VERSION: u8 = 1;
+const AGENT_INTEGRATION_STATE_FILE: &str = "integration-state.json";
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentIntegrationState {
+    version: u8,
+    client: String,
+    paths: Vec<PathBuf>,
+    // `original` is promoted with user edits; `applied` remains the last CPA-written snapshot.
+    original: Images,
+    applied: Images,
+}
+
+fn integration_managed_paths<'a>(client: &str, paths: &'a [PathBuf]) -> &'a [PathBuf] {
+    if client == "deepseek-harness" && paths.len() > 2 {
+        &paths[..2]
+    } else {
+        paths
+    }
+}
+
+fn integration_state_path(client: &str, paths: &[PathBuf]) -> Result<PathBuf, String> {
+    let paths = integration_managed_paths(client, paths);
+    let identity = sha256_bytes(
+        &serde_json::to_vec(paths).map_err(|_| "生成接入配置标识失败".to_string())?,
+    );
+    Ok(agent_data_directory(paths)?
+        .join("agents")
+        .join(client)
+        .join(identity)
+        .join(AGENT_INTEGRATION_STATE_FILE))
+}
+
+fn parse_integration_state(
+    client: &str,
+    paths: &[PathBuf],
+    bytes: Option<&[u8]>,
+) -> Result<Option<AgentIntegrationState>, String> {
+    let Some(bytes) = bytes else {
+        return Ok(None);
+    };
+    let state: AgentIntegrationState = serde_json::from_slice(bytes)
+        .map_err(|_| "接入配置合并状态损坏，请先手动备份配置".to_string())?;
+    let paths = integration_managed_paths(client, paths);
+    let valid_images = |images: &Images| {
+        images.len() == paths.len()
+            && images
+                .iter()
+                .zip(paths)
+                .all(|((path, _), expected)| path == expected)
+    };
+    if state.version != AGENT_INTEGRATION_STATE_VERSION
+        || state.client != client
+        || state.paths != paths
+        || !valid_images(&state.original)
+        || !valid_images(&state.applied)
+    {
+        return Err("接入配置合并状态与当前客户端不匹配，请先手动备份配置".into());
+    }
+    Ok(Some(state))
+}
+
+fn integration_state_bytes(state: &AgentIntegrationState) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(state).map_err(|_| "生成接入配置合并状态失败".to_string())
+}
+
+fn merge_user_value(
+    baseline: Option<&Value>,
+    applied: Option<&Value>,
+    current: Option<&Value>,
+) -> Option<Value> {
+    // Three-way merge: unchanged CPA values return to the baseline, while external edits win.
+    if current == applied {
+        return baseline.cloned();
+    }
+    match (
+        applied.and_then(Value::as_object),
+        current.and_then(Value::as_object),
+    ) {
+        (Some(applied), Some(current)) => {
+            let baseline = baseline.and_then(Value::as_object);
+            let mut keys = applied
+                .keys()
+                .chain(current.keys())
+                .chain(baseline.into_iter().flat_map(|value| value.keys()))
+                .cloned()
+                .collect::<Vec<_>>();
+            keys.sort();
+            keys.dedup();
+            let mut merged = serde_json::Map::new();
+            for key in keys {
+                if let Some(value) = merge_user_value(
+                    baseline.and_then(|value| value.get(&key)),
+                    applied.get(&key),
+                    current.get(&key),
+                ) {
+                    merged.insert(key, value);
+                }
+            }
+            Some(Value::Object(merged))
+        }
+        _ => current.cloned(),
+    }
+}
+
+fn merge_user_image(
+    path: &Path,
+    baseline: Option<&[u8]>,
+    applied: Option<&[u8]>,
+    current: Option<&[u8]>,
+) -> Result<Option<Vec<u8>>, String> {
+    if current == applied {
+        return Ok(baseline.map(ToOwned::to_owned));
+    }
+    let Some(current) = current else {
+        return Ok(None);
+    };
+    let current_text = std::str::from_utf8(current)
+        .map_err(|_| format!("配置不是 UTF-8 文本: {}", path_to_string(path)))?;
+    let applied_value = parse(
+        path,
+        applied
+            .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "接入状态不是 UTF-8 文本"))
+            .transpose()?,
+    )?;
+    let current_value = parse(path, Some(current_text))?;
+    let baseline_value = parse(
+        path,
+        baseline
+            .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "原始状态不是 UTF-8 文本"))
+            .transpose()?,
+    )?;
+    let merged = merge_user_value(
+        baseline.map(|_| &baseline_value),
+        applied.map(|_| &applied_value),
+        Some(&current_value),
+    );
+    merged
+        .map(|value| render(path, &value).map(|value| value.into_bytes()))
+        .transpose()
+}
+
+fn promote_user_changes(
+    paths: &[PathBuf],
+    baseline: &Images,
+    applied: &Images,
+    current: &Images,
+) -> Result<Images, String> {
+    paths
+        .iter()
+        .zip(baseline)
+        .zip(applied)
+        .zip(current)
+        .map(|(((path, (_, baseline)), (_, applied)), (_, current))| {
+            Ok((
+                path.clone(),
+                merge_user_image(
+                    path,
+                    baseline.as_deref(),
+                    applied.as_deref(),
+                    current.as_deref(),
+                )?,
+            ))
+        })
+        .collect()
+}
+
+fn prepare_integration_restore(
+    client: AgentClient,
+    paths: &[PathBuf],
+    current: &Images,
+    state: &AgentIntegrationState,
+) -> Result<Images, String> {
+    let effective_original = promote_user_changes(
+        paths,
+        &state.original,
+        &state.applied,
+        current,
+    )?;
+    current
+        .iter()
+        .zip(&effective_original)
+        .map(|((path, current), (_, original))| {
+            Ok((
+                path.clone(),
+                build_agent_session_restored_bytes_with_preference(
+                    client,
+                    paths,
+                    path,
+                    current.as_deref(),
+                    original.as_deref(),
+                    false,
+                )?,
+            ))
+        })
+        .collect()
+}
+
+pub(crate) fn prepare_recorded_integration_restore(
+    client: AgentClient,
+    paths: &[PathBuf],
+    current: &Images,
+) -> Result<Option<Images>, String> {
+    let state_path = integration_state_path(client.id(), paths)?;
+    let state = parse_integration_state(
+        client.id(),
+        paths,
+        read_agent_bytes(&state_path)?.as_deref(),
+    )?;
+    state
+        .as_ref()
+        .map(|state| prepare_integration_restore(client, paths, current, state))
+        .transpose()
+}
+
 pub(crate) fn config_paths(client: &str, home: &Path) -> Result<Vec<PathBuf>, String> {
     if client == PI_AGENT_ID {
         return Ok(vec![
@@ -86,7 +302,11 @@ pub(crate) fn write_config_images(client: &str, images: &Images) -> Result<(), S
             continue;
         }
         if let Some(bytes) = bytes {
-            if client == PI_AGENT_ID {
+            if path.file_name().and_then(|name| name.to_str())
+                == Some(AGENT_INTEGRATION_STATE_FILE)
+            {
+                write_codex_private_file(path, bytes)?;
+            } else if client == PI_AGENT_ID {
                 write_bytes_directly(path, bytes)?;
             } else {
                 write_agent_configuration_file(AgentClient::parse(client)?, path, bytes)?;
@@ -179,6 +399,50 @@ fn commit_config_transaction(
     }
     let mut previous = before.clone();
     let mut target = after.clone();
+    if client != PI_AGENT_ID && client != AgentClient::Codex.id() {
+        let managed_paths = integration_managed_paths(client, paths);
+        let managed_len = managed_paths.len();
+        let state_path = integration_state_path(client, paths)?;
+        let state_before = read_agent_bytes(&state_path)?;
+        let current_state = parse_integration_state(client, paths, state_before.as_deref())?;
+        let state_after = match source {
+            "update" => {
+                let parsed_client = AgentClient::parse(client)?;
+                let next = if let Some(state) = current_state {
+                    let original = promote_user_changes(
+                        managed_paths,
+                        &state.original,
+                        &state.applied,
+                        &before[..managed_len].to_vec(),
+                    )?;
+                    Some(AgentIntegrationState {
+                        version: AGENT_INTEGRATION_STATE_VERSION,
+                        client: client.to_string(),
+                        paths: managed_paths.to_vec(),
+                        original,
+                        applied: after[..managed_len].to_vec(),
+                    })
+                } else if before[..managed_len] != after[..managed_len]
+                    && !agent_has_managed_marker(parsed_client, managed_paths)?
+                {
+                    Some(AgentIntegrationState {
+                        version: AGENT_INTEGRATION_STATE_VERSION,
+                        client: client.to_string(),
+                        paths: managed_paths.to_vec(),
+                        original: before[..managed_len].to_vec(),
+                        applied: after[..managed_len].to_vec(),
+                    })
+                } else {
+                    None
+                };
+                next.as_ref().map(integration_state_bytes).transpose()?
+            }
+            "clear-integration" | "restore" | "template" => None,
+            _ => state_before.clone(),
+        };
+        previous.push((state_path.clone(), state_before));
+        target.push((state_path, state_after));
+    }
     if source == "clear-integration" {
         let state_path = agent_state_path(paths)?;
         previous.push((state_path.clone(), read_agent_bytes(&state_path)?));
@@ -758,6 +1022,9 @@ fn restore_text(
     } else {
         paths
     };
+    if parsed == AgentClient::Codex && base_paths.first().is_some_and(|config| config == path) {
+        return build_restored_codex_agent_config_with_policy(Some(current), target, false);
+    }
     build_agent_session_restored_bytes(
         parsed,
         base_paths,

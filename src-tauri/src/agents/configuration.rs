@@ -598,13 +598,14 @@ pub(crate) fn build_claude_agent_config(
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
             model_settings.sonnet.as_str(),
         ),
-        ("CLAUDE_CODE_SUBAGENT_MODEL", subagent_model.as_str()),
     ] {
         env.insert(
             key.to_string(),
             serde_json::Value::String(value.to_string()),
         );
     }
+    env.entry("CLAUDE_CODE_SUBAGENT_MODEL".to_string())
+        .or_insert_with(|| serde_json::Value::String(subagent_model));
     env.insert(
         CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV.to_string(),
         serde_json::Value::String(max_context_tokens.to_string()),
@@ -755,7 +756,6 @@ pub(crate) fn build_claude_desktop_profile(
     mappings: Option<&ClaudeDesktopModelMappings>,
 ) -> Result<String, String> {
     let mut root = parse_agent_json_object(existing, "Claude Desktop 网关配置")?;
-    root.remove("coworkEgressAllowedHosts");
     root.insert(
         "disableDeploymentModeChooser".to_string(),
         serde_json::json!(true),
@@ -957,14 +957,19 @@ pub(crate) fn clear_agent_managed_configuration(
     let paths = config_paths(client.id(), home)?;
     let before = config_images(&paths)?;
     validate_client_config_images(client.id(), &before)?;
-    let mut after = before.clone();
-    for (path, bytes) in prepare_agent_managed_removal(client, &paths, port)? {
-        let entry = after
-            .iter_mut()
-            .find(|(candidate, _)| candidate == &path)
-            .ok_or("配置清理路径不匹配")?;
-        entry.1 = bytes;
-    }
+    let after = if let Some(after) = prepare_recorded_integration_restore(client, &paths, &before)? {
+        after
+    } else {
+        let mut after = before.clone();
+        for (path, bytes) in prepare_agent_managed_removal(client, &paths, port)? {
+            let entry = after
+                .iter_mut()
+                .find(|(candidate, _)| candidate == &path)
+                .ok_or("配置清理路径不匹配")?;
+            entry.1 = bytes;
+        }
+        after
+    };
     let mut result = commit_config(
         client.id(),
         &paths,
@@ -1049,7 +1054,6 @@ pub(crate) fn prepare_claude_desktop_managed_removal(paths: &[PathBuf]) -> Resul
         prepare_agent_json_removal(&paths[2], "Claude Desktop 网关配置", |root| {
             let mut updated = false;
             for key in [
-                "coworkEgressAllowedHosts",
                 "disableDeploymentModeChooser",
                 "inferenceGatewayApiKey",
                 "inferenceGatewayAuthScheme",
@@ -1205,19 +1209,6 @@ pub(crate) fn prepare_codex_managed_removal(paths: &[PathBuf]) -> Result<Images,
     }
     if managed_catalog {
         document.remove("model_catalog_json");
-    }
-    if let Some(providers) = document
-        .get_mut("model_providers")
-        .and_then(Item::as_table_mut)
-    {
-        providers.remove(MANAGED_AGENT_PROVIDER_ID);
-    }
-    if document
-        .get("model_providers")
-        .and_then(Item::as_table)
-        .is_some_and(toml_edit::Table::is_empty)
-    {
-        document.remove("model_providers");
     }
     let rendered = document.to_string();
     toml::from_str::<toml::Value>(&rendered)
@@ -1798,6 +1789,19 @@ pub(crate) fn build_restored_claude_code_config(
             CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
             DISABLE_AUTO_COMPACT_ENV,
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            "CLAUDE_CODE_EFFORT_LEVEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION",
         ] {
             restore_json_key(env, original_env, key);
         }
@@ -1821,7 +1825,6 @@ pub(crate) fn build_restored_claude_desktop_config(
         0 | 1 => restore_json_key(&mut root, original_root.as_ref(), "deploymentMode"),
         2 => {
             for key in [
-                "coworkEgressAllowedHosts",
                 "disableDeploymentModeChooser",
                 "inferenceGatewayApiKey",
                 "inferenceGatewayAuthScheme",
@@ -2602,6 +2605,19 @@ pub(crate) fn build_agent_session_restored_bytes(
     current: Option<&[u8]>,
     original: Option<&[u8]>,
 ) -> Result<Option<Vec<u8>>, String> {
+    build_agent_session_restored_bytes_with_preference(
+        client, paths, path, current, original, true,
+    )
+}
+
+pub(crate) fn build_agent_session_restored_bytes_with_preference(
+    client: AgentClient,
+    paths: &[PathBuf],
+    path: &Path,
+    current: Option<&[u8]>,
+    original: Option<&[u8]>,
+    prefer_exact_original: bool,
+) -> Result<Option<Vec<u8>>, String> {
     let Some(current) = current else {
         return Ok(original.map(ToOwned::to_owned));
     };
@@ -2645,11 +2661,13 @@ pub(crate) fn build_agent_session_restored_bytes(
         AgentClient::KimiCode => build_restored_kimi_code_config(current, original)?,
         AgentClient::GrokBuild => build_restored_grok_build_config(current, original)?,
     };
-    if let (Some(restored), Some(original), Some(original_bytes)) =
-        (restored.as_deref(), original, original_bytes)
-    {
-        if agent_config_semantically_equal(client, restored, original) {
-            return Ok(Some(original_bytes.to_vec()));
+    if prefer_exact_original {
+        if let (Some(restored), Some(original), Some(original_bytes)) =
+            (restored.as_deref(), original, original_bytes)
+        {
+            if agent_config_semantically_equal(client, restored, original) {
+                return Ok(Some(original_bytes.to_vec()));
+            }
         }
     }
     Ok(restored.map(String::into_bytes))
@@ -2873,6 +2891,14 @@ pub(crate) fn build_restored_codex_agent_config(
     current: Option<&str>,
     original: Option<&str>,
 ) -> Result<Option<String>, String> {
+    build_restored_codex_agent_config_with_policy(current, original, true)
+}
+
+pub(crate) fn build_restored_codex_agent_config_with_policy(
+    current: Option<&str>,
+    original: Option<&str>,
+    retain_dormant_provider: bool,
+) -> Result<Option<String>, String> {
     use toml_edit::Item;
 
     let mut current_document = parse_codex_document(current, "当前 Codex config.toml")?;
@@ -2923,20 +2949,22 @@ pub(crate) fn build_restored_codex_agent_config(
                 provider.remove(key);
             }
         }
-    } else if let Some(providers) = current_document
-        .as_table_mut()
-        .get_mut("model_providers")
-        .and_then(Item::as_table_mut)
-    {
-        if let Some(provider) = providers
-            .get_mut(MANAGED_AGENT_PROVIDER_ID)
+    } else if !retain_dormant_provider {
+        if let Some(providers) = current_document
+            .as_table_mut()
+            .get_mut("model_providers")
             .and_then(Item::as_table_mut)
         {
-            for key in CODEX_MANAGED_PROVIDER_KEYS {
-                provider.remove(key);
-            }
-            if provider.is_empty() {
-                providers.remove(MANAGED_AGENT_PROVIDER_ID);
+            if let Some(provider) = providers
+                .get_mut(MANAGED_AGENT_PROVIDER_ID)
+                .and_then(Item::as_table_mut)
+            {
+                for key in CODEX_MANAGED_PROVIDER_KEYS {
+                    provider.remove(key);
+                }
+                if provider.is_empty() {
+                    providers.remove(MANAGED_AGENT_PROVIDER_ID);
+                }
             }
         }
     }

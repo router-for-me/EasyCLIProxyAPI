@@ -555,7 +555,10 @@ fn claude_desktop_config_builds_gateway_profile_and_index() {
     let meta: serde_json::Value = serde_json::from_str(&meta).unwrap();
 
     assert_eq!(profile["keep"], true);
-    assert!(profile.get("coworkEgressAllowedHosts").is_none());
+    assert_eq!(
+        profile["coworkEgressAllowedHosts"],
+        serde_json::json!(["*"])
+    );
     assert_eq!(profile["inferenceGatewayApiKey"], DEFAULT_API_KEY);
     assert_eq!(profile["inferenceGatewayBaseUrl"], "http://127.0.0.1:8317");
     assert_eq!(

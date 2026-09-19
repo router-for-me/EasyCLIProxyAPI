@@ -1306,14 +1306,15 @@ pub(crate) fn agent_has_connection_evidence(
             Some("yaml" | "yml") => serde_yaml::from_str(content).map_err(|e| e.to_string())?,
             _ => json5::from_str(content).map_err(|e| e.to_string())?,
         };
-        let provider_present = [
-            "/provider/cpa-gui",
-            "/model_providers/cpa-gui",
-            "/providers/cpa-gui",
-            "/models/providers/cpa-gui",
-        ]
-        .iter()
-        .any(|pointer| value.pointer(pointer).is_some());
+        let provider_present = client != AgentClient::Codex
+            && [
+                "/provider/cpa-gui",
+                "/model_providers/cpa-gui",
+                "/providers/cpa-gui",
+                "/models/providers/cpa-gui",
+            ]
+            .iter()
+            .any(|pointer| value.pointer(pointer).is_some());
         let selected = [
             "/model_provider",
             "/model",
