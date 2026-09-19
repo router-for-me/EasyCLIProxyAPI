@@ -40,7 +40,8 @@ export function validateReleaseNotes(notes) {
 
 export function releaseNotesBody(notes) {
   validateReleaseNotes(notes);
-  return `${releaseNotesLanguages.map(({ locale, label, missing }) => (
+  const languages = ['en', 'zh-CN'].map((locale) => releaseNotesLanguages.find((language) => language.locale === locale));
+  return `${languages.map(({ locale, label, missing }) => (
     `# ${label}\n\n${notes[locale]?.trim() || missing}`
   )).join('\n\n---\n\n')}\n`;
 }

@@ -30,7 +30,7 @@ describe('localized release notes publication', () => {
     }
     expect(await resolveReleaseNotes({ root, tag: '1.2.3' })).toEqual(translations);
     const body = releaseNotesBody(translations);
-    for (const text of Object.values(translations)) expect(body).toContain(text.trim());
+    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN']}`);
   }));
 
   test('never copies another language into a missing or blank translation', () => withNotesRoot(async (root, directory) => {
@@ -38,7 +38,7 @@ describe('localized release notes publication', () => {
     await writeFile(join(directory, 'en.md'), ' \n');
     const notes = await resolveReleaseNotes({ root, tag: 'v1.2.3' });
     expect(notes).toEqual({ 'zh-CN': '## 新增\n\n- 中文独有正文。\n' });
-    const englishSection = releaseNotesBody(notes).split('# English\n\n')[1].split('\n\n---')[0];
+    const englishSection = releaseNotesBody(notes).split('# English\n\n')[1].split('\n\n---\n\n')[0].trim();
     expect(englishSection).toBe('Release notes for this version are not available in English.');
     expect(englishSection).not.toContain('中文独有正文');
   }));
@@ -58,8 +58,16 @@ describe('localized release notes publication', () => {
     }
   });
 
-  test('CLI creates matching localized JSON and multilingual Release body', () => withNotesRoot(async (root, directory) => {
-    await writeFile(join(directory, 'en.md'), '## Added\n\n- Release notes.\n');
+  test('CLI preserves all translations in JSON and publishes only English then Chinese in the Release body', () => withNotesRoot(async (root, directory) => {
+    const translations = {
+      'zh-CN': '## 新增\n\n- 更新说明。\n',
+      'zh-TW': '## 新增\n\n- 更新說明。\n',
+      en: '## Added\n\n- Release notes.\n',
+      ja: '## 新機能\n\n- 更新内容。\n',
+    };
+    for (const [locale, body] of Object.entries(translations)) {
+      await writeFile(join(directory, locale + '.md'), body);
+    }
     const script = fileURLToPath(new URL('../scripts/release-notes.mjs', import.meta.url));
     const jsonPath = join(root, 'notes.json');
     const bodyPath = join(root, 'notes.md');
@@ -69,8 +77,9 @@ describe('localized release notes publication', () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
     const notes = JSON.parse(await readFile(jsonPath, 'utf8'));
-    expect(notes).toEqual({ en: '## Added\n\n- Release notes.\n' });
-    expect(await readFile(bodyPath, 'utf8')).toBe(releaseNotesBody(notes));
+    expect(notes).toEqual(translations);
+    const body = await readFile(bodyPath, 'utf8');
+    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN']}`);
   }));
 
   test('rejects tags that could escape the release notes directory', () => withNotesRoot(async (root) => {
