@@ -646,7 +646,7 @@ export const en: Record<MessageKey, string> = {
   'config.software.behavior.minimize': 'Minimize to Tray',
   'config.software.behavior.exit': 'Exit App',
   'config.diagnostics.title': 'Logging & Diagnostics',
-  'config.diagnostics.description': 'Configure debug output, file logging, and usage statistics with the same controls available in the CPA WebUI.',
+  'config.diagnostics.description': 'When enabled, only failed requests are logged; successful requests are not logged. Turn off "**Write logs to files**" promptly when no longer needed to avoid excessive storage use.',
   'config.diagnostics.debug.title': 'Debug mode',
   'config.diagnostics.debug.description': 'Emit detailed debug-level logs to help diagnose runtime issues.',
   'config.diagnostics.commercial.title': 'Commercial mode',

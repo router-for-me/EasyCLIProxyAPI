@@ -1248,7 +1248,11 @@ export function ConfigPanelPage() {
             </div>
           </div>
 
-          <p className="config-diagnostics-intro">{t('config.diagnostics.description')}</p>
+          <p className="config-diagnostics-intro">
+            {t('config.diagnostics.description').split('**').map((part, index) => (
+              index % 2 === 1 ? <strong key={index}>{part}</strong> : part
+            ))}
+          </p>
 
           <div className="config-diagnostics-toggle-grid">
             <div className="config-diagnostics-setting">

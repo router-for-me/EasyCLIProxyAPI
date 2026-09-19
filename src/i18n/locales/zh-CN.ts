@@ -645,7 +645,7 @@ export const zhCN = {
   'config.software.behavior.minimize': '最小化到托盘',
   'config.software.behavior.exit': '退出程序',
   'config.diagnostics.title': '日志与诊断',
-  'config.diagnostics.description': '配置调试输出、文件日志及用量统计。所有字段与 CPA WebUI 的日志设置保持一致。',
+  'config.diagnostics.description': '启用后将记录调用报错的请求，成功的请求不会记录，请及时关闭"**写入日志文件**"，避免占用过多存储空间。',
   'config.diagnostics.debug.title': '调试模式',
   'config.diagnostics.debug.description': '输出更详细的调试级日志，便于定位运行异常。',
   'config.diagnostics.commercial.title': '商业模式',

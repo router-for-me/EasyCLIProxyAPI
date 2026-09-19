@@ -9343,6 +9343,11 @@ textarea:focus-visible {
   transition: background-color 0.15s ease, height 0.15s ease, width 0.15s ease, opacity 0.15s ease;
 }
 
+/* Keep the final resize handle from adding overflow when all columns fit. */
+.usage-events-table th:last-child .usage-col-resizer {
+  right: 0;
+}
+
 .usage-events-table th:hover .usage-col-resizer::after {
   width: 2px;
   height: 78%;

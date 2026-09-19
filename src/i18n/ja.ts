@@ -615,7 +615,7 @@ export const jaOverrides = {
   'config.notice.sessionAffinityDisabled': 'セッションアフィニティを無効にしました',
   'config.notice.sessionTtlUpdated': 'セッションアフィニティ TTL を保存しました',
   'config.diagnostics.title': 'ログと診断',
-  'config.diagnostics.description': 'デバッグ出力、ファイルログ、使用量統計を CPA WebUI と同じ項目で設定します。',
+  'config.diagnostics.description': '有効にすると、呼び出しでエラーが発生したリクエストのみを記録し、成功したリクエストは記録しません。ストレージ容量を過度に消費しないよう、不要になったら速やかに「**ログファイルへ書き込む**」を無効にしてください。',
   'config.diagnostics.debug.title': 'デバッグモード',
   'config.diagnostics.debug.description': '問題調査用の詳細なデバッグログを出力します。',
   'config.diagnostics.commercial.title': '商用モード',

@@ -1644,93 +1644,79 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
 
 function TableTopScrollbar({
   tableWrapRef,
-  totalWidth,
-  visibleColumnKeys,
 }: {
   tableWrapRef: React.RefObject<HTMLDivElement | null>;
-  totalWidth: number;
-  visibleColumnKeys: EventColumnKey[];
 }) {
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
-  const [hasOverflow, setHasOverflow] = useState(false);
-  const [scrollWidth, setScrollWidth] = useState(totalWidth);
+  const trackRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const scrollbar = scrollbarRef.current;
+    const track = trackRef.current;
     const tableWrap = tableWrapRef.current;
-    if (!scrollbar || !tableWrap) return;
+    if (!scrollbar || !track || !tableWrap) return;
 
-    let syncing = false;
+    // Remember the positions we applied, rather than locking a whole frame.
+    // This ignores delayed programmatic/vertical scroll events without dropping
+    // newer drag or trackpad input on either surface.
+    let lastScrollbarLeft = scrollbar.scrollLeft;
+    let lastTableLeft = tableWrap.scrollLeft;
 
     const syncTable = () => {
-      if (syncing) return;
-      syncing = true;
-      tableWrap.scrollLeft = scrollbar.scrollLeft;
-      window.requestAnimationFrame(() => {
-        syncing = false;
-      });
+      const left = scrollbar.scrollLeft;
+      if (left === lastScrollbarLeft) return;
+      lastScrollbarLeft = left;
+      tableWrap.scrollLeft = left;
+      lastTableLeft = tableWrap.scrollLeft;
     };
 
     const syncScrollbar = () => {
-      if (syncing) return;
-      syncing = true;
-      scrollbar.scrollLeft = tableWrap.scrollLeft;
-      window.requestAnimationFrame(() => {
-        syncing = false;
-      });
+      const left = tableWrap.scrollLeft;
+      if (left === lastTableLeft) return;
+      lastTableLeft = left;
+      scrollbar.scrollLeft = left;
+      lastScrollbarLeft = scrollbar.scrollLeft;
     };
 
     const updateLayout = () => {
       const clientWidth = tableWrap.clientWidth;
-      const wrapScrollWidth = tableWrap.scrollWidth;
-      const maxScroll = Math.max(0, wrapScrollWidth - clientWidth);
-      const isOverflowing = maxScroll > 1;
+      const maxScroll = Math.max(0, tableWrap.scrollWidth - clientWidth);
+      const left = Math.min(tableWrap.scrollLeft, maxScroll);
 
-      setHasOverflow(isOverflowing);
-
-      if (isOverflowing) {
-        const scrollbarClientWidth = scrollbar.clientWidth || clientWidth;
-        const targetInnerWidth = scrollbarClientWidth + maxScroll;
-        setScrollWidth(targetInnerWidth);
-
-        if (tableWrap.scrollLeft > maxScroll) {
-          tableWrap.scrollLeft = maxScroll;
-        }
-        scrollbar.scrollLeft = tableWrap.scrollLeft;
-      } else {
-        tableWrap.scrollLeft = 0;
-        scrollbar.scrollLeft = 0;
-        setScrollWidth(clientWidth);
-      }
+      // Commit the range before the position. A deferred React width update can
+      // clamp the thumb to its old range and then rewind the table via scroll.
+      scrollbar.classList.toggle('is-hidden', maxScroll <= 1);
+      track.style.width = `${(scrollbar.clientWidth || clientWidth) + maxScroll}px`;
+      tableWrap.scrollLeft = left;
+      scrollbar.scrollLeft = left;
+      lastTableLeft = tableWrap.scrollLeft;
+      lastScrollbarLeft = scrollbar.scrollLeft;
     };
 
     updateLayout();
-    const frameId = window.requestAnimationFrame(updateLayout);
-
     scrollbar.addEventListener('scroll', syncTable, { passive: true });
     tableWrap.addEventListener('scroll', syncScrollbar, { passive: true });
 
-    const resizeObserver = new ResizeObserver(() => {
-      updateLayout();
-    });
+    const resizeObserver = new ResizeObserver(updateLayout);
     resizeObserver.observe(tableWrap);
     resizeObserver.observe(scrollbar);
+    // Column resizing changes the table's width without resizing its viewport.
+    if (tableWrap.firstElementChild) resizeObserver.observe(tableWrap.firstElementChild);
 
     return () => {
-      window.cancelAnimationFrame(frameId);
       scrollbar.removeEventListener('scroll', syncTable);
       tableWrap.removeEventListener('scroll', syncScrollbar);
       resizeObserver.disconnect();
     };
-  }, [tableWrapRef, totalWidth, visibleColumnKeys]);
+  }, [tableWrapRef]);
 
   return (
     <div
       ref={scrollbarRef}
-      className={`usage-table-top-scrollbar ${hasOverflow ? '' : 'is-hidden'}`}
+      className="usage-table-top-scrollbar"
       aria-hidden="true"
     >
-      <div style={{ width: `${scrollWidth}px`, height: '1px' }} />
+      <div ref={trackRef} style={{ height: '1px' }} />
     </div>
   );
 }
@@ -2080,8 +2066,6 @@ function EventsView({
       {events.items.length > 0 ? (
         <TableTopScrollbar
           tableWrapRef={tableWrapRef}
-          totalWidth={totalTableWidth}
-          visibleColumnKeys={visibleColumnKeys}
         />
       ) : null}
 

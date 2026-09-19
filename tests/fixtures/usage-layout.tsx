@@ -7,7 +7,7 @@ import '../../src/styles.css';
 
 const params = new URLSearchParams(location.search);
 localStorage.setItem('easy-cli-proxy-api.locale', params.get('locale') || 'zh-TW');
-localStorage.setItem('cpa-gui.usage-records-tab.v1', 'overview');
+localStorage.setItem('cpa-gui.usage-records-tab.v1', params.get('tab') || 'overview');
 localStorage.setItem('cpa-gui.usage-records-range.v1', '4h');
 document.documentElement.dataset.theme = params.get('theme') || 'dark';
 
@@ -42,7 +42,7 @@ const timeline = Array.from({ length: 4 }, (_, index) => ({
   })),
 }));
 
-mockIPC(async (cmd) => {
+mockIPC(async (cmd, args) => {
   if (cmd === 'plugin:event|listen') return 1;
   if (cmd === 'plugin:event|unlisten' || cmd === 'set_app_locale') return null;
   if (cmd === 'get_usage_collector_status') {
@@ -50,6 +50,43 @@ mockIPC(async (cmd) => {
   }
   if (cmd === 'get_usage_analysis') {
     return { models: [], providers: [], sources: [], apiKeys: [] };
+  }
+  if (cmd === 'get_usage_events') {
+    const query = args?.query as { page: number; page_size: number };
+    return {
+      page: query.page,
+      pageSize: query.page_size,
+      total: 400,
+      totalPages: Math.ceil(400 / query.page_size),
+      items: Array.from({ length: query.page_size }, (_, index) => ({
+        id: `record-${query.page}-${index}`,
+        timestamp: now.toISOString(),
+        latency_ms: 2000,
+        ttft_ms: 200,
+        source: 'test-source',
+        source_display: 'Test source',
+        failed: index % 4 === 0,
+        canceled: false,
+        failure_status: index % 4 === 0 ? 429 : 0,
+        failure_body: index % 4 === 0 ? 'Rate limit exceeded' : '',
+        provider: 'test-provider',
+        model: 'test-model',
+        alias: '',
+        reasoning_effort: 'high',
+        endpoint: '/v1/responses',
+        api_key_hash: 'test-key',
+        api_key_display: 'sk-test',
+        api_key_remark: 'Test key',
+        tokens: {
+          input_tokens: 1000,
+          output_tokens: 200,
+          reasoning_tokens: 100,
+          cache_read_tokens: 400,
+          cache_creation_tokens: 0,
+          total_tokens: 1600,
+        },
+      })),
+    };
   }
   if (cmd === 'get_usage_overview') {
     return {
