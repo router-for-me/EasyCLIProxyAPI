@@ -58,7 +58,7 @@ describe('控件自身反馈', () => {
     expect(attributes?.find((attribute) => attribute.name.getText(source) === 'className')?.initializer?.getText(source))
       .toBe("{`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`}");
     expect(attributes?.find((attribute) => attribute.name.getText(source) === 'disabled')?.initializer?.getText(source))
-      .toBe('{busy}');
+      .toBe('{busy || !isOAuthCredentialFile(file)}');
     const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
     expect(styles).toMatch(/\.real-auth-file-row\.disabled\s*>\s*:not\(\.auth-file-actions\)\s*\{\s*opacity:\s*0\.68;/);
     expect(styles).not.toMatch(/\.real-auth-file-row\.disabled\s*\{[^}]*opacity:/);

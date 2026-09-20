@@ -135,6 +135,25 @@ describe('OAuth model settings scopes', () => {
     expect(deletes).toHaveLength(1);
   });
 
+  it('uses only the OAuth exclusion endpoint even when excluding every model for a provider', async () => {
+    const { api, files, globalRules, writes, deletes, reads } = createApi();
+    const beforeFiles = structuredClone(files);
+    await saveOAuthModelSettings(await loadOAuthModelSettings(provider, api), ['*'], api);
+    expect(reads).toEqual([
+      { path: '/model-definitions/codex', query: undefined },
+      { path: '/oauth-excluded-models', query: undefined },
+    ]);
+    expect(writes).toEqual([
+      { path: '/oauth-excluded-models', body: { provider: 'codex', models: ['*'] } },
+    ]);
+    expect(globalRules).toEqual({ codex: ['*'], claude: ['claude-old-*'] });
+    expect(files).toEqual(beforeFiles);
+    await saveOAuthModelSettings(await loadOAuthModelSettings(provider, api), [], api);
+    expect(deletes).toEqual([{ path: '/oauth-excluded-models', query: { provider: 'codex' } }]);
+    expect(writes).toHaveLength(1);
+    expect(files).toEqual(beforeFiles);
+  });
+
   it('does not rewrite unchanged account rules, including legacy metadata', async () => {
     const { api, files, writes } = createApi();
     delete files['a.json'].excluded_models;

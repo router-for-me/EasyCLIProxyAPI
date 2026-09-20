@@ -1,4 +1,4 @@
-import { readBoolean, readString } from './managementApi';
+import { managementApi, readBoolean, readString } from './managementApi';
 import { getCurrentLocale, translate } from '../i18n';
 
 export type AuthFileRecord = Record<string, unknown>;
@@ -9,6 +9,26 @@ export const authFileName = (file: AuthFileRecord) =>
 
 export const isRuntimeOnlyAuthFile = (file: AuthFileRecord) =>
   readBoolean(file, 'runtime_only', 'runtimeOnly');
+
+export const isOAuthCredentialFile = (file: AuthFileRecord): boolean => {
+  if (!readString(file, 'name').toLowerCase().endsWith('.json') || isRuntimeOnlyAuthFile(file)) return false;
+  const kinds = ['account_type', 'auth_kind', 'authKind'].map((key) =>
+    readString(file, key).toLowerCase().replace(/[-_]/g, ''));
+  if (kinds.includes('apikey')) return false;
+  const source = readString(file, 'source').toLowerCase();
+  return !source || source === 'file';
+};
+
+export const setOAuthCredentialFileDisabled = async (
+  file: AuthFileRecord,
+  disabled: boolean,
+  api: { patch: (path: string, body: Record<string, unknown>) => Promise<unknown> } = managementApi,
+): Promise<void> => {
+  if (!isOAuthCredentialFile(file)) {
+    throw new Error(translate(getCurrentLocale(), 'authFiles.fileOnly'));
+  }
+  await api.patch('/auth-files/status', { name: readString(file, 'name'), disabled });
+};
 
 export const parseAuthFilePriority = (value: unknown): number | undefined => {
   if (typeof value === 'number') {
@@ -31,12 +51,16 @@ const normalizeOAuthProvider = (value: string) => {
   const provider = value.trim().toLowerCase();
   if (provider === 'cognition') return 'devin';
   if (provider === 'anthropic') return 'claude';
+  if (provider === 'anti-gravity') return 'antigravity';
   if (provider === 'openai') return 'codex';
   return provider;
 };
 
 const authFileProvider = (file: AuthFileRecord) =>
   normalizeOAuthProvider(readString(file, 'provider', 'type'));
+
+export const oauthModelProvidersFromAuthFiles = (files: AuthFileRecord[]): string[] =>
+  [...new Set(files.filter(isOAuthCredentialFile).map(authFileProvider).filter(Boolean))].sort();
 
 export const snapshotAuthFiles = (files: AuthFileRecord[]): AuthFileSnapshot => {
   const grouped = new Map<string, string[]>();
@@ -99,6 +123,10 @@ const authFilePriority = (file: AuthFileRecord) => {
   return score;
 };
 
+const authFileSourceFields = new Set([
+  'source', 'path', 'runtime_only', 'runtimeOnly', 'account_type', 'auth_kind', 'authKind',
+]);
+
 const mergeDuplicateAuthFiles = (entries: AuthFileRecord[]) => {
   const sorted = [...entries].sort((left, right) => {
     const priority = authFilePriority(right) - authFilePriority(left);
@@ -111,6 +139,7 @@ const mergeDuplicateAuthFiles = (entries: AuthFileRecord[]) => {
   const merged = { ...sorted[0] };
   sorted.slice(1).forEach((entry) => {
     Object.entries(entry).forEach(([key, value]) => {
+      if (authFileSourceFields.has(key)) return;
       if (key === 'cooldowns' && Object.prototype.hasOwnProperty.call(merged, key)) return;
       if (!hasMeaningfulValue(merged[key]) && hasMeaningfulValue(value)) merged[key] = value;
     });

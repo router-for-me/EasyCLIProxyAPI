@@ -25,6 +25,17 @@ describe('i18n', () => {
     expect(Object.values(zhTW).filter((message) => /認證(?:檔案|文件)/.test(message))).toEqual([]);
   });
 
+  it('makes the OAuth-only model exclusion scope explicit in every locale', () => {
+    for (const locale of supportedLocales) {
+      const description = translate(locale, 'authFiles.models.globalDescription', { provider: 'Codex' });
+      expect(description).toContain('Codex');
+      expect(description).toContain('OAuth');
+      expect(description).toContain('API');
+      expect(translate(locale, 'authFiles.fileOnly')).toContain('API');
+    }
+    expect(translate('zh-CN', 'authFiles.models.globalDescription', { provider: 'Codex' })).toContain('不影响 API 接入');
+  });
+
   it('normalizes English variants and keeps Chinese as the fallback', () => {
     expect(normalizeLocale('en-US')).toBe('en');
     expect(normalizeLocale('en')).toBe('en');

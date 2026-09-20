@@ -2,8 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import {
   changedOAuthAuthFileNames,
   dedupeAuthFiles,
+  isOAuthCredentialFile,
   normalizeAuthFilePriorityInput,
+  oauthModelProvidersFromAuthFiles,
   parseAuthFilePriority,
+  setOAuthCredentialFileDisabled,
   snapshotAuthFiles,
 } from '../src/services/authFiles';
 
@@ -14,6 +17,7 @@ describe('认证文件列表规范化', () => {
         name: 'codex-user.json',
         provider: 'codex',
         runtime_only: true,
+        account_type: 'api_key',
         auth_index: 'runtime-index',
         email: 'user@example.com',
       },
@@ -32,6 +36,73 @@ describe('认证文件列表规范化', () => {
     expect(files[0].path).toBe('/tmp/codex-user.json');
     expect(files[0].email).toBe('user@example.com');
     expect(files[0].auth_index).toBe('runtime-index');
+    expect(files[0].runtime_only).toBeUndefined();
+    expect(files[0].account_type).toBeUndefined();
+    expect(isOAuthCredentialFile(files[0])).toBe(true);
+  });
+});
+
+const oauthFile = { name: 'codex-user.json', provider: 'codex', source: 'file', account_type: 'oauth' };
+const nonOAuthFiles = [
+  { ...oauthFile, runtime_only: true },
+  { ...oauthFile, runtimeOnly: true },
+  { ...oauthFile, account_type: 'api_key' },
+  { ...oauthFile, account_type: 'API-KEY' },
+  { ...oauthFile, auth_kind: 'apikey' },
+  { ...oauthFile, authKind: 'api_key' },
+  { ...oauthFile, source: 'memory' },
+  { ...oauthFile, source: 'config:codex[key]' },
+  { ...oauthFile, name: 'codex:apikey:runtime-id' },
+  { ...oauthFile, name: '' },
+];
+
+describe('OAuth credential file boundaries', () => {
+  it('accepts disk-backed OAuth files, disabled files, and legacy disk listings', () => {
+    expect(isOAuthCredentialFile(oauthFile)).toBe(true);
+    expect(isOAuthCredentialFile({ ...oauthFile, disabled: true })).toBe(true);
+    expect(isOAuthCredentialFile({ name: 'legacy.JSON', type: 'codex' })).toBe(true);
+    expect(isOAuthCredentialFile({})).toBe(false);
+  });
+
+  it('rejects API-key and runtime records even when they use an OAuth provider or JSON name', () => {
+    for (const file of nonOAuthFiles) expect(isOAuthCredentialFile(file)).toBe(false);
+  });
+
+  it('offers only providers with OAuth credential files, preserving aliases and plugin providers', () => {
+    expect(oauthModelProvidersFromAuthFiles([
+      ...nonOAuthFiles.map((file) => ({ ...file, provider: 'api-only' })),
+      oauthFile,
+      { ...oauthFile, name: 'second.json' },
+      { name: 'claude.json', type: 'anthropic' },
+      { name: 'devin.json', type: 'cognition' },
+      { name: 'antigravity.json', type: 'anti-gravity' },
+      { name: 'openai.json', type: 'openai' },
+      { name: 'plugin.json', provider: 'custom-oauth', source: 'file' },
+      { name: 'unknown.json' },
+    ])).toEqual(['antigravity', 'claude', 'codex', 'custom-oauth', 'devin']);
+    expect(oauthModelProvidersFromAuthFiles(nonOAuthFiles)).toEqual([]);
+  });
+
+  it('enables and disables only the selected OAuth file without touching API configuration', async () => {
+    const writes: unknown[] = [];
+    const api = { patch: async (path: string, body: Record<string, unknown>) => { writes.push({ path, body }); } };
+    await setOAuthCredentialFileDisabled(oauthFile, true, api);
+    await setOAuthCredentialFileDisabled({ ...oauthFile, disabled: true }, false, api);
+    expect(writes).toEqual([
+      { path: '/auth-files/status', body: { name: 'codex-user.json', disabled: true } },
+      { path: '/auth-files/status', body: { name: 'codex-user.json', disabled: false } },
+    ]);
+  });
+
+  it('rejects runtime and API-key status changes before any management request', async () => {
+    const writes: unknown[] = [];
+    const api = { patch: async (path: string, body: Record<string, unknown>) => { writes.push({ path, body }); } };
+    for (const file of nonOAuthFiles) {
+      for (const disabled of [true, false]) {
+        await expect(setOAuthCredentialFileDisabled(file, disabled, api)).rejects.toThrow('OAuth');
+      }
+    }
+    expect(writes).toEqual([]);
   });
 });
 

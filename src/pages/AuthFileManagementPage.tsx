@@ -55,8 +55,11 @@ import {
 import {
   authFileName,
   dedupeAuthFiles,
+  isOAuthCredentialFile,
   isRuntimeOnlyAuthFile,
+  oauthModelProvidersFromAuthFiles,
   parseAuthFilePriority,
+  setOAuthCredentialFileDisabled,
 } from '../services/authFiles';
 import {
   modelMatchesRule,
@@ -140,12 +143,9 @@ export function AuthFileManagementPage() {
   const oauthModels = oauthModelSettings?.models ?? [];
   const oauthExcludedRules = normalizeOAuthExcludedRules(oauthExcludedRulesText.split(/\r?\n/));
   const excludedOauthModelCount = oauthModels.length - openOAuthModelNames(oauthModels, oauthExcludedRules).size;
-  const oauthModelProviders = useMemo(() => Array.from(new Map(
-    files.filter((file) => providerKey(file)).map((file) => [providerKey(file), {
-      provider: providerKey(file),
-      label: providerName(file),
-    }]),
-  ).values()).sort((a, b) => a.label.localeCompare(b.label)), [files]);
+  const oauthModelProviders = useMemo(() => oauthModelProvidersFromAuthFiles(files)
+    .map((provider) => ({ provider, label: providerName({ provider }) }))
+    .sort((a, b) => a.label.localeCompare(b.label)), [files]);
 
   const loadFiles = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -306,15 +306,11 @@ export function AuthFileManagementPage() {
   };
 
   const toggleStatus = async (file: AuthFile) => {
-    const name = fileName(file);
     feedback.clearNotice();
     setBusy(true);
     setError('');
     try {
-      await managementApi.patch('/auth-files/status', {
-        name,
-        disabled: !readBoolean(file, 'disabled'),
-      });
+      await setOAuthCredentialFileDisabled(file, !readBoolean(file, 'disabled'));
       await loadFiles(false);
     } catch (requestError) {
       setError(String(requestError));
@@ -447,10 +443,10 @@ export function AuthFileManagementPage() {
                   </div>
                   {note ? <div className="auth-card-note"><span>{t('authFiles.settings.note')}</span><p title={note}>{note}</p></div> : null}
                   <footer className="auth-card-actions">
-                    <button type="button" className="secondary-button compact-button" onClick={() => setSettingsName(name)} disabled={busy || isRuntimeOnly(file) || !readString(file, 'name')} title={t(isRuntimeOnly(file) ? 'authFiles.settings.runtime' : 'authFiles.settings.title')}><Settings2 size={14} />{t('authFiles.settings.button')}</button>
+                    <button type="button" className="secondary-button compact-button" onClick={() => setSettingsName(name)} disabled={busy || !isOAuthCredentialFile(file)} title={t(isOAuthCredentialFile(file) ? 'authFiles.settings.title' : 'authFiles.fileOnly')}><Settings2 size={14} />{t('authFiles.settings.button')}</button>
                     {providerKey(file) ? <button type="button" className="secondary-button compact-button" onClick={() => setModelViewName(name)} disabled={busy} title={t('authFiles.models.viewTitle')}>{t('authFiles.models.button')}</button> : null}
                     <button type="button" className="icon-button quiet" onClick={() => void copyName(name)} disabled={busy} title={t('authFiles.copyName')}>{copied === name ? <Check size={15} /> : <Copy size={15} />}</button>
-                    <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`} onClick={() => void toggleStatus(file)} disabled={busy}>{disabled ? t('common.enable') : t('common.disable')}</button>
+                    <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`} onClick={() => void toggleStatus(file)} disabled={busy || !isOAuthCredentialFile(file)} title={isOAuthCredentialFile(file) ? undefined : t('authFiles.fileOnly')}>{disabled ? t('common.enable') : t('common.disable')}</button>
                     <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.delete')}><Trash2 size={15} /></button>
                   </footer>
                 </article>
