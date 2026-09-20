@@ -28,7 +28,6 @@ import {
   shouldShowOAuthLoginStatus,
 } from '../services/oauthLoginState';
 import { AuthFileManagementPage } from './AuthFileManagementPage';
-import { QuotaPage } from './QuotaPage';
 import { validateDevinCallback } from '../services/devinOAuth';
 
 type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'devin';
@@ -151,7 +150,6 @@ export function OAuthManagementPage() {
       >
         {activeSubpage === 'login' ? <OAuthLoginPage /> : null}
         {activeSubpage === 'authFiles' ? <AuthFileManagementPage /> : null}
-        {activeSubpage === 'quota' ? <QuotaPage /> : null}
       </div>
     </section>
   );

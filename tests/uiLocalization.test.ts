@@ -5,7 +5,17 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const sourceRoot = fileURLToPath(new URL('../src/', import.meta.url));
-const technicalText = new Set(['EasyCLIProxyAPI', 'WebSocket', 'Fast', 'ms', 'auto']);
+const technicalText = new Set([
+  'EasyCLIProxyAPI',
+  'WebSocket',
+  'Fast',
+  'HTTP',
+  'auto',
+  'excluded_models',
+  'headers',
+  'ms',
+  'note',
+]);
 const technicalPlaceholders = new Set(['1h', 'sk-...', 'gpt-5.6-terra', 'https://...']);
 
 function componentFiles(directory: string): string[] {
