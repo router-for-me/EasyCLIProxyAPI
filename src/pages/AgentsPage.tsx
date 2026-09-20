@@ -599,6 +599,12 @@ function AgentModelPicker({
 
   return (
     <div className={`agent-model-picker ${open ? 'open' : ''}`} ref={rootRef}
+      onMouseDown={(event) => {
+        if (event.button === 0 && event.currentTarget.contains(document.activeElement)
+          && event.target instanceof Element && event.target.closest('button')) {
+          event.preventDefault();
+        }
+      }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
       }}>
