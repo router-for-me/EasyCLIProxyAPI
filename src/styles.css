@@ -10,34 +10,38 @@
   --theme-3f6f98: #3f6f98;
   --theme-42637f: #42637f;
   --theme-433f39: #433f39;
+  --theme-4b4742: var(--text-secondary);
   --theme-4d78a8: #4d78a8;
   --theme-4f4a43: #4f4a43;
   --theme-4f825c: #4f825c;
   --theme-554075: #554075;
+  --theme-59544d: var(--text-secondary);
   --theme-5d9a6c: #5d9a6c;
-  --theme-5f5a53: #5f5a53;
+  --theme-5f5a53: var(--text-secondary);
   --theme-654f91: #654f91;
-  --theme-655f57: #655f57;
+  --theme-655f57: var(--text-secondary);
   --theme-66709a: #66709a;
   --theme-6684a1: #6684a1;
-  --theme-6d6760: #6d6760;
-  --theme-6f6961: #6f6961;
-  --theme-716b61: #716b61;
-  --theme-777067: #777067;
-  --theme-7a746c: #7a746c;
+  --theme-6b655d: var(--text-secondary);
+  --theme-6d6760: var(--text-secondary);
+  --theme-6f6961: var(--text-tertiary);
+  --theme-716b61: var(--text-tertiary);
+  --theme-777067: var(--text-tertiary);
+  --theme-7a746c: var(--text-tertiary);
   --theme-805a24: #805a24;
   --theme-8069ad: #8069ad;
-  --theme-817b73: #817b73;
+  --theme-817b72: var(--text-tertiary);
+  --theme-817b73: var(--text-tertiary);
   --theme-866b4d: #866b4d;
   --theme-8a625d: #8a625d;
-  --theme-8a847c: #8a847c;
+  --theme-8a847c: var(--text-quaternary);
   --theme-8b5b21: #8b5b21;
   --theme-8d8377: #8d8377;
   --theme-8f3025: #8f3025;
-  --theme-918a81: #918a81;
-  --theme-9a938a: #9a938a;
-  --theme-9a958d: #9a958d;
-  --theme-9b958c: #9b958c;
+  --theme-918a81: var(--text-quaternary);
+  --theme-9a938a: var(--text-quaternary);
+  --theme-9a958d: var(--text-quaternary);
+  --theme-9b958c: var(--text-quaternary);
   --theme-9ca9df: #9ca9df;
   --theme-9d8abd: #9d8abd;
   --theme-9db8a5: #9db8a5;
@@ -119,10 +123,12 @@
   --bg-card: #ffffff;
   --bg-error-light: #fff1ee;
   --text-primary: #202521;
-  --text-secondary: #556159;
-  --text-tertiary: #657168;
-  --text-quaternary: #7d877f;
-  --text-muted: #657168;
+  --text-secondary: #46524a;
+  --text-tertiary: #566259;
+  --text-quaternary: #5f6a62;
+  --text-muted: var(--text-tertiary);
+  --text-placeholder: var(--text-quaternary);
+  --text-disabled: #7d877f;
   --border-color: #e2e8e3;
   --border-secondary: #edf1ee;
   --border-primary: #cfd7d0;
@@ -167,10 +173,10 @@
   --bg-error-light: rgba(198, 87, 70, 0.18);
 
   --text-primary: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-tertiary: #94a3b8;
-  --text-quaternary: #64748b;
-  --text-muted: #94a3b8;
+  --text-secondary: #d3dce8;
+  --text-tertiary: #b0bdcf;
+  --text-quaternary: #9aa9bf;
+  --text-disabled: #64748b;
 
   --border-color: #222836;
   --border-secondary: #222836;
@@ -222,38 +228,21 @@
   --theme-3f6f98: #9c958d;
   --theme-42637f: #9c958d;
   --theme-433f39: #d3cfc7;
-  --theme-4b4742: #c9c3bb;
   --theme-4d78a8: #9c958d;
   --theme-4f4a43: #cbd5e1;
   --theme-4f825c: #34d399;
   --theme-554075: #b0aaa2;
-  --theme-59544d: #b0aaa2;
   --theme-5d9a6c: #34d399;
-  --theme-5f5a53: #94a3b8;
   --theme-654f91: #b0aaa2;
-  --theme-655f57: #a29c95;
   --theme-66709a: #c9c3bb;
   --theme-6684a1: #c9c3bb;
-  --theme-6b655d: #c9c3bb;
-  --theme-6d6760: #cbd5e1;
-  --theme-6f6961: #9c958d;
-  --theme-716b61: #94a3b8;
-  --theme-777067: #9c958d;
-  --theme-7a746c: #94a3b8;
   --theme-805a24: #fcd34d;
   --theme-8069ad: #8a847c;
-  --theme-817b72: #8a847c;
-  --theme-817b73: #8a847c;
   --theme-866b4d: #8a847c;
   --theme-8a625d: #8a847c;
-  --theme-8a847c: #64748b;
   --theme-8b5b21: #fcd34d;
   --theme-8d8377: #6d6760;
   --theme-8f3025: #c65746;
-  --theme-918a81: #6d6760;
-  --theme-9a938a: #5f5a53;
-  --theme-9a958d: #334155;
-  --theme-9b958c: #334155;
   --theme-9ca9df: #8b8680;
   --theme-9d8abd: #8b8680;
   --theme-9db8a5: #34d399;
@@ -352,20 +341,7 @@
   --theme-39352f: #313832;
   --theme-433f39: #39413b;
   --theme-4f4a43: #465049;
-  --theme-5f5a53: #556159;
-  --theme-655f57: #5e6a61;
-  --theme-6d6760: #667169;
-  --theme-6f6961: #69756c;
-  --theme-716b61: #6c776f;
-  --theme-777067: #717c74;
-  --theme-7a746c: #657168;
-  --theme-817b73: #758078;
-  --theme-8a847c: #7d877f;
   --theme-8d8377: #808a82;
-  --theme-918a81: #879189;
-  --theme-9a938a: #8e9890;
-  --theme-9a958d: #909a92;
-  --theme-9b958c: #929c94;
   --theme-aaa49b: #a1aaa3;
   --theme-bdb5a9: #b2bab4;
   --theme-c7c2b8: #c0c8c1;
@@ -487,6 +463,12 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-placeholder);
+  opacity: 1;
 }
 
 button {
@@ -639,14 +621,14 @@ textarea:focus-visible {
 .nav-section button:disabled,
 .nav-section button.locked {
   cursor: not-allowed;
-  color: var(--theme-9a958d);
+  color: var(--text-disabled);
   opacity: 0.58;
 }
 
 .nav-section button:disabled:hover,
 .nav-section button.locked:hover {
   background: transparent;
-  color: var(--theme-9a958d);
+  color: var(--text-disabled);
   transform: none;
 }
 
@@ -1859,7 +1841,7 @@ textarea:focus-visible {
 }
 
 .compact-text-input::placeholder {
-  color: var(--theme-9b958c);
+  color: var(--text-placeholder);
 }
 
 .compact-text-input.error {
@@ -8497,8 +8479,12 @@ textarea:focus-visible {
 }
 
 .usage-trend-legend-item.is-hidden {
-  opacity: 0.38;
+  color: var(--text-quaternary);
   text-decoration: line-through;
+}
+
+.usage-trend-legend-item.is-hidden .usage-trend-swatch {
+  opacity: 0.38;
 }
 
 .usage-trend-swatch {
@@ -8943,8 +8929,7 @@ textarea:focus-visible {
 
 .usage-col-hint {
   font-size: var(--font-size-caption);
-  color: var(--theme-9a958d);
-  opacity: 0.9;
+  color: var(--text-quaternary);
 }
 
 .usage-page-size-select {
@@ -13017,7 +13002,7 @@ body.table-col-resizing * {
 }
 
 .simple-mode-field .text-input::placeholder {
-  color: var(--theme-9b958c);
+  color: var(--text-placeholder);
 }
 
 .simple-mode-api-actions,

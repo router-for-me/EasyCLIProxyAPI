@@ -31,7 +31,7 @@
 .credential-quota-heading > strong { color: var(--text-secondary); font-size: var(--font-size-meta); font-weight: var(--font-weight-medium); }
 .credential-quota-plan { max-width: 100%; overflow-wrap: anywhere; padding: 2px 6px; border-radius: 4px; font-size: var(--font-size-caption); background: var(--bg-secondary); color: var(--text-secondary); }
 .credential-quota-refresh { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 3px 0 3px 5px; background: transparent; color: var(--primary-color); font: inherit; font-size: var(--font-size-caption); margin-left: auto; cursor: pointer; }
-.credential-quota-refresh:disabled { color: var(--text-tertiary); cursor: default; }
+.credential-quota-refresh:disabled { color: var(--text-disabled); cursor: default; }
 .credential-quota-heading .credential-quota-reset { min-height: 26px; padding: 3px 7px; margin-left: auto; font-size: var(--font-size-caption); }
 .credential-quota-reset + .credential-quota-refresh { margin-left: 0; }
 .credential-quota-rows { display: grid; gap: 14px; }
