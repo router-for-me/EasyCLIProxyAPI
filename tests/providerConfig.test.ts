@@ -542,7 +542,7 @@ describe('API 接入配置合并', () => {
     const result = exclusionsForModelSelection(
       'legacy-*\ngpt-image',
       [{ name: 'gpt-5-codex' }, { name: 'gpt-image' }, { name: 'gpt-5-mini' }],
-      new Set(['gpt-5-codex']),
+      [{ name: 'gpt-5-codex' }],
     );
 
     expect(result.split('\n')).toEqual(['legacy-*', 'gpt-image', 'gpt-5-mini']);
@@ -552,10 +552,87 @@ describe('API 接入配置合并', () => {
     const result = exclusionsForModelSelection(
       'legacy-*\ngpt-image\nmanual-model',
       [{ name: 'gpt-5-codex' }, { name: 'gpt-image' }],
-      new Set(['gpt-image']),
+      [{ name: 'gpt-image' }],
     );
 
     expect(result.split('\n')).toEqual(['legacy-*', 'manual-model', 'gpt-5-codex']);
+  });
+
+  it('未勾选的原模型名与已选模型别名相同时不生成冲突排除规则', () => {
+    const discovered = [{ name: 'dsv4' }, { name: 'dsv4.1' }, { name: 'other' }];
+    const models = [{ name: 'dsv4.1', alias: 'dsv4' }];
+    const excludedModelsText = exclusionsForModelSelection('', discovered, models);
+
+    for (const section of ['codex-api-key', 'claude-api-key', 'gemini-api-key'] as const) {
+      const record = buildProviderRecord(section, {
+        ...createProviderDraft(section), apiKey: 'key', models, excludedModelsText,
+      });
+      expect(record.models).toEqual(models);
+      expect(record['excluded-models']).toEqual(['other']);
+    }
+  });
+
+  it('重新应用勾选时清理旧的别名冲突，保留手动规则和通配符', () => {
+    expect(exclusionsForModelSelection(
+      'legacy-*\nmanual-model\nDSV4\ndsv4.1\ndsv*',
+      [{ name: ' dsv4 ' }, { name: 'dsv4.1' }, { name: 'other' }],
+      [{ name: ' DSV4.1 ', alias: ' DSV4 ' }],
+    ).split('\n')).toEqual(['legacy-*', 'manual-model', 'dsv*', 'other']);
+  });
+
+  it('已选自定义模型不在发现列表中时也保护其别名', () => {
+    expect(exclusionsForModelSelection(
+      'dsv4\nmanual-model',
+      [{ name: 'dsv4' }, { name: 'other', alias: 'dsv4' }],
+      [{ name: 'custom-upstream', alias: 'dsv4' }],
+    ).split('\n')).toEqual(['manual-model', 'other']);
+  });
+
+  it('勾选后编辑或移除别名时同步恢复和移除自动排除规则', () => {
+    const discovered = [{ name: 'dsv4' }, { name: 'dsv4.1' }, { name: 'other' }];
+    const before = exclusionsForModelSelection('manual-model', discovered, [{ name: 'dsv4.1' }]);
+    expect(before.split('\n')).toEqual(['manual-model', 'dsv4', 'other']);
+    const mapped = exclusionsForModelSelection(before, discovered, [{ name: 'dsv4.1', alias: 'dsv4' }]);
+    expect(mapped.split('\n')).toEqual(['manual-model', 'other']);
+    const renamed = exclusionsForModelSelection(mapped, discovered, [{ name: 'dsv4.1', alias: 'other' }]);
+    expect(renamed.split('\n')).toEqual(['manual-model', 'dsv4']);
+    expect(exclusionsForModelSelection(renamed, discovered, [{ name: 'dsv4.1' }])).toBe(before);
+  });
+
+  it('保存时按最终映射清理自动冲突，未应用勾选的手动排除保持不变', () => {
+    const draft = {
+      ...createProviderDraft('codex-api-key'), apiKey: 'key',
+      models: [{ name: 'dsv4.1', alias: 'dsv4' }],
+      excludedModelsText: 'dsv4\nother\ndsv*',
+    };
+    const automatic = buildProviderRecord('codex-api-key', {
+      ...draft, modelSelectionCatalog: [{ name: 'dsv4' }, { name: 'dsv4.1' }, { name: 'other' }],
+    });
+    expect(automatic['excluded-models']).toEqual(['dsv*', 'other']);
+    expect(automatic.modelSelectionCatalog).toBeUndefined();
+    expect(buildProviderRecord('codex-api-key', draft)['excluded-models']).toEqual(['dsv4', 'other', 'dsv*']);
+  });
+
+  it('保存时也保护配置合并保留的同源额外别名，并保留停用状态', () => {
+    const current = {
+      'api-key': 'key',
+      models: [{ name: 'dsv4.1' }, { name: 'dsv4.1', alias: 'dsv4', custom: true }],
+    };
+    const record = buildProviderRecord('codex-api-key', {
+      ...createProviderDraft('codex-api-key'), apiKey: 'key', disabled: true,
+      models: modelsFromRecord(current.models), excludedModelsText: 'dsv4',
+      modelSelectionCatalog: [{ name: 'dsv4' }, { name: 'dsv4.1' }, { name: 'other' }],
+    }, current);
+    expect(record.models).toEqual(current.models);
+    expect(record['excluded-models']).toEqual(['other', '*']);
+  });
+
+  it('反向映射同样保护已选模型对外名称', () => {
+    expect(exclusionsForModelSelection(
+      '',
+      [{ name: 'dsv4' }, { name: 'dsv4.1' }, { name: 'other' }],
+      [{ name: 'dsv4', alias: 'dsv4.1' }],
+    )).toBe('other');
   });
 
   it('普通提供商没有模型映射时按真实开放状态初始化勾选', () => {

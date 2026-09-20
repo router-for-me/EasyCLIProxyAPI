@@ -6,6 +6,7 @@ import { ApiProviderDialog, type ProviderDraft } from '../../src/pages/ApiAccess
 import '../../src/styles.css';
 
 const params = new URLSearchParams(location.search);
+const scenario = params.get('scenario') ?? 'saved';
 localStorage.setItem('easy-cli-proxy-api.locale', params.get('locale') ?? 'en');
 document.documentElement.dataset.theme = params.get('theme') ?? 'light';
 const fixture = window as typeof window & {
@@ -15,12 +16,14 @@ const fixture = window as typeof window & {
   fixturePending: (() => void)[];
   fixtureSaved: ProviderDraft | null;
 };
-fixture.fixtureCatalog = [
-  ...Array.from({ length: 240 }, (_, i) => ({ name: `gpt-${String(i + 1).padStart(3, '0')}` })),
-  ...Array.from({ length: 120 }, (_, i) => ({ name: `claude-${String(i + 1).padStart(3, '0')}` })),
-  ...Array.from({ length: 40 }, (_, i) => ({ name: `deepseek-${String(i + 1).padStart(3, '0')}` })),
-  { name: 'GPT-001' },
-];
+fixture.fixtureCatalog = scenario.startsWith('alias-')
+  ? [{ name: 'dsv4' }, { name: 'dsv4.1' }, { name: 'other' }]
+  : [
+      ...Array.from({ length: 240 }, (_, i) => ({ name: `gpt-${String(i + 1).padStart(3, '0')}` })),
+      ...Array.from({ length: 120 }, (_, i) => ({ name: `claude-${String(i + 1).padStart(3, '0')}` })),
+      ...Array.from({ length: 40 }, (_, i) => ({ name: `deepseek-${String(i + 1).padStart(3, '0')}` })),
+      { name: 'GPT-001' },
+    ];
 fixture.fixtureFailFetch = false;
 fixture.fixtureHoldNext = false;
 fixture.fixturePending = [];
@@ -41,11 +44,13 @@ mockIPC(async (cmd, rawArgs) => {
   throw new Error(`Unhandled fixture command: ${cmd}`);
 });
 
-const scenario = params.get('scenario') ?? 'saved';
 const initialDraft: ProviderDraft = {
   name: '', apiKey: 'fixture-key', remark: '', baseUrl: 'https://models.example.test', priority: '',
-  models: scenario === 'saved' ? [{ name: ' gpt-001 ', alias: 'Focus' }, { name: 'custom-local', alias: 'Local alias' }] : [],
-  excludedModelsText: scenario === 'excluded' ? 'gpt-*' : '',
+  models: scenario === 'alias-saved' ? [{ name: 'dsv4.1', alias: 'dsv4' }]
+    : scenario === 'saved' ? [{ name: ' gpt-001 ', alias: 'Focus' }, { name: 'custom-local', alias: 'Local alias' }] : [],
+  excludedModelsText: scenario === 'alias-saved' ? 'manual-model\nlegacy-*\ndsv4'
+    : scenario === 'alias-new' ? 'manual-model\nlegacy-*'
+    : scenario === 'excluded' ? 'gpt-*' : '',
 };
 createRoot(document.getElementById('root')!).render(
   <I18nProvider>

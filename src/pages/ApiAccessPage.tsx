@@ -209,6 +209,7 @@ export type ProviderDraft = {
   baseUrl: string;
   priority: string;
   models: ModelOption[];
+  modelSelectionCatalog?: ModelOption[];
   prefix?: string;
   headersText?: string;
   excludedModelsText?: string;
@@ -507,7 +508,7 @@ const mergeModelRecords = (current: unknown, selected: ModelOption[]) => {
 export const exclusionsForModelSelection = (
   currentText: string,
   discoveredModels: ModelOption[],
-  selectedModelNames: Iterable<string>,
+  selectedModels: ModelOption[],
 ) => {
   const discovered = new Map<string, string>();
   discoveredModels.forEach((model) => {
@@ -515,7 +516,12 @@ export const exclusionsForModelSelection = (
     if (name && !discovered.has(name.toLowerCase())) discovered.set(name.toLowerCase(), name);
   });
   const selected = new Set(
-    Array.from(selectedModelNames, (name) => name.trim().toLowerCase()).filter(Boolean),
+    selectedModels.map((model) => model.name.trim().toLowerCase()).filter(Boolean),
+  );
+  const selectedClientNames = new Set(
+    selectedModels
+      .filter((model) => model.name.trim())
+      .map((model) => (model.alias?.trim() || model.name.trim()).toLowerCase()),
   );
   const rules = currentText
     .split(/[,\n]/)
@@ -525,7 +531,7 @@ export const exclusionsForModelSelection = (
 
   if (selected.size > 0) {
     discovered.forEach((name, key) => {
-      if (!selected.has(key)) next.push(name);
+      if (!selected.has(key) && !selectedClientNames.has(key)) next.push(name);
     });
   }
 
@@ -732,7 +738,17 @@ const applyAdvancedFields = (
     else delete next.headers;
   }
   if (draft.excludedModelsText !== undefined && section !== 'openai-compatibility') {
-    const excludedModels = draft.excludedModelsText
+    const excludedModelsText = draft.modelSelectionCatalog && draft.models.some((model) => model.name.trim())
+      ? exclusionsForModelSelection(
+          draft.excludedModelsText,
+          draft.modelSelectionCatalog,
+          (Array.isArray(next.models) ? next.models : []).filter(isRecord).map((model) => ({
+            name: readString(model, 'name'),
+            alias: readString(model, 'alias'),
+          })),
+        )
+      : draft.excludedModelsText;
+    const excludedModels = excludedModelsText
       .split(/[,\n]/)
       .map((value) => value.trim())
       .filter((value, index, values) =>
@@ -1814,7 +1830,11 @@ export function ApiProviderDialog({
       setModelError('');
       if (activeCategory === 'deepseek') setModelDiscoveryReady(false);
     }
-    setDraft((current) => ({ ...current, [field]: value }));
+    setDraft((current) => ({
+      ...current,
+      [field]: value,
+      ...(field === 'excludedModelsText' ? { modelSelectionCatalog: undefined } : {}),
+    }));
   };
 
   const updateBooleanField = (
@@ -1825,27 +1845,31 @@ export function ApiProviderDialog({
     setDraft((current) => ({ ...current, [field]: value }));
   };
 
+  const updateModels = (update: (models: ModelOption[]) => ModelOption[]) => {
+    setDraft((current) => {
+      const models = update(current.models);
+      return {
+        ...current,
+        models,
+        excludedModelsText: current.modelSelectionCatalog && models.some((model) => model.name.trim())
+          ? exclusionsForModelSelection(current.excludedModelsText ?? '', current.modelSelectionCatalog, models)
+          : current.excludedModelsText,
+      };
+    });
+  };
+
   const updateModel = (index: number, patch: Partial<ModelOption>) => {
-    setDraft((current) => ({
-      ...current,
-      models: current.models.map((model, modelIndex) =>
-        modelIndex === index ? { ...model, ...patch } : model,
-      ),
-    }));
+    updateModels((models) => models.map((model, modelIndex) =>
+      modelIndex === index ? { ...model, ...patch } : model,
+    ));
   };
 
   const addModel = () => {
-    setDraft((current) => ({
-      ...current,
-      models: [...current.models, { name: '', alias: '' }],
-    }));
+    updateModels((models) => [...models, { name: '', alias: '' }]);
   };
 
   const removeModel = (index: number) => {
-    setDraft((current) => ({
-      ...current,
-      models: current.models.filter((_, modelIndex) => modelIndex !== index),
-    }));
+    updateModels((models) => models.filter((_, modelIndex) => modelIndex !== index));
   };
 
   const addThinkingLevel = () => {
@@ -1949,12 +1973,13 @@ export function ApiProviderDialog({
     setDraft((current) => ({
       ...current,
       models: selectedModels,
+      modelSelectionCatalog: activeSection === 'openai-compatibility' ? undefined : discoveredModels,
       excludedModelsText: activeSection === 'openai-compatibility'
         ? current.excludedModelsText
         : exclusionsForModelSelection(
             current.excludedModelsText ?? '',
             discoveredModels,
-            selectedModelNames,
+            selectedModels,
           ),
     }));
     closeModelDiscovery();

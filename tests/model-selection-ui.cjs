@@ -117,13 +117,75 @@ const { mkdirSync } = require('node:fs');
     await counts(400, 0);
     await left.getByRole('button', { name: 'Add All', exact: true }).click();
     await counts(0, 400);
+
+    await open('alias-saved');
+    await counts(2, 1);
+    await dialog.getByRole('button', { name: 'Apply Selection (1)', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    const mapped = await page.evaluate(() => window.fixtureSaved);
+    assert.deepEqual(mapped.models, [{ name: 'dsv4.1', alias: 'dsv4' }]);
+    assert.deepEqual(mapped.excludedModelsText.split('\n'), ['manual-model', 'legacy-*', 'other']);
+    await page.getByRole('button', { name: 'Fetch Models', exact: true }).click();
+    await ready();
+    await counts(2, 1);
+    await dialog.getByRole('button', { name: 'Apply Selection (1)', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    assert.deepEqual(await page.evaluate(() => window.fixtureSaved), mapped, 'Reapplying must not reintroduce the alias exclusion');
+
+    await open('alias-new');
+    await right.getByRole('button', { name: 'Remove dsv4', exact: true }).click();
+    await right.getByRole('button', { name: 'Remove other', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Apply Selection (1)', exact: true }).click();
+    const exclusions = page.locator('.provider-advanced-settings textarea').last();
+    const aliasInput = page.locator('.model-config-entry input').nth(1);
+    const expectExclusions = async (extra) => assert.deepEqual((await exclusions.inputValue()).split('\n'), ['manual-model', 'legacy-*', ...extra]);
+    await expectExclusions(['dsv4', 'other']);
+    await aliasInput.fill(' DSV4 ');
+    await expectExclusions(['other']);
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    assert.deepEqual((await page.evaluate(() => window.fixtureSaved)).excludedModelsText.split('\n'), ['manual-model', 'legacy-*', 'other']);
+    await aliasInput.fill('other');
+    await expectExclusions(['dsv4']);
+    await aliasInput.fill('');
+    await aliasInput.pressSequentially('dsv4.1');
+    await expectExclusions(['dsv4', 'other']);
+
+    await page.evaluate(() => { window.fixtureCatalog = [{ name: 'new-upstream' }]; });
+    await page.getByRole('button', { name: 'Fetch Models', exact: true }).click();
+    await ready();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await aliasInput.fill('dsv4');
+    await expectExclusions(['other']);
+    await aliasInput.fill('dsv4.1');
+    await expectExclusions(['dsv4', 'other']);
+
+    await page.locator('.model-config-add').press('Enter');
+    const added = page.locator('.model-config-entry').last();
+    await added.locator('input').nth(0).fill('custom-upstream');
+    await added.locator('input').nth(1).fill('dsv4');
+    await expectExclusions(['other']);
+    await added.getByRole('button').press('Enter');
+    await expectExclusions(['dsv4', 'other']);
+
+    await page.locator('.model-config-entry').getByRole('button').press('Enter');
+    await expectExclusions(['dsv4', 'other']);
+    await page.locator('.model-config-add').press('Enter');
+    await page.locator('.model-config-entry input').nth(0).fill('dsv4.1');
+    await expectExclusions(['dsv4', 'other']);
+
+    const manualRules = 'dsv4\nother\nmanual-model\ndsv*';
+    await page.locator('.provider-advanced-settings summary').press('Enter');
+    await exclusions.fill(manualRules);
+    await aliasInput.fill('other');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    assert.equal((await page.evaluate(() => window.fixtureSaved)).excludedModelsText, manualRules, 'Manual exclusions remain authoritative after editing aliases');
     assert.deepEqual(errors, []);
 
     mkdirSync('misc', { recursive: true });
     for (const [locale, theme, width, height] of [['zh-CN', 'light', 1280, 820], ['en', 'dark', 1280, 820], ['ja', 'light', 390, 740]]) {
       await page.setViewportSize({ width, height });
       await page.goto(`http://127.0.0.1:1423/tests/fixtures/model-selection.html?locale=${locale}&theme=${theme}`);
-      await page.locator('.model-config-heading button').click();
+      await page.locator('.model-config-heading button').press('Enter');
       await ready();
       const popup = page.locator('.model-transfer-dialog');
       const rect = await popup.boundingBox();
@@ -134,7 +196,7 @@ const { mkdirSync } = require('node:fs');
       }
       await page.screenshot({ path: `misc/model-selection-${locale}-${theme}.png` });
     }
-    console.log('PASS: 400 models, independent searches, filtered transfers, empty selection recovery, keyboard focus, refresh errors, selection persistence, cancel, stale responses, exclusions, save, and responsive themes');
+    console.log('PASS: 400 models, independent searches, filtered transfers, empty selection recovery, keyboard focus, refresh errors, selection persistence, cancel, stale responses, exclusions, alias collisions, alias edits, manual overrides, save, and responsive themes');
   } finally {
     await browser.close();
   }
