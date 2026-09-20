@@ -56,7 +56,7 @@ describe('控件自身反馈', () => {
     visit(source);
     const attributes = button?.attributes.properties.filter(ts.isJsxAttribute);
     expect(attributes?.find((attribute) => attribute.name.getText(source) === 'className')?.initializer?.getText(source))
-      .toBe("{`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`}");
+      .toBe("{`${disabled ? 'primary-button' : 'secondary-button'} compact-button`}");
     expect(attributes?.find((attribute) => attribute.name.getText(source) === 'disabled')?.initializer?.getText(source))
       .toBe('{busy}');
     const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');

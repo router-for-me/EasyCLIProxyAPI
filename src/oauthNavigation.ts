@@ -1,6 +1,7 @@
 export const oauthSubpages = [
   { id: 'login', labelKey: 'oauth.title' },
   { id: 'authFiles', labelKey: 'authFiles.title' },
+  { id: 'quota', labelKey: 'quota.title' },
 ] as const;
 
 export type OAuthSubpage = (typeof oauthSubpages)[number]['id'];
