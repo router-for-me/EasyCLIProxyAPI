@@ -50,7 +50,7 @@
   flex-wrap: wrap;
   gap: 3px 12px;
 }
-.auth-health-heading strong { color: var(--health-accent); font-weight: 600; }
+.auth-health-heading strong { color: var(--health-accent); font-weight: var(--font-weight-semibold); }
 .auth-health-heading > span { color: var(--text-secondary); }
 .auth-health-message-preview {
   display: -webkit-box;

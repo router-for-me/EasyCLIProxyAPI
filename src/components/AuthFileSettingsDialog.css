@@ -14,25 +14,26 @@
 .credential-settings-heading, .credential-settings-footer { flex-shrink: 0; }
 .credential-settings-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--border-color); }
 .credential-settings-heading > div { min-width: 0; }
-.credential-settings-heading h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 18px; }
-.credential-settings-heading p { margin: 6px 0 0; color: var(--text-tertiary); font-size: 12px; overflow-wrap: anywhere; }
+.credential-settings-heading h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: var(--font-size-dialog-title); line-height: var(--line-height-tight); }
+.credential-settings-heading p { margin: 6px 0 0; color: var(--text-tertiary); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
 .credential-settings-body { overflow-y: auto; min-height: 0; padding: 22px 24px; overscroll-behavior: contain; }
 .credential-settings-body fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .credential-settings-section + .credential-settings-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-color); }
-.credential-settings-section h3 { margin: 0 0 15px; font-size: 14px; }
+.credential-settings-section h3 { margin: 0 0 15px; font-size: var(--font-size-section); line-height: var(--line-height-tight); }
 .credential-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 20px; }
-.credential-settings-field { display: grid; align-content: start; gap: 7px; min-width: 0; font-size: 13px; }
+.credential-settings-field { display: grid; align-content: start; gap: 7px; min-width: 0; font-size: var(--font-size-label); }
+.credential-settings-field > span { font-weight: var(--font-weight-medium); }
 .credential-settings-field + .credential-settings-field { margin-top: 16px; }
 .credential-settings-grid .credential-settings-field { margin: 0; }
-.credential-settings-dialog code { font-family: ui-monospace, monospace; font-size: 11px; font-weight: 400; color: var(--text-tertiary); margin-left: 5px; }
-.credential-settings-dialog small { display: block; color: var(--text-tertiary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.credential-settings-dialog code { font-family: var(--font-family-mono); font-size: var(--font-size-caption); font-weight: var(--font-weight-regular); color: var(--text-tertiary); margin-left: 5px; }
+.credential-settings-dialog small { display: block; color: var(--text-tertiary); font-size: var(--font-size-meta); line-height: var(--line-height-body); overflow-wrap: anywhere; }
 .credential-settings-dialog input:not([type=checkbox]), .credential-settings-dialog select, .credential-settings-dialog textarea {
   box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 11px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--bg-primary); color: var(--text-primary); font: inherit; line-height: 1.5;
 }
 .credential-settings-dialog textarea { resize: vertical; }
-.credential-settings-dialog textarea.credential-settings-json { font-family: ui-monospace, monospace; font-size: 12px; }
+.credential-settings-dialog textarea.credential-settings-json { font-family: var(--font-family-mono); font-size: var(--font-size-meta); line-height: var(--line-height-relaxed); }
 .credential-settings-dialog :is(input, textarea, select, summary):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-.credential-settings-catalog { margin-top: 12px; padding: 11px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 12px; }
+.credential-settings-catalog { margin-top: 12px; padding: 11px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: var(--font-size-meta); }
 .credential-settings-catalog summary { cursor: pointer; color: var(--text-secondary); }
 .credential-settings-catalog[open] summary { margin-bottom: 12px; }
 .credential-settings-models { display: grid; gap: 8px; max-height: 210px; overflow-y: auto; margin-top: 12px; }
@@ -41,9 +42,9 @@
 .credential-settings-models span { min-width: 0; }
 .credential-settings-footer { padding: 16px 24px; border-top: 1px solid var(--border-color); }
 .credential-settings-actions { display: flex; gap: 10px; justify-content: flex-end; }
-.credential-settings-error { color: var(--failure-badge-text); margin: 0 0 12px; font-size: 12px; overflow-wrap: anywhere; max-height: 90px; overflow-y: auto; }
+.credential-settings-error { color: var(--failure-badge-text); margin: 0 0 12px; font-size: var(--font-size-caption); overflow-wrap: anywhere; max-height: 90px; overflow-y: auto; }
 .credential-settings-warning { color: var(--amber-text); }
-.credential-settings-discard { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: 12px; }
+.credential-settings-discard { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: var(--font-size-caption); }
 .credential-settings-discard span { flex: 1 1 100%; }
 .credential-settings-loading { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 150px; }
 @media (max-width: 560px) {

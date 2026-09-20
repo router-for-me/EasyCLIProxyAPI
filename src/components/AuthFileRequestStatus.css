@@ -18,7 +18,7 @@
 }
 
 .auth-file-requests-heading > span:first-child {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .auth-file-requests-counts {
@@ -62,7 +62,7 @@
 .auth-file-requests-rate {
   min-width: 42px;
   text-align: right;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .auth-file-requests .success {
