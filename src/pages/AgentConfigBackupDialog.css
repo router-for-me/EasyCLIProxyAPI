@@ -1,0 +1,23 @@
+.agent-backup-modal { width: min(1000px, calc(100vw - 40px)); max-height: calc(100vh - 40px); overflow: auto; box-sizing: border-box; padding: 22px; border: 1px solid var(--theme-e3e1db); border-radius: 16px; background: var(--theme-fffdf8); color: var(--theme-2d2a26); box-shadow: 0 24px 80px #0005; }
+.agent-backup-modal::backdrop { background: #0007; }
+.agent-backup-modal header, .agent-backup-modal footer { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.agent-backup-modal h2 { display: flex; align-items: center; gap: 8px; font-size: 18px; margin: 0; }
+.agent-backup-modal p { font-size: 13px; line-height: 1.6; }
+.agent-backup-modal footer { justify-content: flex-end; margin-top: 16px; }
+.agent-backup-columns { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+.agent-backup-columns nav { max-height: 52vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.agent-backup-columns nav button { display: grid; gap: 5px; text-align: left; border: 1px solid var(--theme-e3e1db); border-radius: 8px; padding: 12px; color: inherit; background: transparent; cursor: pointer; }
+.agent-backup-columns nav button.active { border-color: var(--theme-4f825c); background: var(--theme-eef7f0); }
+.agent-backup-columns nav span, .agent-backup-columns nav small { font-size: 12px; color: var(--theme-7a746c); }
+.agent-backup-changes { min-width: 0; max-height: 52vh; overflow: auto; }
+.agent-backup-changes table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
+.agent-backup-changes td, .agent-backup-changes th { text-align: left; vertical-align: top; padding: 10px 8px; border-bottom: 1px solid var(--theme-e3e1db); overflow-wrap: anywhere; white-space: pre-wrap; }
+.agent-backup-changes td small, .agent-backup-changes td code { display: block; }
+.agent-backup-changes td small { color: var(--theme-7a746c); margin-bottom: 5px; }
+@media (max-width: 760px) { .agent-backup-columns { grid-template-columns: 1fr; } .agent-backup-columns nav { max-height: 180px; } }
+
+.agent-backup-path, .agent-backup-files code, .agent-template-files code { overflow-wrap: anywhere; }
+.agent-backup-files { padding-left: 20px; }
+.agent-backup-files li { margin-bottom: 12px; }
+.agent-backup-files small { display: block; margin-top: 4px; }
+.agent-backup-confirmation { margin-top: 16px; padding: 16px; border: 1px solid currentColor; border-radius: 8px; }

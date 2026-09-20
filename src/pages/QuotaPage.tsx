@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, KeyRound, LoaderCircle, RefreshCw, Settings2, ShieldCheck, X } from 'lucide-react';
+import { MessageNotice } from '../appNotice';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
-import { canResetCodexQuota, resetCodexQuotaWithConfirmation } from '../services/quotaActions';
+import { canResetCodexQuota } from '../services/quotaActions';
+import { useCodexQuotaReset } from '../components/useCodexQuotaReset';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
 import deepseekIcon from '../assets/icons/deepseek.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import grokIcon from '../assets/icons/grok.svg';
+import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import {
@@ -60,10 +63,11 @@ const providerMeta: Record<QuotaProvider, { label: string; icon: string }> = {
   codex: { label: 'Codex', icon: codexIcon },
   kimi: { label: 'Kimi', icon: kimiIcon },
   xai: { label: 'xAI', icon: grokIcon },
+  devin: { label: 'Devin', icon: devinIcon },
   antigravity: { label: 'Antigravity', icon: antigravityIcon },
 };
 
-const providerOrder: QuotaProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi'];
+const providerOrder: QuotaProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin'];
 const apiProviderOrder: ApiQuotaVendor[] = ['deepseek', 'stepfun', 'siliconflow', 'openrouter', 'novita'];
 
 export const apiAccessIconForQuotaSource = (
@@ -78,7 +82,7 @@ export const apiAccessIconForQuotaSource = (
 };
 
 export function QuotaPage() {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const [files, setFiles] = useState<AuthFile[]>([]);
   const [apiSources, setApiSources] = useState<ApiQuotaSource[]>([]);
@@ -180,23 +184,7 @@ export function QuotaPage() {
     }
   }, [applyApiSources]);
 
-  const resetCodexQuota = useCallback(async (file: AuthFile, quota: QuotaState) => {
-    setError('');
-    try {
-      await resetCodexQuotaWithConfirmation(file, () => askConfirmation({
-        title: t('quota.reset'),
-        message: t('quota.confirm.title', { name: fileName(file) }),
-        confirmText: t('quota.confirm.button'),
-        details: [
-          { label: t('quota.resetCredits'), value: String(quota.resetCredits ?? '—') },
-          { label: t('quota.earliestExpiry'), value: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) },
-        ],
-        warning: t('quota.confirm.warning'),
-      }));
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : String(requestError));
-    }
-  }, [askConfirmation, locale, t]);
+  const resetCodexQuota = useCodexQuotaReset(askConfirmation, setError);
 
   const refreshAll = useCallback(async () => {
     if (Object.values(getQuotaCacheSnapshot()).some((quota) => quota.status === 'loading')) return;
@@ -262,7 +250,7 @@ export function QuotaPage() {
           </button>
         </div>
       </header>
-      {error ? <div className="management-alert error">{error}</div> : null}
+      {error ? <MessageNotice message={error} /> : null}
       {loading ? (
         <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('quota.loadingFiles')}</div>
       ) : oauthCards.length === 0 && apiCards.length === 0 ? (
@@ -309,17 +297,21 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
           <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} /></button>
         </div>
       </div>
-      <QuotaActionFeedback quota={quota} />
+      <QuotaActionFeedback quota={quota} name={name} />
       {quota.status === 'idle' ? <div className="quota-card-message"><span>{disabled ? t('quota.fileDisabled') : t('quota.notFetched')}</span><button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={disabled}>{disabled ? t('quota.disabled') : t('quota.fetch')}</button></div> : null}
       {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />{t(quota.pendingAction === 'reset' ? 'quota.resetting' : 'quota.querying')}</div> : null}
-      {quota.status === 'error' ? <div className="quota-card-error"><AlertCircle size={18} />{quota.error}</div> : null}
+      {quota.status === 'error' ? <>
+        <MessageNotice message={quota.error ? name + ': ' + quota.error : null} />
+        <div className="quota-card-error"><AlertCircle size={18} />{t('authFiles.quota.failed')}</div>
+      </> : null}
       {quota.status === 'success' && provider === 'codex' ? <div className="quota-reset-credit-summary">
         <span>{t('quota.resetCredits')} <strong>{quota.resetCredits ?? '—'}</strong></span>
         {quota.resetCreditsApplicable !== undefined ? <span>{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</span> : null}
         <span>{t('quota.earliestExpiry')} <strong>{formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale)}</strong></span>
         {quota.subscriptionActiveUntil ? <span>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span> : null}
-        {quota.resetCreditsError ? <small>{t('quota.resetCreditsWarning', { error: quota.resetCreditsError })}</small> : null}
+        <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
       </div> : null}
+      {quota.status === 'success' && provider === 'devin' && quota.subscriptionActiveUntil ? <div className="quota-reset-credit-summary"><span>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span></div> : null}
       <QuotaRows quota={quota} now={now} />
     </article>
   );

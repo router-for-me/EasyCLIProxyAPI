@@ -3,6 +3,18 @@ use super::*;
 const AGENT_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const AGENT_VERSION_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+#[cfg(not(test))]
+fn agent_configuration_environment(name: &str) -> Option<PathBuf> {
+    env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
+#[cfg(test)]
+fn agent_configuration_environment(_: &str) -> Option<PathBuf> {
+    None
+}
+
 pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBuf> {
     match client {
         AgentClient::ClaudeCode => {
@@ -89,24 +101,15 @@ pub(crate) fn opencode_config_path_from_environment(
 }
 
 pub(crate) fn kimi_code_home(home: &Path) -> PathBuf {
-    env::var_os("KIMI_CODE_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| home.join(".kimi-code"))
+    agent_configuration_environment("KIMI_CODE_HOME").unwrap_or_else(|| home.join(".kimi-code"))
 }
 
 pub(crate) fn grok_build_home(home: &Path) -> PathBuf {
-    env::var_os("GROK_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| home.join(".grok"))
+    agent_configuration_environment("GROK_HOME").unwrap_or_else(|| home.join(".grok"))
 }
 
 pub(crate) fn deepseek_harness_home(home: &Path) -> PathBuf {
-    env::var_os("DSH_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| home.join(".dsh"))
+    agent_configuration_environment("DSH_HOME").unwrap_or_else(|| home.join(".dsh"))
 }
 
 pub(crate) fn read_deepseek_harness_profile_version(home: &Path) -> Option<String> {
@@ -131,10 +134,7 @@ pub(crate) fn read_package_json_version(path: &Path) -> Option<String> {
 }
 
 pub(crate) fn pi_agent_directory(home: &Path) -> PathBuf {
-    env::var_os("PI_CODING_AGENT_DIR")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| home.join(".pi/agent"))
+    agent_configuration_environment("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi/agent"))
 }
 
 pub(crate) fn pi_provider_config_path(home: &Path) -> PathBuf {
@@ -425,8 +425,15 @@ pub(crate) fn inspect_pi_provider_status(
         config_valid,
         configured,
         configuration_synchronized: configured,
+        connection_state: agent_connection_state(
+            configured,
+            config_valid,
+            Ok(config_path.is_file() || default_provider_matches),
+        )
+        .into(),
         current_model: current_model.clone(),
         oauth_configuration: false,
+        codex_native_oauth: false,
         modification_enabled: configured,
         modification_state: modification_state.to_string(),
         backup_available: false,
@@ -455,7 +462,9 @@ pub(crate) fn install_pi_provider_inner(
     let settings_path = pi_provider_settings_path(home);
     let mut changed_files = Vec::new();
     if !pi_provider_package_installed(home)? {
-        install_pi_package(executable, home, proxy_url)?;
+        config_package_operation(home, "plugin-install", || {
+            install_pi_package(executable, home, proxy_url)
+        })?;
         changed_files.push(path_to_string(&settings_path));
     }
 
@@ -479,7 +488,11 @@ pub(crate) fn repair_pi_provider_inner(
     }
     let config_path = pi_provider_config_path(home);
     let settings_path = pi_provider_settings_path(home);
-    let mut changed_files = Vec::new();
+    let _guard = AGENT_CONFIG_FILE_LOCK
+        .lock()
+        .map_err(|_| "配置文件锁已损坏")?;
+    let before = config_images(&config_paths(PI_AGENT_ID, home)?)?;
+    validate_config_images(&before)?;
     if !pi_provider_package_installed(home)? {
         return Err("Pi CLIProxyAPI provider is not installed".to_string());
     }
@@ -495,11 +508,6 @@ pub(crate) fn repair_pi_provider_inner(
     };
     let base_url = managed_core_loopback_origin(port);
     let rendered = build_pi_provider_config(existing.as_deref(), &base_url, api_key)?;
-    if existing.as_deref() != Some(rendered.as_str()) {
-        write_bytes_atomically(&config_path, rendered.as_bytes())?;
-        changed_files.push(path_to_string(&config_path));
-    }
-
     let settings = fs::read_to_string(&settings_path).map_err(|error| {
         format!(
             "读取 Pi settings.json 失败 {}: {error}",
@@ -507,18 +515,24 @@ pub(crate) fn repair_pi_provider_inner(
         )
     })?;
     let rendered_settings = build_pi_provider_settings(&settings, default_model)?;
-    if settings != rendered_settings {
-        write_bytes_atomically(&settings_path, rendered_settings.as_bytes())?;
-        changed_files.push(path_to_string(&settings_path));
-    }
-
-    Ok(action_result(
-        "applied",
-        true,
-        Some(default_model.trim().to_string()),
-        changed_files,
-        Vec::new(),
-    ))
+    config_updates(
+        PI_AGENT_ID,
+        home,
+        &before,
+        &[
+            AgentFileUpdate {
+                path: config_path,
+                after: rendered,
+            },
+            AgentFileUpdate {
+                path: settings_path,
+                after: rendered_settings,
+            },
+        ],
+        "update",
+        Some(default_model.to_string()),
+        None,
+    )
 }
 
 pub(crate) fn update_pi_provider_inner(
@@ -532,7 +546,9 @@ pub(crate) fn update_pi_provider_inner(
     if !pi_provider_package_installed(home)? {
         return Err("Pi CLIProxyAPI provider 插件尚未安装".to_string());
     }
-    update_pi_package(executable, home, proxy_url)?;
+    config_package_operation(home, "plugin-update", || {
+        update_pi_package(executable, home, proxy_url)
+    })?;
     let mut result = repair_pi_provider_inner(home, port, api_key, default_model)?;
     result.outcome = "updated".to_string();
     Ok(result)
@@ -551,7 +567,9 @@ pub(crate) fn uninstall_pi_provider_inner(
             Vec::new(),
         ));
     }
-    remove_pi_package(executable, home)?;
+    config_package_operation(home, "plugin-remove", || {
+        remove_pi_package(executable, home)
+    })?;
     Ok(action_result(
         "removed",
         false,
@@ -694,10 +712,7 @@ pub(crate) fn remove_pi_package(executable: &Path, home: &Path) -> Result<(), St
 }
 
 pub(crate) fn codex_configuration_directory(home: &Path) -> PathBuf {
-    env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| home.join(".codex"))
+    agent_configuration_environment("CODEX_HOME").unwrap_or_else(|| home.join(".codex"))
 }
 
 pub(crate) fn current_codex_oauth_configuration(home: &Path) -> Result<bool, String> {
@@ -753,7 +768,11 @@ pub(crate) fn codex_auth_file_has_api_key(path: &Path, api_key: &str) -> bool {
 }
 
 pub(crate) fn validate_codex_oauth_login(home: &Path) -> Result<(), String> {
-    validate_codex_oauth_login_at(&codex_configuration_directory(home).join("auth.json"))
+    if validate_codex_oauth_login_at(&codex_configuration_directory(home).join("auth.json")).is_ok()
+    {
+        return Ok(());
+    }
+    available_codex_oauth_auth(home).map(|_| ())
 }
 
 pub(crate) fn validate_codex_oauth_login_at(auth_path: &Path) -> Result<(), String> {
@@ -764,36 +783,19 @@ pub(crate) fn validate_codex_oauth_login_at(auth_path: &Path) -> Result<(), Stri
     }
 }
 
-pub(crate) fn remove_codex_config_file(path: &Path) -> Result<bool, String> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!(
-            "删除 Codex 配置文件失败 {}: {error}",
-            path_to_string(path)
-        )),
-    }
-}
-
 pub(crate) fn clear_codex_config_files(home: &Path) -> Result<Vec<String>, String> {
-    let codex_dir = codex_configuration_directory(home);
-    let config_path = codex_dir.join("config.toml");
-    let targets = [codex_dir.join("auth.json"), config_path.clone()];
-    let mut deleted = Vec::new();
-
-    for path in targets {
-        if remove_codex_config_file(&path)? {
-            deleted.push(path_to_string(&path));
+    let mut paths = config_paths("codex", home)?;
+    paths.push(codex_configuration_directory(home).join(CODEX_NATIVE_OAUTH_STATE_FILE));
+    let before = config_images(&paths)?;
+    let mut after = before.clone();
+    for (path, bytes) in &mut after {
+        if path.file_name().and_then(|v| v.to_str()).is_some_and(|v| {
+            v == "auth.json" || v == "config.toml" || v == CODEX_NATIVE_OAUTH_STATE_FILE
+        }) {
+            *bytes = None;
         }
     }
-
-    let state_path = agent_state_path(std::slice::from_ref(&config_path))?;
-    clear_codex_applied_state(&state_path)?;
-    // Clean up state files left by older releases. New Codex applications keep
-    // this short-lived restore metadata in memory instead.
-    remove_codex_config_file(&state_path)?;
-
-    Ok(deleted)
+    Ok(commit_config("codex", &paths, &before, &after, "clear", None)?.changed_files)
 }
 
 pub(crate) fn codex_model_catalog_path(home: &Path) -> PathBuf {
@@ -819,15 +821,13 @@ pub(crate) fn claude_desktop_config_paths(_home: &Path) -> Vec<PathBuf> {
     };
     #[cfg(target_os = "windows")]
     {
-        let local = env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
+        let local = agent_configuration_environment("LOCALAPPDATA")
             .unwrap_or_else(|| _home.join("AppData/Local"));
         claude_desktop_config_paths_from_local_app_data(&local)
     }
     #[cfg(target_os = "linux")]
     let (normal, threep) = {
-        let config_home = env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
+        let config_home = agent_configuration_environment("XDG_CONFIG_HOME")
             .filter(|path| path.is_absolute())
             .unwrap_or_else(|| _home.join(".config"));
         (config_home.join("Claude"), config_home.join("Claude-3p"))
@@ -858,10 +858,6 @@ pub(crate) fn claude_desktop_config_paths_from_directories(
 pub(crate) fn claude_desktop_config_paths_from_local_app_data(
     local_app_data: &Path,
 ) -> Vec<PathBuf> {
-    // Claude Desktop may add a channel or version suffix to these directories.
-    // Match cc-switch's resolver so status detection and configuration writes use
-    // the same files as the installed Desktop client rather than only the legacy
-    // fixed `Claude` / `Claude-3p` locations.
     let normal = find_windows_claude_data_directory(local_app_data, false)
         .unwrap_or_else(|| local_app_data.join("Claude"));
     let threep = find_windows_claude_data_directory(local_app_data, true)
@@ -898,16 +894,12 @@ pub(crate) fn find_windows_claude_data_directory(
 }
 
 pub(crate) fn hermes_agent_config_path(home: &Path) -> PathBuf {
-    if let Some(directory) = env::var_os("HERMES_HOME")
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-    {
+    if let Some(directory) = agent_configuration_environment("HERMES_HOME") {
         return directory.join("config.yaml");
     }
     #[cfg(target_os = "windows")]
     {
-        env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
+        agent_configuration_environment("LOCALAPPDATA")
             .unwrap_or_else(|| home.join("AppData/Local"))
             .join("hermes/config.yaml")
     }
@@ -923,8 +915,19 @@ pub(crate) fn inspect_agent_config(
 ) -> AgentConfigStatus {
     let paths = agent_config_paths(client, home);
     let config_exists = paths.iter().any(|path| path.is_file());
-    let result = inspect_agent_managed_config(client, &paths, port, api_key).and_then(
-        |(configured, model, oauth_configuration)| {
+    let result = config_paths(client.id(), home)
+        .and_then(|mut paths| {
+            if client == AgentClient::Codex && codex_native_oauth_enabled(home)? {
+                paths.retain(|path| {
+                    path.file_name().and_then(|name| name.to_str())
+                        != Some(CODEX_MODEL_CATALOG_FILE)
+                });
+            }
+            config_images(&paths)
+        })
+        .and_then(|images| validate_config_images(&images))
+        .and_then(|_| inspect_agent_managed_config(client, &paths, port, api_key))
+        .and_then(|(configured, model, oauth_configuration)| {
             if client == AgentClient::Codex && configured {
                 let model = model
                     .as_deref()
@@ -932,18 +935,23 @@ pub(crate) fn inspect_agent_config(
                 validate_codex_catalog_file(&paths[0], model)?;
             }
             Ok((configured, model, oauth_configuration))
-        },
-    );
+        });
     let (configured, current_model, oauth_configuration, config_valid, error) = match result {
         Ok((configured, model, oauth_configuration)) => {
             (configured, model, oauth_configuration, true, None)
         }
-        Err(error) => (false, None, false, false, Some(error)),
+        Err(_) => (
+            false,
+            None,
+            false,
+            false,
+            Some(
+                "配置读取或解析失败，请检查文件权限，或使用手动备份恢复、基础配置模板修复"
+                    .to_string(),
+            ),
+        ),
     };
     let executable = find_agent_executable(client, home);
-    // Desktop application executables are not CLIs. Invoking them with
-    // --version can start their GUI and block discovery, so never probe them
-    // directly. ZCode may still expose a separate command-line entry point.
     let cli_version = if client == AgentClient::ZCode {
         find_named_agent_executable(home, &["zcode"])
             .filter(|path| executable.as_ref() != Some(path))
@@ -971,7 +979,7 @@ pub(crate) fn inspect_agent_config(
             .as_deref()
             .and_then(read_opencode_desktop_version),
         AgentClient::DeepSeekHarness => read_deepseek_harness_profile_version(home),
-        AgentClient::ZCode => read_zcode_app_version(home),
+        AgentClient::ZCode => executable.as_deref().and_then(read_zcode_app_version),
         _ => None,
     };
     let version = cli_version.clone().or_else(|| app_version.clone());
@@ -997,9 +1005,8 @@ pub(crate) fn inspect_agent_config(
     if let Some(message) = error.as_ref() {
         warnings.push(message.clone());
     }
-    let modification = inspect_agent_application(client, home);
+
     let configuration_synchronized = agent_configuration_is_synchronized(client, home, configured);
-    warnings.extend(modification.warnings.iter().cloned());
 
     AgentConfigStatus {
         id: client.id().to_string(),
@@ -1017,16 +1024,33 @@ pub(crate) fn inspect_agent_config(
         config_valid,
         configured,
         configuration_synchronized,
-        current_model,
+        connection_state: agent_connection_state(
+            configured,
+            config_valid,
+            agent_has_connection_evidence(client, &paths),
+        )
+        .into(),
+        current_model: current_model.clone(),
         oauth_configuration,
-        modification_enabled: modification.enabled,
-        modification_state: modification.state,
-        backup_available: modification.backup_available,
-        applied_model: modification.applied_model,
+        codex_native_oauth: client == AgentClient::Codex
+            && codex_native_oauth_enabled(home).unwrap_or(false),
+        modification_enabled: configured,
+        modification_state: if !config_valid {
+            "invalid"
+        } else if configured {
+            "applied"
+        } else {
+            "unconfigured"
+        }
+        .into(),
+        backup_available: false,
+        applied_model: current_model,
         claude_code_model_mappings: (client == AgentClient::ClaudeCode)
             .then(|| inspect_claude_code_model_mappings(&paths[0]).ok().flatten())
             .flatten(),
-        claude_desktop_model_mappings: modification.claude_desktop_model_mappings,
+        claude_desktop_model_mappings: (client == AgentClient::ClaudeDesktop)
+            .then(|| current_desktop_mappings(home))
+            .flatten(),
         warnings,
         error,
     }
@@ -1133,22 +1157,14 @@ pub(crate) fn agent_launch_targets(
 }
 
 pub(crate) fn agent_configuration_is_synchronized(
-    client: AgentClient,
-    home: &Path,
+    _client: AgentClient,
+    _home: &Path,
     configured: bool,
 ) -> bool {
-    if !configured {
-        return false;
-    }
-    if !matches!(client, AgentClient::KimiCode | AgentClient::GrokBuild) {
-        return true;
-    }
-    load_agent_applied_state(client, home)
-        .ok()
-        .flatten()
-        .is_some_and(|state| state.configuration_revision >= AGENT_CONFIGURATION_REVISION)
+    configured
 }
 
+#[cfg(test)]
 pub(crate) fn inspect_agent_application(
     client: AgentClient,
     home: &Path,
@@ -1168,8 +1184,6 @@ pub(crate) fn inspect_agent_application(
                             enabled: false,
                             state: "unconfigured".to_string(),
                             backup_available: false,
-                            applied_model: None,
-                            claude_desktop_model_mappings: None,
                             warnings: Vec::new(),
                         };
                     }
@@ -1178,8 +1192,6 @@ pub(crate) fn inspect_agent_application(
                             enabled: false,
                             state: "invalid".to_string(),
                             backup_available: false,
-                            applied_model: None,
-                            claude_desktop_model_mappings: None,
                             warnings: vec![error],
                         };
                     }
@@ -1196,8 +1208,6 @@ pub(crate) fn inspect_agent_application(
                 enabled: true,
                 state: "applied".to_string(),
                 backup_available,
-                applied_model: Some(state.model),
-                claude_desktop_model_mappings: state.claude_desktop_model_mappings,
                 warnings,
             }
         }
@@ -1205,16 +1215,12 @@ pub(crate) fn inspect_agent_application(
             enabled: false,
             state: "unconfigured".to_string(),
             backup_available: false,
-            applied_model: None,
-            claude_desktop_model_mappings: None,
             warnings: Vec::new(),
         },
         Err(error) => AgentModificationInspection {
             enabled: false,
             state: "invalid".to_string(),
             backup_available: false,
-            applied_model: None,
-            claude_desktop_model_mappings: None,
             warnings: vec![error],
         },
     }
@@ -1261,6 +1267,89 @@ pub(crate) fn inspect_agent_managed_config(
         AgentClient::GrokBuild => inspect_grok_build_agent_config(&paths[0], port, api_key)
             .map(|(configured, model)| (configured, model, false)),
     }
+}
+
+pub(crate) fn agent_connection_state(
+    configured: bool,
+    valid: bool,
+    managed: Result<bool, String>,
+) -> &'static str {
+    if !valid || managed.is_err() {
+        "invalid"
+    } else if configured {
+        "configured"
+    } else if managed == Ok(true) {
+        "needs-update"
+    } else {
+        "not-configured"
+    }
+}
+
+pub(crate) fn agent_has_connection_evidence(
+    client: AgentClient,
+    paths: &[PathBuf],
+) -> Result<bool, String> {
+    let active_marker = agent_has_managed_marker(client, paths)?;
+    if active_marker {
+        return Ok(true);
+    }
+    for path in paths {
+        let Some(bytes) = read_agent_bytes(path)? else {
+            continue;
+        };
+        let content = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
+        let value: serde_json::Value = match path.extension().and_then(|v| v.to_str()) {
+            Some("toml") => serde_json::to_value(
+                toml::from_str::<toml::Value>(content).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?,
+            Some("yaml" | "yml") => serde_yaml::from_str(content).map_err(|e| e.to_string())?,
+            _ => json5::from_str(content).map_err(|e| e.to_string())?,
+        };
+        let provider_present = client != AgentClient::Codex
+            && [
+                "/provider/cpa-gui",
+                "/model_providers/cpa-gui",
+                "/providers/cpa-gui",
+                "/models/providers/cpa-gui",
+            ]
+            .iter()
+            .any(|pointer| value.pointer(pointer).is_some());
+        let selected = [
+            "/model_provider",
+            "/model",
+            "/model/main",
+            "/model/provider",
+            "/default_model",
+            "/models/default",
+            "/agents/defaults/model/primary",
+        ]
+        .iter()
+        .filter_map(|pointer| value.pointer(pointer).and_then(serde_json::Value::as_str))
+        .any(|model| {
+            model == MANAGED_AGENT_PROVIDER_ID
+                || model.starts_with(&format!("{MANAGED_AGENT_PROVIDER_ID}/"))
+        });
+        let catalog = client == AgentClient::Codex
+            && value
+                .get("model_catalog_json")
+                .and_then(serde_json::Value::as_str)
+                == Some(CODEX_MODEL_CATALOG_FILE);
+        let hermes_provider = client == AgentClient::Hermes
+            && value
+                .get("custom_providers")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|items| {
+                    items.iter().any(|item| {
+                        item.get("name").and_then(serde_json::Value::as_str)
+                            == Some(MANAGED_AGENT_PROVIDER_ID)
+                    })
+                });
+        if provider_present || selected || catalog || hermes_provider {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(crate) fn agent_has_managed_marker(
@@ -1490,7 +1579,7 @@ pub(crate) fn inspect_managed_toml_model_marker(
     Ok(provider_exists && catalog_has_selected)
 }
 
-pub(crate) fn find_codex_app_installation(home: &Path) -> Option<CodexAppTarget> {
+pub(crate) fn find_codex_app_installation(home: &Path) -> Option<DesktopAppTarget> {
     #[cfg(target_os = "macos")]
     {
         [PathBuf::from("/Applications"), home.join("Applications")]
@@ -1506,7 +1595,7 @@ pub(crate) fn find_codex_app_installation(home: &Path) -> Option<CodexAppTarget>
                 .map(move |name| directory.join(name))
             })
             .find(|path| path.is_dir())
-            .map(CodexAppTarget::Application)
+            .map(DesktopAppTarget::Application)
     }
 
     #[cfg(target_os = "windows")]
@@ -2011,19 +2100,19 @@ pub(crate) fn read_claude_desktop_version(home: &Path) -> Option<String> {
 }
 
 pub(crate) fn read_codex_app_installation_version(
-    installation: &CodexAppTarget,
+    installation: &DesktopAppTarget,
     _home: &Path,
 ) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         match installation {
-            CodexAppTarget::WindowsAppId(app_id) => read_windows_codex_store_version(app_id),
-            CodexAppTarget::Application(path) => read_windows_codex_desktop_version(path),
+            DesktopAppTarget::WindowsAppId(app_id) => read_windows_codex_store_version(app_id),
+            DesktopAppTarget::Application(path) => read_windows_codex_desktop_version(path),
         }
     }
     #[cfg(target_os = "macos")]
     {
-        let CodexAppTarget::Application(path) = installation;
+        let DesktopAppTarget::Application(path) = installation;
         read_macos_app_version(path)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -2033,30 +2122,21 @@ pub(crate) fn read_codex_app_installation_version(
     }
 }
 
-pub(crate) fn read_zcode_app_version(home: &Path) -> Option<String> {
+pub(crate) fn read_zcode_app_version(executable: &Path) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
-        find_zcode_desktop_executable(home).and_then(|path| {
-            read_windows_executable_version(&path).or_else(|| read_agent_version(&path, home))
-        })
+        read_windows_executable_version(executable)
     }
     #[cfg(target_os = "macos")]
     {
-        [
-            PathBuf::from("/Applications/ZCode.app"),
-            home.join("Applications/ZCode.app"),
-        ]
-        .into_iter()
-        .find(|path| path.is_dir())
-        .and_then(|path| read_macos_app_version(&path))
-        .or_else(|| {
-            find_named_agent_executable(home, &["zcode"])
-                .and_then(|path| read_agent_version(&path, home))
-        })
+        let application = executable
+            .ancestors()
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))?;
+        read_macos_app_version(application)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = home;
+        let _ = executable;
         None
     }
 }
@@ -2066,6 +2146,7 @@ pub(crate) fn find_zcode_desktop_executable(home: &Path) -> Option<PathBuf> {
     {
         let local = env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or_else(|| home.join("AppData/Local"));
         let mut candidates = vec![
             local.join("Programs/ZCode/ZCode.exe"),
@@ -2083,6 +2164,7 @@ pub(crate) fn find_zcode_desktop_executable(home: &Path) -> Option<PathBuf> {
             .into_iter()
             .find(|path| path.is_file())
             .or_else(|| find_named_agent_executable(home, &["zcode"]))
+            .or_else(find_windows_registered_zcode_executable)
     }
     #[cfg(target_os = "macos")]
     {
@@ -2164,16 +2246,6 @@ pub(crate) fn windows_explorer_executable() -> PathBuf {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn windows_registry_executable() -> PathBuf {
-    let executable = windows_system_root().join("System32/reg.exe");
-    if executable.is_file() {
-        executable
-    } else {
-        PathBuf::from("reg.exe")
-    }
-}
-
-#[cfg(target_os = "windows")]
 pub(crate) fn windows_command_processor() -> PathBuf {
     env::var_os("ComSpec")
         .map(PathBuf::from)
@@ -2182,97 +2254,17 @@ pub(crate) fn windows_command_processor() -> PathBuf {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn find_windows_codex_app_installation(home: &Path) -> Option<CodexAppTarget> {
-    find_windows_registered_codex_app_installation()
-        .or_else(|| find_windows_codex_app_id_via_registry().map(CodexAppTarget::WindowsAppId))
-        .or_else(|| find_windows_codex_app_executable(home).map(CodexAppTarget::Application))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn read_windows_claude_desktop_store_version() -> Option<String> {
-    const VERSION_SCRIPT: &str = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$package = @(Get-AppxPackage) |
-    Where-Object {
-        $_.Name -eq 'Claude' -or
-        $_.Name -like 'Anthropic.Claude*' -or
-        $_.PackageFamilyName -match '^(Claude|Anthropic\.Claude)_'
-    } |
-    Select-Object -First 1
-if ($package -and $package.Version) {
-    Write-Output "VERSION:$($package.Version)"
-}
-"#;
-
-    let encoded_command = windows_powershell_encoded_command(VERSION_SCRIPT);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    parse_windows_claude_desktop_version_output(&String::from_utf8_lossy(&output.stdout))
+pub(crate) fn find_windows_codex_app_installation(home: &Path) -> Option<DesktopAppTarget> {
+    find_windows_codex_app_executable(home)
+        .map(DesktopAppTarget::Application)
+        .or_else(find_windows_registered_codex_app_installation)
+        .or_else(|| find_windows_codex_app_id_via_registry().map(DesktopAppTarget::WindowsAppId))
 }
 
 #[cfg(target_os = "windows")]
 pub(crate) fn read_windows_codex_store_version(app_id: &str) -> Option<String> {
-    let script = windows_codex_store_executable_script(app_id)?;
-    let encoded_command = windows_powershell_encoded_command(&script);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    match parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout))? {
-        CodexAppTarget::Application(path) => read_windows_codex_desktop_version(&path),
-        CodexAppTarget::WindowsAppId(_) => None,
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_codex_store_executable_script(app_id: &str) -> Option<String> {
-    let (family, application) = app_id.split_once('!')?;
-    if family.is_empty() || application.is_empty() {
-        return None;
-    }
-    let family = windows_powershell_single_quoted_literal(family);
-    let application = windows_powershell_single_quoted_literal(application);
-    Some(format!(
-        r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$ProgressPreference = 'SilentlyContinue'
-$package = Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq {family} }} |
-    Sort-Object {{ [version]$_.Version }} -Descending | Select-Object -First 1
-if ($package) {{
-    $manifest = Get-AppxPackageManifest -Package $package.PackageFullName
-    $application = @($manifest.Package.Applications.Application) |
-        Where-Object {{ $_.Id -eq {application} }} | Select-Object -First 1
-    if ($application.Executable -and $package.InstallLocation) {{
-        $path = Join-Path $package.InstallLocation $application.Executable
-        if (Test-Path -LiteralPath $path -PathType Leaf) {{ Write-Output "EXE:$path" }}
-    }}
-}}
-"#
-    ))
+    find_windows_codex_store_executable(app_id)
+        .and_then(|path| read_windows_codex_desktop_version(&path))
 }
 
 #[cfg(target_os = "windows")]
@@ -2285,8 +2277,6 @@ pub(crate) fn read_windows_codex_desktop_version(executable: &Path) -> Option<St
         .and_then(|content| parse_codex_owl_app_version(&content))
         .or_else(|| read_codex_asar_version(&asar))
         .or_else(|| {
-            // Owl's EXE reports the Chromium runtime version, not the Codex
-            // version. Never launch a desktop executable with --version either.
             if owl_ini.exists() || asar.exists() || resources.join("owl-electron-app.json").exists()
             {
                 None
@@ -2321,9 +2311,6 @@ pub(crate) fn parse_codex_owl_app_version(content: &str) -> Option<String> {
 pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
 
-    // ASAR starts with two Chromium pickles: a header-size pickle followed by
-    // a JSON header pickle. Read only the header and the root package.json,
-    // not the hundreds of MB of bundled application code.
     let mut file = fs::File::open(path).ok()?;
     let mut prefix = [0_u8; 16];
     file.read_exact(&mut prefix).ok()?;
@@ -2361,230 +2348,8 @@ pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn find_windows_registered_codex_app_installation() -> Option<CodexAppTarget> {
-    const DISCOVERY_SCRIPT: &str = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$ProgressPreference = 'SilentlyContinue'
-$startApps = @(Get-StartApps)
-$appId = $startApps |
-    Where-Object {
-        $_.AppID -like 'OpenAI.Codex_*!*' -or
-        $_.AppID -like 'OpenAI.CodexBeta_*!*' -or
-        $_.AppID -like 'OpenAI.ChatGPT_*!*'
-    } |
-    Select-Object -First 1 -ExpandProperty AppID
-if ($appId) {
-    Write-Output "APPID:$appId"
-    exit 0
-}
-
-$packages = @(Get-AppxPackage) |
-    Where-Object {
-        $_.Name -in @('OpenAI.Codex', 'OpenAI.CodexBeta', 'OpenAI.ChatGPT') -or
-        $_.PackageFamilyName -match '^OpenAI\.(Codex|CodexBeta|ChatGPT)_'
-    }
-foreach ($package in $packages) {
-    $manifest = Get-AppxPackageManifest -Package $package.PackageFullName
-    $application = @($manifest.Package.Applications.Application) |
-        Where-Object { $_.Id } |
-        Select-Object -First 1
-    if ($application -and $package.PackageFamilyName) {
-        Write-Output "APPID:$($package.PackageFamilyName)!$($application.Id)"
-        exit 0
-    }
-}
-
-$appPathKeys = @(
-    'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe',
-    'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe',
-    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\ChatGPT.exe'
-)
-foreach ($key in $appPathKeys) {
-    if (-not (Test-Path -LiteralPath $key)) { continue }
-    $candidate = (Get-Item -LiteralPath $key).GetValue('')
-    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-        Write-Output "EXE:$candidate"
-        exit 0
-    }
-}
-
-$shortcutRoots = @(
-    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
-    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
-)
-$shell = New-Object -ComObject WScript.Shell
-foreach ($shortcutFile in (Get-ChildItem -LiteralPath $shortcutRoots -Filter '*.lnk' -Recurse)) {
-    $shortcut = $shell.CreateShortcut($shortcutFile.FullName)
-    $target = $shortcut.TargetPath
-    if (-not $target -or -not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
-    $fileName = [System.IO.Path]::GetFileName($target)
-    if ($fileName -ieq 'Codex.exe' -and $target -match '(?i)\\(bin|node_modules|\.vscode\\extensions)\\') {
-        continue
-    }
-    if ($fileName -ieq 'ChatGPT.exe' -or $fileName -ieq 'Codex.exe') {
-        Write-Output "EXE:$target"
-        exit 0
-    }
-}
-"#;
-
-    let encoded_command = windows_powershell_encoded_command(DISCOVERY_SCRIPT);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    parse_windows_codex_app_discovery_output(&String::from_utf8_lossy(&output.stdout)).and_then(
-        |target| match &target {
-            CodexAppTarget::Application(path) if !path.is_file() => None,
-            _ => Some(target),
-        },
-    )
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_powershell_encoded_command(script: &str) -> String {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    let bytes = script
-        .encode_utf16()
-        .flat_map(|unit| unit.to_le_bytes())
-        .collect::<Vec<_>>();
-    STANDARD.encode(bytes)
-}
-
-#[cfg(target_os = "windows")]
 pub(crate) fn windows_powershell_single_quoted_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn read_windows_executable_version(path: &Path) -> Option<String> {
-    let path = windows_powershell_single_quoted_literal(&path_to_string(path));
-    let script = format!(
-        r#"
-$ErrorActionPreference = 'SilentlyContinue'
-$item = Get-Item -LiteralPath {path}
-$version = $item.VersionInfo.ProductVersion
-if ($version) {{
-    Write-Output "VERSION:$version"
-}}
-"#
-    );
-    let encoded_command = windows_powershell_encoded_command(&script);
-    let mut command = Command::new(windows_powershell_executable());
-    command.args([
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        &encoded_command,
-    ]);
-    configure_background_command(&mut command);
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
-    if !output.status.success() {
-        return None;
-    }
-    parse_windows_codex_version_output(&String::from_utf8_lossy(&output.stdout))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_codex_app_discovery_output(output: &str) -> Option<CodexAppTarget> {
-    output.lines().find_map(|line| {
-        let line = line.trim();
-        if let Some(app_id) = line.strip_prefix("APPID:").map(str::trim) {
-            return (!app_id.is_empty()).then(|| CodexAppTarget::WindowsAppId(app_id.to_string()));
-        }
-        line.strip_prefix("EXE:")
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .map(|path| CodexAppTarget::Application(PathBuf::from(path)))
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_claude_desktop_version_output(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("VERSION:")
-            .and_then(normalize_detected_agent_version)
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_codex_version_output(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("VERSION:")
-            .and_then(normalize_detected_agent_version)
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn find_windows_codex_app_id_via_registry() -> Option<String> {
-    const PACKAGES_KEY: &str = r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
-    for package_name in ["OpenAI.Codex_", "OpenAI.CodexBeta_", "OpenAI.ChatGPT_"] {
-        let mut command = Command::new(windows_registry_executable());
-        command.args(["query", PACKAGES_KEY, "/f", package_name, "/k", "/s"]);
-        configure_background_command(&mut command);
-        let Ok(Some(output)) =
-            command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT)
-        else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        if let Some(app_id) =
-            parse_windows_codex_app_id_from_registry(&String::from_utf8_lossy(&output.stdout))
-        {
-            return Some(app_id);
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn parse_windows_codex_app_id_from_registry(output: &str) -> Option<String> {
-    const PACKAGE_MARKER: &str = "\\AppModel\\Repository\\Packages\\";
-    output.lines().find_map(|line| {
-        let line = line.trim();
-        let (_, package_full_name) = line.split_once(PACKAGE_MARKER)?;
-        if package_full_name.contains('\\') {
-            return None;
-        }
-        windows_codex_app_id_from_package_full_name(package_full_name)
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_codex_app_id_from_package_full_name(
-    package_full_name: &str,
-) -> Option<String> {
-    let package_name = package_full_name.split('_').next()?.trim();
-    if !matches!(
-        package_name,
-        "OpenAI.Codex" | "OpenAI.CodexBeta" | "OpenAI.ChatGPT"
-    ) {
-        return None;
-    }
-    let publisher_id = package_full_name.rsplit('_').next()?.trim();
-    if publisher_id.is_empty() || publisher_id == package_name {
-        return None;
-    }
-    Some(format!("{package_name}_{publisher_id}!App"))
 }
 
 #[cfg(target_os = "windows")]
@@ -3037,6 +2802,7 @@ pub(crate) fn inspect_claude_code_model_mappings(
         .and_then(serde_json::Value::as_str)
         .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
     Ok(Some(ClaudeDesktopModelMappings {
+        desktop_models: None,
         opus,
         sonnet,
         haiku,
@@ -3124,17 +2890,6 @@ pub(crate) fn claude_effective_context_window(
     context_window
 }
 
-#[allow(dead_code)]
-pub(crate) fn claude_code_max_context_tokens(
-    mappings: &ClaudeDesktopModelMappings,
-    models: &[AgentModelOption],
-) -> Result<u64, String> {
-    let model = mappings.sonnet.as_str();
-    let context_window = claude_effective_context_window(models, model, mappings.sonnet_1m)
-        .ok_or_else(|| format!("CPA 模型 API 未返回 Claude Code 主模型 {model} 的上下文窗口"))?;
-    Ok(context_window)
-}
-
 pub(crate) fn agent_model_display_name<'a>(
     models: &'a [AgentModelOption],
     model_name: &'a str,
@@ -3173,6 +2928,7 @@ pub(crate) fn claude_code_model_settings(
     mappings: &ClaudeDesktopModelMappings,
 ) -> ClaudeDesktopModelMappings {
     ClaudeDesktopModelMappings {
+        desktop_models: None,
         opus: claude_code_model_setting(&mappings.opus, mappings.opus_1m),
         sonnet: claude_code_model_setting(&mappings.sonnet, mappings.sonnet_1m),
         haiku: claude_code_model_setting(&mappings.haiku, mappings.haiku_1m),
@@ -3759,7 +3515,15 @@ pub(crate) fn inspect_deepseek_harness_config(
                 .map(str::to_string)
         })
         .flatten();
-    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
+    let expected_base = if provider
+        .and_then(|p| yaml_mapping_value(p, "api"))
+        .and_then(serde_norway::Value::as_str)
+        == Some("anthropic-messages")
+    {
+        managed_core_loopback_origin(port)
+    } else {
+        format!("{}/v1", managed_core_loopback_origin(port))
+    };
     let credentials_layout_supported = deepseek_harness_credentials_layout_supported(&credentials);
     let credential = yaml_mapping_value(&credentials, "refs")
         .and_then(serde_norway::Value::as_mapping)
@@ -3786,7 +3550,12 @@ pub(crate) fn inspect_deepseek_harness_config(
         && provider
             .and_then(|provider| yaml_mapping_value(provider, "api"))
             .and_then(serde_norway::Value::as_str)
-            == Some("openai-completions")
+            .is_some_and(|api| {
+                matches!(
+                    api,
+                    "openai-completions" | "openai-responses" | "anthropic-messages"
+                )
+            })
         && provider
             .and_then(|provider| yaml_mapping_value(provider, "baseURL"))
             .and_then(serde_norway::Value::as_str)

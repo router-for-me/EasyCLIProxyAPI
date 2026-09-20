@@ -12,7 +12,6 @@ pub(crate) fn lock_core_operation(
     Ok(guard)
 }
 
-// Own the guard from spawn, including while the management port is starting.
 pub(crate) struct CoreChild {
     child: Child,
     #[cfg(windows)]
@@ -323,7 +322,6 @@ pub(crate) fn pause_core_process_for_install(
     process_state: &CoreProcessState,
 ) -> Result<bool, String> {
     process_state.ensure_active()?;
-    // A process can hold files even when its HTTP port is not responding.
     let was_running = current_core_status(Some(process_state), None)?.running;
     if was_running {
         stop_core_process_inner(process_state)?;
@@ -378,6 +376,7 @@ pub(crate) fn start_core_process_with_state(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) -> Result<CoreStatus, String> {
+    network_proxy::refresh(gui_config_state)?;
     let config = gui_config_state.snapshot()?;
     start_core_process_inner(process_state, &config)?;
     if let Err(error) = gui_config_state.set_run_on_startup(true) {
@@ -410,6 +409,7 @@ pub(crate) fn restart_core_process_with_state(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) -> Result<CoreStatus, String> {
+    network_proxy::refresh(gui_config_state)?;
     let config = gui_config_state.snapshot()?;
     if current_core_status(Some(process_state), None)?.running {
         stop_core_process_inner(process_state)?;
@@ -973,11 +973,13 @@ pub(crate) fn apply_configured_proxy(
     proxy_url: &str,
 ) -> Result<reqwest::ClientBuilder, String> {
     let proxy_url = proxy_url.trim();
+    let builder = builder.no_proxy();
     if proxy_url.is_empty() {
         return Ok(builder);
     }
-    let proxy =
-        reqwest::Proxy::all(proxy_url).map_err(|error| format!("代理 URL 无效: {error}"))?;
+    let proxy = reqwest::Proxy::all(proxy_url)
+        .map_err(|_| "代理 URL 无效".to_string())?
+        .no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
     Ok(builder.proxy(proxy))
 }
 
@@ -1036,7 +1038,6 @@ pub(crate) fn core_release_asset_name(version: &str, platform: &CorePlatform) ->
     )
 }
 
-// Download progress and cancellation require the complete transfer context here.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn download_asset(
     client: &reqwest::Client,
@@ -1226,7 +1227,12 @@ pub(crate) fn current_core_status(
             .and_then(|path| find_core_process_ids(path).first().copied()),
         None => None,
     };
-    let running = process_id.is_some() && management_port_open.unwrap_or(true);
+    // A tracked process remains running even if a single management-port probe
+    // times out. The port probe is still required before discovering an
+    // untracked process, but using it to override a known live PID makes the UI
+    // oscillate between running and stopped while continuing to show that PID.
+    let running = process_id.is_some();
+    let ready = running && management_port_open.unwrap_or(true);
     let current_version = read_core_metadata(&install_dir).map(|metadata| metadata.version);
 
     let message = if starting {
@@ -1242,6 +1248,7 @@ pub(crate) fn current_core_status(
     Ok(CoreStatus {
         installed,
         running,
+        ready,
         starting,
         managed: managed_pid.is_some(),
         process_id,
@@ -1259,7 +1266,15 @@ pub(crate) fn is_management_port_open(port: u16) -> bool {
     let Ok(address) = core_management_address(&listen_host, port) else {
         return false;
     };
-    TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok()
+    for attempt in 0..3 {
+        if TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok() {
+            return true;
+        }
+        if attempt < 2 {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    false
 }
 
 fn core_management_address(listen_host: &str, port: u16) -> Result<SocketAddr, String> {
@@ -1318,9 +1333,6 @@ pub(crate) fn core_start_stdio(log_path: &Path) -> io::Result<(Stdio, Stdio)> {
         fs::create_dir_all(parent)?;
     }
 
-    // Keep only the current process run so console output cannot grow without
-    // bound across restarts. Both child handles use append mode to avoid their
-    // independent file cursors overwriting each other's output.
     let mut header_file = File::options()
         .write(true)
         .create(true)
@@ -1393,6 +1405,16 @@ fn start_core_process_once(
         }
     };
     configure_background_command(&mut command);
+    for variable in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        command.env_remove(variable);
+    }
 
     let mut child = match spawn_core_child(command) {
         Ok(child) => child,
@@ -1419,6 +1441,9 @@ pub(crate) fn start_core_process_inner(
     gui_config: &GuiConfigFile,
 ) -> Result<(), String> {
     process_state.ensure_active()?;
+    let mut resolved_config = gui_config.clone();
+    resolved_config.proxy_url = network_proxy::resolve(gui_config);
+    let gui_config = &resolved_config;
     let install_dir = core_install_dir()?;
     if !gui_config.auth_dir.trim().is_empty() {
         let auth_dir = auth_dir_path_for_core(&gui_config.auth_dir, &install_dir);
@@ -1553,10 +1578,6 @@ pub(crate) fn configure_background_command(command: &mut Command) {
 
 pub(crate) fn configure_networked_command(command: &mut Command, proxy_url: &str) {
     let proxy_url = proxy_url.trim();
-    if proxy_url.is_empty() {
-        return;
-    }
-
     for variable in [
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -1565,8 +1586,15 @@ pub(crate) fn configure_networked_command(command: &mut Command, proxy_url: &str
         "https_proxy",
         "all_proxy",
     ] {
-        command.env(variable, proxy_url);
+        if proxy_url.is_empty() {
+            command.env_remove(variable);
+        } else {
+            command.env(variable, proxy_url);
+        }
     }
+    command
+        .env("NO_PROXY", "localhost,127.0.0.1,::1")
+        .env("no_proxy", "localhost,127.0.0.1,::1");
 }
 
 pub(crate) fn stop_core_process_inner(process_state: &CoreProcessState) -> Result<(), String> {
@@ -1834,9 +1862,16 @@ pub(crate) fn migrate_core_config_for_update(
         return Ok(());
     }
     let old_config_path = source_dir.join(CORE_CONFIG_FILE);
-    if !old_config_path.is_file() {
-        return Ok(());
-    }
+    let old_config = match fs::read_to_string(&old_config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "读取旧版内核配置失败，为避免配置丢失已取消更新 {}: {error}",
+                path_to_string(&old_config_path)
+            ));
+        }
+    };
 
     let template_path = target_dir.join(CORE_EXAMPLE_CONFIG_FILE);
     if !template_path.is_file() {
@@ -1845,23 +1880,13 @@ pub(crate) fn migrate_core_config_for_update(
             path_to_string(&template_path)
         ));
     }
-    let old_config = match fs::read(&old_config_path) {
-        Ok(content) => String::from_utf8_lossy(&content).into_owned(),
-        Err(error) => {
-            eprintln!(
-                "读取旧版内核配置失败，将使用新版默认配置继续更新 {}: {error}",
-                path_to_string(&old_config_path)
-            );
-            String::new()
-        }
-    };
     let template = fs::read_to_string(&template_path).map_err(|error| {
         format!(
             "读取新版内核配置模板失败 {}: {error}",
             path_to_string(&template_path)
         )
     })?;
-    let migrated = merge_core_config_fields_tolerant(&template, &old_config)?;
+    let migrated = merge_core_config_fields(&template, Some(&old_config))?;
     let config_path = target_dir.join(CORE_CONFIG_FILE);
     fs::write(&config_path, migrated).map_err(|error| {
         format!(
@@ -2307,9 +2332,6 @@ pub(crate) fn terminate_process_id(process_id: u32) -> Result<(), String> {
             System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
         };
 
-        // Keep a handle to this process until it is signalled. taskkill exiting
-        // successfully only means termination was requested, not that file
-        // handles have been released.
         let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, process_id) };
         if handle.is_null() {
             let error = io::Error::last_os_error();
@@ -2477,11 +2499,6 @@ fn overlay_directory(source_dir: &Path, target_dir: &Path) -> Result<(), String>
     Ok(())
 }
 
-/// Copies through a sibling temporary file and atomically replaces the target.
-///
-/// In particular, do not change this back to copying over an existing file:
-/// macOS caches code-signature validation by vnode, so in-place updates can
-/// leave an otherwise valid executable permanently rejected with SIGKILL.
 pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -2525,8 +2542,6 @@ pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> 
 
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn rematerialize_core_binary(binary_path: &Path) -> Result<(), String> {
-    // Replacing the path with an identical copy gives it a fresh vnode and
-    // clears the macOS signature-cache state left by older in-place updates.
     copy_core_file_replace(binary_path, binary_path)
 }
 

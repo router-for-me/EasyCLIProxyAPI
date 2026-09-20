@@ -1,3 +1,4 @@
+import { MessageNotice } from './appNotice';
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -10,13 +11,13 @@ import {
   History,
   House,
   Languages,
+  Lock,
   LogIn,
   MessageCircle,
   Network,
   PackageOpen,
   ServerCog,
   Settings,
-  Sparkles,
   X,
 } from 'lucide-react';
 import appLogo from './assets/logo.jpg';
@@ -35,7 +36,7 @@ import { languageOptions, useI18n } from './i18n';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
 import { canOpenAppPage, isAlwaysAvailablePage } from './navigation';
-import { detectInitialTheme, saveTheme, type AppTheme } from './theme';
+import { useThemePreference } from './theme';
 
 const CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 
@@ -43,7 +44,7 @@ const pages = [
   {
     id: 'easy',
     labelKey: 'app.nav.easy',
-    icon: Sparkles,
+    icon: House,
     component: HomePage,
   },
   {
@@ -51,24 +52,6 @@ const pages = [
     labelKey: 'app.nav.home',
     icon: House,
     component: HomePage,
-  },
-  {
-    id: 'versions',
-    labelKey: 'app.nav.versions',
-    icon: PackageOpen,
-    component: VersionManagementPageWrapper,
-  },
-  {
-    id: 'config',
-    labelKey: 'app.nav.config',
-    icon: Settings,
-    component: ConfigPanelPage,
-  },
-  {
-    id: 'oauth',
-    labelKey: 'app.nav.oauth',
-    icon: LogIn,
-    component: OAuthManagementPage,
   },
   {
     id: 'api',
@@ -89,10 +72,28 @@ const pages = [
     component: UsageRecordsPage,
   },
   {
+    id: 'oauth',
+    labelKey: 'app.nav.oauth',
+    icon: LogIn,
+    component: OAuthManagementPage,
+  },
+  {
     id: 'agents',
     labelKey: 'app.nav.agents',
     icon: Bot,
     component: AgentsPage,
+  },
+  {
+    id: 'config',
+    labelKey: 'app.nav.config',
+    icon: Settings,
+    component: ConfigPanelPage,
+  },
+  {
+    id: 'versions',
+    labelKey: 'app.nav.versions',
+    icon: PackageOpen,
+    component: VersionManagementPageWrapper,
   },
 ] as const;
 
@@ -138,13 +139,13 @@ function AppContent() {
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<PageId>('home');
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
-  const [theme, setTheme] = useState<AppTheme>(detectInitialTheme);
+  const [theme, setTheme] = useThemePreference();
   const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
   const closeDialogRef = useRef<HTMLElement>(null);
   const languageMenuRef = useRef<HTMLDivElement>(null);
   const languageButtonRef = useRef<HTMLButtonElement>(null);
   const { status } = useCoreRuntime();
-  const coreRunning = Boolean(status?.running);
+  const coreReady = Boolean(status?.ready);
   const activePage = pages.find((page) => page.id === active) ?? pages[0];
   const ActivePage = activePage.component;
   const selectedLanguage = languageOptions.find((option) => option.value === locale)
@@ -158,14 +159,10 @@ function AppContent() {
       : '',
   ].filter(Boolean).join(' · ');
   useEffect(() => {
-    saveTheme(theme);
-  }, [theme]);
-
-  useEffect(() => {
-    if (!canOpenAppPage(active, coreRunning)) {
+    if (!canOpenAppPage(active, coreReady)) {
       setActive('home');
     }
-  }, [active, coreRunning]);
+  }, [active, coreReady]);
 
   useEffect(() => {
     if (!languageMenuOpen) return undefined;
@@ -243,7 +240,7 @@ function AppContent() {
   }, [windowsClosePrompt]);
 
   const select = (pageId: PageId) => {
-    if (!canOpenAppPage(pageId, coreRunning)) {
+    if (!canOpenAppPage(pageId, coreReady)) {
       return;
     }
     setActive(pageId);
@@ -307,7 +304,7 @@ function AppContent() {
           <nav className="nav-section" aria-label={t('app.navigation')}>
             {pages.filter((page) => page.id !== 'easy').map((page) => {
               const Icon = page.icon;
-              const locked = !canOpenAppPage(page.id, coreRunning);
+              const locked = !canOpenAppPage(page.id, coreReady);
               const updateIndicator = page.id === 'versions'
                 ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
                 : null;
@@ -322,12 +319,14 @@ function AppContent() {
                     .filter(Boolean)
                     .join(' ')}
                   disabled={locked}
-                  title={locked ? t('app.coreRequired.title') : undefined}
+                  title={locked ? t('app.nav.lockedHint') : undefined}
                   onClick={() => select(page.id)}
                 >
                   <Icon size={17} aria-hidden="true" />
                   <span>{t(page.labelKey)}</span>
-                  {updateIndicator ? (
+                  {locked ? (
+                    <Lock size={13} className="nav-lock-icon" aria-hidden="true" />
+                  ) : updateIndicator ? (
                     <i
                       className={`nav-update-indicator ${updateIndicator}`}
                       title={updateIndicator === 'processing'
@@ -354,7 +353,7 @@ function AppContent() {
             <div
               className="sidebar-theme-selector"
               role="group"
-              aria-label={`${t('app.theme.light')} / ${t('app.theme.dark')}`}
+              aria-label={t('app.theme.label')}
             >
               <button
                 type="button"
@@ -373,6 +372,15 @@ function AppContent() {
                 onClick={() => setTheme('dark')}
               >
                 {t('app.theme.dark')}
+              </button>
+              <button
+                type="button"
+                className={theme === 'system' ? 'active' : ''}
+                aria-pressed={theme === 'system'}
+                title={t('app.theme.switchToSystem')}
+                onClick={() => setTheme('system')}
+              >
+                {t('app.theme.system')}
               </button>
             </div>
             <div ref={languageMenuRef} className="sidebar-language">
@@ -439,7 +447,7 @@ function AppContent() {
 
         <div className="workspace">
           <main className="content">
-            {isAlwaysAvailablePage(activePage.id) || coreRunning ? (
+            {isAlwaysAvailablePage(activePage.id) || coreReady ? (
               activePage.id === 'easy' ? (
                 <EasyModePage
                   onExit={() => select('home')}
@@ -491,9 +499,7 @@ function AppContent() {
               {t('app.close.description')}
             </p>
             {windowsClosePrompt.error ? (
-              <div className="close-dialog-error" role="alert">
-                {windowsClosePrompt.error}
-              </div>
+              <MessageNotice message={windowsClosePrompt.error} onDismiss={() => setWindowsClosePrompt(current => current ? { ...current, error: null } : current)} />
             ) : null}
             <label className="close-dialog-remember">
               <input

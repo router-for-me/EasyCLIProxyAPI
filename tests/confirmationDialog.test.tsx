@@ -15,11 +15,8 @@ describe('application confirmation and quota feedback', () => {
     expect(html).toContain('消耗 1 次重置机会');
   });
 
-  it('distinguishes a submitted reset whose follow-up query failed', () => {
+  it('keeps reset feedback out of the card layout (message checked in browser)', () => {
     const html = renderToStaticMarkup(<I18nProvider><QuotaActionFeedback quota={{ status: 'success', rows: [], actionResult: { action: 'reset', status: 'refresh-error', error: 'query failed' } }} /></I18nProvider>);
-    expect(html).toContain('重置请求已提交');
-    expect(html).toContain('额度刷新失败');
-    expect(html).toContain('避免重复消耗');
-    expect(html).toContain('query failed');
+    expect(html).toBe('');
   });
 });

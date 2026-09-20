@@ -18,6 +18,7 @@ export type AgentConfigurationAction = 'apply' | 'update' | 'close';
 export type ClaudeModelMappingClientId = 'claude-code' | 'claude-desktop';
 
 export type AgentModelMappings = {
+  desktopModels?: import('./claudeDesktopModels').ClaudeDesktopModelMapping[];
   opus: string;
   sonnet: string;
   haiku: string;
@@ -50,7 +51,15 @@ export const sameAgentModel = (left: string, right: string) => (
 export const sameAgentModelMappings = (
   left: AgentModelMappings,
   right: AgentModelMappings,
-) => sameAgentModel(left.opus, right.opus)
+) => (left.desktopModels !== undefined || right.desktopModels !== undefined)
+  ? left.desktopModels !== undefined && right.desktopModels !== undefined
+    && left.desktopModels.length === right.desktopModels.length
+    && left.desktopModels.every((entry, index) => {
+      const other = right.desktopModels![index];
+      return sameAgentModel(entry.model, other.model) && entry.alias.trim() === other.alias.trim()
+        && Boolean(entry.context1m) === Boolean(other.context1m);
+    })
+  : sameAgentModel(left.opus, right.opus)
   && sameAgentModel(left.sonnet, right.sonnet)
   && sameAgentModel(left.haiku, right.haiku)
   && Boolean(left.opus1m) === Boolean(right.opus1m)

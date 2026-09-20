@@ -6,7 +6,7 @@ use std::path::Path;
 
 pub(super) type ModelCustomizations = BTreeMap<String, Map<String, Value>>;
 
-const EDITABLE_FIELDS: [&str; 11] = [
+pub(super) const EDITABLE_FIELDS: [&str; 11] = [
     "display_name",
     "description",
     "context_window",
@@ -66,8 +66,6 @@ fn editable_configuration(model: &Map<String, Value>) -> Map<String, Value> {
             (
                 field.to_string(),
                 model.get(*field).cloned().unwrap_or_else(|| {
-                    // Codex defaults this optional field to 95 when it is omitted.
-                    // The editor needs the same value to validate and save context changes.
                     if *field == "effective_context_window_percent" {
                         Value::from(95)
                     } else {
@@ -517,7 +515,6 @@ mod tests {
             256_000
         );
 
-        // Restoring defaults drops the saved override and follows the current API response.
         state.customizations = customizations_from_request(
             &updated,
             CatalogEditorRequest {

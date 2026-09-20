@@ -12,9 +12,10 @@ import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
+import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import { useI18n } from '../i18n';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { FloatingNotice, useAppNotice } from '../appNotice';
 import { oauthSubpages, type OAuthSubpage } from '../oauthNavigation';
 import {
   changedOAuthAuthFileNames,
@@ -27,8 +28,9 @@ import {
   shouldShowOAuthLoginStatus,
 } from '../services/oauthLoginState';
 import { AuthFileManagementPage } from './AuthFileManagementPage';
+import { validateDevinCallback } from '../services/devinOAuth';
 
-type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai';
+type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'devin';
 type OAuthFlowStatus = 'idle' | 'waiting' | 'success' | 'error';
 
 type OAuthProviderState = {
@@ -67,6 +69,7 @@ const oauthProviders = [
   { id: 'antigravity' as const, name: 'Antigravity OAuth', icon: antigravityIcon },
   { id: 'kimi' as const, name: 'Kimi OAuth', icon: kimiIcon },
   { id: 'xai' as const, name: 'xAI OAuth', icon: grokIcon },
+  { id: 'devin' as const, name: 'Devin OAuth', icon: devinIcon },
 ];
 
 const OAUTH_CALLBACK_SUPPORTED = new Set<OAuthProviderId>([
@@ -74,6 +77,7 @@ const OAUTH_CALLBACK_SUPPORTED = new Set<OAuthProviderId>([
   'claude',
   'antigravity',
   'xai',
+  'devin',
 ]);
 const XAI_CALLBACK_URL = 'http://127.0.0.1:56121/callback';
 const OAUTH_POLL_INTERVAL_MS = 3000;
@@ -163,6 +167,7 @@ export function OAuthLoginPage() {
   const [selectedBrowser, setSelectedBrowser] = useState(loadOAuthBrowserPreference);
   const pollingTimers = useRef<Partial<Record<OAuthProviderId, number>>>({});
   const pollingRequests = useRef<Partial<Record<OAuthProviderId, boolean>>>({});
+  const pollingSessions = useRef<Partial<Record<OAuthProviderId, string>>>({});
   const credentialSnapshots = useRef<Partial<Record<OAuthProviderId, AuthFileSnapshot>>>({});
 
   useEffect(() => {
@@ -190,7 +195,6 @@ export function OAuthLoginPage() {
     try {
       window.localStorage.setItem(OAUTH_BROWSER_STORAGE_KEY, selectedBrowser);
     } catch {
-      // Keep the in-memory selection when persistent storage is unavailable.
     }
   }, [selectedBrowser]);
 
@@ -211,6 +215,7 @@ export function OAuthLoginPage() {
   const clearPollingTimer = useCallback((provider: OAuthProviderId) => {
     const timer = pollingTimers.current[provider];
     if (timer !== undefined) window.clearInterval(timer);
+    delete pollingSessions.current[provider];
     delete pollingTimers.current[provider];
     delete pollingRequests.current[provider];
   }, []);
@@ -255,11 +260,14 @@ export function OAuthLoginPage() {
   const startPolling = useCallback(
     (provider: OAuthProviderId, state: string) => {
       clearPollingTimer(provider);
+      pollingSessions.current[provider] = state;
+      const isCurrent = () => pollingSessions.current[provider] === state;
       const checkStatus = async () => {
         if (pollingRequests.current[provider]) return;
         pollingRequests.current[provider] = true;
         try {
           const result = await invoke<OAuthStatusResult>('get_oauth_status', { state });
+          if (!isCurrent()) return;
           const status = (result.status || '').toLowerCase();
           if (status === 'ok') {
             let priorityError = '';
@@ -268,6 +276,7 @@ export function OAuthLoginPage() {
             } catch (error) {
               priorityError = String(error);
             }
+            if (!isCurrent()) return;
             completeProviderAuth(provider);
             showNotice(
               priorityError
@@ -291,6 +300,7 @@ export function OAuthLoginPage() {
             );
           }
         } catch (error) {
+          if (!isCurrent()) return;
           updateProviderState(provider, {
             status: 'error',
             error: String(error),
@@ -299,7 +309,7 @@ export function OAuthLoginPage() {
           clearPollingTimer(provider);
           showNotice(String(error), 'error');
         } finally {
-          delete pollingRequests.current[provider];
+          if (isCurrent()) delete pollingRequests.current[provider];
         }
       };
       pollingTimers.current[provider] = window.setInterval(
@@ -312,6 +322,7 @@ export function OAuthLoginPage() {
 
   useEffect(() => {
     return () => {
+      pollingSessions.current = {};
       Object.values(pollingTimers.current).forEach((timer) => {
         if (timer !== undefined) window.clearInterval(timer);
       });
@@ -385,6 +396,12 @@ export function OAuthLoginPage() {
         await managementApi.delete('/oauth-session', { query: { state: currentState } });
       }
     } catch (error) {
+      if (provider === 'devin') {
+        updateProviderState(provider, { refreshing: false });
+        if (currentState) startPolling(provider, currentState);
+        showNotice(String(error), 'error');
+        return;
+      }
       console.warn('Failed to cancel the previous OAuth session before refreshing', error);
     }
     try {
@@ -427,6 +444,13 @@ export function OAuthLoginPage() {
       return;
     }
 
+    if (provider === 'devin') {
+      const error = validateDevinCallback(callbackInput, current?.state);
+      if (error) {
+        showNotice(t(error === 'state_mismatch' ? 'oauth.devinStateMismatch' : 'oauth.invalidCallback'), 'error');
+        return;
+      }
+    }
     const redirectUrl = resolveCallbackUrl(provider, callbackInput, current?.state);
     if (!redirectUrl) {
       showNotice(
@@ -484,7 +508,7 @@ export function OAuthLoginPage() {
         </label>
       </header>
 
-      <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
+      <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
       <div className="oauth-grid">
         {oauthProviders.map((provider) => {
           const state = states[provider.id] ?? { status: 'idle' as const };
@@ -498,7 +522,7 @@ export function OAuthLoginPage() {
           return (
             <section className="panel oauth-card" key={provider.id}>
               <div className="provider-title-row">
-                <img src={provider.icon} alt="" className="provider-logo" />
+                <img src={provider.icon} alt="" className={provider.id === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} />
                 <div>
                   <h2>{provider.name}</h2>
                   {shouldShowOAuthLoginStatus(state.status) ? (
@@ -508,7 +532,7 @@ export function OAuthLoginPage() {
               </div>
 
               <div className="oauth-card-body">
-                <p className="oauth-hint">{t('oauth.hint')}</p>
+                <p className="oauth-hint">{t(provider.id === 'devin' ? 'oauth.devinHint' : 'oauth.hint')}</p>
                 {state.url ? (
                   <div className="oauth-auth-url-box">
                     <div className="oauth-auth-url-label">{t('oauth.authorizationLink')}</div>
@@ -544,17 +568,7 @@ export function OAuthLoginPage() {
                         {t('oauth.submitCallback')}
                       </button>
                     </div>
-                    {state.callbackStatus === 'success' && state.status === 'waiting' ? (
-                      <div className="oauth-inline-status success">{t('oauth.callbackSubmitted')}</div>
-                    ) : null}
-                    {state.callbackStatus === 'error' ? (
-                      <div className="oauth-inline-status error">{t('oauth.callbackFailed', { detail: state.callbackError ? `: ${state.callbackError}` : '' })}</div>
-                    ) : null}
                   </div>
-                ) : null}
-
-                {state.status === 'error' && state.error ? (
-                  <div className="oauth-inline-status error">{state.error}</div>
                 ) : null}
               </div>
 

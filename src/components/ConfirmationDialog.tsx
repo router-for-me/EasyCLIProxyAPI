@@ -31,9 +31,9 @@ export function ConfirmationDialog({ title, message, confirmText, warning, detai
         event.stopPropagation();
         onDecision(false);
       } else if (event.key === 'Tab') {
-        const buttons = Array.from(dialogRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
-        const first = buttons[0];
-        const last = buttons[buttons.length - 1];
+        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]') ?? []);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
         if (event.shiftKey && (document.activeElement === first || !dialogRef.current?.contains(document.activeElement))) {
           event.preventDefault();
           last?.focus();

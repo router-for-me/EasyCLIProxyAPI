@@ -55,16 +55,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 models,
                 claude_code_model_mappings,
             )
-            .or_else(|_| {
-                build_claude_agent_config(
-                    None,
-                    &root_base,
-                    api_key,
-                    model,
-                    models,
-                    claude_code_model_mappings,
-                )
-            })?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -82,12 +73,12 @@ pub(crate) fn build_agent_updates_with_oauth(
                 AgentFileUpdate {
                     path: paths[0].clone(),
                     after: build_claude_desktop_deployment_config(normal_before.as_deref())
-                        .or_else(|_| build_claude_desktop_deployment_config(None))?,
+                        ?,
                 },
                 AgentFileUpdate {
                     path: paths[1].clone(),
                     after: build_claude_desktop_deployment_config(threep_before.as_deref())
-                        .or_else(|_| build_claude_desktop_deployment_config(None))?,
+                        ?,
                 },
                 AgentFileUpdate {
                     path: paths[2].clone(),
@@ -99,21 +90,12 @@ pub(crate) fn build_agent_updates_with_oauth(
                         models,
                         claude_desktop_model_mappings,
                     )
-                    .or_else(|_| {
-                        build_claude_desktop_profile(
-                            None,
-                            &root_base,
-                            api_key,
-                            model,
-                            models,
-                            claude_desktop_model_mappings,
-                        )
-                    })?,
+                    ?,
                 },
                 AgentFileUpdate {
                     path: paths[3].clone(),
                     after: build_claude_desktop_meta(meta_before.as_deref())
-                        .or_else(|_| build_claude_desktop_meta(None))?,
+                        ?,
                 },
             ])
         }
@@ -126,15 +108,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 oauth_configuration,
             )
-            .or_else(|_| {
-                build_codex_agent_config_with_oauth(
-                    None,
-                    &openai_base,
-                    api_key,
-                    model,
-                    oauth_configuration,
-                )
-            })?;
+            ?;
             let mut updates = vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -157,7 +131,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| build_opencode_agent_config(None, &openai_base, api_key, model, models))?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -172,7 +146,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| build_openclaw_agent_config(None, &openai_base, api_key, model, models))?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -182,9 +156,7 @@ pub(crate) fn build_agent_updates_with_oauth(
             let before = read_optional_text(&paths[0])?;
             let after =
                 build_hermes_agent_config(before.as_deref(), &openai_base, api_key, model, models)
-                    .or_else(|_| {
-                        build_hermes_agent_config(None, &openai_base, api_key, model, models)
-                    })?;
+                    ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -220,9 +192,7 @@ pub(crate) fn build_agent_updates_with_oauth(
             let cli_before = read_optional_text(&paths[1])?;
             let app_after =
                 build_zcode_agent_config(app_before.as_deref(), &root_base, api_key, model, models)
-                    .or_else(|_| {
-                        build_zcode_agent_config(None, &root_base, api_key, model, models)
-                    })?;
+                    ?;
             let cli_after = build_zcode_cli_agent_config(
                 cli_before.as_deref(),
                 &root_base,
@@ -230,7 +200,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| build_zcode_cli_agent_config(None, &root_base, api_key, model, models))?;
+            ?;
             Ok(vec![
                 AgentFileUpdate {
                     path: paths[0].clone(),
@@ -251,9 +221,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| {
-                build_kimi_code_agent_config(None, &openai_base, api_key, model, models)
-            })?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -268,9 +236,7 @@ pub(crate) fn build_agent_updates_with_oauth(
                 model,
                 models,
             )
-            .or_else(|_| {
-                build_grok_build_agent_config(None, &openai_base, api_key, model, models)
-            })?;
+            ?;
             Ok(vec![AgentFileUpdate {
                 path: paths[0].clone(),
                 after,
@@ -280,12 +246,8 @@ pub(crate) fn build_agent_updates_with_oauth(
 }
 
 pub(crate) fn read_optional_text(path: &Path) -> Result<Option<String>, String> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    fs::read_to_string(path)
-        .map(Some)
-        .map_err(|error| format!("读取配置失败 {}: {error}", path_to_string(path)))
+    read_agent_bytes(path)?.map(|bytes| String::from_utf8(bytes)
+        .map_err(|_| "配置不是 UTF-8 文本，请使用手动备份恢复或基础配置模板修复".to_string())).transpose()
 }
 
 pub(crate) fn read_agent_yaml_mapping_or_empty(
@@ -360,6 +322,13 @@ pub(crate) fn build_deepseek_harness_models(
                         .map_err(|error| format!("序列化 Harness 模型上下文失败: {error}"))?,
                 );
             }
+            if let Some(input) = model.input_modalities {
+                entry.insert(
+                    yaml_key("input"),
+                    serde_norway::to_value(input)
+                        .map_err(|_| "序列化 Harness 模型输入类型失败")?,
+                );
+            }
             Ok(serde_norway::Value::Mapping(entry))
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -372,7 +341,21 @@ pub(crate) fn build_deepseek_harness_settings(
     model: &str,
     models: &[AgentModelOption],
 ) -> Result<String, String> {
-    let published_models = build_deepseek_harness_models(models, model)?;
+    build_deepseek_harness_catalog_settings(
+        existing,
+        base_url,
+        model,
+        models,
+        &mut DeepSeekHarnessCatalogState::default(),
+    )
+}
+
+pub(crate) fn render_deepseek_harness_settings(
+    existing: Option<&str>,
+    base_url: &str,
+    model: &str,
+    published_models: serde_norway::Value,
+) -> Result<String, String> {
     render_agent_yaml_mapping_update(existing, "DeepSeek Harness settings", |root| {
         let llm = root
             .entry(yaml_key("llm-pi-ai"))
@@ -407,6 +390,8 @@ pub(crate) fn build_deepseek_harness_settings(
             .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
             .as_mapping_mut()
             .ok_or_else(|| "DeepSeek Harness agent-default-model 必须是映射".to_string())?;
+        let same_model = selection.get(yaml_key("provider")).and_then(serde_norway::Value::as_str) == Some(DEEPSEEK_HARNESS_PROVIDER_ID)
+            && selection.get(yaml_key("model")).and_then(serde_norway::Value::as_str) == Some(model);
         selection.insert(
             yaml_key("provider"),
             serde_norway::Value::String(DEEPSEEK_HARNESS_PROVIDER_ID.to_string()),
@@ -415,7 +400,7 @@ pub(crate) fn build_deepseek_harness_settings(
             yaml_key("model"),
             serde_norway::Value::String(model.to_string()),
         );
-        selection.remove(yaml_key("reasoningEffort"));
+        if !same_model { selection.remove(yaml_key("reasoningEffort")); }
         Ok(())
     })
 }
@@ -454,12 +439,7 @@ fn validate_deepseek_harness_versioned_credentials(
         let Some(key) = key.as_str() else {
             return Err(format!("{label} 顶层字段名必须是字符串"));
         };
-        if !matches!(
-            key,
-            "version" | "refs" | "records" | DEEPSEEK_HARNESS_CREDENTIAL
-        ) {
-            return Err(format!("{label} 包含未知顶层字段 {key}"));
-        }
+        let _ = key;
     }
     for section in ["refs", "records"] {
         if yaml_mapping_value(root, section).is_some_and(|value| !value.is_mapping()) {
@@ -480,8 +460,6 @@ fn deepseek_harness_credentials_refs_mut<'a>(
         );
     } else {
         validate_deepseek_harness_versioned_credentials(root, label)?;
-        // Repair files written by older EasyCLIProxyAPI builds, which placed
-        // this managed reference beside version/refs/records.
         root.remove(yaml_key(DEEPSEEK_HARNESS_CREDENTIAL));
     }
 
@@ -560,6 +538,11 @@ pub(crate) fn write_agent_configuration_file(
     path: &Path,
     content: &[u8],
 ) -> Result<(), String> {
+    if client == AgentClient::Codex
+        && matches!(path.file_name().and_then(|name| name.to_str()), Some(CODEX_NATIVE_OAUTH_STATE_FILE | "auth.json"))
+    {
+        return write_codex_private_file(path, content);
+    }
     if client == AgentClient::DeepSeekHarness {
         let owner_only = path.file_name().and_then(|name| name.to_str())
             == Some(DEEPSEEK_HARNESS_CREDENTIALS_FILE);
@@ -615,13 +598,14 @@ pub(crate) fn build_claude_agent_config(
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
             model_settings.sonnet.as_str(),
         ),
-        ("CLAUDE_CODE_SUBAGENT_MODEL", subagent_model.as_str()),
     ] {
         env.insert(
             key.to_string(),
             serde_json::Value::String(value.to_string()),
         );
     }
+    env.entry("CLAUDE_CODE_SUBAGENT_MODEL".to_string())
+        .or_insert_with(|| serde_json::Value::String(subagent_model));
     env.insert(
         CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV.to_string(),
         serde_json::Value::String(max_context_tokens.to_string()),
@@ -735,6 +719,8 @@ pub(crate) fn ordered_agent_models(
         ordered.push(selected.clone());
     } else {
         ordered.push(AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: selected_model.to_string(),
             alias: None,
             is_alias: false,
@@ -770,7 +756,6 @@ pub(crate) fn build_claude_desktop_profile(
     mappings: Option<&ClaudeDesktopModelMappings>,
 ) -> Result<String, String> {
     let mut root = parse_agent_json_object(existing, "Claude Desktop 网关配置")?;
-    root.remove("coworkEgressAllowedHosts");
     root.insert(
         "disableDeploymentModeChooser".to_string(),
         serde_json::json!(true),
@@ -794,26 +779,48 @@ pub(crate) fn build_claude_desktop_profile(
     let mappings = mappings
         .cloned()
         .unwrap_or_else(|| ClaudeDesktopModelMappings::all(model));
-    let inference_models = vec![
-        claude_desktop_inference_model(
-            CLAUDE_DESKTOP_OPUS_MODEL_ID,
-            &mappings.opus,
-            mappings.opus_1m,
-            models,
-        ),
-        claude_desktop_inference_model(
-            CLAUDE_DESKTOP_SONNET_MODEL_ID,
-            &mappings.sonnet,
-            mappings.sonnet_1m,
-            models,
-        ),
-        claude_desktop_inference_model(
-            CLAUDE_DESKTOP_HAIKU_MODEL_ID,
-            &mappings.haiku,
-            mappings.haiku_1m,
-            models,
-        ),
-    ];
+    let inference_models = if let Some(entries) = &mappings.desktop_models {
+        validate_claude_desktop_entries(entries)?;
+        let mut families = HashSet::new();
+        entries
+            .iter()
+            .map(|entry| {
+                let mut value = claude_desktop_inference_model(
+                    entry.model_id(),
+                    entry.source_or_alias(),
+                    entry.context_1m,
+                    models,
+                );
+                value["name"] = serde_json::json!(entry.model_id());
+                value["labelOverride"] = serde_json::json!(entry.source_or_alias());
+                if let Some(tier) = claude_desktop_family_tier(entry.model_id()) {
+                    value["isFamilyDefault"] = serde_json::json!(families.insert(tier));
+                }
+                value
+            })
+            .collect()
+    } else {
+        vec![
+            claude_desktop_inference_model(
+                CLAUDE_DESKTOP_OPUS_MODEL_ID,
+                &mappings.opus,
+                mappings.opus_1m,
+                models,
+            ),
+            claude_desktop_inference_model(
+                CLAUDE_DESKTOP_SONNET_MODEL_ID,
+                &mappings.sonnet,
+                mappings.sonnet_1m,
+                models,
+            ),
+            claude_desktop_inference_model(
+                CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+                &mappings.haiku,
+                mappings.haiku_1m,
+                models,
+            ),
+        ]
+    };
     let mut deduplicated_models = Vec::<serde_json::Value>::with_capacity(inference_models.len());
     for entry in inference_models {
         let Some(name) = entry.get("name").and_then(serde_json::Value::as_str) else {
@@ -846,35 +853,55 @@ pub(crate) fn claude_desktop_inference_model(
     enable_1m: bool,
     models: &[AgentModelOption],
 ) -> serde_json::Value {
-    let selected = models
-        .iter()
-        .find(|model| model.name.eq_ignore_ascii_case(source_model));
-    let direct_alias = selected.is_some_and(|model| model.is_alias);
-    let context_window = claude_effective_context_window(models, source_model, enable_1m);
+    let use_source = claude_desktop_uses_source_directly(source_model, models);
     let mut entry = serde_json::Map::new();
     entry.insert(
         "name".to_string(),
-        serde_json::json!(if direct_alias {
+        serde_json::json!(if use_source {
             source_model
         } else {
             route_model
         }),
     );
-    if let Some(context_window) = context_window {
-        entry.insert(
-            "contextWindow".to_string(),
-            serde_json::json!(context_window),
-        );
-        if enable_1m {
-            entry.insert("supports1m".to_string(), serde_json::json!(true));
-            entry.insert("prefer1m".to_string(), serde_json::json!(true));
-        }
+    if !use_source {
+        entry.insert("labelOverride".to_string(), serde_json::json!(source_model));
+    }
+    if let Some(tier) = claude_desktop_family_tier(route_model) {
+        entry.insert("anthropicFamilyTier".to_string(), serde_json::json!(tier));
+        entry.insert("isFamilyDefault".to_string(), serde_json::json!(true));
+    }
+    if enable_1m {
+        entry.insert("supports1m".to_string(), serde_json::json!(true));
+        entry.insert("prefer1m".to_string(), serde_json::json!(true));
     }
     serde_json::Value::Object(entry)
 }
 
+pub(crate) fn claude_desktop_family_tier(route_model: &str) -> Option<&'static str> {
+    let lowered = route_model.to_ascii_lowercase();
+    if lowered.starts_with("claude-opus-") || lowered.contains("-opus-")
+        || route_model.eq_ignore_ascii_case(CLAUDE_DESKTOP_OPUS_MODEL_ID)
+        || route_model.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0])
+    {
+        Some("opus")
+    } else if lowered.starts_with("claude-sonnet-") || lowered.contains("-sonnet-")
+        || route_model.eq_ignore_ascii_case(CLAUDE_DESKTOP_SONNET_MODEL_ID)
+        || route_model.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1])
+    {
+        Some("sonnet")
+    } else if lowered.starts_with("claude-haiku-") || lowered.contains("-haiku-")
+        || route_model.eq_ignore_ascii_case(CLAUDE_DESKTOP_HAIKU_MODEL_ID)
+        || route_model.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2])
+    {
+        Some("haiku")
+    } else {
+        None
+    }
+}
+
 pub(crate) fn build_claude_desktop_meta(existing: Option<&str>) -> Result<String, String> {
     let mut root = parse_agent_json_object(existing, "Claude Desktop 配置索引")?;
+    repair_claude_desktop_meta_names(&mut root);
     let entries = ensure_json_array_entry(&mut root, "entries");
     let mut managed_entry = None;
     let mut retained_entries = Vec::with_capacity(entries.len());
@@ -904,45 +931,114 @@ pub(crate) fn build_claude_desktop_meta(existing: Option<&str>) -> Result<String
     render_agent_json(root, "Claude Desktop 配置索引")
 }
 
-pub(crate) fn update_agent_json_file<F>(path: &Path, label: &str, update: F) -> Result<bool, String>
+pub(crate) fn repair_claude_desktop_meta_names(root: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(entries) = root.get_mut("entries").and_then(serde_json::Value::as_array_mut) else {
+        return;
+    };
+    for entry in entries {
+        let Some(id) = entry.get("id").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if entry.get("name").and_then(serde_json::Value::as_str).is_none() {
+            let name = format!("Configuration {id}");
+            entry["name"] = serde_json::json!(name);
+        }
+    }
+}
+
+pub(crate) fn clear_agent_managed_configuration(
+    client: AgentClient,
+    home: &Path,
+    port: u16,
+) -> Result<AgentConfigActionResult, String> {
+    if client == AgentClient::Codex {
+        return close_codex_configuration(home);
+    }
+    let paths = config_paths(client.id(), home)?;
+    let before = config_images(&paths)?;
+    validate_client_config_images(client.id(), &before)?;
+    let after = if let Some(after) = prepare_recorded_integration_restore(client, &paths, &before)? {
+        after
+    } else {
+        let mut after = before.clone();
+        for (path, bytes) in prepare_agent_managed_removal(client, &paths, port)? {
+            let entry = after
+                .iter_mut()
+                .find(|(candidate, _)| candidate == &path)
+                .ok_or("配置清理路径不匹配")?;
+            entry.1 = bytes;
+        }
+        after
+    };
+    let mut result = commit_config(
+        client.id(),
+        &paths,
+        &before,
+        &after,
+        "clear-integration",
+        None,
+    )?;
+    result.enabled = false;
+    Ok(result)
+}
+
+#[cfg(test)]
+pub(crate) fn remove_agent_managed_configuration(
+    client: AgentClient,
+    paths: &[PathBuf],
+) -> Result<Vec<String>, String> {
+    let updates = prepare_agent_managed_removal(client, paths, GuiConfigFile::default().port)?;
+    write_config_images(client.id(), &updates)?;
+    Ok(updates
+        .iter()
+        .map(|(path, _)| path_to_string(path))
+        .collect())
+}
+
+pub(crate) fn prepare_agent_json_removal<F>(
+    path: &Path,
+    label: &str,
+    update: F,
+) -> Result<Option<FileSnapshot>, String>
 where
     F: FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> bool,
 {
     if !path.is_file() {
-        return Ok(false);
+        return Ok(None);
     }
     let content = fs::read_to_string(path)
         .map_err(|error| format!("读取 {label} 失败 {}: {error}", path_to_string(path)))?;
     let mut root = parse_agent_json_object(Some(&content), label)?;
     if !update(&mut root) {
-        return Ok(false);
+        return Ok(None);
     }
-    if root.is_empty() {
-        fs::remove_file(path)
-            .map_err(|error| format!("删除空的 {label} 失败 {}: {error}", path_to_string(path)))?;
+    let bytes = if root.is_empty() {
+        None
     } else {
-        let rendered = render_agent_json(root, label)?;
-        write_bytes_directly(path, rendered.as_bytes())?;
-    }
-    Ok(true)
+        Some(render_agent_json(root, label)?.into_bytes())
+    };
+    Ok(Some((path.to_path_buf(), bytes)))
 }
 
-pub(crate) fn remove_claude_desktop_managed_configuration(
-    paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
+pub(crate) fn prepare_claude_desktop_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
     if paths.len() != 4 {
         return Err("Claude Desktop 当前平台配置路径不可用".to_string());
     }
+    let meta = read_agent_json_or_empty(&paths[3], "Claude Desktop 配置索引")?;
+    let applied_id = meta.get("appliedId").and_then(serde_json::Value::as_str);
+    let managed_active = applied_id == Some(CLAUDE_DESKTOP_PROFILE_ID)
+        || (applied_id.is_none() && agent_has_managed_marker(AgentClient::ClaudeDesktop, paths)?);
     let mut changed = Vec::new();
     for (path, label) in [
         (&paths[0], "Claude Desktop 主配置"),
         (&paths[1], "Claude Desktop 3P 配置"),
     ] {
-        if update_agent_json_file(path, label, |root| {
-            if root
-                .get("deploymentMode")
-                .and_then(serde_json::Value::as_str)
-                == Some("3p")
+        if let Some(update) = prepare_agent_json_removal(path, label, |root| {
+            if managed_active
+                && root
+                    .get("deploymentMode")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("3p")
             {
                 root.remove("deploymentMode");
                 true
@@ -950,67 +1046,73 @@ pub(crate) fn remove_claude_desktop_managed_configuration(
                 false
             }
         })? {
-            changed.push(path_to_string(path));
+            changed.push(update);
         }
     }
 
-    if update_agent_json_file(&paths[2], "Claude Desktop 网关配置", |root| {
-        let mut updated = false;
-        for key in [
-            "coworkEgressAllowedHosts",
-            "disableDeploymentModeChooser",
-            "inferenceGatewayApiKey",
-            "inferenceGatewayAuthScheme",
-            "inferenceGatewayBaseUrl",
-            "inferenceProvider",
-            "inferenceModels",
-        ] {
-            updated |= root.remove(key).is_some();
-        }
-        updated
-    })? {
-        changed.push(path_to_string(&paths[2]));
+    if let Some(update) =
+        prepare_agent_json_removal(&paths[2], "Claude Desktop 网关配置", |root| {
+            let mut updated = false;
+            for key in [
+                "disableDeploymentModeChooser",
+                "inferenceGatewayApiKey",
+                "inferenceGatewayAuthScheme",
+                "inferenceGatewayBaseUrl",
+                "inferenceProvider",
+                "inferenceModels",
+            ] {
+                updated |= root.remove(key).is_some();
+            }
+            updated
+        })?
+    {
+        changed.push(update);
     }
 
-    if update_agent_json_file(&paths[3], "Claude Desktop 配置索引", |root| {
-        let mut updated = false;
-        if root.get("appliedId").and_then(serde_json::Value::as_str)
-            == Some(CLAUDE_DESKTOP_PROFILE_ID)
-        {
-            root.remove("appliedId");
-            updated = true;
-        }
-        let entries_empty = if let Some(entries) = root
-            .get_mut("entries")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            let previous_len = entries.len();
-            entries.retain(|entry| {
-                entry.get("id").and_then(serde_json::Value::as_str)
-                    != Some(CLAUDE_DESKTOP_PROFILE_ID)
-            });
-            updated |= entries.len() != previous_len;
-            entries.is_empty()
-        } else {
-            false
-        };
-        if entries_empty {
-            root.remove("entries");
-        }
-        updated
-    })? {
-        changed.push(path_to_string(&paths[3]));
+    if let Some(update) =
+        prepare_agent_json_removal(&paths[3], "Claude Desktop 配置索引", |root| {
+            let mut updated = false;
+            if root.get("appliedId").and_then(serde_json::Value::as_str)
+                == Some(CLAUDE_DESKTOP_PROFILE_ID)
+            {
+                root.remove("appliedId");
+                updated = true;
+            }
+            let entries_empty = if let Some(entries) = root
+                .get_mut("entries")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                let previous_len = entries.len();
+                entries.retain(|entry| {
+                    entry.get("id").and_then(serde_json::Value::as_str)
+                        != Some(CLAUDE_DESKTOP_PROFILE_ID)
+                });
+                updated |= entries.len() != previous_len;
+                entries.is_empty()
+            } else {
+                false
+            };
+            if entries_empty {
+                root.remove("entries");
+            }
+            updated
+        })?
+    {
+        changed.push(update);
     }
     Ok(changed)
 }
 
-pub(crate) fn remove_claude_code_managed_configuration(
+pub(crate) fn prepare_claude_code_managed_removal(
     paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
+    expected_base_url: &str,
+) -> Result<Images, String> {
     let Some(path) = paths.first() else {
         return Err("Claude Code 当前平台配置路径不可用".to_string());
     };
-    let updated = update_agent_json_file(path, "Claude Code 配置", |root| {
+    let expected_base_url = reqwest::Url::parse(expected_base_url)
+        .map_err(|_| "CPA 接入地址无效".to_string())?;
+    let updated = prepare_agent_json_removal(path, "Claude Code 配置", |root| {
         let managed_model = root
             .get("env")
             .and_then(serde_json::Value::as_object)
@@ -1022,7 +1124,9 @@ pub(crate) fn remove_claude_code_managed_configuration(
             .and_then(serde_json::Value::as_object)
             .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
             .and_then(serde_json::Value::as_str)
-            .is_some_and(is_managed_agent_base_url);
+            .is_some_and(|url| {
+                reqwest::Url::parse(url.trim()).is_ok_and(|url| url == expected_base_url)
+            });
         if !managed {
             return false;
         }
@@ -1046,6 +1150,19 @@ pub(crate) fn remove_claude_code_managed_configuration(
                 CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
                 CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
                 DISABLE_AUTO_COMPACT_ENV,
+                "CLAUDE_CODE_SUBAGENT_MODEL",
+                "CLAUDE_CODE_EFFORT_LEVEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION",
+                "ANTHROPIC_CUSTOM_MODEL_OPTION",
+                "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+                "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION",
             ] {
                 env.remove(key);
             }
@@ -1058,10 +1175,10 @@ pub(crate) fn remove_claude_code_managed_configuration(
         }
         true
     })?;
-    Ok(updated.then(|| path_to_string(path)).into_iter().collect())
+    Ok(updated.into_iter().collect())
 }
 
-pub(crate) fn remove_codex_managed_configuration(paths: &[PathBuf]) -> Result<Vec<String>, String> {
+pub(crate) fn prepare_codex_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
     use toml_edit::{Document, Item};
 
     let Some(path) = paths.first() else {
@@ -1093,53 +1210,25 @@ pub(crate) fn remove_codex_managed_configuration(paths: &[PathBuf]) -> Result<Ve
     if managed_catalog {
         document.remove("model_catalog_json");
     }
-    if let Some(providers) = document
-        .get_mut("model_providers")
-        .and_then(Item::as_table_mut)
-    {
-        providers.remove(MANAGED_AGENT_PROVIDER_ID);
-    }
-    if document
-        .get("model_providers")
-        .and_then(Item::as_table)
-        .is_some_and(toml_edit::Table::is_empty)
-    {
-        document.remove("model_providers");
-    }
     let rendered = document.to_string();
     toml::from_str::<toml::Value>(&rendered)
         .map_err(|error| format!("验证恢复后的 Codex 配置失败: {error}"))?;
-    if rendered.trim().is_empty() {
-        fs::remove_file(path).map_err(|error| {
-            format!("删除空的 Codex 配置失败 {}: {error}", path_to_string(path))
-        })?;
-    } else {
-        write_bytes_directly(path, rendered.as_bytes())?;
-    }
-    let mut changed = vec![path_to_string(path)];
+    let mut changed = vec![(
+        path.clone(),
+        (!rendered.trim().is_empty()).then(|| rendered.into_bytes()),
+    )];
     if managed_catalog {
-        let catalog_path = path.with_file_name(CODEX_MODEL_CATALOG_FILE);
-        if catalog_path.is_file() {
-            fs::remove_file(&catalog_path).map_err(|error| {
-                format!(
-                    "删除 Codex CPA 模型目录失败 {}: {error}",
-                    path_to_string(&catalog_path)
-                )
-            })?;
-            changed.push(path_to_string(&catalog_path));
-        }
+        changed.push((path.with_file_name(CODEX_MODEL_CATALOG_FILE), None));
     }
     Ok(changed)
 }
 
-pub(crate) fn remove_opencode_managed_configuration(
-    paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
+pub(crate) fn prepare_opencode_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
     let Some(path) = paths.first() else {
         return Err("OpenCode 当前平台配置路径不可用".to_string());
     };
     let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
-    let updated = update_agent_json5_file(path, "OpenCode 配置", |root| {
+    let updated = prepare_agent_json5_removal(path, "OpenCode 配置", |root| {
         let mut changed = false;
         if root
             .get("model")
@@ -1163,17 +1252,17 @@ pub(crate) fn remove_opencode_managed_configuration(
         }
         changed
     })?;
-    Ok(updated.then(|| path_to_string(path)).into_iter().collect())
+    Ok(updated.into_iter().collect())
 }
 
-pub(crate) fn remove_zcode_managed_configuration(paths: &[PathBuf]) -> Result<Vec<String>, String> {
+pub(crate) fn prepare_zcode_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
     if paths.is_empty() {
         return Err("ZCode 当前平台配置路径不可用".to_string());
     }
     let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
     let mut changed_paths = Vec::new();
     for path in paths {
-        let updated = update_agent_json_file(path, "ZCode 配置", |root| {
+        let updated = prepare_agent_json_removal(path, "ZCode 配置", |root| {
             let mut changed = false;
             let remove_model = if root
                 .get("model")
@@ -1215,17 +1304,15 @@ pub(crate) fn remove_zcode_managed_configuration(paths: &[PathBuf]) -> Result<Ve
             }
             changed
         })?;
-        if updated {
-            changed_paths.push(path_to_string(path));
+        if let Some(update) = updated {
+            changed_paths.push(update);
         }
     }
     Ok(changed_paths)
 }
 
-pub(crate) fn remove_kimi_code_managed_configuration(
-    paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
-    remove_managed_toml_client_configuration(
+pub(crate) fn prepare_kimi_code_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
+    prepare_managed_toml_client_removal(
         paths,
         "Kimi Code",
         Some("providers"),
@@ -1235,10 +1322,8 @@ pub(crate) fn remove_kimi_code_managed_configuration(
     )
 }
 
-pub(crate) fn remove_grok_build_managed_configuration(
-    paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
-    remove_managed_toml_client_configuration(
+pub(crate) fn prepare_grok_build_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
+    prepare_managed_toml_client_removal(
         paths,
         "Grok Build",
         None,
@@ -1248,14 +1333,14 @@ pub(crate) fn remove_grok_build_managed_configuration(
     )
 }
 
-pub(crate) fn remove_managed_toml_client_configuration(
+pub(crate) fn prepare_managed_toml_client_removal(
     paths: &[PathBuf],
     label: &str,
     provider_section: Option<&str>,
     model_entry_section: &str,
     default_section: Option<&str>,
     default_key: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Images, String> {
     use toml_edit::{Document, Item};
 
     let Some(path) = paths.first() else {
@@ -1272,14 +1357,15 @@ pub(crate) fn remove_managed_toml_client_configuration(
     let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
     let mut changed = false;
 
-    let default_table = if let Some(section) = default_section {
-        document
-            .as_table_mut()
-            .get_mut(section)
-            .and_then(Item::as_table_mut)
-    } else {
-        Some(document.as_table_mut())
-    };
+    let default_table: Option<&mut dyn toml_edit::TableLike> =
+        if let Some(section) = default_section {
+            document
+                .as_table_mut()
+                .get_mut(section)
+                .and_then(Item::as_table_like_mut)
+        } else {
+            Some(document.as_table_mut())
+        };
     if let Some(table) = default_table {
         if table
             .get(default_key)
@@ -1295,7 +1381,7 @@ pub(crate) fn remove_managed_toml_client_configuration(
         if let Some(providers) = document
             .as_table_mut()
             .get_mut(section)
-            .and_then(Item::as_table_mut)
+            .and_then(Item::as_table_like_mut)
         {
             changed |= providers.remove(MANAGED_AGENT_PROVIDER_ID).is_some();
         }
@@ -1303,7 +1389,7 @@ pub(crate) fn remove_managed_toml_client_configuration(
     if let Some(models) = document
         .as_table_mut()
         .get_mut(model_entry_section)
-        .and_then(Item::as_table_mut)
+        .and_then(Item::as_table_like_mut)
     {
         let managed = models
             .iter()
@@ -1319,8 +1405,8 @@ pub(crate) fn remove_managed_toml_client_configuration(
         let empty = document
             .as_table()
             .get(section)
-            .and_then(Item::as_table)
-            .is_some_and(toml_edit::Table::is_empty);
+            .and_then(Item::as_table_like)
+            .is_some_and(|table| table.is_empty());
         if empty {
             document.as_table_mut().remove(section);
         }
@@ -1329,8 +1415,8 @@ pub(crate) fn remove_managed_toml_client_configuration(
         let empty = document
             .as_table()
             .get(section)
-            .and_then(Item::as_table)
-            .is_some_and(toml_edit::Table::is_empty);
+            .and_then(Item::as_table_like)
+            .is_some_and(|table| table.is_empty());
         if empty {
             document.as_table_mut().remove(section);
         }
@@ -1341,29 +1427,22 @@ pub(crate) fn remove_managed_toml_client_configuration(
     let rendered = document.to_string();
     toml::from_str::<toml::Value>(&rendered)
         .map_err(|error| format!("验证恢复后的 {label} 配置失败: {error}"))?;
-    if rendered.trim().is_empty() {
-        fs::remove_file(path).map_err(|error| {
-            format!(
-                "删除空的 {label} 配置失败 {}: {error}",
-                path_to_string(path)
-            )
-        })?;
-    } else {
-        write_bytes_directly(path, rendered.as_bytes())?;
-    }
-    Ok(vec![path_to_string(path)])
+    Ok(vec![(
+        path.clone(),
+        (!rendered.trim().is_empty()).then(|| rendered.into_bytes()),
+    )])
 }
 
-pub(crate) fn update_agent_json5_file<F>(
+pub(crate) fn prepare_agent_json5_removal<F>(
     path: &Path,
     label: &str,
     update: F,
-) -> Result<bool, String>
+) -> Result<Option<FileSnapshot>, String>
 where
     F: FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> bool,
 {
     if !path.is_file() {
-        return Ok(false);
+        return Ok(None);
     }
     let content = fs::read_to_string(path)
         .map_err(|error| format!("读取 {label} 失败 {}: {error}", path_to_string(path)))?;
@@ -1374,32 +1453,31 @@ where
         .cloned()
         .ok_or_else(|| format!("{label} 根节点必须是对象"))?;
     if !update(&mut root) {
-        return Ok(false);
+        return Ok(None);
     }
-    if root.is_empty() {
-        fs::remove_file(path)
-            .map_err(|error| format!("删除空的 {label} 失败 {}: {error}", path_to_string(path)))?;
+    let bytes = if root.is_empty() {
+        None
     } else {
         let rendered = render_agent_json(root, label)?;
         let comments = extract_json5_comments(&content);
-        let rendered = if comments.is_empty() {
-            rendered
-        } else {
-            format!("{}\n{rendered}", comments.join("\n"))
-        };
-        write_bytes_directly(path, rendered.as_bytes())?;
-    }
-    Ok(true)
+        Some(
+            if comments.is_empty() {
+                rendered
+            } else {
+                format!("{}\n{rendered}", comments.join("\n"))
+            }
+            .into_bytes(),
+        )
+    };
+    Ok(Some((path.to_path_buf(), bytes)))
 }
 
-pub(crate) fn remove_openclaw_managed_configuration(
-    paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
+pub(crate) fn prepare_openclaw_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
     let Some(path) = paths.first() else {
         return Err("OpenClaw 当前平台配置路径不可用".to_string());
     };
     let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
-    let updated = update_agent_json5_file(path, "OpenClaw 配置", |root| {
+    let updated = prepare_agent_json5_removal(path, "OpenClaw 配置", |root| {
         let mut changed = false;
         if let Some(models) = root
             .get_mut("models")
@@ -1460,12 +1538,10 @@ pub(crate) fn remove_openclaw_managed_configuration(
         }
         changed
     })?;
-    Ok(updated.then(|| path_to_string(path)).into_iter().collect())
+    Ok(updated.into_iter().collect())
 }
 
-pub(crate) fn remove_hermes_managed_configuration(
-    paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
+pub(crate) fn prepare_hermes_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
     let Some(path) = paths.first() else {
         return Err("Hermes 当前平台配置路径不可用".to_string());
     };
@@ -1521,32 +1597,32 @@ pub(crate) fn remove_hermes_managed_configuration(
     if !changed {
         return Ok(Vec::new());
     }
-    if root.is_empty() {
-        fs::remove_file(path).map_err(|error| {
-            format!("删除空的 Hermes 配置失败 {}: {error}", path_to_string(path))
-        })?;
+    let bytes = if root.is_empty() {
+        None
     } else {
-        let rendered = render_updated_core_yaml(&mut document, updated)?;
-        write_bytes_directly(path, rendered.as_bytes())?;
-    }
-    Ok(vec![path_to_string(path)])
+        Some(render_updated_core_yaml(&mut document, updated)?.into_bytes())
+    };
+    Ok(vec![(path.clone(), bytes)])
 }
 
-pub(crate) fn remove_agent_managed_configuration(
+pub(crate) fn prepare_agent_managed_removal(
     client: AgentClient,
     paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
+    port: u16,
+) -> Result<Images, String> {
     match client {
-        AgentClient::ClaudeCode => remove_claude_code_managed_configuration(paths),
-        AgentClient::ClaudeDesktop => remove_claude_desktop_managed_configuration(paths),
-        AgentClient::Codex => remove_codex_managed_configuration(paths),
-        AgentClient::OpenCode => remove_opencode_managed_configuration(paths),
-        AgentClient::OpenClaw => remove_openclaw_managed_configuration(paths),
-        AgentClient::Hermes => remove_hermes_managed_configuration(paths),
-        AgentClient::DeepSeekHarness => remove_deepseek_harness_managed_configuration(paths),
-        AgentClient::ZCode => remove_zcode_managed_configuration(paths),
-        AgentClient::KimiCode => remove_kimi_code_managed_configuration(paths),
-        AgentClient::GrokBuild => remove_grok_build_managed_configuration(paths),
+        AgentClient::ClaudeCode => {
+            prepare_claude_code_managed_removal(paths, &managed_core_loopback_origin(port))
+        }
+        AgentClient::ClaudeDesktop => prepare_claude_desktop_managed_removal(paths),
+        AgentClient::Codex => prepare_codex_managed_removal(paths),
+        AgentClient::OpenCode => prepare_opencode_managed_removal(paths),
+        AgentClient::OpenClaw => prepare_openclaw_managed_removal(paths),
+        AgentClient::Hermes => prepare_hermes_managed_removal(paths),
+        AgentClient::DeepSeekHarness => prepare_deepseek_harness_managed_removal(paths),
+        AgentClient::ZCode => prepare_zcode_managed_removal(paths),
+        AgentClient::KimiCode => prepare_kimi_code_managed_removal(paths),
+        AgentClient::GrokBuild => prepare_grok_build_managed_removal(paths),
     }
 }
 
@@ -1588,9 +1664,9 @@ pub(crate) fn remove_deepseek_harness_settings_fields(root: &mut serde_norway::M
     changed
 }
 
-pub(crate) fn remove_deepseek_harness_managed_configuration(
+pub(crate) fn prepare_deepseek_harness_managed_removal(
     paths: &[PathBuf],
-) -> Result<Vec<String>, String> {
+) -> Result<Images, String> {
     if paths.len() != 2 {
         return Err("DeepSeek Harness 配置路径数量无效".to_string());
     }
@@ -1609,13 +1685,10 @@ pub(crate) fn remove_deepseek_harness_managed_configuration(
         )?;
         if changed {
             let root = parse_agent_yaml_mapping(Some(&rendered), "DeepSeek Harness settings")?;
-            if root.is_empty() {
-                fs::remove_file(&paths[0])
-                    .map_err(|error| format!("删除空的 DeepSeek Harness settings 失败: {error}"))?;
-            } else {
-                write_bytes_directly(&paths[0], rendered.as_bytes())?;
-            }
-            changed_paths.push(path_to_string(&paths[0]));
+            changed_paths.push((
+                paths[0].clone(),
+                (!root.is_empty()).then(|| rendered.into_bytes()),
+            ));
         }
     }
     if paths[1].is_file() {
@@ -1635,14 +1708,11 @@ pub(crate) fn remove_deepseek_harness_managed_configuration(
         )?;
         if changed {
             let root = parse_agent_yaml_mapping(Some(&rendered), "DeepSeek Harness credentials")?;
-            if deepseek_harness_credentials_document_is_empty(&root) {
-                fs::remove_file(&paths[1]).map_err(|error| {
-                    format!("删除空的 DeepSeek Harness credentials 失败: {error}")
-                })?;
-            } else {
-                write_deepseek_harness_file(&paths[1], rendered.as_bytes(), true)?;
-            }
-            changed_paths.push(path_to_string(&paths[1]));
+            changed_paths.push((
+                paths[1].clone(),
+                (!deepseek_harness_credentials_document_is_empty(&root))
+                    .then(|| rendered.into_bytes()),
+            ));
         }
     }
     Ok(changed_paths)
@@ -1719,6 +1789,19 @@ pub(crate) fn build_restored_claude_code_config(
             CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
             DISABLE_AUTO_COMPACT_ENV,
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            "CLAUDE_CODE_EFFORT_LEVEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION",
         ] {
             restore_json_key(env, original_env, key);
         }
@@ -1742,7 +1825,6 @@ pub(crate) fn build_restored_claude_desktop_config(
         0 | 1 => restore_json_key(&mut root, original_root.as_ref(), "deploymentMode"),
         2 => {
             for key in [
-                "coworkEgressAllowedHosts",
                 "disableDeploymentModeChooser",
                 "inferenceGatewayApiKey",
                 "inferenceGatewayAuthScheme",
@@ -2523,6 +2605,19 @@ pub(crate) fn build_agent_session_restored_bytes(
     current: Option<&[u8]>,
     original: Option<&[u8]>,
 ) -> Result<Option<Vec<u8>>, String> {
+    build_agent_session_restored_bytes_with_preference(
+        client, paths, path, current, original, true,
+    )
+}
+
+pub(crate) fn build_agent_session_restored_bytes_with_preference(
+    client: AgentClient,
+    paths: &[PathBuf],
+    path: &Path,
+    current: Option<&[u8]>,
+    original: Option<&[u8]>,
+    prefer_exact_original: bool,
+) -> Result<Option<Vec<u8>>, String> {
     let Some(current) = current else {
         return Ok(original.map(ToOwned::to_owned));
     };
@@ -2566,11 +2661,13 @@ pub(crate) fn build_agent_session_restored_bytes(
         AgentClient::KimiCode => build_restored_kimi_code_config(current, original)?,
         AgentClient::GrokBuild => build_restored_grok_build_config(current, original)?,
     };
-    if let (Some(restored), Some(original), Some(original_bytes)) =
-        (restored.as_deref(), original, original_bytes)
-    {
-        if agent_config_semantically_equal(client, restored, original) {
-            return Ok(Some(original_bytes.to_vec()));
+    if prefer_exact_original {
+        if let (Some(restored), Some(original), Some(original_bytes)) =
+            (restored.as_deref(), original, original_bytes)
+        {
+            if agent_config_semantically_equal(client, restored, original) {
+                return Ok(Some(original_bytes.to_vec()));
+            }
         }
     }
     Ok(restored.map(String::into_bytes))
@@ -2665,11 +2762,19 @@ pub(crate) fn build_codex_auth_update(
 ) -> Result<AgentFileUpdate, String> {
     let path = codex_configuration_directory(home).join("auth.json");
     let after = if oauth_configuration {
-        validate_codex_oauth_login_at(&path)?;
-        read_optional_text(&path)?
-            .ok_or_else(|| "Codex OAuth 登录凭据在应用配置前已被删除，请重新登录".to_string())?
+        if validate_codex_oauth_login_at(&path).is_ok() {
+            read_optional_text(&path)?
+                .ok_or_else(|| "Codex OAuth 登录凭据在应用配置前已被删除，请重新登录".to_string())?
+        } else {
+            available_codex_oauth_auth(home)?
+        }
     } else {
-        build_codex_api_auth(api_key)?
+        let path_text = read_optional_text(&path)?;
+        let mut root = parse_agent_json_object(path_text.as_deref(), "Codex auth.json")?;
+        for key in ["tokens", "last_refresh"] { root.remove(key); }
+        root.insert("auth_mode".into(), serde_json::json!("apikey"));
+        root.insert("OPENAI_API_KEY".into(), serde_json::json!(api_key));
+        render_agent_json(root, "Codex auth.json")?
     };
     Ok(AgentFileUpdate { path, after })
 }
@@ -2786,6 +2891,14 @@ pub(crate) fn build_restored_codex_agent_config(
     current: Option<&str>,
     original: Option<&str>,
 ) -> Result<Option<String>, String> {
+    build_restored_codex_agent_config_with_policy(current, original, true)
+}
+
+pub(crate) fn build_restored_codex_agent_config_with_policy(
+    current: Option<&str>,
+    original: Option<&str>,
+    retain_dormant_provider: bool,
+) -> Result<Option<String>, String> {
     use toml_edit::Item;
 
     let mut current_document = parse_codex_document(current, "当前 Codex config.toml")?;
@@ -2836,20 +2949,22 @@ pub(crate) fn build_restored_codex_agent_config(
                 provider.remove(key);
             }
         }
-    } else if let Some(providers) = current_document
-        .as_table_mut()
-        .get_mut("model_providers")
-        .and_then(Item::as_table_mut)
-    {
-        if let Some(provider) = providers
-            .get_mut(MANAGED_AGENT_PROVIDER_ID)
+    } else if !retain_dormant_provider {
+        if let Some(providers) = current_document
+            .as_table_mut()
+            .get_mut("model_providers")
             .and_then(Item::as_table_mut)
         {
-            for key in CODEX_MANAGED_PROVIDER_KEYS {
-                provider.remove(key);
-            }
-            if provider.is_empty() {
-                providers.remove(MANAGED_AGENT_PROVIDER_ID);
+            if let Some(provider) = providers
+                .get_mut(MANAGED_AGENT_PROVIDER_ID)
+                .and_then(Item::as_table_mut)
+            {
+                for key in CODEX_MANAGED_PROVIDER_KEYS {
+                    provider.remove(key);
+                }
+                if provider.is_empty() {
+                    providers.remove(MANAGED_AGENT_PROVIDER_ID);
+                }
             }
         }
     }
@@ -2979,8 +3094,6 @@ fn build_zcode_config(
         })
         .collect::<serde_json::Map<_, _>>();
     let managed_provider = ensure_json_object_entry(providers, MANAGED_AGENT_PROVIDER_ID);
-    // `npm` is an OpenCode provider field. ZCode treats it as an incompatible
-    // provider definition, so also remove values written by earlier versions.
     managed_provider.remove("npm");
     managed_provider.insert("enabled".to_string(), serde_json::json!(true));
     managed_provider.insert("name".to_string(), serde_json::json!("EasyCLIProxyAPI"));
@@ -3339,7 +3452,8 @@ pub(crate) fn build_hermes_agent_config(
         serde_norway::Value::String(MANAGED_AGENT_PROVIDER_ID.to_string()),
     );
     let rendered = if let Some(existing) = existing.filter(|value| !value.trim().is_empty()) {
-        render_yaml_value_changes(existing, &original, &root)?
+        render_yaml_value_changes(existing, &original, &root)
+            .or_else(|_| serde_norway::to_string(&root).map_err(|_| "生成 Hermes 配置失败".to_string()))?
     } else {
         serde_norway::to_string(&root).map_err(|error| format!("生成 Hermes 配置失败: {error}"))?
     };

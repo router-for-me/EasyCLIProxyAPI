@@ -563,6 +563,39 @@ fn thinking_alias_effort_accepts_provider_defined_levels() {
 }
 
 #[test]
+fn existing_aliases_with_spaces_can_be_loaded_and_deleted() {
+    assert_eq!(
+        existing_thinking_alias_model_id(" Codex Auto Review ", "别名模型").unwrap(),
+        "Codex Auto Review"
+    );
+    assert!(validate_thinking_alias_model_id("Codex Auto Review", "别名模型").is_err());
+    let content = "codex-api-key:\n  - name: provider\n    base-url: https://www.loomex.cc\n    models:\n      - name: codex-auto-review\n        alias: Codex Auto Review\n      - name: keep-me\n";
+    let entries = thinking_aliases_from_yaml(content).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].alias, "Codex Auto Review");
+    assert_eq!(entries[0].source_model, "codex-auto-review");
+    let context = model_alias_edit_context(content, "Codex Auto Review", &[]).unwrap();
+    assert_eq!(context.source.model, "codex-auto-review");
+    let deleted = remove_thinking_alias_from_yaml(content, "Codex Auto Review").unwrap();
+    assert!(thinking_aliases_from_yaml(&deleted).unwrap().is_empty());
+    assert!(deleted.contains("name: keep-me"));
+    assert!(!deleted.contains("Codex Auto Review"));
+    let source = resolve_model_alias_edit_source(content, "Codex Auto Review", &[]).unwrap();
+    let renamed = edit_model_alias_in_yaml(
+        content,
+        "Codex Auto Review",
+        &source,
+        "codex-auto-review-alias",
+        "",
+        false,
+    )
+    .unwrap();
+    let renamed_entries = thinking_aliases_from_yaml(&renamed).unwrap();
+    assert_eq!(renamed_entries.len(), 1);
+    assert_eq!(renamed_entries[0].alias, "codex-auto-review-alias");
+}
+
+#[test]
 fn thinking_alias_removal_keeps_other_models_in_grouped_rule() {
     let input = "oauth-model-alias:\n  codex:\n    - name: gpt-5.5\n      alias: gpt-5.5-xhigh\n      fork: true\n    - name: gpt-5.4\n      alias: gpt-5.4-xhigh\n      fork: true\npayload:\n  override:\n    - models:\n        - name: gpt-5.5-xhigh\n          protocol: codex\n        - name: gpt-5.4-xhigh\n          protocol: codex\n      params:\n        reasoning.effort: xhigh\n";
     let rendered = remove_thinking_alias_from_yaml(input, "gpt-5.5-xhigh").unwrap();
@@ -670,4 +703,54 @@ fn speed_alias_supports_codex_api_model_entries() {
     let entries = speed_aliases_from_yaml(&rendered).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "codex-api");
+}
+
+#[test]
+fn edit_model_alias_replaces_name_effort_and_fast_in_memory() {
+    let source = test_oauth_thinking_source("codex", "gpt-test");
+    let original =
+        add_model_alias_to_yaml("port: 8317\n", &source, "old-alias", "high", true).unwrap();
+    let updated = edit_model_alias_in_yaml(&original, "old-alias", &source, "new-alias", "low", false).unwrap();
+    let entries = thinking_aliases_from_yaml(&updated).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].alias, "new-alias");
+    assert_eq!(entries[0].effort.as_deref(), Some("low"));
+    assert!(speed_aliases_from_yaml(&updated).unwrap().is_empty());
+    assert!(updated.contains("port: 8317"));
+    assert!(!updated.contains("old-alias"));
+    let unchanged_name =
+        edit_model_alias_in_yaml(&original, "old-alias", &source, "old-alias", "", false).unwrap();
+    assert_eq!(
+        thinking_aliases_from_yaml(&unchanged_name).unwrap()[0].effort,
+        None
+    );
+}
+
+#[test]
+fn edit_model_alias_rejects_missing_and_ambiguous_aliases() {
+    assert!(resolve_model_alias_edit_source("port: 8317\n", "missing", &[]).is_err());
+    let content = "oauth-model-alias:\n  codex:\n    - name: model-a\n      alias: shared\n  claude:\n    - name: model-b\n      alias: shared\n";
+    assert!(resolve_model_alias_edit_source(content, "shared", &[]).is_err());
+}
+
+#[test]
+fn devin_aliases_use_the_devin_channel_without_unsupported_overrides() {
+    assert_eq!(normalize_oauth_alias_channel("cognition"), Some("devin"));
+    let available_models = test_agent_models(&["devin/swe-2"]);
+    let mut definitions = test_oauth_definition_set("devin", &["devin/swe-2"]);
+    definitions.models[0].reasoning_levels = vec!["medium".to_string(), "high".to_string()];
+    let definitions = vec![definitions];
+    let sources = resolved_oauth_alias_sources("{}\n", &definitions, &available_models, AliasSourceCapability::Base).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].source.kind, "devin-oauth");
+    let rendered = add_model_alias_to_yaml("{}\n", &sources[0], "swe-2", "", false).unwrap();
+    assert!(rendered.contains("devin:"), "{rendered}");
+    assert!(rendered.contains("name: devin/swe-2"), "{rendered}");
+    assert!(rendered.contains("alias: swe-2"), "{rendered}");
+    assert!(!rendered.contains("payload:"), "{rendered}");
+    let edited = model_alias_edit_context(&rendered, "swe-2", &definitions).unwrap();
+    assert!(edited.source.reasoning_levels.is_empty());
+    for capability in [AliasSourceCapability::Reasoning, AliasSourceCapability::Fast] {
+        assert!(resolved_oauth_alias_sources("{}\n", &definitions, &available_models, capability).unwrap().is_empty());
+    }
 }

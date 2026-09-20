@@ -172,7 +172,6 @@ fn updating_stops_an_adopted_core_without_a_port_before_replacing_its_config() {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     configure_background_command(&mut command);
-    // Spawn without the GUI's job guard to simulate a previous orphan.
     let mut child = command.spawn().unwrap();
     let output = io::BufReader::new(child.stdout.take().unwrap());
     let ready = output
@@ -196,9 +195,10 @@ fn updating_stops_an_adopted_core_without_a_port_before_replacing_its_config() {
 
     assert!(ready);
     assert!(
-        !status.running,
-        "the orphan has no listening management port"
+        status.running,
+        "the tracked orphan remains a running process without a listening management port"
     );
+    assert!(!status.ready, "the orphan is not management-ready");
     assert!(
         locked_result.is_err(),
         "the orphan must hold a real Windows file lock"
@@ -365,6 +365,44 @@ fn core_process_state_tracks_and_releases_adopted_processes() {
         vec![std::process::id()]
     );
     assert_eq!(state.managed_pid(), None);
+}
+
+#[test]
+fn tracked_core_stays_running_when_a_management_port_probe_misses() {
+    let state = CoreProcessState::new(false);
+    let binary_path = env::current_exe().unwrap();
+    let process_id = std::process::id();
+    state
+        .adopt_process_ids(&binary_path, vec![process_id])
+        .unwrap();
+
+    // Port zero cannot be the configured management endpoint. This models a
+    // transient failed health probe while the tracked process is still alive.
+    let status = current_core_status(Some(&state), Some(0)).unwrap();
+    state.clear_adopted_processes().unwrap();
+
+    assert!(status.running);
+    assert!(!status.ready);
+    assert_eq!(status.process_id, Some(process_id));
+}
+
+#[test]
+fn tracked_core_is_ready_when_its_management_port_accepts_connections() {
+    let state = CoreProcessState::new(false);
+    let binary_path = env::current_exe().unwrap();
+    let process_id = std::process::id();
+    state
+        .adopt_process_ids(&binary_path, vec![process_id])
+        .unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let status = current_core_status(Some(&state), Some(port)).unwrap();
+    state.clear_adopted_processes().unwrap();
+
+    assert!(status.running);
+    assert!(status.ready);
+    assert_eq!(status.process_id, Some(process_id));
 }
 
 #[test]
@@ -556,7 +594,7 @@ fn replacing_a_core_migrates_old_fields_into_the_new_template() {
 }
 
 #[test]
-fn replacing_a_core_discards_invalid_fields_and_continues_migration() {
+fn replacing_a_core_rejects_invalid_config_without_overwriting_files() {
     let root = agent_test_home("core-config-migrate-invalid");
     let source = root.join("source");
     let target = root.join("target");
@@ -574,16 +612,46 @@ fn replacing_a_core_discards_invalid_fields_and_continues_migration() {
         .unwrap();
     fs::write(target.join(CORE_CONFIG_FILE), "staged: untouched\n").unwrap();
 
-    migrate_core_config_for_update(&source, &target).unwrap();
+    let original = fs::read(source.join(CORE_CONFIG_FILE)).unwrap();
+    assert!(migrate_core_config_for_update(&source, &target).is_err());
+    assert_eq!(fs::read(source.join(CORE_CONFIG_FILE)).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap(),
+        "staged: untouched\n"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
 
-    let migrated = fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap();
-    let document = serde_norway::from_str::<serde_norway::Value>(&migrated).unwrap();
-    assert_eq!(document["host"], "127.0.0.1");
-    assert_eq!(document["broken"], "new-default");
-    assert_eq!(document["port"], 9527);
-    assert_eq!(document["api-keys"][0], "old-a");
-    assert_eq!(document["api-keys"][1], "old-b");
-    assert_eq!(document["new-option"], true);
+#[cfg(windows)]
+#[test]
+fn replacing_a_core_rejects_locked_config_without_using_defaults() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = agent_test_home("core-config-locked");
+    let source = root.join("source");
+    let target = root.join("target");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    let original = "codex-api-key:\n  - api-key: test-key\n    base-url: https://example.test\n";
+    let source_path = source.join(CORE_CONFIG_FILE);
+    fs::write(&source_path, original).unwrap();
+    fs::write(target.join(CORE_EXAMPLE_CONFIG_FILE), "port: 8317\n").unwrap();
+    fs::write(target.join(CORE_CONFIG_FILE), "staged: untouched\n").unwrap();
+    let locked = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&source_path)
+        .unwrap();
+    let result = migrate_core_config_for_update(&source, &target);
+    drop(locked);
+    assert!(
+        result.is_err(),
+        "unreadable configuration must not be replaced by defaults"
+    );
+    assert_eq!(fs::read_to_string(source_path).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap(),
+        "staged: untouched\n"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

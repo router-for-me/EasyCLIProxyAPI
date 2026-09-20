@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { MessageNotice } from '../appNotice';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -6,7 +7,6 @@ import {
   ArrowRight,
   Archive,
   Database,
-  Info,
   LoaderCircle,
   RefreshCw,
   ScanSearch,
@@ -41,6 +41,12 @@ type DeleteConfirmation = {
 
 const PAGE_SIZE = 50;
 
+let sessionViewCache = {
+  offset: 0,
+  selectionMode: false,
+  selectedIds: new Set<string>(),
+};
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -51,8 +57,8 @@ export function CodexSessionsPanel() {
   const [loading, setLoading] = useState(true);
   const [operation, setOperation] = useState<'delete' | 'repair' | 'preview' | 'cleanup' | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [selectionMode, setSelectionMode] = useState(() => sessionViewCache.selectionMode);
+  const [selectedIds, setSelectedIds] = useState(() => new Set(sessionViewCache.selectedIds));
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
   const [cleanupPreview, setCleanupPreview] = useState<SessionIndexCleanupPreview | null>(null);
   const [cleanupSelectedIds, setCleanupSelectedIds] = useState<Set<string>>(() => new Set());
@@ -62,13 +68,38 @@ export function CodexSessionsPanel() {
     processed: 0,
     total: 0,
   });
+  const mountedRef = useRef(false);
+  const loadRequestRef = useRef(0);
+  const initialOffsetRef = useRef(sessionViewCache.offset);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      loadRequestRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    sessionViewCache = {
+      offset: page?.offset ?? initialOffsetRef.current,
+      selectionMode,
+      selectedIds: new Set(selectedIds),
+    };
+  }, [page, selectionMode, selectedIds]);
 
   const loadPage = useCallback(async (offset = 0, silent = false) => {
-    if (!silent) setLoading(true);
+    if (!mountedRef.current) return null;
+    const requestId = ++loadRequestRef.current;
+    if (!silent) {
+      setLoading(true);
+      setNotice((current) => current?.kind === 'error' ? null : current);
+    }
     try {
       const result = await invoke<CodexSessionPage>('list_codex_sessions', {
         request: { offset, limit: PAGE_SIZE },
       });
+      if (!mountedRef.current || requestId !== loadRequestRef.current) return null;
       if (result.sessions.length === 0 && result.offset > 0) {
         return await loadPage(Math.max(0, result.offset - result.limit), silent);
       }
@@ -79,15 +110,16 @@ export function CodexSessionsPanel() {
       }
       return result;
     } catch (error) {
+      if (!mountedRef.current || requestId !== loadRequestRef.current) return null;
       setNotice({ kind: 'error', message: t('agents.sessions.loadFailed', { error: errorMessage(error) }) });
       return null;
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && mountedRef.current && requestId === loadRequestRef.current) setLoading(false);
     }
   }, [t]);
 
   useEffect(() => {
-    void loadPage();
+    void loadPage(sessionViewCache.offset);
   }, [loadPage]);
 
   useEffect(() => {
@@ -107,7 +139,8 @@ export function CodexSessionsPanel() {
 
   const sessions = page?.sessions ?? [];
   const pageCounts = codexSessionPageCounts(sessions);
-  const currentPage = Math.floor((page?.offset ?? 0) / (page?.limit ?? PAGE_SIZE)) + 1;
+  const currentOffset = page?.offset ?? initialOffsetRef.current;
+  const currentPage = Math.floor(currentOffset / (page?.limit ?? PAGE_SIZE)) + 1;
   const selectedSessions = useMemo(
     () => sessions.filter((session) => selectedIds.has(session.id)),
     [selectedIds, sessions],
@@ -172,7 +205,7 @@ export function CodexSessionsPanel() {
         }),
       });
       setSelectedIds(new Set());
-      await loadPage(page?.offset ?? 0, true);
+      await loadPage(currentOffset, true);
     } catch (error) {
       setNotice({ kind: 'error', message: t('agents.sessions.deleteFailed', { error: errorMessage(error) }) });
     } finally {
@@ -201,7 +234,7 @@ export function CodexSessionsPanel() {
         kind: result.encryptedContentWarning || result.warnings.length > 0 ? 'warning' : 'success',
         message: messages.join(' '),
       });
-      await loadPage(page?.offset ?? 0, true);
+      await loadPage(currentOffset, true);
     } catch (error) {
       setNotice({ kind: 'error', message: t('agents.sessions.repairFailed', { error: errorMessage(error) }) });
     } finally {
@@ -279,7 +312,7 @@ export function CodexSessionsPanel() {
             type="button"
             className="secondary-button compact-button"
             disabled={busy || loading}
-            onClick={() => void loadPage(page?.offset ?? 0)}
+            onClick={() => void loadPage(currentOffset)}
           >
             <RefreshCw size={15} className={loading ? 'spin' : ''} />
             {t('agents.sessions.refresh')}
@@ -353,13 +386,7 @@ export function CodexSessionsPanel() {
 
       </section>
 
-      {notice ? (
-        <div className={`codex-session-notice ${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}>
-          {notice.kind === 'error' ? <TriangleAlert size={16} /> : notice.kind === 'warning' ? <Info size={16} /> : <ShieldCheck size={16} />}
-          <span>{notice.message}</span>
-          <button type="button" aria-label={t('common.close')} onClick={() => setNotice(null)}><X size={14} /></button>
-        </div>
-      ) : null}
+      <MessageNotice message={notice?.message} tone={notice?.kind === 'warning' ? 'info' : notice?.kind ?? 'info'} onDismiss={() => setNotice(null)} />
 
       <section className="codex-session-list-section">
         <div className="codex-session-list-head">
@@ -439,7 +466,7 @@ export function CodexSessionsPanel() {
             aria-label={t('agents.sessions.previousPage')}
             title={t('agents.sessions.previousPage')}
             disabled={busy || loading || !page || page.offset === 0}
-            onClick={() => void loadPage(Math.max(0, (page?.offset ?? 0) - (page?.limit ?? PAGE_SIZE)))}
+            onClick={() => void loadPage(Math.max(0, currentOffset - (page?.limit ?? PAGE_SIZE)))}
           ><ArrowLeft size={15} /></button>
           <span>{t('agents.sessions.pageNumber', { page: currentPage })}</span>
           <button
@@ -448,7 +475,7 @@ export function CodexSessionsPanel() {
             aria-label={t('agents.sessions.nextPage')}
             title={t('agents.sessions.nextPage')}
             disabled={busy || loading || !page?.hasMore}
-            onClick={() => void loadPage((page?.offset ?? 0) + (page?.limit ?? PAGE_SIZE))}
+            onClick={() => void loadPage(currentOffset + (page?.limit ?? PAGE_SIZE))}
           ><ArrowRight size={15} /></button>
         </div>
       </section>

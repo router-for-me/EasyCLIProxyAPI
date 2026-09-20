@@ -1,0 +1,117 @@
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const assert = require('node:assert/strict');
+const { mkdirSync } = require('node:fs');
+
+(async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    page.setDefaultTimeout(10000);
+    await page.route('**/*', route => route.request().url().startsWith('http://127.0.0.1:1423/')
+      ? route.continue() : route.abort());
+    const errors = [];
+    page.on('pageerror', error => errors.push(String(error)));
+    await page.goto('http://127.0.0.1:1423/tests/fixtures/model-alias-editor.html', { waitUntil: 'domcontentloaded' });
+    const writes = () => page.evaluate(() => window.fixtureCalls.filter(call => call.cmd === 'create_thinking_alias'));
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.waitFor();
+    assert.equal(await dialog.locator('#thinking-model-search').inputValue(), 'upstream-gpt');
+    assert.equal(await dialog.locator('#thinking-alias-name').inputValue(), 'my-alias');
+    await page.keyboard.press('Escape');
+    assert.equal(await dialog.count(), 1);
+    assert.equal(await page.getByRole('listbox').count(), 0);
+    await dialog.getByRole('button', { name: 'Save', exact: true }).focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await dialog.getByRole('button', { name: 'Close', exact: true }).evaluate(el => el === document.activeElement), true);
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).evaluate(el => el === document.activeElement), true);
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal((await writes()).length, 0);
+    assert.equal(await page.getByRole('button', { name: 'Edit', exact: true }).evaluate(el => el === document.activeElement), true);
+
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await dialog.locator('#thinking-alias-name').fill('renamed-alias');
+    await dialog.getByRole('button', { name: 'Low', exact: true }).click();
+    await page.evaluate(() => { window.fixtureFailSave = true; });
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.locator('.app-notice-stack').getByRole('alert').waitFor();
+    assert.match(await page.locator('.app-notice-stack').getByRole('alert').innerText(), /configuration changed/);
+    assert.equal(await dialog.locator('#thinking-alias-name').inputValue(), 'renamed-alias');
+    await page.evaluate(() => { window.fixtureFailSave = false; });
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    const saved = (await writes()).at(-1).args;
+    assert.equal(saved.sourceId, 'alias-edit:my-alias');
+    assert.equal(saved.originalAlias, 'my-alias');
+    assert.equal(saved.expectedRevision, 'revision:my-alias');
+    assert.equal(saved.alias, 'renamed-alias');
+    assert.equal(saved.effort, 'low');
+    await page.getByText('Updated model alias renamed-alias', { exact: true }).waitFor();
+
+    await page.evaluate(() => { window.fixtureCurrentEffort = 'high'; });
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    assert.match(await dialog.getByRole('button', { name: 'High', exact: true }).getAttribute('class'), /active/);
+    await dialog.locator('#thinking-model-search').fill('public-gpt');
+    await page.getByRole('option').click();
+    assert.equal(await dialog.locator('#thinking-alias-name').inputValue(), 'renamed-alias');
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal((await writes()).at(-1).args.sourceId, 'openai-compatibility:0:0:provider-revision');
+    assert.equal((await writes()).at(-1).args.expectedRevision, 'revision:renamed-alias');
+
+    await page.setViewportSize({ width: 640, height: 600 });
+    await page.getByRole('button', { name: 'Create Alias', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await dialog.getByRole('button', { name: 'Create Alias', exact: true }).click();
+    const validation = page.locator('.app-notice-stack').getByRole('alert');
+    await validation.waitFor();
+    assert.equal(await validation.evaluate(el => Boolean(el.closest('[role="dialog"]'))), true);
+    const create = dialog.getByRole('button', { name: 'Create Alias', exact: true });
+    const close = dialog.getByRole('button', { name: 'Close', exact: true });
+    const createCount = (await writes()).length;
+    await create.focus();
+    await page.keyboard.press('Tab');
+    assert.equal(await validation.locator('.action-feedback-text').evaluate(el => el === document.activeElement), true, 'Tab reaches validation text');
+    await page.keyboard.press('Tab');
+    assert.equal(await validation.getByRole('button').evaluate(el => el === document.activeElement), true, 'Tab reaches notification dismissal');
+    await page.keyboard.press('Tab');
+    assert.equal(await close.evaluate(el => el === document.activeElement), true, 'Tab wraps inside the dialog from the notification');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await validation.getByRole('button').evaluate(el => el === document.activeElement), true, 'Reverse Tab reaches the notification');
+    await page.keyboard.press('Enter');
+    await validation.waitFor({ state: 'detached' });
+    assert.equal(await close.evaluate(el => el === document.activeElement), true, 'Keyboard dismissal restores focus in the dialog');
+    await create.click();
+    await validation.waitFor();
+    assert.match(await validation.innerText(), /Select an original model first/);
+    assert.equal((await writes()).length, createCount, 'Repeated invalid submission stays local and shows the same error again');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await validation.waitFor({ state: 'detached' });
+    assert.equal(await create.evaluate(el => el === document.activeElement), true, 'Dismissal returns to the submit button');
+    await dialog.locator('#thinking-model-search').fill('public-gpt');
+    await page.getByRole('option').click();
+    await dialog.locator('#thinking-alias-name').fill('new-alias');
+    const rect = await dialog.boundingBox();
+    assert.ok(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= 640 && rect.y + rect.height <= 600);
+    const overlap = await dialog.locator('.thinking-alias-dialog-body').evaluate(body => {
+      const fields = Array.from(body.children);
+      return fields.some((field, index) => index > 0 && field.getBoundingClientRect().top < fields[index - 1].getBoundingClientRect().bottom - 1);
+    });
+    assert.equal(overlap, false, 'Narrow dialog fields must scroll instead of overlapping');
+    assert.equal(await dialog.locator('.thinking-fast-option').evaluate(el => getComputedStyle(el).display), 'flex');
+    mkdirSync('misc', { recursive: true });
+    await page.screenshot({ path: 'misc/model-alias-editor-narrow.png', fullPage: true });
+    await dialog.getByRole('button', { name: 'Create Alias', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal((await writes()).at(-1).args.originalAlias, undefined);
+    assert.equal((await writes()).at(-1).args.expectedRevision, undefined);
+    assert.equal((await writes()).at(-1).args.alias, 'new-alias');
+    assert.deepEqual(errors, []);
+    console.log('PASS: remapped source, cancel, focus trap, Escape, floating errors, retry, rename, source switch, create, narrow dialog');
+  } finally {
+    await browser.close();
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });

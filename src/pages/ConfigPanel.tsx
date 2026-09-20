@@ -25,7 +25,6 @@ import {
   Route,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Power,
   Terminal,
   Trash2,
@@ -33,7 +32,7 @@ import {
 } from 'lucide-react';
 import { useCoreRuntime, type CoreStatus } from '../coreRuntime';
 import { useI18n } from '../i18n';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { webUiManagementUrl } from '../services/clientAccess';
 import { ThinkingAliasesPage } from './ThinkingAliasesPage';
 
@@ -51,6 +50,7 @@ type CoreConfigSettings = {
   allowLan: boolean;
   routingStrategy: string;
   proxyUrl: string;
+  proxyOverride: boolean;
   routingSessionAffinity: boolean;
   routingSessionAffinityTtl: string;
   disableCooling: boolean;
@@ -84,6 +84,7 @@ type NetworkDraftField =
   | 'port'
   | 'host'
   | 'proxyUrl'
+  | 'proxyOverride'
   | 'sessionAffinity'
   | 'sessionTtl'
   | 'disableCooling'
@@ -119,6 +120,7 @@ const cleanNetworkDraft = (): NetworkDraftDirty => ({
   port: false,
   host: false,
   proxyUrl: false,
+  proxyOverride: false,
   sessionAffinity: false,
   sessionTtl: false,
   disableCooling: false,
@@ -185,12 +187,13 @@ export function ConfigPanelPage() {
   const tlsFeedback = useAppNotice();
   const softwareFeedback = useAppNotice();
   const renderFeedback = (feedback: ReturnType<typeof useAppNotice>) => (
-    <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
+    <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
   );
   const [activeSubpage, setActiveSubpage] = useState<ConfigSubpage>('general');
   const [portDraft, setPortDraft] = useState('8317');
   const [hostDraft, setHostDraft] = useState('127.0.0.1');
   const [proxyUrlDraft, setProxyUrlDraft] = useState('');
+  const [proxyOverrideDraft, setProxyOverrideDraft] = useState(false);
   const [sessionAffinityDraft, setSessionAffinityDraft] = useState(false);
   const [sessionTtlDraft, setSessionTtlDraft] = useState('');
   const [disableCoolingDraft, setDisableCoolingDraft] = useState(false);
@@ -237,6 +240,7 @@ export function ConfigPanelPage() {
       if (!dirty.port) setPortDraft(String(result.port));
       if (!dirty.host) setHostDraft(result.host);
       if (!dirty.proxyUrl) setProxyUrlDraft(result.proxyUrl);
+      if (!dirty.proxyOverride) setProxyOverrideDraft(result.proxyOverride);
       if (!dirty.sessionAffinity) setSessionAffinityDraft(result.routingSessionAffinity);
       if (!dirty.sessionTtl) setSessionTtlDraft(result.routingSessionAffinityTtl);
       if (!dirty.disableCooling) setDisableCoolingDraft(result.disableCooling);
@@ -262,6 +266,7 @@ export function ConfigPanelPage() {
     setPortDraft(String(result.port));
     setHostDraft(result.host);
     setProxyUrlDraft(result.proxyUrl);
+    setProxyOverrideDraft(result.proxyOverride);
     setSessionAffinityDraft(result.routingSessionAffinity);
     setSessionTtlDraft(result.routingSessionAffinityTtl);
     setDisableCoolingDraft(result.disableCooling);
@@ -721,11 +726,14 @@ export function ConfigPanelPage() {
     setBusyAction('network');
     try {
       const result = await invoke<CoreConfigSettings>('save_network_endpoint_settings', {
-        settings: { host, port, proxyUrl },
+        settings: networkDraftDirtyRef.current.proxyUrl || networkDraftDirtyRef.current.proxyOverride
+          ? { host, port, proxyUrl, proxyOverride: proxyOverrideDraft }
+          : { host, port },
       });
       clearDraftDirty('host');
       clearDraftDirty('port');
       clearDraftDirty('proxyUrl');
+      clearDraftDirty('proxyOverride');
       applySettings(result, 'preserve');
       setLoadError('');
 
@@ -871,6 +879,7 @@ export function ConfigPanelPage() {
     hostDraft.trim() !== settings?.host
     || portDraft !== String(settings?.port)
     || proxyUrlDraft.trim() !== settings?.proxyUrl
+    || proxyOverrideDraft !== settings?.proxyOverride
   );
   const sessionRoutingDirty = Boolean(settings) && (
     sessionAffinityDraft !== settings?.routingSessionAffinity
@@ -1239,7 +1248,11 @@ export function ConfigPanelPage() {
             </div>
           </div>
 
-          <p className="config-diagnostics-intro">{t('config.diagnostics.description')}</p>
+          <p className="config-diagnostics-intro">
+            {t('config.diagnostics.description').split('**').map((part, index) => (
+              index % 2 === 1 ? <strong key={index}>{part}</strong> : part
+            ))}
+          </p>
 
           <div className="config-diagnostics-toggle-grid">
             <div className="config-diagnostics-setting">
@@ -1501,16 +1514,34 @@ export function ConfigPanelPage() {
                 <small>{t('config.network.listenHostHint')}</small>
               </label>
 
-              <label className="config-network-field">
-                <span className="config-network-label">
-                  <Link2 size={15} aria-hidden="true" />
-                  {t('config.network.proxyUrl')}
-                </span>
+              <div className="config-network-field config-proxy-field">
+                <div className="config-proxy-heading">
+                  <label className="config-network-label" htmlFor="config-network-proxy-url">
+                    <Link2 size={15} aria-hidden="true" />
+                    {t('config.network.proxyUrl')}
+                  </label>
+                  <label className="config-proxy-system-toggle" title={t('config.network.systemProxyHint')}>
+                    <span>{t('config.network.systemProxy')}</span>
+                    <span className="switch-control">
+                      <input
+                        type="checkbox"
+                        checked={!proxyOverrideDraft}
+                        disabled={controlsDisabled}
+                        onChange={(event) => {
+                          markDraftDirty('proxyOverride');
+                          setProxyOverrideDraft(!event.currentTarget.checked);
+                        }}
+                      />
+                      <span className="switch-track" />
+                    </span>
+                  </label>
+                </div>
                 <input
+                  id="config-network-proxy-url"
                   className="config-network-input"
                   type="text"
                   value={proxyUrlDraft}
-                  disabled={controlsDisabled}
+                  disabled={controlsDisabled || !proxyOverrideDraft}
                   placeholder={t('config.network.proxyPlaceholder')}
                   onChange={(event) => {
                     markDraftDirty('proxyUrl');
@@ -1525,7 +1556,7 @@ export function ConfigPanelPage() {
                   }}
                 />
                 <small>{t('config.network.proxyHint')}</small>
-              </label>
+              </div>
             </div>
           </section>
 
@@ -1903,9 +1934,8 @@ export function ConfigPanelPage() {
               </div>
             ) : null}
 
-            <div className={`config-tls-message ${tlsError ? 'error' : ''}`} role={tlsError ? 'alert' : undefined}>
-              {tlsError || t('config.tls.restartHint')}
-            </div>
+            <MessageNotice message={tlsError} onDismiss={() => setTlsError('')} />
+            <div className="config-tls-message">{t('config.tls.restartHint')}</div>
             {renderFeedback(tlsFeedback)}
           </div>
         </section>
@@ -2181,7 +2211,6 @@ export function ConfigPanelPage() {
                 onClick={generateApiKey}
                 disabled={keyMutationBusy}
               >
-                <Sparkles size={16} aria-hidden="true" />
                 {t('config.keys.generate')}
               </button>
               <button type="submit" className="primary-button" disabled={keyMutationBusy}>

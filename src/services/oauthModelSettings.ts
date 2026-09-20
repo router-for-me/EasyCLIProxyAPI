@@ -32,14 +32,12 @@ export const authFileExcludedRulesFromPayload = (payload: unknown): string[] => 
     try {
       metadata = JSON.parse(metadata);
     } catch {
-      // Parser errors can quote credential contents; show a fixed message instead.
       throw new Error(translate(getCurrentLocale(), 'authFiles.models.invalidMetadata'));
     }
   }
   if (!isRecord(metadata)) {
     throw new Error(translate(getCurrentLocale(), 'authFiles.models.invalidMetadata'));
   }
-  // CPA gives the canonical key precedence, including an explicit empty array or null.
   const rules = Object.prototype.hasOwnProperty.call(metadata, 'excluded_models')
     ? metadata.excluded_models
     : metadata['excluded-models'];
@@ -84,7 +82,6 @@ export const saveOAuthModelSettings = async (
   if (excludedModels.length === settings.excludedRules.length
     && excludedModels.every((rule) => settings.excludedRules.includes(rule))) return;
   if (settings.target.scope === 'credential') {
-    // Patch only this field: never upload a stale copy of tokens or other metadata.
     await api.patch('/auth-files/fields', {
       name: settings.target.name,
       excluded_models: excludedModels,

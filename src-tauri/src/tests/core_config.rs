@@ -393,7 +393,7 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
     assert!(config.request_log);
     assert!(config.plugins_enabled);
     assert_eq!(config.routing_strategy, "fill-first");
-    assert_eq!(config.proxy_url, "http://127.0.0.1:8080");
+    assert_eq!(config.proxy_url, "");
     assert!(config.routing_session_affinity);
     assert_eq!(config.routing_session_affinity_ttl, "45m");
     assert_eq!(config.request_retry, 1);
@@ -401,6 +401,40 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
     assert_eq!(config.max_retry_interval, 5);
     assert_eq!(config.streaming_bootstrap_retries, 1);
     assert!(config.run_on_startup);
+}
+
+#[test]
+fn external_core_proxy_changes_become_manual_overrides() {
+    let settings_with_proxy = |proxy_url: &str| {
+        let input = format!("proxy-url: \"{proxy_url}\"\n");
+        let document = serde_norway::from_str::<serde_norway::Value>(&input).unwrap();
+        core_config_settings_from_value(&document).unwrap()
+    };
+
+    let detected_url = "http://127.0.0.1:7890";
+    let mut unchanged = GuiConfigFile {
+        proxy_url: detected_url.to_string(),
+        proxy_override: false,
+        ..GuiConfigFile::default()
+    };
+    apply_external_core_proxy_override(&mut unchanged, &settings_with_proxy(detected_url)).unwrap();
+    assert!(!unchanged.proxy_override);
+
+    let mut custom = unchanged.clone();
+    apply_external_core_proxy_override(
+        &mut custom,
+        &settings_with_proxy("socks5://127.0.0.1:1080"),
+    )
+    .unwrap();
+    assert!(custom.proxy_override);
+    assert_eq!(custom.proxy_url, "socks5://127.0.0.1:1080");
+
+    let mut direct = unchanged;
+    apply_external_core_proxy_override(&mut direct, &settings_with_proxy("")).unwrap();
+    assert!(direct.proxy_override);
+    assert!(direct.proxy_url.is_empty());
+    ensure_strong_management_secret(&mut direct).unwrap();
+    assert!(validate_gui_config(&direct).is_ok());
 }
 
 #[test]
@@ -731,8 +765,6 @@ fn yaml_edit_runtime_patch_removes_empty_keys_and_skips_unsupported_sections() {
     assert!(rendered.contains("host: 127.0.0.1"));
     assert!(rendered.contains("port: 8317"));
 
-    // Nested plugin/routing sections are still optional for comment-preserving
-    // runtime patches; missing maps remain unsupported and stay untouched.
     let unsupported = "host: 127.0.0.1\nport: 8317\n";
     let file = unsupported.parse::<yaml_edit::YamlFile>().unwrap();
     let document = file.document().unwrap();
@@ -1133,6 +1165,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         plugins_enabled: true,
         routing_strategy: "fill-first".to_string(),
         proxy_url: "socks5://127.0.0.1:7890".to_string(),
+        proxy_override: true,
         download_source: VersionDownloadSource::Github,
         custom_download_mirrors: Vec::new(),
         active_custom_download_mirror: String::new(),

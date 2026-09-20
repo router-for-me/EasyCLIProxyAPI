@@ -29,6 +29,7 @@ export const normalizeAuthFilePriorityInput = (value: string): number | null => 
 
 const normalizeOAuthProvider = (value: string) => {
   const provider = value.trim().toLowerCase();
+  if (provider === 'cognition') return 'devin';
   if (provider === 'anthropic') return 'claude';
   if (provider === 'openai') return 'codex';
   return provider;
@@ -110,6 +111,7 @@ const mergeDuplicateAuthFiles = (entries: AuthFileRecord[]) => {
   const merged = { ...sorted[0] };
   sorted.slice(1).forEach((entry) => {
     Object.entries(entry).forEach(([key, value]) => {
+      if (key === 'cooldowns' && Object.prototype.hasOwnProperty.call(merged, key)) return;
       if (!hasMeaningfulValue(merged[key]) && hasMeaningfulValue(value)) merged[key] = value;
     });
   });

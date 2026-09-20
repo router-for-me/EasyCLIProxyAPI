@@ -309,6 +309,16 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Prepare shared release notes
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          node scripts/release-notes.mjs \
+            --tag "$RELEASE_TAG" \
+            --output "$RUNNER_TEMP/easycli-release-notes.json" \
+            --body-output "$RUNNER_TEMP/easycli-release-notes.md"
       - name: Generate portable update manifests
         shell: bash
         env:
@@ -321,7 +331,8 @@ jobs:
               --platform "$platform" \
               --repository "${{ github.repository }}" \
               --gitcode-repository "${{ vars.GITCODE_GUI_REPOSITORY }}" \
-              --tag "$RELEASE_TAG"
+              --tag "$RELEASE_TAG" \
+              --release-notes "$RUNNER_TEMP/easycli-release-notes.json"
           done
       - name: Publish release
         shell: bash
@@ -339,7 +350,7 @@ jobs:
           esac
 
           prerelease="$MANUAL_PRERELEASE"
-          release_args=(--title "EasyCLIProxyAPI $RELEASE_TAG" --generate-notes)
+          release_args=(--title "EasyCLIProxyAPI $RELEASE_TAG" --notes-file "$RUNNER_TEMP/easycli-release-notes.md")
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             if [[ "$RELEASE_TAG" == *-* ]]; then
               prerelease=true
@@ -355,6 +366,7 @@ jobs:
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" artifacts/* --clobber
+            gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/easycli-release-notes.md"
           else
             gh release create "$RELEASE_TAG" "${release_args[@]}" artifacts/*
           fi

@@ -16,6 +16,8 @@ describe('简易模式、首页、配置与版本管理导航', () => {
     expect(canOpenAppPage('versions', false)).toBe(true);
     expect(canOpenAppPage('config', false)).toBe(true);
     expect(canOpenAppPage('usage-records', false)).toBe(true);
+    expect(canOpenAppPage('agents', false)).toBe(true);
+    expect(isAlwaysAvailablePage('agents')).toBe(true);
     expect(canOpenAppPage('quota', false)).toBe(false);
   });
 

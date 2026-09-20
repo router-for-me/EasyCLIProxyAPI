@@ -40,6 +40,7 @@ export type ProviderHealthCheckOptions = {
 const defaultBaseUrl = (provider: ModelProvider) => {
   if (provider === 'claude') return 'https://api.anthropic.com';
   if (provider === 'gemini') return 'https://generativelanguage.googleapis.com';
+  if (provider === 'deepseek') return 'https://api.deepseek.com';
   return '';
 };
 
@@ -153,10 +154,12 @@ export function buildProviderHealthProbe(
   if (key) setHeaderIfMissing(headers, 'Authorization', `Bearer ${key}`);
   else if (authIndex) setHeaderIfMissing(headers, 'Authorization', 'Bearer $TOKEN$');
 
-  if (provider === 'codex') {
+  if (provider === 'codex' || provider === 'deepseek') {
     return {
       ...metadata,
-      url: `${root}/v1/responses`,
+      url: provider === 'deepseek'
+        ? `${normalizeBaseUrl(baseUrl.trim() || defaultBaseUrl(provider))}/responses`
+        : `${root}/v1/responses`,
       header: headers,
       protocol: 'openai-responses',
       data: JSON.stringify({

@@ -6,14 +6,79 @@ const modelText = (key: Parameters<typeof translate>[1]) => translate(getCurrent
 export type ModelOption = {
   name: string;
   alias?: string;
+  displayName?: string;
   isAlias?: boolean;
   contextWindow?: number;
+  inputModalities?: Array<'text' | 'image'>;
   thinking?: Record<string, unknown>;
 };
-export type ModelProvider = 'gemini' | 'codex' | 'claude' | 'openai';
+export type ModelProvider = 'gemini' | 'codex' | 'deepseek' | 'claude' | 'openai';
+
+export type ModelSelectionMode = 'initial' | 'refresh';
 
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com';
 const DEFAULT_CLAUDE_BASE_URL = 'https://api.anthropic.com';
+export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
+
+const modelKey = (name: string) => name.trim().toLowerCase();
+
+export function usableModelAlias(value: string | undefined | null): string {
+  const alias = value?.trim() ?? '';
+  if (!alias || alias.length > 240) return '';
+  for (const character of alias) {
+    const code = character.charCodeAt(0);
+    if (character.trim() === '' || code < 32 || code === 127) return '';
+  }
+  return alias;
+}
+
+export function modelSearchText(
+  model: Pick<ModelOption, 'name' | 'alias' | 'displayName'>,
+): string {
+  return [model.name, model.alias, model.displayName].filter(Boolean).join(' ').toLowerCase();
+}
+
+export function mergeModelOptions(...groups: ModelOption[][]): ModelOption[] {
+  const merged = new Map<string, ModelOption>();
+  groups.flat().forEach((model) => {
+    const name = model.name.trim();
+    if (!name) return;
+    const previous = merged.get(modelKey(name));
+    const next: ModelOption = { ...previous, ...model, name };
+    const alias = (model.alias ?? '').trim() || previous?.alias;
+    const displayName = (model.displayName ?? '').trim() || previous?.displayName;
+    if (alias && alias !== name) next.alias = alias;
+    else delete next.alias;
+    if (displayName && displayName !== name) next.displayName = displayName;
+    else delete next.displayName;
+    merged.set(modelKey(name), next);
+  });
+  return Array.from(merged.values());
+}
+
+export function reconcileModelSelection(
+  discoveredModels: ModelOption[],
+  configuredModels: ModelOption[],
+  selectedModelNames: Iterable<string>,
+  mode: ModelSelectionMode,
+): Set<string> {
+  const availableNames = new Set(
+    mergeModelOptions(discoveredModels, configuredModels).map((model) => modelKey(model.name)),
+  );
+  const configuredNames = new Set(
+    configuredModels.map((model) => modelKey(model.name)).filter(Boolean),
+  );
+  const previousSelection = new Set(
+    Array.from(selectedModelNames, modelKey).filter(Boolean),
+  );
+  const requestedSelection = mode === 'refresh'
+    ? previousSelection
+    : configuredNames.size > 0
+      ? configuredNames
+      : new Set(discoveredModels.map((model) => modelKey(model.name)).filter(Boolean));
+
+  return new Set(Array.from(requestedSelection).filter((name) => availableNames.has(name)));
+}
 
 export function normalizeBaseUrl(value: string): string {
   let raw = value.trim();
@@ -46,6 +111,8 @@ export const modelEndpointCandidates = (provider: ModelProvider, baseUrl: string
       ? DEFAULT_GEMINI_BASE_URL
       : provider === 'claude'
         ? DEFAULT_CLAUDE_BASE_URL
+        : provider === 'deepseek'
+          ? DEEPSEEK_BASE_URL
         : '');
   const normalized = normalizeBaseUrl(resolvedBaseUrl);
   if (!normalized) return [];
@@ -56,10 +123,11 @@ export const modelEndpointCandidates = (provider: ModelProvider, baseUrl: string
   const withoutVersion = base.replace(/\/(?:v1beta|v1)$/i, '');
   if (provider === 'gemini') return [`${withoutVersion}/v1beta/models`];
   if (provider === 'claude') return [`${withoutVersion}/v1/models`];
+  if (provider === 'deepseek') return [`${base}/models`];
   return [/\/v1$/i.test(base) ? `${base}/models` : `${base}/v1/models`];
 };
 
-const normalizeModelList = (payload: unknown): ModelOption[] => {
+const normalizeModelList = (payload: unknown, preserveExistingAlias = false): ModelOption[] => {
   const parsed = typeof payload === 'string' ? (() => {
     try { return JSON.parse(payload) as unknown; } catch { return payload; }
   })() : payload;
@@ -71,13 +139,17 @@ const normalizeModelList = (payload: unknown): ModelOption[] => {
     const name = typeof item === 'string' ? item : isRecord(item) ? readString(item, 'id', 'name', 'model', 'value') : '';
     if (!name || seen.has(name.toLowerCase())) return null;
     seen.add(name.toLowerCase());
-    const alias = typeof item === 'object' && isRecord(item) ? readString(item, 'alias', 'display_name', 'displayName') : '';
-    const thinking = typeof item === 'object' && isRecord(item) && isRecord(item.thinking)
-      ? { ...item.thinking }
+    const record = typeof item === 'object' && isRecord(item) ? item : null;
+    const rawAlias = record ? readString(record, 'alias') : '';
+    const alias = preserveExistingAlias ? rawAlias : usableModelAlias(rawAlias);
+    const displayName = record ? readString(record, 'display-name', 'display_name', 'displayName') : '';
+    const thinking = record && isRecord(record.thinking)
+      ? { ...record.thinking }
       : undefined;
     return {
       name,
       ...(alias && alias !== name ? { alias } : {}),
+      ...(displayName && displayName !== name ? { displayName } : {}),
       ...(thinking ? { thinking } : {}),
     };
   }).filter((item): item is ModelOption => item !== null);
@@ -85,7 +157,11 @@ const normalizeModelList = (payload: unknown): ModelOption[] => {
 
 export function modelsFromRecord(value: unknown): ModelOption[] {
   if (!Array.isArray(value)) return [];
-  return normalizeModelList(value);
+  return normalizeModelList(value, true);
+}
+
+export function modelsFromDiscoveredPayload(payload: unknown): ModelOption[] {
+  return normalizeModelList(payload);
 }
 
 export async function fetchModels(
@@ -143,7 +219,7 @@ export async function fetchModels(
         }
 
         const payload = response.body ?? response.bodyText;
-        normalizeModelList(payload).forEach((model) => {
+        modelsFromDiscoveredPayload(payload).forEach((model) => {
           const name = provider === 'gemini' ? model.name.replace(/^models\//i, '') : model.name;
           const dedupeKey = name.toLowerCase();
           if (!name || seen.has(dedupeKey)) return;
@@ -173,7 +249,7 @@ export async function fetchModels(
         }, { timeoutMs });
         const status = Number(response.status_code ?? response.statusCode ?? 0);
         if (status >= 200 && status < 300) {
-          const models = normalizeModelList(response.body ?? response.bodyText);
+          const models = modelsFromDiscoveredPayload(response.body ?? response.bodyText);
           if (models.length) return models;
         }
       }
@@ -187,11 +263,10 @@ export async function fetchModels(
           }, { timeoutMs });
           const status = Number(response.status_code ?? response.statusCode ?? 0);
           if (status >= 200 && status < 300) {
-            const models = normalizeModelList(response.body ?? response.bodyText);
+            const models = modelsFromDiscoveredPayload(response.body ?? response.bodyText);
             if (models.length) return models;
           }
         } catch {
-          // Keep the authenticated request error as the useful failure reason.
         }
       }
     }

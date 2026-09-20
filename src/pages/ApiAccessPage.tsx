@@ -1,4 +1,5 @@
 import { useConfirmation } from '../components/ConfirmationDialog';
+import { ModelSelectionPanel } from '../components/ModelSelectionPanel';
 import {
   type CSSProperties,
   FormEvent,
@@ -27,7 +28,6 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS as DndCss } from '@dnd-kit/utilities';
 import {
-  Check,
   Edit3,
   Filter,
   GripVertical,
@@ -52,9 +52,14 @@ import {
   readString,
 } from '../services/managementApi';
 import {
+  DEEPSEEK_BASE_URL,
   fetchModels,
+  mergeModelOptions,
+  modelSearchText,
   modelsFromRecord,
   normalizeBaseUrl,
+  reconcileModelSelection,
+  usableModelAlias,
   type ModelOption,
   type ModelProvider,
 } from '../services/modelService';
@@ -69,7 +74,7 @@ import {
 import { modelMatchesRule } from '../services/oauthModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import {
   apiAccessRecordIdentityFromRecord,
   apiAccessRecordIdentityFor,
@@ -89,9 +94,8 @@ export type ProviderSection =
 
 export type ProviderCategory = ProviderSection | 'deepseek';
 
-export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 export const OPENAI_THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
-export const DEEPSEEK_THINKING_LEVELS = ['low', 'high', 'max'] as const;
+export { DEEPSEEK_BASE_URL };
 
 type ProviderDefinition = {
   id: ProviderCategory;
@@ -118,8 +122,15 @@ type ProviderRow = {
   remark: string;
 };
 
-const providerDragId = (
-  row: Pick<ProviderRow, 'section' | 'name' | 'apiKey' | 'baseUrl'>,
+export type ApiAccessRemarkLocator = {
+  providerName: string;
+  baseUrl: string;
+  apiKeys: string[];
+  configIdentity?: string;
+};
+
+export const providerDragId = (
+  row: Pick<ProviderRow, 'section' | 'index' | 'name' | 'apiKey' | 'baseUrl'>,
 ) => {
   const identity = `${row.section}\u0000${row.name}\u0000${row.apiKey}\u0000${row.baseUrl}`;
   let hash = 2166136261;
@@ -127,7 +138,7 @@ const providerDragId = (
     hash ^= identity.charCodeAt(index);
     hash = Math.imul(hash, 16777619);
   }
-  return `${row.section}:${(hash >>> 0).toString(36)}`;
+  return `${row.section}:${(hash >>> 0).toString(36)}:${row.index}`;
 };
 
 function SortableProviderRow({
@@ -235,11 +246,11 @@ const providerDefinitions: ProviderDefinition[] = [
   },
   {
     id: 'deepseek',
-    section: 'openai-compatibility',
-    responseKey: 'openai-compatibility',
+    section: 'codex-api-key',
+    responseKey: 'codex-api-key',
     labelKey: 'apiAccess.provider.deepseek',
     icon: deepseekIcon,
-    openAi: true,
+    openAi: false,
   },
   { id: 'claude-api-key', section: 'claude-api-key', responseKey: 'claude-api-key', labelKey: 'apiAccess.provider.claude', icon: claudeIcon, openAi: false },
   { id: 'gemini-api-key', section: 'gemini-api-key', responseKey: 'gemini-api-key', labelKey: 'apiAccess.provider.gemini', icon: geminiIcon, openAi: false },
@@ -266,9 +277,17 @@ const isDeepSeekRecord = (record: Record<string, unknown>) => {
 export const providerCategoryMatchesRecord = (
   category: ProviderCategory,
   record: Record<string, unknown>,
+  section: ProviderSection = definitionFor(category).section,
 ) => {
-  if (category === 'deepseek') return isDeepSeekRecord(record);
-  if (category === 'openai-compatibility') return !isDeepSeekRecord(record);
+  if (category === 'deepseek') {
+    return section === 'codex-api-key' && isDeepSeekRecord(record);
+  }
+  if (category === 'codex-api-key') {
+    return section === 'codex-api-key' && !isDeepSeekRecord(record);
+  }
+  if (category === 'openai-compatibility') {
+    return section === 'openai-compatibility';
+  }
   return true;
 };
 
@@ -332,8 +351,26 @@ const rowFromRecord = (
   };
 };
 
-const providerRemarkIdentity = (section: ProviderSection, apiKeys: string[]) =>
-  `${section}\u0000${apiKeys.join('\u0000')}`;
+export const providerRemarkIdentity = (
+  section: ProviderSection,
+  locator: ApiAccessRemarkLocator,
+) => JSON.stringify([section, locator.providerName, locator.baseUrl, locator.apiKeys, locator.configIdentity ?? '']);
+
+export const apiAccessRemarkLocatorFromRecord = (
+  section: ProviderSection,
+  record: Record<string, unknown>,
+): ApiAccessRemarkLocator => {
+  const row = rowFromRecord(section, record, 0);
+  return {
+    providerName: readString(record, 'name'),
+    baseUrl: row.baseUrl,
+    apiKeys: row.apiKeys,
+    configIdentity: providerRemarkConfigIdentity(record),
+  };
+};
+
+const apiAccessRemarkLocatorFromRow = (row: ProviderRow): ApiAccessRemarkLocator =>
+  apiAccessRemarkLocatorFromRecord(row.section, row.record);
 
 const providerHealthIdentity = (row: ProviderRow) => [
   row.section,
@@ -346,9 +383,13 @@ const providerHealthIdentity = (row: ProviderRow) => [
   row.models.map((model) => model.name).join('\u0000'),
 ].join('\u0001');
 
-const providerModelType = (section: ProviderSection): ModelProvider => {
+const providerModelType = (
+  section: ProviderSection,
+  record?: Record<string, unknown>,
+): ModelProvider => {
   if (section === 'gemini-api-key') return 'gemini';
   if (section === 'claude-api-key') return 'claude';
+  if (section === 'codex-api-key' && record && isDeepSeekRecord(record)) return 'deepseek';
   if (section === 'codex-api-key') return 'codex';
   return 'openai';
 };
@@ -379,26 +420,113 @@ export const stripResponseFields = (record: Record<string, unknown>) => {
   return next;
 };
 
+const normalizeProviderIdentity = (value: unknown): unknown => {
+  if (value == null || value === '') return undefined;
+  if (Array.isArray(value)) return value.length ? value.map(normalizeProviderIdentity) : undefined;
+  if (isRecord(value)) {
+    const entries = Object.keys(value).sort().flatMap((key) => {
+      const normalized = normalizeProviderIdentity(value[key]);
+      return normalized === undefined ? [] : [[key, normalized]];
+    });
+    return entries.length ? Object.fromEntries(entries) : undefined;
+  }
+  return value;
+};
+
+const providerConfigIdentity = (record: Record<string, unknown>) => {
+  const config = stripResponseFields(record);
+  if (config.priority === 0) delete config.priority;
+  if (config.websockets === false) delete config.websockets;
+  if (config.disabled === false) delete config.disabled;
+  return JSON.stringify(normalizeProviderIdentity(config) ?? {});
+};
+
+const providerRemarkConfigIdentity = (record: Record<string, unknown>) => {
+  const config = stripResponseFields(record);
+  for (const key of ['name', 'api-key', 'apiKey', 'api-key-entries', 'base-url', 'baseUrl', 'disabled']) {
+    delete config[key];
+  }
+  if (Array.isArray(config['excluded-models'])) {
+    config['excluded-models'] = config['excluded-models'].filter((model) => String(model).trim() !== '*');
+  }
+  return providerConfigIdentity(config);
+};
+
+export const hasDuplicateProviderRecord = (
+  section: ProviderSection,
+  records: Record<string, unknown>[],
+  candidates: Record<string, unknown>[],
+  targetIndex = -1,
+) => records.some((record, index) => index !== targetIndex && candidates.some((candidate) => {
+  if (definitionFor(section).openAi) return readString(record, 'name') === readString(candidate, 'name');
+  if (section === 'gemini-api-key') {
+    return readString(record, 'api-key', 'apiKey') === readString(candidate, 'api-key', 'apiKey')
+      && readString(record, 'base-url', 'baseUrl') === readString(candidate, 'base-url', 'baseUrl');
+  }
+  return providerConfigIdentity(record) === providerConfigIdentity(candidate);
+}));
+
 const mergeModelRecords = (current: unknown, selected: ModelOption[]) => {
   const existing = Array.isArray(current) ? current : [];
+  const consumedExistingIndexes = new Set<number>();
+  const selectedNames = new Set<string>();
   const seen = new Set<string>();
-  return selected.reduce<Record<string, unknown>[]>((models, model) => {
+  const models = selected.reduce<Record<string, unknown>[]>((result, model) => {
     const name = model.name.trim();
     const key = name.toLowerCase();
-    if (!name || seen.has(key)) return models;
+    if (!name || seen.has(key)) return result;
     seen.add(key);
-    const matched = existing.find(
-      (item) => isRecord(item) && readString(item, 'name').toLowerCase() === name.toLowerCase(),
-    );
+    selectedNames.add(key);
+    const requested = (model.alias ?? '').trim();
+    const requestedAlias = requested.toLowerCase();
+    let matchedIndex = existing.findIndex((item, index) => (
+      !consumedExistingIndexes.has(index)
+      && isRecord(item)
+      && readString(item, 'name').toLowerCase() === key
+      && readString(item, 'alias').toLowerCase() === requestedAlias
+    ));
+    if (matchedIndex < 0) {
+      matchedIndex = existing.findIndex((item, index) => (
+        !consumedExistingIndexes.has(index)
+        && isRecord(item)
+        && readString(item, 'name').toLowerCase() === key
+      ));
+    }
+    if (matchedIndex >= 0) consumedExistingIndexes.add(matchedIndex);
+    const matched = matchedIndex >= 0 ? existing[matchedIndex] : undefined;
     const next: Record<string, unknown> = isRecord(matched) ? { ...matched } : {};
     next.name = name;
-    const alias = model.alias?.trim();
-    if (alias && alias !== name) next.alias = alias;
-    else delete next.alias;
+    const storedAlias = readString(next, 'alias');
+    const alias = usableModelAlias(requested);
+    if (alias && alias !== name) {
+      next.alias = alias;
+    } else if (
+      requested
+      && storedAlias
+      && requested.toLowerCase() === storedAlias.toLowerCase()
+      && requested.toLowerCase() !== name.toLowerCase()
+    ) {
+      next.alias = storedAlias;
+    } else if (requested && requested !== name) {
+      throw new Error(translate(getCurrentLocale(), 'aliases.error.invalidAlias'));
+    } else {
+      delete next.alias;
+    }
     if (model.thinking) next.thinking = { ...model.thinking };
-    models.push(next);
-    return models;
+    result.push(next);
+    return result;
   }, []);
+
+  existing.forEach((item, index) => {
+    if (
+      consumedExistingIndexes.has(index)
+      || !isRecord(item)
+      || !selectedNames.has(readString(item, 'name').toLowerCase())
+    ) return;
+    models.push({ ...item });
+  });
+
+  return models;
 };
 
 export const exclusionsForModelSelection = (
@@ -434,7 +562,6 @@ export const exclusionsForModelSelection = (
 };
 
 export const modelSelectionForDiscovery = (
-  section: ProviderSection,
   configuredModels: ModelOption[],
   discoveredModels: ModelOption[],
   excludedModelsText: string,
@@ -454,9 +581,6 @@ export const modelSelectionForDiscovery = (
       .map((model) => model.name.toLowerCase()),
   );
 };
-
-export const allModelSelectionForDiscovery = (models: ModelOption[]) =>
-  new Set(models.map((model) => model.name.trim().toLowerCase()).filter(Boolean));
 
 export const parseProviderApiKeys = (value: string) => value
   .split(/\r?\n/)
@@ -497,9 +621,9 @@ const thinkingLevelsFromModels = (models: ModelOption[]): string[] => {
 
 const draftFromRow = (row: ProviderRow): ProviderDraft => {
   const definition = definitionFor(row.section);
-  const isDeepSeek = row.section === 'openai-compatibility' && isDeepSeekRecord(row.record);
+  const isDeepSeek = row.section === 'codex-api-key' && isDeepSeekRecord(row.record);
   return {
-    name: row.name,
+    name: isDeepSeek ? 'DeepSeek' : row.name,
     apiKey: definition.openAi ? row.apiKeys.join('\n') : row.apiKey,
     remark: row.remark || (definition.openAi && !isDeepSeek ? row.name : ''),
     baseUrl: row.baseUrl,
@@ -566,7 +690,6 @@ export const createProviderDraft = (category: ProviderCategory): ProviderDraft =
     name: 'DeepSeek',
     remark: '',
     baseUrl: DEEPSEEK_BASE_URL,
-    thinkingLevels: [...DEEPSEEK_THINKING_LEVELS],
   };
 };
 
@@ -584,9 +707,7 @@ export const applyProviderPreset = (
   draft: ProviderDraft,
 ): ProviderDraft => {
   if (!definitionFor(category).openAi || draft.thinkingLevels === undefined) return draft;
-  const levels = category === 'deepseek'
-    ? [...DEEPSEEK_THINKING_LEVELS]
-    : draft.thinkingLevels;
+  const levels = draft.thinkingLevels;
   return {
     ...draft,
     models: draft.models.map((model) => {
@@ -722,6 +843,9 @@ export const buildProviderRecord = (
     'api-key': draft.apiKey.trim(),
     models,
   };
+  if (section === 'codex-api-key' && draft.name.trim().toLowerCase() === 'deepseek') {
+    next.name = 'DeepSeek';
+  }
   if (draft.baseUrl.trim()) next['base-url'] = draft.baseUrl.trim();
   else delete next['base-url'];
   if (priority !== null && Number.isFinite(priority)) next.priority = priority;
@@ -745,7 +869,7 @@ const providerIdentityMatches = (
 export type ProviderRecordIdentity = Pick<
   ProviderRow,
   'section' | 'index' | 'name' | 'apiKey' | 'baseUrl'
->;
+> & Partial<Pick<ProviderRow, 'record'>>;
 
 const providerPrimaryIdentityMatches = (
   row: ProviderRecordIdentity,
@@ -758,8 +882,29 @@ export const resolveProviderRecordIndex = (
   records: Record<string, unknown>[],
   row: ProviderRecordIdentity,
 ) => {
-  const exactIndex = records.findIndex((record) => providerIdentityMatches(row, record));
-  if (exactIndex >= 0) return exactIndex;
+  if (row.record) {
+    const identity = providerConfigIdentity(row.record);
+    const matches = records.flatMap((record, index) => (
+      providerConfigIdentity(record) === identity ? [index] : []
+    ));
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) return matches.includes(row.index) ? row.index : -1;
+
+    const withoutBaseUrl = (record: Record<string, unknown>) => {
+      const { 'base-url': _baseUrl, baseUrl: _camelBaseUrl, ...rest } = record;
+      return providerConfigIdentity(rest);
+    };
+    const defaultUrlMatches = records.flatMap((record, index) => (
+      providerPrimaryIdentityMatches(row, record)
+      && (!readString(record, 'base-url', 'baseUrl') || !row.baseUrl)
+      && withoutBaseUrl(record) === withoutBaseUrl(row.record!) ? [index] : []
+    ));
+    return defaultUrlMatches.length === 1 ? defaultUrlMatches[0] : -1;
+  }
+
+  const exactMatches = records.flatMap((record, index) => providerIdentityMatches(row, record) ? [index] : []);
+  if (exactMatches.length === 1) return exactMatches[0];
+  if (exactMatches.length > 1) return -1;
 
   const indexedRecord = records[row.index];
   if (indexedRecord && providerPrimaryIdentityMatches(row, indexedRecord)) {
@@ -832,7 +977,6 @@ export function ApiAccessPage() {
   const [error, setError] = useState('');
   const feedback = useAppNotice();
   const { showNotice: setNotice } = feedback;
-  const [feedbackRow, setFeedbackRow] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRow, setEditingRow] = useState<ProviderRow | null>(null);
   const [dialogDraft, setDialogDraft] = useState<ProviderDraft>(emptyProviderDraft);
@@ -887,12 +1031,12 @@ export function ApiAccessPage() {
     void invoke<string[]>('resolve_api_access_remarks', {
       queries: providerRows.map((row) => ({
         providerSection: row.section,
-        apiKeys: row.apiKeys,
+        ...apiAccessRemarkLocatorFromRow(row),
       })),
     }).then((remarks) => {
       if (disposed) return;
       setApiAccessRemarks(Object.fromEntries(providerRows.map((row, index) => [
-        providerRemarkIdentity(row.section, row.apiKeys),
+        providerRemarkIdentity(row.section, apiAccessRemarkLocatorFromRow(row)),
         remarks[index] ?? '',
       ])));
     }).catch(() => {
@@ -910,9 +1054,14 @@ export function ApiAccessPage() {
         .map((row) => ({
           ...row,
           balanceUrl: apiBalanceUrls[apiAccessRecordIdentityKey(apiAccessRecordIdentityFromRecord(row.section, row.record))] ?? '',
-          remark: apiAccessRemarks[providerRemarkIdentity(row.section, row.apiKeys)] ?? '',
+          name: activeCategory === 'deepseek'
+            ? t('apiAccess.provider.deepseek')
+            : row.name,
+          remark: apiAccessRemarks[
+            providerRemarkIdentity(row.section, apiAccessRemarkLocatorFromRow(row))
+          ] ?? '',
         }))
-        .filter((row) => providerCategoryMatchesRecord(activeCategory, row.record))
+        .filter((row) => providerCategoryMatchesRecord(activeCategory, row.record, activeSection))
         .filter((row) => {
           const query = filter.trim().toLowerCase();
           if (!query) return true;
@@ -921,12 +1070,11 @@ export function ApiAccessPage() {
             .toLowerCase()
             .includes(query);
         }),
-    [activeCategory, activeSection, apiAccessRemarks, apiBalanceUrls, filter, records],
+    [activeCategory, activeSection, apiAccessRemarks, apiBalanceUrls, filter, records, t],
   );
 
   const openCreate = () => {
     feedback.clearNotice();
-    setFeedbackRow(null);
     setError('');
     setEditingRow(null);
     setDialogDraft(createProviderDraft(activeCategory));
@@ -935,18 +1083,17 @@ export function ApiAccessPage() {
 
   const openEdit = (row: ProviderRow) => {
     feedback.clearNotice();
-    setFeedbackRow(null);
     setError('');
     setEditingRow(row);
     const draft = draftFromRow(row);
-    setDialogDraft(activeCategory === 'deepseek'
-      ? { ...draft, thinkingLevels: [...DEEPSEEK_THINKING_LEVELS] }
-      : draft);
+    setDialogDraft(draft);
     setDialogOpen(true);
   };
 
-  const saveProvider = async (nextDraft: ProviderDraft): Promise<ProviderSaveResult> => {
-    setFeedbackRow(null);
+  const saveProvider = async (
+    nextDraft: ProviderDraft,
+    modelDiscoveryReady: boolean,
+  ): Promise<ProviderSaveResult> => {
     const definition = activeDefinition;
     const preparedDraft = applyProviderRemarkIdentity(
       activeCategory,
@@ -975,6 +1122,16 @@ export function ApiAccessPage() {
             : t('apiAccess.error.requiredKey'),
       };
     }
+    if (
+      activeCategory === 'deepseek'
+      && (!modelDiscoveryReady || preparedDraftForSave.models.length === 0)
+    ) {
+      return {
+        saved: false,
+        target: 'models',
+        error: t('apiAccess.error.fetchModelsBeforeSave'),
+      };
+    }
     if (Array.from(preparedDraft.remark.trim()).length > 80 || /[\u0000-\u001f\u007f]/.test(preparedDraft.remark)) {
       return { saved: false, target: 'form', error: t('apiAccess.error.remarkInvalid') };
     }
@@ -993,7 +1150,11 @@ export function ApiAccessPage() {
     setError('');
     try {
       let draftToSave: ProviderDraft = { ...preparedDraftForSave, baseUrl, balanceUrl };
-      if (definition.openAi && draftToSave.models.length === 0) {
+      if (
+        definition.openAi
+        && activeCategory !== 'deepseek'
+        && draftToSave.models.length === 0
+      ) {
         let fetchedModels: ModelOption[];
         try {
           fetchedModels = await fetchModels(
@@ -1032,16 +1193,6 @@ export function ApiAccessPage() {
         currentRecord = current[targetIndex];
       }
 
-      const duplicate = current.some((record, index) => {
-        if (index === targetIndex) return false;
-        if (definition.openAi) return readString(record, 'name') === preparedDraft.name.trim();
-        return parsedApiKeys.some((apiKey) => (
-          readString(record, 'api-key', 'apiKey').trim() === apiKey
-          && readString(record, 'base-url', 'baseUrl').trim() === baseUrl
-        ));
-      });
-      if (duplicate) throw new Error(t('apiAccess.error.duplicate'));
-
       const recordsToSave = definition.openAi
         ? [buildProviderRecord(activeSection, draftToSave, currentRecord)]
         : parsedApiKeys.map((apiKey) => buildProviderRecord(
@@ -1049,6 +1200,9 @@ export function ApiAccessPage() {
           { ...draftToSave, apiKey },
           currentRecord,
         ));
+      if (hasDuplicateProviderRecord(activeSection, current, recordsToSave, targetIndex)) {
+        throw new Error(t('apiAccess.error.duplicate'));
+      }
       nextList = editingRow
         ? [
           ...current.slice(0, targetIndex),
@@ -1071,8 +1225,13 @@ export function ApiAccessPage() {
       await invoke('save_api_access_remark', {
         update: {
           providerSection: activeSection,
-          previousApiKeys: editingRow?.apiKeys ?? [],
-          apiKeys: parsedApiKeys,
+          previousRecords: editingRow ? [apiAccessRemarkLocatorFromRow(editingRow)] : [],
+          records: recordsToSave.map((record) => (
+            apiAccessRemarkLocatorFromRecord(activeSection, record)
+          )),
+          allRecords: nextList.map((record) => (
+            apiAccessRemarkLocatorFromRecord(activeSection, record)
+          )),
           remark: draftToSave.remark,
         },
       });
@@ -1088,18 +1247,16 @@ export function ApiAccessPage() {
 
   const deleteRow = async (row: ProviderRow) => {
     if (!await askConfirmation({ title: t('common.delete'), message: t('apiAccess.deleteConfirm', { remark: row.remark || row.name }), confirmText: t('common.delete'), variant: 'danger' })) return;
-    setFeedbackRow(providerDragId(row));
     feedback.clearNotice();
     setBusy(true);
     setError('');
     try {
-      if (definitionFor(row.section).openAi) {
-        await managementApi.delete('/openai-compatibility', { query: { name: row.name } });
-      } else {
-        await managementApi.delete(`/${row.section}`, {
-          query: { 'api-key': row.apiKey, 'base-url': row.baseUrl },
-        });
-      }
+      const latestConfig = await managementApi.get('/config');
+      const current = sectionRecordsFromConfig(latestConfig, row.section);
+      const targetIndex = resolveProviderRecordIndex(current, row);
+      if (targetIndex < 0) throw new Error(t('apiAccess.error.stale'));
+      const remainingRecords = current.filter((_, index) => index !== targetIndex).map(stripResponseFields);
+      await managementApi.put(`/${row.section}`, remainingRecords);
       await saveApiAccessBalanceEndpoint(
         apiAccessRecordIdentityFromRecord(row.section, row.record),
         null,
@@ -1108,12 +1265,14 @@ export function ApiAccessPage() {
       await invoke('save_api_access_remark', {
         update: {
           providerSection: row.section,
-          previousApiKeys: row.apiKeys,
-          apiKeys: [],
+          previousRecords: [apiAccessRemarkLocatorFromRow(row)],
+          records: [],
+          allRecords: remainingRecords.map((record) => (
+            apiAccessRemarkLocatorFromRecord(row.section, record)
+          )),
           remark: '',
         },
       });
-      setFeedbackRow(null);
       setNotice({ key: 'apiAccess.notice.deleted' });
       await loadProviders();
     } catch (requestError) {
@@ -1124,7 +1283,6 @@ export function ApiAccessPage() {
   };
 
   const toggleProvider = async (row: ProviderRow) => {
-    setFeedbackRow(providerDragId(row));
     setBusy(true);
     setError('');
     setNotice('');
@@ -1167,7 +1325,6 @@ export function ApiAccessPage() {
 
   const reorderProviders = async (source: ProviderRow, target: ProviderRow) => {
     if (source.section !== target.section || source.index === target.index) return;
-    setFeedbackRow(providerDragId(source));
     setBusy(true);
     setError('');
     setNotice('');
@@ -1209,7 +1366,7 @@ export function ApiAccessPage() {
 
   const countForDefinition = (definition: ProviderDefinition) =>
     records[definition.section].filter((record) =>
-      providerCategoryMatchesRecord(definition.id, record)
+      providerCategoryMatchesRecord(definition.id, record, definition.section)
     ).length;
 
   return (
@@ -1232,8 +1389,7 @@ export function ApiAccessPage() {
         </div>
       </header>
 
-      {error ? <div className="management-alert error">{error}</div> : null}
-
+      {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
       <div className="provider-workbench real-provider-workbench">
         <aside className="panel provider-category-panel">
           {providerDefinitions.map((definition) => (
@@ -1244,7 +1400,6 @@ export function ApiAccessPage() {
               onClick={() => {
                 setActiveCategory(definition.id);
                 feedback.clearNotice();
-                setFeedbackRow(null);
               }}
               disabled={busy}
             >
@@ -1267,7 +1422,6 @@ export function ApiAccessPage() {
             </div>
           </div>
 
-          {feedbackRow === null ? <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} /> : null}
           {loading ? (
             <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('apiAccess.loading')}</div>
           ) : rows.length === 0 ? (
@@ -1309,7 +1463,6 @@ export function ApiAccessPage() {
                     </code>
                     <span className="provider-row-url" title={row.baseUrl || undefined}>{row.baseUrl || t('apiAccess.defaultUrl')}</span>
                     {row.models.length > 0 ? <span className="provider-row-models">{t('apiAccess.models.summary', { count: row.models.length })}</span> : null}
-                    {feedbackRow === providerDragId(row) ? <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} /> : null}
                   </div>
                   {row.priority === null ? null : (
                     <div className="provider-row-meta">
@@ -1371,6 +1524,7 @@ export function ApiAccessPage() {
           onClose={() => setHealthDialogRow(null)}
         />
       ) : null}
+      <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
     </section>
   );
 }
@@ -1403,7 +1557,7 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
   }, []);
 
   const healthOptions = useMemo<ProviderHealthCheckOptions>(() => ({
-    provider: providerModelType(row.section),
+    provider: providerModelType(row.section, row.record),
     baseUrl: row.baseUrl,
     apiKeys: row.apiKeys,
     authIndex: row.authIndex,
@@ -1437,9 +1591,7 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
   const visibleModels = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return models;
-    return models.filter((model) =>
-      `${model.name} ${model.alias ?? ''}`.toLowerCase().includes(query),
-    );
+    return models.filter((model) => modelSearchText(model).includes(query));
   }, [models, search]);
 
   const resultValues = Object.values(results);
@@ -1514,7 +1666,7 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
             failed: failedCount,
           })}</span>
           {modelError ? (
-            <small className="error" title={modelError}>{t('apiAccess.health.modelLoadFailed', { error: modelError })}</small>
+            <MessageNotice message={t('apiAccess.health.modelLoadFailed', { error: modelError })} onDismiss={() => setModelError('')} />
           ) : modelLoading ? (
             <small>{t('apiAccess.health.loadingModels')}</small>
           ) : null}
@@ -1551,8 +1703,8 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
                   <strong title={model.name}>{model.name}</strong>
                   {error
                     ? <small className="error" title={error}>{error}</small>
-                    : model.alias
-                      ? <small title={model.alias}>{model.alias}</small>
+                    : model.alias || model.displayName
+                      ? <small title={model.alias || model.displayName}>{model.alias || model.displayName}</small>
                       : null}
                 </div>
                 <span
@@ -1599,10 +1751,10 @@ type ApiProviderDialogProps = {
   initialDraft: ProviderDraft;
   busy: boolean;
   onClose: () => void;
-  onSave: (draft: ProviderDraft) => Promise<ProviderSaveResult>;
+  onSave: (draft: ProviderDraft, modelDiscoveryReady: boolean) => Promise<ProviderSaveResult>;
 };
 
-function ApiProviderDialog({
+export function ApiProviderDialog({
   activeCategory,
   editingRow,
   initialDraft,
@@ -1619,37 +1771,73 @@ function ApiProviderDialog({
   const [formError, setFormError] = useState('');
   const [discoveredModels, setDiscoveredModels] = useState<ModelOption[]>([]);
   const [modelDiscoveryOpen, setModelDiscoveryOpen] = useState(false);
-  const [modelSearch, setModelSearch] = useState('');
+  const [modelDiscoveryReady, setModelDiscoveryReady] = useState(
+    () => activeCategory !== 'deepseek'
+      || Boolean(editingRow && initialDraft.models.some((model) => model.name.trim())),
+  );
   const [thinkingLevelInput, setThinkingLevelInput] = useState('');
   const [selectedModelNames, setSelectedModelNames] = useState<Set<string>>(
-    () => new Set(initialDraft.models.map((model) => model.name.toLowerCase())),
+    () => new Set(mergeModelOptions(initialDraft.models).map((model) => model.name.toLowerCase())),
   );
   const modelCardRef = useRef<HTMLDivElement>(null);
+  const modelDialogRef = useRef<HTMLElement>(null);
+  const discoverySelectionInitializedRef = useRef(false);
+  const discoveryRequestRef = useRef(0);
 
-  const modelOptions = useMemo(() => {
-    const options = new Map<string, ModelOption>();
-    [...discoveredModels, ...draft.models].forEach((model) => {
-      const name = model.name.trim();
-      if (name) options.set(name.toLowerCase(), { ...model, name });
-    });
-    return Array.from(options.values());
-  }, [discoveredModels, draft.models]);
+  const closeModelDiscovery = useCallback(() => {
+    discoveryRequestRef.current += 1;
+    setModelLoading(false);
+    setModelDiscoveryOpen(false);
+  }, []);
+
+  useEffect(() => () => { discoveryRequestRef.current += 1; }, []);
+
+  useEffect(() => {
+    if (!modelDiscoveryOpen) return;
+    const previousFocus = document.activeElement;
+    const dialog = modelDialogRef.current;
+    dialog?.querySelector<HTMLInputElement>('input')?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeModelDiscovery();
+      } else if (event.key === 'Tab') {
+        const controls = Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, [modelDiscoveryOpen, closeModelDiscovery]);
+
+  const modelOptions = useMemo(
+    () => mergeModelOptions(discoveredModels, draft.models),
+    [discoveredModels, draft.models],
+  );
 
   const configuredModels = useMemo(
     () => draft.models.filter((model) => model.name.trim()),
     [draft.models],
   );
 
-  const visibleModelOptions = useMemo(() => {
-    const query = modelSearch.trim().toLowerCase();
-    if (!query) return modelOptions;
-    return modelOptions.filter((model) =>
-      `${model.name} ${model.alias ?? ''}`.toLowerCase().includes(query),
-    );
-  }, [modelOptions, modelSearch]);
-
-  const allVisibleModelsSelected = visibleModelOptions.length > 0
-    && visibleModelOptions.every((model) => selectedModelNames.has(model.name.toLowerCase()));
+  const selectedModels = useMemo(() => modelOptions.filter((model) =>
+    selectedModelNames.has(model.name.toLowerCase()),
+  ), [modelOptions, selectedModelNames]);
+  const unselectedModels = useMemo(() => modelOptions.filter((model) =>
+    !selectedModelNames.has(model.name.toLowerCase()),
+  ), [modelOptions, selectedModelNames]);
 
   const updateTextField = (
     field: 'apiKey' | 'remark' | 'baseUrl' | 'balanceUrl' | 'priority' | 'prefix' | 'headersText' | 'excludedModelsText' | 'testModel' | 'cloakMode' | 'cloakSensitiveWordsText',
@@ -1657,7 +1845,10 @@ function ApiProviderDialog({
   ) => {
     setFormError('');
     if (field === 'apiKey' || field === 'baseUrl' || field === 'headersText') {
+      discoveryRequestRef.current += 1;
+      setModelLoading(false);
       setModelError('');
+      if (activeCategory === 'deepseek') setModelDiscoveryReady(false);
     }
     setDraft((current) => ({ ...current, [field]: value }));
   };
@@ -1721,16 +1912,19 @@ function ApiProviderDialog({
       setModelError(t('apiAccess.error.enterBaseUrl'));
       return;
     }
+    const requestId = ++discoveryRequestRef.current;
     setModelLoading(true);
     setModelError('');
     try {
-      const provider: ModelProvider = definition.section === 'gemini-api-key'
-        ? 'gemini'
-        : definition.section === 'claude-api-key'
-          ? 'claude'
-          : definition.section === 'codex-api-key'
-            ? 'codex'
-            : 'openai';
+      const provider: ModelProvider = activeCategory === 'deepseek'
+        ? 'deepseek'
+        : definition.section === 'gemini-api-key'
+          ? 'gemini'
+          : definition.section === 'claude-api-key'
+            ? 'claude'
+            : definition.section === 'codex-api-key'
+              ? 'codex'
+              : 'openai';
       const modelApiKey = draft.apiKey.split(/\r?\n/).map((value) => value.trim()).find(Boolean) ?? '';
       const fetchedModels = await fetchModels(
         provider,
@@ -1739,21 +1933,24 @@ function ApiProviderDialog({
         editingRow?.authIndex,
         parseProviderHeaders(draft.headersText ?? ''),
       );
+      if (requestId !== discoveryRequestRef.current) return;
       const models = applyProviderPreset(
         activeCategory,
         { ...draft, models: fetchedModels },
       ).models;
+      const initialized = discoverySelectionInitializedRef.current;
       setDiscoveredModels(models);
-      setSelectedModelNames(new Set(
-        [...models, ...draft.models]
-          .map((model) => model.name.trim().toLowerCase())
-          .filter(Boolean),
-      ));
+      setSelectedModelNames((current) =>
+        initialized
+          ? reconcileModelSelection(models, draft.models, current, 'refresh')
+          : modelSelectionForDiscovery(draft.models, models, draft.excludedModelsText ?? ''));
+      discoverySelectionInitializedRef.current = true;
+      if (activeCategory === 'deepseek') setModelDiscoveryReady(true);
       if (!models.length) setModelError(t('apiAccess.error.noAvailableModels'));
     } catch (requestError) {
-      setModelError(requestErrorMessage(requestError));
+      if (requestId === discoveryRequestRef.current) setModelError(requestErrorMessage(requestError));
     } finally {
-      setModelLoading(false);
+      if (requestId === discoveryRequestRef.current) setModelLoading(false);
     }
   };
 
@@ -1764,41 +1961,30 @@ function ApiProviderDialog({
       setModelError(t('apiAccess.error.baseBeforeModels'));
       return;
     }
-    setModelSearch('');
-    setSelectedModelNames(new Set(draft.models.map((model) => model.name.toLowerCase())));
+    discoverySelectionInitializedRef.current = false;
+    setSelectedModelNames(modelSelectionForDiscovery(draft.models, discoveredModels, draft.excludedModelsText ?? ''));
     setModelDiscoveryOpen(true);
     void discoverModels();
   };
 
-  const toggleModelSelection = (model: ModelOption) => {
-    const key = model.name.toLowerCase();
+  const moveModels = (models: ModelOption[], selected: boolean) => {
+    discoverySelectionInitializedRef.current = true;
     setSelectedModelNames((current) => {
       const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const toggleAllVisibleModels = () => {
-    setSelectedModelNames((current) => {
-      const next = new Set(current);
-      visibleModelOptions.forEach((model) => {
+      models.forEach((model) => {
         const key = model.name.toLowerCase();
-        if (allVisibleModelsSelected) next.delete(key);
-        else next.add(key);
+        if (selected) next.add(key);
+        else next.delete(key);
       });
       return next;
     });
   };
 
   const applyModelSelection = () => {
-    const models = modelOptions.filter((model) =>
-      selectedModelNames.has(model.name.toLowerCase()),
-    );
+    if (modelLoading || selectedModels.length === 0) return;
     setDraft((current) => ({
       ...current,
-      models,
+      models: selectedModels,
       excludedModelsText: activeSection === 'openai-compatibility'
         ? current.excludedModelsText
         : exclusionsForModelSelection(
@@ -1807,13 +1993,13 @@ function ApiProviderDialog({
             selectedModelNames,
           ),
     }));
-    setModelDiscoveryOpen(false);
+    closeModelDiscovery();
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setFormError('');
-    const result = await onSave(draft);
+    const result = await onSave(draft, modelDiscoveryReady);
     if (result.saved) {
       onClose();
       return;
@@ -1830,15 +2016,22 @@ function ApiProviderDialog({
 
   const hasModelExclusions = activeSection !== 'openai-compatibility'
     && Boolean(draft.excludedModelsText?.trim());
+  const deepSeekModelsStale = activeCategory === 'deepseek' && !modelDiscoveryReady;
   const modelSummaryTitle = configuredModels.length > 0
     ? t('apiAccess.models.selected', { count: configuredModels.length })
+    : activeCategory === 'deepseek'
+      ? t('apiAccess.models.selectionRequired')
     : hasModelExclusions
       ? t('apiAccess.models.restricted')
       : activeSection === 'openai-compatibility'
         ? t('apiAccess.models.autoAll')
         : t('apiAccess.models.upstreamDefault');
   const modelSummaryDetail = configuredModels.length > 0
-    ? configuredModels.slice(0, 3).map((model) => model.name).join('、')
+    ? deepSeekModelsStale
+      ? t('apiAccess.models.staleHint')
+      : configuredModels.slice(0, 3).map((model) => model.name).join('、')
+    : activeCategory === 'deepseek'
+      ? t('apiAccess.models.selectionRequiredHint')
     : hasModelExclusions
       ? t('apiAccess.models.hiddenHint')
       : activeSection === 'openai-compatibility'
@@ -1872,26 +2065,7 @@ function ApiProviderDialog({
         <label><span>{t('apiAccess.field.baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
         <label><span>{t('quota.api.balanceUrl.label')}</span><input value={draft.balanceUrl ?? ''} onChange={(event) => updateTextField('balanceUrl', event.currentTarget.value)} placeholder={t('quota.api.balanceUrl.placeholder')} /></label>
         <small className="api-balance-url-hint">{t('quota.api.balanceUrl.description')}</small>
-        {activeCategory === 'deepseek' ? (
-          <div className="provider-preset-summary">
-            <img src={deepseekIcon} alt="" className="provider-logo" />
-            <div>
-              <strong>{t('apiAccess.preset.title')}</strong>
-              <span>{t('apiAccess.preset.description')}</span>
-            </div>
-          </div>
-        ) : null}
-        {activeCategory === 'deepseek' ? (
-          <div className="thinking-level-config">
-            <div className="thinking-level-heading">
-              <strong>{t('apiAccess.thinking.builtIn')}</strong>
-              <span>{t('apiAccess.thinking.builtInDescription')}</span>
-            </div>
-            <div className="thinking-level-tags readonly">
-              {DEEPSEEK_THINKING_LEVELS.map((level) => <span key={level}>{level}</span>)}
-            </div>
-          </div>
-        ) : activeCategory === 'openai-compatibility' ? (
+        {activeCategory === 'openai-compatibility' ? (
           <div className="thinking-level-config">
             <div className="thinking-level-heading">
               <strong>{t('apiAccess.thinking.title')}</strong>
@@ -1971,7 +2145,7 @@ function ApiProviderDialog({
               <Plus size={14} />{t('apiAccess.models.add')}
             </button>
           </div>
-          {modelError && !modelDiscoveryOpen ? <small className="model-picker-error">{modelError}</small> : null}
+          {modelError && !modelDiscoveryOpen ? <MessageNotice message={modelError} onDismiss={() => setModelError('')} /> : null}
         </div>
         <label><span>{t('apiAccess.field.priority')}</span><input inputMode="numeric" value={draft.priority} onChange={(event) => updateTextField('priority', event.currentTarget.value.replace(/\D/g, ''))} placeholder={t('common.optional')} /></label>
         <details className="provider-advanced-settings">
@@ -2029,9 +2203,7 @@ function ApiProviderDialog({
           </div>
         </details>
         {formError ? (
-          <div className="management-alert error api-provider-dialog-error" role="alert">
-            {formError}
-          </div>
+          <MessageNotice message={formError} onDismiss={() => setFormError('')} />
         ) : null}
         <div className="config-dialog-actions two-actions">
           <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
@@ -2041,63 +2213,33 @@ function ApiProviderDialog({
       </div>
 
       {modelDiscoveryOpen ? (
-        <div className="model-discovery-backdrop" onMouseDown={(event) => event.currentTarget === event.target && setModelDiscoveryOpen(false)}>
-          <section className="model-discovery-dialog" role="dialog" aria-modal="true" aria-labelledby="model-discovery-title">
+        <div className="model-discovery-backdrop" onMouseDown={(event) => event.currentTarget === event.target && closeModelDiscovery()}>
+          <section ref={modelDialogRef} className="model-discovery-dialog model-transfer-dialog" role="dialog" aria-modal="true" aria-labelledby="model-discovery-title">
             <div className="model-discovery-header">
               <div><h2 id="model-discovery-title">{t('apiAccess.modelDialog.title')}</h2><span>{t(definition.labelKey)}</span></div>
-              <button type="button" className="icon-button quiet" onClick={() => setModelDiscoveryOpen(false)} title={t('common.close')}><X size={18} /></button>
+              <button type="button" className="icon-button quiet" onClick={closeModelDiscovery} title={t('common.close')}><X size={18} /></button>
             </div>
 
-            <div className="model-discovery-search">
-              <Search size={16} aria-hidden="true" />
-              <input value={modelSearch} onChange={(event) => setModelSearch(event.currentTarget.value)} placeholder={t('agents.model.search')} />
+            <div className="model-transfer-summary">
+              <span role="status">{t('apiAccess.modelDialog.summary', { found: modelOptions.length, selected: selectedModels.length })}</span>
               <button type="button" className="secondary-button compact-button" onClick={() => void discoverModels()} disabled={modelLoading}>
                 <RefreshCw size={15} className={modelLoading ? 'spin' : ''} />{t('common.refresh')}
               </button>
             </div>
 
-            <div className="model-discovery-toolbar">
-              <span>{t('apiAccess.modelDialog.summary', { found: modelOptions.length, selected: selectedModelNames.size })}</span>
-              <div>
-                <button type="button" className="secondary-button compact-button" onClick={toggleAllVisibleModels} disabled={modelLoading || visibleModelOptions.length === 0}>{allVisibleModelsSelected ? t('apiAccess.modelDialog.deselectAll') : t('apiAccess.modelDialog.selectVisible')}</button>
-                <button type="button" className="secondary-button compact-button" onClick={() => setSelectedModelNames(new Set())} disabled={modelLoading || selectedModelNames.size === 0}>{t('common.clear')}</button>
-              </div>
+            {modelError ? (
+              <MessageNotice source="apiAccess.modelDialog.fetchFailed" message={modelError} onDismiss={() => setModelError('')} />
+            ) : null}
+
+            <div className="model-transfer-panels">
+              <ModelSelectionPanel models={unselectedModels} selected={false} loading={modelLoading} onMove={moveModels} />
+              <ModelSelectionPanel models={selectedModels} selected loading={modelLoading} onMove={moveModels} />
             </div>
 
-            <div className="model-discovery-content">
-              {modelLoading ? (
-                <div className="model-discovery-message"><LoaderCircle size={20} className="spin" />{t('apiAccess.modelDialog.fetching')}</div>
-              ) : modelError && modelOptions.length === 0 ? (
-                <div className="model-discovery-message error"><strong>{t('apiAccess.modelDialog.fetchFailed')}</strong><span>{modelError}</span></div>
-              ) : visibleModelOptions.length === 0 ? (
-                <div className="model-discovery-message"><strong>{modelOptions.length ? t('apiAccess.modelDialog.noMatch') : t('apiAccess.modelDialog.none')}</strong><span>{modelOptions.length ? t('apiAccess.modelDialog.tryKeyword') : t('apiAccess.modelDialog.checkCredentials')}</span></div>
-              ) : (
-                <div className="model-discovery-results">
-                  {modelError ? (
-                    <div className="model-discovery-inline-error" role="alert">
-                      <strong>{t('apiAccess.modelDialog.fetchFailed')}</strong>
-                      <span title={modelError}>{modelError}</span>
-                    </div>
-                  ) : null}
-                  <div className="model-discovery-list">
-                    {visibleModelOptions.map((model) => {
-                      const checked = selectedModelNames.has(model.name.toLowerCase());
-                      return (
-                        <label className={`model-discovery-row ${checked ? 'selected' : ''}`} key={model.name}>
-                          <input type="checkbox" checked={checked} onChange={() => toggleModelSelection(model)} />
-                          <span><strong title={model.name}>{model.name}</strong>{model.alias ? <small title={model.alias}>{model.alias}</small> : null}</span>
-                          {checked ? <Check size={16} aria-hidden="true" /> : null}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="model-discovery-actions">
-              <button type="button" className="secondary-button" onClick={() => setModelDiscoveryOpen(false)}>{t('common.cancel')}</button>
-              <button type="button" className="primary-button" onClick={applyModelSelection} disabled={modelLoading}>{t('apiAccess.modelDialog.apply', { count: selectedModelNames.size })}</button>
+            <div className="model-discovery-actions model-transfer-actions">
+              {selectedModels.length === 0 ? <span>{t('apiAccess.modelDialog.chooseOne')}</span> : null}
+              <button type="button" className="secondary-button" onClick={closeModelDiscovery}>{t('common.cancel')}</button>
+              <button type="button" className="primary-button" onClick={applyModelSelection} disabled={modelLoading || selectedModels.length === 0}>{t('apiAccess.modelDialog.apply', { count: selectedModels.length })}</button>
             </div>
           </section>
         </div>

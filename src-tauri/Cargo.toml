@@ -1,7 +1,7 @@
 [package]
 name = "cpa-gui"
 # Single source of truth for the desktop app version.
-version = "0.2.81"
+version = "0.2.97"
 description = "CPA desktop management shell"
 authors = ["lzt404"]
 edition = "2021"
@@ -17,6 +17,7 @@ futures-util = "0.3"
 getrandom = "0.3"
 json5 = "0.4"
 notify = "7"
+regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "stream"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 semver = "1"
@@ -41,6 +42,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSEvent", "NSRunningApplication"] }
@@ -48,9 +52,12 @@ objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSEvent", "NSRu
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
+  "Win32_Networking_WinHttp",
   "Win32_Security",
   "Win32_Storage_FileSystem",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Environment",
   "Win32_System_JobObjects",
+  "Win32_System_Registry",
   "Win32_System_Threading",
 ] }

@@ -37,6 +37,7 @@ describe('控件自身反馈', () => {
     expect(nonEmptyCalls[0].arguments[1].getText()).toBe("'error'");
   });
 
+
   it('凭证文件的启用停用由按钮与状态标签反馈', () => {
     expect(actionCalls('AuthFileManagementPage.tsx', 'toggleStatus', 'showNotice').calls).toHaveLength(0);
   });
@@ -55,7 +56,7 @@ describe('控件自身反馈', () => {
     visit(source);
     const attributes = button?.attributes.properties.filter(ts.isJsxAttribute);
     expect(attributes?.find((attribute) => attribute.name.getText(source) === 'className')?.initializer?.getText(source))
-      .toBe("{`${disabled ? 'primary-button' : 'secondary-button'} compact-button`}");
+      .toBe("{`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`}");
     expect(attributes?.find((attribute) => attribute.name.getText(source) === 'disabled')?.initializer?.getText(source))
       .toBe('{busy}');
     const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');

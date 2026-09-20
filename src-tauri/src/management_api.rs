@@ -179,6 +179,7 @@ pub(crate) async fn start_oauth_login(
     provider: String,
     browser: Option<String>,
 ) -> Result<OAuthStartResult, String> {
+    super::network_proxy::prepare_oauth(&app).await;
     let config = gui_config_state.snapshot()?;
     let provider_key = normalize_management_oauth_provider(&provider)?;
     let client = management_http_client()?;
@@ -298,14 +299,9 @@ pub(crate) async fn submit_oauth_callback(
 pub(crate) fn management_http_client() -> Result<reqwest::Client, String> {
     static CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
         reqwest::Client::builder()
-            // GUI-to-Core management traffic must always connect directly. Upstream
-            // traffic still uses Core's proxy-url, and other GUI HTTP clients keep
-            // their independently configured proxy behavior.
             .no_proxy()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
-            // Management requests target the configured local listener. This keeps
-            // self-signed/private-CA certificates usable without weakening upstream clients.
             .danger_accept_invalid_certs(true)
             .build()
             .map_err(|err| format_management_request_error("创建管理 API 客户端失败", &err))
@@ -366,6 +362,7 @@ fn normalize_management_oauth_provider(provider: &str) -> Result<String, String>
     let key = match key.as_str() {
         "claude" | "anthropic" => "anthropic".to_string(),
         "anti-gravity" => "antigravity".to_string(),
+        "cognition" => "devin".to_string(),
         "grok" | "x-ai" | "x.ai" => "xai".to_string(),
         other => other.to_string(),
     };
@@ -380,7 +377,7 @@ fn normalize_management_oauth_provider(provider: &str) -> Result<String, String>
 }
 
 fn management_oauth_uses_webui_callback(provider_key: &str) -> bool {
-    matches!(provider_key, "codex" | "anthropic" | "antigravity" | "xai")
+    matches!(provider_key, "codex" | "anthropic" | "antigravity" | "xai" | "devin")
 }
 
 async fn read_management_json<T>(response: reqwest::Response) -> Result<T, String>
@@ -463,6 +460,15 @@ fn format_management_error(status: u16, body: &str) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn devin_oauth_uses_the_management_callback_flow() {
+        for provider in ["Devin", " cognition "] {
+            let key = normalize_management_oauth_provider(provider).unwrap();
+            assert_eq!(key, "devin");
+            assert!(management_oauth_uses_webui_callback(&key));
+        }
+    }
 
     #[test]
     fn core_logs_follow_the_default_auth_directory() {

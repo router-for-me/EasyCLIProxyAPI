@@ -178,6 +178,26 @@ describe('API 接入健康检测', () => {
     expect(probe.protocol).toBe('openai-responses');
   });
 
+  it('为 DeepSeek 使用 Codex Responses 协议并保留自定义路径前缀', () => {
+    const probe = buildProviderHealthProbe(
+      'deepseek',
+      'https://api.deepseek.com',
+      'deepseek-chat',
+      'deepseek-key',
+    );
+
+    expect(probe.url).toBe('https://api.deepseek.com/responses');
+    expect(probe.protocol).toBe('openai-responses');
+    expect(JSON.parse(probe.data)).toEqual({
+      model: 'deepseek-chat',
+      input: 'hi',
+      stream: true,
+    });
+    expect(modelEndpointCandidates('deepseek', 'https://api.deepseek.com')).toEqual([
+      'https://api.deepseek.com/models',
+    ]);
+  });
+
   it('为 Gemini 使用默认地址并移除 models/ 前缀', () => {
     const probe = buildProviderHealthProbe(
       'gemini',

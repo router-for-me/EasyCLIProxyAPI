@@ -7,6 +7,7 @@ import {
   readString,
 } from './managementApi';
 import { authFileName } from './authFiles';
+import { DEVIN_QUOTA_DATA, DEVIN_QUOTA_HEADERS, DEVIN_QUOTA_URL, readDevinQuota } from './devinQuota';
 import { antigravityProjectFor, codexMetadataFor, isPaidXaiFile } from './quotaMetadata';
 import { quotaResetFor, quotaResetInstant } from './quotaTime';
 import { getCurrentLocale, translate, type AppLocale } from '../i18n';
@@ -17,7 +18,7 @@ const quotaText = (
 ) => translate(getCurrentLocale(), key, variables);
 
 export type AuthFile = Record<string, unknown>;
-export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity';
+export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin';
 export type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
 export type QuotaRow = {
   label: string;
@@ -52,6 +53,7 @@ export type QuotaState = {
 export const idleQuota = (): QuotaState => ({ status: 'idle', rows: [] });
 
 const endpointByProvider: Record<QuotaProvider, string> = {
+  devin: DEVIN_QUOTA_URL,
   claude: 'https://api.anthropic.com/api/oauth/usage',
   codex: 'https://chatgpt.com/backend-api/wham/usage',
   kimi: 'https://api.kimi.com/coding/v1/usages',
@@ -69,6 +71,7 @@ const ANTIGRAVITY_CODE_ASSIST_URL =
   'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
 
 const headersByProvider: Record<QuotaProvider, Record<string, string>> = {
+  devin: DEVIN_QUOTA_HEADERS,
   claude: {
     Authorization: 'Bearer $TOKEN$',
     'Content-Type': 'application/json',
@@ -97,9 +100,10 @@ const headersByProvider: Record<QuotaProvider, Record<string, string>> = {
 export const providerForFile = (file: AuthFile): QuotaProvider | null => {
   const value = readString(file, 'provider', 'type', 'account_type').toLowerCase().replace(/_/g, '-');
   if (value === 'x-ai' || value === 'grok') return 'xai';
+  if (value === 'cognition') return 'devin';
   if (value === 'anthropic') return 'claude';
   if (value === 'anti-gravity') return 'antigravity';
-  return ['claude', 'codex', 'kimi', 'xai', 'antigravity'].includes(value)
+  return ['claude', 'codex', 'kimi', 'xai', 'antigravity', 'devin'].includes(value)
     ? (value as QuotaProvider)
     : null;
 };
@@ -335,7 +339,6 @@ export const codexResetCreditDetailsFor = (
     .sort((left, right) => left.expiresAtMs - right.expiresAtMs)[0]?.expiresAt;
 
   return {
-    // An empty detail list is not an explicit zero; keep the usage-summary fallback.
     availableCount: availableCount === null
       ? validCredits.length || undefined
       : Math.max(0, Math.floor(availableCount)),
@@ -345,6 +348,11 @@ export const codexResetCreditDetailsFor = (
 };
 
 export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRow[] => {
+  if (provider === 'devin') return readDevinQuota(payload).windows.map((window) => ({
+    label: quotaText(window.id === 'daily' ? 'quota.service.daily' : 'quota.service.weekly'),
+    remainingPercent: window.remainingPercent,
+    resetAtMs: window.resetAtMs,
+  }));
   const value = parseBody(payload);
   if (!isRecord(value)) return [];
 
@@ -762,6 +770,10 @@ async function callUpstreamQuota(
 ): Promise<unknown> {
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
   if (!authIndex) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
+  if (provider === 'devin') {
+    if (!readString(file, 'name')) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
+    return requestQuotaPayload(authIndex, DEVIN_QUOTA_URL, DEVIN_QUOTA_HEADERS, 'POST', DEVIN_QUOTA_DATA, undefined, responseClock);
+  }
   const header = { ...headersByProvider[provider] };
   if (provider === 'codex') {
     const accountId = resolvedCodexAccountId ?? await resolveCodexAccountId(file);
@@ -879,9 +891,10 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
     return {
       status: 'success',
       rows,
-      plan: detectedPlan
+      plan: (provider === 'devin' ? readDevinQuota(payload).plan : detectedPlan)
         ?? (readString(isRecord(payload) ? payload : {}, 'plan_type', 'planType') || codexMetadata?.plan),
-      subscriptionActiveUntil: codexMetadata?.subscriptionActiveUntil,
+      subscriptionActiveUntil: provider === 'devin'
+        ? readDevinQuota(payload).subscriptionActiveUntil : codexMetadata?.subscriptionActiveUntil,
       resetCreditsError,
       resetCreditsApplicable: usageCreditDetails.applicableAvailableCount
         ?? resetCreditDetails?.applicableAvailableCount ?? resetCredits,

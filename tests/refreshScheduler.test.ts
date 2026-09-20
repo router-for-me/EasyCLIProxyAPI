@@ -42,6 +42,32 @@ describe('refresh scheduler', () => {
     expect(performance.now() - started).toBeGreaterThanOrEqual(25);
   });
 
+  it('starts foreground work immediately and holds trailing background refreshes until it finishes', async () => {
+    const scheduler = createRefreshScheduler(0);
+    const backgroundGate = deferred();
+    const foregroundGate = deferred();
+    const calls: string[] = [];
+    const background = scheduler.schedule(async () => {
+      calls.push('background');
+      await backgroundGate.promise;
+    });
+    const obsolete = scheduler.schedule(async () => { calls.push('obsolete'); });
+    const foreground = scheduler.runForeground(async () => {
+      calls.push('foreground');
+      await foregroundGate.promise;
+    });
+    const trailing = scheduler.schedule(async () => { calls.push('trailing'); }, true);
+
+    expect(calls).toEqual(['background', 'foreground']);
+    await obsolete;
+    backgroundGate.resolve();
+    await background;
+    expect(calls).toEqual(['background', 'foreground']);
+    foregroundGate.resolve();
+    await Promise.all([foreground, trailing]);
+    expect(calls).toEqual(['background', 'foreground', 'trailing']);
+  });
+
   it('cancels queued work during navigation and accepts a fresh request', async () => {
     const scheduler = createRefreshScheduler(0);
     const gate = deferred();

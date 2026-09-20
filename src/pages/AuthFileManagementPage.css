@@ -1,0 +1,57 @@
+.auth-file-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 14px; padding: 16px; }
+.auth-file-card { display: flex; flex-direction: column; min-width: 0; gap: 14px; padding: 16px; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-card); transition: border-color .15s; }
+.auth-file-card:hover { border-color: color-mix(in srgb, var(--primary-color) 35%, var(--border-color)); }
+.auth-file-card.is-disabled { border-style: dashed; }
+.auth-card-header { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.auth-card-header .provider-logo { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
+.auth-card-identity { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.auth-card-identity strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auth-card-header.filename-only strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; }
+.auth-card-provider { font-size: 11px; color: var(--text-tertiary); letter-spacing: .02em; }
+.auth-card-filename { margin: -3px 0 0; color: var(--text-secondary); overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.6; }
+.auth-card-note { display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 8px 10px; border-radius: 7px; background: color-mix(in srgb, var(--text-tertiary) 5%, var(--bg-card)); font-size: 12px; line-height: 1.6; }
+.auth-card-note > span { flex-shrink: 0; color: var(--text-tertiary); font-size: 11px; }
+.auth-card-note p { min-width: 0; margin: 0; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.auth-card-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px 12px; margin-top: auto; color: var(--text-tertiary); font-size: 11px; }
+.auth-card-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding-top: 12px; border-top: 1px solid var(--border-color); }
+.auth-card-actions .compact-button { min-height: 30px; padding: 5px 9px; font-size: 12px; }
+.auth-card-actions .icon-button { width: 30px; height: 30px; }
+.auth-card-actions .auth-card-toggle { margin-left: auto; }
+.auth-file-card .auth-file-health, .auth-file-card .auth-file-requests { grid-column: auto; }
+.auth-file-card .auth-file-requests { padding-top: 12px; border-top: 1px solid var(--border-color); }
+.auth-file-card .auth-file-requests-chart { max-width: none; }
+.auth-file-card .auth-health-summary { gap: 6px; }
+.auth-file-card .auth-health-heading { gap: 2px 8px; }
+.auth-file-card .auth-health-countdown { margin-left: 25px; }
+.auth-file-card .auth-health-summary-content { flex-basis: calc(100% - 28px); }
+.auth-file-card .auth-health-disclosure { margin-left: auto; }
+.auth-file-card .auth-health-body, .auth-file-card .auth-health-summary { overflow-wrap: anywhere; }
+.credential-quota { display: grid; gap: 12px; padding: 11px 12px; border: 1px solid var(--border-color); border-radius: 10px; background: color-mix(in srgb, var(--text-tertiary) 3%, var(--bg-card)); font-size: 12px; }
+.credential-quota-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.credential-quota-heading > strong { color: var(--text-secondary); font-size: 11px; font-weight: 500; }
+.credential-quota-plan { max-width: 100%; overflow-wrap: anywhere; padding: 2px 6px; border-radius: 4px; font-size: 10px; background: var(--bg-secondary); color: var(--text-secondary); }
+.credential-quota-refresh { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 3px 0 3px 5px; background: transparent; color: var(--primary-color); font: inherit; font-size: 11px; margin-left: auto; cursor: pointer; }
+.credential-quota-refresh:disabled { color: var(--text-tertiary); cursor: default; }
+.credential-quota-heading .credential-quota-reset { min-height: 26px; padding: 3px 7px; margin-left: auto; font-size: 11px; }
+.credential-quota-reset + .credential-quota-refresh { margin-left: 0; }
+.credential-quota-rows { display: grid; gap: 14px; }
+.credential-quota-row { --quota-color: var(--success-color); display: grid; gap: 5px; min-width: 0; }
+.credential-quota-row.medium { --quota-color: var(--amber-text); }
+.credential-quota-row.low { --quota-color: var(--failure-badge-text); }
+.credential-quota-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.credential-quota-label span { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
+.credential-quota-label strong { flex-shrink: 0; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--quota-color); }
+.credential-quota-row.unknown strong { color: var(--text-tertiary); }
+.credential-quota-track { height: 6px; border-radius: 3px; overflow: hidden; background: var(--border-color); }
+.credential-quota-track i { display: block; height: 100%; border-radius: inherit; background: var(--quota-color, var(--primary-color)); transition: width .25s ease; }
+.credential-quota-row.unknown .credential-quota-track { background: repeating-linear-gradient(115deg, var(--border-color) 0 4px, transparent 4px 8px); }
+.credential-quota small, .credential-quota-empty, .credential-quota-loading { font-size: 11px; line-height: 1.6; color: var(--text-tertiary); overflow-wrap: anywhere; }
+.credential-quota-empty { margin: 0; }
+.credential-quota-footnotes { display: grid; gap: 3px; }
+.credential-quota-footnotes:empty { display: none; }
+.credential-quota-error { display: grid; gap: 4px; color: var(--failure-badge-text); }
+.credential-quota-loading { display: grid; gap: 8px; }
+.credential-quota-track.indeterminate i { width: 35%; animation: credential-quota-pending 1.3s ease-in-out infinite alternate; }
+@keyframes credential-quota-pending { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+@media (prefers-reduced-motion: reduce) { .credential-quota-track.indeterminate i { animation: none; width: 100%; opacity: .3; } }
+@media (max-width: 600px) { .auth-file-card-grid { padding: 10px; gap: 10px; } .auth-file-card { padding: 14px; } }

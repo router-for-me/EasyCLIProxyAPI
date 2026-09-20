@@ -176,7 +176,6 @@ const messageFromPayload = (value: unknown, depth = 0): string => {
       const nested = messageFromPayload(parsed, depth + 1);
       if (nested) return nested;
     } catch {
-      // The response is plain text rather than JSON.
     }
     return text;
   }

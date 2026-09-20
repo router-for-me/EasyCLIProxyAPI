@@ -3,7 +3,6 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
-  AlertCircle,
   Download,
   ExternalLink,
   Info,
@@ -15,8 +14,9 @@ import { useCoreRuntime } from '../coreRuntime';
 import { useCoreUpdate } from '../coreUpdate';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
-import { InlineNotice, useAppNotice } from '../appNotice';
+import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
+import { AppReleaseNotes } from '../components/AppReleaseNotes';
 
 export type CoreInstallResult = {
   version: string;
@@ -85,7 +85,6 @@ export function VersionManagementPage() {
 
   const {
     status: coreStatus,
-    statusError,
     refreshStatus,
   } = useCoreRuntime();
   const {
@@ -198,7 +197,6 @@ export function VersionManagementPage() {
     } catch (error) {
       await loadVersionSourceSettings();
       setVersionSourceError(t('kernel.versions.gitcodeSaveFailed', { error: String(error) }));
-      showNotice({ key: 'kernel.versions.gitcodeSaveFailed', variables: { error: String(error) } }, 'error');
     } finally {
       setVersionSourceSaving(false);
     }
@@ -219,7 +217,6 @@ export function VersionManagementPage() {
     } catch (error) {
       const message = t('kernel.versions.customMirrorAddFailed', { error: String(error) });
       setVersionSourceError(message);
-      showNotice(message, 'error');
     } finally {
       setVersionSourceSaving(false);
     }
@@ -241,7 +238,6 @@ export function VersionManagementPage() {
     } catch (error) {
       const message = t('kernel.versions.customMirrorRemoveFailed', { error: String(error) });
       setVersionSourceError(message);
-      showNotice(message, 'error');
     } finally {
       setVersionSourceSaving(false);
     }
@@ -324,9 +320,9 @@ export function VersionManagementPage() {
     setCancellingInstall(false);
   };
 
-  const openAppRelease = async () => {
+  const openAppRelease = async (url = appUpdate?.releaseUrl || APP_RELEASE_URL) => {
     try {
-      await invoke('open_external_url', { url: appUpdate?.releaseUrl || APP_RELEASE_URL });
+      await invoke('open_external_url', { url });
     } catch (error) {
       showNotice({ key: 'kernel.error.openUpdate', variables: { error: String(error) } }, 'error');
     }
@@ -438,7 +434,6 @@ export function VersionManagementPage() {
     };
   }, [customMirrorDialogOpen, versionSourceSaving]);
 
-  // Derived state calculations
   const latestVersion = latest?.version ?? '';
   const currentVersion = coreStatus?.currentVersion ?? '';
   const coreInstalled = Boolean(coreStatus?.installed);
@@ -484,7 +479,6 @@ export function VersionManagementPage() {
           ? t('kernel.status.notInstalled')
           : null;
 
-  // Install dialog calculations
   const computedPercent = progress?.percent ?? (progress?.total && progress.total > 0 ? (progress.downloaded / progress.total) * 100 : null);
   const progressKnown = computedPercent !== null;
   const progressPercent = clampPercent(computedPercent ?? 0);
@@ -532,6 +526,7 @@ export function VersionManagementPage() {
 
   return (
     <section className="page management-page version-management-page">
+      <MessageNotice message={versionSourceError} onDismiss={() => setVersionSourceError('')} />
       <section className="panel version-list">
         <div className="version-source-row" aria-label={t('kernel.versions.downloadSource')}>
           <div className="version-source-copy">
@@ -539,9 +534,6 @@ export function VersionManagementPage() {
             <span>{t('kernel.versions.downloadSourceHint')}</span>
             {versionSource?.gitcodeAvailable === false ? (
               <span>{t('kernel.versions.gitcodeUnavailable')}</span>
-            ) : null}
-            {versionSourceError ? (
-              <span className="version-source-error" role="alert">{versionSourceError}</span>
             ) : null}
           </div>
           <div className="version-source-control">
@@ -585,7 +577,7 @@ export function VersionManagementPage() {
           </div>
         </div>
 
-        <InlineNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
+        <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
         <div className="version-card-grid">
         <article className="version-list-item app-module-card">
           <div className="version-item-content">
@@ -611,12 +603,8 @@ export function VersionManagementPage() {
               </div>
             </dl>
 
-            {appUpdateError ? (
-              <div className="version-alert-banner error" role="alert">
-                <AlertCircle size={14} />
-                <span>{appUpdateError}</span>
-              </div>
-            ) : !appUpdate?.autoUpdateSupported ? (
+            <MessageNotice message={appUpdateError} />
+            {!appUpdate?.autoUpdateSupported ? (
               <div className="version-alert-banner neutral">
                 <Info size={14} />
                 <span>{t('appUpdate.manualFallback')}</span>
@@ -685,10 +673,7 @@ export function VersionManagementPage() {
             </dl>
 
             {latestError ? (
-              <div className="version-alert-banner error" role="alert">
-                <AlertCircle size={14} />
-                <span>{latestError}</span>
-              </div>
+              <MessageNotice message={latestError} />
             ) : null}
           </div>
 
@@ -726,8 +711,14 @@ export function VersionManagementPage() {
             </button>
           </div>
         </article>
-
         </div>
+        <AppReleaseNotes
+          key={appUpdate?.latestVersion ?? 'pending'}
+          info={appUpdate}
+          checking={checkingAppUpdate}
+          failed={Boolean(appUpdateError)}
+          onOpenUrl={openAppRelease}
+        />
       </section>
 
       {customMirrorDialogOpen ? (
@@ -758,9 +749,7 @@ export function VersionManagementPage() {
               aria-label={t('kernel.versions.customMirrorPlaceholder')}
               onChange={(event) => setCustomMirrorDraft(event.currentTarget.value)}
             />
-            {versionSourceError ? (
-              <span className="custom-mirror-dialog-error" role="alert">{versionSourceError}</span>
-            ) : null}
+
             {versionSource?.customMirrors.length ? (
               <div className="custom-mirror-dialog-list">
                 <span>{t('kernel.versions.customMirrorSaved')}</span>
@@ -805,7 +794,6 @@ export function VersionManagementPage() {
         </div>
       ) : null}
 
-      {/* Core Update Confirmation Dialog */}
       {confirmUpdateOpen ? (
         <div className="install-dialog-backdrop app-update-dialog-backdrop">
           <section
@@ -849,7 +837,6 @@ export function VersionManagementPage() {
         </div>
       ) : null}
 
-      {/* Installation Progress Modal Dialog */}
       {installDialogOpen && progress ? (
         <div className="install-dialog-backdrop">
           <div

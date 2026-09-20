@@ -1,3 +1,4 @@
+import { MessageNotice } from './appNotice';
 import {
   createContext,
   useCallback,
@@ -10,14 +11,16 @@ import {
 } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { AlertCircle, Download, RefreshCw } from 'lucide-react';
-import { getCurrentLocale, translate, useI18n } from './i18n';
+import { Download, RefreshCw } from 'lucide-react';
+import { getCurrentLocale, translate, useI18n, type AppLocale } from './i18n';
 
 export type AppUpdateInfo = {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
   releaseUrl: string;
+  releaseNotes: Partial<Record<AppLocale, string>> | null;
+  publishedAt: string;
   autoUpdateSupported: boolean;
   downloadSizeBytes: number | null;
   unsupportedReason: string | null;
@@ -151,6 +154,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cancel = useCallback(async () => {
+    setError('');
     try {
       await invoke('cancel_app_update');
     } catch (nextError) {
@@ -250,9 +254,7 @@ export function AppUpdateDialog() {
               <span>{task.message || phaseLabel}</span>
             </div>
             {error ? (
-              <div className="install-dialog-message error" role="alert">
-                <AlertCircle size={15} aria-hidden="true" /> {error}
-              </div>
+              <MessageNotice message={error} />
             ) : null}
             <button
               type="button"

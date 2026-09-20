@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OAuthAliasChannel {
@@ -11,7 +12,7 @@ pub(crate) struct OAuthAliasChannel {
     pub(crate) force_mapping: bool,
 }
 
-pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
+pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 8] = [
     OAuthAliasChannel {
         key: "vertex",
         provider: "Vertex OAuth",
@@ -63,6 +64,15 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 7] = [
         kind: "kimi-oauth",
         protocol: "openai",
         supports_reasoning: true,
+        supports_fast: false,
+        force_mapping: false,
+    },
+    OAuthAliasChannel {
+        key: "devin",
+        provider: "Devin OAuth",
+        kind: "devin-oauth",
+        protocol: "interactions",
+        supports_reasoning: false,
         supports_fast: false,
         force_mapping: false,
     },
@@ -125,6 +135,7 @@ pub(crate) fn normalize_oauth_alias_channel(value: &str) -> Option<&'static str>
         "claude" | "anthropic" => Some("claude"),
         "codex" => Some("codex"),
         "kimi" | "moonshot" => Some("kimi"),
+        "devin" | "cognition" => Some("devin"),
         "xai" | "x-ai" | "grok" => Some("xai"),
         _ => None,
     }
@@ -174,19 +185,26 @@ pub(crate) async fn fetch_active_oauth_alias_channels(
         .collect())
 }
 
-pub(crate) fn validate_thinking_alias_model_id(value: &str, label: &str) -> Result<String, String> {
+pub(crate) fn existing_thinking_alias_model_id(value: &str, label: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
         return Err(format!("{label}不能为空"));
     }
-    if value.len() > 240
-        || value
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control())
+    if value.len() > 240 || value.chars().any(char::is_control) {
+        return Err(format!("{label}格式无效"));
+    }
+    Ok(value.to_string())
+}
+
+pub(crate) fn validate_thinking_alias_model_id(value: &str, label: &str) -> Result<String, String> {
+    let value = existing_thinking_alias_model_id(value, label)?;
+    if value
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
     {
         return Err(format!("{label}格式无效，不能包含空白字符"));
     }
-    Ok(value.to_string())
+    Ok(value)
 }
 
 pub(crate) fn validate_thinking_alias_effort(value: &str) -> Result<String, String> {
@@ -290,48 +308,6 @@ pub(crate) fn management_alias_config_changes(
     })
 }
 
-pub(crate) async fn put_management_alias_config_changes(
-    config: &GuiConfigFile,
-    current: &str,
-    updated: &str,
-) -> Result<(), String> {
-    if updated == current {
-        return Ok(());
-    }
-    let changes = management_alias_config_changes(current, updated)?;
-    if let Some(oauth_model_aliases) = changes.oauth_model_aliases.as_ref() {
-        // The dedicated endpoint refreshes CPA's OAuth model registry immediately.
-        // Writing the same section only through config.yaml updates the file and
-        // management snapshot, but can leave /v1/models and routing stale.
-        put_management_oauth_model_aliases(config, oauth_model_aliases).await?;
-    }
-    if changes.update_config_yaml {
-        put_management_config_yaml(config, updated).await?;
-    }
-    Ok(())
-}
-
-pub(crate) async fn ensure_claude_desktop_model_aliases(
-    config: &GuiConfigFile,
-    mappings: &ClaudeDesktopModelMappings,
-    models: &[AgentModelOption],
-) -> Result<(), String> {
-    let content = fetch_management_config_yaml(config).await?;
-    let updated = match ensure_claude_desktop_model_aliases_in_yaml(&content, mappings, models) {
-        Ok(updated) => updated,
-        Err(_) => {
-            let definitions = fetch_oauth_model_definitions(config).await;
-            ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
-                &content,
-                mappings,
-                models,
-                &definitions,
-            )?
-        }
-    };
-    put_management_alias_config_changes(config, &content, &updated).await
-}
-
 pub(crate) fn ensure_claude_desktop_model_aliases_in_yaml(
     content: &str,
     mappings: &ClaudeDesktopModelMappings,
@@ -366,6 +342,26 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
     models: &[AgentModelOption],
     oauth_model_definitions: &[OAuthModelDefinitions],
 ) -> Result<String, String> {
+    ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml(
+        content,
+        mappings,
+        models,
+        oauth_model_definitions,
+        [
+            CLAUDE_DESKTOP_OPUS_MODEL_ID,
+            CLAUDE_DESKTOP_SONNET_MODEL_ID,
+            CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+        ],
+    )
+}
+
+pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml(
+    content: &str,
+    mappings: &ClaudeDesktopModelMappings,
+    models: &[AgentModelOption],
+    oauth_model_definitions: &[OAuthModelDefinitions],
+    routes: [&str; 3],
+) -> Result<String, String> {
     let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
     let mut updated = document.get().clone();
@@ -373,11 +369,77 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
         .as_mapping_mut()
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
 
+    let sources = root.clone();
+    if let Some(entries) = &mappings.desktop_models {
+        validate_claude_desktop_entries(entries)?;
+        let managed_aliases = managed_claude_desktop_aliases(&sources);
+        for entry in entries {
+            if !entry.has_mapping() {
+                continue;
+            }
+            let occupied = configured_model_client_identity(&sources, &entry.alias).is_some()
+                || models
+                    .iter()
+                    .any(|model| model.name.eq_ignore_ascii_case(&entry.alias));
+            let unmanaged_collision = claude_desktop_configured_models(&sources)
+                .into_iter()
+                .any(|model| {
+                    configured_model_identity(model).is_some_and(|(_, alias, _)| {
+                        alias.eq_ignore_ascii_case(&entry.alias)
+                            && !is_managed_claude_model_alias(model, &alias)
+                    })
+                });
+            if unmanaged_collision
+                || (occupied && !managed_aliases.iter()
+                    .any(|alias| alias.eq_ignore_ascii_case(&entry.alias)))
+            {
+                return Err(format!("别名 {} 已被其他模型使用，请更换别名", entry.alias));
+            }
+        }
+        for alias in managed_aliases {
+            if !entries.iter().any(|entry| entry.source_or_alias().eq_ignore_ascii_case(&alias)) {
+                remove_managed_claude_model_alias(root, &alias)?;
+            }
+        }
+        for entry in entries {
+            if entry.has_mapping() {
+                ensure_claude_desktop_model_alias(
+                    root,
+                    &sources,
+                    &entry.model,
+                    &entry.alias,
+                    oauth_model_definitions,
+                )?;
+            }
+        }
+        if *root == sources {
+            return Ok(content.to_string());
+        }
+        return render_updated_core_yaml(&mut document, updated);
+    }
+    for alias in managed_claude_desktop_aliases(&sources) {
+        if !is_claude_desktop_route_id(&alias)
+            && ![&mappings.opus, &mappings.sonnet, &mappings.haiku]
+                .iter()
+                .any(|model| model.eq_ignore_ascii_case(&alias))
+        {
+            remove_managed_claude_model_alias(root, &alias)?;
+        }
+    }
     for (alias, source_model) in [
-        (CLAUDE_DESKTOP_OPUS_MODEL_ID, mappings.opus.as_str()),
-        (CLAUDE_DESKTOP_SONNET_MODEL_ID, mappings.sonnet.as_str()),
-        (CLAUDE_DESKTOP_HAIKU_MODEL_ID, mappings.haiku.as_str()),
+        (routes[0], mappings.opus.as_str()),
+        (routes[1], mappings.sonnet.as_str()),
+        (routes[2], mappings.haiku.as_str()),
     ] {
+        if let Some(paired_alias) = paired_claude_desktop_alias(alias) {
+            remove_managed_claude_model_alias(root, paired_alias)?;
+        }
+        if claude_desktop_uses_source_directly(source_model, models) {
+            if !source_model.eq_ignore_ascii_case(alias) {
+                remove_managed_claude_model_alias(root, alias)?;
+            }
+            continue;
+        }
         let direct_alias = models
             .iter()
             .any(|model| model.name.eq_ignore_ascii_case(source_model) && model.is_alias);
@@ -386,10 +448,109 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
                 remove_managed_claude_model_alias(root, alias)?;
             }
         } else {
-            ensure_claude_desktop_model_alias(root, source_model, alias, oauth_model_definitions)?;
+            ensure_claude_desktop_model_alias(
+                root,
+                &sources,
+                source_model,
+                alias,
+                oauth_model_definitions,
+            )?;
         }
     }
+    if *root == sources {
+        return Ok(content.to_string());
+    }
     render_updated_core_yaml(&mut document, updated)
+}
+
+pub(crate) fn validate_claude_desktop_entries(
+    entries: &[ClaudeDesktopModelMapping],
+) -> Result<(), String> {
+    if entries.is_empty() {
+        return Err("请至少添加一个 Claude Desktop 模型".into());
+    }
+    let mut ids = HashSet::new();
+    for entry in entries {
+        validate_agent_model(entry.source_or_alias())?;
+        if entry.source_or_alias().chars().any(char::is_whitespace) {
+            return Err("原模型 ID 不能包含空白字符".into());
+        }
+        let alias = entry.alias.trim();
+        if !alias.is_empty() && !alias.eq_ignore_ascii_case(entry.source_or_alias()) && !valid_claude_desktop_alias(alias) {
+            return Err(format!("Claude Desktop 别名 {alias} 必须以 claude- 开头，只能包含小写字母、数字、连字符和小数点，且不能包含 gpt、grok、gemini、deepseek 等其他模型系列名称"));
+        }
+        let id = entry.model_id();
+        if !ids.insert(id.to_ascii_lowercase()) {
+            return Err(format!("Claude Desktop 模型 ID 重复: {id}"));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn valid_claude_desktop_alias(alias: &str) -> bool {
+    claude_desktop_alias_has_valid_syntax(alias) && !claude_desktop_has_other_model_family(alias)
+}
+
+fn claude_desktop_alias_has_valid_syntax(alias: &str) -> bool {
+    alias.len() <= 128
+        && alias.strip_prefix("claude-").is_some_and(|rest| {
+            !rest.is_empty()
+                && rest.split(['-', '.']).all(|part| {
+                    !part.is_empty()
+                        && part.bytes().all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+                })
+        })
+}
+
+fn claude_desktop_has_other_model_family(name: &str) -> bool {
+    static OTHER_MODEL_FAMILY: LazyLock<regex::Regex> = LazyLock::new(|| {
+        let rules: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/services/claudeDesktopModelRules.json"
+        ))
+        .expect("valid bundled Claude Desktop model rules");
+        regex::RegexBuilder::new(
+            rules["otherModelFamilyPattern"]
+                .as_str()
+                .expect("Claude Desktop model-family pattern"),
+        )
+        .unicode(false)
+        .build()
+        .expect("valid Claude Desktop model-family pattern")
+    });
+    OTHER_MODEL_FAMILY.is_match(&name.to_ascii_lowercase())
+}
+
+fn claude_desktop_configured_models(root: &serde_norway::Mapping) -> Vec<&serde_norway::Value> {
+    let mut models = Vec::new();
+    for section in MODEL_ALIAS_CONFIG_SECTIONS {
+        for provider in yaml_mapping_value(root, section)
+            .and_then(serde_norway::Value::as_sequence)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(entries) = provider.as_mapping()
+                .and_then(|provider| yaml_mapping_value(provider, "models"))
+                .and_then(serde_norway::Value::as_sequence)
+            {
+                models.extend(entries);
+            }
+        }
+    }
+    if let Some(channels) = yaml_mapping_value(root, "oauth-model-alias")
+        .and_then(serde_norway::Value::as_mapping)
+    {
+        for entries in channels.values().filter_map(serde_norway::Value::as_sequence) {
+            models.extend(entries);
+        }
+    }
+    models
+}
+
+pub(crate) fn managed_claude_desktop_aliases(root: &serde_norway::Mapping) -> Vec<String> {
+    claude_desktop_configured_models(root).into_iter().filter_map(|model| {
+        let (_, alias, _) = configured_model_identity(model)?;
+        is_managed_claude_model_alias(model, &alias).then_some(alias)
+    }).collect::<BTreeSet<_>>().into_iter().collect()
 }
 
 #[cfg(test)]
@@ -405,6 +566,9 @@ pub(crate) fn remove_managed_claude_model_aliases_in_yaml(content: &str) -> Resu
         CLAUDE_DESKTOP_OPUS_MODEL_ID,
         CLAUDE_DESKTOP_SONNET_MODEL_ID,
         CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0],
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1],
+        LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2],
     ] {
         changed |= remove_managed_claude_model_alias(root, alias)?;
     }
@@ -468,10 +632,7 @@ pub(crate) fn remove_existing_claude_model_alias(
                 .as_sequence_mut()
                 .ok_or_else(|| format!("{section}.models 必须是数组"))?;
             let before = models.len();
-            models.retain(|model| {
-                configured_model_identity(model)
-                    .is_none_or(|(_, client_model, _)| !client_model.eq_ignore_ascii_case(alias))
-            });
+            models.retain(|model| !occupies_claude_client_alias(model, alias));
             changed |= models.len() != before;
         }
     }
@@ -502,8 +663,7 @@ pub(crate) fn remove_oauth_claude_model_alias(
             if managed_only {
                 !is_managed_claude_model_alias(entry, alias)
             } else {
-                configured_model_identity(entry)
-                    .is_none_or(|(_, client_model, _)| !client_model.eq_ignore_ascii_case(alias))
+                !occupies_claude_client_alias(entry, alias)
             }
         });
         if entries.len() != before {
@@ -524,15 +684,92 @@ pub(crate) fn remove_oauth_claude_model_alias(
 }
 
 pub(crate) fn managed_claude_alias_display_name(alias: &str) -> Option<&'static str> {
-    if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_OPUS_MODEL_ID) {
+    if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_OPUS_MODEL_ID)
+        || alias.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0])
+    {
         Some(MANAGED_CLAUDE_OPUS_ALIAS_DISPLAY_NAME)
-    } else if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_SONNET_MODEL_ID) {
+    } else if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_SONNET_MODEL_ID)
+        || alias.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1])
+    {
         Some(MANAGED_CLAUDE_SONNET_ALIAS_DISPLAY_NAME)
-    } else if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_HAIKU_MODEL_ID) {
+    } else if alias.eq_ignore_ascii_case(CLAUDE_DESKTOP_HAIKU_MODEL_ID)
+        || alias.eq_ignore_ascii_case(LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2])
+    {
         Some(MANAGED_CLAUDE_HAIKU_ALIAS_DISPLAY_NAME)
+    } else if claude_desktop_alias_has_valid_syntax(alias) {
+        Some("EasyCLIProxyAPI managed Claude Desktop mapping")
     } else {
         None
     }
+}
+
+pub(crate) fn claude_desktop_uses_source_directly(
+    source_model: &str,
+    models: &[AgentModelOption],
+) -> bool {
+    models
+        .iter()
+        .any(|model| model.name.eq_ignore_ascii_case(source_model) && model.is_alias)
+        || is_claude_native_model_id(source_model)
+}
+
+pub(crate) fn is_claude_native_model_id(name: &str) -> bool {
+    let name = name.trim();
+    if name.is_empty() || claude_desktop_has_other_model_family(name) {
+        return false;
+    }
+    let lowered = name.to_ascii_lowercase();
+    if lowered.starts_with("claude-")
+        || lowered.starts_with("anthropic.")
+        || lowered.contains("anthropic/")
+    {
+        return true;
+    }
+    ["opus", "sonnet", "haiku", "fable", "mythos"]
+        .into_iter()
+        .any(|family| {
+            lowered == family
+                || lowered
+                    .strip_prefix(&format!("{family}-"))
+                    .is_some_and(|rest| {
+                        !rest.is_empty()
+                            && rest
+                                .chars()
+                                .all(|ch| ch.is_ascii_digit() || ch == '.')
+                    })
+        })
+}
+
+pub(crate) fn is_claude_desktop_route_id(name: &str) -> bool {
+    claude_desktop_route_pairs()
+        .iter()
+        .any(|(current, legacy)| current.eq_ignore_ascii_case(name) || legacy.eq_ignore_ascii_case(name))
+}
+
+fn claude_desktop_route_pairs() -> [(&'static str, &'static str); 3] {
+    [
+        (CLAUDE_DESKTOP_OPUS_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[0]),
+        (CLAUDE_DESKTOP_SONNET_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[1]),
+        (CLAUDE_DESKTOP_HAIKU_MODEL_ID, LEGACY_CLAUDE_DESKTOP_MODEL_IDS[2]),
+    ]
+}
+
+fn paired_claude_desktop_alias(alias: &str) -> Option<&'static str> {
+    claude_desktop_route_pairs().into_iter().find_map(|(current, legacy)| {
+        if alias.eq_ignore_ascii_case(current) {
+            Some(legacy)
+        } else if alias.eq_ignore_ascii_case(legacy) {
+            Some(current)
+        } else {
+            None
+        }
+    })
+}
+
+fn occupies_claude_client_alias(model: &serde_norway::Value, alias: &str) -> bool {
+    configured_model_identity(model).is_some_and(|(source, client_model, _)| {
+        client_model.eq_ignore_ascii_case(alias) && !source.eq_ignore_ascii_case(&client_model)
+    })
 }
 
 pub(crate) fn is_managed_claude_model_alias(model: &serde_norway::Value, alias: &str) -> bool {
@@ -548,20 +785,27 @@ pub(crate) fn is_managed_claude_model_alias(model: &serde_norway::Value, alias: 
             .is_some_and(|value| value == expected_display_name)
 }
 
-pub(crate) fn configured_managed_claude_alias_exists(
+pub(crate) fn configured_managed_claude_alias_matches(
     root: &serde_norway::Mapping,
     alias: &str,
+    source_model: &str,
 ) -> bool {
+    let matches = |model: &serde_norway::Value| {
+        is_managed_claude_model_alias(model, alias)
+            && configured_model_identity(model)
+                .is_some_and(|(source, _, _)| source.eq_ignore_ascii_case(source_model))
+    };
     let configured_provider_alias = MODEL_ALIAS_CONFIG_SECTIONS.iter().any(|section| {
         yaml_mapping_value(root, section)
             .and_then(serde_norway::Value::as_sequence)
             .into_iter()
             .flatten()
             .filter_map(serde_norway::Value::as_mapping)
+            .filter(|provider| configured_provider_model_is_enabled(provider, alias))
             .filter_map(|provider| yaml_mapping_value(provider, "models"))
             .filter_map(serde_norway::Value::as_sequence)
             .flatten()
-            .any(|model| is_managed_claude_model_alias(model, alias))
+            .any(matches)
     });
     configured_provider_alias
         || yaml_mapping_value(root, "oauth-model-alias")
@@ -570,24 +814,23 @@ pub(crate) fn configured_managed_claude_alias_exists(
             .flat_map(|channels| channels.values())
             .filter_map(serde_norway::Value::as_sequence)
             .flatten()
-            .any(|model| is_managed_claude_model_alias(model, alias))
+            .any(matches)
 }
 
 pub(crate) fn ensure_claude_desktop_model_alias(
     root: &mut serde_norway::Mapping,
+    sources: &serde_norway::Mapping,
     source_model: &str,
     alias: &str,
     oauth_model_definitions: &[OAuthModelDefinitions],
 ) -> Result<(), String> {
-    if let Some((existing_source, _)) = configured_model_client_identity(root, alias) {
-        if existing_source.eq_ignore_ascii_case(source_model)
-            && configured_managed_claude_alias_exists(root, alias)
-        {
-            return Ok(());
-        }
-        remove_existing_claude_model_alias(root, alias)?;
+    if configured_managed_claude_alias_matches(root, alias, source_model) {
+        return Ok(());
     }
-    if append_claude_desktop_model_alias(root, source_model, alias)? {
+    let source = resolve_claude_desktop_alias_source(sources, source_model, alias)?;
+    if let Some(source) = source {
+        remove_existing_claude_model_alias(root, alias)?;
+        append_claude_desktop_model_alias(root, source, alias)?;
         return Ok(());
     }
     if let Some(definition) = oauth_model_definitions.iter().find(|definition| {
@@ -596,6 +839,7 @@ pub(crate) fn ensure_claude_desktop_model_alias(
             .iter()
             .any(|model| model.id.eq_ignore_ascii_case(source_model))
     }) {
+        remove_existing_claude_model_alias(root, alias)?;
         append_managed_oauth_model_alias(
             root,
             definition.channel.key,
@@ -661,64 +905,177 @@ pub(crate) fn configured_model_client_identity(
     None
 }
 
-pub(crate) fn append_claude_desktop_model_alias(
-    root: &mut serde_norway::Mapping,
+enum ClaudeDesktopAliasSource {
+    Provider {
+        section: &'static str,
+        provider_index: usize,
+        model: serde_norway::Mapping,
+    },
+    OAuth {
+        channel: String,
+        model: serde_norway::Mapping,
+    },
+}
+
+pub(crate) fn configured_provider_model_is_enabled(provider: &serde_norway::Mapping, model: &str) -> bool {
+    if yaml_mapping_value(provider, "disabled") == Some(&serde_norway::Value::Bool(true)) {
+        return false;
+    }
+    let model = model.trim().to_lowercase();
+    !yaml_mapping_value(provider, "excluded-models")
+        .and_then(serde_norway::Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_norway::Value::as_str)
+        .any(|pattern| {
+            let pattern = pattern.trim().to_lowercase();
+            if pattern.is_empty() {
+                return false;
+            }
+            let Some((prefix, rest)) = pattern.split_once('*') else {
+                return pattern == model;
+            };
+            let Some(mut remaining) = model.strip_prefix(prefix) else {
+                return false;
+            };
+            let mut parts = rest.rsplitn(2, '*');
+            let suffix = parts.next().unwrap_or_default();
+            let Some(middle) = remaining.strip_suffix(suffix) else {
+                return false;
+            };
+            remaining = middle;
+            if let Some(parts) = parts.next() {
+                for part in parts.split('*').filter(|part| !part.is_empty()) {
+                    let Some(index) = remaining.find(part) else {
+                        return false;
+                    };
+                    remaining = &remaining[index + part.len()..];
+                }
+            }
+            true
+        })
+}
+
+fn resolve_claude_desktop_alias_source(
+    root: &serde_norway::Mapping,
     source_model: &str,
     alias: &str,
-) -> Result<bool, String> {
-    for section in MODEL_ALIAS_CONFIG_SECTIONS {
-        let Some(providers) = yaml_mapping_value_mut(root, section) else {
-            continue;
+) -> Result<Option<ClaudeDesktopAliasSource>, String> {
+    for upstream in [false, true] {
+        let matching_model = |model: &serde_norway::Value| {
+            let (name, client_model, _) = configured_model_identity(model)?;
+            let matches = if upstream { &name } else { &client_model };
+            if !matches.eq_ignore_ascii_case(source_model) {
+                return None;
+            }
+            let mut model = model.as_mapping().cloned().unwrap_or_default();
+            model.insert(yaml_key("name"), serde_norway::Value::String(name));
+            Some(model)
         };
-        let providers = providers
-            .as_sequence_mut()
-            .ok_or_else(|| format!("{section} 必须是数组"))?;
-        for provider in providers {
-            let Some(provider) = provider.as_mapping_mut() else {
+        for section in MODEL_ALIAS_CONFIG_SECTIONS {
+            let Some(providers) = yaml_mapping_value(root, section) else {
                 continue;
             };
-            let Some(models) = yaml_mapping_value_mut(provider, "models") else {
-                continue;
-            };
-            let models = models
-                .as_sequence_mut()
-                .ok_or_else(|| format!("{section}.models 必须是数组"))?;
-            let Some(source) = models.iter().find_map(|model| {
-                let (upstream_model, client_model, _) = configured_model_identity(model)?;
-                client_model
-                    .eq_ignore_ascii_case(source_model)
-                    .then(|| (model.clone(), upstream_model))
-            }) else {
-                continue;
-            };
-            let (source, upstream_model) = source;
-            let mut alias_model = source.as_mapping().cloned().unwrap_or_else(|| {
-                let mut mapping = serde_norway::Mapping::new();
-                mapping.insert(
-                    yaml_key("name"),
-                    serde_norway::Value::String(upstream_model.clone()),
-                );
-                mapping
-            });
-            alias_model.insert(
-                yaml_key("name"),
-                serde_norway::Value::String(upstream_model),
-            );
-            alias_model.insert(
-                yaml_key("alias"),
-                serde_norway::Value::String(alias.to_string()),
-            );
-            let display_name = managed_claude_alias_display_name(alias)
-                .ok_or_else(|| format!("不支持的 Claude 托管别名: {alias}"))?;
-            alias_model.insert(
-                yaml_key("display-name"),
-                serde_norway::Value::String(display_name.to_string()),
-            );
-            models.push(serde_norway::Value::Mapping(alias_model));
-            return Ok(true);
+            let providers = providers
+                .as_sequence()
+                .ok_or_else(|| format!("{section} 必须是数组"))?;
+            for (provider_index, provider) in providers.iter().enumerate() {
+                let Some(provider) = provider.as_mapping() else {
+                    continue;
+                };
+                if !configured_provider_model_is_enabled(provider, alias) {
+                    continue;
+                }
+                let Some(models) = yaml_mapping_value(provider, "models") else {
+                    continue;
+                };
+                let models = models
+                    .as_sequence()
+                    .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+                if let Some(model) = models.iter().find_map(|model| {
+                    let (_, client_model, _) = configured_model_identity(model)?;
+                    if !configured_provider_model_is_enabled(provider, &client_model) {
+                        return None;
+                    }
+                    matching_model(model)
+                }) {
+                    return Ok(Some(ClaudeDesktopAliasSource::Provider {
+                        section,
+                        provider_index,
+                        model,
+                    }));
+                }
+            }
+        }
+        if let Some(channels) =
+            yaml_mapping_value(root, "oauth-model-alias").and_then(serde_norway::Value::as_mapping)
+        {
+            for (channel, models) in channels {
+                let (Some(channel), Some(models)) = (channel.as_str(), models.as_sequence()) else {
+                    continue;
+                };
+                if let Some(model) = models.iter().find_map(matching_model) {
+                    return Ok(Some(ClaudeDesktopAliasSource::OAuth {
+                        channel: channel.to_string(),
+                        model,
+                    }));
+                }
+            }
         }
     }
-    Ok(false)
+    Ok(None)
+}
+
+fn append_claude_desktop_model_alias(
+    root: &mut serde_norway::Mapping,
+    source: ClaudeDesktopAliasSource,
+    alias: &str,
+) -> Result<(), String> {
+    let (models, mut model) = match source {
+        ClaudeDesktopAliasSource::Provider {
+            section,
+            provider_index,
+            model,
+        } => {
+            let models = yaml_mapping_value_mut(root, section)
+                .and_then(serde_norway::Value::as_sequence_mut)
+                .and_then(|providers| providers.get_mut(provider_index))
+                .and_then(serde_norway::Value::as_mapping_mut)
+                .and_then(|provider| yaml_mapping_value_mut(provider, "models"))
+                .and_then(serde_norway::Value::as_sequence_mut)
+                .ok_or("模型来源配置已变化，请刷新后重试")?;
+            (models, model)
+        }
+        ClaudeDesktopAliasSource::OAuth { channel, mut model } => {
+            let aliases = root
+                .entry(yaml_key("oauth-model-alias"))
+                .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
+                .as_mapping_mut()
+                .ok_or("oauth-model-alias 必须是 YAML 映射")?;
+            let models = aliases
+                .entry(yaml_key(&channel))
+                .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
+                .as_sequence_mut()
+                .ok_or_else(|| format!("oauth-model-alias.{channel} 必须是数组"))?;
+            model.insert(yaml_key("fork"), serde_norway::Value::Bool(true));
+            if oauth_alias_channel(&channel).is_some_and(|channel| channel.force_mapping) {
+                model.insert(yaml_key("force-mapping"), serde_norway::Value::Bool(true));
+            }
+            (models, model)
+        }
+    };
+    model.insert(
+        yaml_key("alias"),
+        serde_norway::Value::String(alias.to_string()),
+    );
+    let display_name = managed_claude_alias_display_name(alias)
+        .ok_or_else(|| format!("不支持的 Claude 托管别名: {alias}"))?;
+    model.insert(
+        yaml_key("display-name"),
+        serde_norway::Value::String(display_name.to_string()),
+    );
+    models.push(serde_norway::Value::Mapping(model));
+    Ok(())
 }
 
 pub(crate) fn append_managed_oauth_model_alias(
@@ -876,11 +1233,6 @@ pub(crate) fn resolved_oauth_alias_sources(
     let root = document
         .as_mapping()
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
-    // A configured API-key model must win over a catalog entry with the same
-    // name. `model-definitions/codex` describes the OAuth channel's capabilities;
-    // it is not evidence that a model returned by /v1/models is using OAuth.
-    // Otherwise a Codex API alias would be written to oauth-model-alias, which
-    // CPA deliberately does not apply to codex-api-key credentials.
     let mut sources = Vec::new();
     collect_config_thinking_alias_sources(
         root,
@@ -1017,6 +1369,11 @@ pub(crate) fn collect_config_thinking_alias_sources(
         }
         let provider_name =
             thinking_alias_provider_name(provider, fallback_provider, provider_index);
+        let provider_revision = sha256_bytes(
+            serde_norway::to_string(provider)
+                .map_err(|error| format!("读取模型源配置失败: {error}"))?
+                .as_bytes(),
+        );
         let Some(models) = yaml_mapping_value(provider, "models") else {
             continue;
         };
@@ -1040,7 +1397,7 @@ pub(crate) fn collect_config_thinking_alias_sources(
             let reasoning_levels = configured_model_reasoning_levels(model, protocol);
             sources.push(ResolvedThinkingAliasSource {
                 source: ThinkingAliasSource {
-                    id: format!("{section}:{provider_index}:{model_index}"),
+                    id: format!("{section}:{provider_index}:{model_index}:{provider_revision}"),
                     model: client_model,
                     display_name,
                     provider: provider_name.clone(),
@@ -1417,64 +1774,79 @@ pub(crate) fn collect_config_speed_alias_entries(
     Ok(())
 }
 
+fn alias_override_params<'a>(
+    root: &'a serde_norway::Mapping,
+    alias: &'a str,
+    protocol: &'a str,
+) -> impl Iterator<Item = (&'a serde_norway::Mapping, bool)> {
+    ["override-raw", "override"]
+        .into_iter()
+        .flat_map(move |section| {
+            nested_yaml_value(root, &["payload", section])
+                .and_then(serde_norway::Value::as_sequence)
+                .into_iter()
+                .flatten()
+                .rev()
+                .filter_map(move |rule| {
+                    let rule = rule.as_mapping()?;
+                    let models = yaml_mapping_value(rule, "models")?.as_sequence()?;
+                    if !models
+                        .iter()
+                        .any(|model| thinking_payload_model_matches(model, alias, protocol))
+                    {
+                        return None;
+                    }
+                    Some((
+                        yaml_mapping_value(rule, "params")?.as_mapping()?,
+                        section == "override-raw",
+                    ))
+                })
+        })
+}
+
+fn alias_payload_string(params: &serde_norway::Mapping, key: &str, raw: bool) -> Option<String> {
+    let value = yaml_mapping_value(params, key)?.as_str()?;
+    let decoded;
+    let value = if raw {
+        decoded = serde_json::from_str::<serde_json::Value>(value).ok()?;
+        decoded.as_str()?
+    } else {
+        value
+    };
+    let value = value.trim().to_ascii_lowercase();
+    (!value.is_empty()).then_some(value)
+}
+
+pub(crate) fn thinking_effort_from_params(
+    params: &serde_norway::Mapping,
+    protocol: &str,
+    raw: bool,
+) -> Option<String> {
+    [
+        "reasoning.effort",
+        "reasoning_effort",
+        "output_config.effort",
+        "generationConfig.thinkingConfig.thinkingLevel",
+        "thinking.effort",
+    ]
+    .into_iter()
+    .find_map(|key| alias_payload_string(params, key, raw))
+    .or_else(
+        || match alias_payload_string(params, "thinking.type", raw)?.as_str() {
+            "disabled" => Some("none".to_string()),
+            "adaptive" if protocol.eq_ignore_ascii_case("claude") => Some("auto".to_string()),
+            _ => None,
+        },
+    )
+}
+
 pub(crate) fn find_thinking_alias_effort(
     root: &serde_norway::Mapping,
     alias: &str,
     protocol: &str,
 ) -> Option<String> {
-    let rules = nested_yaml_value(root, &["payload", "override"])?.as_sequence()?;
-    for rule in rules {
-        let Some(rule) = rule.as_mapping() else {
-            continue;
-        };
-        let effort = yaml_mapping_value(rule, "params")
-            .and_then(serde_norway::Value::as_mapping)
-            .and_then(|params| {
-                let explicit = [
-                    "reasoning.effort",
-                    "reasoning_effort",
-                    "output_config.effort",
-                    "generationConfig.thinkingConfig.thinkingLevel",
-                    "thinking.effort",
-                ]
-                .into_iter()
-                .find_map(|key| yaml_mapping_value(params, key))
-                .and_then(serde_norway::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_ascii_lowercase);
-                explicit.or_else(|| {
-                    let thinking_type = yaml_mapping_value(params, "thinking.type")
-                        .and_then(serde_norway::Value::as_str)
-                        .map(str::trim)?;
-                    if thinking_type.eq_ignore_ascii_case("disabled") {
-                        Some("none".to_string())
-                    } else if protocol.eq_ignore_ascii_case("claude")
-                        && thinking_type.eq_ignore_ascii_case("adaptive")
-                    {
-                        Some("auto".to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .filter(|value| !value.is_empty());
-        let Some(effort) = effort else {
-            continue;
-        };
-        let Some(models) =
-            yaml_mapping_value(rule, "models").and_then(serde_norway::Value::as_sequence)
-        else {
-            continue;
-        };
-        if models
-            .iter()
-            .any(|model| thinking_payload_model_matches(model, alias, protocol))
-        {
-            return Some(effort);
-        }
-    }
-    None
+    alias_override_params(root, alias, protocol)
+        .find_map(|(params, raw)| thinking_effort_from_params(params, protocol, raw))
 }
 
 pub(crate) fn find_speed_alias_service_tier(
@@ -1482,33 +1854,8 @@ pub(crate) fn find_speed_alias_service_tier(
     alias: &str,
     protocol: &str,
 ) -> Option<String> {
-    let rules = nested_yaml_value(root, &["payload", "override"])?.as_sequence()?;
-    for rule in rules {
-        let Some(rule) = rule.as_mapping() else {
-            continue;
-        };
-        let service_tier = yaml_mapping_value(rule, "params")
-            .and_then(serde_norway::Value::as_mapping)
-            .and_then(|params| yaml_mapping_value(params, "service_tier"))
-            .and_then(serde_norway::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        let Some(service_tier) = service_tier else {
-            continue;
-        };
-        let Some(models) =
-            yaml_mapping_value(rule, "models").and_then(serde_norway::Value::as_sequence)
-        else {
-            continue;
-        };
-        if models
-            .iter()
-            .any(|model| thinking_payload_model_matches(model, alias, protocol))
-        {
-            return Some(service_tier.to_ascii_lowercase());
-        }
-    }
-    None
+    alias_override_params(root, alias, protocol)
+        .find_map(|(params, raw)| alias_payload_string(params, "service_tier", raw))
 }
 
 pub(crate) fn thinking_payload_model_matches(
@@ -1522,9 +1869,11 @@ pub(crate) fn thinking_payload_model_matches(
     let name_matches = yaml_mapping_value(model, "name")
         .and_then(serde_norway::Value::as_str)
         .is_some_and(|name| name.trim().eq_ignore_ascii_case(alias));
-    let protocol_matches = yaml_mapping_value(model, "protocol")
-        .and_then(serde_norway::Value::as_str)
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case(protocol));
+    let protocol_matches = yaml_mapping_value(model, "protocol").is_none_or(|value| {
+        value.as_str().is_some_and(|value| {
+            value.trim().is_empty() || value.trim().eq_ignore_ascii_case(protocol)
+        })
+    });
     name_matches && protocol_matches
 }
 
@@ -1569,7 +1918,6 @@ pub(crate) fn insert_thinking_effort_params(
             );
         }
         "antigravity-oauth" => {
-            // Antigravity applies payload rules relative to its `request` object.
             insert(
                 params,
                 "generationConfig.thinkingConfig.thinkingLevel",
@@ -1660,8 +2008,8 @@ pub(crate) fn add_model_alias_to_yaml(
         )?,
     }
 
-    remove_thinking_payload_model(root, alias)?;
-    remove_speed_payload_model(root, alias)?;
+    let scope = AliasPayloadScope::for_protocol(&source.source.protocol);
+    remove_alias_payload_options(root, alias, &scope)?;
     if !effort.is_empty() {
         let mut params_mapping = serde_norway::Mapping::new();
         insert_thinking_effort_params(&mut params_mapping, &source.source, effort)?;
@@ -1759,7 +2107,11 @@ pub(crate) fn add_speed_alias_to_yaml(
         )?,
     }
 
-    remove_speed_payload_model(root, alias)?;
+    remove_alias_payload_options(
+        root,
+        alias,
+        &AliasPayloadScope::for_protocol(&source.source.protocol),
+    )?;
     let mut params_mapping = serde_norway::Mapping::new();
     params_mapping.insert(
         yaml_key("service_tier"),
@@ -1936,16 +2288,16 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
         .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
     let mut removed = remove_oauth_model_alias(root, alias, oauth_channel)?;
     if oauth_channel.is_none() {
-        removed |= remove_config_thinking_alias(root, "codex-api-key", "codex", alias)?;
-        removed |= remove_config_thinking_alias(root, "openai-compatibility", "openai", alias)?;
-        removed |= remove_config_thinking_alias(root, "claude-api-key", "claude", alias)?;
-        removed |= remove_config_thinking_alias(root, "gemini-api-key", "gemini", alias)?;
+        removed |= remove_config_model_alias(root, "codex-api-key", alias)?;
+        removed |= remove_config_model_alias(root, "openai-compatibility", alias)?;
+        removed |= remove_config_model_alias(root, "claude-api-key", alias)?;
+        removed |= remove_config_model_alias(root, "gemini-api-key", alias)?;
     }
     if !removed {
         return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
     }
-    remove_thinking_payload_model(root, alias)?;
-    remove_speed_payload_model(root, alias)?;
+    let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
+    remove_alias_payload_options(root, alias, &scope)?;
     render_updated_core_yaml(&mut document, updated)
 }
 
@@ -1973,7 +2325,8 @@ pub(crate) fn remove_speed_alias_from_yaml_for_channel(
     if !removed {
         return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
     }
-    remove_speed_payload_model(root, alias)?;
+    let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
+    remove_alias_payload_options(root, alias, &scope)?;
     render_updated_core_yaml(&mut document, updated)
 }
 
@@ -2051,15 +2404,11 @@ pub(crate) fn configured_model_alias_exists(root: &serde_norway::Mapping, alias:
             .any(|value| value.eq_ignore_ascii_case(alias))
 }
 
-pub(crate) fn remove_config_thinking_alias(
+pub(crate) fn remove_config_model_alias(
     root: &mut serde_norway::Mapping,
     section: &str,
-    protocol: &str,
     alias: &str,
 ) -> Result<bool, String> {
-    if find_thinking_alias_effort(root, alias, protocol).is_none() {
-        return Ok(false);
-    }
     let Some(providers) = yaml_mapping_value_mut(root, section) else {
         return Ok(false);
     };
@@ -2129,116 +2478,164 @@ pub(crate) fn remove_config_speed_alias(
     Ok(removed)
 }
 
-pub(crate) fn remove_thinking_payload_model(
-    root: &mut serde_norway::Mapping,
-    alias: &str,
-) -> Result<(), String> {
-    let mut remove_payload_section = false;
-    if let Some(payload) = yaml_mapping_value_mut(root, "payload") {
-        let payload = payload
-            .as_mapping_mut()
-            .ok_or_else(|| "payload 必须是 YAML 映射".to_string())?;
-        if let Some(override_rules) = yaml_mapping_value_mut(payload, "override") {
-            let override_rules = override_rules
-                .as_sequence_mut()
-                .ok_or_else(|| "payload.override 必须是数组".to_string())?;
-            let mut next_rules = Vec::with_capacity(override_rules.len());
-            for mut rule in std::mem::take(override_rules) {
-                let mut removed_from_rule = false;
-                let mut models_empty = false;
-                if let Some(rule_mapping) = rule.as_mapping_mut() {
-                    let has_effort = yaml_mapping_value(rule_mapping, "params")
-                        .and_then(serde_norway::Value::as_mapping)
-                        .is_some_and(|params| {
-                            [
-                                "reasoning.effort",
-                                "reasoning_effort",
-                                "output_config.effort",
-                                "generationConfig.thinkingConfig.thinkingLevel",
-                                "thinking.effort",
-                            ]
-                            .into_iter()
-                            .any(|key| yaml_mapping_value(params, key).is_some())
-                                || yaml_mapping_value(params, "thinking.type").is_some()
-                        });
-                    if has_effort {
-                        if let Some(models) = yaml_mapping_value_mut(rule_mapping, "models") {
-                            let models = models
-                                .as_sequence_mut()
-                                .ok_or_else(|| "payload.override.models 必须是数组".to_string())?;
-                            let before = models.len();
-                            models
-                                .retain(|model| !thinking_payload_model_name_matches(model, alias));
-                            removed_from_rule = models.len() != before;
-                            models_empty = models.is_empty();
-                        }
-                    }
-                }
-                if !(removed_from_rule && models_empty) {
-                    next_rules.push(rule);
-                }
-            }
-            *override_rules = next_rules;
-            if override_rules.is_empty() {
-                payload.remove(yaml_key("override"));
-            }
-        }
-        remove_payload_section = payload.is_empty();
-    }
-    if remove_payload_section {
-        root.remove(yaml_key("payload"));
-    }
-    Ok(())
+struct AliasPayloadScope {
+    protocol: Option<String>,
+    preserved_protocols: BTreeSet<String>,
 }
 
-pub(crate) fn remove_speed_payload_model(
-    root: &mut serde_norway::Mapping,
-    alias: &str,
-) -> Result<(), String> {
-    let mut remove_payload_section = false;
-    if let Some(payload) = yaml_mapping_value_mut(root, "payload") {
-        let payload = payload
-            .as_mapping_mut()
-            .ok_or_else(|| "payload 必须是 YAML 映射".to_string())?;
-        if let Some(override_rules) = yaml_mapping_value_mut(payload, "override") {
-            let override_rules = override_rules
-                .as_sequence_mut()
-                .ok_or_else(|| "payload.override 必须是数组".to_string())?;
-            let mut next_rules = Vec::with_capacity(override_rules.len());
-            for mut rule in std::mem::take(override_rules) {
-                let mut removed_from_rule = false;
-                let mut models_empty = false;
-                if let Some(rule_mapping) = rule.as_mapping_mut() {
-                    let has_speed = yaml_mapping_value(rule_mapping, "params")
-                        .and_then(serde_norway::Value::as_mapping)
-                        .is_some_and(|params| yaml_mapping_value(params, "service_tier").is_some());
-                    if has_speed {
-                        if let Some(models) = yaml_mapping_value_mut(rule_mapping, "models") {
-                            let models = models
-                                .as_sequence_mut()
-                                .ok_or_else(|| "payload.override.models 必须是数组".to_string())?;
-                            let before = models.len();
-                            models.retain(|model| {
-                                !thinking_payload_model_matches(model, alias, "codex")
-                                    && !thinking_payload_model_matches(model, alias, "openai")
-                            });
-                            removed_from_rule = models.len() != before;
-                            models_empty = models.is_empty();
-                        }
-                    }
+impl AliasPayloadScope {
+    fn for_protocol(protocol: &str) -> Self {
+        Self {
+            protocol: Some(protocol.to_string()),
+            preserved_protocols: BTreeSet::new(),
+        }
+    }
+
+    fn after_removal(root: &serde_norway::Mapping, alias: &str, channel: Option<&str>) -> Self {
+        let mut preserved_protocols = BTreeSet::new();
+        if let Some(channels) =
+            yaml_mapping_value(root, "oauth-model-alias").and_then(serde_norway::Value::as_mapping)
+        {
+            for (channel, entries) in channels {
+                let matches = entries.as_sequence().is_some_and(|entries| {
+                    entries.iter().any(|entry| {
+                        entry
+                            .as_mapping()
+                            .and_then(|entry| yaml_mapping_value(entry, "alias"))
+                            .and_then(serde_norway::Value::as_str)
+                            .is_some_and(|name| name.trim().eq_ignore_ascii_case(alias))
+                    })
+                });
+                if matches {
+                    preserved_protocols.insert(
+                        oauth_alias_channel_details(channel.as_str().unwrap_or_default()).2,
+                    );
                 }
-                if !(removed_from_rule && models_empty) {
-                    next_rules.push(rule);
-                }
-            }
-            *override_rules = next_rules;
-            if override_rules.is_empty() {
-                payload.remove(yaml_key("override"));
             }
         }
-        remove_payload_section = payload.is_empty();
+        for (section, protocol) in [
+            ("codex-api-key", "codex"),
+            ("openai-compatibility", "openai"),
+            ("claude-api-key", "claude"),
+            ("gemini-api-key", "gemini"),
+        ] {
+            let matches = yaml_mapping_value(root, section)
+                .and_then(serde_norway::Value::as_sequence)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_norway::Value::as_mapping)
+                .filter_map(|provider| yaml_mapping_value(provider, "models"))
+                .filter_map(serde_norway::Value::as_sequence)
+                .flatten()
+                .filter_map(configured_model_identity)
+                .any(|(_, name, _)| name.eq_ignore_ascii_case(alias));
+            if matches {
+                preserved_protocols.insert(protocol.to_string());
+            }
+        }
+        Self {
+            protocol: channel.map(|channel| oauth_alias_channel_details(channel).2),
+            preserved_protocols,
+        }
     }
-    if remove_payload_section {
+
+    fn matches(&self, model: &serde_norway::Value, alias: &str) -> bool {
+        if !thinking_payload_model_name_matches(model, alias) {
+            return false;
+        }
+        let protocol = model
+            .as_mapping()
+            .and_then(|model| yaml_mapping_value(model, "protocol"))
+            .and_then(serde_norway::Value::as_str)
+            .map(str::trim)
+            .filter(|protocol| !protocol.is_empty());
+        match protocol {
+            Some(protocol) => {
+                self.protocol
+                    .as_ref()
+                    .is_none_or(|target| target.eq_ignore_ascii_case(protocol))
+                    && !self
+                        .preserved_protocols
+                        .iter()
+                        .any(|existing| existing.eq_ignore_ascii_case(protocol))
+            }
+            None => self.preserved_protocols.is_empty(),
+        }
+    }
+}
+
+fn remove_alias_payload_options(
+    root: &mut serde_norway::Mapping,
+    alias: &str,
+    scope: &AliasPayloadScope,
+) -> Result<(), String> {
+    let Some(payload) = yaml_mapping_value_mut(root, "payload") else {
+        return Ok(());
+    };
+    let payload = payload.as_mapping_mut().ok_or("payload 必须是 YAML 映射")?;
+    for section in ["override", "override-raw"] {
+        let Some(rules) = yaml_mapping_value_mut(payload, section) else {
+            continue;
+        };
+        let rules = rules
+            .as_sequence_mut()
+            .ok_or_else(|| format!("payload.{section} 必须是数组"))?;
+        let mut next = Vec::with_capacity(rules.len());
+        for rule in rules.iter() {
+            let Some(mapping) = rule.as_mapping() else {
+                next.push(rule.clone());
+                continue;
+            };
+            let Some(params) =
+                yaml_mapping_value(mapping, "params").and_then(serde_norway::Value::as_mapping)
+            else {
+                next.push(rule.clone());
+                continue;
+            };
+            let mut retained_params = params.clone();
+            for key in ALIAS_EFFORT_KEYS.iter().copied().chain(["service_tier"]) {
+                retained_params.remove(yaml_key(key));
+            }
+            if retained_params == *params {
+                next.push(rule.clone());
+                continue;
+            }
+            let Some(models) = yaml_mapping_value(mapping, "models") else {
+                next.push(rule.clone());
+                continue;
+            };
+            let models = models
+                .as_sequence()
+                .ok_or_else(|| format!("payload.{section}.models 必须是数组"))?;
+            let (target, others): (Vec<_>, Vec<_>) = models
+                .iter()
+                .cloned()
+                .partition(|model| scope.matches(model, alias));
+            if target.is_empty() {
+                next.push(rule.clone());
+                continue;
+            }
+            if !others.is_empty() {
+                let mut shared = mapping.clone();
+                shared.insert(yaml_key("models"), serde_norway::Value::Sequence(others));
+                next.push(serde_norway::Value::Mapping(shared));
+            }
+            if !retained_params.is_empty() {
+                let mut retained = mapping.clone();
+                retained.insert(yaml_key("models"), serde_norway::Value::Sequence(target));
+                retained.insert(
+                    yaml_key("params"),
+                    serde_norway::Value::Mapping(retained_params),
+                );
+                next.push(serde_norway::Value::Mapping(retained));
+            }
+        }
+        *rules = next;
+        if rules.is_empty() {
+            payload.remove(yaml_key(section));
+        }
+    }
+    if payload.is_empty() {
         root.remove(yaml_key("payload"));
     }
     Ok(())
@@ -2251,8 +2648,15 @@ pub(crate) fn render_updated_core_yaml(
     document.set(updated);
     let rendered = expand_top_level_flow_style_collections(&document.get_string(), document.get())?;
     let rendered = indent_indentationless_yaml_sequences(&rendered);
-    serde_norway::from_str::<serde_norway::Value>(&rendered)
+    let validated = serde_norway::from_str::<serde_norway::Value>(&rendered)
         .map_err(|error| format!("验证更新后的内核配置失败: {error}"))?;
+    if &validated != document.get() {
+        let path = first_yaml_mismatch_path(document.get(), &validated, &mut Vec::new())
+            .unwrap_or_else(|| "<unknown>".to_string());
+        return Err(format!(
+            "更新后的内核配置与预期值不一致（路径: {path}），已拒绝写入"
+        ));
+    }
     Ok(rendered)
 }
 

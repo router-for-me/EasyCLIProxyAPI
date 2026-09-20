@@ -7,34 +7,37 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Check,
-  CheckCircle2,
   ChevronDown,
   Languages,
   LoaderCircle,
+  Monitor,
   Moon,
+  RefreshCw,
   Sun,
   X,
 } from "lucide-react";
 import appLogo from "../assets/logo.jpg";
 import { useI18n, languageOptions, type AppLocale } from "../i18n";
 import type { MessageKey } from "../i18n/resources";
-import { InlineNotice, useAppNotice, type NoticeMessage } from "../appNotice";
+import { MessageNotice, FloatingNotice, useAppNotice, type NoticeMessage } from "../appNotice";
 import {
   managementApi,
   readString,
   responseList,
 } from "../services/managementApi";
 import {
+  DEEPSEEK_BASE_URL,
   fetchModels,
+  mergeModelOptions,
   normalizeBaseUrl,
+  reconcileModelSelection,
   type ModelOption,
   type ModelProvider,
 } from "../services/modelService";
-import { type AppTheme } from "../theme";
+import { type ThemePreference } from "../theme";
 import { AgentsPage } from "./AgentsPage";
 
 import codexIcon from "../assets/icons/codex.svg";
@@ -42,6 +45,7 @@ import claudeIcon from "../assets/icons/claude.svg";
 import antigravityIcon from "../assets/icons/antigravity.svg";
 import kimiIcon from "../assets/icons/kimi-light.svg";
 import grokIcon from "../assets/icons/grok.svg";
+import devinIcon from "../assets/icons/devin.svg";
 import openaiIcon from "../assets/icons/openai-light.svg";
 import deepseekIcon from "../assets/icons/deepseek.svg";
 import geminiIcon from "../assets/icons/gemini.svg";
@@ -49,7 +53,7 @@ import geminiIcon from "../assets/icons/gemini.svg";
 type AuthMethod = "oauth" | "api";
 type SetupStep = 1 | 2;
 
-type OAuthProviderId = "codex" | "claude" | "antigravity" | "kimi" | "xai";
+type OAuthProviderId = "codex" | "claude" | "antigravity" | "kimi" | "xai" | "devin";
 
 type OAuthProviderInfo = {
   id: OAuthProviderId;
@@ -64,6 +68,7 @@ const oauthProviders: OAuthProviderInfo[] = [
   { id: "antigravity", name: "Antigravity OAuth", icon: antigravityIcon, descriptionKey: "easyMode.oauth.providerDesc.antigravity" },
   { id: "kimi", name: "Kimi OAuth", icon: kimiIcon, descriptionKey: "easyMode.oauth.providerDesc.kimi" },
   { id: "xai", name: "xAI OAuth", icon: grokIcon, descriptionKey: "easyMode.oauth.providerDesc.xai" },
+  { id: "devin", name: "Devin OAuth", icon: devinIcon, descriptionKey: "easyMode.oauth.providerDesc.devin" },
 ];
 
 type ApiSection = "openai-compatibility" | "deepseek" | "claude" | "gemini" | "codex";
@@ -83,7 +88,7 @@ const apiSectionOptions: ApiSectionOption[] = [
   { id: "claude", managementSection: "claude-api-key", nameKey: "easyMode.api.platformName.claude", provider: "claude", defaultBaseUrl: "", icon: claudeIcon },
   { id: "codex", managementSection: "codex-api-key", nameKey: "easyMode.api.platformName.codex", provider: "codex", defaultBaseUrl: "", icon: codexIcon },
   { id: "gemini", managementSection: "gemini-api-key", nameKey: "easyMode.api.platformName.gemini", provider: "gemini", defaultBaseUrl: "", icon: geminiIcon },
-  { id: "deepseek", managementSection: "openai-compatibility", nameKey: "easyMode.api.platformName.deepseek", provider: "openai", defaultBaseUrl: "https://api.deepseek.com", icon: deepseekIcon },
+  { id: "deepseek", managementSection: "codex-api-key", nameKey: "easyMode.api.platformName.deepseek", provider: "deepseek", defaultBaseUrl: DEEPSEEK_BASE_URL, icon: deepseekIcon },
 ];
 
 const isDeepSeekRecord = (record: Record<string, unknown>) => {
@@ -100,8 +105,8 @@ export function EasyModePage({
   setLocale,
 }: {
   onExit?: () => void;
-  theme?: AppTheme;
-  setTheme?: (theme: AppTheme) => void;
+  theme?: ThemePreference;
+  setTheme?: (theme: ThemePreference) => void;
   locale?: AppLocale;
   setLocale?: (locale: AppLocale) => void;
 }) {
@@ -110,7 +115,6 @@ export function EasyModePage({
   const [activeStep, setActiveStep] = useState<SetupStep>(1);
   const [authMethod, setAuthMethod] = useState<AuthMethod>("oauth");
 
-  const [loadingSources, setLoadingSources] = useState(true);
   const [authFiles, setAuthFiles] = useState<Record<string, unknown>[]>([]);
   const [apiCounts, setApiCounts] = useState<Record<ApiSection, number>>({
     "openai-compatibility": 0,
@@ -119,7 +123,6 @@ export function EasyModePage({
     gemini: 0,
     codex: 0,
   });
-  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
 
   const [oauthLoggingIn, setOauthLoggingIn] = useState<OAuthProviderId | null>(null);
   const oauthFeedback = useAppNotice();
@@ -134,6 +137,7 @@ export function EasyModePage({
   const [apiTesting, setApiTesting] = useState(false);
   const [apiTestedModels, setApiTestedModels] = useState<ModelOption[]>([]);
   const [apiSelectedModels, setApiSelectedModels] = useState<ModelOption[]>([]);
+  const [apiModelsReady, setApiModelsReady] = useState(false);
   const [apiErrorMessage, setApiTestError] = useState<NoticeMessage>("");
   const apiTestError = typeof apiErrorMessage === "string"
     ? apiErrorMessage
@@ -149,7 +153,6 @@ export function EasyModePage({
   const [guideApiModelsFetched, setGuideApiModelsFetched] = useState(false);
   const [guideAgentConfigured, setGuideAgentConfigured] = useState(false);
 
-  // 新手聚焦指导状态（默认关闭，点击开启）
   const [guideActive, setGuideActive] = useState(false);
   const [guideStep, setGuideStep] = useState<number>(1);
   const [spotlightRect, setSpotlightRect] = useState<{
@@ -163,7 +166,6 @@ export function EasyModePage({
   const [langMenuOpen, setLangMenuOpen] = useState(false);
 
   const refreshSourceStatus = useCallback(async () => {
-    setLoadingSources(true);
     try {
       const authFilesPayload = await managementApi.get("/auth-files");
       const files = responseList(authFilesPayload, "files");
@@ -189,7 +191,7 @@ export function EasyModePage({
         const sourceList = recordsBySection[section.managementSection];
         const list = section.id === "deepseek"
           ? sourceList.filter(isDeepSeekRecord)
-          : section.id === "openai-compatibility"
+          : section.id === "codex"
             ? sourceList.filter((record) => !isDeepSeekRecord(record))
             : sourceList;
         counts[section.id] = list.length;
@@ -197,8 +199,6 @@ export function EasyModePage({
       setApiCounts(counts);
     } catch (e) {
       console.warn("Failed to refresh source status", e);
-    } finally {
-      setLoadingSources(false);
     }
   }, []);
 
@@ -214,7 +214,7 @@ export function EasyModePage({
     const norm = providerId === "claude" ? "claude" : providerId === "codex" ? "codex" : providerId;
     return authFiles.some((f) => {
       const p = readString(f, "provider", "type").toLowerCase();
-      return p.includes(norm) || (norm === "codex" && p.includes("openai")) || (norm === "claude" && p.includes("anthropic"));
+      return (norm === "devin" && p === "cognition") || p.includes(norm) || (norm === "codex" && p.includes("openai")) || (norm === "claude" && p.includes("anthropic"));
     });
   };
 
@@ -320,6 +320,7 @@ export function EasyModePage({
     if (opt) setApiBaseUrl(opt.defaultBaseUrl);
     setApiTestedModels([]);
     setApiSelectedModels([]);
+    setApiModelsReady(false);
     setApiTestError("");
     clearApiNotice();
     setGuideApiSaved(false);
@@ -337,10 +338,7 @@ export function EasyModePage({
     }
     setApiTesting(true);
     setApiTestError("");
-    setApiTestedModels([]);
-    setApiSelectedModels([]);
     setGuideApiSaved(false);
-    setGuideApiModelsFetched(false);
 
     const opt = apiSectionOptions.find((o) => o.id === selectedApiSection);
     const providerType = opt ? opt.provider : "openai";
@@ -355,8 +353,18 @@ export function EasyModePage({
         10000,
       );
       if (models.length > 0) {
-        setApiTestedModels(models);
-        setApiSelectedModels(models);
+        const mergedModels = mergeModelOptions(models);
+        const selectedNames = reconcileModelSelection(
+          mergedModels,
+          [],
+          apiSelectedModels.map((model) => model.name),
+          apiModelsReady ? "refresh" : "initial",
+        );
+        setApiTestedModels(mergedModels);
+        setApiSelectedModels(
+          mergedModels.filter((model) => selectedNames.has(model.name.trim().toLowerCase())),
+        );
+        setApiModelsReady(true);
         setGuideApiModelsFetched(true);
       } else {
         setApiTestError({ key: "easyMode.api.noModelsFound" });
@@ -389,6 +397,10 @@ export function EasyModePage({
       setApiTestError({ key: "easyMode.api.apiKeyRequired" });
       return;
     }
+    if (selectedApiSection === "deepseek" && !apiModelsReady) {
+      setApiTestError({ key: "easyMode.api.fetchListFirst" });
+      return;
+    }
     if (apiSelectedModels.length === 0) {
       setApiTestError({ key: "easyMode.api.modelRequired" });
       return;
@@ -407,7 +419,8 @@ export function EasyModePage({
       const managementSection = selectedOption?.managementSection ?? "openai-compatibility";
       const configPayload = await managementApi.get("/config");
       const list = responseList(configPayload, managementSection);
-      const models = apiSelectedModels.map((model) => ({ name: model.name.trim() }));
+      const selectedModels = apiSelectedModels.map((model) => ({ name: model.name.trim() }));
+      const models = selectedModels;
       const newEntry = managementSection === "openai-compatibility"
         ? {
           name: apiRemark.trim() || `${selectedApiSection} (${list.length + 1})`,
@@ -418,6 +431,7 @@ export function EasyModePage({
           models,
         }
         : {
+          ...(selectedApiSection === "deepseek" ? { name: "DeepSeek" } : {}),
           "api-key": apiKey.trim(),
           "base-url": normalizeBaseUrl(apiBaseUrl.trim()),
           models,
@@ -434,7 +448,6 @@ export function EasyModePage({
     }
   };
 
-  // 获取当前聚焦点元素 ID (4 个稳定步骤)
   const currentTargetId = (() => {
     if (!guideActive) return null;
     if (activeStep === 1) {
@@ -447,7 +460,6 @@ export function EasyModePage({
     return null;
   })();
 
-  // 计算聚光灯位置
   const updateSpotlightPosition = useCallback(() => {
     if (!guideActive || !currentTargetId) {
       setSpotlightRect(null);
@@ -556,7 +568,6 @@ export function EasyModePage({
         ? hasConnectedSource || guideOAuthCompleted || guideApiSaved
         : guideAgentConfigured;
 
-  // 指引步骤控制
   const handleNextGuideStep = () => {
     if (!guideCanAdvance) return;
     if (guideStep === 1) {
@@ -600,10 +611,8 @@ export function EasyModePage({
 
   return (
     <section className="page simple-mode-page simple-mode-expanded">
-      {/* 全灰色聚焦蒙层 (Dimmed Backdrop) */}
       {guideActive ? <div className="guide-dimmed-overlay" /> : null}
 
-      {/* 顶部全宽导航栏 */}
       <header className="simple-mode-topbar">
         <div className="simple-mode-topbar-left">
           <div className="simple-mode-brand">
@@ -616,7 +625,6 @@ export function EasyModePage({
               <span className="simple-mode-brand-sub">{t("easyMode.brandSub")}</span>
             </div>
           </div>
-          {/* 新手聚焦指导开关 */}
           <button
             type="button"
             className={`simple-mode-guide-toggle simple-mode-highlight-button${guideActive ? " active" : ""}`}
@@ -630,13 +638,14 @@ export function EasyModePage({
         </div>
 
         <div className="simple-mode-topbar-right">
-          {/* 主题切换 */}
           {setTheme ? (
-            <div className="simple-mode-theme-group">
+            <div className="simple-mode-theme-group" role="group" aria-label={t("app.theme.label")}>
               <button
                 type="button"
                 className={theme === "light" ? "active" : ""}
                 title={t("easyMode.theme.light")}
+                aria-label={t("easyMode.theme.light")}
+                aria-pressed={theme === "light"}
                 onClick={() => setTheme("light")}
               >
                 <Sun size={15} />
@@ -645,14 +654,25 @@ export function EasyModePage({
                 type="button"
                 className={theme === "dark" ? "active" : ""}
                 title={t("easyMode.theme.dark")}
+                aria-label={t("easyMode.theme.dark")}
+                aria-pressed={theme === "dark"}
                 onClick={() => setTheme("dark")}
               >
                 <Moon size={15} />
               </button>
+              <button
+                type="button"
+                className={theme === "system" ? "active" : ""}
+                title={t("app.theme.switchToSystem")}
+                aria-label={t("app.theme.system")}
+                aria-pressed={theme === "system"}
+                onClick={() => setTheme("system")}
+              >
+                <Monitor size={15} />
+              </button>
             </div>
           ) : null}
 
-          {/* 语言选择 */}
           <div className="simple-mode-lang-dropdown">
             <button
               type="button"
@@ -685,7 +705,6 @@ export function EasyModePage({
             ) : null}
           </div>
 
-          {/* 退出新手模式返回常规控制台 */}
           <button
             type="button"
             className="secondary-button simple-mode-exit-btn simple-mode-highlight-button"
@@ -697,7 +716,6 @@ export function EasyModePage({
         </div>
       </header>
 
-      {/* 步骤条进度指示器 */}
       <nav className="simple-mode-step-status" aria-label={t("easyMode.steps.label")}>
         <div className="simple-mode-step-status-heading">
           <span>{t("easyMode.steps.label")}</span>
@@ -741,7 +759,6 @@ export function EasyModePage({
         </div>
       </nav>
 
-      {/* 第一步：接入模型 */}
       {activeStep === 1 ? (
         <section className="panel simple-mode-task">
           <div className="simple-mode-task-heading">
@@ -751,7 +768,6 @@ export function EasyModePage({
             </div>
           </div>
 
-          {/* 连接方式选择卡片 */}
           <div
             id="easy-guide-choice-grid"
             className={`simple-mode-choice-grid${guideActive && guideStep === 1 ? " guide-focus-highlight" : ""}`}
@@ -801,13 +817,12 @@ export function EasyModePage({
             </button>
           </div>
 
-          {/* OAuth 平台列表 */}
           {authMethod === "oauth" ? (
             <div
               id="easy-guide-oauth-box"
               className={`simple-mode-embedded-box${guideActive && guideStep === 2 ? " guide-focus-highlight" : ""}`}
             >
-              <InlineNotice key={oauthFeedback.revision} notice={oauthFeedback.notice} onDismiss={clearOAuthNotice} />
+              <FloatingNotice key={oauthFeedback.revision} notice={oauthFeedback.notice} onDismiss={clearOAuthNotice} />
               <div className="simple-mode-provider-grid">
                 {oauthProviders.map((provider) => {
                   const loggedIn = isOAuthLoggedIn(provider.id);
@@ -820,7 +835,7 @@ export function EasyModePage({
                     >
                       <div className="simple-mode-provider-card-head">
                         <div className="simple-mode-provider-logo">
-                          <img src={provider.icon} alt="" />
+                          <img src={provider.icon} alt="" className={provider.id === "devin" ? "devin-logo" : undefined} />
                         </div>
                         <div className="simple-mode-provider-copy">
                           <strong>{provider.name}</strong>
@@ -863,19 +878,17 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          {/* API 接入表单 */}
           {authMethod === "api" ? (
             <div
               id="easy-guide-api-box"
               className={`simple-mode-embedded-box${guideActive && guideStep === 2 ? " guide-focus-highlight" : ""}`}
             >
-              <InlineNotice key={apiFeedback.revision} notice={apiFeedback.notice} onDismiss={clearApiNotice} />
+              <FloatingNotice key={apiFeedback.revision} notice={apiFeedback.notice} onDismiss={clearApiNotice} />
               {apiTestError ? (
-                <div className="management-alert error" role="alert">{apiTestError}</div>
+                <MessageNotice message={apiTestError} onDismiss={() => setApiTestError("")} />
               ) : null}
 
               <div className="simple-mode-api-form">
-                {/* 平台格式切换 */}
                 <div className="simple-mode-api-platforms">
                   {apiSectionOptions.map((opt) => (
                     <button
@@ -908,7 +921,12 @@ export function EasyModePage({
                       type="text"
                       className="text-input"
                       value={apiBaseUrl}
-                      onChange={(e) => { setApiBaseUrl(e.target.value); setGuideApiSaved(false); }}
+                      onChange={(e) => {
+                        setApiBaseUrl(e.target.value);
+                        setApiModelsReady(false);
+                        setGuideApiModelsFetched(false);
+                        setGuideApiSaved(false);
+                      }}
                       placeholder="https://..."
                     />
                   </div>
@@ -918,13 +936,17 @@ export function EasyModePage({
                       type="password"
                       className="text-input"
                       value={apiKey}
-                      onChange={(e) => { setApiKey(e.target.value); setGuideApiSaved(false); }}
+                      onChange={(e) => {
+                        setApiKey(e.target.value);
+                        setApiModelsReady(false);
+                        setGuideApiModelsFetched(false);
+                        setGuideApiSaved(false);
+                      }}
                       placeholder="sk-..."
                     />
                   </div>
                 </div>
 
-                {/* 模型拉取与选择 */}
                 <div className="simple-mode-api-model-card">
                   {apiTestedModels.length === 0 ? (
                     <div className="simple-mode-api-model-fetch">
@@ -948,11 +970,24 @@ export function EasyModePage({
                     <>
                       <div className="simple-mode-api-model-heading">
                         <strong>{t("easyMode.api.modelListTitle")}</strong>
+                        <button
+                          type="button"
+                          className="secondary-button compact-button"
+                          disabled={apiTesting || !apiBaseUrl.trim() || !apiKey.trim()}
+                          onClick={() => void handleTestApi()}
+                        >
+                          <RefreshCw size={14} className={apiTesting ? "spin" : ""} />
+                          {t("common.refresh")}
+                        </button>
                       </div>
 
                       <div className="simple-mode-api-model-selection">
                         <div className="simple-mode-api-model-selection-heading">
-                          <span>{t("easyMode.api.modelListHint")}</span>
+                          <span>
+                            {selectedApiSection === "deepseek" && !apiModelsReady
+                              ? t("easyMode.api.modelListStale")
+                              : t("easyMode.api.modelListHint")}
+                          </span>
                         </div>
                         <div className="simple-mode-api-model-options">
                           {apiTestedModels.map((model) => {
@@ -968,6 +1003,7 @@ export function EasyModePage({
                                 <input
                                   type="checkbox"
                                   checked={selected}
+                                  disabled={apiTesting}
                                   onChange={() => handleToggleApiModel(model)}
                                 />
                                 <span title={model.name}>{model.name}</span>
@@ -981,7 +1017,13 @@ export function EasyModePage({
                         <button
                           type="button"
                           className="primary-button"
-                          disabled={apiSaving || !apiBaseUrl.trim() || !apiKey.trim() || apiSelectedModels.length === 0}
+                          disabled={
+                            apiSaving
+                            || !apiBaseUrl.trim()
+                            || !apiKey.trim()
+                            || apiSelectedModels.length === 0
+                            || (selectedApiSection === "deepseek" && !apiModelsReady)
+                          }
                           onClick={() => void handleSaveApi()}
                         >
                           {t("easyMode.api.saveAndConnect")}
@@ -994,7 +1036,6 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          {/* 第一步底部操作栏 */}
           <div
             id="easy-guide-footer-action"
             className={`simple-mode-task-footer${guideActive && guideStep === 3 ? " guide-focus-highlight" : ""}`}
@@ -1027,7 +1068,6 @@ export function EasyModePage({
         </section>
       ) : null}
 
-      {/* 第二步：接入智能体 */}
       {activeStep === 2 ? (
         <section
           id="easy-guide-agents-panel"
@@ -1052,7 +1092,6 @@ export function EasyModePage({
         </section>
       ) : null}
 
-      {/* 悬浮指导卡片 */}
       {guideActive && spotlightRect ? (
         <aside
           ref={guideTooltipRef}

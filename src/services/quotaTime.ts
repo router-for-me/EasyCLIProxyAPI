@@ -52,7 +52,6 @@ export const formatQuotaReset = (
   return `${absolute} · ${label}`;
 };
 
-// One clock shared by quota cards on both pages; no polling of upstream APIs.
 let now = Date.now();
 let timer: ReturnType<typeof setInterval> | undefined;
 const listeners = new Set<() => void>();

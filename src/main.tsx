@@ -3,10 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import App from './App';
 import { I18nProvider } from './i18n';
-import { applyTheme, detectInitialTheme } from './theme';
+import { initializeTheme } from './theme';
 import './styles.css';
 
-applyTheme(detectInitialTheme());
+initializeTheme();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

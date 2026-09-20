@@ -3,6 +3,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateAppVersion } from './version.mjs';
+import { validateReleaseNotes } from './release-notes.mjs';
 
 export function portableUpdateManifestName(platform) {
   const normalizedPlatform = String(platform).trim().toLowerCase();
@@ -31,6 +32,7 @@ export async function generatePortableUpdateManifest({
   gitcodeRepository,
   tag: rawTag,
   publishedAt = new Date().toISOString(),
+  releaseNotes,
 }) {
   const resolvedDirectory = resolve(directory ?? 'artifacts');
   const platformSpecs = {
@@ -62,6 +64,7 @@ export async function generatePortableUpdateManifest({
   if (Number.isNaN(Date.parse(publishedAt))) {
     throw new Error(`Invalid publishedAt: ${publishedAt}`);
   }
+  if (releaseNotes !== undefined) validateReleaseNotes(releaseNotes);
 
   const assets = {};
   for (const arch of ['amd64', 'aarch64']) {
@@ -91,6 +94,7 @@ export async function generatePortableUpdateManifest({
     version,
     publishedAt,
     releaseUrl: `https://github.com/${resolvedRepository}/releases/tag/${tag}`,
+    ...(releaseNotes === undefined ? {} : { releaseNotes }),
     assets,
   };
 
@@ -116,6 +120,9 @@ async function main() {
     ? [resolve(requestedOutput)]
     : portableUpdateManifestNames(platform).map((name) => join(directory, name));
   const publishedAt = new Date().toISOString();
+  const releaseNotes = args.has('--release-notes')
+    ? JSON.parse(await readFile(resolve(args.get('--release-notes')), 'utf8'))
+    : undefined;
   let manifest;
   for (const output of outputs) {
     manifest = await generatePortableUpdateManifest({
@@ -126,6 +133,7 @@ async function main() {
       gitcodeRepository: args.get('--gitcode-repository'),
       tag: args.get('--tag'),
       publishedAt,
+      releaseNotes,
     });
   }
   console.log(

@@ -1,5 +1,5 @@
 import { useConfirmation } from '../components/ConfirmationDialog';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -8,29 +8,38 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
-  Clock3,
   Columns3Cog,
   Database,
   FilterX,
-  Key,
-  Layers,
   List,
   Pencil,
   RefreshCw,
   RotateCcw,
-  ShieldCheck,
-  Sparkles,
-  Terminal,
   Trash2,
   TriangleAlert,
   Wrench,
   X,
 } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
+import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
+import {
+  OTHER_TREND_MODEL_KEY,
+  buildUsageTrendSeries,
+  findTrendPointIndex,
+  formatTrendAxisLabel,
+  formatTrendRangeLabel,
+  niceCeiling,
+  trendAxisTicks,
+  trendTimeAxisTicks,
+  trendTimePosition,
+  stackModelTokens,
+  type UsageTimelinePoint,
+} from '../services/usageTrend';
 import { createRefreshScheduler } from '../services/refreshScheduler';
+import { usageViewScopeKey } from '../services/usageViewScope';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
@@ -42,14 +51,7 @@ type CollectorStatus = {
   totalRecords: number;
 };
 
-type TimelinePoint = {
-  hour: string;
-  requests: number;
-  success: number;
-  failure: number;
-  canceled: number;
-  tokens: number;
-};
+type TimelinePoint = UsageTimelinePoint;
 
 type UsageOverview = {
   totalRequests: number;
@@ -169,6 +171,13 @@ type UsageRepairResult = {
   backupPath: string | null;
 };
 
+type UsageStorageSettings = {
+  maxDatabaseSizeMb: number;
+  databaseSizeBytes: number;
+  totalRecords: number;
+  deletedRecords: number;
+};
+
 type ModelPriceSyncResult = {
   imported: number;
   skipped: number;
@@ -239,6 +248,13 @@ const rangeQuery = (range: UsageRange, customStart: string, customEnd: string): 
 
 const compactNumber = (value: number) => formatUsageNumber(value, getCurrentLocale());
 
+const formatStorageBytes = (value: number) => {
+  const bytes = Number.isFinite(value) ? Math.max(0, value) : 0;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+};
+
 const formatUsd = (amount: number) => {
   if (!Number.isFinite(amount) || amount <= 0) return '$0.00';
   const maximumFractionDigits =
@@ -287,21 +303,22 @@ export function UsageRecordsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [status, setStatus] = useState<CollectorStatus | null>(null);
   const [overview, setOverview] = useState<UsageOverview | null>(null);
+  const [overviewRange, setOverviewRange] = useState<Pick<UsageQuery, 'start' | 'end'>>({});
   const [analysis, setAnalysis] = useState<UsageAnalysis>(emptyAnalysis);
   const [optionsAnalysis, setOptionsAnalysis] = useState<UsageAnalysis>(emptyAnalysis);
   const [events, setEvents] = useState<UsageEventPage | null>(null);
   const [pricing, setPricing] = useState<UsagePricing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [loadedScopeKey, setLoadedScopeKey] = useState('');
   const requestIdRef = useRef(0);
   const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
-  if (!schedulerRef.current) schedulerRef.current = createRefreshScheduler();
+  if (!schedulerRef.current) schedulerRef.current = createRefreshScheduler(250);
 
   useEffect(() => {
     try {
       localStorage.setItem(TAB_KEY, activeTab);
     } catch {
-      /* Keep in-memory */
     }
   }, [activeTab]);
 
@@ -309,7 +326,6 @@ export function UsageRecordsPage() {
     try {
       localStorage.setItem(RANGE_KEY, range);
     } catch {
-      /* Keep in-memory */
     }
   }, [range]);
 
@@ -329,6 +345,32 @@ export function UsageRecordsPage() {
     };
   }, [apiKeyHash, customEnd, customStart, model, provider, range, result, source]);
 
+  const scopeKey = useMemo(() => usageViewScopeKey({
+    tab: activeTab,
+    range,
+    customStart,
+    customEnd,
+    model,
+    provider,
+    source,
+    apiKeyHash,
+    result,
+    page,
+    pageSize,
+  }), [
+    activeTab,
+    apiKeyHash,
+    customEnd,
+    customStart,
+    model,
+    page,
+    pageSize,
+    provider,
+    range,
+    result,
+    source,
+  ]);
+
   const executeLoadData = useCallback(
     async (quiet = false) => {
       const requestId = ++requestIdRef.current;
@@ -347,6 +389,7 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           setOptionsAnalysis(nextOptions);
           setOverview(nextOverview);
+          setOverviewRange(timeQuery);
         } else if (activeTab === 'analysis') {
           const [nextStatus, nextOptions, nextOverview, nextAnalysis] = await Promise.all([
             statusRequest,
@@ -360,6 +403,7 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           setOptionsAnalysis(nextOptions);
           setOverview(nextOverview);
+          setOverviewRange(timeQuery);
           setAnalysis(nextAnalysis);
         } else if (activeTab === 'events') {
           const [nextStatus, nextOptions, nextEvents] = await Promise.all([
@@ -389,6 +433,7 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           setOptionsAnalysis(nextOptions);
         }
+        setLoadedScopeKey(scopeKey);
         setError('');
       } catch (requestError) {
         if (requestId === requestIdRef.current) setError(String(requestError));
@@ -396,13 +441,14 @@ export function UsageRecordsPage() {
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [activeTab, buildQueries, page, pageSize, model, provider, source, apiKeyHash, result]
+    [activeTab, buildQueries, page, pageSize, model, provider, source, apiKeyHash, result, scopeKey]
   );
 
   const loadData = useCallback(
-    (quiet = false) => {
+    (quiet = false, immediate = !quiet) => {
       if (!quiet) setLoading(true);
-      return schedulerRef.current!.schedule(() => executeLoadData(quiet), !quiet);
+      if (!quiet) return schedulerRef.current!.runForeground(() => executeLoadData(false));
+      return schedulerRef.current!.schedule(() => executeLoadData(quiet), immediate);
     },
     [executeLoadData],
   );
@@ -419,7 +465,10 @@ export function UsageRecordsPage() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     const refresh = () => {
-      if (!disposed && !document.hidden) void loadData(true);
+      // WebView2 may classify an unfocused or occluded window on another monitor
+      // as hidden. Keep usage refreshes independent of Page Visibility so both
+      // record events and the fallback poll continue to update the current view.
+      if (!disposed) void loadData(true, true);
     };
     listen('usage-records-updated', refresh)
       .then((stop) => {
@@ -427,7 +476,7 @@ export function UsageRecordsPage() {
         else unlisten = stop;
       })
       .catch(() => {});
-    const timer = window.setInterval(refresh, 5_000);
+    const timer = window.setInterval(refresh, 1_000);
     const refreshWhenVisible = () => {
       if (!document.hidden) refresh();
     };
@@ -464,16 +513,20 @@ export function UsageRecordsPage() {
   };
 
   const collectorTone = status?.state === 'error' ? 'error' : status?.state === 'collecting' ? 'success' : '';
+  const hasCurrentSnapshot = loadedScopeKey === scopeKey;
   const showInitialLoading =
-    loading &&
-    ((activeTab === 'overview' && !overview) ||
-      (activeTab === 'analysis' && !overview) ||
-      (activeTab === 'events' && !events) ||
-      (activeTab === 'pricing' && !pricing));
+    activeTab !== 'data-management' &&
+    !error &&
+    (!hasCurrentSnapshot ||
+      (loading &&
+        ((activeTab === 'overview' && !overview) ||
+          (activeTab === 'analysis' && !overview) ||
+          (activeTab === 'events' && !events) ||
+          (activeTab === 'pricing' && !pricing))));
 
   return (
     <section className="page management-page usage-records-page">
-      {error ? <div className="management-alert error">{error}</div> : null}
+      {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
 
       <div className="usage-topbar">
         <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
@@ -548,10 +601,7 @@ export function UsageRecordsPage() {
         <div className="usage-filter-row">
           <div className="usage-filter-group">
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Clock3 size={13} />
-                {t('usage.filter.timeRange')}
-              </span>
+              <span className="usage-filter-label">{t('usage.filter.timeRange')}</span>
               <select
                 value={range}
                 onChange={(event) => {
@@ -571,10 +621,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Sparkles size={13} />
-                {t('usage.filter.model')}
-              </span>
+              <span className="usage-filter-label">{t('usage.filter.model')}</span>
               <select
                 value={model}
                 onChange={(event) => changeFilter(setModel, event.currentTarget.value)}
@@ -590,10 +637,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Layers size={13} />
-                {t('usage.column.provider')}
-              </span>
+              <span className="usage-filter-label">{t('usage.column.provider')}</span>
               <select
                 value={provider}
                 onChange={(event) => changeFilter(setProvider, event.currentTarget.value)}
@@ -609,10 +653,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Terminal size={13} />
-                {t('usage.filter.source')}
-              </span>
+              <span className="usage-filter-label">{t('usage.filter.source')}</span>
               <select
                 value={source}
                 onChange={(event) => changeFilter(setSource, event.currentTarget.value)}
@@ -628,10 +669,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <Key size={13} />
-                {t('apiAccess.field.key')}
-              </span>
+              <span className="usage-filter-label">{t('apiAccess.field.key')}</span>
               <select
                 value={apiKeyHash}
                 onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)}
@@ -647,10 +685,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="usage-filter-label">
-                <ShieldCheck size={13} />
-                {t('usage.filter.result')}
-              </span>
+              <span className="usage-filter-label">{t('usage.filter.result')}</span>
               <select
                 value={result}
                 onChange={(event) => changeFilter(setResult, event.currentTarget.value)}
@@ -703,9 +738,9 @@ export function UsageRecordsPage() {
         </div>
       ) : null}
 
-      {activeTab === 'overview' && overview ? <OverviewView overview={overview} /> : null}
-      {activeTab === 'analysis' ? <AnalysisView analysis={analysis} overview={overview} /> : null}
-      {activeTab === 'events' && events ? (
+      {hasCurrentSnapshot && activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
+      {hasCurrentSnapshot && activeTab === 'analysis' ? <AnalysisView analysis={analysis} overview={overview} /> : null}
+      {hasCurrentSnapshot && activeTab === 'events' && events ? (
         <EventsView
           events={events}
           pageSize={pageSize}
@@ -716,7 +751,7 @@ export function UsageRecordsPage() {
           }}
         />
       ) : null}
-      {activeTab === 'pricing' && pricing ? (
+      {hasCurrentSnapshot && activeTab === 'pricing' && pricing ? (
         <PricingView pricing={pricing} query={buildQueries().query} onChanged={() => loadData(true)} />
       ) : null}
       {activeTab === 'data-management' ? <UsageDataManagementView /> : null}
@@ -730,6 +765,93 @@ function UsageDataManagementView() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<UsageRepairResult | null>(null);
   const [error, setError] = useState('');
+  const [storage, setStorage] = useState<UsageStorageSettings | null>(null);
+  const [limitDraft, setLimitDraft] = useState('0');
+  const [loadingLimit, setLoadingLimit] = useState(true);
+  const [savingLimit, setSavingLimit] = useState(false);
+  const [shrinkDraft, setShrinkDraft] = useState('');
+  const [shrinking, setShrinking] = useState(false);
+  const [storageNotice, setStorageNotice] = useState('');
+
+  useEffect(() => {
+    let disposed = false;
+    invoke<UsageStorageSettings>('get_usage_storage_settings')
+      .then((next) => {
+        if (disposed) return;
+        setStorage(next);
+        setLimitDraft(String(next.maxDatabaseSizeMb));
+      })
+      .catch((requestError) => {
+        if (!disposed) setError(String(requestError));
+      })
+      .finally(() => {
+        if (!disposed) setLoadingLimit(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const saveStorageLimit = async () => {
+    const normalized = limitDraft.trim();
+    const maxDatabaseSizeMb = Number(normalized);
+    if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(maxDatabaseSizeMb)) {
+      setError(t('usage.dataManagement.storageInvalid'));
+      return;
+    }
+    setSavingLimit(true);
+    setError('');
+    setStorageNotice('');
+    try {
+      const next = await invoke<UsageStorageSettings>('save_usage_storage_settings', { maxDatabaseSizeMb });
+      setStorage(next);
+      setLimitDraft(String(next.maxDatabaseSizeMb));
+      setStorageNotice(t(
+        next.deletedRecords > 0
+          ? 'usage.dataManagement.storageSavedWithCleanup'
+          : 'usage.dataManagement.storageSaved',
+        { deleted: next.deletedRecords.toLocaleString() },
+      ));
+    } catch (requestError) {
+      setError(String(requestError));
+    } finally {
+      setSavingLimit(false);
+    }
+  };
+
+  const shrinkDatabase = async () => {
+    const normalized = shrinkDraft.trim();
+    const targetDatabaseSizeMb = Number(normalized);
+    if (!/^\d+$/.test(normalized) || !Number.isSafeInteger(targetDatabaseSizeMb) || targetDatabaseSizeMb <= 0) {
+      setError(t('usage.dataManagement.shrinkInvalid'));
+      return;
+    }
+    const confirmed = await askConfirmation({
+      title: t('usage.dataManagement.shrinkConfirmTitle'),
+      message: t('usage.dataManagement.shrinkConfirm', { size: targetDatabaseSizeMb }),
+    });
+    if (!confirmed) return;
+    setShrinking(true);
+    setError('');
+    setStorageNotice('');
+    try {
+      const next = await invoke<UsageStorageSettings>('shrink_usage_database', { targetDatabaseSizeMb });
+      setStorage(next);
+      setStorageNotice(t(
+        next.deletedRecords > 0
+          ? 'usage.dataManagement.shrinkSuccess'
+          : 'usage.dataManagement.shrinkNoCleanup',
+        {
+          deleted: next.deletedRecords.toLocaleString(),
+          size: formatStorageBytes(next.databaseSizeBytes),
+        },
+      ));
+    } catch (requestError) {
+      setError(String(requestError));
+    } finally {
+      setShrinking(false);
+    }
+  };
 
   const repair = async () => {
     if (!await askConfirmation({ title: t('usage.dataManagement.title'), message: t('usage.dataManagement.confirm') })) return;
@@ -739,6 +861,8 @@ function UsageDataManagementView() {
     try {
       const next = await invoke<UsageRepairResult>('repair_usage_cache_records');
       setResult(next);
+      const nextStorage = await invoke<UsageStorageSettings>('get_usage_storage_settings');
+      setStorage(nextStorage);
     } catch (requestError) {
       setError(String(requestError));
     } finally {
@@ -752,36 +876,99 @@ function UsageDataManagementView() {
       <div className="usage-data-management-heading">
         <div>
           <Wrench size={20} aria-hidden="true" />
-          <div>
-            <h2>{t('usage.dataManagement.title')}</h2>
-            <p>{t('usage.dataManagement.description')}</p>
-          </div>
+          <h2>{t('usage.dataManagement.title')}</h2>
         </div>
         <span className="usage-data-management-badge">{t('usage.dataManagement.manualBadge')}</span>
       </div>
 
-      <div className="usage-data-management-notice">
-        <TriangleAlert size={17} aria-hidden="true" />
-        <span>{t('usage.dataManagement.notice')}</span>
+      <div className="usage-data-management-action usage-storage-limit-action">
+        <div>
+          <strong>{t('usage.dataManagement.storageTitle')}</strong>
+          <span>{t('usage.dataManagement.storageDescription')}</span>
+          {storage ? (
+            <small>
+              {t('usage.dataManagement.storageCurrent', {
+                size: formatStorageBytes(storage.databaseSizeBytes),
+                records: compactNumber(storage.totalRecords),
+              })}
+            </small>
+          ) : null}
+        </div>
+        <div className="usage-storage-limit-editor">
+          <label>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={limitDraft}
+              disabled={loadingLimit || savingLimit || shrinking || running}
+              onChange={(event) => setLimitDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !loadingLimit && !savingLimit && !shrinking && !running) void saveStorageLimit();
+              }}
+              aria-label={t('usage.dataManagement.storageInput')}
+            />
+            <span>{t('usage.dataManagement.storageUnit')}</span>
+          </label>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void saveStorageLimit()}
+            disabled={loadingLimit || savingLimit || shrinking || running}
+          >
+            {savingLimit ? t('usage.dataManagement.storageSaving') : t('usage.dataManagement.storageSave')}
+          </button>
+        </div>
       </div>
+
+      <div className="usage-data-management-action">
+        <div>
+          <strong>{t('usage.dataManagement.shrinkTitle')}</strong>
+          <span>{t('usage.dataManagement.shrinkDescription')}</span>
+        </div>
+        <div className="usage-storage-limit-editor">
+          <label>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={shrinkDraft}
+              disabled={savingLimit || shrinking || running}
+              onChange={(event) => setShrinkDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !savingLimit && !shrinking && !running) void shrinkDatabase();
+              }}
+              aria-label={t('usage.dataManagement.shrinkInput')}
+            />
+            <span>{t('usage.dataManagement.storageUnit')}</span>
+          </label>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void shrinkDatabase()}
+            disabled={savingLimit || shrinking || running}
+          >
+            {shrinking ? t('usage.dataManagement.shrinking') : t('usage.dataManagement.shrinkRun')}
+          </button>
+        </div>
+      </div>
+
+      {storageNotice ? <MessageNotice tone="success" message={storageNotice} onDismiss={() => setStorageNotice('')} /> : null}
 
       <div className="usage-data-management-action">
         <div>
           <strong>{t('usage.dataManagement.actionTitle')}</strong>
           <span>{t('usage.dataManagement.actionDescription')}</span>
         </div>
-        <button type="button" className="primary-button" onClick={() => void repair()} disabled={running}>
+        <button type="button" className="primary-button" onClick={() => void repair()} disabled={running || savingLimit || shrinking}>
           {running ? t('usage.dataManagement.running') : t('usage.dataManagement.run')}
         </button>
       </div>
 
-      {error ? <div className="management-alert error">{error}</div> : null}
+      {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
       {result ? (
         <>
-          <div className="management-alert success">
-            <ShieldCheck size={16} aria-hidden="true" />
-            <span>{t('usage.dataManagement.success', { repaired: result.repaired, deleted: result.deleted })}</span>
-          </div>
+          <MessageNotice tone="success" message={t('usage.dataManagement.success', { repaired: result.repaired, deleted: result.deleted })} />
           <div className="usage-data-management-result">
           <div><span>{t('usage.dataManagement.scanned')}</span><strong>{result.scanned.toLocaleString()}</strong></div>
           <div><span>{t('usage.dataManagement.repaired')}</span><strong>{result.repaired.toLocaleString()}</strong></div>
@@ -794,7 +981,7 @@ function UsageDataManagementView() {
   );
 }
 
-function OverviewView({ overview }: { overview: UsageOverview }) {
+function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pick<UsageQuery, 'start' | 'end'> }) {
   const { t } = useI18n();
   const cards = [
     {
@@ -899,10 +1086,9 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
         <div className="usage-section-heading">
           <div>
             <strong>{t('usage.trend.title')}</strong>
-            <span>{t('usage.trend.description')}</span>
           </div>
         </div>
-        {overview.timeline.length ? <UsageTrend points={overview.timeline} /> : <UsageEmpty />}
+        <UsageTrend points={overview.timeline} range={range} />
       </section>
       <section className="panel usage-health-panel">
         <div className="usage-section-heading">
@@ -948,57 +1134,294 @@ function OverviewView({ overview }: { overview: UsageOverview }) {
   );
 }
 
-function UsageTrend({ points }: { points: TimelinePoint[] }) {
-  const { t } = useI18n();
-  const recent = points.slice(-48);
-  const max = Math.max(...recent.map((point) => point.requests), 1);
-  const totalTokens = recent.reduce((sum, point) => sum + point.tokens, 0);
-  const totalReqs = recent.reduce((sum, point) => sum + point.requests, 0);
+function UsageTrend({
+  points,
+  range,
+}: {
+  points: TimelinePoint[];
+  range?: Pick<UsageQuery, 'start' | 'end'>;
+}) {
+  const { t, locale } = useI18n();
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [hiddenModels, setHiddenModels] = useState<string[]>([]);
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [plotWidth, setPlotWidth] = useState(800);
 
-  const pointsCoords = recent.map((point, index) => {
-    const x = recent.length <= 1 ? 50 : (index * 100) / (recent.length - 1);
-    const y = 28 - (point.requests * 24) / max;
-    return { x, y, point };
-  });
+  const series = useMemo(
+    () => buildUsageTrendSeries(points, range),
+    [points, range?.start, range?.end],
+  );
 
-  const polyline = pointsCoords.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-  const areaPath =
-    pointsCoords.length > 0
-      ? `M 0,32 L ${pointsCoords[0].x.toFixed(1)},${pointsCoords[0].y.toFixed(1)} ` +
-        pointsCoords.map((p) => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ') +
-        ` L 100,32 Z`
-      : '';
+  const hiddenKeys = useMemo(() => new Set(hiddenModels), [hiddenModels]);
+  useEffect(() => {
+    setHoveredIndex(null);
+    setHiddenModels((current) => current.filter((key) => series.models.some((model) => model.key === key)));
+  }, [series.bucket, series.models, series.points[0]?.hour, series.points[series.points.length - 1]?.hour]);
+
+  const count = series.points.length;
+
+  useEffect(() => {
+    const plot = plotRef.current;
+    if (!plot) return;
+    const observer = new ResizeObserver(([entry]) => setPlotWidth(entry.contentRect.width));
+    observer.observe(plot);
+    return () => observer.disconnect();
+  }, [count > 0]);
+
+  const chart = useMemo(() => {
+    const stacked = series.points.map((point) => stackModelTokens(point, series.models, hiddenKeys));
+    const maxTokens = niceCeiling(stacked.reduce((max, layers) => Math.max(max, layers[layers.length - 1]?.y1 ?? 0), 1));
+
+    const VIEWBOX_W = 1000;
+    const PT = 8;
+    const PB = 8;
+    const UH = 154 - PT - PB;
+    const baseY = PT + UH;
+
+    const calcY = (val: number) => (maxTokens > 0 ? baseY - (val / maxTokens) * UH : baseY);
+    const start = series.points[0]?.start ?? new Date(0);
+    const end = series.points[count - 1]?.end ?? start;
+    const bars = series.points.map((point, index) => {
+      const left = trendTimePosition(point.start, start, end) * VIEWBOX_W;
+      const right = trendTimePosition(point.end, start, end) * VIEWBOX_W;
+      const gap = Math.min((right - left) * 0.2, 6);
+      return {
+        x: left + gap / 2,
+        width: right - left - gap,
+        center: (left + right) / 2,
+        layers: stacked[index].filter((layer) => layer.tokens > 0).map((layer) => ({
+          ...layer,
+          y: calcY(layer.y1),
+          height: (layer.tokens / maxTokens) * UH,
+          color: series.models.find((model) => model.key === layer.key)?.color,
+        })),
+      };
+    });
+    const yTicks = trendAxisTicks(maxTokens);
+    const compactSameDay = start.toDateString() === end.toDateString();
+    const timeTicks = trendTimeAxisTicks(start, end, plotWidth, compactSameDay ? 64 : 112);
+    const showAxisTime = timeTicks.length > 1 && timeTicks[1].getTime() - timeTicks[0].getTime() < 24 * 60 * 60 * 1000;
+
+    return {
+      maxTokens,
+      stacked,
+      bars,
+      start,
+      end,
+      yTicks,
+      timeTicks,
+      compactSameDay,
+      showAxisTime,
+      baseY,
+      PT,
+      UH,
+    };
+  }, [count, hiddenKeys, series, plotWidth]);
+
+  if (count === 0) {
+    return <UsageEmpty />;
+  }
+
+  const modelLabel = (key: string, fallback: string) =>
+    key === OTHER_TREND_MODEL_KEY ? t('usage.trend.other') : fallback;
+
+  const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || count === 0) return;
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const time = new Date(chart.start.getTime() + ratio * (chart.end.getTime() - chart.start.getTime()));
+    const idx = findTrendPointIndex(series.points, time);
+    setHoveredIndex(idx);
+  };
+
+  const handlePointerLeave = () => {
+    setHoveredIndex(null);
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (count === 0) return;
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      setHoveredIndex((prev) => (prev == null || prev <= 0 ? count - 1 : prev - 1));
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      setHoveredIndex((prev) => (prev == null || prev >= count - 1 ? 0 : prev + 1));
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setHoveredIndex(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setHoveredIndex(count - 1);
+    } else if (e.key === 'Escape') {
+      setHoveredIndex(null);
+    }
+  };
+
+  const active = hoveredIndex != null && hoveredIndex >= 0 && hoveredIndex < count ? series.points[hoveredIndex] : null;
+  const activeStacked = hoveredIndex != null && chart.stacked[hoveredIndex] ? chart.stacked[hoveredIndex] : [];
+  const activeViewboxX = chart.bars[hoveredIndex ?? 0]?.center ?? 0;
+  const activePercent = activeViewboxX / 10;
+  const activeLayers = [...activeStacked]
+    .filter((l) => l.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens);
+  const activeTotal = activeStacked[activeStacked.length - 1]?.y1 ?? 0;
+
+  const srText = active
+    ? `${formatTrendRangeLabel(active, locale, series.bucket)}: ${compactNumber(activeTotal)} ${t('usage.unit.tokens')}`
+    : '';
 
   return (
     <div className="usage-trend-wrapper">
-      <div className="usage-trend-header-meta">
-        <span className="usage-trend-chip">
-          <strong>{compactNumber(totalReqs)}</strong> {t('usage.unit.requests')}
-        </span>
-        <span className="usage-trend-chip">
-          <strong>{compactNumber(totalTokens)}</strong> {t('usage.unit.tokens')}
-        </span>
-      </div>
-      <div className="usage-trend">
-        <svg viewBox="0 0 100 32" preserveAspectRatio="none" aria-label={t('usage.trend.aria')}>
-          <defs>
-            <linearGradient id="usageTrendGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--theme-3f6f98)" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="var(--theme-3f6f98)" stopOpacity="0.02" />
-            </linearGradient>
-          </defs>
-          <line x1="0" y1="8" x2="100" y2="8" stroke="var(--theme-eeeae2)" strokeDasharray="2,2" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1="18" x2="100" y2="18" stroke="var(--theme-eeeae2)" strokeDasharray="2,2" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1="28" x2="100" y2="28" stroke="var(--theme-eeeae2)" strokeDasharray="2,2" vectorEffect="non-scaling-stroke" />
-          {areaPath ? <path d={areaPath} fill="url(#usageTrendGrad)" /> : null}
-          <polyline points={polyline} fill="none" vectorEffect="non-scaling-stroke" />
-        </svg>
-        <div className="usage-trend-labels">
-          <span>{recent[0]?.hour ?? ''}</span>
-          {recent.length > 2 ? <span>{recent[Math.floor(recent.length / 2)]?.hour ?? ''}</span> : null}
-          <span>{recent[recent.length - 1]?.hour ?? ''}</span>
+      <div className="usage-trend-toolbar">
+        <div className="usage-trend-legend" role="group" aria-label={t('usage.trend.aria')}>
+          {series.models.map((model) => {
+            const isHidden = hiddenKeys.has(model.key);
+            return (
+              <button
+                type="button"
+                key={model.key}
+                className={`usage-trend-legend-item${isHidden ? ' is-hidden' : ''}`}
+                aria-pressed={!isHidden}
+                onClick={() =>
+                  setHiddenModels((current) =>
+                    current.includes(model.key)
+                      ? current.filter((key) => key !== model.key)
+                      : [...current, model.key],
+                  )
+                }
+              >
+                <span className="usage-trend-swatch" style={{ background: model.color }} />
+                <span>{modelLabel(model.key, model.label)}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
+
+      <div className="usage-trend-chart">
+        <div className="usage-trend-y-axis" aria-hidden="true">
+          {chart.yTicks.map((tick) => (
+            <span key={tick} style={{ top: `${((chart.baseY - (tick / chart.maxTokens) * chart.UH) / 154) * 100}%` }}>
+              {compactNumber(tick)}
+            </span>
+          ))}
+        </div>
+
+        <div
+          ref={plotRef}
+          className="usage-trend-plot"
+          tabIndex={0}
+          role="region"
+          aria-label={t('usage.trend.aria')}
+          onPointerMove={handlePointerMove}
+          onPointerLeave={handlePointerLeave}
+          onKeyDown={handleKeyDown}
+        >
+          <svg
+            viewBox="0 0 1000 154"
+            preserveAspectRatio="none"
+            className="usage-trend-svg"
+          >
+            {chart.yTicks.map((tick) => {
+              const y = chart.baseY - (tick / chart.maxTokens) * chart.UH;
+              const isBase = tick === 0;
+              return (
+                <line
+                  key={`grid-${tick}`}
+                  x1="0"
+                  y1={y}
+                  x2="1000"
+                  y2={y}
+                  className={isBase ? 'usage-trend-baseline' : 'usage-trend-grid'}
+                />
+              );
+            })}
+
+            {chart.bars.map((bar, index) => (
+              <g key={series.points[index].hour} className={`usage-trend-bar${index === hoveredIndex ? ' is-active' : ''}`}>
+                {bar.layers.map((layer) => (
+                  <rect
+                    key={layer.key}
+                    x={bar.x}
+                    y={layer.y}
+                    width={bar.width}
+                    height={layer.height}
+                    fill={layer.color}
+                  />
+                ))}
+              </g>
+            ))}
+
+            {active && hoveredIndex != null ? (
+              <g className="usage-trend-active-mark">
+                <line
+                  x1={activeViewboxX}
+                  y1={chart.PT}
+                  x2={activeViewboxX}
+                  y2={chart.baseY}
+                  className="usage-trend-cursor-line"
+                />
+              </g>
+            ) : null}
+          </svg>
+
+          {active && hoveredIndex != null ? (
+            <div
+              className={`usage-trend-tooltip${activePercent > 62 ? ' is-left' : ' is-right'}`}
+              style={{ left: `${activePercent}%` }}
+            >
+              <div className="usage-trend-tooltip-header">
+                <strong>{formatTrendRangeLabel(active, locale, series.bucket)}</strong>
+                <span className="usage-trend-tooltip-total">
+                  {compactNumber(activeTotal)} {t('usage.trend.tooltip.tokens')}
+                </span>
+              </div>
+              {activeLayers.length > 0 ? (
+                <div className="usage-trend-tooltip-list">
+                  {activeLayers.map((layer) => {
+                    const model = series.models.find((m) => m.key === layer.key);
+                    return (
+                      <div key={layer.key} className="usage-trend-tooltip-row">
+                        <span className="usage-trend-swatch" style={{ background: model?.color }} />
+                        <span className="usage-trend-tooltip-label">
+                          {modelLabel(layer.key, model?.label ?? layer.key)}
+                        </span>
+                        <b>{compactNumber(layer.tokens)}</b>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="usage-trend-tooltip-empty">{t('usage.unit.tokens')}: 0</div>
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="usage-trend-x-axis" aria-hidden="true">
+          {chart.timeTicks.map((date, index) => {
+            const left = trendTimePosition(date, chart.start, chart.end) * 100;
+            const posClass = index === 0 ? 'is-start' : index === chart.timeTicks.length - 1 ? 'is-end' : 'is-mid';
+            return (
+              <span
+                key={date.getTime()}
+                className={posClass}
+                style={{ left: `${left}%` }}
+                title={date.toLocaleString(locale)}
+              >
+                {formatTrendAxisLabel({ start: date }, series.bucket, locale, {
+                  compactSameDay: chart.compactSameDay,
+                  showTime: chart.showAxisTime,
+                })}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      <span className="sr-only" aria-live="polite">
+        {srText}
+      </span>
     </div>
   );
 }
@@ -1189,7 +1612,6 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
       }
     }
   } catch {
-    // fallback to defaults
   }
   return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
 };
@@ -1216,100 +1638,85 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
       }
     }
   } catch {
-    // fallback to defaults
   }
   return initial;
 };
 
 function TableTopScrollbar({
   tableWrapRef,
-  totalWidth,
-  visibleColumnKeys,
 }: {
   tableWrapRef: React.RefObject<HTMLDivElement | null>;
-  totalWidth: number;
-  visibleColumnKeys: EventColumnKey[];
 }) {
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
-  const [hasOverflow, setHasOverflow] = useState(false);
-  const [scrollWidth, setScrollWidth] = useState(totalWidth);
+  const trackRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const scrollbar = scrollbarRef.current;
+    const track = trackRef.current;
     const tableWrap = tableWrapRef.current;
-    if (!scrollbar || !tableWrap) return;
+    if (!scrollbar || !track || !tableWrap) return;
 
-    let syncing = false;
+    // Remember the positions we applied, rather than locking a whole frame.
+    // This ignores delayed programmatic/vertical scroll events without dropping
+    // newer drag or trackpad input on either surface.
+    let lastScrollbarLeft = scrollbar.scrollLeft;
+    let lastTableLeft = tableWrap.scrollLeft;
 
     const syncTable = () => {
-      if (syncing) return;
-      syncing = true;
-      tableWrap.scrollLeft = scrollbar.scrollLeft;
-      window.requestAnimationFrame(() => {
-        syncing = false;
-      });
+      const left = scrollbar.scrollLeft;
+      if (left === lastScrollbarLeft) return;
+      lastScrollbarLeft = left;
+      tableWrap.scrollLeft = left;
+      lastTableLeft = tableWrap.scrollLeft;
     };
 
     const syncScrollbar = () => {
-      if (syncing) return;
-      syncing = true;
-      scrollbar.scrollLeft = tableWrap.scrollLeft;
-      window.requestAnimationFrame(() => {
-        syncing = false;
-      });
+      const left = tableWrap.scrollLeft;
+      if (left === lastTableLeft) return;
+      lastTableLeft = left;
+      scrollbar.scrollLeft = left;
+      lastScrollbarLeft = scrollbar.scrollLeft;
     };
 
     const updateLayout = () => {
       const clientWidth = tableWrap.clientWidth;
-      const wrapScrollWidth = tableWrap.scrollWidth;
-      const maxScroll = Math.max(0, wrapScrollWidth - clientWidth);
-      const isOverflowing = maxScroll > 1;
+      const maxScroll = Math.max(0, tableWrap.scrollWidth - clientWidth);
+      const left = Math.min(tableWrap.scrollLeft, maxScroll);
 
-      setHasOverflow(isOverflowing);
-
-      if (isOverflowing) {
-        const scrollbarClientWidth = scrollbar.clientWidth || clientWidth;
-        const targetInnerWidth = scrollbarClientWidth + maxScroll;
-        setScrollWidth(targetInnerWidth);
-
-        if (tableWrap.scrollLeft > maxScroll) {
-          tableWrap.scrollLeft = maxScroll;
-        }
-        scrollbar.scrollLeft = tableWrap.scrollLeft;
-      } else {
-        tableWrap.scrollLeft = 0;
-        scrollbar.scrollLeft = 0;
-        setScrollWidth(clientWidth);
-      }
+      // Commit the range before the position. A deferred React width update can
+      // clamp the thumb to its old range and then rewind the table via scroll.
+      scrollbar.classList.toggle('is-hidden', maxScroll <= 1);
+      track.style.width = `${(scrollbar.clientWidth || clientWidth) + maxScroll}px`;
+      tableWrap.scrollLeft = left;
+      scrollbar.scrollLeft = left;
+      lastTableLeft = tableWrap.scrollLeft;
+      lastScrollbarLeft = scrollbar.scrollLeft;
     };
 
     updateLayout();
-    const frameId = window.requestAnimationFrame(updateLayout);
-
     scrollbar.addEventListener('scroll', syncTable, { passive: true });
     tableWrap.addEventListener('scroll', syncScrollbar, { passive: true });
 
-    const resizeObserver = new ResizeObserver(() => {
-      updateLayout();
-    });
+    const resizeObserver = new ResizeObserver(updateLayout);
     resizeObserver.observe(tableWrap);
     resizeObserver.observe(scrollbar);
+    // Column resizing changes the table's width without resizing its viewport.
+    if (tableWrap.firstElementChild) resizeObserver.observe(tableWrap.firstElementChild);
 
     return () => {
-      window.cancelAnimationFrame(frameId);
       scrollbar.removeEventListener('scroll', syncTable);
       tableWrap.removeEventListener('scroll', syncScrollbar);
       resizeObserver.disconnect();
     };
-  }, [tableWrapRef, totalWidth, visibleColumnKeys]);
+  }, [tableWrapRef]);
 
   return (
     <div
       ref={scrollbarRef}
-      className={`usage-table-top-scrollbar ${hasOverflow ? '' : 'is-hidden'}`}
+      className="usage-table-top-scrollbar"
       aria-hidden="true"
     >
-      <div style={{ width: `${scrollWidth}px`, height: '1px' }} />
+      <div ref={trackRef} style={{ height: '1px' }} />
     </div>
   );
 }
@@ -1440,7 +1847,6 @@ function UsageEventCell({
       const value = formatGenerationSpeed({
         outputTokens: record.tokens.output_tokens,
         latencyMs: record.latency_ms,
-        ttftMs: record.ttft_ms,
       });
       return <td className="usage-td-speed align-center" title={value === '—' ? undefined : value}>{value}</td>;
     }
@@ -1660,8 +2066,6 @@ function EventsView({
       {events.items.length > 0 ? (
         <TableTopScrollbar
           tableWrapRef={tableWrapRef}
-          totalWidth={totalTableWidth}
-          visibleColumnKeys={visibleColumnKeys}
         />
       ) : null}
 
@@ -1859,8 +2263,9 @@ function PricingView({
   const [draft, setDraft] = useState<PriceDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [message, setMessage] = useState('');
-  const [localError, setLocalError] = useState('');
+  const { notice, revision, showNotice, clearNotice } = useAppNotice();
+
+
   const visibleRows = pricing.rows.filter((row) => {
     const keyword = search.trim().toLowerCase();
     return !keyword || row.model.toLowerCase().includes(keyword);
@@ -1868,11 +2273,11 @@ function PricingView({
 
   const savePrice = async () => {
     if (!draft?.model.trim()) {
-      setLocalError(t('usage.pricing.modelRequired'));
+      showNotice({ key: 'usage.pricing.modelRequired' }, 'error');
       return;
     }
     setSaving(true);
-    setLocalError('');
+    clearNotice();
     try {
       await invoke('save_usage_model_price', {
         price: {
@@ -1892,10 +2297,10 @@ function PricingView({
         } satisfies ModelPrice,
       });
       setDraft(null);
-      setMessage(t('usage.pricing.saved'));
+      showNotice({ key: 'usage.pricing.saved' });
       await onChanged();
     } catch (saveError) {
-      setLocalError(String(saveError));
+      showNotice(String(saveError), 'error');
     } finally {
       setSaving(false);
     }
@@ -1903,30 +2308,32 @@ function PricingView({
 
   const deletePrice = async (model: string) => {
     if (!await askConfirmation({ title: t('common.delete'), message: t('usage.pricing.deleteConfirm', { model }), confirmText: t('common.delete'), variant: 'danger' })) return;
+    clearNotice();
     try {
       await invoke('delete_usage_model_price', { model });
-      setMessage(t('usage.pricing.deleted'));
+      showNotice({ key: 'usage.pricing.deleted' });
       await onChanged();
     } catch (deleteError) {
-      setLocalError(String(deleteError));
+      showNotice(String(deleteError), 'error');
     }
   };
 
   const syncPrices = async () => {
     setSyncing(true);
-    setLocalError('');
+    clearNotice();
     try {
       const result = await invoke<ModelPriceSyncResult>('sync_usage_model_prices', { query });
-      setMessage(
-        t('usage.pricing.syncResult', {
+      showNotice({
+        key: 'usage.pricing.syncResult',
+        variables: {
           imported: result.imported,
           skipped: result.skipped,
           unmatched: result.unmatched.length,
-        })
-      );
+        },
+      });
       await onChanged();
     } catch (syncError) {
-      setLocalError(String(syncError));
+      showNotice(String(syncError), 'error');
     } finally {
       setSyncing(false);
     }
@@ -1963,8 +2370,7 @@ function PricingView({
         </div>
       </div>
 
-      {localError ? <div className="management-alert error">{localError}</div> : null}
-      {message ? <div className="management-alert success">{message}</div> : null}
+      <FloatingNotice key={revision} notice={notice} onDismiss={clearNotice} />
 
       {draft ? (
         <div className="usage-price-editor">

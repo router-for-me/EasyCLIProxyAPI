@@ -9,7 +9,7 @@ pub(crate) use customizations::{
     editor_snapshot, load_customizations, save_customizations, CatalogEditorRequest,
     CatalogEditorSnapshot,
 };
-pub(crate) use runtime_context::{apply_configured_context_limits, merge_context_definitions};
+pub(crate) use runtime_context::apply_configured_context_limits;
 
 const MODEL_CATALOG_JSON: &str = include_str!("../resources/codex_models/model-catalog.json");
 const FALLBACK_MODEL_JSON: &str = include_str!("../resources/codex_models/fallback-model.json");
@@ -75,6 +75,29 @@ struct CatalogEntry {
 
 pub(crate) fn validate_embedded_catalog() -> Result<(), String> {
     catalog_state().map(|_| ())
+}
+
+pub(crate) fn is_managed_model_field(field: &str) -> bool {
+    static FIELDS: OnceLock<HashSet<String>> = OnceLock::new();
+    FIELDS
+        .get_or_init(|| {
+            let sources = parse_sources(MODEL_CATALOG_JSON)
+                .expect("embedded Codex model catalog must be valid");
+            sources
+                .fallback
+                .keys()
+                .chain(
+                    sources
+                        .templates
+                        .values()
+                        .flat_map(|template| template.value.keys()),
+                )
+                .map(String::as_str)
+                .chain(customizations::EDITABLE_FIELDS)
+                .map(str::to_string)
+                .collect()
+        })
+        .contains(field)
 }
 
 pub(crate) fn activate_catalog_json(catalog_json: &str) -> Result<bool, String> {
@@ -165,7 +188,7 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
             context_window,
             max_context_window,
             context_source: if context_window.or(max_context_window).is_some() {
-                "compatibility"
+                "client"
             } else {
                 "template"
             },
@@ -494,6 +517,8 @@ fn prepare_catalog_with_customizations(
     let models = entries
         .iter()
         .map(|entry| AgentModelOption {
+            input_modalities: None,
+            harness_metadata: None,
             name: string_value(&entry.value, "slug"),
             alias: optional_map_string(&entry.value, "display_name").filter(|display| {
                 !display.eq_ignore_ascii_case(&string_value(&entry.value, "slug"))
@@ -581,8 +606,6 @@ fn normalize_fallback_model(model: &mut Map<String, Value>) {
     }
 }
 
-// Both official and fallback templates take context defaults from the CPA API.
-// Template values are used only when the API provides no valid context metadata.
 fn apply_runtime_context_windows(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
     if let Some(context_window) = runtime.context_window.or(runtime.max_context_window) {
         let max_context_window = runtime
@@ -656,7 +679,7 @@ fn enable_fast_mode(model: &mut Map<String, Value>) {
     );
 }
 
-fn parse_modalities(value: &Value) -> Option<Vec<String>> {
+pub(crate) fn parse_modalities(value: &Value) -> Option<Vec<String>> {
     let raw = value
         .get("input_modalities")
         .or_else(|| value.get("inputModalities"))
@@ -1045,18 +1068,24 @@ mod tests {
     fn runtime_context_windows_override_generic_model_metadata() {
         let mut models = vec![
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "GPT-Test".to_string(),
                 alias: None,
                 is_alias: false,
                 context_window: Some(200_000),
             },
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "unmatched".to_string(),
                 alias: None,
                 is_alias: false,
                 context_window: Some(128_000),
             },
             AgentModelOption {
+                input_modalities: None,
+                harness_metadata: None,
                 name: "max-only".to_string(),
                 alias: None,
                 is_alias: false,

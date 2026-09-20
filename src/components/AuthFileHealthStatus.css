@@ -1,0 +1,91 @@
+.auth-file-health {
+  --health-accent: var(--text-tertiary);
+  grid-column: 2 / -1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-label);
+  line-height: 1.55;
+}
+
+.auth-file-health.success { --health-accent: var(--success-color); }
+.auth-file-health.warning { --health-accent: var(--amber-text); }
+.auth-file-health.error { --health-accent: var(--failure-badge-text); }
+.auth-file-health.info { --health-accent: var(--primary-color); }
+
+.auth-file-health.detailed {
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--health-accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--health-accent) 4%, var(--bg-card));
+}
+
+.auth-health-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+  list-style: none;
+}
+
+.auth-file-health.detailed .auth-health-summary {
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+.auth-health-summary::-webkit-details-marker { display: none; }
+.auth-health-summary:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.auth-health-icon { flex-shrink: 0; color: var(--health-accent); }
+.auth-health-summary-content { flex: 1; min-width: 0; }
+.auth-health-heading,
+.auth-health-record-heading,
+.auth-health-record-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+}
+.auth-health-heading strong { color: var(--health-accent); font-weight: 600; }
+.auth-health-heading > span { color: var(--text-secondary); }
+.auth-health-message-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+.auth-health-countdown,
+.auth-health-record-heading > span {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.auth-health-disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-meta);
+}
+.auth-file-health details[open] .auth-health-disclosure svg { transform: rotate(180deg); }
+.auth-health-body { padding: 0 12px 10px; }
+.auth-health-core-state { margin: 0 0 8px; }
+.auth-health-core-message > span { color: var(--text-tertiary); font-size: var(--font-size-meta); }
+.auth-health-core-message p { margin: 4px 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.auth-health-records { margin: 0; padding: 0; list-style: none; }
+.auth-health-records li { padding: 9px 0; border-top: 1px solid var(--border-color); }
+.auth-health-record-heading { justify-content: space-between; }
+.auth-health-record-heading strong { min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.auth-health-record-meta { margin: 3px 0; }
+.auth-health-hint { display: block; margin: 3px 0 0; color: var(--text-tertiary); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .auth-health-summary-content { flex-basis: calc(100% - 30px); }
+  .auth-health-countdown { margin-left: 26px; }
+  .auth-health-disclosure { margin-left: auto; }
+}

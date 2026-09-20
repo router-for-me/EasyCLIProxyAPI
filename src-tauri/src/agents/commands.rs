@@ -135,7 +135,7 @@ pub(crate) async fn refresh_agent_config_statuses(
 
 #[tauri::command]
 pub(crate) async fn get_agent_models(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
 ) -> Result<Vec<AgentModelOption>, String> {
@@ -151,11 +151,6 @@ pub(crate) async fn get_agent_models(
     };
     let config = gui_config_state.snapshot()?;
     let prepared = fetch_prepared_agent_models(client, &config).await?;
-    if client == AgentClient::Codex {
-        if let Err(error) = sync_prepared_codex_model_catalog(&app, &config, &prepared) {
-            eprintln!("自动刷新已应用的 Codex 模型目录失败: {error}");
-        }
-    }
     Ok(prepared.models)
 }
 
@@ -498,19 +493,42 @@ pub(crate) async fn get_thinking_alias_sources(
 }
 
 #[tauri::command]
+pub(crate) async fn get_model_alias_edit_source(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    alias: String,
+) -> Result<ModelAliasEditContext, String> {
+    let config = gui_config_state.snapshot()?;
+    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
+    let content = fetch_management_config_yaml(&config).await?;
+    let definitions = fetch_oauth_model_definitions(&config).await;
+    model_alias_edit_context(&content, &alias, &definitions)
+}
+
+#[tauri::command]
 pub(crate) async fn create_thinking_alias(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     source_id: String,
     alias: String,
     effort: String,
     fast: Option<bool>,
+    original_alias: Option<String>,
+    expected_revision: Option<String>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
     let source_id = source_id.trim().to_string();
     if source_id.is_empty() {
         return Err("请先选择原模型".to_string());
     }
-    let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
+    let original_alias = original_alias
+        .as_deref()
+        .map(|original| existing_thinking_alias_model_id(original, "别名模型"))
+        .transpose()?;
+    let alias = match original_alias.as_deref() {
+        Some(original) if original.eq_ignore_ascii_case(alias.trim()) => {
+            existing_thinking_alias_model_id(&alias, "别名模型")?
+        }
+        _ => validate_thinking_alias_model_id(&alias, "别名模型")?,
+    };
     let effort = if effort.trim().is_empty() {
         String::new()
     } else {
@@ -518,6 +536,9 @@ pub(crate) async fn create_thinking_alias(
     };
     let fast = fast.unwrap_or(false);
     let content = fetch_management_config_yaml(&config).await?;
+    if original_alias.is_some() {
+        validate_model_alias_revision(&content, expected_revision.as_deref())?;
+    }
     let available_models =
         fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
     let definitions = fetch_oauth_model_definitions(&config).await;
@@ -528,15 +549,18 @@ pub(crate) async fn create_thinking_alias(
     } else {
         AliasSourceCapability::Base
     };
-    let sources =
-        resolved_oauth_alias_sources(&content, &definitions, &available_models, capability)?;
-    let source = sources
-        .iter()
-        .find(|source| source.source.id == source_id)
-        .cloned()
-        .ok_or_else(|| {
-            "原模型已不在内核当前可用模型中，或其配置来源已经变化，请刷新后重新选择".to_string()
-        })?;
+    let source = if let Some(original) = original_alias.as_deref()
+        .filter(|original| source_id == model_alias_edit_source_id(original))
+    {
+        resolve_model_alias_edit_source(&content, original, &definitions)?
+    } else {
+        resolved_oauth_alias_sources(&content, &definitions, &available_models, capability)?
+            .into_iter()
+            .find(|source| source.source.id == source_id)
+            .ok_or_else(|| {
+                "原模型已不在内核当前可用模型中，或其配置来源已经变化，请刷新后重新选择".to_string()
+            })?
+    };
     if fast && !alias_source_supports_fast(&source) {
         return Err("Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 模型源".to_string());
     }
@@ -556,22 +580,18 @@ pub(crate) async fn create_thinking_alias(
         return Err("别名模型不能和原模型相同".to_string());
     }
 
-    if available_models
-        .iter()
-        .any(|model| model.name.eq_ignore_ascii_case(&alias))
-    {
+    if available_models.iter().any(|model| {
+        model.name.eq_ignore_ascii_case(&alias)
+            && !original_alias
+                .as_deref()
+                .is_some_and(|original| original.eq_ignore_ascii_case(&alias))
+    }) {
         return Err(format!("{alias} 已经是实际模型 ID，不能再作为别名"));
     }
-    let document = serde_norway::from_str::<serde_norway::Value>(&content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
-    let root = document
-        .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
-    if configured_model_alias_exists(root, &alias) {
-        return Err(format!("别名模型 {alias} 已存在"));
-    }
-
-    let updated = add_model_alias_to_yaml(&content, &source, &alias, &effort, fast)?;
+    let updated = match original_alias.as_deref() {
+        Some(original) => edit_model_alias_in_yaml(&content, original, &source, &alias, &effort, fast)?,
+        None => add_model_alias_to_yaml(&content, &source, &alias, &effort, fast)?,
+    };
     put_management_alias_config_changes(&config, &content, &updated).await?;
     thinking_aliases_from_yaml(&updated)
 }
@@ -583,7 +603,7 @@ pub(crate) async fn delete_thinking_alias(
     oauth_channel: Option<String>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
-    let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
     let content = fetch_management_config_yaml(&config).await?;
     let updated =
         remove_thinking_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?;
@@ -679,7 +699,7 @@ pub(crate) async fn delete_speed_alias(
     oauth_channel: Option<String>,
 ) -> Result<Vec<SpeedAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
-    let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
     let content = fetch_management_config_yaml(&config).await?;
     let updated =
         remove_speed_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?;
@@ -696,6 +716,7 @@ pub(crate) async fn fetch_agent_models(
     }
     let tls_enabled = managed_core_tls_enabled();
     let client = reqwest::Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(15))
         .danger_accept_invalid_certs(tls_enabled)
@@ -749,6 +770,7 @@ pub(crate) async fn fetch_codex_runtime_models(
     }
     let tls_enabled = managed_core_tls_enabled();
     let client = reqwest::Client::builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(15))
         .danger_accept_invalid_certs(tls_enabled)
@@ -794,51 +816,16 @@ pub(crate) async fn fetch_codex_runtime_models(
     Err("本地内核不支持 Codex 模型列表接口".to_string())
 }
 
-// The client_version response contains synthesized Codex templates; its context
-// fields are not the raw core model definitions. Resolve defaults through the
-// management APIs before generating or editing the Codex catalog.
 pub(crate) async fn fetch_codex_catalog_runtime_models(
     config: &GuiConfigFile,
 ) -> Result<Vec<codex_catalog::CodexRuntimeModel>, String> {
-    let (runtime, definitions, content) = tokio::join!(
+    let (runtime, content) = tokio::join!(
         fetch_codex_runtime_models(config.port, effective_agent_api_key(config)),
-        fetch_codex_context_definitions(config),
         fetch_management_config_yaml(config),
     );
     let mut runtime = runtime?;
-    let definitions = definitions?;
-    let content = content?;
-    let mut aliases = runtime.iter().map(|model| AgentModelOption {
-        name: model.slug.clone(), alias: None, is_alias: false, context_window: None,
-    }).collect::<Vec<_>>();
-    mark_configured_agent_model_aliases(&mut aliases, &content)?;
-    codex_catalog::merge_context_definitions(&mut runtime, &definitions, &aliases);
-    codex_catalog::apply_configured_context_limits(&mut runtime, &content)?;
+    codex_catalog::apply_configured_context_limits(&mut runtime, &content?)?;
     Ok(runtime)
-}
-
-async fn fetch_codex_context_definitions(
-    config: &GuiConfigFile,
-) -> Result<Vec<CodexModelDefinition>, String> {
-    // API-key sources may expose models from other channels, so do not filter by
-    // active OAuth credentials. Model IDs still come only from the available list.
-    let channels = ["gemini", "vertex", "aistudio", "antigravity", "claude", "codex", "kimi", "xai"];
-    let results = futures_util::future::join_all(channels.iter().map(|channel|
-        fetch_oauth_channel_model_definitions(config, channel)
-    )).await;
-    let mut definitions = Vec::new();
-    let mut successes = 0;
-    let mut first_error = None;
-    for result in results {
-        match result {
-            Ok(models) => { successes += 1; definitions.extend(models); }
-            Err(error) => { first_error.get_or_insert(error); }
-        }
-    }
-    if successes == 0 {
-        return Err(format!("读取 CPA 模型上下文定义失败: {}", first_error.unwrap_or_default()));
-    }
-    Ok(definitions)
 }
 
 pub(crate) async fn fetch_prepared_agent_models(
@@ -850,7 +837,11 @@ pub(crate) async fn fetch_prepared_agent_models(
         let runtime_models = fetch_codex_catalog_runtime_models(config).await?;
         prepare_codex_agent_models(&runtime_models)
     } else {
-        let mut models = fetch_agent_models(config.port, api_key).await?;
+        let mut models = if client == AgentClient::DeepSeekHarness {
+            fetch_deepseek_harness_models(config).await?
+        } else {
+            fetch_agent_models(config.port, api_key).await?
+        };
         if agent_uses_cpa_runtime_context_windows(client) {
             let runtime_models = fetch_codex_runtime_models(config.port, api_key).await?;
             codex_catalog::merge_runtime_context_windows(&mut models, &runtime_models);
@@ -969,19 +960,56 @@ pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> boo
     )
 }
 
+fn resolve_claude_desktop_source_model(models: &[AgentModelOption], value: &str) -> Result<String, String> {
+    let model = validate_agent_model(value)?;
+    Ok(models.iter().find(|entry| entry.name.eq_ignore_ascii_case(&model))
+        .map(|entry| entry.name.clone()).unwrap_or(model))
+}
+
+pub(crate) fn resolve_agent_configuration_model(
+    client: AgentClient,
+    models: &[AgentModelOption],
+    model: &str,
+    desktop_mappings: Option<&ClaudeDesktopModelMappings>,
+) -> Result<String, String> {
+    if client == AgentClient::ClaudeDesktop {
+        if let Some(entries) = desktop_mappings.and_then(|mappings| mappings.desktop_models.as_ref()) {
+            validate_claude_desktop_entries(entries)?;
+            return resolve_claude_desktop_source_model(models, entries[0].source_or_alias());
+        }
+    }
+    resolve_available_agent_model(models, &validate_agent_model(model)?)
+}
+
 pub(crate) fn resolve_claude_desktop_model_mappings(
     client: AgentClient,
     models: &[AgentModelOption],
-    selected_model: &str,
+    _selected_model: &str,
     requested: Option<ClaudeDesktopModelMappings>,
 ) -> Result<Option<ClaudeDesktopModelMappings>, String> {
     if client != AgentClient::ClaudeDesktop {
         return Ok(None);
     }
-    let requested = requested.unwrap_or_else(|| ClaudeDesktopModelMappings::all(selected_model));
+    let mut requested = requested.ok_or("请重新配置 Claude Desktop 的模型与别名")?;
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
+    if let Some(entries) = requested.desktop_models.as_mut() {
+        validate_claude_desktop_entries(entries)?;
+        for entry in entries.iter_mut() {
+            entry.model = resolve_claude_desktop_source_model(models, entry.source_or_alias())?;
+            entry.alias = if entry.alias.trim().eq_ignore_ascii_case(&entry.model) {
+                String::new()
+            } else {
+                entry.alias.trim().to_string()
+            };
+        }
+        requested.sonnet = entries[0].source_or_alias().to_string();
+        requested.opus.clear();
+        requested.haiku.clear();
+        return Ok(Some(requested));
+    }
     Ok(Some(ClaudeDesktopModelMappings {
+        desktop_models: None,
         opus: resolve(&requested.opus)?,
         sonnet: resolve(&requested.sonnet)?,
         haiku: resolve(&requested.haiku)?,
@@ -1018,6 +1046,7 @@ pub(crate) fn resolve_claude_code_model_mappings(
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
     Ok(Some(ClaudeDesktopModelMappings {
+        desktop_models: None,
         opus: resolve(&requested.opus)?,
         sonnet: resolve(&requested.sonnet)?,
         haiku: resolve(&requested.haiku)?,
@@ -1070,7 +1099,9 @@ pub(crate) async fn apply_agent_config(
     }
     validate_agent_can_enable(client, &home, config.port, api_key)?;
     let prepared = fetch_prepared_agent_models(client, &config).await?;
-    let model = resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
+    let model = resolve_agent_configuration_model(
+        client, &prepared.models, &model, claude_desktop_model_mappings.as_ref(),
+    )?;
     let claude_code_model_mappings = resolve_claude_code_model_mappings(
         client,
         &prepared.models,
@@ -1083,98 +1114,25 @@ pub(crate) async fn apply_agent_config(
         &model,
         claude_desktop_model_mappings,
     )?;
-    if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
-        ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
-    }
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    apply_agent_configuration_with_oauth(
-        client,
-        &home,
-        config.port,
-        api_key,
-        &model,
-        AgentConfigurationOptions {
-            models: &prepared.models,
-            codex_catalog: prepared.codex_catalog.as_deref(),
-            oauth_configuration,
-            claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-            claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
-        },
-    )
-}
-
-#[tauri::command]
-pub(crate) fn close_agent_config_modification(
-    app: tauri::AppHandle,
-    client: String,
-) -> Result<AgentConfigActionResult, String> {
-    let client = AgentClient::parse(&client)?;
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    restore_agent_session_configuration(client, &home)?;
-    Ok(action_result("closed", false, None, Vec::new(), Vec::new()))
-}
-
-#[tauri::command]
-pub(crate) async fn reset_agent_config_to_default(
-    app: tauri::AppHandle,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
-    client: String,
-    model: String,
-    oauth_configuration: bool,
-    claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
-    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
-) -> Result<AgentConfigActionResult, String> {
-    let client = AgentClient::parse(&client)?;
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let config = gui_config_state.snapshot()?;
-    let api_key = effective_agent_api_key(&config);
-    if client == AgentClient::Codex && oauth_configuration {
-        validate_codex_oauth_login(&home)?;
-    }
-    validate_agent_can_enable(client, &home, config.port, api_key)?;
-    let prepared = fetch_prepared_agent_models(client, &config).await?;
-    let model = resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
-    let claude_code_model_mappings = resolve_claude_code_model_mappings(
-        client,
-        &prepared.models,
-        &model,
-        claude_code_model_mappings,
-    )?;
-    let claude_desktop_model_mappings = resolve_claude_desktop_model_mappings(
-        client,
-        &prepared.models,
-        &model,
-        claude_desktop_model_mappings,
-    )?;
-    if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
-        ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
-    }
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    reset_agent_configuration_to_default_with_oauth(AgentDefaultConfiguration {
-        client,
-        home: &home,
-        port: config.port,
-        api_key,
-        model: &model,
-        models: &prepared.models,
-        codex_catalog: prepared.codex_catalog.as_deref(),
-        oauth_configuration,
-        claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-        claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
-    })
+    commit_agent_with_core(&config, claude_desktop_model_mappings.as_ref(), &prepared.models, || {
+        let _guard = AGENT_CONFIG_FILE_LOCK
+            .lock()
+            .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+        apply_agent_configuration_with_oauth(
+            client,
+            &home,
+            config.port,
+            api_key,
+            &model,
+            AgentConfigurationOptions {
+                models: &prepared.models,
+                codex_catalog: prepared.codex_catalog.as_deref(),
+                oauth_configuration,
+                claude_code_model_mappings: claude_code_model_mappings.as_ref(),
+                claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+            },
+        )
+    }).await
 }
 
 #[tauri::command]
@@ -1206,15 +1164,15 @@ pub(crate) async fn set_agent_config_enabled(
         .path()
         .home_dir()
         .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let config = gui_config_state.snapshot()?;
-    let port = config.port;
-    let api_key = effective_agent_api_key(&config);
-
     if enabled {
+        let config = gui_config_state.snapshot()?;
+        let port = config.port;
+        let api_key = effective_agent_api_key(&config);
         validate_agent_can_enable(client, &home, port, api_key)?;
         let prepared = fetch_prepared_agent_models(client, &config).await?;
-        let model =
-            resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
+        let model = resolve_agent_configuration_model(
+            client, &prepared.models, &model, claude_desktop_model_mappings.as_ref(),
+        )?;
         let claude_code_model_mappings = resolve_claude_code_model_mappings(
             client,
             &prepared.models,
@@ -1227,37 +1185,39 @@ pub(crate) async fn set_agent_config_enabled(
             &model,
             claude_desktop_model_mappings,
         )?;
-        if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
-            ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
-        }
-        let _guard = AGENT_CONFIG_FILE_LOCK
-            .lock()
-            .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-        let oauth_configuration = if client == AgentClient::Codex {
-            current_codex_oauth_configuration(&home)?
-        } else {
-            false
-        };
-        apply_agent_configuration_with_oauth(
-            client,
-            &home,
-            port,
-            api_key,
-            &model,
-            AgentConfigurationOptions {
-                models: &prepared.models,
-                codex_catalog: prepared.codex_catalog.as_deref(),
-                oauth_configuration,
-                claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-                claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
-            },
-        )
+        commit_agent_with_core(&config, claude_desktop_model_mappings.as_ref(), &prepared.models, || {
+            let _guard = AGENT_CONFIG_FILE_LOCK
+                .lock()
+                .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+            let oauth_configuration = if client == AgentClient::Codex {
+                current_codex_oauth_configuration(&home)?
+            } else {
+                false
+            };
+            apply_agent_configuration_with_oauth(
+                client,
+                &home,
+                port,
+                api_key,
+                &model,
+                AgentConfigurationOptions {
+                    models: &prepared.models,
+                    codex_catalog: prepared.codex_catalog.as_deref(),
+                    oauth_configuration,
+                    claude_code_model_mappings: claude_code_model_mappings.as_ref(),
+                    claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+                },
+            )
+        }).await
     } else {
+        let config = gui_config_state.snapshot()?;
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
             .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
         let _ = force_restore;
-        Err("停用智能体配置接口已移除；如需整体重置，请使用“默认配置”".to_string())
+        let result = clear_agent_managed_configuration(client, &home, config.port)?;
+        app.state::<AgentConfigStatusCache>().clear()?;
+        Ok(result)
     }
 }
 
@@ -1267,56 +1227,19 @@ pub(crate) async fn update_agent_config(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
     model: String,
+    oauth_configuration: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
 ) -> Result<AgentConfigActionResult, String> {
-    let client = AgentClient::parse(&client)?;
-    let home = app
-        .path()
-        .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
-    let config = gui_config_state.snapshot()?;
-    let port = config.port;
-    let api_key = effective_agent_api_key(&config);
-    let prepared = fetch_prepared_agent_models(client, &config).await?;
-    let model = resolve_available_agent_model(&prepared.models, &validate_agent_model(&model)?)?;
-    let claude_code_model_mappings = resolve_claude_code_model_mappings(
+    apply_agent_config(
+        app,
+        gui_config_state,
         client,
-        &prepared.models,
-        &model,
+        model,
+        oauth_configuration,
         claude_code_model_mappings,
-    )?;
-    let claude_desktop_model_mappings = resolve_claude_desktop_model_mappings(
-        client,
-        &prepared.models,
-        &model,
         claude_desktop_model_mappings,
-    )?;
-    if let Some(mappings) = claude_desktop_model_mappings.as_ref() {
-        ensure_claude_desktop_model_aliases(&config, mappings, &prepared.models).await?;
-    }
-    let _guard = AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
-    let oauth_configuration = if client == AgentClient::Codex {
-        current_codex_oauth_configuration(&home)?
-    } else {
-        false
-    };
-    apply_agent_configuration_with_oauth(
-        client,
-        &home,
-        port,
-        api_key,
-        &model,
-        AgentConfigurationOptions {
-            models: &prepared.models,
-            codex_catalog: prepared.codex_catalog.as_deref(),
-            oauth_configuration,
-            claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-            claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
-        },
-    )
+    ).await
 }
 
 pub(crate) fn validate_agent_can_enable(
@@ -1366,11 +1289,18 @@ pub(crate) fn resolve_available_agent_model(
 pub(crate) fn parse_agent_model_options(
     payload: &serde_json::Value,
 ) -> Result<Vec<AgentModelOption>, String> {
-    let source = payload
-        .as_array()
+    let object_models = payload.get("models").and_then(serde_json::Value::as_object).map(|models| {
+        models.iter().map(|(id, value)| {
+            let mut entry = value.as_object().cloned().unwrap_or_default();
+            entry.entry("id").or_insert(serde_json::json!(id));
+            serde_json::Value::Object(entry)
+        }).collect::<Vec<_>>()
+    });
+    let source = payload.as_array()
         .or_else(|| payload.get("data").and_then(serde_json::Value::as_array))
         .or_else(|| payload.get("models").and_then(serde_json::Value::as_array))
-        .ok_or_else(|| "本机模型列表响应缺少 data 或 models 数组".to_string())?;
+        .or(object_models.as_ref())
+        .ok_or_else(|| "本机模型列表响应缺少 data 数组或 models 目录".to_string())?;
     let mut models = Vec::new();
     for item in source {
         let name = if let Some(name) = item.as_str() {
@@ -1383,7 +1313,7 @@ pub(crate) fn parse_agent_model_options(
                 .trim()
                 .to_string()
         };
-        let display_name = ["display_name", "displayName"]
+        let display_name = ["display_name", "displayName", "name"]
             .into_iter()
             .find_map(|key| item.get(key).and_then(serde_json::Value::as_str))
             .map(str::trim)
@@ -1412,14 +1342,18 @@ pub(crate) fn parse_agent_model_options(
         ]
         .into_iter()
         .find_map(|key| item.get(key).and_then(json_positive_u64));
+        let input_modalities = codex_catalog::parse_modalities(item).or_else(|| {
+            codex_catalog::parse_modalities(&serde_json::json!({"input_modalities": item.get("input")}))
+        });
+        let harness_metadata = harness_api_metadata(item);
 
         if let Some(model_alias) = model_alias {
             if keep_original {
-                append_agent_model_option(&mut models, &name, display_name, false, context_window);
+                append_agent_model_option(&mut models, &name, display_name, false, context_window, input_modalities.clone(), harness_metadata.clone());
             }
-            append_agent_model_option(&mut models, &model_alias, Some(name), true, context_window);
+            append_agent_model_option(&mut models, &model_alias, Some(name), true, context_window, input_modalities, harness_metadata);
         } else {
-            append_agent_model_option(&mut models, &name, display_name, false, context_window);
+            append_agent_model_option(&mut models, &name, display_name, false, context_window, input_modalities, harness_metadata);
         }
     }
     Ok(models)
@@ -1431,6 +1365,8 @@ pub(crate) fn append_agent_model_option(
     alias: Option<String>,
     is_alias: bool,
     context_window: Option<u64>,
+    input_modalities: Option<Vec<String>>,
+    harness_metadata: Option<serde_json::Value>,
 ) {
     let name = name.trim();
     if name.is_empty()
@@ -1446,6 +1382,8 @@ pub(crate) fn append_agent_model_option(
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case(name))
         .map(str::to_string);
     models.push(AgentModelOption {
+        input_modalities,
+        harness_metadata,
         name: name.to_string(),
         alias,
         is_alias,
@@ -1474,13 +1412,22 @@ pub(crate) fn mark_configured_agent_model_aliases(
             let Some(provider) = provider.as_mapping() else {
                 continue;
             };
+            if yaml_mapping_value(provider, "disabled") == Some(&serde_norway::Value::Bool(true)) {
+                continue;
+            }
             let Some(configured_models) = yaml_mapping_value(provider, "models") else {
                 continue;
             };
             let configured_models = configured_models
                 .as_sequence()
                 .ok_or_else(|| format!("{section}.models 必须是数组"))?;
-            mark_agent_model_aliases_from_sequence(models, configured_models);
+            for configured in configured_models {
+                if configured_model_identity(configured).is_some_and(|(_, client_model, _)| {
+                    configured_provider_model_is_enabled(provider, &client_model)
+                }) {
+                    mark_agent_model_aliases_from_sequence(models, std::slice::from_ref(configured));
+                }
+            }
         }
     }
 

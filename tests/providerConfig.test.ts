@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import {
-  allModelSelectionForDiscovery,
+  apiAccessRemarkLocatorFromRecord,
   applyProviderRemarkIdentity,
   applyProviderPreset,
   buildProviderRecord,
   createProviderDraft,
+  hasDuplicateProviderRecord,
   DEEPSEEK_BASE_URL,
-  DEEPSEEK_THINKING_LEVELS,
   exclusionsForModelSelection,
   loadProviderRecords,
   modelSelectionForDiscovery,
@@ -14,13 +14,95 @@ import {
   parseProviderApiKeys,
   providerCategoryMatchesRecord,
   providerRecordsFromConfig,
+  providerDragId,
   providerRecordWithDisabledState,
+  providerRemarkIdentity,
   providerSectionOrder,
   reorderProviderRecords,
   resolveProviderRecordIndex,
   sectionRecordsFromConfig,
   stripResponseFields,
 } from '../src/pages/ApiAccessPage';
+import { modelsFromRecord } from '../src/services/modelService';
+
+describe('shared-credential provider entries (#276)', () => {
+  const first = {
+    'api-key': 'shared-key',
+    'base-url': 'https://claude.example.test',
+    priority: 10,
+    models: [{ name: 'upstream-a', alias: 'claude-a' }],
+  };
+  const second = {
+    ...first, priority: 1, models: [{ name: 'upstream-b', alias: 'claude-b' }],
+  };
+  const row = (record: Record<string, unknown>, index: number) => ({
+    section: 'claude-api-key' as const, index, name: 'Claude',
+    apiKey: 'shared-key', baseUrl: first['base-url'], record,
+  });
+
+  it('allows different model mappings, aliases, priorities and routing settings', () => {
+    for (const candidate of [
+      second,
+      { ...first, priority: 1 },
+      { ...first, models: [{ name: 'upstream-a', alias: 'claude-other' }] },
+      { ...first, prefix: 'team-b' },
+      { ...first, headers: { 'X-Team': 'b' } },
+      { ...first, 'disable-cooling': false },
+      { ...first, 'request-retry': 0 },
+      { ...first, weight: 0 },
+    ]) {
+      expect(hasDuplicateProviderRecord('claude-api-key', [first], [candidate])).toBe(false);
+    }
+  });
+
+  it('still rejects identical configurations, ignoring runtime IDs and empty defaults', () => {
+    const persisted = { ...first, 'auth-index': 'runtime-only', headers: {}, prefix: '', cloak: null };
+    const candidate = buildProviderRecord('claude-api-key', {
+      ...createProviderDraft('claude-api-key'), apiKey: 'shared-key',
+      baseUrl: first['base-url'], priority: '10', models: first.models,
+    });
+    expect(hasDuplicateProviderRecord('claude-api-key', [persisted], [candidate])).toBe(true);
+    expect(hasDuplicateProviderRecord('claude-api-key', [persisted], [candidate], 0)).toBe(false);
+    expect(hasDuplicateProviderRecord('claude-api-key', [first], [second, candidate])).toBe(true);
+    expect(hasDuplicateProviderRecord('openai-compatibility', [{ name: 'same' }], [{ name: 'same', models: first.models }])).toBe(true);
+    expect(hasDuplicateProviderRecord('gemini-api-key', [first], [second])).toBe(true);
+    expect(hasDuplicateProviderRecord('codex-api-key', [first], [second])).toBe(false);
+  });
+
+  it('locates the second entry for edit/toggle/delete, even after an external reorder', () => {
+    const selected = row({ ...second, 'auth-index': 'runtime-second' }, 1);
+    expect(resolveProviderRecordIndex([first, second], selected)).toBe(1);
+    expect(resolveProviderRecordIndex([second, first], selected)).toBe(0);
+    expect(resolveProviderRecordIndex([first], selected)).toBe(-1);
+    expect(resolveProviderRecordIndex([first, { ...second, priority: 5 }], selected)).toBe(-1);
+  });
+
+  it('retains default URL compatibility without guessing among sibling records', () => {
+    const { 'base-url': _base, ...withoutBase } = second;
+    expect(resolveProviderRecordIndex([first, withoutBase], row(second, 1))).toBe(1);
+    expect(resolveProviderRecordIndex([first, withoutBase, { ...withoutBase }], row(second, 1))).toBe(-1);
+  });
+
+  it('uses distinct drag IDs and reorders only the intended entries', () => {
+    const firstRow = row(first, 0);
+    const secondRow = row(second, 1);
+    expect(providerDragId(firstRow)).not.toBe(providerDragId(secondRow));
+    expect(reorderProviderRecords([first, second], [firstRow, secondRow], secondRow, firstRow)).toEqual([second, first]);
+  });
+
+  it('keeps remarks separate and stable through enable/disable and property ordering', () => {
+    const firstLocator = apiAccessRemarkLocatorFromRecord('claude-api-key', first);
+    const secondLocator = apiAccessRemarkLocatorFromRecord('claude-api-key', second);
+    expect(providerRemarkIdentity('claude-api-key', firstLocator))
+      .not.toBe(providerRemarkIdentity('claude-api-key', secondLocator));
+    const disabled = providerRecordWithDisabledState('claude-api-key', first, true);
+    expect(apiAccessRemarkLocatorFromRecord('claude-api-key', disabled)).toEqual(firstLocator);
+    expect(apiAccessRemarkLocatorFromRecord('claude-api-key', {
+      models: first.models, priority: 10, 'base-url': first['base-url'], 'api-key': first['api-key'],
+      'auth-index': 'runtime', websockets: false,
+    })).toEqual(firstLocator);
+  });
+});
 
 it('saves non-empty custom model names and removes duplicate or blank entries', () => {
   const result = buildProviderRecord('openai-compatibility', {
@@ -29,13 +111,113 @@ it('saves non-empty custom model names and removes duplicate or blank entries', 
     baseUrl: 'https://api.example.com',
     priority: '',
     models: [
-      { name: ' custom-model ', alias: ' Custom Alias ' },
+      { name: ' custom-model ', alias: ' custom-alias ' },
       { name: ' ' },
       { name: 'CUSTOM-MODEL', alias: 'duplicate' },
     ],
   });
 
-  expect(result.models).toEqual([{ name: 'custom-model', alias: 'Custom Alias' }]);
+  expect(result.models).toEqual([{ name: 'custom-model', alias: 'custom-alias' }]);
+});
+
+it('does not persist display names as model aliases', () => {
+  const result = buildProviderRecord('codex-api-key', {
+    name: '',
+    apiKey: 'codex-key',
+    baseUrl: 'https://www.loomex.cc',
+    priority: '',
+    models: [
+      { name: 'codex-auto-review', displayName: 'Codex Auto Review' },
+      { name: 'gpt-test', alias: 'review-alias', displayName: 'GPT Test' },
+    ],
+  });
+
+  expect(result.models).toEqual([
+    { name: 'codex-auto-review' },
+    { name: 'gpt-test', alias: 'review-alias' },
+  ]);
+});
+
+it('rejects newly entered aliases that contain whitespace', () => {
+  expect(() => buildProviderRecord('codex-api-key', {
+    name: '',
+    apiKey: 'codex-key',
+    baseUrl: 'https://www.loomex.cc',
+    priority: '',
+    models: [{ name: 'codex-auto-review', alias: 'Codex Auto Review' }],
+  })).toThrow(/空白|whitespace|空白文字/);
+});
+
+it('preserves an existing spaced alias until the user changes it', () => {
+  const result = buildProviderRecord(
+    'codex-api-key',
+    {
+      name: '',
+      apiKey: 'codex-key',
+      baseUrl: 'https://www.loomex.cc',
+      priority: '',
+      models: [{ name: 'codex-auto-review', alias: 'Codex Auto Review' }],
+    },
+    {
+      'api-key': 'codex-key',
+      models: [{ name: 'codex-auto-review', alias: 'Codex Auto Review' }],
+    },
+  );
+
+  expect(result.models).toEqual([
+    { name: 'codex-auto-review', alias: 'Codex Auto Review' },
+  ]);
+});
+
+it('keeps an existing spaced alias when only the letter case changes', () => {
+  const result = buildProviderRecord(
+    'codex-api-key',
+    {
+      name: '',
+      apiKey: 'codex-key',
+      baseUrl: 'https://www.loomex.cc',
+      priority: '',
+      models: [{ name: 'codex-auto-review', alias: 'codex auto review' }],
+    },
+    {
+      'api-key': 'codex-key',
+      models: [{ name: 'codex-auto-review', alias: 'Codex Auto Review' }],
+    },
+  );
+
+  expect(result.models).toEqual([
+    { name: 'codex-auto-review', alias: 'Codex Auto Review' },
+  ]);
+});
+
+it('preserves aliases added in advanced settings when saving an API connection', () => {
+  const current = {
+    'api-key': 'codex-key',
+    'base-url': 'https://foobar.com/v1',
+    headers: { 'User-Agent': '$User-Agent' },
+    models: [
+      { name: 'gpt-5.6-luna' },
+      {
+        name: 'gpt-5.6-luna',
+        alias: 'claude-sonnet-5-luna',
+        custom: { keep: true },
+      },
+    ],
+  };
+  const result = buildProviderRecord(
+    'codex-api-key',
+    {
+      name: '',
+      apiKey: 'codex-key',
+      baseUrl: 'https://foobar.com/v1',
+      priority: '',
+      models: modelsFromRecord(current.models),
+      headersText: 'User-Agent: $User-Agent',
+    },
+    current,
+  );
+
+  expect(result.models).toEqual(current.models);
 });
 
 it('parses multiline API keys into unique trimmed entries', () => {
@@ -105,6 +287,25 @@ it('propagates API Access config failures without fallback requests', async () =
   expect(paths).toEqual(['/config']);
 });
 
+it('keeps remark identities separate for records that share an API key', () => {
+  const first = apiAccessRemarkLocatorFromRecord('codex-api-key', {
+    'api-key': 'shared-key',
+    'base-url': 'https://first.example/v1',
+  });
+  const second = apiAccessRemarkLocatorFromRecord('codex-api-key', {
+    'api-key': 'shared-key',
+    'base-url': 'https://second.example/v1',
+  });
+
+  expect(first.apiKeys).toEqual(second.apiKeys);
+  expect(first.baseUrl).not.toBe(second.baseUrl);
+  expect(providerRemarkIdentity('codex-api-key', first))
+    .not.toBe(providerRemarkIdentity('codex-api-key', second));
+  expect(providerRemarkIdentity('codex-api-key', first)).toBe(
+    providerRemarkIdentity('codex-api-key', { ...first, apiKeys: [...first.apiKeys] }),
+  );
+});
+
 describe('API 接入配置合并', () => {
   it('固定使用 Codex、OpenAI、DeepSeek、Claude、Gemini 顺序且不包含 Vertex', () => {
     expect(providerSectionOrder).toEqual([
@@ -116,8 +317,7 @@ describe('API 接入配置合并', () => {
     ]);
   });
 
-  it('DeepSeek 新增预设默认发现全部模型并应用内置思考等级', () => {
-    expect(DEEPSEEK_THINKING_LEVELS).toEqual(['low', 'high', 'max']);
+  it('DeepSeek 使用 Codex API 记录且不写入内置思考等级', () => {
     const draft = createProviderDraft('deepseek');
     const discovered = [
       { name: 'deepseek-chat' },
@@ -130,7 +330,7 @@ describe('API 接入配置合并', () => {
       models: discovered,
     });
     const identified = applyProviderRemarkIdentity('deepseek', prepared);
-    const result = buildProviderRecord('openai-compatibility', identified);
+    const result = buildProviderRecord('codex-api-key', identified);
 
     expect(draft.name).toBe('DeepSeek');
     expect(draft.remark).toBe('');
@@ -140,19 +340,16 @@ describe('API 接入配置合并', () => {
     expect(result).toMatchObject({
       name: 'DeepSeek',
       'base-url': 'https://api.deepseek.com',
-      'api-key-entries': [{ 'api-key': 'deepseek-key' }],
+      'api-key': 'deepseek-key',
       models: [
         {
           name: 'deepseek-chat',
-          thinking: { levels: [...DEEPSEEK_THINKING_LEVELS] },
         },
         {
           name: 'deepseek-reasoner',
-          thinking: { levels: [...DEEPSEEK_THINKING_LEVELS] },
         },
         {
           name: 'deepseek-new-model',
-          thinking: { levels: [...DEEPSEEK_THINKING_LEVELS] },
         },
       ],
     });
@@ -169,14 +366,20 @@ describe('API 接入配置合并', () => {
     expect(draft.name).toBe('生产环境');
   });
 
-  it('DeepSeek 接入单独归类，不在 OpenAI 兼容列表重复显示', () => {
-    const record = {
+  it('DeepSeek 只从 Codex API 分类识别，旧 OpenAI 兼容记录保持原样', () => {
+    const codexRecord = {
+      name: 'custom-deepseek',
+      'base-url': 'https://api.deepseek.com/v1',
+    };
+    const legacyRecord = {
       name: 'custom-deepseek',
       'base-url': 'https://api.deepseek.com/v1',
     };
 
-    expect(providerCategoryMatchesRecord('deepseek', record)).toBe(true);
-    expect(providerCategoryMatchesRecord('openai-compatibility', record)).toBe(false);
+    expect(providerCategoryMatchesRecord('deepseek', codexRecord, 'codex-api-key')).toBe(true);
+    expect(providerCategoryMatchesRecord('codex-api-key', codexRecord, 'codex-api-key')).toBe(false);
+    expect(providerCategoryMatchesRecord('deepseek', legacyRecord, 'openai-compatibility')).toBe(false);
+    expect(providerCategoryMatchesRecord('openai-compatibility', legacyRecord, 'openai-compatibility')).toBe(true);
   });
 
   it('OpenAI 兼容接入把选定思考等级写入全部开放模型', () => {
@@ -422,7 +625,6 @@ describe('API 接入配置合并', () => {
 
   it('普通提供商没有模型映射时按真实开放状态初始化勾选', () => {
     const selected = modelSelectionForDiscovery(
-      'codex-api-key',
       [],
       [{ name: 'gpt-5.4' }, { name: 'gpt-image-1.5' }, { name: 'gpt-image-2' }],
       'gpt-image-*',
@@ -433,7 +635,6 @@ describe('API 接入配置合并', () => {
 
   it('普通提供商未限制模型时默认显示全部已开放', () => {
     const selected = modelSelectionForDiscovery(
-      'codex-api-key',
       [],
       [{ name: 'gpt-5.4' }, { name: 'gpt-image-2' }],
       '',
@@ -444,26 +645,11 @@ describe('API 接入配置合并', () => {
 
   it('OpenAI 兼容接入没有已保存模型时默认全选发现的模型', () => {
     const selected = modelSelectionForDiscovery(
-      'openai-compatibility',
       [],
       [{ name: 'model-a' }, { name: 'model-b' }],
       '',
     );
 
     expect(Array.from(selected)).toEqual(['model-a', 'model-b']);
-  });
-
-  it('模型选择窗口每次打开都以接口返回的全部模型作为默认选择', () => {
-    const selected = allModelSelectionForDiscovery([
-      { name: 'deepseek-chat' },
-      { name: 'deepseek-reasoner' },
-      { name: 'deepseek-new-model' },
-    ]);
-
-    expect(Array.from(selected)).toEqual([
-      'deepseek-chat',
-      'deepseek-reasoner',
-      'deepseek-new-model',
-    ]);
   });
 });

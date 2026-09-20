@@ -7,18 +7,19 @@ import {
 } from '../src/services/usageMetrics';
 
 describe('generation speed', () => {
-  test('uses only the generation interval after the first token', () => {
-    const input = { outputTokens: 344, latencyMs: 10_600, ttftMs: 2_770 };
-    expect(calculateGenerationSpeed(input)).toBeCloseTo(43.9336, 4);
-    expect(formatGenerationSpeed(input)).toBe('43.9 t/s');
+  test('uses the total request latency without requiring TTFT', () => {
+    const input = { outputTokens: 344, latencyMs: 10_600 };
+    expect(calculateGenerationSpeed(input)).toBeCloseTo(32.4528, 4);
+    expect(formatGenerationSpeed(input)).toBe('32.5 t/s');
   });
 
   test.each([
-    { outputTokens: 344, latencyMs: 10_600, ttftMs: 0 },
-    { outputTokens: 344, latencyMs: 10_600, ttftMs: null },
-    { outputTokens: 344, latencyMs: 2_770, ttftMs: 2_770 },
-    { outputTokens: 344, latencyMs: 2_000, ttftMs: 2_770 },
-    { outputTokens: 0, latencyMs: 10_600, ttftMs: 2_770 },
+    { outputTokens: 344, latencyMs: 0 },
+    { outputTokens: 344, latencyMs: -1 },
+    { outputTokens: 0, latencyMs: 10_600 },
+    { outputTokens: -1, latencyMs: 10_600 },
+    { outputTokens: Number.NaN, latencyMs: 10_600 },
+    { outputTokens: 344, latencyMs: Number.POSITIVE_INFINITY },
   ])('returns an em dash when generation speed cannot be calculated', (input) => {
     expect(calculateGenerationSpeed(input)).toBeNull();
     expect(formatGenerationSpeed(input)).toBe('—');
