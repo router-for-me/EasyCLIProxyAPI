@@ -1,6 +1,11 @@
 use super::*;
 
 #[cfg(target_os = "macos")]
+use objc2_app_kit::NSStatusItemBehavior;
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSString;
+
+#[cfg(target_os = "macos")]
 const MACOS_TRAY_ID: &str = "macos-tray";
 
 #[cfg(target_os = "macos")]
@@ -96,7 +101,7 @@ pub(crate) fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Resul
     let click_state = Arc::new(Mutex::new(MacosTrayClickState::default()));
     let double_click_interval = Duration::from_secs_f64(NSEvent::doubleClickInterval());
 
-    TrayIconBuilder::with_id(MACOS_TRAY_ID)
+    let tray = TrayIconBuilder::with_id(MACOS_TRAY_ID)
         .icon(
             app.default_window_icon()
                 .cloned()
@@ -168,6 +173,13 @@ pub(crate) fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Resul
             });
         })
         .build(app)?;
+
+    tray.with_inner_tray_icon(|tray_icon| {
+        if let Some(status_item) = tray_icon.ns_status_item() {
+            status_item.setBehavior(NSStatusItemBehavior::RemovalAllowed);
+            status_item.setAutosaveName(Some(&NSString::from_str(MACOS_TRAY_ID)));
+        }
+    })?;
 
     Ok(())
 }
