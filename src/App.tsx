@@ -60,6 +60,12 @@ const pages = [
     component: ApiAccessPage,
   },
   {
+    id: 'oauth',
+    labelKey: 'app.nav.oauth',
+    icon: LogIn,
+    component: OAuthManagementPage,
+  },
+  {
     id: 'quota',
     labelKey: 'app.nav.quota',
     icon: Gauge,
@@ -70,12 +76,6 @@ const pages = [
     labelKey: 'app.nav.usageRecords',
     icon: History,
     component: UsageRecordsPage,
-  },
-  {
-    id: 'oauth',
-    labelKey: 'app.nav.oauth',
-    icon: LogIn,
-    component: OAuthManagementPage,
   },
   {
     id: 'agents',

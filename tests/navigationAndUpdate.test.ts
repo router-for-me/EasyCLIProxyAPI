@@ -29,9 +29,15 @@ describe('简易模式、首页、配置与版本管理导航', () => {
 });
 
 describe('Top-level sidebar navigation', () => {
-  test('places quota immediately after API access and before usage records', () => {
+  test('keeps API access, OAuth, quota, usage records, and agents in product order', () => {
     const apiIndex = appPageIds.indexOf('api');
-    expect(appPageIds.slice(apiIndex, apiIndex + 3)).toEqual(['api', 'quota', 'usage-records']);
+    expect(appPageIds.slice(apiIndex, apiIndex + 5)).toEqual([
+      'api',
+      'oauth',
+      'quota',
+      'usage-records',
+      'agents',
+    ]);
 
   });
 });
