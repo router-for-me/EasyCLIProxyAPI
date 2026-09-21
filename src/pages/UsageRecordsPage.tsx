@@ -1028,7 +1028,7 @@ function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pi
     },
     {
       label: t('usage.stat.tps'),
-      value: overview.tpsSampleCount > 0 ? `${overview.tps.toFixed(1)} TPS` : '—',
+      value: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
       meta: t('usage.stat.performanceMeta', {
         samples: compactNumber(overview.tpsSampleCount),
         rpm: overview.rpm.toFixed(2),
@@ -1073,12 +1073,9 @@ function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pi
     <div className="usage-overview-layout">
       <div className="usage-stat-grid">
         {cards.map(({ label, value, meta, metaTitle }) => (
-          <article className="panel usage-stat-card" key={label}>
+          <article className="panel usage-stat-card" key={label} title={metaTitle ?? meta}>
             <span className="usage-stat-card-label">{label}</span>
             <strong className="usage-stat-card-value">{value}</strong>
-            <small className="usage-stat-card-meta" title={metaTitle ?? meta}>
-              {meta}
-            </small>
           </article>
         ))}
       </div>

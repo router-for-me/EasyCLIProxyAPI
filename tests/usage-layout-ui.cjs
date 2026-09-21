@@ -6,10 +6,33 @@ const base = 'http://127.0.0.1:1421';
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--no-proxy-server'] });
   try {
-    const page = await browser.newPage({ viewport: { width: 1100, height: 600 } });
+    const page = await browser.newPage({ viewport: { width: 1213, height: 600 } });
     await page.route('**/*', (route) => route.request().url().startsWith(`${base}/`) ? route.continue() : route.abort());
     await page.goto(`${base}/tests/fixtures/usage-layout.html`, { waitUntil: 'domcontentloaded' });
     await page.locator('.usage-trend-x-axis').waitFor();
+
+    const statInfo1213 = await page.evaluate(() => {
+      const cards = Array.from(document.querySelectorAll('.usage-stat-card'));
+      const metas = Array.from(document.querySelectorAll('.usage-stat-card-meta'));
+      const tpsCard = cards.find((card) => card.querySelector('.usage-stat-card-label')?.textContent?.trim() === 'TPS');
+      const tpsValue = tpsCard?.querySelector('.usage-stat-card-value')?.textContent?.trim() ?? '';
+      return {
+        cardCount: cards.length,
+        metaCount: metas.length,
+        cardRows: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top))).size,
+        tpsValue,
+      };
+    });
+
+    assert.equal(statInfo1213.cardCount, 6, 'There are 6 stat cards');
+    assert.equal(statInfo1213.cardRows, 1, 'At 1213px width, all 6 cards fit into a single row');
+    assert.equal(statInfo1213.metaCount, 0, 'Stat cards have no meta subtext displayed');
+    assert.ok(!statInfo1213.tpsValue.includes('TPS'), `TPS value should not contain TPS unit: ${statInfo1213.tpsValue}`);
+    assert.ok(/^\d+(\.\d+)?$/.test(statInfo1213.tpsValue), `TPS value should be numeric: ${statInfo1213.tpsValue}`);
+
+    // Now test constrained width where cards wrap and ensure vertical scrolling is preserved
+    await page.setViewportSize({ width: 750, height: 600 });
+    await page.waitForTimeout(100);
 
     const geometry = await page.evaluate(() => {
       const layout = document.querySelector('.usage-overview-layout');
@@ -45,7 +68,7 @@ const base = 'http://127.0.0.1:1421';
       return axis.getBoundingClientRect().bottom <= layout.getBoundingClientRect().bottom + 1;
     }), 'The complete X axis is reachable by scrolling the overview');
 
-    console.log('PASS: wrapped usage cards preserve the full trend chart and use vertical overview scrolling.');
+    console.log('PASS: 1213px single row stat cards and constrained wrapped overview scrolling passed.');
   } finally {
     await browser.close();
   }
