@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "check": "tsc --noEmit",
     "preview": "vite preview",

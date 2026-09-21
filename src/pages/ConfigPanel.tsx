@@ -1074,8 +1074,8 @@ export function ConfigPanelPage() {
                     <span className="config-key-index">{String(index + 1).padStart(2, '0')}</span>
                     <div className="config-key-details">
                       <div className="config-key-label-line">
-                        <strong title={entry.remark || t('config.keys.noRemark')}>
-                          {entry.remark || t('config.keys.noRemark')}
+                        <strong title={entry.remark === '默认密钥' ? t('config.keys.defaultRemark') : (entry.remark || t('config.keys.noRemark'))}>
+                          {entry.remark === '默认密钥' ? t('config.keys.defaultRemark') : (entry.remark || t('config.keys.noRemark'))}
                         </strong>
                       </div>
                       <code title={maskApiKey(entry.apiKey)}>{maskApiKey(entry.apiKey)}</code>

@@ -1231,7 +1231,7 @@ export function ApiAccessPage() {
   };
 
   const deleteRow = async (row: ProviderRow) => {
-    if (!await askConfirmation({ title: t('common.delete'), message: t('apiAccess.deleteConfirm', { remark: row.remark || row.name }), confirmText: t('common.delete'), variant: 'danger' })) return;
+    if (!await askConfirmation({ title: t('common.delete'), message: t('apiAccess.deleteConfirm', { remark: row.remark === '默认密钥' ? t('config.keys.defaultRemark') : (row.remark || row.name) }), confirmText: t('common.delete'), variant: 'danger' })) return;
     feedback.clearNotice();
     setBusy(true);
     setError('');
@@ -1429,12 +1429,12 @@ export function ApiAccessPage() {
                       key={providerDragId(row)}
                       row={row}
                       disabled={busy || rows.length < 2}
-                      dragLabel={t('apiAccess.dragHandle', { remark: row.remark || row.name })}
+                      dragLabel={t('apiAccess.dragHandle', { remark: row.remark === '默认密钥' ? t('config.keys.defaultRemark') : (row.remark || row.name) })}
                       isDragOver={dragOverId === providerDragId(row)}
                     >
                   <div className="provider-row-main">
                     <div className="provider-row-title">
-                      <strong title={row.remark || row.name}>{row.remark || row.name}</strong>
+                      <strong title={row.remark === '默认密钥' ? t('config.keys.defaultRemark') : (row.remark || row.name)}>{row.remark === '默认密钥' ? t('config.keys.defaultRemark') : (row.remark || row.name)}</strong>
                     </div>
                     <code title={definitionFor(row.section).openAi ? t('apiAccess.keys.count', { count: row.apiKeys.length }) : undefined}>
                       {definitionFor(row.section).openAi && row.apiKeys.length > 1
@@ -1466,7 +1466,7 @@ export function ApiAccessPage() {
                           checked={!row.disabled}
                           onChange={() => void toggleProvider(row)}
                           disabled={busy}
-                          aria-label={t('apiAccess.toggleAria', { remark: row.remark || row.name, action: row.disabled ? t('common.enable') : t('common.disable') })}
+                          aria-label={t('apiAccess.toggleAria', { remark: row.remark === '默认密钥' ? t('config.keys.defaultRemark') : (row.remark || row.name), action: row.disabled ? t('common.enable') : t('common.disable') })}
                         />
                         <span className="switch-track" />
                       </span>
@@ -1625,7 +1625,7 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
         <div className="model-discovery-header">
           <div>
             <h2 id="provider-health-title">{t('apiAccess.health.title')}</h2>
-            <span>{t('apiAccess.health.description', { provider: row.remark || row.name })}</span>
+            <span>{t('apiAccess.health.description', { provider: row.remark === '默认密钥' ? t('config.keys.defaultRemark') : (row.remark || row.name) })}</span>
           </div>
           <button type="button" className="icon-button quiet" onClick={onClose} title={t('common.close')}>
             <X size={18} />
@@ -2018,7 +2018,7 @@ export function ApiProviderDialog({
   const modelSummaryDetail = configuredModels.length > 0
     ? deepSeekModelsStale
       ? t('apiAccess.models.staleHint')
-      : configuredModels.slice(0, 3).map((model) => model.name).join('、')
+      : configuredModels.slice(0, 3).map((model) => model.name).join(getCurrentLocale().startsWith('zh') || getCurrentLocale() === 'ja' ? '、' : ', ')
     : activeCategory === 'deepseek'
       ? t('apiAccess.models.selectionRequiredHint')
     : hasModelExclusions

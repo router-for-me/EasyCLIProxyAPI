@@ -74,10 +74,7 @@ pub(crate) async fn management_request(
         "DELETE" => reqwest::Method::DELETE,
         _ => return Err("不支持的管理 API 请求方法".to_string()),
     };
-    let path = request.path.trim();
-    if path.is_empty() || path.contains("://") || path.contains("..") {
-        return Err("无效的管理 API 路径".to_string());
-    }
+    let path = validate_management_path(&request.path)?;
 
     let client = management_http_client()?;
     let mut builder = client
@@ -106,12 +103,16 @@ pub(crate) async fn upload_auth_file(
     name: String,
     data: Vec<u8>,
 ) -> Result<serde_json::Value, String> {
-    let name = name.trim().to_string();
-    if name.is_empty() || !name.to_ascii_lowercase().ends_with(".json") {
-        return Err("凭证文件名必须以 .json 结尾".to_string());
-    }
-
+    let name = validate_auth_file_name(&name)?;
     let config = gui_config_state.snapshot()?;
+    const MAX_AUTH_FILE_BYTES: usize = 10 * 1024 * 1024;
+    if data.len() > MAX_AUTH_FILE_BYTES {
+        return Err(if config.locale.starts_with("en") {
+            "Credential file size cannot exceed 10MB".to_string()
+        } else {
+            "凭证文件大小不能超过 10MB".to_string()
+        });
+    }
     let client = management_http_client()?;
     let mut query = HashMap::new();
     query.insert("name".to_string(), name);
@@ -344,6 +345,34 @@ pub(crate) fn management_authorization(config: &GuiConfigFile) -> Result<String,
     Ok(format!("Bearer {secret_key}"))
 }
 
+pub(crate) fn validate_management_path(path: &str) -> Result<&str, String> {
+    let path = path.trim();
+    if path.is_empty()
+        || path.contains("://")
+        || path.contains("..")
+        || path.contains('\\')
+        || path.chars().any(char::is_control)
+    {
+        return Err("无效的管理 API 路径".to_string());
+    }
+    Ok(path)
+}
+
+pub(crate) fn validate_auth_file_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty()
+        || name.len() > 255
+        || !name.to_ascii_lowercase().ends_with(".json")
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name.chars().any(char::is_control)
+    {
+        return Err("凭证文件名无效或包含非法路径字符".to_string());
+    }
+    Ok(name.to_string())
+}
+
 pub(crate) fn management_endpoint(config: &GuiConfigFile, path: &str) -> Result<String, String> {
     if config.port == 0 {
         return Err("内核端口无效".to_string());
@@ -490,5 +519,30 @@ mod tests {
             core_logs_dir_path(auth_dir.to_str().unwrap(), &install_dir),
             install_dir.join(auth_dir).join("logs")
         );
+    }
+
+    #[test]
+    fn validate_management_path_blocks_unsafe_paths() {
+        assert_eq!(validate_management_path("auth-files").unwrap(), "auth-files");
+        assert_eq!(validate_management_path("config/status").unwrap(), "config/status");
+        assert!(validate_management_path("").is_err());
+        assert!(validate_management_path("../secrets").is_err());
+        assert!(validate_management_path("https://evil.com").is_err());
+        assert!(validate_management_path("path\\with\\backslash").is_err());
+        assert!(validate_management_path("path\nwith\ncontrol").is_err());
+    }
+
+    #[test]
+    fn validate_auth_file_name_blocks_path_traversal() {
+        assert_eq!(
+            validate_auth_file_name("account-1.json").unwrap(),
+            "account-1.json"
+        );
+        assert!(validate_auth_file_name("").is_err());
+        assert!(validate_auth_file_name("not-json.txt").is_err());
+        assert!(validate_auth_file_name("../escaped.json").is_err());
+        assert!(validate_auth_file_name("sub/folder.json").is_err());
+        assert!(validate_auth_file_name("sub\\folder.json").is_err());
+        assert!(validate_auth_file_name("bad\0char.json").is_err());
     }
 }

@@ -291,7 +291,7 @@ export function AuthFileManagementPage() {
         await managementApi.uploadAuthFile(file);
         uploaded += 1;
       } catch (requestError) {
-        failures.push(`${file.name}：${String(requestError)}`);
+        failures.push(`${file.name}: ${String(requestError)}`);
       }
     }
     try {

@@ -2097,7 +2097,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </span>
               </div>
 
-              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
+              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join(getCurrentLocale().startsWith('zh') ? '；' : '; ')} tone={activeStatus?.error ? 'error' : 'info'} />
 
               {isCursorClient ? (
                 <div className="agent-unmanaged-notice">
@@ -2198,7 +2198,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 )}
               </div>
 
-              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
+              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join(getCurrentLocale().startsWith('zh') ? '；' : '; ')} tone={activeStatus?.error ? 'error' : 'info'} />
 
               {isCursorClient ? (
                 <section className="agent-core-setting-section">

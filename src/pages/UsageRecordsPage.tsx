@@ -173,6 +173,15 @@ type UsageRepairResult = {
   backupPath: string | null;
 };
 
+function localizeCollectorStatusMessage(message: string | undefined, t: ReturnType<typeof useI18n>['t']) {
+  if (!message) return undefined;
+  if (message === '等待内核启动') return t('kernel.access.waiting');
+  if (message.includes('已连接 CPA usage 实时订阅') || message.includes('CPA usage 实时订阅采集中') || message.startsWith('使用记录采集中')) {
+    return t('usage.collector.collecting');
+  }
+  return message;
+}
+
 type UsageStorageSettings = {
   maxDatabaseSizeMb: number;
   databaseSizeBytes: number;
@@ -575,7 +584,7 @@ export function UsageRecordsPage() {
         </div>
 
         <div className="usage-topbar-actions">
-          <div className={`usage-collector-state ${collectorTone}`} title={status?.message}>
+          <div className={`usage-collector-state ${collectorTone}`} title={localizeCollectorStatusMessage(status?.message, t)}>
             <span className="status-dot" />
             <strong>
               {status?.state === 'collecting'
@@ -1784,7 +1793,7 @@ function UsageEventCell({
   columnKey: EventColumnKey;
   noRemarkLabel: string;
 }) {
-  const { formatDate } = useI18n();
+  const { formatDate, t } = useI18n();
 
   switch (columnKey) {
     case 'time':
@@ -1812,13 +1821,17 @@ function UsageEventCell({
           <span className="usage-tag-pill">{record.source_display || record.source || '—'}</span>
         </td>
       );
-    case 'key':
+    case 'key': {
+      const displayRemark = record.api_key_remark === '默认密钥'
+        ? t('config.keys.defaultRemark')
+        : (record.api_key_remark || noRemarkLabel);
       return (
         <td className="usage-stacked-cell align-center">
-          <strong title={record.api_key_remark}>{record.api_key_remark || noRemarkLabel}</strong>
+          <strong title={displayRemark}>{displayRemark}</strong>
           <small title={record.api_key_display || undefined}>{record.api_key_display || '—'}</small>
         </td>
       );
+    }
     case 'input':
       return (
         <td className="usage-td-token align-center" title={`${record.tokens.input_tokens.toLocaleString()} tokens`}>

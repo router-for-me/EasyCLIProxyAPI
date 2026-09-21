@@ -485,7 +485,7 @@ export function VersionManagementPage() {
   const progressText = progress
     ? progress.phase === '安装完成'
       ? t('kernel.progress.completed')
-      : progress.phase === '解压中'
+      : (progress.phase === '解压中' || progress.phase === '解压内置内核')
         ? t('kernel.progress.extracting')
         : progress.total
           ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
@@ -912,12 +912,20 @@ function localizeInstallPhase(
     '下载中': 'kernel.phase.downloading',
     '解压中': 'kernel.phase.extracting',
     '准备内置内核': 'kernel.phase.preparingBundled',
+    '校验内置内核': 'appUpdate.phase.verifying',
+    '解压内置内核': 'kernel.phase.extracting',
+    '检查版本': 'appUpdate.phase.checking',
     '安装完成': 'kernel.phase.completed',
     '安装失败': 'kernel.phase.failed',
     '已取消': 'kernel.phase.cancelled',
   } as const;
   const key = keys[phase as keyof typeof keys];
-  return key ? t(key) : phase;
+  if (key) return t(key);
+  if (phase.startsWith('下载失败，正在切换到 ')) {
+    const candidate = phase.replace('下载失败，正在切换到 ', '');
+    return t('kernel.versions.sourceAutoSwitched', { source: candidate });
+  }
+  return phase;
 }
 
 function clampPercent(percent: number) {

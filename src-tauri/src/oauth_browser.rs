@@ -73,6 +73,9 @@ pub(crate) fn open_oauth_url_inner(
 
 fn validate_http_url(url: &str) -> Result<&str, String> {
     let url = url.trim();
+    if url.is_empty() || url.chars().any(char::is_control) {
+        return Err("Invalid URL".to_string());
+    }
     if url.starts_with("http://") || url.starts_with("https://") {
         Ok(url)
     } else {
@@ -202,5 +205,7 @@ mod tests {
         );
         assert!(validate_http_url("file:///tmp/token").is_err());
         assert!(validate_http_url("javascript:alert(1)").is_err());
+        assert!(validate_http_url("https://example.com\r\n").is_err());
+        assert!(validate_http_url("https://example.com\0").is_err());
     }
 }
