@@ -58,6 +58,7 @@ windows-sys = { version = "0.59", features = [
   "Win32_Storage_FileSystem",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Environment",
+  "Win32_System_Console",
   "Win32_System_JobObjects",
   "Win32_System_Registry",
   "Win32_System_Threading",

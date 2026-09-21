@@ -100,11 +100,15 @@ OpenAI、Claude、Gemini、およびその他の互換形式の間で変換で�
 - Pi（CLIProxyAPI provider 拡張機能）
 - ZCode
 - WorkBuddy / WorkBuddy AI
+- Antigravity IDE
+- Antigravity CLI
 - Kimi Code
 - Grok Build
 
 対応クライアントでは、利用可能なモデルカタログの同期、デフォルトモデルの選択、管理設定を適用する前の
 元設定のバックアップ、以前の設定への復元、利用可能なデスクトップまたは CLI エントリーポイントの起動ができます。
+
+Antigravity IDE と Antigravity CLI は設定ファイルが異なるため、個別のエントリーとして表示されます。どちらも CPA の Gemini 互換 API に接続します。IDE は設定の適用・解除後に再起動してください。IDE 内のモデル名表示は変わりませんが、リクエストには CPA で選択したモデルが使われます。CLI は CPA から起動すると、そのプロセスに接続先と API キーが渡されます。`agy` を直接実行する場合は環境変数を自分で設定してください。
 
 ## その他の機能
 

@@ -37,6 +37,7 @@ import opencodeIcon from '../assets/icons/opencode.svg';
 import piIcon from '../assets/icons/pi-logo-on-light.svg';
 import zcodeIcon from '../assets/icons/zcode.png';
 import workbuddyIcon from '../assets/icons/workbuddy.png';
+import antigravityIcon from '../assets/icons/antigravity.svg';
 import {
   agentModelAlias,
   filterAgentModels,
@@ -81,6 +82,8 @@ type AgentClientId =
   | 'deepseek-harness'
   | 'zcode'
   | 'workbuddy'
+  | 'antigravity-ide'
+  | 'antigravity-cli'
   | 'kimi-code'
   | 'grok-build'
   | 'pi';
@@ -230,7 +233,7 @@ type AgentDefinition = {
   name: string;
   icon?: string;
   Icon?: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes' | 'agents.description.deepseekHarness' | 'agents.description.zcode' | 'agents.description.workbuddy' | 'agents.description.kimiCode' | 'agents.description.grokBuild' | 'agents.description.pi';
+  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes' | 'agents.description.deepseekHarness' | 'agents.description.zcode' | 'agents.description.workbuddy' | 'agents.description.antigravityIde' | 'agents.description.antigravityCli' | 'agents.description.kimiCode' | 'agents.description.grokBuild' | 'agents.description.pi';
 };
 
 type AgentSubpageId = 'core' | 'management' | 'sessions';
@@ -284,6 +287,8 @@ const agentDefinitions: AgentDefinition[] = [
     icon: grokIcon,
     descriptionKey: 'agents.description.grokBuild',
   },
+  { id: 'antigravity-ide', name: 'Antigravity IDE', icon: antigravityIcon, descriptionKey: 'agents.description.antigravityIde' },
+  { id: 'antigravity-cli', name: 'Antigravity CLI', icon: antigravityIcon, descriptionKey: 'agents.description.antigravityCli' },
   {
     id: 'workbuddy',
     name: 'WorkBuddy',
@@ -1218,6 +1223,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const modificationDescription = activeStatus?.modificationState === 'invalid'
     ? t('agents.modify.invalid')
     : nativeOauth ? t('agents.nativeOAuth.activeHint')
+    : selected === 'antigravity-ide' ? t('agents.modify.antigravityIdeHint')
+    : selected === 'antigravity-cli' ? t('agents.modify.antigravityCliHint')
     : selected === 'workbuddy'
       ? t('agents.modify.workbuddyHint')
     : selected === 'zcode'
@@ -1741,7 +1748,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   };
 
   const restartDesktopApp = async () => {
-    if (!['codex', 'opencode', 'claude-desktop', 'zcode', 'workbuddy'].includes(selected)) return;
+    if (!['codex', 'opencode', 'claude-desktop', 'zcode', 'workbuddy', 'antigravity-ide'].includes(selected)) return;
     setBusyAction('restart-app');
     setLaunchError('');
     try {
@@ -2436,7 +2443,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           <MessageNotice tone="success" message={!configurationErrorMessage ? configurationNotice || clearNotice : null}
             onDismiss={() => { setConfigurationNotice(''); setClearNotice(''); }} />
           {activeSubpage === 'core' ? <AgentRunControls name={activeDefinition.name} dualTargets={hasIndependentCliAndApp}
-            desktop={hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode' || selected === 'workbuddy'}
+            desktop={hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode' || selected === 'workbuddy' || selected === 'antigravity-ide'}
             targets={activeLaunchTargets} enabled={launchEnabled} busyAction={busyAction}
             harness={isDeepSeekHarnessClient ? deepSeekHarnessProcessStatus : null}
             onLaunch={(target) => void launchAgent(target)} onRestart={() => void restartDesktopApp()}

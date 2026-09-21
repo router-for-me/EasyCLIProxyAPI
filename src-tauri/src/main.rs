@@ -1363,6 +1363,8 @@ enum AgentClient {
     DeepSeekHarness,
     ZCode,
     WorkBuddy,
+    AntigravityIde,
+    AntigravityCli,
     KimiCode,
     GrokBuild,
 }
@@ -1386,6 +1388,8 @@ impl AgentClient {
             "deepseek-harness" => Ok(Self::DeepSeekHarness),
             "zcode" => Ok(Self::ZCode),
             "workbuddy" => Ok(Self::WorkBuddy),
+            "antigravity-ide" => Ok(Self::AntigravityIde),
+            "antigravity-cli" => Ok(Self::AntigravityCli),
             "kimi-code" => Ok(Self::KimiCode),
             "grok-build" => Ok(Self::GrokBuild),
             _ => Err(format!("不支持的智能体客户端: {value}")),
@@ -1403,6 +1407,8 @@ impl AgentClient {
             Self::DeepSeekHarness => "deepseek-harness",
             Self::ZCode => "zcode",
             Self::WorkBuddy => "workbuddy",
+            Self::AntigravityIde => "antigravity-ide",
+            Self::AntigravityCli => "antigravity-cli",
             Self::KimiCode => "kimi-code",
             Self::GrokBuild => "grok-build",
         }
@@ -1419,6 +1425,8 @@ impl AgentClient {
             Self::DeepSeekHarness => "DeepSeek Harness",
             Self::ZCode => "ZCode",
             Self::WorkBuddy => "WorkBuddy",
+            Self::AntigravityIde => "Antigravity IDE",
+            Self::AntigravityCli => "Antigravity CLI",
             Self::KimiCode => "Kimi Code",
             Self::GrokBuild => "Grok Build",
         }
@@ -1444,6 +1452,8 @@ impl AgentClient {
             Self::DeepSeekHarness => &["dsh"],
             Self::ZCode => &["zcode"],
             Self::WorkBuddy => &[],
+            Self::AntigravityIde => &[],
+            Self::AntigravityCli => &["agy"],
             Self::KimiCode => &["kimi"],
             Self::GrokBuild => &["grok"],
         }
@@ -2341,6 +2351,14 @@ struct GithubAsset {
 }
 
 fn main() {
+    let helper_args = env::args_os().collect::<Vec<_>>();
+    if antigravity_helper_requested(&helper_args) {
+        let code = run_antigravity_helper(&helper_args).unwrap_or_else(|error| {
+            eprintln!("{error}");
+            1
+        });
+        std::process::exit(code);
+    }
     let mut args = env::args_os();
     while let Some(argument) = args.next() {
         if argument == "--portable-update-helper" {

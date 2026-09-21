@@ -48,6 +48,7 @@ pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBu
             ]
         }
         AgentClient::WorkBuddy => vec![workbuddy_home(home).join("models.json")],
+        AgentClient::AntigravityIde | AgentClient::AntigravityCli => antigravity_config_paths(client, home),
         AgentClient::ZCode => vec![
             home.join(".zcode/v2").join(ZCODE_CONFIG_FILE),
             home.join(".zcode/cli").join(ZCODE_CONFIG_FILE),
@@ -982,6 +983,7 @@ pub(crate) fn inspect_agent_config(
         AgentClient::DeepSeekHarness => read_deepseek_harness_profile_version(home),
         AgentClient::ZCode => executable.as_deref().and_then(read_zcode_app_version),
         AgentClient::WorkBuddy => executable.as_deref().and_then(read_workbuddy_app_version),
+        AgentClient::AntigravityIde => executable.as_deref().and_then(read_antigravity_ide_version),
         _ => None,
     };
     let version = cli_version.clone().or_else(|| app_version.clone());
@@ -1067,13 +1069,13 @@ pub(crate) fn agent_installation_detected(
     version.is_some()
         || (matches!(
             client,
-            AgentClient::ClaudeDesktop | AgentClient::OpenCode | AgentClient::ZCode | AgentClient::WorkBuddy
+            AgentClient::ClaudeDesktop | AgentClient::OpenCode | AgentClient::ZCode | AgentClient::WorkBuddy | AgentClient::AntigravityIde
         ) && executable_found)
         || app_installed
 }
 
 pub(crate) fn should_probe_primary_agent_executable_version(client: AgentClient) -> bool {
-    !matches!(client, AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy)
+    !matches!(client, AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy | AgentClient::AntigravityIde)
 }
 
 pub(crate) fn agent_launch_targets(
@@ -1127,7 +1129,7 @@ pub(crate) fn agent_launch_targets(
                 });
             }
         }
-        AgentClient::ZCode | AgentClient::WorkBuddy => {
+        AgentClient::ZCode | AgentClient::WorkBuddy | AgentClient::AntigravityIde => {
             if let Some(executable) = executable {
                 targets.push(AgentLaunchTarget {
                     id: "app".to_string(),
@@ -1264,6 +1266,7 @@ pub(crate) fn inspect_agent_managed_config(
                 false,
             ))
         }
+        AgentClient::AntigravityIde | AgentClient::AntigravityCli => inspect_antigravity_config(client, paths, port, api_key).map(|(configured, model)| (configured, model, false)),
         AgentClient::WorkBuddy => inspect_workbuddy_agent_config(&paths[0], port, api_key)
             .map(|(configured, model)| (configured, model, false)),
         AgentClient::KimiCode => inspect_kimi_code_agent_config(&paths[0], port, api_key)
@@ -1473,6 +1476,7 @@ pub(crate) fn agent_has_managed_marker(
         }
         AgentClient::DeepSeekHarness => deepseek_harness_has_managed_marker(paths),
         AgentClient::WorkBuddy => workbuddy_has_managed_marker(&paths[0]),
+        AgentClient::AntigravityIde | AgentClient::AntigravityCli => antigravity_has_marker(client, paths),
         AgentClient::ZCode => {
             let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
             for path in paths {
@@ -2389,6 +2393,8 @@ pub(crate) fn find_windows_codex_app_executable(home: &Path) -> Option<PathBuf> 
 }
 
 pub(crate) fn find_agent_executable(client: AgentClient, home: &Path) -> Option<PathBuf> {
+    if client == AgentClient::AntigravityIde { return find_antigravity_ide(home); }
+    if client == AgentClient::AntigravityCli { return find_antigravity_cli(home); }
     if client == AgentClient::ClaudeDesktop {
         return find_claude_desktop_executable(home);
     }

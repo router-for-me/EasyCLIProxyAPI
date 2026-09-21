@@ -30,6 +30,8 @@ pub(crate) fn inspect_agent_config_statuses(
         AgentStatusDetectionTarget::Client(AgentClient::DeepSeekHarness),
         AgentStatusDetectionTarget::Client(AgentClient::ZCode),
         AgentStatusDetectionTarget::Client(AgentClient::WorkBuddy),
+        AgentStatusDetectionTarget::Client(AgentClient::AntigravityIde),
+        AgentStatusDetectionTarget::Client(AgentClient::AntigravityCli),
         AgentStatusDetectionTarget::Client(AgentClient::KimiCode),
         AgentStatusDetectionTarget::Client(AgentClient::GrokBuild),
         AgentStatusDetectionTarget::PiProvider,

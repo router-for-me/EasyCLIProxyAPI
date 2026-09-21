@@ -109,6 +109,8 @@ API 接入页面按照协议或 Provider 管理上游 API 凭证和服务地址�
 - Pi（通过 CLIProxyAPI provider 插件）
 - ZCode
 - WorkBuddy / WorkBuddy AI
+- Antigravity IDE
+- Antigravity CLI
 - Kimi Code
 - Grok Build
 
@@ -118,6 +120,8 @@ API 接入页面按照协议或 Provider 管理上游 API 凭证和服务地址�
 WorkBuddy 接入沿用模型选择、更新配置、关闭配置修改、手动备份/恢复和桌面启动/重启流程。
 支持 WorkBuddy 与 WorkBuddy AI 的 `models.json` 对象及数组格式，并保留已有自定义模型。
 应用后需在 WorkBuddy 内选择 `CPA:模型名`；已有会话不会自动切换模型，未显示时可重启 App。
+
+Antigravity IDE 与 Antigravity CLI 使用不同的配置文件，因此提供独立入口，均通过 CPA 的 Gemini 兼容接口连接。IDE 应用或关闭配置后需要重启；IDE 内的模型标签保持不变，实际请求使用 CPA 中选定的模型。CLI 请从 CPA 启动，以便为该进程注入接口地址和密钥；直接运行 `agy` 时需自行设置环境变量。
 
 ## 其他功能
 

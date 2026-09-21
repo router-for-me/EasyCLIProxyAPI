@@ -118,12 +118,16 @@ proxy. Supported clients include:
 - Pi (with the CLIProxyAPI provider extension)
 - ZCode
 - WorkBuddy / WorkBuddy AI
+- Antigravity IDE
+- Antigravity CLI
 - Kimi Code
 - Grok Build
 
 For supported clients, the application can synchronize the available model catalog, select a
 default model, back up the original configuration before applying managed settings, and restore the
 previous configuration.
+
+Antigravity IDE and Antigravity CLI have separate entries because they use different configuration files. Both connect through CPA's Gemini-compatible API. Restart the IDE after applying or disabling settings; its model labels stay unchanged, while requests use the model selected in CPA. Launch the CLI from CPA to supply its endpoint and API key for that process. Running `agy` directly requires setting those environment variables yourself.
 
 ## Additional Capabilities
 

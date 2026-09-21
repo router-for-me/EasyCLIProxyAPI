@@ -11,6 +11,7 @@ mod state;
 mod templates;
 mod transactions;
 mod workbuddy;
+mod antigravity;
 #[cfg(target_os = "windows")]
 mod windows_probe;
 pub(crate) use backups::*;
@@ -24,5 +25,6 @@ pub(crate) use state::*;
 pub(crate) use templates::*;
 pub(crate) use transactions::*;
 pub(crate) use workbuddy::*;
+pub(crate) use antigravity::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows_probe::*;

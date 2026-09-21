@@ -14,6 +14,8 @@ fn configuration_paths_ignore_inherited_environment() {
         "deepseek-harness",
         "zcode",
         "workbuddy",
+        "antigravity-ide",
+        "antigravity-cli",
         "kimi-code",
         "grok-build",
         "pi",
@@ -36,6 +38,7 @@ fn configuration_paths_ignore_inherited_environment() {
         command.env("CPA_PATH_ISOLATION_CHILD", "1");
         for variable in [
             "LOCALAPPDATA",
+            "APPDATA",
             "XDG_CONFIG_HOME",
             "CODEX_HOME",
             "HERMES_HOME",

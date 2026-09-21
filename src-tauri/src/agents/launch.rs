@@ -181,6 +181,19 @@ pub(crate) fn launch_agent(
     let requested_target = requested_target.unwrap_or(default_target);
     match (client, requested_target) {
         (AgentClient::ClaudeDesktop, "app") => launch_claude_desktop(&home),
+        (AgentClient::AntigravityIde, "app") => {
+            let executable = find_antigravity_ide(&home).ok_or("未找到 Antigravity IDE")?;
+            launch_desktop_agent(&executable, client.name())
+        }
+        (AgentClient::AntigravityCli, "cli")
+            if antigravity_has_marker(client, &agent_config_paths(client, &home))? => {
+            if !status.configured {
+                return Err("Antigravity CLI 配置与 CPA 不一致，请重新应用配置".into());
+            }
+            let executable = env::current_exe().map_err(|_| "无法定位 CPA 启动适配程序")?;
+            let directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+            launch_cli_agent(&executable, client.name(), &directory, &antigravity_cli_helper_arguments(&home), &[], &terminal)
+        }
         (AgentClient::WorkBuddy, "app") => {
             let executable = find_workbuddy_desktop_executable(&home)
                 .ok_or_else(|| "未找到 WorkBuddy 应用程序".to_string())?;
@@ -193,7 +206,7 @@ pub(crate) fn launch_agent(
         }
         (AgentClient::Codex, "app") => launch_codex_desktop(&home),
         (AgentClient::OpenCode, "app") => launch_opencode_desktop(&home),
-        (AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy, "cli") => {
+        (AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy | AgentClient::AntigravityIde, "cli") => {
             Err(format!("{} 不支持 CLI 启动方式", client.name()))
         }
         (_, "cli") => {
@@ -701,6 +714,7 @@ pub(crate) async fn restart_agent_app(app: tauri::AppHandle, client: String) -> 
             | AgentClient::ClaudeDesktop
             | AgentClient::ZCode
             | AgentClient::WorkBuddy
+            | AgentClient::AntigravityIde
     ) {
         return Err(format!("{} 不支持桌面应用重启", client.name()));
     }
@@ -747,6 +761,7 @@ fn find_desktop_restart_target(
         AgentClient::WorkBuddy => {
             find_workbuddy_desktop_executable(home).map(DesktopAppTarget::Application)
         }
+        AgentClient::AntigravityIde => find_antigravity_ide(home).map(DesktopAppTarget::Application),
         AgentClient::ClaudeDesktop => {
             let executable =
                 find_claude_desktop_executable(home).map(DesktopAppTarget::Application);

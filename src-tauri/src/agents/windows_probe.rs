@@ -354,6 +354,19 @@ pub(crate) fn find_windows_registered_zcode_executable() -> Option<PathBuf> {
 }
 
 #[cfg(not(test))]
+pub(crate) fn find_windows_registered_antigravity_ide() -> Option<PathBuf> {
+    for executable in ["Antigravity IDE.exe", "Antigravity.exe"] {
+        if let Some(path) = collect_windows_desktop_registrations(executable, |name| {
+            name == "Antigravity IDE" || name.starts_with("Antigravity IDE (")
+                || name == "Antigravity" || name.starts_with("Antigravity (")
+        }).into_iter().find_map(|r| parse_windows_desktop_registration(r.kind, &r.value, executable)) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[cfg(not(test))]
 pub(crate) fn find_windows_registered_workbuddy_executable() -> Option<PathBuf> {
     for executable in ["WorkBuddyAI.exe", "WorkBuddy.exe"] {
         if let Some(path) = collect_windows_desktop_registrations(executable, |name| {
