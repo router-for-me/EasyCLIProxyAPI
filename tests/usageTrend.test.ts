@@ -3,15 +3,18 @@ import {
   OTHER_TREND_MODEL_KEY,
   buildUsageTrendSeries,
   chooseTrendBucket,
+  clampTrendRatio,
   findTrendPointIndex,
   formatLocalHourKey,
   formatTrendAxisLabel,
   formatTrendRangeLabel,
+  isClientPointInsideRect,
   niceCeiling,
   parseLocalHourKey,
   stackModelTokens,
   startOfBucket,
   trendAxisTicks,
+  trendPointIndexAtRatio,
   trendTimeAxisTicks,
   trendTimePosition,
   type UsageTimelinePoint,
@@ -190,6 +193,14 @@ describe('usage trend helpers', () => {
     expect(findTrendPointIndex(series.points, new Date(2026, 8, 14, 10, 29))).toBe(0);
     expect(findTrendPointIndex(series.points, new Date(2026, 8, 14, 10, 30))).toBe(1);
     expect(findTrendPointIndex(series.points, end)).toBe(series.points.length - 1);
+    expect(trendPointIndexAtRatio(series.points, start, end, 0)).toBe(0);
+    expect(trendPointIndexAtRatio(series.points, start, end, 12 / 240)).toBe(0);
+    expect(trendPointIndexAtRatio(series.points, start, end, 14 / 240)).toBe(1);
+    expect(trendPointIndexAtRatio(series.points, start, end, 1)).toBe(series.points.length - 1);
+    expect(clampTrendRatio(1.4)).toBe(1);
+    expect(clampTrendRatio(Number.NaN)).toBe(0);
+    expect(isClientPointInsideRect(120, 40, { left: 100, right: 200, top: 10, bottom: 80 })).toBe(true);
+    expect(isClientPointInsideRect(90, 40, { left: 100, right: 200, top: 10, bottom: 80 })).toBe(false);
     expect(formatTrendRangeLabel(series.points[0], 'zh-CN', '30m')).toContain('10:17-10:30');
   });
 

@@ -288,6 +288,31 @@ export function findTrendPointIndex(points: PreparedTrendPoint[], time: Date): n
   return index < 0 ? points.length - 1 : index;
 }
 
+export function clampTrendRatio(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+export function trendPointIndexAtRatio(
+  points: PreparedTrendPoint[],
+  start: Date,
+  end: Date,
+  ratio: number,
+): number {
+  if (!points.length) return -1;
+  const span = Math.max(0, end.getTime() - start.getTime());
+  const time = new Date(start.getTime() + clampTrendRatio(ratio) * span);
+  return findTrendPointIndex(points, time);
+}
+
+export function isClientPointInsideRect(
+  clientX: number,
+  clientY: number,
+  rect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>,
+): boolean {
+  return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
+
 function sameCalendarDay(left: Date, right: Date): boolean {
   return (
     left.getFullYear() === right.getFullYear()

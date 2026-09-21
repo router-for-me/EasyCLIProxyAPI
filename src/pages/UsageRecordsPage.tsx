@@ -28,11 +28,13 @@ import { formatUsageNumber } from '../services/usageNumber';
 import {
   OTHER_TREND_MODEL_KEY,
   buildUsageTrendSeries,
-  findTrendPointIndex,
+  clampTrendRatio,
   formatTrendAxisLabel,
   formatTrendRangeLabel,
+  isClientPointInsideRect,
   niceCeiling,
   trendAxisTicks,
+  trendPointIndexAtRatio,
   trendTimeAxisTicks,
   trendTimePosition,
   stackModelTokens,
@@ -1139,7 +1141,7 @@ function UsageTrend({
   range?: Pick<UsageQuery, 'start' | 'end'>;
 }) {
   const { t, locale } = useI18n();
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [hoveredRatio, setHoveredRatio] = useState<number | null>(null);
   const [hiddenModels, setHiddenModels] = useState<string[]>([]);
   const plotRef = useRef<HTMLDivElement>(null);
   const [plotWidth, setPlotWidth] = useState(800);
@@ -1151,9 +1153,14 @@ function UsageTrend({
 
   const hiddenKeys = useMemo(() => new Set(hiddenModels), [hiddenModels]);
   useEffect(() => {
-    setHoveredIndex(null);
-    setHiddenModels((current) => current.filter((key) => series.models.some((model) => model.key === key)));
-  }, [series.bucket, series.models, series.points[0]?.hour, series.points[series.points.length - 1]?.hour]);
+    const available = new Set(series.models.map((model) => model.key));
+    setHiddenModels((current) => {
+      const next = current.filter((key) => available.has(key));
+      return next.length === current.length && next.every((key, index) => key === current[index])
+        ? current
+        : next;
+    });
+  }, [series.models]);
 
   const count = series.points.length;
 
@@ -1164,6 +1171,23 @@ function UsageTrend({
     observer.observe(plot);
     return () => observer.disconnect();
   }, [count > 0]);
+
+  useEffect(() => {
+    if (count === 0) setHoveredRatio(null);
+  }, [count === 0]);
+
+  useEffect(() => {
+    if (hoveredRatio == null) return undefined;
+    const onWindowPointerMove = (event: PointerEvent) => {
+      if (event.clientX === 0 && event.clientY === 0) return;
+      const plot = plotRef.current;
+      if (!plot || !isClientPointInsideRect(event.clientX, event.clientY, plot.getBoundingClientRect())) {
+        setHoveredRatio(null);
+      }
+    };
+    window.addEventListener('pointermove', onWindowPointerMove);
+    return () => window.removeEventListener('pointermove', onWindowPointerMove);
+  }, [hoveredRatio == null]);
 
   const chart = useMemo(() => {
     const stacked = series.points.map((point) => stackModelTokens(point, series.models, hiddenKeys));
@@ -1222,41 +1246,53 @@ function UsageTrend({
   const modelLabel = (key: string, fallback: string) =>
     key === OTHER_TREND_MODEL_KEY ? t('usage.trend.other') : fallback;
 
+  const hoveredIndex = hoveredRatio == null
+    ? -1
+    : trendPointIndexAtRatio(series.points, chart.start, chart.end, hoveredRatio);
+
   const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0 || count === 0) return;
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const time = new Date(chart.start.getTime() + ratio * (chart.end.getTime() - chart.start.getTime()));
-    const idx = findTrendPointIndex(series.points, time);
-    setHoveredIndex(idx);
+    setHoveredRatio(clampTrendRatio((e.clientX - rect.left) / rect.width));
   };
 
-  const handlePointerLeave = () => {
-    setHoveredIndex(null);
+  const handlePointerLeave = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget;
+    if (next instanceof Node && e.currentTarget.contains(next)) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (isClientPointInsideRect(e.clientX, e.clientY, rect)) return;
+    if (e.clientX === 0 && e.clientY === 0) return;
+    setHoveredRatio(null);
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (count === 0) return;
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      setHoveredIndex((prev) => (prev == null || prev <= 0 ? count - 1 : prev - 1));
+      const current = hoveredIndex < 0
+        ? count - 1
+        : (hoveredIndex <= 0 ? count - 1 : hoveredIndex - 1);
+      setHoveredRatio((chart.bars[current]?.center ?? 0) / 1000);
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
-      setHoveredIndex((prev) => (prev == null || prev >= count - 1 ? 0 : prev + 1));
+      const current = hoveredIndex < 0
+        ? 0
+        : (hoveredIndex >= count - 1 ? 0 : hoveredIndex + 1);
+      setHoveredRatio((chart.bars[current]?.center ?? 0) / 1000);
     } else if (e.key === 'Home') {
       e.preventDefault();
-      setHoveredIndex(0);
+      setHoveredRatio((chart.bars[0]?.center ?? 0) / 1000);
     } else if (e.key === 'End') {
       e.preventDefault();
-      setHoveredIndex(count - 1);
+      setHoveredRatio((chart.bars[count - 1]?.center ?? 0) / 1000);
     } else if (e.key === 'Escape') {
-      setHoveredIndex(null);
+      setHoveredRatio(null);
     }
   };
 
-  const active = hoveredIndex != null && hoveredIndex >= 0 && hoveredIndex < count ? series.points[hoveredIndex] : null;
-  const activeStacked = hoveredIndex != null && chart.stacked[hoveredIndex] ? chart.stacked[hoveredIndex] : [];
-  const activeViewboxX = chart.bars[hoveredIndex ?? 0]?.center ?? 0;
+  const active = hoveredIndex >= 0 && hoveredIndex < count ? series.points[hoveredIndex] : null;
+  const activeStacked = hoveredIndex >= 0 && chart.stacked[hoveredIndex] ? chart.stacked[hoveredIndex] : [];
+  const activeViewboxX = hoveredIndex >= 0 ? (chart.bars[hoveredIndex]?.center ?? 0) : 0;
   const activePercent = activeViewboxX / 10;
   const activeLayers = [...activeStacked]
     .filter((l) => l.tokens > 0)
@@ -1312,6 +1348,7 @@ function UsageTrend({
           aria-label={t('usage.trend.aria')}
           onPointerMove={handlePointerMove}
           onPointerLeave={handlePointerLeave}
+          onPointerCancel={handlePointerLeave}
           onKeyDown={handleKeyDown}
         >
           <svg
@@ -1335,7 +1372,7 @@ function UsageTrend({
             })}
 
             {chart.bars.map((bar, index) => (
-              <g key={series.points[index].hour} className={`usage-trend-bar${index === hoveredIndex ? ' is-active' : ''}`}>
+              <g key={series.points[index].hour} className={`usage-trend-bar${active && index === hoveredIndex ? ' is-active' : ''}`}>
                 {bar.layers.map((layer) => (
                   <rect
                     key={layer.key}
@@ -1349,7 +1386,7 @@ function UsageTrend({
               </g>
             ))}
 
-            {active && hoveredIndex != null ? (
+            {active ? (
               <g className="usage-trend-active-mark">
                 <line
                   x1={activeViewboxX}
@@ -1362,7 +1399,7 @@ function UsageTrend({
             ) : null}
           </svg>
 
-          {active && hoveredIndex != null ? (
+          {active ? (
             <div
               className={`usage-trend-tooltip${activePercent > 62 ? ' is-left' : ' is-right'}`}
               style={{ left: `${activePercent}%` }}

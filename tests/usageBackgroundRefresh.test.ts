@@ -17,6 +17,17 @@ describe('usage records background refresh', () => {
     expect(refreshBlock).not.toContain('document.hidden');
   });
 
+  it('keeps the trend tooltip while the pointer stays over the plot', () => {
+    const source = readFileSync(
+      new URL('../src/pages/UsageRecordsPage.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('hoveredRatio');
+    expect(source).toContain('isClientPointInsideRect');
+    expect(source).toContain('addEventListener(\'pointermove\', onWindowPointerMove)');
+    expect(source).not.toContain('setHoveredIndex(null)');
+  });
+
   it('disables WebView background suspension for the desktop window', () => {
     const config = JSON.parse(
       readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'),
