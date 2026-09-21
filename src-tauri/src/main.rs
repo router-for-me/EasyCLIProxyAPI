@@ -1363,7 +1363,6 @@ enum AgentClient {
     DeepSeekHarness,
     ZCode,
     WorkBuddy,
-    AntigravityIde,
     AntigravityCli,
     KimiCode,
     GrokBuild,
@@ -1388,10 +1387,12 @@ impl AgentClient {
             "deepseek-harness" => Ok(Self::DeepSeekHarness),
             "zcode" => Ok(Self::ZCode),
             "workbuddy" => Ok(Self::WorkBuddy),
-            "antigravity-ide" => Ok(Self::AntigravityIde),
             "antigravity-cli" => Ok(Self::AntigravityCli),
             "kimi-code" => Ok(Self::KimiCode),
             "grok-build" => Ok(Self::GrokBuild),
+            "cursor-ide" | "cursor-cli" => {
+                Err(format!("Cursor 客户端暂不支持 CPA 托管配置: {value}"))
+            }
             _ => Err(format!("不支持的智能体客户端: {value}")),
         }
     }
@@ -1407,7 +1408,6 @@ impl AgentClient {
             Self::DeepSeekHarness => "deepseek-harness",
             Self::ZCode => "zcode",
             Self::WorkBuddy => "workbuddy",
-            Self::AntigravityIde => "antigravity-ide",
             Self::AntigravityCli => "antigravity-cli",
             Self::KimiCode => "kimi-code",
             Self::GrokBuild => "grok-build",
@@ -1425,7 +1425,6 @@ impl AgentClient {
             Self::DeepSeekHarness => "DeepSeek Harness",
             Self::ZCode => "ZCode",
             Self::WorkBuddy => "WorkBuddy",
-            Self::AntigravityIde => "Antigravity IDE",
             Self::AntigravityCli => "Antigravity CLI",
             Self::KimiCode => "Kimi Code",
             Self::GrokBuild => "Grok Build",
@@ -1452,7 +1451,6 @@ impl AgentClient {
             Self::DeepSeekHarness => &["dsh"],
             Self::ZCode => &["zcode"],
             Self::WorkBuddy => &[],
-            Self::AntigravityIde => &[],
             Self::AntigravityCli => &["agy"],
             Self::KimiCode => &["kimi"],
             Self::GrokBuild => &["grok"],

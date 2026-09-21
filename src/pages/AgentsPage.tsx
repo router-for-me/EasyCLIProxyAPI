@@ -38,6 +38,7 @@ import piIcon from '../assets/icons/pi-logo-on-light.svg';
 import zcodeIcon from '../assets/icons/zcode.png';
 import workbuddyIcon from '../assets/icons/workbuddy.png';
 import antigravityIcon from '../assets/icons/antigravity.svg';
+import cursorIcon from '../assets/icons/cursor.svg';
 import {
   agentModelAlias,
   filterAgentModels,
@@ -82,8 +83,8 @@ type AgentClientId =
   | 'deepseek-harness'
   | 'zcode'
   | 'workbuddy'
-  | 'antigravity-ide'
   | 'antigravity-cli'
+  | 'cursor-cli'
   | 'kimi-code'
   | 'grok-build'
   | 'pi';
@@ -233,7 +234,7 @@ type AgentDefinition = {
   name: string;
   icon?: string;
   Icon?: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes' | 'agents.description.deepseekHarness' | 'agents.description.zcode' | 'agents.description.workbuddy' | 'agents.description.antigravityIde' | 'agents.description.antigravityCli' | 'agents.description.kimiCode' | 'agents.description.grokBuild' | 'agents.description.pi';
+  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes' | 'agents.description.deepseekHarness' | 'agents.description.zcode' | 'agents.description.workbuddy' | 'agents.description.antigravityCli' | 'agents.description.cursorCli' | 'agents.description.kimiCode' | 'agents.description.grokBuild' | 'agents.description.pi';
 };
 
 type AgentSubpageId = 'core' | 'management' | 'sessions';
@@ -287,8 +288,8 @@ const agentDefinitions: AgentDefinition[] = [
     icon: grokIcon,
     descriptionKey: 'agents.description.grokBuild',
   },
-  { id: 'antigravity-ide', name: 'Antigravity IDE', icon: antigravityIcon, descriptionKey: 'agents.description.antigravityIde' },
   { id: 'antigravity-cli', name: 'Antigravity CLI', icon: antigravityIcon, descriptionKey: 'agents.description.antigravityCli' },
+  { id: 'cursor-cli', name: 'Cursor CLI', icon: cursorIcon, descriptionKey: 'agents.description.cursorCli' },
   {
     id: 'workbuddy',
     name: 'WorkBuddy',
@@ -329,6 +330,21 @@ const agentSubpages: AgentSubpageDefinition[] = [
   {
     id: 'management',
     labelKey: 'agents.tabs.management',
+    clients: [
+      'claude-code',
+      'claude-desktop',
+      'codex',
+      'opencode',
+      'openclaw',
+      'hermes',
+      'deepseek-harness',
+      'zcode',
+      'workbuddy',
+      'antigravity-cli',
+      'kimi-code',
+      'grok-build',
+      'pi',
+    ],
   },
   {
     id: 'sessions',
@@ -796,8 +812,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [viewStateByClient, setViewStateByClient] = useState(() => agentViewStateCache);
   const viewMode = embedded ? 'embedded' : 'full';
   const viewState = viewStateByClient[viewMode][selected] ?? DEFAULT_AGENT_VIEW_STATE;
-  const activeSubpage = viewState.subpage === 'sessions' && (embedded || selected !== 'codex')
-    ? DEFAULT_AGENT_SUBPAGE : viewState.subpage;
+  const isCursorClient = selected === 'cursor-cli';
+  const activeSubpage = isCursorClient
+    ? DEFAULT_AGENT_SUBPAGE
+    : viewState.subpage === 'sessions' && (embedded || selected !== 'codex')
+      ? DEFAULT_AGENT_SUBPAGE : viewState.subpage;
   const updateViewState = (patch: Partial<AgentViewState>) => {
     setViewStateByClient((current) => {
       const next = {
@@ -919,6 +938,12 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   }, []);
 
   const loadModels = useCallback(async (client: AgentClientId, preferredModel = '') => {
+    if (client === 'cursor-cli') {
+      setModelLoading(false);
+      setModelError('');
+      setModels([]);
+      return;
+    }
     const requestId = modelRequestRef.current + 1;
     modelRequestRef.current = requestId;
     setModelLoading(true);
@@ -1223,7 +1248,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const modificationDescription = activeStatus?.modificationState === 'invalid'
     ? t('agents.modify.invalid')
     : nativeOauth ? t('agents.nativeOAuth.activeHint')
-    : selected === 'antigravity-ide' ? t('agents.modify.antigravityIdeHint')
     : selected === 'antigravity-cli' ? t('agents.modify.antigravityCliHint')
     : selected === 'workbuddy'
       ? t('agents.modify.workbuddyHint')
@@ -1748,7 +1772,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   };
 
   const restartDesktopApp = async () => {
-    if (!['codex', 'opencode', 'claude-desktop', 'zcode', 'workbuddy', 'antigravity-ide'].includes(selected)) return;
+    if (!['codex', 'opencode', 'claude-desktop', 'zcode', 'workbuddy'].includes(selected)) return;
     setBusyAction('restart-app');
     setLaunchError('');
     try {
@@ -2030,7 +2054,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         </aside>
 
         <section className="panel agent-config-panel">
-          <div className="agent-subpage-tabs" role="tablist" aria-label={t('agents.tabs.label')}>
+          {availableSubpages.length > 1 ? (
+            <div className="agent-subpage-tabs" role="tablist" aria-label={t('agents.tabs.label')}>
             {availableSubpages.map((subpage) => (
               <button
                 type="button"
@@ -2058,6 +2083,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               </button>
             ))}
           </div>
+          ) : null}
           {embedded && activeSubpage === 'core' ? (
             <div className="agent-minimal-config" id="agent-subpage-panel-core" role="tabpanel" aria-labelledby="agent-subpage-tab-core">
               <div className="agent-minimal-client-summary">
@@ -2073,7 +2099,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
 
-              {selected === 'claude-desktop' ? desktopModelEditor : <div className="agent-minimal-field">
+              {isCursorClient ? (
+                <div className="agent-unmanaged-notice">
+                  <p className="agent-model-hint">
+                    {t('agents.modify.cursorCliHint')}
+                  </p>
+                </div>
+              ) : selected === 'claude-desktop' ? desktopModelEditor : <div className="agent-minimal-field">
                 <label htmlFor="embedded-agent-model">{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</label>
                 <AgentModelPicker
                   models={isClaudeModelMappingClient ? claudeMappingModels : models}
@@ -2089,23 +2121,25 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
 
-              <div className="agent-save-bar">
-                {configurationFeedback}
-                <div className={`agent-save-actions${!isPiClient ? ' agent-codex-save-actions' : ''}`}>
-                  {closeConfigurationButton}
-                  <button
-                    type="button"
-                    className="primary-button"
-                    onClick={applySelectedConfiguration}
-                    disabled={busy || !canEnable || configurationWriteBlocked}
-                  >
-                    {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
-                    {isPiClient
-                      ? activeStatus?.pluginInstalled ? configurationActionLabel : t('agents.pi.install')
-                      : configurationActionLabel}
-                  </button>
+              {!isCursorClient ? (
+                <div className="agent-save-bar">
+                  {configurationFeedback}
+                  <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
+                    {closeConfigurationButton}
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={applySelectedConfiguration}
+                      disabled={busy || !canEnable || configurationWriteBlocked}
+                    >
+                      {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
+                      {isPiClient
+                        ? activeStatus?.pluginInstalled ? configurationActionLabel : t('agents.pi.install')
+                        : configurationActionLabel}
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
             </div>
           ) : null}
@@ -2158,7 +2192,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   </>
                 ) : (
                   <div>
-                    <span>{t('agents.clientVersion')}</span>
+                    <span>{selected === 'cursor-cli' ? t('agents.cliVersion') : t('agents.clientVersion')}</span>
                     <strong title={activeStatus?.version ?? undefined}>{activeStatus?.version ?? t('agents.notFetched')}</strong>
                   </div>
                 )}
@@ -2166,7 +2200,18 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
 
-              {!isClaudeModelMappingClient ? (
+              {isCursorClient ? (
+                <section className="agent-core-setting-section">
+                  <div className="agent-section-heading">
+                    <div><strong>{t('agents.description.cursorCli')}</strong></div>
+                  </div>
+                  <p className="agent-model-hint">
+                    {t('agents.modify.cursorCliHint')}
+                  </p>
+                </section>
+              ) : null}
+
+              {!isCursorClient && !isClaudeModelMappingClient ? (
                 <section className="agent-core-setting-section agent-model-section">
                   <div className="agent-section-heading">
                     <div><strong>{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</strong></div>
@@ -2396,9 +2441,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </section>
               ) : null}
 
+              {!isCursorClient ? (
               <div className="agent-save-bar">
                 {configurationFeedback}
-                <div className={`agent-save-actions${!isPiClient ? ' agent-codex-save-actions' : ''}`}>
+                  <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
                   {closeConfigurationButton}
                   <button type="button" className="primary-button" onClick={applySelectedConfiguration}
                     disabled={busy || !canEnable || configurationWriteBlocked}
@@ -2408,6 +2454,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   </button>
                 </div>
               </div>
+              ) : null}
 
             </div>
           ) : null}
@@ -2443,7 +2490,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           <MessageNotice tone="success" message={!configurationErrorMessage ? configurationNotice || clearNotice : null}
             onDismiss={() => { setConfigurationNotice(''); setClearNotice(''); }} />
           {activeSubpage === 'core' ? <AgentRunControls name={activeDefinition.name} dualTargets={hasIndependentCliAndApp}
-            desktop={hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode' || selected === 'workbuddy' || selected === 'antigravity-ide'}
+            desktop={hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode' || selected === 'workbuddy'}
             targets={activeLaunchTargets} enabled={launchEnabled} busyAction={busyAction}
             harness={isDeepSeekHarnessClient ? deepSeekHarnessProcessStatus : null}
             onLaunch={(target) => void launchAgent(target)} onRestart={() => void restartDesktopApp()}

@@ -727,7 +727,7 @@ pub(crate) fn fresh_agent_contents_with_oauth(
             build_deepseek_harness_settings(None, &openai_base, model, models)?,
             build_deepseek_harness_credentials(None, api_key)?,
         ]),
-        AgentClient::AntigravityIde | AgentClient::AntigravityCli => Err("Antigravity 模板需要安装和用户目录信息".into()),
+        AgentClient::AntigravityCli => Err("Antigravity 模板需要安装和用户目录信息".into()),
         AgentClient::WorkBuddy => Ok(vec![build_workbuddy_agent_config(
             None, &openai_base, api_key, model, models,
         )?]),
@@ -1541,7 +1541,7 @@ pub(crate) fn build_agent_template_updates(
         claude_code_model_mappings,
         claude_desktop_model_mappings,
     } = request;
-    if matches!(client, AgentClient::AntigravityIde | AgentClient::AntigravityCli) {
+    if client == AgentClient::AntigravityCli {
         return build_antigravity_updates(client, home, &managed_core_loopback_origin(port), api_key, model, true);
     }
     let paths = agent_config_paths(client, home);

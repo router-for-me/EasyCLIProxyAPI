@@ -66,7 +66,7 @@ const path = require('node:path');
       assert.equal(await tab('基础配置').getAttribute('aria-selected'), 'true');
       assert.equal(await tab('会话管理').count(), 0);
 
-      for (const client of ['claude-desktop', 'zcode', 'workbuddy', 'antigravity-ide', 'opencode']) {
+      for (const client of ['claude-desktop', 'zcode', 'workbuddy', 'opencode']) {
         await open(mode + 'client=' + client + '&app-only');
         assert.ok(await button('重启 App').isEnabled());
         await button('重启 App').click();
@@ -80,7 +80,7 @@ const path = require('node:path');
       await open(mode + 'client=kimi-code');
       assert.equal(await button('重启 App').count(), 0);
 
-      for (const client of ['claude-code', 'claude-desktop', 'opencode', 'openclaw', 'hermes', 'deepseek-harness', 'zcode', 'workbuddy', 'antigravity-ide', 'antigravity-cli', 'kimi-code', 'grok-build']) {
+      for (const client of ['claude-code', 'claude-desktop', 'opencode', 'openclaw', 'hermes', 'deepseek-harness', 'zcode', 'workbuddy', 'antigravity-cli', 'kimi-code', 'grok-build']) {
         await open(mode + 'client=' + client);
         assert.ok(await button('关闭配置修改').isEnabled());
         await tab('配置管理').click();

@@ -14,7 +14,6 @@ fn configuration_paths_ignore_inherited_environment() {
         "deepseek-harness",
         "zcode",
         "workbuddy",
-        "antigravity-ide",
         "antigravity-cli",
         "kimi-code",
         "grok-build",
