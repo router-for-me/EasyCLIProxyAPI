@@ -84,6 +84,7 @@ fn clients() -> Vec<AgentClient> {
         "hermes",
         "deepseek-harness",
         "zcode",
+        "workbuddy",
         "kimi-code",
         "grok-build",
     ]
@@ -272,6 +273,21 @@ fn corrupt_raw_and_non_utf8_backups_are_saved_but_not_restorable() {
 }
 
 #[test]
+fn workbuddy_native_array_backup_restores_exact_bytes_after_template() {
+    let home = Home::new();
+    let client = AgentClient::WorkBuddy;
+    let paths = config_paths(client.id(), &home.0).unwrap();
+    let original = b"[\n  {\"id\":\"user-model\",\"apiKey\":\"private-key\"}\n]\n";
+    save(&paths[0], original);
+    let backup = create_backup(client.id(), &home.0).unwrap();
+    assert!(backup.restorable);
+    apply(&home.0, client, "gpt-one").unwrap();
+    template(&home.0, client).unwrap();
+    test_restore_backup(client, &home.0, &backup.id);
+    assert_eq!(fs::read(&paths[0]).unwrap(), original);
+}
+
+#[test]
 fn restore_validation_uses_the_clients_actual_json_format() {
     for (client, restorable) in [
         ("claude-code", false),
@@ -398,6 +414,7 @@ fn clear_integration_needs_no_backup_and_removes_state_for_each_client() {
         AgentClient::Hermes,
         AgentClient::DeepSeekHarness,
         AgentClient::ZCode,
+        AgentClient::WorkBuddy,
         AgentClient::KimiCode,
         AgentClient::GrokBuild,
     ]

@@ -29,6 +29,7 @@ pub(crate) fn inspect_agent_config_statuses(
         AgentStatusDetectionTarget::Client(AgentClient::Hermes),
         AgentStatusDetectionTarget::Client(AgentClient::DeepSeekHarness),
         AgentStatusDetectionTarget::Client(AgentClient::ZCode),
+        AgentStatusDetectionTarget::Client(AgentClient::WorkBuddy),
         AgentStatusDetectionTarget::Client(AgentClient::KimiCode),
         AgentStatusDetectionTarget::Client(AgentClient::GrokBuild),
         AgentStatusDetectionTarget::PiProvider,
@@ -956,7 +957,7 @@ pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
 pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> bool {
     matches!(
         client,
-        AgentClient::ZCode | AgentClient::KimiCode | AgentClient::GrokBuild
+        AgentClient::ZCode | AgentClient::WorkBuddy | AgentClient::KimiCode | AgentClient::GrokBuild
     )
 }
 

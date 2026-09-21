@@ -936,6 +936,8 @@ export const zhCN = {
   'agents.description.openclaw': '使用 CPA 模型供应商和默认模型',
   'agents.description.hermes': '使用 CPA 自定义提供方',
   'agents.description.deepseekHarness': '通过通用 OpenAI 兼容路由使用 CPA，并与 Harness 原生 DeepSeek 配置隔离',
+  'agents.description.workbuddy': '使用 CPA 的 OpenAI Chat Completions 接口配置 WorkBuddy 自定义模型',
+  'agents.modify.workbuddyHint': '应用后，在 WorkBuddy 的模型选择器中选择「CPA:模型名」。若未显示，请重启 App；已有会话的模型不会自动切换。',
   'agents.description.zcode': '使用 CPA 的 Anthropic Messages 接口和动态模型目录',
   'agents.description.kimiCode': '使用 CPA 的 OpenAI Chat Completions 接口和动态模型目录',
   'agents.description.grokBuild': '使用 CPA 的 OpenAI Chat Completions 接口和自定义模型目录',

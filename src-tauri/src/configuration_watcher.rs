@@ -74,6 +74,7 @@ fn tracked_configuration_paths(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, S
         AgentClient::Hermes,
         AgentClient::DeepSeekHarness,
         AgentClient::ZCode,
+        AgentClient::WorkBuddy,
         AgentClient::KimiCode,
         AgentClient::GrokBuild,
     ] {

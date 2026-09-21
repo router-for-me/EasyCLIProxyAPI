@@ -4,14 +4,14 @@ const AGENT_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const AGENT_VERSION_PROBE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 #[cfg(not(test))]
-fn agent_configuration_environment(name: &str) -> Option<PathBuf> {
+pub(crate) fn agent_configuration_environment(name: &str) -> Option<PathBuf> {
     env::var_os(name)
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
 }
 
 #[cfg(test)]
-fn agent_configuration_environment(_: &str) -> Option<PathBuf> {
+pub(crate) fn agent_configuration_environment(_: &str) -> Option<PathBuf> {
     None
 }
 
@@ -47,6 +47,7 @@ pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBu
                 directory.join(DEEPSEEK_HARNESS_CREDENTIALS_FILE),
             ]
         }
+        AgentClient::WorkBuddy => vec![workbuddy_home(home).join("models.json")],
         AgentClient::ZCode => vec![
             home.join(".zcode/v2").join(ZCODE_CONFIG_FILE),
             home.join(".zcode/cli").join(ZCODE_CONFIG_FILE),
@@ -980,6 +981,7 @@ pub(crate) fn inspect_agent_config(
             .and_then(read_opencode_desktop_version),
         AgentClient::DeepSeekHarness => read_deepseek_harness_profile_version(home),
         AgentClient::ZCode => executable.as_deref().and_then(read_zcode_app_version),
+        AgentClient::WorkBuddy => executable.as_deref().and_then(read_workbuddy_app_version),
         _ => None,
     };
     let version = cli_version.clone().or_else(|| app_version.clone());
@@ -1065,13 +1067,13 @@ pub(crate) fn agent_installation_detected(
     version.is_some()
         || (matches!(
             client,
-            AgentClient::ClaudeDesktop | AgentClient::OpenCode | AgentClient::ZCode
+            AgentClient::ClaudeDesktop | AgentClient::OpenCode | AgentClient::ZCode | AgentClient::WorkBuddy
         ) && executable_found)
         || app_installed
 }
 
 pub(crate) fn should_probe_primary_agent_executable_version(client: AgentClient) -> bool {
-    !matches!(client, AgentClient::ClaudeDesktop | AgentClient::ZCode)
+    !matches!(client, AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy)
 }
 
 pub(crate) fn agent_launch_targets(
@@ -1125,11 +1127,11 @@ pub(crate) fn agent_launch_targets(
                 });
             }
         }
-        AgentClient::ZCode => {
+        AgentClient::ZCode | AgentClient::WorkBuddy => {
             if let Some(executable) = executable {
                 targets.push(AgentLaunchTarget {
                     id: "app".to_string(),
-                    label: "ZCode".to_string(),
+                    label: client.name().to_string(),
                     detail: path_to_string(executable),
                 });
             }
@@ -1262,6 +1264,8 @@ pub(crate) fn inspect_agent_managed_config(
                 false,
             ))
         }
+        AgentClient::WorkBuddy => inspect_workbuddy_agent_config(&paths[0], port, api_key)
+            .map(|(configured, model)| (configured, model, false)),
         AgentClient::KimiCode => inspect_kimi_code_agent_config(&paths[0], port, api_key)
             .map(|(configured, model)| (configured, model, false)),
         AgentClient::GrokBuild => inspect_grok_build_agent_config(&paths[0], port, api_key)
@@ -1468,6 +1472,7 @@ pub(crate) fn agent_has_managed_marker(
             Ok(provider_exists && model_selected)
         }
         AgentClient::DeepSeekHarness => deepseek_harness_has_managed_marker(paths),
+        AgentClient::WorkBuddy => workbuddy_has_managed_marker(&paths[0]),
         AgentClient::ZCode => {
             let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
             for path in paths {
@@ -2389,6 +2394,9 @@ pub(crate) fn find_agent_executable(client: AgentClient, home: &Path) -> Option<
     }
     if client == AgentClient::ZCode {
         return find_zcode_desktop_executable(home);
+    }
+    if client == AgentClient::WorkBuddy {
+        return find_workbuddy_desktop_executable(home);
     }
     if client == AgentClient::KimiCode {
         return find_kimi_code_executable(home);

@@ -99,6 +99,7 @@ OpenAI、Claude、Gemini、およびその他の互換形式の間で変換で�
 - Hermes Agent
 - Pi（CLIProxyAPI provider 拡張機能）
 - ZCode
+- WorkBuddy / WorkBuddy AI
 - Kimi Code
 - Grok Build
 

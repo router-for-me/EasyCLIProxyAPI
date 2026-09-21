@@ -108,11 +108,16 @@ API 接入页面按照协议或 Provider 管理上游 API 凭证和服务地址�
 - Hermes Agent
 - Pi（通过 CLIProxyAPI provider 插件）
 - ZCode
+- WorkBuddy / WorkBuddy AI
 - Kimi Code
 - Grok Build
 
 对于受支持的客户端，软件可以同步可用模型目录、选择默认模型、在应用托管配置前备份原始配置，
 以及恢复之前的配置。
+
+WorkBuddy 接入沿用模型选择、更新配置、关闭配置修改、手动备份/恢复和桌面启动/重启流程。
+支持 WorkBuddy 与 WorkBuddy AI 的 `models.json` 对象及数组格式，并保留已有自定义模型。
+应用后需在 WorkBuddy 内选择 `CPA:模型名`；已有会话不会自动切换模型，未显示时可重启 App。
 
 ## 其他功能
 

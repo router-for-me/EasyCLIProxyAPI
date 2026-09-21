@@ -113,6 +113,7 @@ fn merge_user_value(
 }
 
 fn merge_user_image(
+    client: &str,
     path: &Path,
     baseline: Option<&[u8]>,
     applied: Option<&[u8]>,
@@ -139,17 +140,23 @@ fn merge_user_image(
             .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "原始状态不是 UTF-8 文本"))
             .transpose()?,
     )?;
-    let merged = merge_user_value(
+    let mut merged = merge_user_value(
         baseline.map(|_| &baseline_value),
         applied.map(|_| &applied_value),
         Some(&current_value),
     );
+    if client == "workbuddy" {
+        if let Some(merged) = &mut merged {
+            merge_workbuddy_visibility(&baseline_value, &applied_value, &current_value, merged);
+        }
+    }
     merged
         .map(|value| render(path, &value).map(|value| value.into_bytes()))
         .transpose()
 }
 
 fn promote_user_changes(
+    client: &str,
     paths: &[PathBuf],
     baseline: &Images,
     applied: &Images,
@@ -164,6 +171,7 @@ fn promote_user_changes(
             Ok((
                 path.clone(),
                 merge_user_image(
+                    client,
                     path,
                     baseline.as_deref(),
                     applied.as_deref(),
@@ -181,6 +189,7 @@ fn prepare_integration_restore(
     state: &AgentIntegrationState,
 ) -> Result<Images, String> {
     let effective_original = promote_user_changes(
+        client.id(),
         paths,
         &state.original,
         &state.applied,
@@ -410,6 +419,7 @@ fn commit_config_transaction(
                 let parsed_client = AgentClient::parse(client)?;
                 let next = if let Some(state) = current_state {
                     let original = promote_user_changes(
+                        client,
                         managed_paths,
                         &state.original,
                         &state.applied,
@@ -563,6 +573,17 @@ pub(crate) fn validate_config_images(images: &Images) -> Result<(), String> {
 
 pub(crate) fn validate_client_config_images(client: &str, images: &Images) -> Result<(), String> {
     validate_config_images(images)?;
+    if client == "workbuddy" {
+        for (_, bytes) in images {
+            parse_workbuddy_config(text(bytes.as_deref())?)?;
+        }
+        return Ok(());
+    }
+    for (path, bytes) in images {
+        if !parse(path, text(bytes.as_deref())?)?.is_object() {
+            return Err("配置根节点必须是对象".into());
+        }
+    }
     if matches!(client, "opencode" | "openclaw") {
         return Ok(());
     }
@@ -811,6 +832,9 @@ fn validate_unmanaged_preserved(
     before: &Value,
     after: &Value,
 ) -> Result<(), String> {
+    if client == "workbuddy" {
+        return validate_workbuddy_unmanaged_preserved(before, after);
+    }
     let project = |value: &Value| -> Result<Value, String> {
         let mut value = value.clone();
         if client == "claude-desktop" && paths.get(3).is_some_and(|p| p == path) {
@@ -901,7 +925,8 @@ pub(crate) fn parse(path: &Path, content: Option<&str>) -> Result<Value, String>
             path_to_string(path)
         )
     })?;
-    if !value.is_object() {
+    // WorkBuddy also saves models.json as a top-level array.
+    if !value.is_object() && !(path.file_name().is_some_and(|n| n == "models.json") && value.is_array()) {
         return Err(format!("{} 配置根节点必须是对象", path_to_string(path)));
     }
     Ok(value)

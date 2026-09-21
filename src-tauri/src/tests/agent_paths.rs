@@ -13,6 +13,7 @@ fn configuration_paths_ignore_inherited_environment() {
         "hermes",
         "deepseek-harness",
         "zcode",
+        "workbuddy",
         "kimi-code",
         "grok-build",
         "pi",
@@ -42,6 +43,9 @@ fn configuration_paths_ignore_inherited_environment() {
             "KIMI_CODE_HOME",
             "GROK_HOME",
             "DSH_HOME",
+            "WORKBUDDY_CONFIG_DIR",
+            "CODEBUDDY_CONFIG_DIR",
+            "WORKBUDDY_INSTALL_DIR",
             "PI_CODING_AGENT_DIR",
         ] {
             command.env(variable, &outside);

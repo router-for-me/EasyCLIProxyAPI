@@ -10,6 +10,7 @@ mod native_oauth;
 mod state;
 mod templates;
 mod transactions;
+mod workbuddy;
 #[cfg(target_os = "windows")]
 mod windows_probe;
 pub(crate) use backups::*;
@@ -22,5 +23,6 @@ pub(crate) use native_oauth::*;
 pub(crate) use state::*;
 pub(crate) use templates::*;
 pub(crate) use transactions::*;
+pub(crate) use workbuddy::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows_probe::*;

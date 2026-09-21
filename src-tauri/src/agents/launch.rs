@@ -181,6 +181,11 @@ pub(crate) fn launch_agent(
     let requested_target = requested_target.unwrap_or(default_target);
     match (client, requested_target) {
         (AgentClient::ClaudeDesktop, "app") => launch_claude_desktop(&home),
+        (AgentClient::WorkBuddy, "app") => {
+            let executable = find_workbuddy_desktop_executable(&home)
+                .ok_or_else(|| "未找到 WorkBuddy 应用程序".to_string())?;
+            launch_desktop_agent(&executable, client.name())
+        }
         (AgentClient::ZCode, "app") => {
             let executable = find_zcode_desktop_executable(&home)
                 .ok_or_else(|| "未找到 ZCode 应用程序".to_string())?;
@@ -188,7 +193,7 @@ pub(crate) fn launch_agent(
         }
         (AgentClient::Codex, "app") => launch_codex_desktop(&home),
         (AgentClient::OpenCode, "app") => launch_opencode_desktop(&home),
-        (AgentClient::ClaudeDesktop | AgentClient::ZCode, "cli") => {
+        (AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy, "cli") => {
             Err(format!("{} 不支持 CLI 启动方式", client.name()))
         }
         (_, "cli") => {
@@ -695,6 +700,7 @@ pub(crate) async fn restart_agent_app(app: tauri::AppHandle, client: String) -> 
             | AgentClient::OpenCode
             | AgentClient::ClaudeDesktop
             | AgentClient::ZCode
+            | AgentClient::WorkBuddy
     ) {
         return Err(format!("{} 不支持桌面应用重启", client.name()));
     }
@@ -737,6 +743,9 @@ fn find_desktop_restart_target(
         }
         AgentClient::ZCode => {
             find_zcode_desktop_executable(home).map(DesktopAppTarget::Application)
+        }
+        AgentClient::WorkBuddy => {
+            find_workbuddy_desktop_executable(home).map(DesktopAppTarget::Application)
         }
         AgentClient::ClaudeDesktop => {
             let executable =

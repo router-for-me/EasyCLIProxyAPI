@@ -937,6 +937,8 @@ export const jaOverrides = {
   'agents.description.openclaw': 'CPA モデルプロバイダーと既定モデルを使用',
   'agents.description.hermes': 'CPA カスタムプロバイダーを使用',
   'agents.description.deepseekHarness': 'Harness のネイティブ DeepSeek 設定と分離された OpenAI 互換ルートで CPA を使用',
+  'agents.description.workbuddy': 'CPA の OpenAI Chat Completions API で WorkBuddy のカスタムモデルを設定',
+  'agents.modify.workbuddyHint': '適用後、WorkBuddy で「CPA:モデル名」を選択してください。表示されない場合は App を再起動してください。既存の会話のモデルは自動で切り替わりません。',
   'agents.description.zcode': 'CPA の Anthropic Messages API と動的モデルカタログを使用',
   'agents.description.kimiCode': 'CPA の OpenAI Chat Completions API と動的モデルカタログを使用',
   'agents.description.grokBuild': 'CPA の OpenAI Chat Completions API とカスタムモデルカタログを使用',

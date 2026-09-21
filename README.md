@@ -117,6 +117,7 @@ proxy. Supported clients include:
 - Hermes Agent
 - Pi (with the CLIProxyAPI provider extension)
 - ZCode
+- WorkBuddy / WorkBuddy AI
 - Kimi Code
 - Grok Build
 

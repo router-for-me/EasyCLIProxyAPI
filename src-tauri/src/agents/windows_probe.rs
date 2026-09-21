@@ -235,11 +235,15 @@ pub(crate) fn windows_app_path_executable(file_name: &str) -> Option<PathBuf> {
 }
 
 pub(crate) fn collect_windows_zcode_registrations() -> Vec<WindowsZcodeRegistration> {
+    collect_windows_desktop_registrations("ZCode.exe", windows_display_name_matches_zcode)
+}
+
+fn collect_windows_desktop_registrations(executable: &str, matches_name: fn(&str) -> bool) -> Vec<WindowsZcodeRegistration> {
     let mut registrations = Vec::new();
     for root in current_version_roots() {
         if let Some(path) = RegistryKey::open(
             root.hive,
-            &join_registry_path(root.prefix, r"App Paths\ZCode.exe"),
+            &join_registry_path(root.prefix, &format!(r"App Paths\{executable}")),
         )
         .and_then(|key| key.string(""))
         {
@@ -263,7 +267,7 @@ pub(crate) fn collect_windows_zcode_registrations() -> Vec<WindowsZcodeRegistrat
             let Some(display_name) = entry.string("DisplayName") else {
                 continue;
             };
-            if !windows_display_name_matches_zcode(&display_name) {
+            if !matches_name(&display_name) {
                 continue;
             }
             if let Some(value) = entry.string("InstallLocation") {
@@ -297,6 +301,10 @@ pub(crate) fn windows_display_name_matches_zcode(name: &str) -> bool {
 }
 
 pub(crate) fn parse_windows_zcode_registration(kind: &str, value: &str) -> Option<PathBuf> {
+    parse_windows_desktop_registration(kind, value, "ZCode.exe")
+}
+
+pub(crate) fn parse_windows_desktop_registration(kind: &str, value: &str, executable_name: &str) -> Option<PathBuf> {
     let value = value.trim();
     let value =
         if let Some(quoted) = value.strip_prefix('"') {
@@ -325,14 +333,14 @@ pub(crate) fn parse_windows_zcode_registration(kind: &str, value: &str) -> Optio
     }
     let executable = match kind {
         "executable" => path,
-        "directory" => path.join("ZCode.exe"),
-        "icon" | "uninstaller" => path.parent()?.join("ZCode.exe"),
+        "directory" => path.join(executable_name),
+        "icon" | "uninstaller" => path.parent()?.join(executable_name),
         _ => return None,
     };
     (executable
         .file_name()?
         .to_str()?
-        .eq_ignore_ascii_case("ZCode.exe")
+        .eq_ignore_ascii_case(executable_name)
         && executable.is_file())
     .then_some(executable)
 }
@@ -343,6 +351,20 @@ pub(crate) fn find_windows_registered_zcode_executable() -> Option<PathBuf> {
         .find_map(|registration| {
             parse_windows_zcode_registration(registration.kind, &registration.value)
         })
+}
+
+#[cfg(not(test))]
+pub(crate) fn find_windows_registered_workbuddy_executable() -> Option<PathBuf> {
+    for executable in ["WorkBuddyAI.exe", "WorkBuddy.exe"] {
+        if let Some(path) = collect_windows_desktop_registrations(executable, |name| {
+            ["WorkBuddyAI", "WorkBuddy AI", "WorkBuddy"].iter().any(|prefix| {
+                name.strip_prefix(prefix).is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '(']))
+            })
+        }).into_iter().find_map(|r| parse_windows_desktop_registration(r.kind, &r.value, executable)) {
+            return Some(path);
+        }
+    }
+    None
 }
 
 pub(crate) fn read_windows_executable_version(path: &Path) -> Option<String> {

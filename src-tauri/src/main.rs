@@ -1362,6 +1362,7 @@ enum AgentClient {
     Hermes,
     DeepSeekHarness,
     ZCode,
+    WorkBuddy,
     KimiCode,
     GrokBuild,
 }
@@ -1384,6 +1385,7 @@ impl AgentClient {
             "hermes" => Ok(Self::Hermes),
             "deepseek-harness" => Ok(Self::DeepSeekHarness),
             "zcode" => Ok(Self::ZCode),
+            "workbuddy" => Ok(Self::WorkBuddy),
             "kimi-code" => Ok(Self::KimiCode),
             "grok-build" => Ok(Self::GrokBuild),
             _ => Err(format!("不支持的智能体客户端: {value}")),
@@ -1400,6 +1402,7 @@ impl AgentClient {
             Self::Hermes => "hermes",
             Self::DeepSeekHarness => "deepseek-harness",
             Self::ZCode => "zcode",
+            Self::WorkBuddy => "workbuddy",
             Self::KimiCode => "kimi-code",
             Self::GrokBuild => "grok-build",
         }
@@ -1415,6 +1418,7 @@ impl AgentClient {
             Self::Hermes => "Hermes Agent",
             Self::DeepSeekHarness => "DeepSeek Harness",
             Self::ZCode => "ZCode",
+            Self::WorkBuddy => "WorkBuddy",
             Self::KimiCode => "Kimi Code",
             Self::GrokBuild => "Grok Build",
         }
@@ -1439,6 +1443,7 @@ impl AgentClient {
             Self::Hermes => &["hermes"],
             Self::DeepSeekHarness => &["dsh"],
             Self::ZCode => &["zcode"],
+            Self::WorkBuddy => &[],
             Self::KimiCode => &["kimi"],
             Self::GrokBuild => &["grok"],
         }

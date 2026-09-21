@@ -937,6 +937,8 @@ export const en: Record<MessageKey, string> = {
   'agents.description.openclaw': 'Uses the CPA model provider and default model',
   'agents.description.hermes': 'Uses the CPA custom provider',
   'agents.description.deepseekHarness': 'Uses CPA through an isolated, OpenAI-compatible Harness route',
+  'agents.description.workbuddy': 'Configures a WorkBuddy custom model using the CPA OpenAI Chat Completions API',
+  'agents.modify.workbuddyHint': 'After applying, select “CPA:model name” in WorkBuddy. Restart the app if it is missing; existing conversations keep their selected model.',
   'agents.description.zcode': 'Uses the CPA Anthropic Messages API and dynamic model catalog',
   'agents.description.kimiCode': 'Uses the CPA OpenAI Chat Completions API and dynamic model catalog',
   'agents.description.grokBuild': 'Uses the CPA OpenAI Chat Completions API and custom model catalog',
