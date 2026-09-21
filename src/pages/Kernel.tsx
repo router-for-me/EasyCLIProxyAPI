@@ -312,7 +312,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                   </button>
                   <button
                     type="button"
-                    className="icon-button quiet"
+                    className={`icon-button quiet ${copiedApiField === 'home:apikey' ? 'copied' : ''}`}
                     onClick={() => void copyApiValue(homeApiKey, 'home:apikey')}
                     title={copiedApiField === 'home:apikey' ? t('config.notice.keyCopied') : t('config.keys.copy')}
                     aria-label={copiedApiField === 'home:apikey' ? t('config.notice.keyCopied') : t('config.keys.copy')}
@@ -342,17 +342,27 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                 </span>
                 <div>
                   <strong>{profile.name}</strong>
-                  <span>{profile.description}</span>
+                  <span className="client-api-format-tag">{profile.description}</span>
                 </div>
               </div>
 
               <div className="client-api-values">
                 <div className="client-api-value-row">
                   <span>{t('kernel.access.apiUrl')}</span>
-                  <code title={profile.baseUrl}>{profile.baseUrl}</code>
+                  <code
+                    title={profile.baseUrl}
+                    onClick={() =>
+                      void copyApiValue(
+                        profile.baseUrl,
+                        `${profile.id}:base`,
+                      )
+                    }
+                  >
+                    {profile.baseUrl}
+                  </code>
                   <button
                     type="button"
-                    className="icon-button quiet"
+                    className={`icon-button quiet ${copiedApiField === `${profile.id}:base` ? 'copied' : ''}`}
                     onClick={() =>
                       void copyApiValue(
                         profile.baseUrl,

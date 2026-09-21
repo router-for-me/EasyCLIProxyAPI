@@ -1643,118 +1643,179 @@ textarea:focus-visible {
 }
 
 .client-api-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
-  grid-auto-rows: 1fr;
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
 .client-api-card {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
-  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   min-width: 0;
-  padding: 16px;
+  height: 100%;
+  min-height: 56px;
+  padding: 0 14px;
   border: 1px solid var(--theme-e3e1db);
-  border-radius: 8px;
-  background: var(--theme-faf9f5);
+  border-radius: 10px;
+  background: var(--theme-ffffff);
+  box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.client-api-card:hover {
+  border-color: var(--theme-d5d2cb);
+  background: var(--theme-ffffff);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.06);
+}
+
+:root[data-theme='dark'] .client-api-card {
+  border-color: var(--border-primary);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+:root[data-theme='dark'] .client-api-card:hover {
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 .client-api-card-heading {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
   min-width: 0;
+  flex: 0 0 138px;
+  width: 138px;
 }
 
 .client-api-logo {
   display: grid;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
+  flex: none;
   place-items: center;
   border: 1px solid var(--theme-e3e1db);
   border-radius: 8px;
-  background: var(--theme-fffdf8);
+  background: var(--bg-secondary);
+}
+
+:root[data-theme='dark'] .client-api-logo {
+  border-color: var(--border-secondary);
+  background: var(--bg-quinary);
+}
+
+:root[data-theme='dark'] .client-api-card.openai .client-api-logo img {
+  filter: invert(1);
 }
 
 .client-api-logo img {
   display: block;
-  width: 23px;
-  height: 23px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
 }
 
 .client-api-card-heading > div {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  gap: 4px;
-}
-
-.client-api-card-heading strong,
-.client-api-card-heading span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .client-api-card-heading strong {
   color: var(--theme-2d2a26);
-  font-size: var(--font-size-section);
+  font-size: 13.5px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
 }
 
-.client-api-card-heading > div > span {
+.client-api-card-heading .client-api-format-tag,
+.client-api-card-heading span {
   color: var(--theme-7a746c);
-  font-size: var(--font-size-meta);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .client-api-values {
-  display: grid;
-  align-content: start;
-  gap: 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: stretch;
 }
 
 .client-api-value-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
+  display: flex;
   align-items: center;
-  gap: 6px 8px;
+  gap: 8px;
   min-width: 0;
-  min-height: 52px;
-  padding: 8px 10px;
-  border: 1px solid var(--theme-e3e1db);
-  border-radius: 6px;
-  background: var(--theme-fffdf8);
+  width: 100%;
+  justify-content: stretch;
+  height: 36px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-sizing: border-box;
 }
 
 .client-api-value-row > span:first-child {
-  grid-column: 1 / -1;
-  color: var(--theme-7a746c);
-  font-size: var(--font-size-meta);
-  font-weight: var(--font-weight-semibold);
+  display: none;
 }
 
 .client-api-value-row code {
+  flex: 1 1 auto;
   min-width: 0;
+  height: 36px;
+  line-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 6px;
+  background: var(--bg-secondary);
   color: var(--theme-2d2a26);
-  font-size: var(--font-size-label);
-  line-height: var(--line-height-body);
-  overflow-wrap: anywhere;
-  white-space: normal;
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: all;
+  box-sizing: border-box;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.client-api-value-row code:hover {
+  border-color: var(--theme-d5d2cb);
+  background: var(--theme-ffffff);
+}
+
+:root[data-theme='dark'] .client-api-value-row code {
+  border-color: var(--border-secondary);
+  background: var(--bg-quinary);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .client-api-value-row code:hover {
+  border-color: var(--border-primary);
+  background: var(--bg-primary);
 }
 
 .client-api-value-row .icon-button {
-  width: 30px;
-  height: 30px;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
 }
 
 .client-api-copy-placeholder {
   display: block;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
 }
 
 .kernel-layout > .panel {
@@ -1855,37 +1916,30 @@ textarea:focus-visible {
 }
 
 .button-row.control-action-row {
-  --kernel-action-button-min: clamp(112px, 12ch, 156px);
-
-  grid-template-columns: repeat(
-    auto-fit,
-    minmax(min(100%, var(--kernel-action-button-min)), 1fr)
-  );
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-auto-flow: row;
-  grid-auto-columns: unset;
-  grid-auto-rows: minmax(42px, auto);
+  grid-auto-rows: minmax(38px, auto);
+  gap: 8px;
   align-items: stretch;
 }
 
-
 .control-action-row > button {
   width: 100%;
-  min-height: 42px;
+  min-height: 38px;
   height: auto;
-  padding-block: 7px;
+  padding: 6px 8px;
   overflow: hidden;
+  font-size: var(--font-size-label);
   line-height: var(--line-height-tight);
-  overflow-wrap: anywhere;
   text-align: center;
-  text-overflow: clip;
-  text-wrap: balance;
-  white-space: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
 
 @container workspace (min-width: 840px) {
   .home-page {
-    grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+    grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.15fr);
     grid-auto-rows: 1fr;
     align-items: stretch;
   }
@@ -1908,7 +1962,8 @@ textarea:focus-visible {
     display: grid;
     height: 100%;
     align-self: stretch;
-    row-gap: clamp(12px, 2vh, 22px);
+    row-gap: 16px;
+    box-sizing: border-box;
   }
 
   .home-page > .home-layout > .control-panel {
@@ -1927,9 +1982,16 @@ textarea:focus-visible {
     padding-bottom: 0;
   }
 
-  .home-page > .home-layout > .control-panel > .panel-detail-grid,
-  .home-page > .client-api-panel > .client-api-grid {
+  .home-page > .home-layout > .control-panel > .panel-detail-grid {
     align-content: space-evenly;
+  }
+
+  .home-page > .client-api-panel > .client-api-grid {
+    display: grid;
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    height: 100%;
+    min-height: 0;
   }
 
   .home-page > .home-layout > .control-panel > .panel-action-row {
@@ -1961,6 +2023,28 @@ textarea:focus-visible {
 }
 
 @container workspace (max-width: 560px) {
+  .client-api-card {
+    flex-direction: column;
+    align-items: stretch;
+    height: auto;
+    min-height: 0;
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .client-api-card-heading {
+    flex: none;
+  }
+
+  .client-api-values {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .client-api-value-row {
+    width: 100%;
+  }
+
   .version-source-row {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1976,6 +2060,12 @@ textarea:focus-visible {
 
   .version-source-add-button {
     grid-column: 1 / -1;
+  }
+}
+
+@container workspace (max-width: 360px) {
+  .button-row.control-action-row {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -10864,10 +10954,6 @@ body.table-col-resizing * {
 
   .client-api-grid {
     grid-template-columns: 1fr;
-  }
-
-  .client-api-card:last-child {
-    grid-column: auto;
   }
 
   .oauth-grid,
