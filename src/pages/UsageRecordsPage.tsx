@@ -1000,6 +1000,21 @@ function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pi
       }),
     },
     {
+      label: t('usage.stat.tps'),
+      value: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
+      meta: t('usage.stat.performanceMeta', {
+        samples: compactNumber(overview.tpsSampleCount),
+        rpm: overview.rpm.toFixed(2),
+        latency: Math.round(overview.averageLatencyMs),
+      }),
+      metaTitle: t('usage.stat.performanceMetaTitle', {
+        tps: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
+        samples: compactNumber(overview.tpsSampleCount),
+        rpm: overview.rpm.toFixed(2),
+        latency: Math.round(overview.averageLatencyMs),
+      }),
+    },
+    {
       label: t('usage.stat.tokens'),
       value: compactNumber(overview.totalTokens),
       meta: t('usage.stat.tokenMeta', {
@@ -1024,21 +1039,6 @@ function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pi
         success: compactNumber(overview.successCount),
         failed: compactNumber(overview.failureCount),
         canceled: compactNumber(overview.canceledCount),
-      }),
-    },
-    {
-      label: t('usage.stat.tps'),
-      value: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
-      meta: t('usage.stat.performanceMeta', {
-        samples: compactNumber(overview.tpsSampleCount),
-        rpm: overview.rpm.toFixed(2),
-        latency: Math.round(overview.averageLatencyMs),
-      }),
-      metaTitle: t('usage.stat.performanceMetaTitle', {
-        tps: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
-        samples: compactNumber(overview.tpsSampleCount),
-        rpm: overview.rpm.toFixed(2),
-        latency: Math.round(overview.averageLatencyMs),
       }),
     },
     {

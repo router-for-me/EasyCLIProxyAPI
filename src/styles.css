@@ -8433,7 +8433,6 @@ textarea:focus-visible {
   align-items: stretch;
   overflow-x: hidden;
   overflow-y: auto;
-  scrollbar-gutter: stable;
 }
 
 .usage-stat-grid {
