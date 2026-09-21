@@ -28,13 +28,45 @@ pub(crate) fn antigravity_config_paths(client: AgentClient, home: &Path) -> Vec<
     let directory = agent_configuration_environment("XDG_CONFIG_HOME")
         .filter(|path| path.is_absolute())
         .unwrap_or_else(|| home.join(".config"));
+    vec![antigravity_ide_settings_path(
+        &directory,
+        find_antigravity_ide(home).as_deref(),
+    )]
+}
+
+fn antigravity_ide_settings_path(directory: &Path, executable: Option<&Path>) -> PathBuf {
+    if let Some(executable) = executable {
+        let product = antigravity_resources(executable)
+            .and_then(|resources| fs::read_to_string(resources.join("product.json")).ok())
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        let name = product
+            .as_ref()
+            .and_then(|value| value.get("nameShort"))
+            .and_then(Value::as_str)
+            .filter(|name| matches!(*name, "Antigravity IDE" | "Antigravity"))
+            .or_else(|| {
+                executable
+                    .ancestors()
+                    .find_map(|path| match path.file_name()?.to_str()? {
+                        "Antigravity IDE.exe" | "Antigravity IDE.app" | "antigravity-ide" => {
+                            Some("Antigravity IDE")
+                        }
+                        "Antigravity.exe" | "Antigravity.app" | "antigravity" => {
+                            Some("Antigravity")
+                        }
+                        _ => None,
+                    })
+            })
+            .unwrap_or("Antigravity IDE");
+        return directory.join(name).join("User/settings.json");
+    }
     let current = directory.join("Antigravity IDE/User/settings.json");
     let legacy = directory.join("Antigravity/User/settings.json");
-    vec![if !current.exists() && legacy.exists() {
+    if !current.exists() && legacy.exists() {
         legacy
     } else {
         current
-    }]
+    }
 }
 
 pub(crate) fn find_antigravity_cli(home: &Path) -> Option<PathBuf> {

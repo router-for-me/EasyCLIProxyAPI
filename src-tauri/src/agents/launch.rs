@@ -1285,6 +1285,63 @@ fn launch_cli_agent(
 }
 
 #[cfg(target_os = "windows")]
+fn windows_powershell_cli_script(
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+) -> String {
+    let directory = windows_powershell_single_quoted_literal(&path_to_string(working_directory));
+    let executable = windows_powershell_single_quoted_literal(&path_to_string(executable));
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--cpa-antigravity-cli")
+    {
+        let arguments = arguments
+            .iter()
+            .map(|argument| {
+                let mut quoted = String::from("\"");
+                let mut backslashes = 0;
+                for ch in argument.chars() {
+                    if ch == '\\' {
+                        backslashes += 1;
+                        continue;
+                    }
+                    quoted.push_str(&"\\".repeat(if ch == '"' {
+                        backslashes * 2 + 1
+                    } else {
+                        backslashes
+                    }));
+                    backslashes = 0;
+                    quoted.push(ch);
+                }
+                quoted.push_str(&"\\".repeat(backslashes * 2));
+                quoted.push('"');
+                quoted
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        return format!(
+            "Set-Location -LiteralPath {directory}; \
+             $cpaLaunchInfo = New-Object System.Diagnostics.ProcessStartInfo; \
+             $cpaLaunchInfo.FileName = {executable}; \
+             $cpaLaunchInfo.WorkingDirectory = {directory}; \
+             $cpaLaunchInfo.UseShellExecute = $false; \
+             $cpaLaunchInfo.Arguments = {}; \
+             $cpaLaunchProcess = [System.Diagnostics.Process]::Start($cpaLaunchInfo); \
+             try {{ $cpaLaunchProcess.WaitForExit(); $global:LASTEXITCODE = $cpaLaunchProcess.ExitCode }} \
+             finally {{ $cpaLaunchProcess.Dispose() }}",
+            windows_powershell_single_quoted_literal(&arguments),
+        );
+    }
+    let arguments = arguments
+        .iter()
+        .map(|argument| windows_powershell_single_quoted_literal(argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("Set-Location -LiteralPath {directory}; & {executable} {arguments}")
+}
+
+#[cfg(target_os = "windows")]
 fn launch_cli_agent(
     executable: &Path,
     label: &str,
@@ -1331,17 +1388,7 @@ fn launch_cli_agent(
         }
         "powershell" => {
             let mut command = Command::new(windows_powershell_executable());
-            let arguments = arguments
-                .iter()
-                .map(|argument| windows_powershell_single_quoted_literal(argument))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let script = format!(
-                "Set-Location -LiteralPath {}; & {} {}",
-                windows_powershell_single_quoted_literal(&path_to_string(working_directory)),
-                windows_powershell_single_quoted_literal(&path_to_string(executable)),
-                arguments,
-            );
+            let script = windows_powershell_cli_script(executable, working_directory, arguments);
             command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &script]);
             command.creation_flags(CREATE_NEW_CONSOLE);
             command
@@ -1409,6 +1456,84 @@ mod tests {
             DEFAULT_AGENT_TERMINAL
         );
         assert_eq!(normalize_agent_terminal(" auto "), "auto");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn antigravity_powershell_waits_for_gui_helper_and_preserves_arguments() {
+        let directory = env::temp_dir()
+            .join(format!(
+                "cpa-powershell-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+            ))
+            .join("用户's [workspace] $value");
+        fs::create_dir_all(&directory).unwrap();
+        let executable = directory.join("GUI helper.exe");
+        let compiled = directory.parent().unwrap().join("helper.exe");
+        let source = r#"
+using System;
+using System.IO;
+using System.Threading;
+class GuiHelper {
+    static void Main(string[] args) {
+        Thread.Sleep(350);
+        File.WriteAllLines(Path.Combine(Environment.CurrentDirectory, "arguments.txt"), args);
+        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "finished.txt"), "done");
+    }
+}
+"#;
+        let script = format!(
+            "Add-Type -TypeDefinition {} -OutputAssembly {} -OutputType WindowsApplication -ErrorAction Stop",
+            windows_powershell_single_quoted_literal(source),
+            windows_powershell_single_quoted_literal(&path_to_string(&compiled)),
+        );
+        let run = |script: &str| {
+            let mut command = Command::new(windows_powershell_executable());
+            command.args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                script,
+            ]);
+            configure_background_command(&mut command);
+            let result = command_output_with_timeout(&mut command, Duration::from_secs(20))
+                .unwrap()
+                .expect("PowerShell timed out");
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+        run(&script);
+        fs::rename(compiled, &executable).unwrap();
+        let arguments = vec![
+            "--cpa-antigravity-cli".into(),
+            path_to_string(&directory),
+            "trailing slash \\".into(),
+            "quote \" and \\\"".into(),
+            "literal $value & [x] 'quoted'".into(),
+            String::new(),
+        ];
+        let script = format!(
+            "{}; if (![IO.File]::Exists({})) {{ throw 'GUI helper is still running' }}",
+            windows_powershell_cli_script(&executable, &directory, &arguments),
+            windows_powershell_single_quoted_literal(&path_to_string(
+                &directory.join("finished.txt")
+            )),
+        );
+        run(&script);
+        let received = fs::read_to_string(directory.join("arguments.txt")).unwrap();
+        assert_eq!(
+            received.lines().collect::<Vec<_>>(),
+            arguments.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

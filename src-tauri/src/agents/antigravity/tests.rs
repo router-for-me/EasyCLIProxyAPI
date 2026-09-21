@@ -88,6 +88,63 @@ fn antigravity_clients_have_independent_paths_and_launch_targets() {
 }
 
 #[test]
+fn antigravity_ide_settings_follow_the_installed_product() {
+    for (name, other) in [
+        ("Antigravity IDE", "Antigravity"),
+        ("Antigravity", "Antigravity IDE"),
+    ] {
+        let home = Home::new();
+        let directory = home.0.join("configuration");
+        let executable = home.0.join("installation/Contents/MacOS/Electron");
+        let resources = antigravity_resources(&executable).unwrap();
+        home.save(&resources.join("product.json"), &json!({"nameShort":name}));
+        let other_settings = directory.join(other).join("User/settings.json");
+        home.save(&other_settings, &json!({"editor.fontSize":17}));
+        let selected = directory.join(name).join("User/settings.json");
+        assert!(!selected.exists());
+        assert_eq!(
+            antigravity_ide_settings_path(&directory, Some(&executable)),
+            selected
+        );
+        home.save(&selected, &json!({}));
+        assert_eq!(
+            antigravity_ide_settings_path(&directory, Some(&executable)),
+            selected
+        );
+        assert_eq!(
+            fs::read_to_string(other_settings).unwrap(),
+            r#"{"editor.fontSize":17}"#
+        );
+    }
+}
+
+#[test]
+fn antigravity_ide_settings_use_installation_name_without_product_metadata() {
+    let home = Home::new();
+    let directory = home.0.join("configuration");
+    for (binary, name) in [
+        ("Antigravity IDE.exe", "Antigravity IDE"),
+        ("Antigravity.exe", "Antigravity"),
+        (
+            "Antigravity IDE.app/Contents/MacOS/Electron",
+            "Antigravity IDE",
+        ),
+        ("Antigravity.app/Contents/MacOS/Electron", "Antigravity"),
+        ("antigravity-ide", "Antigravity IDE"),
+        ("antigravity", "Antigravity"),
+    ] {
+        let executable = home.0.join("installation").join(binary);
+        assert_eq!(
+            antigravity_ide_settings_path(&directory, Some(&executable)),
+            directory.join(name).join("User/settings.json")
+        );
+    }
+    let legacy = directory.join("Antigravity/User/settings.json");
+    home.save(&legacy, &json!({}));
+    assert_eq!(antigravity_ide_settings_path(&directory, None), legacy);
+}
+
+#[test]
 fn antigravity_updates_and_disable_preserve_external_settings() {
     for client in [AgentClient::AntigravityIde, AgentClient::AntigravityCli] {
         let home = Home::new();
@@ -270,7 +327,18 @@ fn antigravity_ide_discovery_and_template_use_native_server() {
     fs::write(&executable, []).unwrap();
     home.save(
         &resources.join("product.json"),
-        &json!({"ideVersion":"2.5.5"}),
+        &json!({"ideVersion":"2.5.5", "nameShort":"Antigravity IDE"}),
+    );
+    let legacy = home
+        .0
+        .join("AppData/Roaming/Antigravity/User/settings.json");
+    home.save(&legacy, &json!({"editor.fontSize":17}));
+    let expected = home
+        .0
+        .join("AppData/Roaming/Antigravity IDE/User/settings.json");
+    assert_eq!(
+        antigravity_config_paths(AgentClient::AntigravityIde, &home.0),
+        vec![expected.clone()]
     );
     assert_eq!(find_antigravity_ide(&home.0), Some(executable.clone()));
     assert_eq!(
@@ -295,6 +363,7 @@ fn antigravity_ide_discovery_and_template_use_native_server() {
     })
     .unwrap();
     assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].path, expected);
     let value = parse(&updates[0].path, Some(&updates[0].after)).unwrap();
     assert_eq!(
         Path::new(value[IDE_ENV_KEY][IDE_SERVER_ENV].as_str().unwrap()),
