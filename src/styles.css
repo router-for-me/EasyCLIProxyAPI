@@ -5947,17 +5947,20 @@ textarea:focus-visible {
 
 .agent-workbench {
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+  min-height: 0;
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .agent-client-list {
+  min-width: 0;
   min-height: 0;
 }
 
 .agent-config-panel {
   min-height: 0;
+  overflow: visible;
 }
 
 .agents-page {
@@ -6005,18 +6008,22 @@ textarea:focus-visible {
 }
 
 .agent-client-list {
-  display: grid;
-  align-content: start;
+  position: relative;
+  display: block;
+  overflow: hidden;
   padding: 14px;
 }
 
 .agent-list-items button > span {
   display: grid;
+  width: 100%;
   min-width: 0;
   gap: 3px;
 }
 
 .agent-list-items strong {
+  min-width: 0;
+  max-width: 100%;
   color: var(--theme-2d2a26);
   font-size: var(--font-size-section);
   line-height: 1.3;
@@ -6024,6 +6031,8 @@ textarea:focus-visible {
 }
 
 .agent-list-items small {
+  min-width: 0;
+  max-width: 100%;
   color: var(--theme-8a847c);
   font-size: var(--font-size-meta);
   line-height: 1.4;
@@ -6032,12 +6041,15 @@ textarea:focus-visible {
 }
 
 .agent-list-items {
+  position: absolute;
+  inset: 14px;
   display: grid;
   align-content: start;
   grid-auto-rows: max-content;
   gap: 6px;
+  height: auto;
   min-height: 0;
-  max-height: min(800px, calc(100vh - 154px));
+  max-height: none;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 4px;
@@ -6125,12 +6137,20 @@ textarea:focus-visible {
 }
 
 .agent-config-panel {
-  display: grid;
-  grid-template-rows: auto auto;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
   container-type: inline-size;
   container-name: agent-panel;
+}
+
+.agent-config-scroll-region {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  grid-auto-rows: max-content;
+  gap: 14px;
 }
 
 .agent-subpage-tabs {
@@ -6445,7 +6465,11 @@ textarea:focus-visible {
 .codex-session-list {
   display: grid;
   min-width: 0;
-  overflow: hidden;
+  max-height: clamp(240px, calc(100dvh - 600px), 480px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border: 1px solid var(--theme-e3e1db);
   border-radius: 7px;
   background: var(--theme-fff);
@@ -10882,10 +10906,6 @@ body.table-col-resizing * {
     display: none;
   }
 
-  .agent-workbench {
-    grid-template-columns: 230px minmax(0, 1fr);
-  }
-
   .control-panel,
   .version-panel {
     grid-column: auto;
@@ -11091,10 +11111,16 @@ body.table-col-resizing * {
     max-height: 460px;
   }
 
-  .agent-client-list,
+  .agent-client-list {
+    height: 270px;
+    min-height: 0;
+    max-height: 270px;
+  }
+
   .agent-config-panel {
     height: auto;
     min-height: 0;
+    overflow: visible;
   }
 
   .codex-session-metrics {
@@ -13754,7 +13780,6 @@ body.table-col-resizing * {
 }
 
 .agents-page-embedded .agent-workbench {
-  grid-template-columns: minmax(280px, 310px) minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -13783,7 +13808,6 @@ body.table-col-resizing * {
 
 .agents-page-embedded .agent-client-list {
   min-height: 0;
-  max-height: min(560px, calc(100vh - 260px));
   overflow: hidden;
   padding: 16px;
 }
@@ -13801,8 +13825,9 @@ body.table-col-resizing * {
 }
 
 .agents-page-embedded .agent-list-items {
+  inset: 16px;
   min-height: 0;
-  max-height: min(526px, calc(100vh - 294px));
+  max-height: none;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 4px;
@@ -13834,15 +13859,14 @@ body.table-col-resizing * {
 }
 
 .agents-page-embedded .agent-config-panel {
-  max-height: min(720px, calc(100vh - 260px));
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   padding: 14px;
-  scrollbar-gutter: stable;
 }
 
 .agents-page-embedded .agent-config-panel {
   display: block;
-  overflow: hidden;
+  overflow: visible;
   padding: 0;
   background: var(--theme-fffdf8);
 }
@@ -13990,10 +14014,6 @@ body.table-col-resizing * {
 }
 
 @media (max-width: 760px) {
-  .agents-page-embedded .agent-config-panel {
-    max-height: calc(100vh - 180px);
-  }
-
   .agents-page-embedded .agent-minimal-config {
     padding: 16px;
   }
@@ -14572,9 +14592,6 @@ body.table-col-resizing * {
     display: none;
   }
 
-  .agent-workbench {
-    grid-template-columns: 230px minmax(0, 1fr);
-  }
 }
 
 @container workspace (max-width: 760px) {
@@ -14706,11 +14723,21 @@ body.table-col-resizing * {
   }
 
   .thinking-alias-editor-panel,
-  .thinking-alias-list-panel,
-  .agent-client-list,
+  .thinking-alias-list-panel {
+    height: auto;
+    min-height: 0;
+  }
+
+  .agent-client-list {
+    height: 270px;
+    min-height: 0;
+    max-height: 270px;
+  }
+
   .agent-config-panel {
     height: auto;
     min-height: 0;
+    overflow: visible;
   }
 
   .thinking-model-list {
@@ -14883,6 +14910,7 @@ body.table-col-resizing * {
 .agent-management-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; max-width: 50%; }
 .agent-management-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; }
 .agents-page-embedded .agent-config-panel { display: grid; gap: 16px; max-height: none; overflow: visible; padding: 20px; }
+.agents-page-embedded .agent-config-scroll-region { gap: 16px; }
 .agents-page-embedded .agent-minimal-config { padding: 0; }
 .agents-page-embedded .agent-minimal-actions { grid-template-columns: minmax(0, 1fr); }
 .agent-subpage-tabs button:focus-visible { outline: 2px solid var(--theme-2d2a26); outline-offset: -2px; }
@@ -15007,12 +15035,157 @@ body.table-col-resizing * {
 }
 
 .agent-codex-save-actions .primary-button {
-  width: 128px;
-  flex-shrink: 0;
+  width: auto;
+  min-width: 128px;
+  flex: none;
 }
 
 .agent-codex-save-actions button {
   width: auto;
   min-width: 0;
   padding-inline: 12px;
+}
+
+@container agent-panel (max-width: 420px) {
+  .agent-subpage-tabs {
+    grid-auto-flow: row;
+    grid-auto-columns: unset;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    overflow-x: visible;
+  }
+
+  .agent-subpage-tabs button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .agent-auth-segmented {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .agent-auth-segmented-button {
+    height: 32px;
+  }
+}
+
+/* Keep the full agent page inset from the window like Usage Records. */
+.app-shell:has(.agents-page:not(.agents-page-embedded)) {
+  height: 100%;
+  min-height: 100%;
+}
+
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .workspace,
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .content {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .content {
+  overflow: hidden;
+}
+
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .agents-page:not(.agents-page-embedded) {
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-rows: minmax(54px, auto) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-workbench {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-client-list,
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-config-panel {
+  height: 100%;
+  min-height: 0;
+}
+
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-config-panel {
+  display: flex;
+  align-content: normal;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-subpage-tabs {
+  flex: none;
+}
+
+.app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-config-scroll-region {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+@media (min-width: 761px) {
+  /* The bounded page already has one right-panel scroller. Let long Codex session
+     results participate in it instead of trapping the wheel in a second scroller. */
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .codex-session-list {
+    max-height: none;
+    overflow: visible;
+    overscroll-behavior: auto;
+    scrollbar-gutter: auto;
+  }
+}
+
+@container workspace (max-width: 760px) {
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-workbench {
+    grid-template-columns: 1fr;
+    grid-template-rows: 270px minmax(0, 1fr);
+  }
+
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-client-list {
+    height: auto;
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .content {
+    overflow: visible;
+  }
+
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agents-page:not(.agents-page-embedded) {
+    flex: none;
+    grid-template-rows: auto auto;
+    overflow: visible;
+  }
+
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-workbench {
+    height: auto;
+    grid-template-rows: 270px auto;
+    overflow: visible;
+  }
+
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-client-list {
+    height: 270px;
+    max-height: 270px;
+  }
+
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-config-panel {
+    height: auto;
+    overflow: visible;
+  }
+
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-config-scroll-region {
+    flex: none;
+    overflow: visible;
+    padding-right: 0;
+    scrollbar-gutter: auto;
+  }
 }

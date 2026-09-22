@@ -2080,6 +2080,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             ))}
           </div>
           ) : null}
+          <div className="agent-config-scroll-region">
           {embedded && activeSubpage === 'core' ? (
             <div className="agent-minimal-config" id="agent-subpage-panel-core" role="tabpanel" aria-labelledby="agent-subpage-tab-core">
               <div className="agent-minimal-client-summary">
@@ -2491,6 +2492,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             harness={isDeepSeekHarnessClient ? deepSeekHarnessProcessStatus : null}
             onLaunch={(target) => void launchAgent(target)} onRestart={() => void restartDesktopApp()}
             onStop={() => void stopDeepSeekHarness()} onRestartWeb={() => void restartDeepSeekHarness()} error={launchError} onErrorDismiss={() => setLaunchError('')} /> : null}
+          </div>
         </section>
       </div>
 

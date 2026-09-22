@@ -118,6 +118,14 @@ mockIPC(async (cmd,args:any) => {
  throw new Error('Unhandled fixture command: '+cmd);
 });
 let root=createRoot(document.getElementById('root')!);
-const render=()=>root.render(<I18nProvider><AgentsPage embedded={embedded} onConfigurationApplied={()=>{document.documentElement.dataset.fixtureApplied=String(++appliedCount);}}/></I18nProvider>);
+const render=()=>{
+ const agents=<AgentsPage embedded={embedded} onConfigurationApplied={()=>{document.documentElement.dataset.fixtureApplied=String(++appliedCount);}}/>;
+ root.render(<I18nProvider>{params.has('shell')?(
+  <div className="app-shell">
+   <aside className="sidebar" aria-hidden="true" />
+   <div className="workspace"><main className="content">{agents}</main></div>
+  </div>
+ ):agents}</I18nProvider>);
+};
 (window as any).fixtureRemount=(nextEmbedded=embedded)=>{embedded=nextEmbedded;root.unmount();root=createRoot(document.getElementById('root')!);render();};
 render();
