@@ -119,7 +119,6 @@ proxy. Supported clients include:
 - ZCode
 - WorkBuddy / WorkBuddy AI
 - Antigravity CLI
-- Cursor CLI
 - Kimi Code
 - Grok Build
 
@@ -128,8 +127,6 @@ default model, back up the original configuration before applying managed settin
 previous configuration.
 
 Antigravity CLI connects through CPA's Gemini-compatible API. Launch the CLI from CPA to supply its endpoint and API key for that process. Running `agy` directly requires setting those environment variables yourself.
-
-Cursor CLI has a separate entry. It supports local installation detection and launch with terminal and working directory selection, and uses Cursor’s native configuration and account system rather than local CPA model routing.
 
 ## Additional Capabilities
 

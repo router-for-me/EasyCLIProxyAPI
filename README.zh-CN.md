@@ -110,7 +110,6 @@ API 接入页面按照协议或 Provider 管理上游 API 凭证和服务地址�
 - ZCode
 - WorkBuddy / WorkBuddy AI
 - Antigravity CLI
-- Cursor CLI
 - Kimi Code
 - Grok Build
 

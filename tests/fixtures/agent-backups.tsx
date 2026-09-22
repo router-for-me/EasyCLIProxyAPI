@@ -9,7 +9,7 @@ if(params.has('reset-selections'))localStorage.removeItem('cpa-gui.agent-model-s
 localStorage.setItem('easy-cli-proxy-api.locale',params.get('locale') || 'zh-CN');
 document.documentElement.dataset.theme = params.get('theme') || 'light';
 localStorage.setItem('cpa-gui.agent-selected-client.v1', params.get('client') || 'codex');
-const ids = ['claude-code','claude-desktop','codex','opencode','openclaw','hermes','deepseek-harness','antigravity-cli','cursor-cli','workbuddy','zcode','kimi-code','grok-build','pi'];
+const ids = ['claude-code','claude-desktop','codex','opencode','openclaw','hermes','deepseek-harness','antigravity-cli','workbuddy','zcode','kimi-code','grok-build','pi'];
 let count=0; let backupCount=0; const backups:any[]=[]; let currentModel=params.has('fresh')?null:'gpt-one';
 let nativeOauth=params.has('native-oauth'); let nativeSwitchCount=0; let codexClosed=false; let closeCount=0;
 let currentOauth=false; const currentMappings:Record<string,any>={};

@@ -937,8 +937,6 @@ export const jaOverrides = {
   'agents.description.openclaw': 'CPA モデルプロバイダーと既定モデルを使用',
   'agents.description.hermes': 'CPA カスタムプロバイダーを使用',
   'agents.description.deepseekHarness': 'Harness のネイティブ DeepSeek 設定と分離された OpenAI 互換ルートで CPA を使用',
-  'agents.description.cursorCli': 'Cursor CLI (cursor-agent) の検出とネイティブ起動に対応',
-  'agents.modify.cursorCliHint': 'Cursor CLI は cursor-agent 経由で起動され、~/.cursor/cli-config.json で設定されます。CPA ではローカルインストールの検出と、任意のディレクトリやターミナル選択からの起動をサポートしています。',
   'agents.description.antigravityCli': 'CPA の Gemini 互換 API で Antigravity CLI を設定',
   'agents.modify.antigravityCliHint': '設定適用後はこのページの起動ボタンを使用してください。CPA が CLI プロセスに接続先とキーを渡します。agy を直接実行する場合は環境変数の設定が必要です。',
   'agents.description.workbuddy': 'CPA の OpenAI Chat Completions API で WorkBuddy のカスタムモデルを設定',

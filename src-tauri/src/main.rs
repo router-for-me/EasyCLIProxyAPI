@@ -1390,9 +1390,6 @@ impl AgentClient {
             "antigravity-cli" => Ok(Self::AntigravityCli),
             "kimi-code" => Ok(Self::KimiCode),
             "grok-build" => Ok(Self::GrokBuild),
-            "cursor-ide" | "cursor-cli" => {
-                Err(format!("Cursor 客户端暂不支持 CPA 托管配置: {value}"))
-            }
             _ => Err(format!("不支持的智能体客户端: {value}")),
         }
     }

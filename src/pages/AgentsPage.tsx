@@ -38,7 +38,6 @@ import piIcon from '../assets/icons/pi-logo-on-light.svg';
 import zcodeIcon from '../assets/icons/zcode.png';
 import workbuddyIcon from '../assets/icons/workbuddy.png';
 import antigravityIcon from '../assets/icons/antigravity.svg';
-import cursorIcon from '../assets/icons/cursor.svg';
 import {
   agentModelAlias,
   filterAgentModels,
@@ -84,7 +83,6 @@ type AgentClientId =
   | 'zcode'
   | 'workbuddy'
   | 'antigravity-cli'
-  | 'cursor-cli'
   | 'kimi-code'
   | 'grok-build'
   | 'pi';
@@ -234,7 +232,7 @@ type AgentDefinition = {
   name: string;
   icon?: string;
   Icon?: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes' | 'agents.description.deepseekHarness' | 'agents.description.zcode' | 'agents.description.workbuddy' | 'agents.description.antigravityCli' | 'agents.description.cursorCli' | 'agents.description.kimiCode' | 'agents.description.grokBuild' | 'agents.description.pi';
+  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes' | 'agents.description.deepseekHarness' | 'agents.description.zcode' | 'agents.description.workbuddy' | 'agents.description.antigravityCli' | 'agents.description.kimiCode' | 'agents.description.grokBuild' | 'agents.description.pi';
 };
 
 type AgentSubpageId = 'core' | 'management' | 'sessions';
@@ -289,7 +287,6 @@ const agentDefinitions: AgentDefinition[] = [
     descriptionKey: 'agents.description.grokBuild',
   },
   { id: 'antigravity-cli', name: 'Antigravity CLI', icon: antigravityIcon, descriptionKey: 'agents.description.antigravityCli' },
-  { id: 'cursor-cli', name: 'Cursor CLI', icon: cursorIcon, descriptionKey: 'agents.description.cursorCli' },
   {
     id: 'workbuddy',
     name: 'WorkBuddy',
@@ -812,11 +809,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [viewStateByClient, setViewStateByClient] = useState(() => agentViewStateCache);
   const viewMode = embedded ? 'embedded' : 'full';
   const viewState = viewStateByClient[viewMode][selected] ?? DEFAULT_AGENT_VIEW_STATE;
-  const isCursorClient = selected === 'cursor-cli';
-  const activeSubpage = isCursorClient
-    ? DEFAULT_AGENT_SUBPAGE
-    : viewState.subpage === 'sessions' && (embedded || selected !== 'codex')
-      ? DEFAULT_AGENT_SUBPAGE : viewState.subpage;
+  const activeSubpage = viewState.subpage === 'sessions' && (embedded || selected !== 'codex')
+    ? DEFAULT_AGENT_SUBPAGE : viewState.subpage;
   const updateViewState = (patch: Partial<AgentViewState>) => {
     setViewStateByClient((current) => {
       const next = {
@@ -938,12 +932,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   }, []);
 
   const loadModels = useCallback(async (client: AgentClientId, preferredModel = '') => {
-    if (client === 'cursor-cli') {
-      setModelLoading(false);
-      setModelError('');
-      setModels([]);
-      return;
-    }
     const requestId = modelRequestRef.current + 1;
     modelRequestRef.current = requestId;
     setModelLoading(true);
@@ -2096,13 +2084,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
 
-              {isCursorClient ? (
-                <div className="agent-unmanaged-notice">
-                  <p className="agent-model-hint">
-                    {t('agents.modify.cursorCliHint')}
-                  </p>
-                </div>
-              ) : selected === 'claude-desktop' ? desktopModelEditor : <div className="agent-minimal-field">
+              {selected === 'claude-desktop' ? desktopModelEditor : <div className="agent-minimal-field">
                 <label htmlFor="embedded-agent-model">{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</label>
                 <AgentModelPicker
                   models={isClaudeModelMappingClient ? claudeMappingModels : models}
@@ -2118,25 +2100,23 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
 
-              {!isCursorClient ? (
-                <div className="agent-save-bar">
-                  {configurationFeedback}
-                  <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
-                    {closeConfigurationButton}
-                    <button
-                      type="button"
-                      className="primary-button"
-                      onClick={applySelectedConfiguration}
-                      disabled={busy || !canEnable || configurationWriteBlocked}
-                    >
-                      {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
-                      {isPiClient
-                        ? activeStatus?.pluginInstalled ? configurationActionLabel : t('agents.pi.install')
-                        : configurationActionLabel}
-                    </button>
-                  </div>
+              <div className="agent-save-bar">
+                {configurationFeedback}
+                <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
+                  {closeConfigurationButton}
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={applySelectedConfiguration}
+                    disabled={busy || !canEnable || configurationWriteBlocked}
+                  >
+                    {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
+                    {isPiClient
+                      ? activeStatus?.pluginInstalled ? configurationActionLabel : t('agents.pi.install')
+                      : configurationActionLabel}
+                  </button>
                 </div>
-              ) : null}
+              </div>
 
             </div>
           ) : null}
@@ -2189,7 +2169,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   </>
                 ) : (
                   <div>
-                    <span>{selected === 'cursor-cli' ? t('agents.cliVersion') : t('agents.clientVersion')}</span>
+                    <span>{t('agents.clientVersion')}</span>
                     <strong title={activeStatus?.version ?? undefined}>{activeStatus?.version ?? t('agents.notFetched')}</strong>
                   </div>
                 )}
@@ -2197,18 +2177,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
 
-              {isCursorClient ? (
-                <section className="agent-core-setting-section">
-                  <div className="agent-section-heading">
-                    <div><strong>{t('agents.description.cursorCli')}</strong></div>
-                  </div>
-                  <p className="agent-model-hint">
-                    {t('agents.modify.cursorCliHint')}
-                  </p>
-                </section>
-              ) : null}
-
-              {!isCursorClient && !isClaudeModelMappingClient ? (
+              {!isClaudeModelMappingClient ? (
                 <section className="agent-core-setting-section agent-model-section">
                   <div className="agent-section-heading">
                     <div><strong>{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</strong></div>
@@ -2438,7 +2407,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </section>
               ) : null}
 
-              {!isCursorClient ? (
               <div className="agent-save-bar">
                 {configurationFeedback}
                   <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
@@ -2451,7 +2419,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   </button>
                 </div>
               </div>
-              ) : null}
 
             </div>
           ) : null}

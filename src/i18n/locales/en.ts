@@ -937,8 +937,6 @@ export const en: Record<MessageKey, string> = {
   'agents.description.openclaw': 'Uses the CPA model provider and default model',
   'agents.description.hermes': 'Uses the CPA custom provider',
   'agents.description.deepseekHarness': 'Uses CPA through an isolated, OpenAI-compatible Harness route',
-  'agents.description.cursorCli': 'Supports detection and native launch for Cursor CLI (cursor-agent)',
-  'agents.modify.cursorCliHint': 'Cursor CLI runs via cursor-agent and is configured in ~/.cursor/cli-config.json. CPA supports local installation detection and launch with custom terminal and working directory.',
   'agents.description.antigravityCli': 'Configure Antigravity CLI with CPA’s Gemini-compatible API',
   'agents.modify.antigravityCliHint': 'Use Launch on this page after applying configuration. CPA supplies the endpoint and key to that CLI process. Running agy directly requires setting the environment variables yourself.',
   'agents.description.workbuddy': 'Configures a WorkBuddy custom model using the CPA OpenAI Chat Completions API',

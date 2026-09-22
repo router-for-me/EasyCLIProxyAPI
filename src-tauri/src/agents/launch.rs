@@ -165,31 +165,6 @@ pub(crate) fn launch_agent(
         );
     }
 
-    if let Some(cursor_client) = CursorClient::parse(&client) {
-        if requested_target.is_some_and(|target| target != cursor_client.target()) {
-            return Err(format!(
-                "{} 不支持 {} 启动方式",
-                cursor_client.name(),
-                requested_target.unwrap_or_default()
-            ));
-        }
-        let status = inspect_cursor_client(cursor_client, &home);
-        if !status.installed {
-            return Err(format!("未检测到 {}，请先安装并重新检测", cursor_client.name()));
-        }
-        let executable = find_cursor_cli(&home)
-            .ok_or_else(|| "未找到 Cursor CLI 可执行文件".to_string())?;
-        let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
-        return launch_cli_agent(
-            &executable,
-            cursor_client.name(),
-            &launch_directory,
-            &[],
-            &[],
-            &terminal,
-        );
-    }
-
     let client = AgentClient::parse(&client)?;
     if !client.supported_platform() {
         return Err(format!("当前平台不支持启动 {}", client.name()));
@@ -727,9 +702,6 @@ pub(crate) async fn restart_opencode_app(app: tauri::AppHandle) -> Result<(), St
 
 #[tauri::command]
 pub(crate) async fn restart_agent_app(app: tauri::AppHandle, client: String) -> Result<(), String> {
-    if client.trim().eq_ignore_ascii_case("cursor-cli") {
-        return Err("Cursor CLI 不支持桌面应用重启".to_string());
-    }
     let client = AgentClient::parse(&client)?;
     if !matches!(
         client,

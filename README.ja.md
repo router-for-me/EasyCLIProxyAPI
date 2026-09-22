@@ -101,7 +101,6 @@ OpenAI、Claude、Gemini、およびその他の互換形式の間で変換で�
 - ZCode
 - WorkBuddy / WorkBuddy AI
 - Antigravity CLI
-- Cursor CLI
 - Kimi Code
 - Grok Build
 

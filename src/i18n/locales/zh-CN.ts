@@ -936,8 +936,6 @@ export const zhCN = {
   'agents.description.openclaw': '使用 CPA 模型供应商和默认模型',
   'agents.description.hermes': '使用 CPA 自定义提供方',
   'agents.description.deepseekHarness': '通过通用 OpenAI 兼容路由使用 CPA，并与 Harness 原生 DeepSeek 配置隔离',
-  'agents.description.cursorCli': '支持 Cursor CLI (cursor-agent) 的检测与原生启动',
-  'agents.modify.cursorCliHint': 'Cursor CLI 通过 cursor-agent 运行，使用 ~/.cursor/cli-config.json 配置。CPA 支持本地安装检测，并支持自定义终端与工作目录启动。',
   'agents.description.antigravityCli': '使用 CPA 的 Gemini 兼容接口配置 Antigravity CLI',
   'agents.modify.antigravityCliHint': '应用后请使用此页的启动按钮，CPA 会为本次 CLI 进程注入地址和密钥。直接运行 agy 需要自行设置环境变量。',
   'agents.description.workbuddy': '使用 CPA 的 OpenAI Chat Completions 接口配置 WorkBuddy 自定义模型',

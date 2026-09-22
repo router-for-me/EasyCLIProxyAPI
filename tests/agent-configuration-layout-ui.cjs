@@ -3,7 +3,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 
 const base = 'http://127.0.0.1:1421';
-const clients = ['codex', 'claude-desktop', 'deepseek-harness', 'zcode', 'cursor-cli'];
+const clients = ['codex', 'claude-desktop', 'deepseek-harness', 'zcode'];
 const desktopViewports = [
   { width: 1280, height: 700 },
   { width: 1280, height: 941 },

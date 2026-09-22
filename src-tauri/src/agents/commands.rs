@@ -9,7 +9,6 @@ static CODEX_CATALOG_REFRESH: tokio::sync::Notify = tokio::sync::Notify::const_n
 enum AgentStatusDetectionTarget {
     Client(AgentClient),
     PiProvider,
-    Cursor(CursorClient),
 }
 
 pub(crate) fn inspect_agent_config_statuses(
@@ -32,7 +31,6 @@ pub(crate) fn inspect_agent_config_statuses(
         AgentStatusDetectionTarget::Client(AgentClient::ZCode),
         AgentStatusDetectionTarget::Client(AgentClient::WorkBuddy),
         AgentStatusDetectionTarget::Client(AgentClient::AntigravityCli),
-        AgentStatusDetectionTarget::Cursor(CursorClient::Cli),
         AgentStatusDetectionTarget::Client(AgentClient::KimiCode),
         AgentStatusDetectionTarget::Client(AgentClient::GrokBuild),
         AgentStatusDetectionTarget::PiProvider,
@@ -60,9 +58,6 @@ pub(crate) fn inspect_agent_config_statuses(
                         }
                         AgentStatusDetectionTarget::PiProvider => {
                             inspect_pi_provider_status(home, config.port, api_key)
-                        }
-                        AgentStatusDetectionTarget::Cursor(client) => {
-                            inspect_cursor_client(client, home)
                         }
                     };
                     results
