@@ -11,6 +11,7 @@ import {
   modelSelectionForDiscovery,
   parseProviderHeaders,
   parseProviderApiKeys,
+  normalizeProviderWeight,
   providerCategoryMatchesRecord,
   providerDragId,
   providerRecordWithDisabledState,
@@ -412,6 +413,48 @@ describe('API 接入配置合并', () => {
     );
 
     expect(result.priority).toBeUndefined();
+  });
+
+  it('读取、更新和清除 API Key 接入的调度权重', () => {
+    const current = {
+      'api-key': 'codex-key',
+      'base-url': 'https://api.example.com',
+      weight: 5,
+    };
+    const draft = {
+      ...createProviderDraft('codex-api-key'),
+      apiKey: 'codex-key',
+      baseUrl: 'https://api.example.com',
+      weight: '12',
+    };
+
+    expect(buildProviderRecord('codex-api-key', draft, current).weight).toBe(12);
+    expect(buildProviderRecord('codex-api-key', { ...draft, weight: '' }, current).weight).toBeUndefined();
+  });
+
+  it('按内核规则校验并归一化调度权重', () => {
+    expect(normalizeProviderWeight('')).toBeNull();
+    expect(normalizeProviderWeight('5')).toBe(5);
+    expect(normalizeProviderWeight('0')).toBe(0);
+    expect(normalizeProviderWeight('-2')).toBe(0);
+    expect(() => normalizeProviderWeight('1.5')).toThrow(/1000000/);
+    expect(() => normalizeProviderWeight('1000001')).toThrow(/1000000/);
+  });
+
+  it('不把连接级权重写入 OpenAI 兼容提供商', () => {
+    const result = buildProviderRecord('openai-compatibility', {
+      ...createProviderDraft('openai-compatibility'),
+      name: 'openrouter',
+      apiKey: 'key-a\nkey-b',
+      baseUrl: 'https://openrouter.ai/api',
+      weight: '5',
+    });
+
+    expect(result.weight).toBeUndefined();
+    expect(result['api-key-entries']).toEqual([
+      { 'api-key': 'key-a' },
+      { 'api-key': 'key-b' },
+    ]);
   });
 
   it('高级设置可编辑且不会引入代理字段', () => {
