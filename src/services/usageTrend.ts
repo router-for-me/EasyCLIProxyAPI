@@ -265,7 +265,36 @@ export function trendTimeAxisTicks(start: Date, end: Date, width: number, labelW
   if (span <= 0) return [start];
   // Choose a readable time interval from the selected duration and available space.
   const minStep = span * labelWidth / Math.max(labelWidth, width);
-  const steps = [1 / 60, 5 / 60, 15 / 60, 0.5, 1, 2, 3, 6, 12, 24, 48, 72, 168, 336, 720, 2160, 4380, 8760];
+  const steps = [
+    1 / 60,
+    2 / 60,
+    5 / 60,
+    10 / 60,
+    15 / 60,
+    20 / 60,
+    0.5,
+    0.75,
+    1,
+    2,
+    3,
+    4,
+    6,
+    8,
+    12,
+    24,
+    48,
+    72,
+    96,
+    168,
+    336,
+    720,
+    1440,
+    2160,
+    2880,
+    4380,
+    8760,
+    17520,
+  ];
   const step = steps.map((hours) => hours * HOUR_MS).find((value) => value >= minStep)
     ?? niceCeiling(minStep / (8760 * HOUR_MS)) * 8760 * HOUR_MS;
   const ticks = [start];

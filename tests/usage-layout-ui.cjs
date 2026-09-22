@@ -68,7 +68,24 @@ const base = 'http://127.0.0.1:1421';
       return axis.getBoundingClientRect().bottom <= layout.getBoundingClientRect().bottom + 1;
     }), 'The complete X axis is reachable by scrolling the overview');
 
-    console.log('PASS: 1213px single row stat cards and constrained wrapped overview scrolling passed.');
+    const narrowAxis = await page.evaluate(() => ({
+      width: document.querySelector('.usage-trend-plot')?.getBoundingClientRect().width ?? 0,
+      ticks: document.querySelectorAll('.usage-trend-x-axis span').length,
+    }));
+    await page.setViewportSize({ width: 1500, height: 600 });
+    await page.waitForFunction((previous) => {
+      const plot = document.querySelector('.usage-trend-plot');
+      const ticks = document.querySelectorAll('.usage-trend-x-axis span').length;
+      return !!plot && plot.getBoundingClientRect().width > previous.width && ticks > previous.ticks;
+    }, narrowAxis);
+    const wideAxis = await page.evaluate(() => ({
+      width: document.querySelector('.usage-trend-plot')?.getBoundingClientRect().width ?? 0,
+      ticks: document.querySelectorAll('.usage-trend-x-axis span').length,
+    }));
+    assert.ok(wideAxis.width > narrowAxis.width, 'The trend plot follows the wider window');
+    assert.ok(wideAxis.ticks > narrowAxis.ticks, 'The X axis adds readable ticks when more width is available');
+
+    console.log('PASS: usage overview layout and responsive trend axis passed.');
   } finally {
     await browser.close();
   }

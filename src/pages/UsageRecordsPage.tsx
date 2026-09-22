@@ -1,5 +1,5 @@
 import { useConfirmation } from '../components/ConfirmationDialog';
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -1144,7 +1144,7 @@ function UsageTrend({
   const [hoveredRatio, setHoveredRatio] = useState<number | null>(null);
   const [hiddenModels, setHiddenModels] = useState<string[]>([]);
   const plotRef = useRef<HTMLDivElement>(null);
-  const [plotWidth, setPlotWidth] = useState(800);
+  const [plotWidth, setPlotWidth] = useState(0);
 
   const series = useMemo(
     () => buildUsageTrendSeries(points, range),
@@ -1164,12 +1164,29 @@ function UsageTrend({
 
   const count = series.points.length;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const plot = plotRef.current;
     if (!plot) return;
-    const observer = new ResizeObserver(([entry]) => setPlotWidth(entry.contentRect.width));
-    observer.observe(plot);
-    return () => observer.disconnect();
+    let frame = 0;
+    const updateWidth = (width: number) => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const next = Math.max(0, Math.round(width));
+        setPlotWidth((current) => current === next ? current : next);
+      });
+    };
+    const measure = () => updateWidth(plot.getBoundingClientRect().width);
+    measure();
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(([entry]) => updateWidth(entry.contentRect.width));
+    observer?.observe(plot);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
   }, [count > 0]);
 
   useEffect(() => {

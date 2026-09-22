@@ -254,6 +254,17 @@ describe('usage trend helpers', () => {
     expect(months.every((date) => date.getDate() === 1)).toBe(true);
   });
 
+  test('increases time tick density progressively as the chart stretches', () => {
+    const start = new Date(2026, 8, 14, 0, 0);
+    const end = new Date(2026, 8, 15, 0, 0);
+    const widths = [320, 480, 640, 800, 1000, 1400];
+    const counts = widths.map((width) => trendTimeAxisTicks(start, end, width, 112).length);
+
+    expect(counts.every((count, index) => index === 0 || count >= counts[index - 1])).toBe(true);
+    expect(new Set(counts).size).toBeGreaterThanOrEqual(4);
+    expect(counts.at(-1)).toBeGreaterThan(counts[0]);
+  });
+
   test('stacks model tokens and groups overflow models', () => {
     const start = new Date(2026, 8, 14, 10, 0, 0);
     const end = new Date(2026, 8, 14, 12, 0, 0);
