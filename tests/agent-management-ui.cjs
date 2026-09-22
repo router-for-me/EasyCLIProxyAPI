@@ -141,14 +141,15 @@ const path = require('node:path');
       await open(mode + 'not-installed');
       assert.ok(await button('启动 App').isDisabled());
       assert.ok(await button('重启 App').isDisabled());
-      await open(mode + 'client=workbuddy&config-only&fresh');
-      assert.ok(await page.locator('.agent-model-trigger').isEnabled());
-      assert.ok(await button('一键接入').isEnabled());
-      assert.ok(await button('启动 App').isDisabled());
-      assert.ok(await button('重启 App').isDisabled());
-      await button('一键接入').click();
-      await page.waitForFunction(() => window.fixtureCalls.some(call => call.cmd === 'update_agent_config'));
-      assert.deepEqual((await calls('update_agent_config'))[0].args.client, 'workbuddy');
+      for (const client of ['workbuddy', 'openclaw']) {
+        await open(mode + `client=${client}&config-only=${client}&fresh`);
+        assert.ok(await page.locator('.agent-model-trigger').isEnabled());
+        assert.ok(await button('一键接入').isEnabled());
+        assert.ok(await page.locator('.agent-launch-actions button').first().isDisabled());
+        await button('一键接入').click();
+        await page.waitForFunction(() => window.fixtureCalls.some(call => call.cmd === 'update_agent_config'));
+        assert.deepEqual((await calls('update_agent_config'))[0].args.client, client);
+      }
       await open(mode + 'client=kimi-code');
       assert.equal(await button('重启 App').count(), 0);
 
@@ -199,6 +200,11 @@ const path = require('node:path');
       assert.equal(await button('手动备份').count(), 0);
       await open(mode + 'client=pi&no-plugin');
       assert.ok(await button('安装 Pi 插件').isEnabled());
+      await open(mode + 'client=pi&config-only=pi&no-plugin&fresh');
+      assert.ok(await button('安装 Pi 插件').isEnabled());
+      assert.ok(await button('启动 CLI').isDisabled());
+      await button('安装 Pi 插件').click();
+      await page.waitForFunction(() => window.fixtureCalls.some(call => call.cmd === 'install_pi_provider'));
 
       await open(mode + 'client=deepseek-harness&running');
       await button('重启 Web').click();

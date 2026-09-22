@@ -1199,7 +1199,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   );
   const canConfigureActiveClient = Boolean(
     activeStatus?.supportedPlatform
-      && (activeStatus.installed || (selected === 'workbuddy' && activeStatus.configExists)),
+      && (activeStatus.installed || activeStatus.configExists),
   );
   const canEnable = Boolean(
     canConfigureActiveClient

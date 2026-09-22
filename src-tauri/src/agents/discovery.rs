@@ -307,6 +307,20 @@ pub(crate) fn build_pi_provider_settings(
     let object = root
         .as_object_mut()
         .ok_or_else(|| "Pi settings.json 根节点必须是 JSON 对象".to_string())?;
+    let packages = object
+        .entry("packages")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or_else(|| "Pi settings.json packages 必须是数组".to_string())?;
+    if !packages.iter().any(|package| {
+        package.as_str().is_some_and(pi_package_source_matches)
+            || package
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(pi_package_source_matches)
+    }) {
+        packages.push(serde_json::json!(PI_CLIPROXYAPI_PACKAGE));
+    }
     object.insert(
         "defaultProvider".to_string(),
         serde_json::json!(PI_CLIPROXYAPI_PROVIDER_ID),
@@ -389,8 +403,10 @@ pub(crate) fn inspect_pi_provider_status(
             "Pi 插件配置不完整，请使用“应用配置”重新写入凭据、默认 provider 和默认模型".to_string(),
         );
     }
-    if executable.is_none() && plugin_installed {
-        warnings.push("已找到 Pi 插件配置，但未检测到 Pi CLI 命令".to_string());
+    if executable.is_none() && config_exists {
+        warnings.push(
+            "只检测到 Pi 配置文件，仍可编辑配置并接入 CPA；启动功能不可用".to_string(),
+        );
     }
     let modification_state = if configured {
         "applied"
@@ -474,6 +490,36 @@ pub(crate) fn install_pi_provider_inner(
     changed_files.extend(result.changed_files);
     result.changed_files = changed_files;
     Ok(result)
+}
+
+pub(crate) fn configure_pi_provider_without_cli_inner(
+    home: &Path,
+    port: u16,
+    api_key: &str,
+    default_model: &str,
+) -> Result<AgentConfigActionResult, String> {
+    if port == 0 {
+        return Err("内核端口无效".to_string());
+    }
+    if api_key.trim().is_empty() {
+        return Err("EasyCLIProxyAPI 没有可用的 API key".to_string());
+    }
+    let settings_path = pi_provider_settings_path(home);
+    config_package_operation(home, "plugin-config", || {
+        let settings = if settings_path.is_file() {
+            fs::read_to_string(&settings_path).map_err(|error| {
+                format!(
+                    "读取 Pi settings.json 失败 {}: {error}",
+                    path_to_string(&settings_path)
+                )
+            })?
+        } else {
+            "{}".to_string()
+        };
+        let rendered = build_pi_provider_settings(&settings, default_model)?;
+        write_bytes_directly(&settings_path, rendered.as_bytes())
+    })?;
+    repair_pi_provider_inner(home, port, api_key, default_model)
 }
 
 pub(crate) fn repair_pi_provider_inner(
@@ -1003,12 +1049,9 @@ pub(crate) fn inspect_agent_config(
     if !client.supported_platform() {
         warnings.push("当前平台不支持 Claude Desktop 3P 配置".to_string());
     } else if !installed && config_exists {
-        warnings.push(if client == AgentClient::WorkBuddy {
-            "只检测到 WorkBuddy 配置文件，仍可编辑配置并接入 CPA；启动功能不可用"
-                .to_string()
-        } else {
-            "只检测到配置文件，未检测到客户端".to_string()
-        });
+        warnings.push(
+            "只检测到配置文件，仍可编辑配置并接入 CPA；启动功能不可用".to_string(),
+        );
     }
     if let Some(message) = error.as_ref() {
         warnings.push(message.clone());

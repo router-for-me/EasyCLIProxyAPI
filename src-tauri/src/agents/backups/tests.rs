@@ -897,6 +897,24 @@ fn pi_template_only_writes_configuration_and_package_references() {
 }
 
 #[test]
+fn pi_config_file_allows_cpa_connection_without_detected_cli() {
+    let home = Home::new();
+    let paths = config_paths("pi", &home.0).unwrap();
+    save(&paths[0], "{}\n");
+
+    let before = inspect_pi_provider_status(&home.0, 8317, "test-key");
+    assert!(before.config_exists);
+    assert!(!before.plugin_installed);
+
+    configure_pi_provider_without_cli_inner(&home.0, 8317, "test-key", "gpt-one").unwrap();
+
+    let connected = inspect_pi_provider_status(&home.0, 8317, "test-key");
+    assert!(connected.configured);
+    assert!(connected.plugin_installed);
+    assert_eq!(connected.current_model.as_deref(), Some("gpt-one"));
+}
+
+#[test]
 fn desktop_setup_repairs_legacy_names_without_changing_other_profiles() {
     if !AgentClient::ClaudeDesktop.supported_platform() {
         return;

@@ -202,14 +202,23 @@ pub(crate) async fn install_pi_provider(
         .home_dir()
         .map_err(|error| format!("无法获取用户目录: {error}"))?;
     let config = gui_config_state.snapshot()?;
-    let executable = find_pi_executable(&home)
-        .ok_or_else(|| "未检测到 Pi CLI，请先安装 Pi 并确保 pi 命令在 PATH 中".to_string())?;
+    let executable = find_pi_executable(&home);
+    if executable.is_none()
+        && !inspect_pi_provider_status(&home, config.port, effective_agent_api_key(&config))
+            .config_exists
+    {
+        return Err("未检测到 Pi CLI 或 Pi 配置文件".to_string());
+    }
     let model = resolve_pi_default_model(&config, &model).await?;
     let port = config.port;
     let api_key = effective_agent_api_key(&config).to_string();
     let proxy_url = config.proxy_url.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        install_pi_provider_inner(&home, &executable, port, &api_key, &model, &proxy_url)
+        if let Some(executable) = executable {
+            install_pi_provider_inner(&home, &executable, port, &api_key, &model, &proxy_url)
+        } else {
+            configure_pi_provider_without_cli_inner(&home, port, &api_key, &model)
+        }
     })
     .await
     .map_err(|error| format!("安装 Pi CLIProxyAPI provider 任务失败: {error}"))??;
@@ -1257,8 +1266,7 @@ pub(crate) fn validate_agent_can_enable(
         ));
     }
     let detection = inspect_agent_config(client, home, port, api_key);
-    let workbuddy_config_available = client == AgentClient::WorkBuddy && detection.config_exists;
-    if !detection.installed && !workbuddy_config_available {
+    if !detection.installed && !detection.config_exists {
         return Err(format!("{} is not installed", client.name()));
     }
     Ok(())
