@@ -1257,7 +1257,8 @@ pub(crate) fn validate_agent_can_enable(
         ));
     }
     let detection = inspect_agent_config(client, home, port, api_key);
-    if !detection.installed {
+    let workbuddy_config_available = client == AgentClient::WorkBuddy && detection.config_exists;
+    if !detection.installed && !workbuddy_config_available {
         return Err(format!("{} is not installed", client.name()));
     }
     Ok(())

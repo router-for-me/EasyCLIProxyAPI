@@ -102,6 +102,7 @@ type AgentConfigStatus = {
   cliVersion: string | null;
   appVersion: string | null;
   pluginVersion: string | null;
+  configExists: boolean;
   configValid: boolean;
   configured: boolean;
   connectionState: 'configured' | 'not-configured' | 'needs-update' | 'invalid';
@@ -1196,9 +1197,12 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     && claudeModelMappingsDraft.autoCompactPct >= 1
     && claudeModelMappingsDraft.autoCompactPct <= 100
   );
-  const canEnable = Boolean(
+  const canConfigureActiveClient = Boolean(
     activeStatus?.supportedPlatform
-      && activeStatus.installed
+      && (activeStatus.installed || (selected === 'workbuddy' && activeStatus.configExists)),
+  );
+  const canEnable = Boolean(
+    canConfigureActiveClient
       && !modelLoading
       && (isClaudeModelMappingClient
         ? claudeMappingsReady && claudeCodeRuntimeSettingsReady
@@ -2091,7 +2095,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   value={isClaudeModelMappingClient ? claudeModelMappingsDraft.sonnet : selectedModel}
                   loading={modelLoading}
                   error={modelError}
-                  disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform}
+                  disabled={busy || !canConfigureActiveClient}
                   onChange={selectEmbeddedModel}
                   onRefresh={refreshModels}
                 />
@@ -2187,7 +2191,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     value={selectedModel}
                     loading={modelLoading}
                     error={modelError}
-                    disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform}
+                    disabled={busy || !canConfigureActiveClient}
                     onChange={selectModel}
                     onRefresh={refreshModels}
                   />

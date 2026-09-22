@@ -1003,7 +1003,12 @@ pub(crate) fn inspect_agent_config(
     if !client.supported_platform() {
         warnings.push("当前平台不支持 Claude Desktop 3P 配置".to_string());
     } else if !installed && config_exists {
-        warnings.push("只检测到配置文件，未检测到客户端".to_string());
+        warnings.push(if client == AgentClient::WorkBuddy {
+            "只检测到 WorkBuddy 配置文件，仍可编辑配置并接入 CPA；启动功能不可用"
+                .to_string()
+        } else {
+            "只检测到配置文件，未检测到客户端".to_string()
+        });
     }
     if let Some(message) = error.as_ref() {
         warnings.push(message.clone());

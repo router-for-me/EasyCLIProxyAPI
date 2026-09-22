@@ -182,6 +182,31 @@ fn workbuddy_status_checks_endpoint_key_visibility_and_tool_support() {
 }
 
 #[test]
+fn workbuddy_config_file_allows_cpa_connection_without_detected_application() {
+    let home = Home::new();
+    home.save(&json!({}));
+
+    let status = inspect_agent_config(AgentClient::WorkBuddy, &home.0, 8317, "test-key");
+    assert!(!status.installed);
+    assert!(status.config_exists);
+    assert!(status.config_valid);
+    assert!(status.launch_targets.is_empty());
+    assert!(validate_agent_can_enable(
+        AgentClient::WorkBuddy,
+        &home.0,
+        8317,
+        "test-key"
+    )
+    .is_ok());
+
+    home.apply("gpt-one").unwrap();
+    let connected = inspect_agent_config(AgentClient::WorkBuddy, &home.0, 8317, "test-key");
+    assert!(!connected.installed);
+    assert!(connected.configured);
+    assert_eq!(connected.current_model.as_deref(), Some("gpt-one"));
+}
+
+#[test]
 fn workbuddy_visibility_restores_original_references_and_keeps_user_edits() {
     for external_edit in [false, true] {
         let home = Home::new();

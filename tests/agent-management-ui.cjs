@@ -141,6 +141,14 @@ const path = require('node:path');
       await open(mode + 'not-installed');
       assert.ok(await button('启动 App').isDisabled());
       assert.ok(await button('重启 App').isDisabled());
+      await open(mode + 'client=workbuddy&config-only&fresh');
+      assert.ok(await page.locator('.agent-model-trigger').isEnabled());
+      assert.ok(await button('一键接入').isEnabled());
+      assert.ok(await button('启动 App').isDisabled());
+      assert.ok(await button('重启 App').isDisabled());
+      await button('一键接入').click();
+      await page.waitForFunction(() => window.fixtureCalls.some(call => call.cmd === 'update_agent_config'));
+      assert.deepEqual((await calls('update_agent_config'))[0].args.client, 'workbuddy');
       await open(mode + 'client=kimi-code');
       assert.equal(await button('重启 App').count(), 0);
 
