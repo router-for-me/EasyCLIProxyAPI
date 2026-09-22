@@ -1157,7 +1157,6 @@ export const zhCN = {
   'agents.sessions.cleanupResult': '已清理 {count} 条无效会话索引。{backup}',
   'agents.sessions.cleanupFailed': '清理无效会话索引失败：{error}',
   'agents.localClients': '本机客户端',
-  'agents.selectClient': '选择需要管理的智能体',
   'agents.installStatus': '安装状态',
   'agents.clientDetected': '已检测到客户端',
   'agents.clientNotDetected': '未检测到客户端',

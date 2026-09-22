@@ -2026,11 +2026,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       </header>
 
       <div className="agent-workbench">
-        <aside className="panel agent-client-list">
-          <div className="agent-list-heading">
-            <Bot size={18} />
-            <div><strong>{t('agents.localClients')}</strong><span>{t('agents.selectClient')}</span></div>
-          </div>
+        <aside className="panel agent-client-list" aria-label={t('agents.localClients')}>
           <div className="agent-list-items">
             {agentDefinitions.map((agent) => {
               const status = statuses.find((item) => item.id === agent.id);

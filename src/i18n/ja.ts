@@ -1157,7 +1157,6 @@ export const jaOverrides = {
   'agents.sessions.cleanupResult': '無効なセッション索引を {count} 件削除しました。{backup}',
   'agents.sessions.cleanupFailed': '無効なセッション索引の削除に失敗しました：{error}',
   'agents.localClients': 'ローカルクライアント',
-  'agents.selectClient': '管理するエージェントを選択',
   'agents.installStatus': 'インストール状態',
   'agents.clientDetected': 'クライアントを検出しました',
   'agents.clientNotDetected': 'クライアントを検出できません',

@@ -1157,7 +1157,6 @@ export const en: Record<MessageKey, string> = {
   'agents.sessions.cleanupResult': 'Removed {count} invalid session index entries. {backup}',
   'agents.sessions.cleanupFailed': 'Failed to remove invalid session index entries: {error}',
   'agents.localClients': 'Local Clients',
-  'agents.selectClient': 'Select an agent to manage',
   'agents.installStatus': 'Installation Status',
   'agents.clientDetected': 'Client detected',
   'agents.clientNotDetected': 'Client not detected',
