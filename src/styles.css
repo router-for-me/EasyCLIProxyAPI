@@ -3258,6 +3258,55 @@ textarea:focus-visible {
   gap: 18px;
 }
 
+.config-sensitive-words-panel {
+  display: grid;
+  width: min(960px, 100%);
+  gap: 18px;
+  margin: 0 auto;
+}
+
+.config-sensitive-words-intro,
+.config-sensitive-words-card p,
+.config-sensitive-words-card small {
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+}
+
+.config-sensitive-words-intro,
+.config-sensitive-words-card p {
+  margin: 0;
+}
+
+.config-sensitive-words-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.config-sensitive-words-card {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 8px;
+  background: var(--theme-faf8f2);
+}
+
+.config-sensitive-words-card label {
+  color: var(--theme-39352f);
+  font-weight: var(--font-weight-semibold);
+}
+
+.config-sensitive-words-input {
+  height: 168px;
+  padding: 10px 11px;
+  resize: vertical;
+  line-height: var(--line-height-body);
+}
+
 .config-software-panel > .config-panel-heading {
   width: min(960px, 100%);
   margin: 0 auto;
@@ -14600,6 +14649,7 @@ body.table-col-resizing * {
   }
 
   .config-network-grid,
+  .config-sensitive-words-grid,
   .config-tls-fields,
   .config-management-form,
   .client-api-grid,

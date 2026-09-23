@@ -21,6 +21,20 @@ pub(crate) fn save_core_tls_settings(
     Ok(settings)
 }
 
+#[tauri::command]
+pub(crate) fn get_core_sensitive_words_settings() -> Result<CoreSensitiveWordsSettings, String> {
+    read_core_sensitive_words_settings()
+}
+
+#[tauri::command]
+pub(crate) fn save_core_sensitive_words_settings(
+    settings: CoreSensitiveWordsSettings,
+) -> Result<CoreSensitiveWordsSettings, String> {
+    let normalized = normalize_core_sensitive_words_settings(settings);
+    patch_core_sensitive_words_settings(&normalized)?;
+    Ok(normalized)
+}
+
 pub(crate) fn detect_lan_ipv4() -> Option<Ipv4Addr> {
     for target in ["192.0.2.1:80", "8.8.8.8:80"] {
         let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else {

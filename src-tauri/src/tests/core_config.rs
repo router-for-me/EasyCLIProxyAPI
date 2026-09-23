@@ -1048,6 +1048,96 @@ fn tls_patch_preserves_unrelated_yaml_and_paths_when_disabled() {
 }
 
 #[test]
+fn sensitive_words_patch_preserves_other_config_and_clears_each_provider_independently() {
+    let input = "# keep this comment\nantigravity:\n  sensitive-words:\n    - old\n  signature-cache: true\ndevin:\n  sensitive-words:\n    - old-devin\ncustom:\n  keep: true\n";
+    let settings = normalize_core_sensitive_words_settings(CoreSensitiveWordsSettings {
+        antigravity_sensitive_words: vec!["  Hermes  ".into(), "".into(), "Nous Research".into()],
+        devin_sensitive_words: Vec::new(),
+    });
+    let patched = patch_core_sensitive_words_yaml(input, &settings)
+        .unwrap()
+        .expect("sensitive words should change");
+    let document = serde_norway::from_str::<serde_norway::Value>(&patched).unwrap();
+    assert!(patched.contains("# keep this comment"));
+    assert_eq!(document["custom"]["keep"], true);
+    assert_eq!(document["antigravity"]["signature-cache"], true);
+    assert_eq!(
+        document["antigravity"]["sensitive-words"],
+        serde_norway::to_value(vec!["Hermes", "Nous Research"]).unwrap()
+    );
+    assert_eq!(
+        document["devin"]["sensitive-words"],
+        serde_norway::to_value(Vec::<String>::new()).unwrap()
+    );
+    assert_eq!(
+        core_sensitive_words_settings_from_value(&document).unwrap(),
+        settings
+    );
+    assert!(patch_core_sensitive_words_yaml(&patched, &settings)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn sensitive_words_patch_adds_missing_sections_without_touching_unrelated_fields() {
+    let input = "# config\ndebug: true\n";
+    let empty = CoreSensitiveWordsSettings::default();
+    assert!(patch_core_sensitive_words_yaml(input, &empty)
+        .unwrap()
+        .is_none());
+
+    let settings = CoreSensitiveWordsSettings {
+        antigravity_sensitive_words: vec!["proxy".into()],
+        devin_sensitive_words: vec!["Claude Code".into()],
+    };
+    let patched = patch_core_sensitive_words_yaml(input, &settings)
+        .unwrap()
+        .expect("missing sections should be created");
+    let document = serde_norway::from_str::<serde_norway::Value>(&patched).unwrap();
+    assert!(patched.contains("# config"));
+    assert_eq!(document["debug"], true);
+    assert_eq!(
+        core_sensitive_words_settings_from_value(&document).unwrap(),
+        settings
+    );
+
+    let invalid =
+        serde_norway::from_str::<serde_norway::Value>("devin:\n  sensitive-words: not-a-list\n")
+            .unwrap();
+    assert!(core_sensitive_words_settings_from_value(&invalid).is_err());
+    let empty =
+        serde_norway::from_str::<serde_norway::Value>("antigravity:\n  sensitive-words:\ndevin:\n")
+            .unwrap();
+    assert_eq!(
+        core_sensitive_words_settings_from_value(&empty).unwrap(),
+        CoreSensitiveWordsSettings::default()
+    );
+    let updated =
+        patch_core_sensitive_words_yaml("antigravity:\n  sensitive-words:\ndevin:\n", &settings)
+            .unwrap()
+            .unwrap();
+    let parsed = serde_norway::from_str::<serde_norway::Value>(&updated).unwrap();
+    assert_eq!(
+        core_sensitive_words_settings_from_value(&parsed).unwrap(),
+        settings
+    );
+    let only_devin = CoreSensitiveWordsSettings {
+        antigravity_sensitive_words: Vec::new(),
+        devin_sensitive_words: vec!["another phrase".into()],
+    };
+    let patched =
+        patch_core_sensitive_words_yaml("antigravity:\n  sensitive-words:\ndevin:\n", &only_devin)
+            .unwrap()
+            .unwrap();
+    let parsed = serde_norway::from_str::<serde_norway::Value>(&patched).unwrap();
+    assert_eq!(
+        core_sensitive_words_settings_from_value(&parsed).unwrap(),
+        only_devin
+    );
+    assert!(parsed["antigravity"]["sensitive-words"].is_null());
+}
+
+#[test]
 fn enabled_tls_requires_both_paths() {
     let missing_key = CoreTlsSettings {
         enabled: true,

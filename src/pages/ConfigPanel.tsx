@@ -35,6 +35,7 @@ import { useI18n } from '../i18n';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { webUiManagementUrl } from '../services/clientAccess';
 import { ThinkingAliasesPage } from './ThinkingAliasesPage';
+import { SensitiveWordsPage } from './SensitiveWordsPage';
 
 type CoreConfigSettings = {
   apiKeys: CoreApiKey[];
@@ -78,7 +79,7 @@ type ConfigAction =
   | 'tls'
   | 'software'
   | null;
-type ConfigSubpage = 'general' | 'network' | 'routing' | 'software' | 'aliases';
+type ConfigSubpage = 'general' | 'network' | 'routing' | 'software' | 'aliases' | 'sensitive-words';
 type CloseBehavior = 'ask' | 'exit' | 'minimize-to-tray';
 type NetworkDraftField =
   | 'port'
@@ -190,6 +191,7 @@ export function ConfigPanelPage() {
     <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
   );
   const [activeSubpage, setActiveSubpage] = useState<ConfigSubpage>('general');
+  const [sensitiveWordsVisited, setSensitiveWordsVisited] = useState(false);
   const [portDraft, setPortDraft] = useState('8317');
   const [hostDraft, setHostDraft] = useState('127.0.0.1');
   const [proxyUrlDraft, setProxyUrlDraft] = useState('');
@@ -1016,6 +1018,21 @@ export function ConfigPanelPage() {
           onClick={() => setActiveSubpage('software')}
         >
           {t('config.tabs.software')}
+        </button>
+        <button
+          type="button"
+          id="config-subpage-tab-sensitive-words"
+          role="tab"
+          className={activeSubpage === 'sensitive-words' ? 'active' : ''}
+          aria-selected={activeSubpage === 'sensitive-words'}
+          aria-controls="config-subpage-panel-sensitive-words"
+          tabIndex={activeSubpage === 'sensitive-words' ? 0 : -1}
+          onClick={() => {
+            setSensitiveWordsVisited(true);
+            setActiveSubpage('sensitive-words');
+          }}
+        >
+          {t('config.tabs.sensitiveWords')}
         </button>
       </div>
 
@@ -2110,7 +2127,7 @@ export function ConfigPanelPage() {
             </div>
           </section>
         </div>
-      ) : (
+      ) : activeSubpage === 'aliases' ? (
         <div
           className="config-subpage-panel"
           id="config-subpage-panel-aliases"
@@ -2119,7 +2136,19 @@ export function ConfigPanelPage() {
         >
           <ThinkingAliasesPage />
         </div>
-      )}
+      ) : null}
+
+      {sensitiveWordsVisited ? (
+        <div
+          className="config-subpage-panel"
+          id="config-subpage-panel-sensitive-words"
+          role="tabpanel"
+          aria-labelledby="config-subpage-tab-sensitive-words"
+          style={{ display: activeSubpage === 'sensitive-words' ? undefined : 'none' }}
+        >
+          <SensitiveWordsPage />
+        </div>
+      ) : null}
 
       {addDialogOpen ? (
         <div className="config-dialog-backdrop" onMouseDown={(event) => {

@@ -224,6 +224,172 @@ pub(crate) fn patch_core_tls_settings(settings: &CoreTlsSettings) -> Result<(), 
     write_yaml_if_changed(&config_path, &updated).map(|_| ())
 }
 
+pub(crate) fn normalize_core_sensitive_words_settings(
+    settings: CoreSensitiveWordsSettings,
+) -> CoreSensitiveWordsSettings {
+    let normalize = |words: Vec<String>| {
+        words
+            .into_iter()
+            .map(|word| word.trim().to_string())
+            .filter(|word| !word.is_empty())
+            .collect()
+    };
+    CoreSensitiveWordsSettings {
+        antigravity_sensitive_words: normalize(settings.antigravity_sensitive_words),
+        devin_sensitive_words: normalize(settings.devin_sensitive_words),
+    }
+}
+
+pub(crate) fn core_sensitive_words_settings_from_value(
+    document: &serde_norway::Value,
+) -> Result<CoreSensitiveWordsSettings, String> {
+    let root = document
+        .as_mapping()
+        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+    let read_words = |provider: &str| -> Result<Vec<String>, String> {
+        let Some(section) = yaml_mapping_value(root, provider) else {
+            return Ok(Vec::new());
+        };
+        if section.is_null() {
+            return Ok(Vec::new());
+        }
+        let section = section
+            .as_mapping()
+            .ok_or_else(|| format!("{provider} 必须是 YAML 映射"))?;
+        let Some(value) = yaml_mapping_value(section, "sensitive-words") else {
+            return Ok(Vec::new());
+        };
+        if value.is_null() {
+            return Ok(Vec::new());
+        }
+        value
+            .as_sequence()
+            .ok_or_else(|| format!("{provider}.sensitive-words 必须是字符串列表"))?
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{provider}.sensitive-words 必须是字符串列表"))
+            })
+            .collect()
+    };
+    Ok(CoreSensitiveWordsSettings {
+        antigravity_sensitive_words: read_words("antigravity")?,
+        devin_sensitive_words: read_words("devin")?,
+    })
+}
+
+pub(crate) fn read_core_sensitive_words_settings() -> Result<CoreSensitiveWordsSettings, String> {
+    let _config_guard = lock_core_config_file()?;
+    let (_, document) = read_core_config_document()?;
+    core_sensitive_words_settings_from_value(document.get())
+}
+
+pub(crate) fn patch_core_sensitive_words_yaml(
+    content: &str,
+    settings: &CoreSensitiveWordsSettings,
+) -> Result<Option<String>, String> {
+    let original = serde_norway::from_str::<serde_norway::Value>(content)
+        .map_err(|error| format!("解析内核配置失败: {error}"))?;
+    let root = original
+        .as_mapping()
+        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+    let mut prepared = content.to_string();
+    for (provider, words) in [
+        ("antigravity", &settings.antigravity_sensitive_words),
+        ("devin", &settings.devin_sensitive_words),
+    ] {
+        if words.is_empty() {
+            continue;
+        }
+        let Some(section) = yaml_mapping_value(root, provider) else {
+            continue;
+        };
+        let needs_normalization = section.is_null()
+            || section
+                .as_mapping()
+                .and_then(|mapping| yaml_mapping_value(mapping, "sensitive-words"))
+                .is_some_and(serde_norway::Value::is_null);
+        if !needs_normalization {
+            continue;
+        }
+        let mut section = if section.is_null() {
+            serde_norway::Mapping::new()
+        } else {
+            section
+                .as_mapping()
+                .ok_or_else(|| format!("{provider} 必须是 YAML 映射"))?
+                .clone()
+        };
+        section.insert(
+            yaml_key("sensitive-words"),
+            serde_norway::to_value(words).map_err(|error| format!("序列化敏感词失败: {error}"))?,
+        );
+        let mut replacement = serde_norway::Mapping::new();
+        replacement.insert(yaml_key(provider), serde_norway::Value::Mapping(section));
+        let block = serde_norway::to_string(&replacement)
+            .map_err(|error| format!("序列化内核配置区段失败: {error}"))?;
+        prepared = replace_top_level_yaml_block(&prepared, provider, &block);
+    }
+    let updated = patch_core_yaml_document(&prepared, |document| {
+        let mut changed = false;
+        for (provider, words) in [
+            ("antigravity", &settings.antigravity_sensitive_words),
+            ("devin", &settings.devin_sensitive_words),
+        ] {
+            let root = document
+                .as_mapping()
+                .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+            let section = yaml_mapping_value(root, provider);
+            let current_words = section
+                .and_then(serde_norway::Value::as_mapping)
+                .and_then(|mapping| yaml_mapping_value(mapping, "sensitive-words"));
+            if words.is_empty() && current_words.is_none_or(serde_norway::Value::is_null) {
+                continue;
+            }
+            if section.is_none_or(serde_norway::Value::is_null) {
+                changed |= set_core_yaml_top_level_value(
+                    document,
+                    provider,
+                    serde_norway::Value::Mapping(serde_norway::Mapping::new()),
+                )?;
+            }
+            changed |= set_core_yaml_nested_value(
+                document,
+                provider,
+                "sensitive-words",
+                serde_norway::Value::Sequence(
+                    words
+                        .iter()
+                        .cloned()
+                        .map(serde_norway::Value::String)
+                        .collect(),
+                ),
+            )?;
+        }
+        Ok(changed)
+    })?
+    .unwrap_or(prepared);
+    Ok((updated != content).then_some(updated))
+}
+
+pub(crate) fn patch_core_sensitive_words_settings(
+    settings: &CoreSensitiveWordsSettings,
+) -> Result<(), String> {
+    let _config_guard = lock_core_config_file()?;
+    let config_path = core_install_dir()?.join(CORE_CONFIG_FILE);
+    if !config_path.is_file() {
+        return Err("内核配置尚未生成，请先启动 CPA 内核".to_string());
+    }
+    let content = fs::read_to_string(&config_path)
+        .map_err(|error| format!("读取内核配置失败 {}: {error}", path_to_string(&config_path)))?;
+    if let Some(updated) = patch_core_sensitive_words_yaml(&content, settings)? {
+        write_yaml_if_changed(&config_path, &updated)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn patch_core_api_keys(api_keys: &[String]) -> Result<(), String> {
     let _config_guard = lock_core_config_file()?;
     let config_path = core_install_dir()?.join(CORE_CONFIG_FILE);

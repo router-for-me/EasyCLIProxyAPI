@@ -1536,6 +1536,13 @@ struct CoreTlsSettings {
     key: String,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoreSensitiveWordsSettings {
+    antigravity_sensitive_words: Vec<String>,
+    devin_sensitive_words: Vec<String>,
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CoreLoggingSettingsInput {
@@ -2665,6 +2672,8 @@ fn main() {
             save_session_routing_settings,
             get_core_tls_settings,
             save_core_tls_settings,
+            get_core_sensitive_words_settings,
+            save_core_sensitive_words_settings,
             get_core_config_settings,
             save_core_logging_settings,
             set_core_request_log,
