@@ -44,10 +44,10 @@ export const formatQuotaReset = (
   }).format(resetAtMs);
   const delta = resetAtMs - nowMs;
   if (delta <= 0) return `${absolute} · ${translate(locale, 'quota.resetPassed')}`;
-  const minutes = Math.max(1, Math.ceil(delta / 60000));
+  const minutes = Math.max(1, Math.floor(delta / 60000));
   const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'always' });
-  const label = minutes >= 1440 ? relative.format(Math.ceil(minutes / 1440), 'day')
-    : minutes >= 60 ? relative.format(Math.ceil(minutes / 60), 'hour')
+  const label = minutes >= 1440 ? relative.format(Math.floor(minutes / 1440), 'day')
+    : minutes >= 60 ? relative.format(Math.floor(minutes / 60), 'hour')
       : relative.format(minutes, 'minute');
   return `${absolute} · ${label}`;
 };

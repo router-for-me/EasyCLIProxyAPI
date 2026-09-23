@@ -28,4 +28,16 @@ describe('quota reset instants', () => {
     expect(formatQuotaReset(resetMs, undefined, 'zh-CN', resetMs)).toContain('重置时间已到，请刷新确认');
     expect(formatQuotaReset(undefined, 'legacy', 'en', resetMs)).toBe('legacy');
   });
+
+  it('与管理中心一致，按完整天、小时和分钟向下计算剩余时间', () => {
+    const absolute = new Intl.DateTimeFormat('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(resetMs);
+    expect(formatQuotaReset(resetMs, undefined, 'zh-CN', resetMs - 36 * 60 * 60 * 1000)).toBe(`${absolute} · 1天后`);
+    expect(formatQuotaReset(resetMs, undefined, 'zh-CN', resetMs - 24 * 60 * 60 * 1000)).toBe(`${absolute} · 1天后`);
+    expect(formatQuotaReset(resetMs, undefined, 'zh-CN', resetMs - (24 * 60 * 60 * 1000 - 1))).toBe(`${absolute} · 23小时后`);
+    expect(formatQuotaReset(resetMs, undefined, 'zh-CN', resetMs - 60 * 60 * 1000)).toBe(`${absolute} · 1小时后`);
+    expect(formatQuotaReset(resetMs, undefined, 'zh-CN', resetMs - (60 * 60 * 1000 - 1))).toBe(`${absolute} · 59分钟后`);
+    expect(formatQuotaReset(resetMs, undefined, 'zh-CN', resetMs - 1000)).toBe(`${absolute} · 1分钟后`);
+  });
 });
