@@ -185,6 +185,8 @@ struct UsageTokenStats {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct UsageRecord {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    row_id: Option<String>,
     timestamp: String,
     #[serde(default)]
     latency_ms: u64,
@@ -2714,6 +2716,7 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
     };
     Ok(UsageRecord {
         id,
+        row_id: None,
         timestamp,
         latency_ms: u64_field(object, "latency_ms"),
         ttft_ms: optional_u64_field(object, "ttft_ms"),
@@ -3928,7 +3931,7 @@ fn load_usage_events(
             cached_tokens, collector_source,
             input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
             cache_creation_tokens, total_tokens, canceled, failure_status,
-            failure_body
+            failure_body, id
         FROM usage_events{}
         ORDER BY timestamp_ms DESC, id DESC
         LIMIT ? OFFSET ?
@@ -3961,6 +3964,7 @@ fn load_usage_events(
 fn usage_record_from_row(row: &Row<'_>) -> rusqlite::Result<UsageRecord> {
     Ok(UsageRecord {
         id: row.get(0)?,
+        row_id: Some(row.get::<_, i64>(36)?.to_string()),
         timestamp: row.get(1)?,
         latency_ms: from_sql_i64(row.get(2)?),
         ttft_ms: row.get::<_, Option<i64>>(3)?.map(from_sql_i64),
@@ -4676,6 +4680,7 @@ mod tests {
     fn sample_record(id: &str, timestamp: &str, model: &str) -> UsageRecord {
         UsageRecord {
             id: id.to_string(),
+            row_id: None,
             timestamp: timestamp.to_string(),
             latency_ms: 100,
             ttft_ms: Some(20),
@@ -5819,6 +5824,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(count, 2);
+        let events = load_usage_events(
+            &connection,
+            &UsageQuery::default(),
+            &GuiConfigFile::default(),
+        )
+        .unwrap();
+        assert_eq!(events.items.len(), 2);
+        assert_eq!(events.items[0].id, events.items[1].id);
+        assert_ne!(events.items[0].row_id, events.items[1].row_id);
+        let serialized = serde_json::to_value(&events).unwrap();
+        assert!(serialized["items"][0]["row_id"].as_str().is_some());
+        assert_ne!(
+            serialized["items"][0]["row_id"],
+            serialized["items"][1]["row_id"]
+        );
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

@@ -95,6 +95,7 @@ type UsageAnalysis = {
 
 type UsageRecord = {
   id: string;
+  row_id: string;
   timestamp: string;
   latency_ms: number;
   ttft_ms: number | null;
@@ -2157,7 +2158,7 @@ function EventsView({
             </thead>
             <tbody>
               {events.items.map((record) => (
-                <tr key={record.id}>
+                <tr key={record.row_id}>
                   {visibleColumns.map((column) => (
                     <UsageEventCell
                       key={column.key}
