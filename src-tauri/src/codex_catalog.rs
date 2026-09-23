@@ -859,13 +859,13 @@ mod tests {
         validate_embedded_catalog().unwrap();
         let state = catalog_state().unwrap().read().unwrap();
         let sources = &state.sources;
-        assert_eq!(sources.templates.len(), 11);
-        assert_eq!(sources.revision, 3);
+        assert_eq!(sources.templates.len(), 13);
+        assert_eq!(sources.revision, 4);
         let embedded: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
         assert!(embedded.get("fallback_model").is_none());
         assert_eq!(
             embedded["upstream_codex_commit"],
-            "ddf04ad26789d040f9ef6a96736f76602e35a6cc"
+            "24462234b2aeeb27373e17bbe226baf9c0e97d3b"
         );
         let fallback: Value = serde_json::from_str(FALLBACK_MODEL_JSON).unwrap();
         assert!(fallback.get("fallback_model").is_none());
@@ -894,6 +894,8 @@ mod tests {
 
         let official_slugs = [
             "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
             "gpt-5.6-sol",
             "gpt-5.6-terra",
             "gpt-5.6-luna",
@@ -925,6 +927,27 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .replace("{{ personality }}", "")
+        );
+        for slug in ["gpt-6-sol", "gpt-6-luna"] {
+            let model = &sources.templates[slug].value;
+            assert_eq!(model["context_window"], 272_000);
+            assert_eq!(model["max_context_window"], 872_000);
+            assert_eq!(model["default_reasoning_level"], "medium");
+            assert_eq!(
+                model["base_instructions"],
+                model["model_messages"]["instructions_template"]
+                    .as_str()
+                    .unwrap()
+                    .replace("{{ personality }}", "")
+            );
+        }
+        assert_eq!(
+            reasoning_efforts(&sources.templates["gpt-6-sol"].value),
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(
+            reasoning_efforts(&sources.templates["gpt-6-luna"].value),
+            ["low", "medium", "high", "xhigh", "max"]
         );
 
         for slug in [
