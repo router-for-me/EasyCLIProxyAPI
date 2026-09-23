@@ -3260,51 +3260,73 @@ textarea:focus-visible {
 
 .config-sensitive-words-panel {
   display: grid;
-  width: min(960px, 100%);
-  gap: 18px;
+  width: min(780px, 100%);
+  gap: 16px;
   margin: 0 auto;
-}
-
-.config-sensitive-words-intro,
-.config-sensitive-words-card p,
-.config-sensitive-words-card small {
-  color: var(--theme-7a746c);
-  font-size: var(--font-size-meta);
-  line-height: var(--line-height-body);
-}
-
-.config-sensitive-words-intro,
-.config-sensitive-words-card p {
-  margin: 0;
 }
 
 .config-sensitive-words-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 
 .config-sensitive-words-card {
   display: grid;
   min-width: 0;
-  align-content: start;
-  gap: 10px;
-  padding: 18px;
+  gap: 12px;
+  padding: 16px;
   border: 1px solid var(--theme-e3e1db);
   border-radius: 8px;
-  background: var(--theme-faf8f2);
+  background: var(--theme-fffdf8);
 }
 
-.config-sensitive-words-card label {
+.config-sensitive-words-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-sensitive-words-card-heading h3 {
+  margin: 0;
   color: var(--theme-39352f);
+  font-size: var(--font-size-body);
   font-weight: var(--font-weight-semibold);
 }
 
-.config-sensitive-words-input {
-  height: 168px;
-  padding: 10px 11px;
-  resize: vertical;
-  line-height: var(--line-height-body);
+.config-sensitive-words-count {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--theme-f4f1ea);
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
+  text-align: center;
+}
+
+.config-sensitive-words-composer,
+.config-sensitive-words-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-sensitive-words-composer .icon-button,
+.config-sensitive-words-row .icon-button {
+  width: 38px;
+  height: 38px;
+}
+
+.config-sensitive-words-list {
+  display: grid;
+  gap: 6px;
+}
+
+.config-sensitive-words-empty {
+  margin: 0;
+  padding: 6px 0;
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-meta);
 }
 
 .config-software-panel > .config-panel-heading {
@@ -14649,7 +14671,6 @@ body.table-col-resizing * {
   }
 
   .config-network-grid,
-  .config-sensitive-words-grid,
   .config-tls-fields,
   .config-management-form,
   .client-api-grid,
