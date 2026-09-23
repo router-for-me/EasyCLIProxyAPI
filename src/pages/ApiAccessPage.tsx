@@ -108,6 +108,7 @@ type ProviderRow = {
   models: ModelOption[];
   disabled: boolean;
   priority: number | null;
+  weight: number | null;
   authIndex: string;
   remark: string;
 };
@@ -208,6 +209,7 @@ export type ProviderDraft = {
   remark: string;
   baseUrl: string;
   priority: string;
+  weight?: string;
   models: ModelOption[];
   modelSelectionCatalog?: ModelOption[];
   prefix?: string;
@@ -322,6 +324,7 @@ const rowFromRecord = (
       ? readBoolean(record, 'disabled')
       : excludedModels.some((model) => model.trim() === '*'),
     priority: readNumber(record, 'priority'),
+    weight: definitionFor(section).openAi ? null : readNumber(record, 'weight'),
     authIndex: entry
       ? readString(entry, 'auth-index', 'authIndex')
       : readString(record, 'auth-index', 'authIndex'),
@@ -609,6 +612,7 @@ const draftFromRow = (row: ProviderRow): ProviderDraft => {
     remark: row.remark || (definition.openAi && !isDeepSeek ? row.name : ''),
     baseUrl: row.baseUrl,
     priority: row.priority === null ? '' : String(row.priority),
+    weight: row.weight === null ? '' : String(row.weight),
     models: row.models,
     prefix: readString(row.record, 'prefix'),
     headersText: isRecord(row.record.headers)
@@ -646,6 +650,7 @@ const emptyProviderDraft = (): ProviderDraft => ({
   remark: '',
   baseUrl: '',
   priority: '',
+  weight: '',
   models: [],
   prefix: '',
   headersText: '',
@@ -720,6 +725,16 @@ export const parseProviderHeaders = (value: string): Record<string, string> => {
     headers[key] = headerValue;
   });
   return headers;
+};
+
+export const normalizeProviderWeight = (value: string | undefined): number | null => {
+  const text = value?.trim() ?? '';
+  if (!text) return null;
+  const weight = Number(text);
+  if (!/^-?\d+$/.test(text) || !Number.isSafeInteger(weight) || weight > 1_000_000) {
+    throw new Error(translate(getCurrentLocale(), 'apiAccess.error.weightInvalid'));
+  }
+  return Math.max(0, weight);
 };
 
 const applyAdvancedFields = (
@@ -839,6 +854,11 @@ export const buildProviderRecord = (
   else delete next['base-url'];
   if (priority !== null && Number.isFinite(priority)) next.priority = priority;
   else delete next.priority;
+  if (draft.weight !== undefined) {
+    const weight = normalizeProviderWeight(draft.weight);
+    if (weight === null) delete next.weight;
+    else next.weight = weight;
+  }
   return applyAdvancedFields(next, section, draft);
 };
 
@@ -1444,9 +1464,10 @@ export function ApiAccessPage() {
                     <span className="provider-row-url" title={row.baseUrl || undefined}>{row.baseUrl || t('apiAccess.defaultUrl')}</span>
                     {row.models.length > 0 ? <span className="provider-row-models">{t('apiAccess.models.summary', { count: row.models.length })}</span> : null}
                   </div>
-                  {row.priority === null ? null : (
+                  {row.priority === null && row.weight === null ? null : (
                     <div className="provider-row-meta">
-                      <span>{t('apiAccess.priorityValue', { priority: row.priority })}</span>
+                      {row.priority === null ? null : <span>{t('apiAccess.priorityValue', { priority: row.priority })}</span>}
+                      {row.weight === null ? null : <span>{t('apiAccess.weightValue', { weight: row.weight })}</span>}
                     </div>
                   )}
                   <div className="provider-row-actions">
@@ -1820,7 +1841,7 @@ export function ApiProviderDialog({
   ), [modelOptions, selectedModelNames]);
 
   const updateTextField = (
-    field: 'apiKey' | 'remark' | 'baseUrl' | 'priority' | 'prefix' | 'headersText' | 'excludedModelsText' | 'testModel' | 'cloakMode' | 'cloakSensitiveWordsText',
+    field: 'apiKey' | 'remark' | 'baseUrl' | 'priority' | 'weight' | 'prefix' | 'headersText' | 'excludedModelsText' | 'testModel' | 'cloakMode' | 'cloakSensitiveWordsText',
     value: string,
   ) => {
     setFormError('');
@@ -2135,6 +2156,12 @@ export function ApiProviderDialog({
           {modelError && !modelDiscoveryOpen ? <MessageNotice message={modelError} onDismiss={() => setModelError('')} /> : null}
         </div>
         <label><span>{t('apiAccess.field.priority')}</span><input inputMode="numeric" value={draft.priority} onChange={(event) => updateTextField('priority', event.currentTarget.value.replace(/\D/g, ''))} placeholder={t('common.optional')} /></label>
+        {activeSection === 'openai-compatibility' ? null : (
+          <label title={t('apiAccess.weightHint')}>
+            <span>{t('apiAccess.field.weight')}</span>
+            <input inputMode="numeric" value={draft.weight ?? ''} onChange={(event) => updateTextField('weight', event.currentTarget.value)} placeholder="1" />
+          </label>
+        )}
         <details className="provider-advanced-settings">
           <summary>{t('apiAccess.advanced')}</summary>
           <div className="provider-advanced-fields">
