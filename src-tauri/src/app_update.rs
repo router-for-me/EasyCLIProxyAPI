@@ -152,6 +152,24 @@ pub(crate) async fn check_app_update(
     state: tauri::State<'_, AppUpdateState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<AppUpdateInfo, String> {
+    let (info, _) = resolve_app_update(&app, gui_config_state.inner()).await?;
+    state.set_available(AppUpdateTask {
+        phase: if info.update_available {
+            "available".to_string()
+        } else {
+            "idle".to_string()
+        },
+        target_version: info.update_available.then(|| info.latest_version.clone()),
+        total_bytes: info.download_size_bytes,
+        ..AppUpdateTask::default()
+    });
+    Ok(info)
+}
+
+async fn resolve_app_update(
+    app: &tauri::AppHandle,
+    gui_config_state: &GuiConfigState,
+) -> Result<(AppUpdateInfo, Option<PendingAppUpdate>), String> {
     let _detection_guard = VERSION_SOURCE_DETECTION_LOCK.lock().await;
     let config = gui_config_state.snapshot()?;
     let proxy_url = config.proxy_url.clone();
@@ -174,8 +192,8 @@ pub(crate) async fn check_app_update(
     )
     .await?;
     persist_automatic_download_source_switch(
-        &app,
-        gui_config_state.inner(),
+        app,
+        gui_config_state,
         &requested_source,
         &resolved_source,
     )?;
@@ -207,21 +225,7 @@ pub(crate) async fn check_app_update(
     } else {
         None
     };
-    state.set_pending(
-        pending,
-        AppUpdateTask {
-            phase: if update_available {
-                "available".to_string()
-            } else {
-                "idle".to_string()
-            },
-            target_version: update_available.then(|| latest_version.clone()),
-            total_bytes: asset.as_ref().map(|value| value.size_bytes),
-            ..AppUpdateTask::default()
-        },
-    );
-
-    Ok(AppUpdateInfo {
+    let info = AppUpdateInfo {
         current_version,
         latest_version,
         update_available,
@@ -231,7 +235,8 @@ pub(crate) async fn check_app_update(
         auto_update_supported,
         download_size_bytes: asset.map(|value| value.size_bytes),
         unsupported_reason,
-    })
+    };
+    Ok((info, pending))
 }
 
 pub(crate) async fn fetch_portable_update_manifest(
@@ -276,8 +281,7 @@ pub(crate) async fn fetch_portable_update_manifest_from_gitcode(
     repository: &str,
 ) -> Result<PortableUpdateManifest, String> {
     let release_url = format!("https://api.gitcode.com/api/v5/repos/{repository}/releases/latest");
-    let release = client
-        .get(release_url)
+    let release = app_update_metadata_request(client, &release_url)
         .header(reqwest::header::ACCEPT, "application/json")
         .header(reqwest::header::USER_AGENT, APP_USER_AGENT)
         .send()
@@ -298,8 +302,7 @@ pub(crate) async fn fetch_portable_update_manifest_url(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<PortableUpdateManifest, String> {
-    let manifest = client
-        .get(url)
+    let manifest = app_update_metadata_request(client, url)
         .header(reqwest::header::ACCEPT, "application/json")
         .header(reqwest::header::USER_AGENT, APP_USER_AGENT)
         .send()
@@ -312,6 +315,19 @@ pub(crate) async fn fetch_portable_update_manifest_url(
         .map_err(|error| format!("parse update manifest: {error}"))?;
     validate_portable_update_manifest(&manifest)?;
     Ok(manifest)
+}
+
+fn app_update_metadata_request(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .to_string();
+    client
+        .get(url)
+        .query(&[("_", nonce)])
+        .header(reqwest::header::CACHE_CONTROL, "no-cache")
+        .header(reqwest::header::PRAGMA, "no-cache")
 }
 
 pub(crate) fn configured_gitcode_gui_repository() -> Option<&'static str> {
@@ -651,27 +667,43 @@ pub(crate) fn cancel_app_update(state: tauri::State<'_, AppUpdateState>) -> Resu
 pub(crate) async fn start_app_update(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppUpdateState>,
-    gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<(), String> {
     if portable_update_platform_key().is_none() {
         return Err("当前平台不支持应用内自动升级".to_string());
     }
-    let config = gui_config_state.snapshot()?;
-    let proxy_url = config.proxy_url.clone();
-    let download_source = config.selected_download_candidate();
     let token = CancellationToken::new();
-    let pending = state.start(token.clone())?;
+    state.start(token.clone())?;
     let task = state.snapshot();
     let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
     let update_app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let outcome = download_and_stage_portable_app_update(
-            &update_app,
-            &pending,
-            &token,
-            &proxy_url,
-            download_source,
-        )
+        let outcome = async {
+            let state = update_app.state::<AppUpdateState>();
+            let gui_config_state = update_app.state::<GuiConfigState>();
+            let pending = refresh_app_update_for_install(state.inner(), &token, async {
+                let (info, pending) =
+                    resolve_app_update(&update_app, gui_config_state.inner()).await?;
+                pending.ok_or_else(|| {
+                    if info.update_available {
+                        info.unsupported_reason
+                            .unwrap_or_else(|| "当前版本不支持自动更新".to_string())
+                    } else {
+                        "当前没有可安装的软件更新，请重新检查更新".to_string()
+                    }
+                })
+            })
+            .await?;
+            let _ = update_app.emit(APP_UPDATE_PROGRESS_EVENT, state.snapshot());
+            let config = gui_config_state.snapshot()?;
+            download_and_stage_portable_app_update(
+                &update_app,
+                &pending,
+                &token,
+                &config.proxy_url,
+                config.selected_download_candidate(),
+            )
+            .await
+        }
         .await;
         if let Err(error) = outcome {
             let state = update_app.state::<AppUpdateState>();
@@ -688,6 +720,23 @@ pub(crate) async fn start_app_update(
         }
     });
     Ok(())
+}
+
+pub(crate) async fn refresh_app_update_for_install<F>(
+    state: &AppUpdateState,
+    token: &CancellationToken,
+    refresh: F,
+) -> Result<PendingAppUpdate, String>
+where
+    F: std::future::Future<Output = Result<PendingAppUpdate, String>>,
+{
+    let pending = tokio::select! {
+        biased;
+        _ = token.cancelled() => return Err("应用更新下载已取消".to_string()),
+        result = refresh => result?,
+    };
+    state.start_download(&pending)?;
+    Ok(pending)
 }
 
 pub(crate) async fn download_and_stage_portable_app_update(

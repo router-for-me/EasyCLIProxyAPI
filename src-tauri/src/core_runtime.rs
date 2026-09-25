@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) static CORE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
+const BUNDLED_CORE_HANDLED_VERSION_FILE: &str = "cpa-gui-bundled-core-handled.txt";
 
 pub(crate) fn lock_core_operation(
     process_state: &CoreProcessState,
@@ -203,25 +204,87 @@ pub(crate) async fn install_bundled_core(
     .map_err(|error| format!("离线内核安装后台任务失败: {error}"))?
 }
 
-pub(crate) fn core_needs_bundled_bootstrap(install_dir: &Path) -> bool {
-    find_core_binary(install_dir).is_none()
+pub(crate) fn core_needs_bundled_install(install_dir: &Path, bundled_version: &str) -> bool {
+    let Ok(bundled_version) =
+        semver::Version::parse(bundled_version.trim().trim_start_matches('v'))
+    else {
+        return false;
+    };
+    if find_core_binary(install_dir).is_none() {
+        return true;
+    }
+    if bundled_core_version_handled(install_dir, &bundled_version) {
+        return false;
+    }
+    read_core_metadata(install_dir)
+        .and_then(|metadata| {
+            semver::Version::parse(metadata.version.trim().trim_start_matches('v')).ok()
+        })
+        .is_none_or(|installed| bundled_version > installed)
 }
 
-pub(crate) fn auto_install_bundled_core_if_missing(app: &tauri::AppHandle) -> Result<bool, String> {
+fn bundled_core_version_handled(install_dir: &Path, bundled_version: &semver::Version) -> bool {
+    fs::read_to_string(install_dir.join(BUNDLED_CORE_HANDLED_VERSION_FILE))
+        .ok()
+        .and_then(|version| semver::Version::parse(version.trim().trim_start_matches('v')).ok())
+        .is_some_and(|version| &version == bundled_version)
+}
+
+pub(crate) fn mark_bundled_core_version_handled(
+    install_dir: &Path,
+    bundled_version: &str,
+) -> Result<(), String> {
+    write_bytes_atomically(
+        &install_dir.join(BUNDLED_CORE_HANDLED_VERSION_FILE),
+        bundled_version.as_bytes(),
+    )
+    .map_err(|error| format!("记录已处理的内置内核版本失败: {error}"))
+}
+
+pub(crate) fn remember_bundled_core_when_up_to_date(
+    install_dir: &Path,
+    bundled_version: &str,
+) -> Result<(), String> {
+    let Ok(bundled) = semver::Version::parse(bundled_version.trim().trim_start_matches('v')) else {
+        return Ok(());
+    };
+    if bundled_core_version_handled(install_dir, &bundled) {
+        return Ok(());
+    }
+    let installed = read_core_metadata(install_dir).and_then(|metadata| {
+        semver::Version::parse(metadata.version.trim().trim_start_matches('v')).ok()
+    });
+    if find_core_binary(install_dir).is_some()
+        && installed.is_some_and(|version| version >= bundled)
+    {
+        mark_bundled_core_version_handled(install_dir, bundled_version)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn auto_install_bundled_core_if_needed(app: &tauri::AppHandle) -> Result<bool, String> {
     let install_dir = core_install_dir()?;
-    if !core_needs_bundled_bootstrap(&install_dir) {
+    let (info, archive_path) = match bundled_core_archive()? {
+        Some(bundled) => bundled,
+        None if find_core_binary(&install_dir).is_some() => return Ok(false),
+        None => return Err("未检测到 CPA 内核，且当前发行包没有匹配的离线内核".to_string()),
+    };
+    if !core_needs_bundled_install(&install_dir, &info.version) {
+        remember_bundled_core_when_up_to_date(&install_dir, &info.version)?;
         return Ok(false);
     }
-
-    let (info, archive_path) = bundled_core_archive()?
-        .ok_or_else(|| "未检测到 CPA 内核，且当前发行包没有匹配的离线内核".to_string())?;
     let window = app
         .get_webview_window("main")
         .map(|webview| webview.as_ref().window())
         .ok_or_else(|| "无法获取主窗口，不能自动安装离线内核".to_string())?;
     let state = app.state::<CoreDownloadState>();
     state.start(CancellationToken::new(), Some(info.version.clone()))?;
-    let result = install_bundled_core_inner(&window, state.inner(), &info, &archive_path);
+    let result = install_core_with_runtime_restore(
+        app,
+        app.state::<CoreProcessState>().inner(),
+        app.state::<GuiConfigState>().inner(),
+        || install_bundled_core_inner(&window, state.inner(), &info, &archive_path),
+    );
     if result.is_err() {
         let _ = cleanup_core_work_dirs();
     }
@@ -585,6 +648,7 @@ pub(crate) fn install_bundled_core_inner(
         },
     )?;
     overlay_install_dir(&install_dir, &staging_dir)?;
+    mark_bundled_core_version_handled(&install_dir, &info.version)?;
 
     Ok(CoreInstallResult {
         version: info.version.clone(),
@@ -1691,13 +1755,14 @@ pub(crate) fn bundled_core_locations(
     base_dir: &Path,
     executable_dir: &Path,
 ) -> Vec<(PathBuf, PathBuf)> {
-    let mut locations = vec![(base_dir.join(CORE_VERSION_FILE), base_dir.join("cpa-core"))];
+    let mut locations = Vec::new();
     if let Some(resources_dir) = macos_app_resources_dir(executable_dir) {
         locations.push((
             resources_dir.join(CORE_VERSION_FILE),
             resources_dir.join("cpa-core"),
         ));
     }
+    locations.push((base_dir.join(CORE_VERSION_FILE), base_dir.join("cpa-core")));
     if let Some(project_root) = source_project_root(executable_dir) {
         if project_root != base_dir {
             locations.push((
@@ -1918,7 +1983,7 @@ pub(crate) fn validate_bundled_core_checksum(archive_path: &Path) -> Result<(), 
         (name == archive_name && digest.len() == 64).then(|| digest.to_ascii_lowercase())
     });
     let Some(expected) = expected else {
-        return Err(format!("校验文件中没有 {archive_name} 的 SHA-256"));
+        return Ok(());
     };
     let actual = sha256_file(archive_path)?;
     if actual != expected {

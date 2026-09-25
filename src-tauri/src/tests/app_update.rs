@@ -352,18 +352,17 @@ fn portable_update_state_supports_cancellation_and_snapshot_recovery() {
         asset: portable_update_test_asset("1.2.3", "amd64"),
         arch: "amd64".to_string(),
     };
-    state.set_pending(
-        Some(pending),
-        AppUpdateTask {
-            phase: "available".to_string(),
-            target_version: Some("1.2.3".to_string()),
-            ..AppUpdateTask::default()
-        },
-    );
+    state.set_available(AppUpdateTask {
+        phase: "available".to_string(),
+        target_version: Some("1.2.3".to_string()),
+        ..AppUpdateTask::default()
+    });
 
     let token = CancellationToken::new();
-    let started = state.start(token.clone()).unwrap();
-    assert_eq!(started.version, "1.2.3");
+    state.start(token.clone()).unwrap();
+    assert_eq!(state.snapshot().phase, "checking");
+    assert!(state.start(CancellationToken::new()).is_err());
+    state.start_download(&pending).unwrap();
     let recovered = state.snapshot();
     assert!(recovered.running);
     assert!(recovered.cancellable);
@@ -375,6 +374,136 @@ fn portable_update_state_supports_cancellation_and_snapshot_recovery() {
     assert!(!finished.running);
     assert!(!finished.cancellable);
     assert_eq!(state.snapshot().phase, "cancelled");
+}
+
+#[tokio::test]
+async fn installing_refreshes_an_old_offer_and_bypasses_cached_manifest_responses() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/releases/latest/manifest.json",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut request = Vec::new();
+        loop {
+            let mut buffer = [0; 1024];
+            let count = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buffer))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(count > 0);
+            request.extend_from_slice(&buffer[..count]);
+            if request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let request = String::from_utf8(request).unwrap().to_ascii_lowercase();
+        let fresh = request.contains("manifest.json?_=")
+            && request.contains("cache-control: no-cache")
+            && request.contains("pragma: no-cache");
+        let manifest = portable_update_test_manifest(if fresh { "0.3.3" } else { "0.3.2" });
+        let assets: serde_json::Map<String, serde_json::Value> = manifest
+            .assets
+            .iter()
+            .map(|(key, asset)| {
+                (
+                    key.clone(),
+                    serde_json::json!({
+                        "url": asset.url, "sha256": asset.sha256, "sizeBytes": asset.size_bytes,
+                    }),
+                )
+            })
+            .collect();
+        let body = serde_json::json!({
+            "schemaVersion": 1, "version": manifest.version,
+            "publishedAt": manifest.published_at, "releaseUrl": manifest.release_url,
+            "assets": assets,
+        })
+        .to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let state = AppUpdateState::default();
+    state.set_available(AppUpdateTask {
+        phase: "available".to_string(),
+        target_version: Some("v0.3.2".to_string()),
+        total_bytes: Some(1),
+        ..AppUpdateTask::default()
+    });
+    let token = CancellationToken::new();
+    state.start(token.clone()).unwrap();
+    let pending = refresh_app_update_for_install(&state, &token, async {
+        let manifest = fetch_portable_update_manifest_url(&client, &url).await?;
+        let (key, arch) = portable_update_target().unwrap();
+        Ok(PendingAppUpdate {
+            version: normalize_version(&manifest.version),
+            asset: manifest.assets.get(key).unwrap().clone(),
+            arch: arch.to_string(),
+        })
+    })
+    .await
+    .unwrap();
+    server.await.unwrap();
+    assert_eq!(pending.version, "v0.3.3");
+    assert!(pending.asset.url.contains("/v0.3.3/"));
+    assert_eq!(state.snapshot().target_version.as_deref(), Some("v0.3.3"));
+    assert_eq!(state.snapshot().total_bytes, Some(pending.asset.size_bytes));
+    assert_eq!(state.snapshot().phase, "downloading");
+    state.set_available(AppUpdateTask::default());
+    assert_eq!(state.snapshot().target_version.as_deref(), Some("v0.3.3"));
+}
+
+#[tokio::test]
+async fn failed_or_cancelled_refresh_never_downloads_the_previous_offer() {
+    let state = AppUpdateState::default();
+    state.set_available(AppUpdateTask {
+        phase: "available".to_string(),
+        target_version: Some("v0.3.2".to_string()),
+        ..AppUpdateTask::default()
+    });
+    let token = CancellationToken::new();
+    state.start(token.clone()).unwrap();
+    let result = refresh_app_update_for_install(&state, &token, async {
+        Err("version check failed".to_string())
+    })
+    .await;
+    assert_eq!(result.err().as_deref(), Some("version check failed"));
+    assert_eq!(state.snapshot().phase, "checking");
+    assert!(state.snapshot().target_version.is_none());
+    state.finish("failed", None);
+
+    let token = CancellationToken::new();
+    state.start(token.clone()).unwrap();
+    let refresh = refresh_app_update_for_install(
+        &state,
+        &token,
+        std::future::pending::<Result<PendingAppUpdate, String>>(),
+    );
+    let (result, _) = tokio::join!(refresh, async {
+        state.cancel();
+    });
+    assert_eq!(result.err().as_deref(), Some("应用更新下载已取消"));
+    assert!(state.snapshot().target_version.is_none());
+    let pending = PendingAppUpdate {
+        version: "v0.3.3".to_string(),
+        asset: portable_update_test_asset("0.3.3", "amd64"),
+        arch: "amd64".to_string(),
+    };
+    assert!(state.start_download(&pending).is_err());
 }
 
 #[test]

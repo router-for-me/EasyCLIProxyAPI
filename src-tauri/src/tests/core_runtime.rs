@@ -656,17 +656,153 @@ fn replacing_a_core_rejects_locked_config_without_using_defaults() {
 }
 
 #[test]
-fn bundled_core_bootstrap_runs_only_when_no_core_binary_exists() {
+fn bundled_core_install_handles_missing_and_unversioned_binaries() {
     let root = agent_test_home("bundled-bootstrap-detection");
     let install_dir = root.join("cpa-core");
 
-    assert!(core_needs_bundled_bootstrap(&install_dir));
+    assert!(core_needs_bundled_install(&install_dir, "v7.3.17"));
 
     let existing_version = install_dir.join("existing-version");
     fs::create_dir_all(&existing_version).unwrap();
     fs::write(existing_version.join(core_binary_name()), b"existing core").unwrap();
 
-    assert!(!core_needs_bundled_bootstrap(&install_dir));
+    assert!(core_needs_bundled_install(&install_dir, "v7.3.17"));
+    assert!(!core_needs_bundled_install(&install_dir, "invalid"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bundled_core_install_replaces_older_installs_without_downgrading() {
+    let root = agent_test_home("bundled-upgrade-detection");
+    let install_dir = root.join("cpa-core");
+    fs::create_dir_all(&install_dir).unwrap();
+    fs::write(install_dir.join(core_binary_name()), b"installed core").unwrap();
+
+    for (installed, bundled, should_install) in [
+        ("v7.3.9", "v7.3.17", true),
+        ("7.3.15", "v7.3.17", true),
+        ("v7.3.17-beta.1", "v7.3.17", true),
+        ("v7.3.17", "7.3.17", false),
+        ("v7.3.18", "v7.3.17", false),
+        ("unknown", "v7.3.17", true),
+        ("v7.3.15", "invalid", false),
+    ] {
+        write_core_metadata(
+            &install_dir,
+            &CoreMetadata {
+                version: installed.to_string(),
+                asset_name: "installed-core.zip".to_string(),
+                installed_at_unix: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            core_needs_bundled_install(&install_dir, bundled),
+            should_install,
+            "installed {installed}, bundled {bundled}"
+        );
+    }
+
+    fs::remove_file(install_dir.join(core_binary_name())).unwrap();
+    assert!(core_needs_bundled_install(&install_dir, "v7.3.17"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn handled_bundled_core_does_not_undo_a_manual_rollback_on_restart() {
+    let root = agent_test_home("bundled-manual-rollback");
+    let install_dir = root.join("cpa-core");
+    fs::create_dir_all(&install_dir).unwrap();
+    let binary = install_dir.join(core_binary_name());
+    fs::write(&binary, b"installed core").unwrap();
+    write_core_metadata(
+        &install_dir,
+        &CoreMetadata {
+            version: "v7.3.15".to_string(),
+            asset_name: "installed-core.zip".to_string(),
+            installed_at_unix: 0,
+        },
+    )
+    .unwrap();
+
+    assert!(core_needs_bundled_install(&install_dir, "v7.3.17"));
+    remember_bundled_core_when_up_to_date(&install_dir, "v7.3.17").unwrap();
+    assert!(core_needs_bundled_install(&install_dir, "v7.3.17"));
+
+    mark_bundled_core_version_handled(&install_dir, "v7.3.17").unwrap();
+    assert!(!core_needs_bundled_install(&install_dir, "v7.3.17"));
+    assert!(core_needs_bundled_install(&install_dir, "v7.3.18"));
+
+    fs::remove_file(binary).unwrap();
+    assert!(core_needs_bundled_install(&install_dir, "v7.3.17"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_already_newer_core_satisfies_the_bundle_after_manual_rollback() {
+    let root = agent_test_home("bundled-newer-manual-rollback");
+    let install_dir = root.join("cpa-core");
+    fs::create_dir_all(&install_dir).unwrap();
+    fs::write(install_dir.join(core_binary_name()), b"installed core").unwrap();
+    write_core_metadata(
+        &install_dir,
+        &CoreMetadata {
+            version: "v7.3.18".to_string(),
+            asset_name: "installed-core.zip".to_string(),
+            installed_at_unix: 0,
+        },
+    )
+    .unwrap();
+
+    assert!(!core_needs_bundled_install(&install_dir, "v7.3.17"));
+    remember_bundled_core_when_up_to_date(&install_dir, "v7.3.17").unwrap();
+    write_core_metadata(
+        &install_dir,
+        &CoreMetadata {
+            version: "v7.3.15".to_string(),
+            asset_name: "manual-rollback.zip".to_string(),
+            installed_at_unix: 1,
+        },
+    )
+    .unwrap();
+    assert!(!core_needs_bundled_install(&install_dir, "v7.3.17"));
+    assert!(core_needs_bundled_install(&install_dir, "v7.3.19"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn stale_core_checksums_do_not_block_a_new_bundled_archive() {
+    let root = agent_test_home("bundled-stale-checksums");
+    let archive = root.join("CLIProxyAPI_7.3.17_windows_amd64.zip");
+    fs::write(&archive, b"new bundled core").unwrap();
+    fs::write(
+        root.join(CORE_CHECKSUMS_FILE),
+        format!("{}  CLIProxyAPI_7.3.15_windows_amd64.zip\n", "a".repeat(64)),
+    )
+    .unwrap();
+    validate_bundled_core_checksum(&archive).unwrap();
+
+    fs::write(
+        root.join(CORE_CHECKSUMS_FILE),
+        format!(
+            "{}  {}\n",
+            "a".repeat(64),
+            archive.file_name().unwrap().to_string_lossy()
+        ),
+    )
+    .unwrap();
+    assert!(validate_bundled_core_checksum(&archive).is_err());
+
+    fs::write(
+        root.join(CORE_CHECKSUMS_FILE),
+        format!(
+            "{}  {}\n",
+            sha256_file(&archive).unwrap(),
+            archive.file_name().unwrap().to_string_lossy()
+        ),
+    )
+    .unwrap();
+    validate_bundled_core_checksum(&archive).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -686,7 +822,8 @@ fn bundled_core_locations_include_macos_app_resources() {
         macos_app_resources_dir(&executable_dir),
         Some(contents_dir.join("Resources"))
     );
-    assert!(bundled_core_locations(&base_dir, &executable_dir).contains(&resource_location));
+    let locations = bundled_core_locations(&base_dir, &executable_dir);
+    assert_eq!(locations.first(), Some(&resource_location));
 }
 
 #[test]

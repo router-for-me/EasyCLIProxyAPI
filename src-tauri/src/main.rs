@@ -309,7 +309,6 @@ struct AppUpdateState {
 struct AppUpdateInner {
     task: AppUpdateTask,
     token: Option<CancellationToken>,
-    pending: Option<PendingAppUpdate>,
 }
 
 #[derive(Default)]
@@ -1772,16 +1771,15 @@ impl AppUpdateState {
             .unwrap_or_default()
     }
 
-    fn set_pending(&self, pending: Option<PendingAppUpdate>, task: AppUpdateTask) {
+    fn set_available(&self, task: AppUpdateTask) {
         if let Ok(mut inner) = self.inner.lock() {
-            inner.pending = pending;
             if !inner.task.running {
                 inner.task = task;
             }
         }
     }
 
-    fn start(&self, token: CancellationToken) -> Result<PendingAppUpdate, String> {
+    fn start(&self, token: CancellationToken) -> Result<(), String> {
         let mut inner = self
             .inner
             .lock()
@@ -1789,11 +1787,31 @@ impl AppUpdateState {
         if inner.task.running {
             return Err("已有应用更新任务正在运行".to_string());
         }
-        let pending = inner
-            .pending
-            .clone()
-            .ok_or_else(|| "没有可安装的应用更新，请先检查更新".to_string())?;
         inner.token = Some(token);
+        inner.task = AppUpdateTask {
+            running: true,
+            cancellable: true,
+            phase: "checking".to_string(),
+            ..AppUpdateTask::default()
+        };
+        Ok(())
+    }
+
+    fn start_download(&self, pending: &PendingAppUpdate) -> Result<(), String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| "应用更新状态锁已损坏".to_string())?;
+        if !inner.task.running || inner.task.phase != "checking" {
+            return Err("应用更新未处于检查阶段".to_string());
+        }
+        if inner
+            .token
+            .as_ref()
+            .is_none_or(CancellationToken::is_cancelled)
+        {
+            return Err("应用更新下载已取消".to_string());
+        }
         inner.task = AppUpdateTask {
             running: true,
             cancellable: true,
@@ -1804,7 +1822,7 @@ impl AppUpdateState {
             percent: Some(0.0),
             message: None,
         };
-        Ok(pending)
+        Ok(())
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -2563,8 +2581,8 @@ fn main() {
                     }
                 }
 
-                match auto_install_bundled_core_if_missing(&core_app) {
-                    Ok(true) => eprintln!("未检测到 CPA 内核，已自动安装内置离线版本"),
+                match auto_install_bundled_core_if_needed(&core_app) {
+                    Ok(true) => eprintln!("已自动安装或升级至软件内置的 CPA 内核版本"),
                     Ok(false) => {}
                     Err(error) => eprintln!("自动安装 CPA 离线内核失败: {error}"),
                 }
