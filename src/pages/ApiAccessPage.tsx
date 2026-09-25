@@ -73,6 +73,7 @@ import {
   type ProviderModelHealthResult,
 } from '../services/providerHealthCheck';
 import { modelMatchesRule } from '../services/oauthModels';
+import { normalizeProviderProxyUrl } from '../services/providerProxy';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
@@ -207,6 +208,9 @@ export type ProviderDraft = {
   apiKey: string;
   remark: string;
   baseUrl: string;
+  proxyUrl?: string;
+  proxyUrlEdited?: boolean;
+  proxyUrlMixed?: boolean;
   priority: string;
   models: ModelOption[];
   modelSelectionCatalog?: ModelOption[];
@@ -600,6 +604,24 @@ const thinkingLevelsFromModels = (models: ModelOption[]): string[] => {
   return levels;
 };
 
+export const providerProxyDraftFromRecord = (
+  section: ProviderSection,
+  record: Record<string, unknown>,
+): Pick<ProviderDraft, 'proxyUrl' | 'proxyUrlEdited' | 'proxyUrlMixed'> => {
+  const entries = definitionFor(section).openAi && Array.isArray(record['api-key-entries'])
+    ? record['api-key-entries'].filter(isRecord)
+    : [];
+  const proxyUrlMixed = entries.some((entry) =>
+    readString(entry, 'proxy-url', 'proxyUrl') !== readString(entries[0], 'proxy-url', 'proxyUrl'));
+  return {
+    proxyUrl: definitionFor(section).openAi
+      ? proxyUrlMixed ? '' : readString(entries[0], 'proxy-url', 'proxyUrl')
+      : readString(record, 'proxy-url', 'proxyUrl'),
+    proxyUrlEdited: false,
+    proxyUrlMixed,
+  };
+};
+
 const draftFromRow = (row: ProviderRow): ProviderDraft => {
   const definition = definitionFor(row.section);
   const isDeepSeek = row.section === 'codex-api-key' && isDeepSeekRecord(row.record);
@@ -608,6 +630,7 @@ const draftFromRow = (row: ProviderRow): ProviderDraft => {
     apiKey: definition.openAi ? row.apiKeys.join('\n') : row.apiKey,
     remark: row.remark || (definition.openAi && !isDeepSeek ? row.name : ''),
     baseUrl: row.baseUrl,
+    ...providerProxyDraftFromRecord(row.section, row.record),
     priority: row.priority === null ? '' : String(row.priority),
     models: row.models,
     prefix: readString(row.record, 'prefix'),
@@ -645,6 +668,7 @@ const emptyProviderDraft = (): ProviderDraft => ({
   apiKey: '',
   remark: '',
   baseUrl: '',
+  proxyUrl: '',
   priority: '',
   models: [],
   prefix: '',
@@ -812,14 +836,19 @@ export const buildProviderRecord = (
   const priority = priorityText ? Number(priorityText) : null;
   const models = mergeModelRecords(record.models, draft.models);
   if (definitionFor(section).openAi) {
+    const entries = mergeOpenAiApiKeyEntries(record['api-key-entries'], draft.apiKey.trim());
+    if (draft.proxyUrlEdited !== false && draft.proxyUrl !== undefined) {
+      const proxyUrl = draft.proxyUrl.trim();
+      entries.forEach((entry) => {
+        if (proxyUrl) entry['proxy-url'] = proxyUrl;
+        else delete entry['proxy-url'];
+      });
+    }
     const next: Record<string, unknown> = {
       ...record,
       name: draft.name.trim(),
       'base-url': draft.baseUrl.trim(),
-      'api-key-entries': mergeOpenAiApiKeyEntries(
-        record['api-key-entries'],
-        draft.apiKey.trim(),
-      ),
+      'api-key-entries': entries,
       models,
     };
     if (priority !== null && Number.isFinite(priority)) next.priority = priority;
@@ -837,6 +866,11 @@ export const buildProviderRecord = (
   }
   if (draft.baseUrl.trim()) next['base-url'] = draft.baseUrl.trim();
   else delete next['base-url'];
+  if (draft.proxyUrl !== undefined && draft.proxyUrlEdited !== false) {
+    const proxyUrl = draft.proxyUrl.trim();
+    if (proxyUrl) next['proxy-url'] = proxyUrl;
+    else delete next['proxy-url'];
+  }
   if (priority !== null && Number.isFinite(priority)) next.priority = priority;
   else delete next.priority;
   return applyAdvancedFields(next, section, draft);
@@ -1133,9 +1167,17 @@ export function ApiAccessPage() {
       return { saved: false, target: 'form', error: t('apiAccess.error.remarkInvalid') };
     }
     let baseUrl = preparedDraft.baseUrl.trim();
+    let proxyUrl = preparedDraft.proxyUrl ?? '';
     let providerHeaders: Record<string, string> = {};
     try {
       if (baseUrl) baseUrl = normalizeBaseUrl(baseUrl);
+      if (preparedDraft.proxyUrlEdited !== false) {
+        try {
+          proxyUrl = normalizeProviderProxyUrl(proxyUrl);
+        } catch {
+          throw new Error(t('apiAccess.error.proxyUrlInvalid'));
+        }
+      }
       if (baseUrlRequired && !baseUrl) throw new Error(t('apiAccess.error.baseRequired', { provider: t(definition.labelKey) }));
       providerHeaders = parseProviderHeaders(preparedDraft.headersText ?? '');
     } catch (requestError) {
@@ -1144,7 +1186,7 @@ export function ApiAccessPage() {
     setBusy(true);
     setError('');
     try {
-      let draftToSave = { ...preparedDraftForSave, baseUrl };
+      let draftToSave: ProviderDraft = { ...preparedDraftForSave, baseUrl, proxyUrl };
       if (
         definition.openAi
         && activeCategory !== 'deepseek'
@@ -1820,7 +1862,7 @@ export function ApiProviderDialog({
   ), [modelOptions, selectedModelNames]);
 
   const updateTextField = (
-    field: 'apiKey' | 'remark' | 'baseUrl' | 'priority' | 'prefix' | 'headersText' | 'excludedModelsText' | 'testModel' | 'cloakMode' | 'cloakSensitiveWordsText',
+    field: 'apiKey' | 'remark' | 'baseUrl' | 'proxyUrl' | 'priority' | 'prefix' | 'headersText' | 'excludedModelsText' | 'testModel' | 'cloakMode' | 'cloakSensitiveWordsText',
     value: string,
   ) => {
     setFormError('');
@@ -1833,6 +1875,7 @@ export function ApiProviderDialog({
     setDraft((current) => ({
       ...current,
       [field]: value,
+      ...(field === 'proxyUrl' ? { proxyUrlEdited: true, proxyUrlMixed: false } : {}),
       ...(field === 'excludedModelsText' ? { modelSelectionCatalog: undefined } : {}),
     }));
   };
@@ -2052,6 +2095,8 @@ export function ApiProviderDialog({
           />
         </label>
         <label><span>{t('apiAccess.field.baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
+        <label><span>{t('apiAccess.field.proxyUrl')}</span><input value={draft.proxyUrl ?? ''} onChange={(event) => updateTextField('proxyUrl', event.currentTarget.value)} placeholder={draft.proxyUrlMixed ? t('apiAccess.proxyMixed') : 'socks5://127.0.0.1:1080'} /></label>
+        {draft.proxyUrlMixed ? <button type="button" className="secondary-button compact-button api-provider-proxy-clear" onClick={() => updateTextField('proxyUrl', '')}>{t('apiAccess.proxyClear')}</button> : null}
         {activeCategory === 'openai-compatibility' ? (
           <div className="thinking-level-config">
             <div className="thinking-level-heading">

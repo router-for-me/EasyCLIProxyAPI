@@ -5153,6 +5153,10 @@ textarea:focus-visible {
   height: 36px;
 }
 
+.api-provider-dialog .api-provider-proxy-clear {
+  justify-self: start;
+}
+
 .api-provider-dialog textarea {
   min-height: 64px;
   padding-block: 7px;

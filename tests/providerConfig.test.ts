@@ -13,6 +13,7 @@ import {
   parseProviderApiKeys,
   providerCategoryMatchesRecord,
   providerDragId,
+  providerProxyDraftFromRecord,
   providerRecordWithDisabledState,
   providerRemarkIdentity,
   providerSectionOrder,
@@ -436,6 +437,74 @@ describe('API 接入配置合并', () => {
       websockets: true,
     });
     expect(result['proxy-url']).toBeUndefined();
+  });
+
+  it('为单个 API 接入保存、更新和清除代理 URL', () => {
+    const draft = {
+      ...createProviderDraft('codex-api-key'),
+      apiKey: 'codex-key',
+      baseUrl: 'https://api.example.com',
+      proxyUrl: 'socks5://127.0.0.1:1080',
+    };
+    const saved = buildProviderRecord('codex-api-key', draft);
+    expect(saved['proxy-url']).toBe('socks5://127.0.0.1:1080');
+    expect(buildProviderRecord('codex-api-key', { ...draft, proxyUrl: 'direct' }, saved)['proxy-url']).toBe('direct');
+    expect(buildProviderRecord('codex-api-key', { ...draft, proxyUrl: '' }, saved)['proxy-url']).toBeUndefined();
+    expect(buildProviderRecord('codex-api-key', { ...draft, proxyUrl: '', proxyUrlEdited: false }, saved)['proxy-url'])
+      .toBe('socks5://127.0.0.1:1080');
+  });
+
+  it('每条 API 接入记录独立设置代理', () => {
+    const current = {
+      name: 'openrouter',
+      'api-key-entries': [
+        { 'api-key': 'first', 'proxy-url': 'direct' },
+        { 'api-key': 'second', 'proxy-url': 'socks5://localhost:1080' },
+      ],
+    };
+    const draft = {
+      ...createProviderDraft('openai-compatibility'),
+      ...providerProxyDraftFromRecord('openai-compatibility', current),
+      name: 'openrouter',
+      apiKey: 'first\nsecond',
+      baseUrl: 'https://openrouter.ai/api/v1',
+    };
+    expect(draft.proxyUrl).toBe('');
+    expect(draft.proxyUrlEdited).toBe(false);
+    expect(draft.proxyUrlMixed).toBe(true);
+    const preserved = buildProviderRecord('openai-compatibility', draft, current);
+    expect(preserved['api-key-entries']).toEqual(current['api-key-entries']);
+
+    const cleared = buildProviderRecord('openai-compatibility', {
+      ...draft,
+      proxyUrl: '',
+      proxyUrlEdited: true,
+      proxyUrlMixed: false,
+    }, current);
+    expect(cleared['api-key-entries']).toEqual([
+      { 'api-key': 'first' },
+      { 'api-key': 'second' },
+    ]);
+
+    const updated = buildProviderRecord('openai-compatibility', {
+      ...draft,
+      proxyUrl: 'http://127.0.0.1:7890',
+      proxyUrlEdited: true,
+    }, current);
+    expect(updated['api-key-entries']).toEqual([
+      { 'api-key': 'first', 'proxy-url': 'http://127.0.0.1:7890' },
+      { 'api-key': 'second', 'proxy-url': 'http://127.0.0.1:7890' },
+    ]);
+    const other = buildProviderRecord('openai-compatibility', {
+      ...createProviderDraft('openai-compatibility'),
+      name: 'another-entry',
+      apiKey: 'third',
+      baseUrl: 'https://other.example/v1',
+      proxyUrl: 'socks5://127.0.0.1:1080',
+    });
+    expect(other['api-key-entries']).toEqual([
+      { 'api-key': 'third', 'proxy-url': 'socks5://127.0.0.1:1080' },
+    ]);
   });
 
   it('编辑已停用的普通提供商时保留停用规则', () => {

@@ -37,6 +37,7 @@ import {
   type ModelOption,
   type ModelProvider,
 } from "../services/modelService";
+import { normalizeProviderProxyUrl } from "../services/providerProxy";
 import { type ThemePreference } from "../theme";
 import { AgentsPage } from "./AgentsPage";
 
@@ -132,6 +133,7 @@ export function EasyModePage({
 
   const [selectedApiSection, setSelectedApiSection] = useState<ApiSection>("openai-compatibility");
   const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const [apiProxyUrl, setApiProxyUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiRemark, setApiRemark] = useState("");
   const [apiTesting, setApiTesting] = useState(false);
@@ -409,6 +411,13 @@ export function EasyModePage({
       setApiTestError({ key: "easyMode.api.fetchListFirst" });
       return;
     }
+    let proxyUrl: string;
+    try {
+      proxyUrl = normalizeProviderProxyUrl(apiProxyUrl);
+    } catch {
+      setApiTestError({ key: "apiAccess.error.proxyUrlInvalid" });
+      return;
+    }
     setApiSaving(true);
     clearApiNotice();
     setApiTestError("");
@@ -426,13 +435,14 @@ export function EasyModePage({
           name: apiRemark.trim() || `${selectedApiSection} (${list.length + 1})`,
           "base-url": normalizeBaseUrl(apiBaseUrl.trim()),
           "api-key-entries": [
-            { "api-key": apiKey.trim() },
+            { "api-key": apiKey.trim(), ...(proxyUrl ? { "proxy-url": proxyUrl } : {}) },
           ],
           models,
         }
         : {
           ...(selectedApiSection === "deepseek" ? { name: "DeepSeek" } : {}),
           "api-key": apiKey.trim(),
+          ...(proxyUrl ? { "proxy-url": proxyUrl } : {}),
           "base-url": normalizeBaseUrl(apiBaseUrl.trim()),
           models,
         };
@@ -945,6 +955,17 @@ export function EasyModePage({
                       placeholder="sk-..."
                     />
                   </div>
+                </div>
+
+                <div className="simple-mode-field">
+                  <label>{t("apiAccess.field.proxyUrl")}</label>
+                  <input
+                    type="text"
+                    className="text-input"
+                    value={apiProxyUrl}
+                    onChange={(event) => { setApiProxyUrl(event.target.value); setGuideApiSaved(false); }}
+                    placeholder="socks5://127.0.0.1:1080"
+                  />
                 </div>
 
                 <div className="simple-mode-api-model-card">
