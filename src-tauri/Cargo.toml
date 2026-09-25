@@ -18,7 +18,7 @@ getrandom = "0.3"
 json5 = "0.4"
 notify = "7"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["gzip", "json", "rustls-tls", "socks", "stream"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }

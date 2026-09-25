@@ -23,10 +23,16 @@ mockIPC(async (cmd) => {
     rows: [{ model: 'test-model', requests: 1, totalTokens: 100, estimatedCost: 0, price: null }],
     totalCost: 0, totalRequests: 1, pricedRequests: 0, savedPrices: 0,
   };
-  if (cmd === 'sync_usage_model_prices') {
+  if (cmd === 'preview_usage_model_prices') {
     if (fixture.feedbackFixture.failSync) throw new Error('price sync failed');
-    return { imported: 77, skipped: 0, unmatched: ['test-model'], usedBuiltin: false };
+    return {
+      source: 'Models.dev', sourceUrl: 'https://models.dev/api.json', unmatched: [],
+      matches: [{ model: 'test-model', prompt: 2, completion: 6, cache: 0, cacheRead: 0, cacheCreation: 0,
+        promptConfigured: true, completionConfigured: true, cacheReadConfigured: false, cacheCreationConfigured: false,
+        source: 'models.dev', sourceModelId: 'openai/test-model', updatedAtMs: 0 }],
+    };
   }
+  if (cmd === 'apply_usage_model_prices') return { imported: 1 };
   if (cmd === 'save_usage_model_price' || cmd === 'delete_usage_model_price') return null;
   throw new Error('Unexpected fixture command: ' + cmd);
 }, { shouldMockEvents: true });

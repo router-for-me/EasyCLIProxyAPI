@@ -60,9 +60,21 @@ const SQLITE_BUSY_TIMEOUT_SECONDS: u64 = 5;
 const BYTES_PER_MB: u64 = 1024 * 1024;
 const TOKENS_PER_PRICE_UNIT: f64 = 1_000_000.0;
 const LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
+const GROK_47_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 200_000;
+const GROK_47_MODEL_SQL: &str = concat!(
+    "(LOWER(TRIM(model)) = 'grok-4.7'",
+    " OR LOWER(TRIM(model)) LIKE 'grok-4.7-%'",
+    " OR LOWER(TRIM(model)) LIKE '%/grok-4.7'",
+    " OR LOWER(TRIM(model)) LIKE '%/grok-4.7-%')"
+);
 const BUNDLED_MODEL_PRICE_CATALOG: &str = include_str!("../resources/model_prices.json");
-const MODEL_PRICE_SYNC_URL: &str =
-    "https://raw.githubusercontent.com/router-for-me/EasyCLIProxyAPI/main/src-tauri/resources/model_prices.json";
+const MODEL_PRICE_SYNC_URL: &str = "https://models.dev/api.json";
+const LITELLM_PRICE_SYNC_URL: &str =
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const MODEL_PRICE_SYNC_MAX_BYTES: usize = 16 * 1024 * 1024;
+const MODEL_PRICE_SYNC_ATTEMPTS: usize = 2;
+const USAGE_DISPLAY_MODEL_SQL: &str =
+    "COALESCE(NULLIF(TRIM(alias), ''), NULLIF(TRIM(model), ''), 'unknown')";
 
 static USAGE_QUERY_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
@@ -337,7 +349,6 @@ pub(crate) struct ModelPrice {
     model: String,
     prompt: f64,
     completion: f64,
-    cache: f64,
     cache_read: f64,
     cache_creation: f64,
     prompt_configured: bool,
@@ -405,13 +416,19 @@ struct UsagePriceRow {
     price: Option<ModelPrice>,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelPriceSyncResult {
     imported: usize,
-    skipped: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelPriceSyncPreview {
+    source: String,
+    source_url: String,
+    matches: Vec<ModelPrice>,
     unmatched: Vec<String>,
-    used_builtin: bool,
 }
 
 struct UsageCostGroup {
@@ -2806,7 +2823,12 @@ fn build_usage_filter(query: &UsageQuery) -> UsageSqlFilter {
         clauses.push("timestamp_ms <= ?".to_string());
         params.push(SqlValue::Integer(end));
     }
-    add_text_filter(&mut clauses, &mut params, "model", query.model.as_deref());
+    add_text_filter(
+        &mut clauses,
+        &mut params,
+        USAGE_DISPLAY_MODEL_SQL,
+        query.model.as_deref(),
+    );
     add_text_filter(
         &mut clauses,
         &mut params,
@@ -2961,7 +2983,7 @@ fn load_usage_overview(
                     END
                 ELSE local_hour || '-00'
             END,
-            COALESCE(NULLIF(TRIM(model), ''), 'unknown'),
+            {USAGE_DISPLAY_MODEL_SQL},
             COUNT(*),
             COALESCE(SUM(CASE WHEN failed = 0 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN failed != 0 AND canceled = 0 THEN 1 ELSE 0 END), 0),
@@ -3079,6 +3101,9 @@ fn load_usage_cost_groups(
     connection: &Connection,
     filter: &UsageSqlFilter,
 ) -> Result<Vec<UsageCostGroup>, String> {
+    let long_context_sql = format!(
+        "input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} OR (input_tokens > {GROK_47_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} AND {GROK_47_MODEL_SQL})"
+    );
     let sql = format!(
         r#"
         SELECT
@@ -3094,10 +3119,10 @@ fn load_usage_cost_groups(
             COALESCE(SUM(output_tokens), 0),
             COALESCE(SUM(cache_read_tokens), 0),
             COALESCE(SUM(cache_creation_tokens), 0),
-            COALESCE(SUM(CASE WHEN input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} THEN input_tokens ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} THEN output_tokens ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} THEN cache_read_tokens ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN input_tokens > {LONG_CONTEXT_INPUT_TOKEN_THRESHOLD} THEN cache_creation_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN ({long_context_sql}) THEN input_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN ({long_context_sql}) THEN output_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN ({long_context_sql}) THEN cache_read_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN ({long_context_sql}) THEN cache_creation_tokens ELSE 0 END), 0),
             COALESCE(SUM(total_tokens), 0)
         FROM usage_events{}
         GROUP BY model, alias, service_tier, response_service_tier, executor_type, provider, auth_type
@@ -3163,6 +3188,11 @@ fn sum_usage_cost(groups: &[UsageCostGroup], prices: &HashMap<String, ModelPrice
 
 fn cost_for_price(model: &str, service_tier: &str, tokens: &CostTokens, price: &ModelPrice) -> f64 {
     let price = enriched_model_price(model, price);
+    let long_output_multiplier = if is_model_family(model, "grok-4.7") {
+        2.0
+    } else {
+        1.5
+    };
     let short_cost = cost_for_token_segment(
         tokens.input.saturating_sub(tokens.long_input),
         tokens.output.saturating_sub(tokens.long_output),
@@ -3181,10 +3211,13 @@ fn cost_for_price(model: &str, service_tier: &str, tokens: &CostTokens, price: &
         tokens.long_cache_creation,
         &price,
         2.0,
-        1.5,
+        long_output_multiplier,
     );
     let tier = service_tier.trim().to_ascii_lowercase();
-    let multiplier = if tokens.long_input > 0 && matches!(tier.as_str(), "priority" | "fast") {
+    let multiplier = if tokens.long_input > 0
+        && matches!(tier.as_str(), "priority" | "fast")
+        && !is_model_family(model, "gpt-6")
+    {
         1.0
     } else {
         match tier.as_str() {
@@ -3253,7 +3286,6 @@ fn parse_model_price_catalog(
             model: model.trim().to_string(),
             prompt: entry.input_per_1_m,
             completion: entry.output_per_1_m,
-            cache: cache_read,
             cache_read,
             cache_creation,
             prompt_configured: true,
@@ -3266,6 +3298,113 @@ fn parse_model_price_catalog(
         };
         validate_model_price(&price)?;
         prices.insert(price.model.clone(), price);
+    }
+    Ok(prices)
+}
+
+fn parse_models_dev_prices(
+    content: &str,
+    updated_at_ms: i64,
+) -> Result<Vec<ModelPrice>, String> {
+    let catalog: Value = serde_json::from_str(content)
+        .map_err(|error| format!("解析 models.dev 价格失败: {error}"))?;
+    let providers = catalog
+        .get("providers")
+        .and_then(Value::as_object)
+        .or_else(|| catalog.as_object())
+        .ok_or("models.dev 价格目录格式无效")?;
+    let mut prices = Vec::new();
+    for (provider, entry) in providers {
+        let Some(models) = entry
+            .get("models")
+            .and_then(Value::as_object)
+        else {
+            continue;
+        };
+        for (model_id, entry) in models {
+            let Some(cost) = entry.get("cost") else {
+                continue;
+            };
+            let (Some(prompt), Some(completion)) = (
+                cost.get("input").and_then(Value::as_f64),
+                cost.get("output").and_then(Value::as_f64),
+            ) else {
+                continue;
+            };
+            let cache_read = cost.get("cache_read").and_then(Value::as_f64);
+            let cache_creation = cost.get("cache_write").and_then(Value::as_f64);
+            let price = ModelPrice {
+                model: model_id.trim().to_string(),
+                prompt,
+                completion,
+                cache_read: cache_read.unwrap_or(0.0),
+                cache_creation: cache_creation.unwrap_or(0.0),
+                prompt_configured: true,
+                completion_configured: true,
+                cache_read_configured: cache_read.is_some(),
+                cache_creation_configured: cache_creation.is_some(),
+                source: "models.dev".to_string(),
+                source_model_id: format!("{provider}/{model_id}"),
+                updated_at_ms,
+            };
+            validate_model_price(&price)?;
+            prices.push(price);
+        }
+    }
+    if prices.is_empty() {
+        return Err("models.dev 没有可用的模型价格".to_string());
+    }
+    Ok(prices)
+}
+
+fn parse_litellm_prices(content: &str, updated_at_ms: i64) -> Result<Vec<ModelPrice>, String> {
+    let catalog: Value = serde_json::from_str(content)
+        .map_err(|error| format!("解析 LiteLLM 价格失败: {error}"))?;
+    let models = catalog.as_object().ok_or("LiteLLM 价格目录格式无效")?;
+    let mut prices = Vec::new();
+    for (model_id, entry) in models {
+        let mode = entry.get("mode").and_then(Value::as_str).unwrap_or_default();
+        if !matches!(mode, "chat" | "completion" | "responses") {
+            continue;
+        }
+        if let Some(modalities) = entry.get("supported_output_modalities").and_then(Value::as_array) {
+            if !modalities.iter().any(|value| value.as_str() == Some("text")) {
+                continue;
+            }
+        }
+        let (Some(prompt), Some(completion)) = (
+            entry.get("input_cost_per_token").and_then(Value::as_f64),
+            entry.get("output_cost_per_token").and_then(Value::as_f64),
+        ) else {
+            continue;
+        };
+        let cache_read = entry
+            .get("cache_read_input_token_cost")
+            .and_then(Value::as_f64)
+            .or_else(|| entry.get("input_cost_per_token_cache_hit").and_then(Value::as_f64));
+        let cache_creation = entry
+            .get("cache_creation_input_token_cost")
+            .and_then(Value::as_f64);
+        let price = ModelPrice {
+            model: model_id.trim().to_string(),
+            prompt: prompt * TOKENS_PER_PRICE_UNIT,
+            completion: completion * TOKENS_PER_PRICE_UNIT,
+            cache_read: cache_read.unwrap_or(0.0) * TOKENS_PER_PRICE_UNIT,
+            cache_creation: cache_creation.unwrap_or(0.0) * TOKENS_PER_PRICE_UNIT,
+            prompt_configured: true,
+            completion_configured: true,
+            cache_read_configured: cache_read.is_some(),
+            cache_creation_configured: cache_creation.is_some(),
+            source: "litellm-sync".to_string(),
+            source_model_id: model_id.clone(),
+            updated_at_ms,
+        };
+        if validate_model_price(&price).is_ok() {
+            prices.push(price);
+        }
+    }
+    if prices.is_empty() {
+        return Err("LiteLLM 没有可用的模型价格".to_string());
     }
     Ok(prices)
 }
@@ -3331,21 +3470,6 @@ fn enriched_model_price(model: &str, price: &ModelPrice) -> ModelPrice {
             price.completion = official.completion;
         }
     }
-    if !price.cache_read_configured && price.cache_read <= 0.0 {
-        price.cache_read = if price.cache > 0.0 {
-            price.cache
-        } else {
-            price.prompt * 0.1
-        };
-    }
-    if !price.cache_creation_configured && price.cache_creation <= 0.0 {
-        price.cache_creation = price.prompt
-            * if is_model_family(model, "gpt-5.6") {
-                1.25
-            } else {
-                1.0
-            };
-    }
     price
 }
 
@@ -3363,7 +3487,8 @@ fn is_model_family(model: &str, family: &str) -> bool {
 fn service_tier_multiplier(model: &str) -> f64 {
     if is_model_family(model, "gpt-5.5") {
         2.5
-    } else if is_model_family(model, "gpt-5.6")
+    } else if is_model_family(model, "gpt-6")
+        || is_model_family(model, "gpt-5.6")
         || is_model_family(model, "gpt-5.4")
         || is_model_family(model, "gpt-5.4-mini")
         || is_model_family(model, "gpt-5.3-codex")
@@ -3379,7 +3504,7 @@ fn load_model_prices(connection: &Connection) -> Result<HashMap<String, ModelPri
     let mut statement = connection
         .prepare(
             r#"
-            SELECT model, prompt_per_1m, completion_per_1m, cache_per_1m,
+            SELECT model, prompt_per_1m, completion_per_1m,
                    cache_read_per_1m, cache_creation_per_1m,
                    prompt_configured, completion_configured,
                    cache_read_configured, cache_creation_configured,
@@ -3394,16 +3519,15 @@ fn load_model_prices(connection: &Connection) -> Result<HashMap<String, ModelPri
                 model: row.get(0)?,
                 prompt: row.get(1)?,
                 completion: row.get(2)?,
-                cache: row.get(3)?,
-                cache_read: row.get(4)?,
-                cache_creation: row.get(5)?,
-                prompt_configured: row.get(6)?,
-                completion_configured: row.get(7)?,
-                cache_read_configured: row.get(8)?,
-                cache_creation_configured: row.get(9)?,
-                source: row.get(10)?,
-                source_model_id: row.get(11)?,
-                updated_at_ms: row.get(12)?,
+                cache_read: row.get(3)?,
+                cache_creation: row.get(4)?,
+                prompt_configured: row.get(5)?,
+                completion_configured: row.get(6)?,
+                cache_read_configured: row.get(7)?,
+                cache_creation_configured: row.get(8)?,
+                source: row.get(9)?,
+                source_model_id: row.get(10)?,
+                updated_at_ms: row.get(11)?,
             })
         })
         .map_err(|error| format!("查询模型价格失败: {error}"))?
@@ -3431,7 +3555,6 @@ fn validate_model_price(price: &ModelPrice) -> Result<(), String> {
     for value in [
         price.prompt,
         price.completion,
-        price.cache,
         price.cache_read,
         price.cache_creation,
     ] {
@@ -3448,16 +3571,16 @@ fn upsert_model_price(connection: &Connection, price: &ModelPrice) -> Result<(),
         .execute(
             r#"
             INSERT INTO model_prices (
-                model, prompt_per_1m, completion_per_1m, cache_per_1m,
+                model, prompt_per_1m, completion_per_1m,
                 cache_read_per_1m, cache_creation_per_1m,
                 prompt_configured, completion_configured,
                 cache_read_configured, cache_creation_configured,
                 source, source_model_id, updated_at_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(model) DO UPDATE SET
                 prompt_per_1m = excluded.prompt_per_1m,
                 completion_per_1m = excluded.completion_per_1m,
-                cache_per_1m = excluded.cache_per_1m,
+                cache_per_1m = 0,
                 cache_read_per_1m = excluded.cache_read_per_1m,
                 cache_creation_per_1m = excluded.cache_creation_per_1m,
                 prompt_configured = excluded.prompt_configured,
@@ -3472,7 +3595,6 @@ fn upsert_model_price(connection: &Connection, price: &ModelPrice) -> Result<(),
                 price.model.trim(),
                 price.prompt,
                 price.completion,
-                price.cache,
                 price.cache_read,
                 price.cache_creation,
                 price.prompt_configured,
@@ -3534,7 +3656,7 @@ fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<Usa
                 };
             let cost = cost_for_price(model, service_tier, &group.tokens, &price);
             entry.estimated_cost += cost;
-            entry.price = Some(price);
+            entry.price = Some(enriched_model_price(model, &price));
             total_cost += cost;
             priced_requests = priced_requests.saturating_add(group.requests);
         }
@@ -3543,7 +3665,7 @@ fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<Usa
         rows.entry(price.model.clone())
             .or_insert_with(|| UsagePriceRow {
                 model: price.model.clone(),
-                price: Some(price.clone()),
+                price: Some(enriched_model_price(&price.model, price)),
                 ..UsagePriceRow::default()
             });
     }
@@ -3588,83 +3710,235 @@ pub(crate) async fn delete_usage_model_price(model: String) -> Result<(), String
     .await
 }
 
+fn sync_price_for_model<'a>(model: &str, prices: &'a [ModelPrice]) -> Option<&'a ModelPrice> {
+    let model = model.trim();
+    if model.is_empty() {
+        return None;
+    }
+    let exact = prices
+        .iter()
+        .filter(|price| price.source_model_id.eq_ignore_ascii_case(model))
+        .collect::<Vec<_>>();
+    if exact.len() == 1 {
+        return Some(exact[0]);
+    }
+    let tail = model.rsplit('/').next().unwrap_or(model);
+    let family = tail.to_ascii_lowercase();
+    let mut candidates = prices
+        .iter()
+        .filter(|price| price.model.eq_ignore_ascii_case(tail))
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        let normalized = canonical_model_tail(tail);
+        candidates = prices
+            .iter()
+            .filter(|price| canonical_model_tail(&price.model) == normalized)
+            .collect();
+    }
+    let provider = if family.starts_with("gpt-")
+        || family.starts_with("chatgpt-")
+        || family.starts_with("o1-")
+        || family.starts_with("o3-")
+        || family.starts_with("o4-")
+    {
+        Some("openai")
+    } else if family.starts_with("claude-") {
+        Some("anthropic")
+    } else if family.starts_with("gemini-") {
+        Some("google")
+    } else if family.starts_with("deepseek-") {
+        Some("deepseek")
+    } else if family.starts_with("grok-") {
+        Some("xai")
+    } else {
+        None
+    };
+    if let Some(provider) = provider {
+        let official = candidates
+            .iter()
+            .filter(|price| price.source_model_id.starts_with(&format!("{provider}/")))
+            .collect::<Vec<_>>();
+        if official.len() == 1 {
+            return Some(official[0]);
+        }
+    }
+    (candidates.len() == 1).then(|| candidates[0])
+}
+
+fn build_model_price_preview(
+    models: &[(String, String)],
+    remote_prices: &[ModelPrice],
+    source: &str,
+    source_url: &str,
+) -> ModelPriceSyncPreview {
+    let mut matches = Vec::new();
+    let mut unmatched = Vec::new();
+    for (model, alias) in models {
+        let matched = [model.as_str(), alias.as_str()]
+            .into_iter()
+            .find_map(|candidate| sync_price_for_model(candidate, remote_prices));
+        if let Some(price) = matched {
+            let mut price = price.clone();
+            price.model = model.clone();
+            matches.push(price);
+        } else {
+            unmatched.push(model.clone());
+        }
+    }
+    ModelPriceSyncPreview {
+        source: source.to_string(),
+        source_url: source_url.to_string(),
+        matches,
+        unmatched,
+    }
+}
+
+fn collect_price_preview_models(
+    connection: &Connection,
+    query: &UsageQuery,
+) -> Result<Vec<(String, String)>, String> {
+    let mut models = std::collections::BTreeMap::<String, (String, String)>::new();
+    for price in load_model_prices(connection)?.values() {
+        models.insert(price.model.to_ascii_lowercase(), (price.model.clone(), String::new()));
+    }
+    let filter = build_usage_filter(query);
+    for group in load_usage_cost_groups(connection, &filter)? {
+        let entry = models
+            .entry(group.model.to_ascii_lowercase())
+            .or_insert_with(|| (group.model, String::new()));
+        if entry.1.is_empty() && !group.alias.trim().is_empty() {
+            entry.1 = group.alias;
+        }
+    }
+    Ok(models.into_values().collect())
+}
+
+async fn fetch_model_price_catalog_once(
+    client: &reqwest::Client,
+    source_name: &str,
+    source_url: &str,
+) -> Result<String, (bool, String)> {
+    let mut response = client
+        .get(source_url)
+        .send()
+        .await
+        .map_err(|error| (true, format!("连接 {source_name} 失败: {error}")))?;
+    let status = response.status();
+    if !status.is_success() {
+        let retryable = status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+        return Err((retryable, format!("读取 {source_name} 价格失败: HTTP {status}")));
+    }
+    if response.content_length().is_some_and(|length| length > MODEL_PRICE_SYNC_MAX_BYTES as u64) {
+        return Err((false, format!("{source_name} 价格目录过大")));
+    }
+    let mut content = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| (true, format!("读取 {source_name} 响应失败: {error}")))?
+    {
+        if content.len().saturating_add(chunk.len()) > MODEL_PRICE_SYNC_MAX_BYTES {
+            return Err((false, format!("{source_name} 价格目录过大")));
+        }
+        content.extend_from_slice(&chunk);
+    }
+    String::from_utf8(content)
+        .map_err(|error| (true, format!("{source_name} 响应不是 UTF-8: {error}")))
+}
+
+async fn fetch_model_price_catalog(
+    client: &reqwest::Client,
+    source_name: &str,
+    source_url: &str,
+) -> Result<String, String> {
+    for attempt in 1..=MODEL_PRICE_SYNC_ATTEMPTS {
+        match fetch_model_price_catalog_once(client, source_name, source_url).await {
+            Ok(content) => return Ok(content),
+            Err((true, _)) if attempt < MODEL_PRICE_SYNC_ATTEMPTS => {
+                tokio::time::sleep(Duration::from_millis(400 * attempt as u64)).await;
+            }
+            Err((retryable, error)) => {
+                return Err(if retryable {
+                    format!("{error}（已尝试 {attempt} 次）")
+                } else {
+                    error
+                });
+            }
+        }
+    }
+    unreachable!("至少尝试读取一次价格目录")
+}
+
 #[tauri::command]
-pub(crate) async fn sync_usage_model_prices(
+pub(crate) async fn preview_usage_model_prices(
     query: UsageQuery,
+    source: String,
     gui_config_state: tauri::State<'_, GuiConfigState>,
-) -> Result<ModelPriceSyncResult, String> {
+) -> Result<ModelPriceSyncPreview, String> {
+    let (source_name, source_url) = match source.as_str() {
+        "models-dev" => ("Models.dev", MODEL_PRICE_SYNC_URL),
+        "litellm" => ("LiteLLM", LITELLM_PRICE_SYNC_URL),
+        _ => return Err("不支持的价格来源".to_string()),
+    };
     let config = gui_config_state.snapshot()?;
     let client_builder = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30));
+        .user_agent("EasyCLIProxyAPI/0.2.97")
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(60));
     let proxy_url = config.proxy_url.trim();
     let client = apply_configured_proxy(client_builder, proxy_url)
-        .ok()
-        .and_then(|builder| builder.build().ok());
-    let remote_content = match client {
-        Some(client) => match client.get(MODEL_PRICE_SYNC_URL).send().await {
-            Ok(response) if response.status().is_success() => response.text().await.ok(),
-            _ => None,
-        },
-        None => None,
-    };
+        .map_err(|error| format!("配置价格同步代理失败: {error}"))?
+        .build()
+        .map_err(|error| format!("创建价格同步客户端失败: {error}"))?;
+    let content = fetch_model_price_catalog(&client, source_name, source_url).await?;
     let now = Local::now().timestamp_millis();
-    let (remote_prices, used_builtin) = match remote_content
-        .as_deref()
-        .and_then(|content| parse_model_price_catalog(content, "github", now).ok())
-    {
-        Some(prices) => (prices, false),
-        None => (bundled_model_prices()?, true),
+    let remote_prices = if source == "models-dev" {
+        parse_models_dev_prices(&content, now)?
+    } else {
+        parse_litellm_prices(&content, now)?
     };
 
     run_usage_task(move || {
-        let mut connection = open_usage_database()?;
-        let current_prices = load_model_prices(&connection)?;
-        let manual_models = current_prices
-            .values()
-            .filter(|price| price.source == "manual")
-            .map(|price| price.model.to_ascii_lowercase())
-            .collect::<std::collections::HashSet<_>>();
-        let mut result = ModelPriceSyncResult {
-            used_builtin,
-            ..ModelPriceSyncResult::default()
-        };
-        if !used_builtin {
-            let transaction = connection
-                .transaction()
-                .map_err(|error| format!("开始更新模型价格失败: {error}"))?;
-            transaction
-                .execute("DELETE FROM model_prices WHERE source = 'github'", [])
-                .map_err(|error| format!("清理旧模型价格失败: {error}"))?;
-            for price in remote_prices.values() {
-                if manual_models.contains(&price.model.to_ascii_lowercase()) {
-                    result.skipped += 1;
-                    continue;
-                }
-                upsert_model_price(&transaction, price)?;
-                result.imported += 1;
-            }
-            transaction
-                .commit()
-                .map_err(|error| format!("提交模型价格更新失败: {error}"))?;
-        } else {
-            connection
-                .execute("DELETE FROM model_prices WHERE source = 'github'", [])
-                .map_err(|error| format!("恢复软件内置模型价格失败: {error}"))?;
-        }
+        let connection = open_usage_database()?;
+        let models = collect_price_preview_models(&connection, &query)?;
+        Ok(build_model_price_preview(
+            &models,
+            &remote_prices,
+            source_name,
+            source_url,
+        ))
+    })
+    .await
+}
 
-        let filter = build_usage_filter(&query);
-        let models = load_usage_cost_groups(&connection, &filter)?
-            .into_iter()
-            .map(|group| group.model)
-            .collect::<std::collections::BTreeSet<_>>();
-        let effective_prices = load_model_prices(&connection)?;
-        for model in models {
-            if resolve_model_price(&model, "", &effective_prices).is_none() {
-                result.unmatched.push(model);
-            }
+#[tauri::command]
+pub(crate) async fn apply_usage_model_prices(prices: Vec<ModelPrice>) -> Result<ModelPriceSyncResult, String> {
+    let mut seen = std::collections::HashSet::new();
+    for price in &prices {
+        validate_model_price(price)?;
+        if !matches!(price.source.as_str(), "models.dev" | "litellm-sync")
+            || price.source_model_id.trim().is_empty()
+        {
+            return Err("无效的同步价格来源".to_string());
         }
-        Ok(result)
+        if !seen.insert(price.model.to_ascii_lowercase()) {
+            return Err(format!("重复的模型价格: {}", price.model));
+        }
+    }
+    run_usage_task(move || {
+        let mut connection = open_usage_database()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("开始保存模型价格失败: {error}"))?;
+        for mut price in prices.iter().cloned() {
+            price.model = price.model.trim().to_string();
+            price.updated_at_ms = Local::now().timestamp_millis();
+            upsert_model_price(&transaction, &price)?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("提交模型价格失败: {error}"))?;
+        Ok(ModelPriceSyncResult { imported: prices.len() })
     })
     .await
 }
@@ -3703,7 +3977,7 @@ fn load_usage_analysis(
     let sql = format!(
         r#"
         SELECT
-            COALESCE(NULLIF(TRIM(model), ''), 'unknown'),
+            {USAGE_DISPLAY_MODEL_SQL},
             COALESCE(NULLIF(TRIM(provider), ''), '未知 Provider'),
             COALESCE(NULLIF(TRIM(source), ''), '未知来源'),
             COALESCE(NULLIF(TRIM(api_key_hash), ''), '未记录密钥'),
@@ -4291,6 +4565,7 @@ mod tests {
                     },
                     [" Model-A ", "model-a", "", "unknown", "Model-B"][index % 5],
                 );
+                record.alias = ["", " model-alias ", ""][index % 3].to_string();
                 record.provider = ["openai", "claude", " "][index % 3].to_string();
                 record.source =
                     ["source-a", " ", "source-b", "sk-secret-source"][index % 4].to_string();
@@ -4349,7 +4624,10 @@ mod tests {
             let actual = load_usage_analysis(&connection, &query, &config).unwrap();
             assert_eq!(
                 canonical(actual.models),
-                canonical(load_simple_categories(&connection, &query, "model", "unknown").unwrap())
+                canonical(
+                    load_simple_categories(&connection, &query, USAGE_DISPLAY_MODEL_SQL, "unknown")
+                        .unwrap()
+                )
             );
             assert_eq!(
                 canonical(actual.providers),
@@ -4366,6 +4644,56 @@ mod tests {
                 canonical(actual.api_keys),
                 canonical(load_api_key_categories(&connection, &query).unwrap())
             );
+        }
+    }
+
+    #[test]
+    fn model_categories_and_filter_keep_aliases_separate() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_usage_schema(&connection).unwrap();
+        let mut records = Vec::new();
+        for (index, alias) in ["", "model-fast", "model-high", "model-fast"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut record = sample_record(
+                &format!("model-alias-{index}"),
+                "2026-09-25T00:00:00Z",
+                "base-model",
+            );
+            record.alias = alias.to_string();
+            records.push(record);
+        }
+        insert_usage_records(&mut connection, &records).unwrap();
+        let config = GuiConfigFile::default();
+        let analysis = load_usage_analysis(&connection, &UsageQuery::default(), &config).unwrap();
+        let counts = analysis
+            .models
+            .iter()
+            .map(|category| (category.key.as_str(), category.requests))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(counts.len(), 3);
+        assert_eq!(counts["base-model"], 1);
+        assert_eq!(counts["model-fast"], 2);
+        assert_eq!(counts["model-high"], 1);
+        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+        let trend_models = overview
+            .timeline
+            .iter()
+            .flat_map(|point| point.models.iter().map(|model| model.key.as_str()))
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(trend_models, ["base-model", "model-fast", "model-high"].into());
+
+        for (model, expected) in [("base-model", 1), ("model-fast", 2), ("model-high", 1)] {
+            let query = UsageQuery {
+                model: Some(model.to_string()),
+                ..UsageQuery::default()
+            };
+            let filtered = load_usage_analysis(&connection, &query, &config).unwrap();
+            assert_eq!(filtered.models.len(), 1);
+            assert_eq!(filtered.models[0].key, model);
+            assert_eq!(filtered.models[0].requests, expected);
+            assert_eq!(load_usage_events(&connection, &query, &config).unwrap().total, expected as usize);
         }
     }
 
@@ -6124,6 +6452,56 @@ mod tests {
     }
 
     #[test]
+    fn estimates_gpt6_fast_mode_for_short_and_long_context() {
+        let sol = official_model_price("gpt-6-sol").unwrap();
+        let short_tokens = CostTokens {
+            input: 1_000_000,
+            output: 1_000_000,
+            ..CostTokens::default()
+        };
+        assert!(
+            (cost_for_price("gpt-6-sol", "fast", &short_tokens, &sol) - 24.0).abs() < 0.000001
+        );
+
+        let long_tokens = CostTokens {
+            input: 300_000,
+            output: 200_000,
+            cache_read: 100_000,
+            long_input: 300_000,
+            long_output: 200_000,
+            long_cache_read: 100_000,
+            ..CostTokens::default()
+        };
+        assert!(
+            (cost_for_price("gpt-6-sol", "fast", &long_tokens, &sol) - 7.68).abs() < 0.000001
+        );
+    }
+
+    #[test]
+    fn grok_47_uses_200k_threshold_and_doubles_long_context_output_price() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_usage_schema(&connection).unwrap();
+        let mut short = sample_record("grok-short", "2026-09-25T00:00:00Z", "grok-4.7");
+        short.tokens.input_tokens = 200_000;
+        short.tokens.output_tokens = 100_000;
+        short.tokens.cache_read_tokens = 0;
+        short.tokens.total_tokens = 300_000;
+        let mut long = sample_record("grok-long", "2026-09-25T00:00:00Z", "xai/grok-4.7");
+        long.tokens.input_tokens = 250_000;
+        long.tokens.output_tokens = 100_000;
+        long.tokens.cache_read_tokens = 0;
+        long.tokens.total_tokens = 350_000;
+        insert_usage_records(&mut connection, &[short, long]).unwrap();
+
+        let query = UsageQuery::default();
+        let groups = load_usage_cost_groups(&connection, &build_usage_filter(&query)).unwrap();
+        assert_eq!(groups.iter().find(|group| group.model == "grok-4.7").unwrap().tokens.long_input, 0);
+        assert_eq!(groups.iter().find(|group| group.model == "xai/grok-4.7").unwrap().tokens.long_input, 250_000);
+        let pricing = load_usage_pricing(&connection, &query).unwrap();
+        assert!((pricing.total_cost - 3.2).abs() < 0.000001);
+    }
+
+    #[test]
     fn bundled_model_prices_are_available_offline_and_override_legacy_cloud_cache() {
         let root = test_root("bundled-pricing");
         let connection = open_test_database(&root);
@@ -6158,6 +6536,166 @@ mod tests {
     }
 
     #[test]
+    fn models_dev_sync_uses_first_party_prices_and_preserves_explicit_zero_cache() {
+        let catalog = serde_json::json!({
+            "openai": { "models": {
+                "gpt-6-sol": { "cost": { "input": 2.25, "output": 10.0, "cache_read": 0.0 } },
+                "missing-output": { "cost": { "input": 1.0 } }
+            } },
+            "anthropic": { "models": {} },
+            "google": { "models": {} },
+            "deepseek": { "models": {} },
+            "xai": { "models": {} },
+            "openrouter": { "models": {
+                "gpt-6-sol": { "cost": { "input": 99.0, "output": 99.0 } }
+            } }
+        });
+        let prices = parse_models_dev_prices(&catalog.to_string(), 123).unwrap();
+        assert_eq!(prices.len(), 2);
+        let price = prices.iter().find(|price| price.source_model_id == "openai/gpt-6-sol").unwrap();
+        assert_eq!(price.model, "gpt-6-sol");
+        assert_eq!(price.prompt, 2.25);
+        assert_eq!(price.cache_read, 0.0);
+        assert!(price.cache_read_configured);
+        assert_eq!(price.source, "models.dev");
+        assert_eq!(price.source_model_id, "openai/gpt-6-sol");
+
+        let effective = enriched_model_price("gpt-6-sol", price);
+        assert_eq!(effective.cache_read, 0.0);
+        assert_eq!(effective.cache_creation, 0.0);
+    }
+
+    #[test]
+    fn price_preview_matches_official_models_without_guessing_dynamic_aliases() {
+        let catalog = serde_json::json!({
+            "openai": { "models": { "gpt-6-sol": { "cost": { "input": 2.0, "output": 10.0 } } } },
+            "google": { "models": { "gpt-6-sol": { "cost": { "input": 90.0, "output": 90.0 } } } }
+        });
+        let remote = parse_models_dev_prices(&catalog.to_string(), 1).unwrap();
+        let models = vec![
+            ("gpt-6-sol".to_string(), String::new()),
+            ("gpt-daybreak-blue-latest".to_string(), String::new()),
+            ("my-alias".to_string(), "gpt-6-sol".to_string()),
+        ];
+        let preview = build_model_price_preview(&models, &remote, "Models.dev", MODEL_PRICE_SYNC_URL);
+        assert_eq!(preview.matches.len(), 2);
+        assert_eq!(preview.matches[0].prompt, 2.0);
+        assert_eq!(preview.matches[0].source_model_id, "openai/gpt-6-sol");
+        assert_eq!(preview.matches[1].model, "my-alias");
+        assert_eq!(preview.unmatched, ["gpt-daybreak-blue-latest"]);
+    }
+
+    #[test]
+    fn price_preview_uses_usage_alias_for_models_with_existing_prices() {
+        let root = test_root("price-preview-existing-alias");
+        let connection = open_test_database(&root);
+        upsert_model_price(
+            &connection,
+            &ModelPrice {
+                model: "my-alias".to_string(),
+                prompt: 1.0,
+                completion: 2.0,
+                source: "manual".to_string(),
+                ..ModelPrice::default()
+            },
+        )
+        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_events (event_key, timestamp, timestamp_ms, local_hour, model, alias, created_at) VALUES ('preview-alias', '2026-09-24T00:00:00Z', 1, '2026-09-24T00', 'my-alias', 'gpt-6-sol', '2026-09-24T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+
+        let models = collect_price_preview_models(&connection, &UsageQuery::default()).unwrap();
+        let remote = parse_models_dev_prices(
+            &serde_json::json!({
+                "openai": { "models": { "gpt-6-sol": { "cost": { "input": 2.0, "output": 10.0 } } } }
+            })
+            .to_string(),
+            1,
+        )
+        .unwrap();
+        let preview =
+            build_model_price_preview(&models, &remote, "Models.dev", MODEL_PRICE_SYNC_URL);
+        let matched = preview
+            .matches
+            .iter()
+            .find(|price| price.model == "my-alias")
+            .unwrap();
+        assert_eq!(matched.source_model_id, "openai/gpt-6-sol");
+        assert!(!preview.unmatched.contains(&"my-alias".to_string()));
+
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn litellm_preview_reads_only_base_text_token_prices() {
+        let catalog = serde_json::json!({
+            "openai/test": {
+                "mode": "chat", "input_cost_per_token": 0.000002,
+                "output_cost_per_token": 0.000010,
+                "cache_read_input_token_cost": 0.0,
+                "input_cost_per_token_above_200k_tokens": 0.000004
+            },
+            "audio/test": {
+                "mode": "chat", "supported_output_modalities": ["audio"],
+                "input_cost_per_token": 0.000002, "output_cost_per_token": 0.000010
+            }
+        });
+        let prices = parse_litellm_prices(&catalog.to_string(), 1).unwrap();
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].prompt, 2.0);
+        assert_eq!(prices[0].completion, 10.0);
+        assert!(prices[0].cache_read_configured);
+        assert_eq!(prices[0].cache_read, 0.0);
+    }
+
+    #[tokio::test]
+    async fn price_catalog_retries_after_truncated_body_and_decodes_gzip() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api.json", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            std::io::Write::write_all(&mut encoder, b"{}").unwrap();
+            let compressed = encoder.finish().unwrap();
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0_u8; 2048];
+                let size = stream.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();
+                assert!(request.contains("accept-encoding: gzip"));
+                if attempt == 0 {
+                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{}").await.unwrap();
+                } else {
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Encoding: gzip\r\nConnection: close\r\n\r\n",
+                        compressed.len()
+                    );
+                    stream.write_all(header.as_bytes()).await.unwrap();
+                    stream.write_all(&compressed).await.unwrap();
+                }
+            }
+        });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let content = tokio::time::timeout(
+            Duration::from_secs(5),
+            fetch_model_price_catalog(&client, "test", &url),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(content, "{}");
+        server.await.unwrap();
+    }
+
+    #[test]
     fn manual_model_prices_drive_pricing_and_overview_cost() {
         let root = test_root("manual-pricing");
         let mut connection = open_test_database(&root);
@@ -6169,7 +6707,8 @@ mod tests {
                 model: "custom-model".to_string(),
                 prompt: 1.0,
                 completion: 2.0,
-                cache: 0.1,
+                cache_read: 0.1,
+                cache_read_configured: true,
                 prompt_configured: true,
                 completion_configured: true,
                 source: "manual".to_string(),
@@ -6190,6 +6729,40 @@ mod tests {
             pricing.saved_prices,
             bundled_model_prices().unwrap().len() + 1
         );
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_cache_prices_stay_zero_even_with_builtin_and_legacy_prices() {
+        let root = test_root("zero-cache-pricing");
+        let connection = open_test_database(&root);
+        upsert_model_price(
+            &connection,
+            &ModelPrice {
+                model: "gpt-6-sol".to_string(),
+                prompt: 2.0,
+                completion: 10.0,
+                prompt_configured: true,
+                completion_configured: true,
+                source: "manual".to_string(),
+                ..ModelPrice::default()
+            },
+        )
+        .unwrap();
+        connection
+            .execute("UPDATE model_prices SET cache_per_1m = 99 WHERE model = 'gpt-6-sol'", [])
+            .unwrap();
+        let price = load_model_prices(&connection).unwrap().remove("gpt-6-sol").unwrap();
+        assert_eq!(price.cache_read, 0.0);
+        assert_eq!(price.cache_creation, 0.0);
+        let tokens = CostTokens {
+            input: 200_000,
+            cache_read: 100_000,
+            cache_creation: 100_000,
+            ..CostTokens::default()
+        };
+        assert_eq!(cost_for_price("gpt-6-sol", "", &tokens, &price), 0.0);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

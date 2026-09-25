@@ -135,7 +135,6 @@ type ModelPrice = {
   model: string;
   prompt: number;
   completion: number;
-  cache: number;
   cacheRead: number;
   cacheCreation: number;
   promptConfigured: boolean;
@@ -183,9 +182,22 @@ type UsageStorageSettings = {
 
 type ModelPriceSyncResult = {
   imported: number;
-  skipped: number;
+};
+
+type ModelPriceSyncPreview = {
+  source: string;
+  sourceUrl: string;
+  matches: ModelPrice[];
   unmatched: string[];
-  usedBuiltin: boolean;
+};
+
+type SyncPriceDraft = {
+  selected: boolean;
+  price: ModelPrice;
+  prompt: string;
+  completion: string;
+  cacheRead: string;
+  cacheCreation: string;
 };
 
 type UsageQuery = {
@@ -2271,7 +2283,6 @@ type PriceDraft = {
   model: string;
   prompt: string;
   completion: string;
-  cache: string;
   cacheRead: string;
   cacheCreation: string;
 };
@@ -2280,7 +2291,6 @@ const emptyPriceDraft = (): PriceDraft => ({
   model: '',
   prompt: '',
   completion: '',
-  cache: '',
   cacheRead: '',
   cacheCreation: '',
 });
@@ -2288,9 +2298,8 @@ const priceDraftFor = (model = '', price?: ModelPrice | null): PriceDraft => ({
   model,
   prompt: price ? String(price.prompt) : '',
   completion: price ? String(price.completion) : '',
-  cache: price ? String(price.cache) : '',
-  cacheRead: price && (price.cacheReadConfigured || price.cacheRead > 0) ? String(price.cacheRead) : '',
-  cacheCreation: price && (price.cacheCreationConfigured || price.cacheCreation > 0) ? String(price.cacheCreation) : '',
+  cacheRead: price ? String(price.cacheRead) : '',
+  cacheCreation: price ? String(price.cacheCreation) : '',
 });
 
 const parsePrice = (value: string) => {
@@ -2315,6 +2324,15 @@ function PricingView({
   const [draft, setDraft] = useState<PriceDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [applyingSync, setApplyingSync] = useState(false);
+  const [syncSource, setSyncSource] = useState<'models-dev' | 'litellm'>(() => {
+    try { return localStorage.getItem('cpa-gui.pricing-sync-source.v1') === 'litellm' ? 'litellm' : 'models-dev'; }
+    catch { return 'models-dev'; }
+  });
+  const [syncPreview, setSyncPreview] = useState<ModelPriceSyncPreview | null>(null);
+  const [syncDrafts, setSyncDrafts] = useState<SyncPriceDraft[]>([]);
+  const [syncError, setSyncError] = useState('');
+  const syncDialog = useRef<HTMLDialogElement>(null);
   const { notice, revision, showNotice, clearNotice } = useAppNotice();
 
 
@@ -2336,7 +2354,6 @@ function PricingView({
           model: draft.model.trim(),
           prompt: parsePrice(draft.prompt),
           completion: parsePrice(draft.completion),
-          cache: draft.cache.trim() ? parsePrice(draft.cache) : parsePrice(draft.prompt),
           cacheRead: parsePrice(draft.cacheRead),
           cacheCreation: parsePrice(draft.cacheCreation),
           promptConfigured: draft.prompt.trim() !== '',
@@ -2370,25 +2387,71 @@ function PricingView({
     }
   };
 
-  const syncPrices = async () => {
+  const previewPrices = async () => {
     setSyncing(true);
+    setSyncError('');
     clearNotice();
     try {
-      const result = await invoke<ModelPriceSyncResult>('sync_usage_model_prices', { query });
-      showNotice({
-        key: 'usage.pricing.syncResult',
-        variables: {
-          imported: result.imported,
-          skipped: result.skipped,
-          unmatched: result.unmatched.length,
-        },
-      });
-      await onChanged();
+      const preview = await invoke<ModelPriceSyncPreview>('preview_usage_model_prices', { query, source: syncSource });
+      const existing = new Map(pricing.rows.map((row) => [row.model.toLowerCase(), row.price]));
+      setSyncPreview(preview);
+      setSyncDrafts(preview.matches.map((price) => ({
+        selected: existing.get(price.model.toLowerCase())?.source !== 'manual',
+        price,
+        prompt: String(price.prompt),
+        completion: String(price.completion),
+        cacheRead: String(price.cacheRead),
+        cacheCreation: String(price.cacheCreation),
+      })));
+      syncDialog.current?.showModal();
     } catch (syncError) {
       showNotice(String(syncError), 'error');
     } finally {
       setSyncing(false);
     }
+  };
+
+  const applySyncPrices = async () => {
+    const selected = syncDrafts.filter((item) => item.selected);
+    if (!selected.length) return;
+    const valid = (value: string) => value.trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0;
+    if (selected.some((item) => !valid(item.prompt) || !valid(item.completion)
+      || (item.cacheRead.trim() !== '' && !valid(item.cacheRead))
+      || (item.cacheCreation.trim() !== '' && !valid(item.cacheCreation)))) {
+      setSyncError(t('usage.pricing.syncInvalid'));
+      return;
+    }
+    const prices = selected.map((item): ModelPrice => ({
+      ...item.price,
+      prompt: Number(item.prompt),
+      completion: Number(item.completion),
+      cacheRead: item.cacheRead.trim() === '' ? 0 : Number(item.cacheRead),
+      cacheCreation: item.cacheCreation.trim() === '' ? 0 : Number(item.cacheCreation),
+      cacheReadConfigured: item.cacheRead.trim() !== '',
+      cacheCreationConfigured: item.cacheCreation.trim() !== '',
+    }));
+    setApplyingSync(true);
+    setSyncError('');
+    clearNotice();
+    try {
+      const result = await invoke<ModelPriceSyncResult>('apply_usage_model_prices', { prices });
+      syncDialog.current?.close();
+      showNotice({ key: 'usage.pricing.syncResult', variables: { imported: result.imported } });
+      await onChanged();
+    } catch (syncError) {
+      setSyncError(String(syncError));
+    } finally {
+      setApplyingSync(false);
+    }
+  };
+
+  const updateSyncDraft = (index: number, update: Partial<SyncPriceDraft>) => {
+    setSyncDrafts((current) => current.map((item, currentIndex) => currentIndex === index ? { ...item, ...update } : item));
+  };
+
+  const changeSyncSource = (source: 'models-dev' | 'litellm') => {
+    setSyncSource(source);
+    try { localStorage.setItem('cpa-gui.pricing-sync-source.v1', source); } catch {}
   };
 
   return (
@@ -2415,14 +2478,64 @@ function PricingView({
           <button type="button" className="secondary-button" onClick={() => setDraft(emptyPriceDraft())}>
             {t('usage.pricing.add')}
           </button>
-          <button type="button" className="primary-button" disabled={syncing} onClick={() => void syncPrices()}>
-            <RefreshCw size={14} className={syncing ? 'spin' : ''} />
+          <select value={syncSource} onChange={(event) => changeSyncSource(event.currentTarget.value as 'models-dev' | 'litellm')} aria-label={t('usage.pricing.syncSource')}>
+            <option value="models-dev">Models.dev</option>
+            <option value="litellm">LiteLLM</option>
+          </select>
+          <button type="button" className="primary-button" disabled={syncing} onClick={() => void previewPrices()}>
             {syncing ? t('usage.pricing.syncing') : t('usage.pricing.sync')}
           </button>
         </div>
       </div>
 
       <FloatingNotice key={revision} notice={notice} onDismiss={clearNotice} />
+
+      <dialog ref={syncDialog} className="usage-price-sync-dialog" onCancel={(event) => { if (applyingSync) event.preventDefault(); }} onClose={() => setSyncPreview(null)}>
+        <div className="usage-price-sync-header">
+          <div>
+            <h2>{t('usage.pricing.syncPreview')}</h2>
+            <a href={syncPreview?.sourceUrl} target="_blank" rel="noreferrer">{syncPreview?.source}</a>
+          </div>
+          <button type="button" className="icon-button" aria-label={t('common.close')} disabled={applyingSync} onClick={() => syncDialog.current?.close()}><X size={16} /></button>
+        </div>
+        <p className="usage-price-sync-note">{t('usage.pricing.syncNote')}</p>
+        <div className="usage-price-sync-controls">
+          <span>{t('usage.pricing.syncCounts', { matched: syncDrafts.length, unmatched: syncPreview?.unmatched.length ?? 0 })}</span>
+          <button type="button" className="secondary-button" onClick={() => setSyncDrafts((current) => current.map((item) => ({ ...item, selected: true })))}>{t('usage.pricing.selectAll')}</button>
+          <button type="button" className="secondary-button" onClick={() => setSyncDrafts((current) => current.map((item) => ({ ...item, selected: false })))}>{t('usage.pricing.selectNone')}</button>
+        </div>
+        <div className="usage-price-sync-list">
+          {syncDrafts.map((item, index) => (
+            <div className="usage-price-sync-row" key={item.price.model}>
+              <label className="usage-price-sync-identity">
+                <input type="checkbox" checked={item.selected} disabled={applyingSync} onChange={(event) => updateSyncDraft(index, { selected: event.currentTarget.checked })} />
+                <span><strong>{item.price.model}</strong><small>{item.price.sourceModelId}</small></span>
+              </label>
+              {(['prompt', 'completion', 'cacheRead', 'cacheCreation'] as const).map((field) => (
+                <label key={field}>
+                  <span>{t(`usage.pricing.${field}`)}</span>
+                  <input type="number" min="0" step="any" value={item[field]} disabled={applyingSync}
+                    onChange={(event) => updateSyncDraft(index, { [field]: event.currentTarget.value })} />
+                </label>
+              ))}
+            </div>
+          ))}
+          {syncDrafts.length === 0 && <p>{t('usage.pricing.syncNoMatches')}</p>}
+        </div>
+        {(syncPreview?.unmatched.length ?? 0) > 0 && (
+          <details className="usage-price-sync-unmatched">
+            <summary>{t('usage.pricing.syncUnmatched', { count: syncPreview?.unmatched.length ?? 0 })}</summary>
+            <p>{syncPreview?.unmatched.join(', ')}</p>
+          </details>
+        )}
+        {syncError && <p className="usage-price-sync-error" role="alert">{syncError}</p>}
+        <div className="usage-price-sync-footer">
+          <button type="button" className="secondary-button" disabled={applyingSync} onClick={() => syncDialog.current?.close()}>{t('common.cancel')}</button>
+          <button type="button" className="primary-button" disabled={applyingSync || !syncDrafts.some((item) => item.selected)} onClick={() => void applySyncPrices()}>
+            {applyingSync ? t('usage.pricing.saving') : t('usage.pricing.applySelected', { count: syncDrafts.filter((item) => item.selected).length })}
+          </button>
+        </div>
+      </dialog>
 
       {draft ? (
         <div className="usage-price-editor">
@@ -2452,16 +2565,6 @@ function PricingView({
               step="0.0001"
               value={draft.completion}
               onChange={(event) => setDraft({ ...draft, completion: event.currentTarget.value })}
-            />
-          </label>
-          <label>
-            <span>{t('usage.pricing.cache')}</span>
-            <input
-              type="number"
-              min="0"
-              step="0.0001"
-              value={draft.cache}
-              onChange={(event) => setDraft({ ...draft, cache: event.currentTarget.value })}
             />
           </label>
           <label>
@@ -2527,24 +2630,8 @@ function PricingView({
                   </td>
                   <td>{row.price ? priceUnit(row.price.prompt) : '—'}</td>
                   <td>{row.price ? priceUnit(row.price.completion) : '—'}</td>
-                  <td>
-                    {row.price
-                      ? priceUnit(
-                          row.price.cacheReadConfigured || row.price.cacheRead > 0
-                            ? row.price.cacheRead
-                            : row.price.cache
-                        )
-                      : '—'}
-                  </td>
-                  <td>
-                    {row.price
-                      ? priceUnit(
-                          row.price.cacheCreationConfigured || row.price.cacheCreation > 0
-                            ? row.price.cacheCreation
-                            : row.price.prompt
-                        )
-                      : '—'}
-                  </td>
+                  <td>{row.price ? priceUnit(row.price.cacheRead) : '—'}</td>
+                  <td>{row.price ? priceUnit(row.price.cacheCreation) : '—'}</td>
                   <td>
                     <div className="usage-price-row-actions">
                       <button

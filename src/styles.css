@@ -9922,7 +9922,8 @@ body.table-col-resizing * {
   gap: 8px;
 }
 
-.usage-pricing-actions input {
+.usage-pricing-actions input,
+.usage-pricing-actions select {
   min-width: 180px;
   height: 34px;
   padding: 0 10px;
@@ -9936,6 +9937,57 @@ body.table-col-resizing * {
 .usage-pricing-actions button,
 .usage-price-editor-actions button {
   height: 34px;
+}
+
+.usage-price-sync-dialog {
+  width: min(1100px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  padding: 20px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 10px;
+  background: var(--theme-fff);
+  color: var(--theme-2d2a26);
+}
+
+.usage-price-sync-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.usage-price-sync-header,
+.usage-price-sync-controls,
+.usage-price-sync-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.usage-price-sync-header h2 { margin: 0 0 4px; }
+.usage-price-sync-note { color: var(--theme-7a746c); }
+.usage-price-sync-controls { justify-content: flex-start; margin: 14px 0; flex-wrap: wrap; }
+.usage-price-sync-controls span { margin-right: auto; }
+.usage-price-sync-list { max-height: 430px; overflow: auto; }
+.usage-price-sync-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.5fr) repeat(4, minmax(115px, 1fr));
+  gap: 8px;
+  align-items: end;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--theme-eeeae2);
+}
+.usage-price-sync-row label:not(.usage-price-sync-identity) { display: grid; gap: 4px; font-size: var(--font-size-caption); }
+.usage-price-sync-row input[type="number"] { width: 100%; min-width: 0; height: 34px; padding: 0 8px; border: 1px solid var(--theme-d5d2cb); border-radius: 6px; }
+.usage-price-sync-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.usage-price-sync-identity span { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.usage-price-sync-identity small { color: var(--theme-8a847c); }
+.usage-price-sync-unmatched { margin-top: 12px; }
+.usage-price-sync-unmatched p { max-height: 90px; overflow: auto; overflow-wrap: anywhere; }
+.usage-price-sync-error { color: var(--theme-error, #b42318); }
+.usage-price-sync-footer { justify-content: flex-end; margin-top: 14px; }
+
+@media (max-width: 800px) {
+  .usage-price-sync-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .usage-price-sync-identity { grid-column: 1 / -1; }
 }
 
 .usage-price-editor {
