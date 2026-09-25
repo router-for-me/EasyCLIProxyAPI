@@ -415,7 +415,7 @@ describe('API 接入配置合并', () => {
     expect(result.priority).toBeUndefined();
   });
 
-  it('高级设置可编辑且不会引入代理字段', () => {
+  it('高级功能可编辑且不会引入代理字段', () => {
     const result = buildProviderRecord('codex-api-key', {
       name: '',
       apiKey: 'codex-key',
