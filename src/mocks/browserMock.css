@@ -1,0 +1,53 @@
+#browser-mock-toolbar {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, #f59e0b 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg, #17191f) 92%, transparent);
+  box-shadow: 0 7px 24px rgb(0 0 0 / 22%);
+  color: var(--text-primary, #f3f4f6);
+  font: 12px/1.2 system-ui, sans-serif;
+  backdrop-filter: blur(10px);
+}
+
+#browser-mock-toolbar strong {
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: #f59e0b;
+  color: #17120a;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+#browser-mock-toolbar select {
+  width: auto;
+  min-width: 94px;
+  min-height: 24px;
+  padding: 2px 24px 2px 7px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+#browser-mock-toolbar span {
+  color: var(--text-secondary, #b6bbc6);
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  #browser-mock-toolbar {
+    top: auto;
+    right: 8px;
+    bottom: 8px;
+  }
+
+  #browser-mock-toolbar span {
+    display: none;
+  }
+}
