@@ -385,6 +385,7 @@ mod tests {
 
     fn runtime_model(slug: &str) -> CodexRuntimeModel {
         CodexRuntimeModel {
+            canonical_model_id: None,
             slug: slug.to_string(),
             display_name: None,
             description: None,
@@ -393,6 +394,7 @@ mod tests {
             context_source: "template",
             input_modalities: None,
             default_reasoning_level: None,
+            capabilities: Map::new(),
             hidden: false,
         }
     }

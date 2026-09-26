@@ -1,6 +1,44 @@
 use super::support::*;
 use super::*;
 
+#[tokio::test]
+async fn codex_catalog_discovery_does_not_use_gui_version_as_cli_version() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0; 2048];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let read = socket.read(&mut buffer).unwrap();
+            assert!(read > 0);
+            request.extend_from_slice(&buffer[..read]);
+        }
+        let request = String::from_utf8(request).unwrap().to_ascii_lowercase();
+        assert!(
+            request.starts_with("get /v1/models?client_version= http/1.1\r\n"),
+            "{request}"
+        );
+        assert!(request.contains("authorization: bearer test-catalog-key\r\n"));
+        let body = r#"{"models":[{"slug":"personal-provider/test-model","context_window":64000,"max_tokens":8192,"default_reasoning_level":"ultra","supported_reasoning_levels":[{"effort":"ultra","description":"Ultra"}]}]}"#;
+        write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+    });
+    let runtime = fetch_codex_runtime_models(port, "test-catalog-key")
+        .await
+        .unwrap();
+    server.join().unwrap();
+    let catalog = codex_catalog::prepare_catalog(&runtime).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&catalog.json).unwrap();
+    let model = &payload["models"][0];
+    assert_eq!(model["slug"], "personal-provider/test-model");
+    assert_eq!(model["default_reasoning_level"], "ultra");
+    assert_eq!(model["supported_reasoning_levels"][0]["effort"], "ultra");
+}
+
 #[test]
 fn claude_agent_config_preserves_existing_fields() {
     let rendered = build_claude_agent_config(
@@ -131,6 +169,7 @@ fn claude_code_role_mappings_drive_settings() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: "gpt-opus-base".to_string(),
             alias: None,
             is_alias: false,
@@ -139,6 +178,7 @@ fn claude_code_role_mappings_drive_settings() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: mappings.opus.clone(),
             alias: Some("gpt-opus-base".to_string()),
             is_alias: true,
@@ -147,6 +187,7 @@ fn claude_code_role_mappings_drive_settings() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: mappings.sonnet.clone(),
             alias: None,
             is_alias: false,
@@ -155,6 +196,7 @@ fn claude_code_role_mappings_drive_settings() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: mappings.haiku.clone(),
             alias: None,
             is_alias: false,
@@ -200,6 +242,7 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: "custom-pro".to_string(),
             alias: Some("Custom Pro".to_string()),
             is_alias: false,
@@ -208,6 +251,7 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: "custom-flash".to_string(),
             alias: Some("Custom Flash".to_string()),
             is_alias: false,
@@ -267,6 +311,7 @@ fn claude_desktop_omits_unsupported_context_window_when_1m_is_off() {
     let models = vec![AgentModelOption {
         input_modalities: None,
         harness_metadata: None,
+        catalog_metadata: None,
         name: "runtime-model".to_string(),
         alias: None,
         is_alias: false,
@@ -597,6 +642,7 @@ fn claude_desktop_profile_keeps_non_claude_models_internal() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: mappings.opus.clone(),
             alias: None,
             is_alias: false,
@@ -605,6 +651,7 @@ fn claude_desktop_profile_keeps_non_claude_models_internal() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: mappings.sonnet.clone(),
             alias: None,
             is_alias: false,
@@ -613,6 +660,7 @@ fn claude_desktop_profile_keeps_non_claude_models_internal() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: mappings.haiku.clone(),
             alias: None,
             is_alias: false,
@@ -750,6 +798,98 @@ fn opencode_agent_config_preserves_other_providers() {
     assert_eq!(value["model"], "cpa-gui/gpt-test");
     assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["gpt-test"].is_object());
     assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["deepseek-test"].is_object());
+}
+
+#[test]
+fn opencode_agent_config_preserves_catalog_capabilities() {
+    let models = parse_agent_model_options(&serde_json::json!({"models":[{
+        "slug":"opencode-go/glm-lab", "display_name":"Personal · OpenCode Go · Lab",
+        "context_window":98304, "max_tokens":12345,
+        "input_modalities":["text","image"], "output_modalities":["text"],
+        "supported_input_modalities":["text","image","audio","video","pdf"],
+        "supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]
+    }]}))
+    .unwrap();
+    assert_eq!(models.len(), 1);
+    let rendered = build_opencode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "test-key",
+        "opencode-go/glm-lab",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let model = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["opencode-go/glm-lab"];
+    assert_eq!(model["name"], "Personal · OpenCode Go · Lab");
+    assert_eq!(
+        model["limit"],
+        serde_json::json!({"context":98304,"output":12345})
+    );
+    assert_eq!(
+        model["modalities"],
+        serde_json::json!({"input":["text","image","audio","video","pdf"],"output":["text"]})
+    );
+    assert_eq!(model["reasoning"], true);
+    assert_eq!(
+        model["variants"],
+        serde_json::json!({
+            "none":{"disabled":true}, "minimal":{"disabled":true},
+            "low":{"reasoningEffort":"low"}, "medium":{"disabled":true},
+            "high":{"reasoningEffort":"high"}, "xhigh":{"disabled":true},
+            "max":{"disabled":true}, "ultra":{"disabled":true}
+        })
+    );
+}
+
+#[test]
+fn opencode_explicit_efforts_disable_inferred_sdk_variants() {
+    for (advertised, expected) in [
+        (serde_json::json!([{"effort":"high"}]), vec!["high"]),
+        (serde_json::json!([]), vec![]),
+        (serde_json::json!(["none"]), vec!["none"]),
+    ] {
+        let models = parse_agent_model_options(&serde_json::json!({"models":[{
+            "slug":"restricted", "supported_reasoning_levels":advertised
+        }]}))
+        .unwrap();
+        let rendered =
+            build_opencode_agent_config(None, "http://localhost/v1", "test", "restricted", &models)
+                .unwrap();
+        let root: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let model = &root["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["restricted"];
+        // Match the consumer boundary: OpenCode merges these SDK defaults with
+        // config variants, then removes entries marked disabled.
+        let mut consumer_variants = serde_json::json!({
+            "low":{"reasoningEffort":"low"}, "medium":{"reasoningEffort":"medium"},
+            "high":{"reasoningEffort":"high"}
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        consumer_variants.extend(model["variants"].as_object().unwrap().clone());
+        consumer_variants.retain(|_, value| value["disabled"] != true);
+        assert_eq!(
+            consumer_variants
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            model["reasoning"],
+            expected.iter().any(|effort| *effort != "none")
+        );
+    }
+    let models =
+        parse_agent_model_options(&serde_json::json!({"models":[{"slug":"unknown"}]})).unwrap();
+    let rendered =
+        build_opencode_agent_config(None, "http://localhost/v1", "test", "unknown", &models)
+            .unwrap();
+    let root: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let model = &root["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["unknown"];
+    assert!(model.get("variants").is_none());
+    assert!(model.get("reasoning").is_none());
 }
 
 #[test]
@@ -1396,6 +1536,7 @@ fn agent_model_list_parser_exposes_aliases_as_selectable_model_ids() {
             AgentModelOption {
                 input_modalities: None,
                 harness_metadata: None,
+                catalog_metadata: None,
                 name: "gpt-5".to_string(),
                 alias: Some("GPT 5".to_string()),
                 is_alias: false,
@@ -1404,6 +1545,7 @@ fn agent_model_list_parser_exposes_aliases_as_selectable_model_ids() {
             AgentModelOption {
                 input_modalities: None,
                 harness_metadata: None,
+                catalog_metadata: None,
                 name: "claude-sonnet".to_string(),
                 alias: None,
                 is_alias: false,
@@ -1412,6 +1554,7 @@ fn agent_model_list_parser_exposes_aliases_as_selectable_model_ids() {
             AgentModelOption {
                 input_modalities: None,
                 harness_metadata: None,
+                catalog_metadata: None,
                 name: "claude-sonnet-xhigh".to_string(),
                 alias: Some("claude-sonnet".to_string()),
                 is_alias: true,
@@ -1420,6 +1563,7 @@ fn agent_model_list_parser_exposes_aliases_as_selectable_model_ids() {
             AgentModelOption {
                 input_modalities: None,
                 harness_metadata: None,
+                catalog_metadata: None,
                 name: "visible-alias".to_string(),
                 alias: Some("hidden-original".to_string()),
                 is_alias: true,
@@ -1428,6 +1572,7 @@ fn agent_model_list_parser_exposes_aliases_as_selectable_model_ids() {
             AgentModelOption {
                 input_modalities: None,
                 harness_metadata: None,
+                catalog_metadata: None,
                 name: "deepseek-chat".to_string(),
                 alias: None,
                 is_alias: false,
@@ -1531,6 +1676,7 @@ agent-default-model:
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: "gpt-selected".to_string(),
             alias: Some("Selected Model".to_string()),
             is_alias: false,
@@ -1539,6 +1685,7 @@ agent-default-model:
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: "gpt-other".to_string(),
             alias: None,
             is_alias: false,
@@ -2104,6 +2251,7 @@ fn claude_desktop_uses_selected_alias_directly_with_original_context() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: "gpt-original".to_string(),
             alias: None,
             is_alias: false,
@@ -2112,6 +2260,7 @@ fn claude_desktop_uses_selected_alias_directly_with_original_context() {
         AgentModelOption {
             input_modalities: None,
             harness_metadata: None,
+            catalog_metadata: None,
             name: "gpt-high".to_string(),
             alias: Some("gpt-original".to_string()),
             is_alias: true,
@@ -2348,6 +2497,7 @@ fn agent_model_validation_only_accepts_models_in_current_list() {
     let models = vec![AgentModelOption {
         input_modalities: None,
         harness_metadata: None,
+        catalog_metadata: None,
         name: "gpt-5.4".to_string(),
         alias: Some("GPT 5.4".to_string()),
         is_alias: false,
