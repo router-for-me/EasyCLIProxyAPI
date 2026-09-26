@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { AgentsPage } from '../../src/pages/AgentsPage';
 import { I18nProvider } from '../../src/i18n';
-import '../../src/styles.css';
+import '../../src/styles/index.css';
 const params = new URLSearchParams(location.search);
 if(params.has('reset-selections'))localStorage.removeItem('cpa-gui.agent-model-selections.v1');
 localStorage.setItem('easy-cli-proxy-api.locale',params.get('locale') || 'zh-CN');

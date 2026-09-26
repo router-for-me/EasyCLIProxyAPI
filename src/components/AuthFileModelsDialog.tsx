@@ -4,6 +4,7 @@ import { Check, Copy, LoaderCircle, Search, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { managementApi } from '../services/managementApi';
 import { oauthModelsFromPayload, type OAuthModelDefinition } from '../services/oauthModels';
+import { useDialogFocusTrap } from './useDialogFocusTrap';
 
 type AuthFileModelsDialogProps = {
   name: string;
@@ -17,6 +18,7 @@ export function AuthFileModelsDialog({ name, onClose }: AuthFileModelsDialogProp
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [copied, setCopied] = useState('');
+  const dialogRef = useDialogFocusTrap<HTMLElement>({ onEscape: onClose });
 
   useEffect(() => {
     let cancelled = false;
@@ -45,14 +47,14 @@ export function AuthFileModelsDialog({ name, onClose }: AuthFileModelsDialogProp
 
   return (
     <div className="model-discovery-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-      <section className="model-discovery-dialog auth-model-dialog auth-model-view-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-model-view-title" onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
+      <section ref={dialogRef} className="model-discovery-dialog auth-model-dialog auth-model-view-dialog" role="dialog" aria-modal="true" aria-labelledby="auth-model-view-title">
         <div className="model-discovery-header">
           <div>
             <h2 id="auth-model-view-title">{t('authFiles.models.viewTitle')}</h2>
             <span className="auth-model-target">{name}</span>
             <span>{t('authFiles.models.viewDescription')}</span>
           </div>
-          <button type="button" className="icon-button quiet" onClick={onClose} title={t('common.close')}><X size={18} /></button>
+          <button type="button" className="icon-button quiet" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}><X size={18} aria-hidden="true" /></button>
         </div>
         <div className="model-discovery-search">
           <Search size={16} aria-hidden="true" />

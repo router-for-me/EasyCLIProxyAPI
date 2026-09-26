@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 import {
   codexSessionPageCounts,
   retainVisibleCodexSessionIds,
@@ -71,6 +72,16 @@ export function CodexSessionsPanel() {
   const mountedRef = useRef(false);
   const loadRequestRef = useRef(0);
   const initialOffsetRef = useRef(sessionViewCache.offset);
+  const deleteDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: Boolean(deleteConfirmation),
+    onEscape: operation === 'delete' ? undefined : () => setDeleteConfirmation(null),
+    preventEscape: operation === 'delete',
+  });
+  const cleanupDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: Boolean(cleanupPreview),
+    onEscape: operation === 'cleanup' ? undefined : () => setCleanupPreview(null),
+    preventEscape: operation === 'cleanup',
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -482,7 +493,7 @@ export function CodexSessionsPanel() {
 
       {deleteConfirmation ? (
         <div className="config-dialog-backdrop">
-          <section className="config-dialog codex-session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="codex-session-delete-title">
+          <section ref={deleteDialogRef} className="config-dialog codex-session-dialog" role="alertdialog" aria-modal="true" aria-labelledby="codex-session-delete-title">
             <div className="config-dialog-heading"><div><TriangleAlert size={19} /><h2 id="codex-session-delete-title">{deleteConfirmation.title}</h2></div></div>
             <p>{deleteConfirmation.description}</p>
             <div className="config-dialog-actions two-actions">
@@ -495,7 +506,7 @@ export function CodexSessionsPanel() {
 
       {cleanupPreview ? (
         <div className="config-dialog-backdrop">
-          <section className="config-dialog codex-session-cleanup-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-session-cleanup-title">
+          <section ref={cleanupDialogRef} className="config-dialog codex-session-cleanup-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-session-cleanup-title">
             <div className="config-dialog-heading">
               <div><TriangleAlert size={19} /><h2 id="codex-session-cleanup-title">{t('agents.sessions.cleanupTitle')}</h2></div>
               <button type="button" className="codex-session-dialog-close" aria-label={t('common.close')} onClick={() => setCleanupPreview(null)}><X size={16} /></button>

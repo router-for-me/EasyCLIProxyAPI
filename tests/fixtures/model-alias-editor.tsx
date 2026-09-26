@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { I18nProvider } from '../../src/i18n';
 import { ThinkingAliasesPage } from '../../src/pages/ThinkingAliasesPage';
-import '../../src/styles.css';
+import '../../src/styles/index.css';
 
 localStorage.setItem('easy-cli-proxy-api.locale', 'en');
 const calls: { cmd: string; args: Record<string, unknown> }[] = [];

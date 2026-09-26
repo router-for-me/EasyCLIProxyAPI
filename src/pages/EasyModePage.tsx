@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -166,6 +167,26 @@ export function EasyModePage({
   const guideTooltipRef = useRef<HTMLElement | null>(null);
   const [guideCardPosition, setGuideCardPosition] = useState<{ top: number; left: number } | null>(null);
   const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const langMenuRef = useRef<HTMLDivElement>(null);
+  const langButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!langMenuOpen) return undefined;
+    const closeFromOutside = (event: PointerEvent) => {
+      if (!langMenuRef.current?.contains(event.target as Node)) setLangMenuOpen(false);
+    };
+    const closeFromKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setLangMenuOpen(false);
+      langButtonRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', closeFromOutside);
+    document.addEventListener('keydown', closeFromKeyboard);
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside);
+      document.removeEventListener('keydown', closeFromKeyboard);
+    };
+  }, [langMenuOpen]);
 
   const refreshSourceStatus = useCallback(async () => {
     try {
@@ -618,9 +639,25 @@ export function EasyModePage({
   };
 
   const currentActiveLang = languageOptions.find((opt) => opt.value === (locale || currentLocale)) || languageOptions[0];
+  const handleLanguageListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    if (!options.length) return;
+    const current = options.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? options.length - 1
+        : event.key === 'ArrowDown'
+          ? (Math.max(current, -1) + 1) % options.length
+          : (current <= 0 ? options.length : current) - 1;
+    event.preventDefault();
+    options[next]?.focus();
+  };
 
   return (
     <section className="page simple-mode-page simple-mode-expanded">
+      <h1 className="sr-only">{t('app.nav.easy')}</h1>
       {guideActive ? <div className="guide-dimmed-overlay" /> : null}
 
       <header className="simple-mode-topbar">
@@ -683,28 +720,45 @@ export function EasyModePage({
             </div>
           ) : null}
 
-          <div className="simple-mode-lang-dropdown">
+          <div ref={langMenuRef} className="simple-mode-lang-dropdown">
             <button
+              ref={langButtonRef}
               type="button"
               className="simple-mode-lang-btn"
               onClick={() => setLangMenuOpen(!langMenuOpen)}
               title={t("easyMode.language.switch")}
+              aria-label={t("easyMode.language.switch")}
+              aria-haspopup="listbox"
+              aria-expanded={langMenuOpen}
+              aria-controls="simple-mode-language-list"
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+                event.preventDefault();
+                setLangMenuOpen(true);
+                window.requestAnimationFrame(() => {
+                  const options = langMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]');
+                  options?.[event.key === 'ArrowUp' ? options.length - 1 : 0]?.focus();
+                });
+              }}
             >
               <Languages size={15} />
               <span>{currentActiveLang.nativeLabel}</span>
               <ChevronDown size={13} />
             </button>
             {langMenuOpen ? (
-              <div className="simple-mode-lang-menu">
+              <div id="simple-mode-language-list" className="simple-mode-lang-menu" role="listbox" aria-label={t("easyMode.language.switch")} onKeyDown={handleLanguageListKeyDown}>
                 {languageOptions.map((opt) => (
                   <button
                     key={opt.value}
                     type="button"
                     className={opt.value === (locale || currentLocale) ? "selected" : ""}
+                    role="option"
+                    aria-selected={opt.value === (locale || currentLocale)}
                     onClick={() => {
                       if (setLocale) setLocale(opt.value);
                       else setI18nLocale(opt.value);
                       setLangMenuOpen(false);
+                      window.requestAnimationFrame(() => langButtonRef.current?.focus());
                     }}
                   >
                     <span>{opt.nativeLabel}</span>
@@ -717,7 +771,7 @@ export function EasyModePage({
 
           <button
             type="button"
-            className="secondary-button simple-mode-exit-btn simple-mode-highlight-button"
+            className="secondary-button simple-mode-exit-btn"
             title={t("easyMode.exitTitle")}
             onClick={() => onExit?.()}
           >
@@ -732,14 +786,13 @@ export function EasyModePage({
           <strong>{setupStepStatus}</strong>
         </div>
         <div className="simple-mode-step-status-track">
-          <div
+          <button
+            type="button"
             className={`simple-mode-step-status-item${activeStep === 1 ? " active" : " complete"}`}
             aria-current={activeStep === 1 ? "step" : undefined}
-            onClick={() => {
-              if (guideActive) return;
-              setActiveStep(1);
-            }}
-            style={{ cursor: guideActive ? "default" : "pointer" }}
+            aria-pressed={activeStep === 1}
+            disabled={guideActive}
+            onClick={() => setActiveStep(1)}
           >
             <span className="simple-mode-step-status-number">
               {activeStep > 1 ? <Check size={14} aria-hidden="true" /> : "1"}
@@ -748,24 +801,22 @@ export function EasyModePage({
               <strong>{t("easyMode.overview.providerTitle")}</strong>
               <small>{t("easyMode.steps.step1Description")}</small>
             </span>
-          </div>
+          </button>
           <span className={`simple-mode-step-status-connector${activeStep > 1 ? " complete" : ""}`} aria-hidden="true" />
-          <div
+          <button
+            type="button"
             className={`simple-mode-step-status-item${activeStep === 2 ? " active" : ""}`}
             aria-current={activeStep === 2 ? "step" : undefined}
-            onClick={() => {
-              if (!guideActive && hasConnectedSource) {
-                setActiveStep(2);
-              }
-            }}
-            style={{ cursor: !guideActive && hasConnectedSource ? "pointer" : "default" }}
+            aria-pressed={activeStep === 2}
+            disabled={guideActive || !hasConnectedSource}
+            onClick={() => setActiveStep(2)}
           >
             <span className="simple-mode-step-status-number">2</span>
             <span className="simple-mode-step-status-copy">
               <strong>{t("easyMode.overview.agentTitle")}</strong>
               <small>{t("easyMode.steps.step2Description")}</small>
             </span>
-          </div>
+          </button>
         </div>
       </nav>
 

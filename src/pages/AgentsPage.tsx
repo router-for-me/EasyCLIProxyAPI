@@ -71,6 +71,7 @@ import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
 import { DeepSeekHarnessCatalogDialog } from './DeepSeekHarnessCatalogDialog';
 import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
 import { AgentConfigManagementPanel, AgentConfigurationFeedback, AgentRunControls } from './AgentControls';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 
 type AgentClientId =
   | 'claude-code'
@@ -710,12 +711,13 @@ function AgentModelPicker({
                   searchRef.current?.focus();
                 }}
                 title={t('agents.model.clearSearch')}
+                aria-label={t('agents.model.clearSearch')}
               >
-                <X size={14} />
+                <X size={14} aria-hidden="true" />
               </button>
             ) : null}
-            {onRefresh ? <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={loading} title={t('agents.model.refresh')}>
-              <RefreshCw size={14} className={loading ? 'spin' : ''} />
+            {onRefresh ? <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={loading} title={t('agents.model.refresh')} aria-label={t('agents.model.refresh')}>
+              <RefreshCw size={14} className={loading ? 'spin' : ''} aria-hidden="true" />
             </button> : null}
           </div> : null}
 
@@ -889,6 +891,30 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const modelRequestRef = useRef(0);
   const piUpdateRequestRef = useRef(0);
   const claudeModelMappingsDirtyRef = useRef(claudeModelMappingsDirtyCache);
+  const launchDirectoryDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: launchDirectoryDialogOpen,
+    onEscape: busy
+      ? undefined
+      : () => {
+          setLaunchDirectoryDialogOpen(false);
+          setLaunchDirectoryTarget(null);
+        },
+    preventEscape: busy,
+  });
+  const defaultDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: defaultConfirmOpen,
+    onEscape: busy ? undefined : () => setDefaultConfirmOpen(false),
+    preventEscape: busy,
+  });
+  const clearDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: clearConfirmOpen,
+    onEscape: busy ? undefined : () => setClearConfirmOpen(false),
+    preventEscape: busy,
+  });
+  const oauthRequiredDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: Boolean(oauthLoginRequiredAction),
+    onEscape: () => setOauthLoginRequiredAction(null),
+  });
 
   const setClaudeModelMappingsDraftByClient = useCallback((
     update: (
@@ -2498,6 +2524,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           }
         }}>
           <section
+            ref={launchDirectoryDialogRef}
             className="config-dialog agent-launch-directory-dialog"
             role="dialog"
             aria-modal="true"
@@ -2724,7 +2751,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
       {defaultConfirmOpen ? (
         <div className="config-dialog-backdrop">
-          <section className="config-dialog agent-restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="agent-default-title">
+          <section ref={defaultDialogRef} className="config-dialog agent-restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="agent-default-title">
             <div className="config-dialog-heading">
               <div><AlertTriangle size={19} /><h2 id="agent-default-title">{t('agents.default.title')}</h2></div>
             </div>
@@ -2748,7 +2775,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
       {clearConfirmOpen ? (
         <div className="config-dialog-backdrop">
-          <section className="config-dialog agent-restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="agent-clear-title">
+          <section ref={clearDialogRef} className="config-dialog agent-restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="agent-clear-title">
             <div className="config-dialog-heading">
               <div><AlertTriangle size={19} /><h2 id="agent-clear-title">{selected === 'codex' ? t('agents.clear.title') : t('agents.clearIntegration.title', { name: activeDefinition.name })}</h2></div>
             </div>
@@ -2769,7 +2796,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
       {oauthLoginRequiredAction ? (
         <div className="config-dialog-backdrop">
-          <section className="config-dialog agent-restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="agent-oauth-login-required-title">
+          <section ref={oauthRequiredDialogRef} className="config-dialog agent-restore-dialog" role="alertdialog" aria-modal="true" aria-labelledby="agent-oauth-login-required-title">
             <div className="config-dialog-heading">
               <div><AlertTriangle size={19} /><h2 id="agent-oauth-login-required-title">{t('agents.oauthLoginRequired.title')}</h2></div>
             </div>

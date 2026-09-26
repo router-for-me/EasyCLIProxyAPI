@@ -1,5 +1,6 @@
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { ModelSelectionPanel } from '../components/ModelSelectionPanel';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 import {
   type CSSProperties,
   FormEvent,
@@ -1513,11 +1514,11 @@ export function ApiAccessPage() {
                         <span className="switch-track" />
                       </span>
                     </label>
-                    <button type="button" className="icon-button quiet" onClick={() => openEdit(row)} disabled={busy} title={t('common.edit')}>
-                      <Edit3 size={16} />
+                    <button type="button" className="icon-button quiet" onClick={() => openEdit(row)} disabled={busy} title={t('common.edit')} aria-label={t('common.edit')}>
+                      <Edit3 size={16} aria-hidden="true" />
                     </button>
-                    <button type="button" className="icon-button danger" onClick={() => void deleteRow(row)} disabled={busy} title={t('common.delete')}>
-                      <Trash2 size={16} />
+                    <button type="button" className="icon-button danger" onClick={() => void deleteRow(row)} disabled={busy} title={t('common.delete')} aria-label={t('common.delete')}>
+                      <Trash2 size={16} aria-hidden="true" />
                     </button>
                   </div>
                     </SortableProviderRow>
@@ -1571,6 +1572,7 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
   const [results, setResults] = useState<Record<string, ProviderModelHealthState>>({});
   const [checkingAll, setCheckingAll] = useState(false);
   const healthControllerRef = useRef<AbortController | null>(null);
+  const dialogRef = useDialogFocusTrap<HTMLElement>({ onEscape: onClose });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1663,14 +1665,14 @@ function ProviderHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
 
   return (
     <div className="model-discovery-backdrop" onMouseDown={(event) => event.currentTarget === event.target && onClose()}>
-      <section className="model-discovery-dialog provider-health-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-health-title">
+      <section ref={dialogRef} className="model-discovery-dialog provider-health-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-health-title">
         <div className="model-discovery-header">
           <div>
             <h2 id="provider-health-title">{t('apiAccess.health.title')}</h2>
             <span>{t('apiAccess.health.description', { provider: row.remark || row.name })}</span>
           </div>
-          <button type="button" className="icon-button quiet" onClick={onClose} title={t('common.close')}>
-            <X size={18} />
+          <button type="button" className="icon-button quiet" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}>
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 
@@ -1802,7 +1804,6 @@ export function ApiProviderDialog({
     () => new Set(mergeModelOptions(initialDraft.models).map((model) => model.name.toLowerCase())),
   );
   const modelCardRef = useRef<HTMLDivElement>(null);
-  const modelDialogRef = useRef<HTMLElement>(null);
   const discoverySelectionInitializedRef = useRef(false);
   const discoveryRequestRef = useRef(0);
 
@@ -1811,38 +1812,16 @@ export function ApiProviderDialog({
     setModelLoading(false);
     setModelDiscoveryOpen(false);
   }, []);
+  const providerDialogRef = useDialogFocusTrap<HTMLFormElement>({
+    onEscape: busy ? undefined : onClose,
+    preventEscape: busy,
+  });
+  const modelDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: modelDiscoveryOpen,
+    onEscape: closeModelDiscovery,
+  });
 
   useEffect(() => () => { discoveryRequestRef.current += 1; }, []);
-
-  useEffect(() => {
-    if (!modelDiscoveryOpen) return;
-    const previousFocus = document.activeElement;
-    const dialog = modelDialogRef.current;
-    dialog?.querySelector<HTMLInputElement>('input')?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        closeModelDiscovery();
-      } else if (event.key === 'Tab') {
-        const controls = Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []);
-        const first = controls[0];
-        const last = controls[controls.length - 1];
-        if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
-          event.preventDefault();
-          last?.focus();
-        } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
-          event.preventDefault();
-          first?.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown, true);
-      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
-    };
-  }, [modelDiscoveryOpen, closeModelDiscovery]);
 
   const modelOptions = useMemo(
     () => mergeModelOptions(discoveredModels, draft.models),
@@ -2073,14 +2052,14 @@ export function ApiProviderDialog({
   return (
     <>
       <div className="config-dialog-backdrop" onMouseDown={(event) => event.currentTarget === event.target && !busy && onClose()}>
-      <form className="config-dialog management-dialog api-provider-dialog" onSubmit={(event) => void submit(event)}>
+      <form ref={providerDialogRef} className="config-dialog management-dialog api-provider-dialog" role="dialog" aria-modal="true" aria-labelledby="api-provider-dialog-title" onSubmit={(event) => void submit(event)}>
         <div className="config-dialog-heading">
           <div>
             <Plus size={19} aria-hidden="true" />
-            <h2>{editingRow ? t('apiAccess.dialog.edit') : t('apiAccess.dialog.add')}</h2>
+            <h2 id="api-provider-dialog-title">{editingRow ? t('apiAccess.dialog.edit') : t('apiAccess.dialog.add')}</h2>
           </div>
-          <button type="button" className="icon-button quiet" onClick={onClose} disabled={busy} title={t('common.close')}>
-            <X size={18} />
+          <button type="button" className="icon-button quiet" onClick={onClose} disabled={busy} title={t('common.close')} aria-label={t('common.close')}>
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
         <label><span>{t('apiAccess.field.remark')}</span><input autoFocus={definition.openAi} value={draft.remark} maxLength={80} onChange={(event) => updateTextField('remark', event.currentTarget.value)} placeholder={t('apiAccess.remarkPlaceholder')} /></label>
@@ -2249,7 +2228,7 @@ export function ApiProviderDialog({
           <section ref={modelDialogRef} className="model-discovery-dialog model-transfer-dialog" role="dialog" aria-modal="true" aria-labelledby="model-discovery-title">
             <div className="model-discovery-header">
               <div><h2 id="model-discovery-title">{t('apiAccess.modelDialog.title')}</h2><span>{t(definition.labelKey)}</span></div>
-              <button type="button" className="icon-button quiet" onClick={closeModelDiscovery} title={t('common.close')}><X size={18} /></button>
+              <button type="button" className="icon-button quiet" onClick={closeModelDiscovery} title={t('common.close')} aria-label={t('common.close')}><X size={18} aria-hidden="true" /></button>
             </div>
 
             <div className="model-transfer-summary">

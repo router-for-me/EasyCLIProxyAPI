@@ -1,8 +1,9 @@
 import { MessageNotice } from '../appNotice';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { LoaderCircle, RefreshCw, RotateCcw, Search, Settings2, X } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 import type { MessageKey } from '../i18n/resources';
 import {
   harnessContextDefault, harnessDraft, harnessReasoningLevels, harnessSchema, isHarnessRecord, parseHarnessDraft, sameHarnessDraft, updateHarnessDraft,
@@ -99,7 +100,6 @@ export function DeepSeekHarnessCatalogDialog({ onClose, onSaved }: { onClose: ()
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [confirmation, setConfirmation] = useState<'close' | 'reload' | null>(null);
-  const dialogRef = useRef<HTMLElement>(null);
   const install = (next: HarnessEditorSnapshot) => {
     setSnapshot(next);
     setDrafts(Object.fromEntries(next.models.map(m => [m.id, harnessDraft(m.configuration, 'model')])));
@@ -118,24 +118,13 @@ export function DeepSeekHarnessCatalogDialog({ onClose, onSaved }: { onClose: ()
   const dirty = !!snapshot && (!sameHarnessDraft(provider, harnessDraft(snapshot.provider, 'provider'))
     || snapshot.models.some(m => !sameHarnessDraft(drafts[m.id] ?? {}, harnessDraft(m.configuration, 'model'))));
   const close = () => { if (!saving) { if (dirty) setConfirmation('close'); else onClose(); } };
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
-    return () => previous?.focus();
-  }, []);
-  useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.stopPropagation(); if (confirmation) setConfirmation(null); else close(); }
-      if (event.key === 'Tab') {
-        const scope = confirmation ? dialogRef.current?.querySelector('[role="alertdialog"]') : dialogRef.current;
-        const targets = [...(scope?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]') ?? [])].filter(el => el.getClientRects().length);
-        const first = targets[0], last = targets[targets.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-      }
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+  const dialogRef = useDialogFocusTrap<HTMLElement>({
+    onEscape: saving ? undefined : close,
+    preventEscape: saving,
+  });
+  const confirmationDialogRef = useDialogFocusTrap<HTMLDivElement>({
+    active: Boolean(confirmation),
+    onEscape: () => setConfirmation(null),
   });
   const active = snapshot?.models.find(m => m.id === selected);
   const api = provider.api || 'openai-completions';
@@ -187,7 +176,7 @@ export function DeepSeekHarnessCatalogDialog({ onClose, onSaved }: { onClose: ()
         <button className="secondary-button" disabled={loading || saving || !snapshot} onClick={() => { setDrafts(Object.fromEntries(snapshot!.models.map(m => [m.id, {}]))); setProvider({}); changed(); }}>{t('agents.catalog.resetAll')}</button>
         <button className="secondary-button" disabled={saving} onClick={close}>{t('common.cancel')}</button><button className="primary-button" disabled={!dirty || loading || saving} onClick={() => void save()}>{saving ? <LoaderCircle size={16} className="spin" /> : null}{t(saving ? 'common.saving' : 'common.save')}</button>
       </div></footer>
-      {confirmation ? <div className="codex-catalog-confirm"><div role="alertdialog" aria-modal="true" aria-label={t('agents.catalog.unsaved')}><strong>{t('agents.catalog.unsaved')}</strong><span>{t('agents.catalog.discardHint')}</span><div><button autoFocus className="secondary-button" onClick={() => setConfirmation(null)}>{t('agents.catalog.keepEditing')}</button><button className="danger-button" onClick={() => { if (confirmation === 'close') onClose(); else { setConfirmation(null); void load(); } }}>{t('agents.catalog.discard')}</button></div></div></div> : null}
+      {confirmation ? <div className="codex-catalog-confirm"><div ref={confirmationDialogRef} role="alertdialog" aria-modal="true" aria-label={t('agents.catalog.unsaved')}><strong>{t('agents.catalog.unsaved')}</strong><span>{t('agents.catalog.discardHint')}</span><div><button autoFocus className="secondary-button" onClick={() => setConfirmation(null)}>{t('agents.catalog.keepEditing')}</button><button className="danger-button" onClick={() => { if (confirmation === 'close') onClose(); else { setConfirmation(null); void load(); } }}>{t('agents.catalog.discard')}</button></div></div></div> : null}
     </section>
   </div>;
 }

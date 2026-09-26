@@ -7,7 +7,7 @@ import { UsageRecordsPage } from '../../src/pages/UsageRecordsPage';
 import { AgentConfigurationFeedback } from '../../src/pages/AgentControls';
 import { useConfirmation } from '../../src/components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../../src/components/QuotaActionFeedback';
-import '../../src/styles.css';
+import '../../src/styles/index.css';
 
 const params = new URLSearchParams(location.search);
 localStorage.setItem('easy-cli-proxy-api.locale', params.get('locale') ?? 'zh-CN');

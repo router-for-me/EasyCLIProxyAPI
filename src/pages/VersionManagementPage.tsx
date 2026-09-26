@@ -17,6 +17,7 @@ import { useAppUpdate } from '../appUpdate';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
 import { AppReleaseNotes } from '../components/AppReleaseNotes';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 
 export type CoreInstallResult = {
   version: string;
@@ -113,7 +114,6 @@ export function VersionManagementPage() {
   const feedback = useAppNotice();
   const { showNotice } = feedback;
 
-  const installDialogRef = useRef<HTMLDivElement>(null);
   const customMirrorInputRef = useRef<HTMLInputElement>(null);
   const completedInstallKeyRef = useRef('');
   const manualInstallInProgressRef = useRef(false);
@@ -395,45 +395,6 @@ export function VersionManagementPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!installDialogOpen) return;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    installDialogRef.current?.focus();
-
-    const preventEscapeClose = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-      }
-    };
-
-    document.addEventListener('keydown', preventEscapeClose);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener('keydown', preventEscapeClose);
-    };
-  }, [installDialogOpen]);
-
-  useEffect(() => {
-    if (!customMirrorDialogOpen) return;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.setTimeout(() => customMirrorInputRef.current?.focus(), 0);
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !versionSourceSaving) {
-        setCustomMirrorDialogOpen(false);
-      }
-    };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [customMirrorDialogOpen, versionSourceSaving]);
-
   const latestVersion = latest?.version ?? '';
   const currentVersion = coreStatus?.currentVersion ?? '';
   const coreInstalled = Boolean(coreStatus?.installed);
@@ -523,9 +484,33 @@ export function VersionManagementPage() {
     : t('common.close');
 
   const installDialogActionDisabled = (installing || progress?.running) && (cancellingInstall || !progress?.cancellable);
+  const customMirrorDialogRef = useDialogFocusTrap<HTMLFormElement>({
+    active: customMirrorDialogOpen,
+    initialFocusRef: customMirrorInputRef,
+    onEscape: versionSourceSaving
+      ? undefined
+      : () => {
+          setCustomMirrorDialogOpen(false);
+          setCustomMirrorDraft('');
+          setVersionSourceError('');
+        },
+    preventEscape: versionSourceSaving,
+  });
+  const confirmUpdateDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: confirmUpdateOpen,
+    onEscape: () => setConfirmUpdateOpen(false),
+  });
+  const installDialogRef = useDialogFocusTrap<HTMLDivElement>({
+    active: installDialogOpen && Boolean(progress),
+    onEscape: installing || progress?.running ? undefined : closeInstallDialog,
+    preventEscape: Boolean(installing || progress?.running),
+  });
 
   return (
     <section className="page management-page version-management-page">
+      <header className="management-header version-page-header">
+        <div><h1>{t('app.nav.versions')}</h1></div>
+      </header>
       <MessageNotice message={versionSourceError} onDismiss={() => setVersionSourceError('')} />
       <section className="panel version-list">
         <div className="version-source-row" aria-label={t('kernel.versions.downloadSource')}>
@@ -724,6 +709,7 @@ export function VersionManagementPage() {
       {customMirrorDialogOpen ? (
         <div className="install-dialog-backdrop custom-mirror-dialog-backdrop">
           <form
+            ref={customMirrorDialogRef}
             className="install-dialog app-update-dialog custom-mirror-dialog"
             role="dialog"
             aria-modal="true"
@@ -797,6 +783,7 @@ export function VersionManagementPage() {
       {confirmUpdateOpen ? (
         <div className="install-dialog-backdrop app-update-dialog-backdrop">
           <section
+            ref={confirmUpdateDialogRef}
             className="install-dialog app-update-dialog"
             role="dialog"
             aria-modal="true"

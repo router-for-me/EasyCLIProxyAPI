@@ -1,5 +1,5 @@
 import { MessageNotice } from './appNotice';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -35,6 +35,7 @@ import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
 import { canOpenAppPage, isAlwaysAvailablePage } from './navigation';
 import { useThemePreference } from './theme';
+import { useDialogFocusTrap } from './components/useDialogFocusTrap';
 
 const CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 
@@ -131,7 +132,13 @@ function AppContent() {
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
   const [theme, setTheme] = useThemePreference();
   const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
-  const closeDialogRef = useRef<HTMLElement>(null);
+  const closeDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: Boolean(windowsClosePrompt),
+    onEscape: windowsClosePrompt?.resolvingAction
+      ? undefined
+      : () => setWindowsClosePrompt(null),
+    preventEscape: Boolean(windowsClosePrompt?.resolvingAction),
+  });
   const languageMenuRef = useRef<HTMLDivElement>(null);
   const languageButtonRef = useRef<HTMLButtonElement>(null);
   const { status } = useCoreRuntime();
@@ -218,16 +225,21 @@ function AppContent() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!windowsClosePrompt || windowsClosePrompt.resolvingAction) {
-      return;
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      closeDialogRef.current?.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [windowsClosePrompt]);
+  const handleLanguageListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    if (!options.length) return;
+    const current = options.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? options.length - 1
+        : event.key === 'ArrowDown'
+          ? (Math.max(current, -1) + 1) % options.length
+          : (current <= 0 ? options.length : current) - 1;
+    event.preventDefault();
+    options[next]?.focus();
+  };
 
   const select = (pageId: PageId) => {
     if (!canOpenAppPage(pageId, coreReady)) {
@@ -383,6 +395,15 @@ function AppContent() {
                 aria-expanded={languageMenuOpen}
                 aria-controls="sidebar-language-list"
                 onClick={() => setLanguageMenuOpen((open) => !open)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+                  event.preventDefault();
+                  setLanguageMenuOpen(true);
+                  window.requestAnimationFrame(() => {
+                    const options = languageMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]');
+                    options?.[event.key === 'ArrowUp' ? options.length - 1 : 0]?.focus();
+                  });
+                }}
               >
                 <Languages size={16} aria-hidden="true" />
                 <span lang={selectedLanguage.value}>{selectedLanguage.nativeLabel}</span>
@@ -398,6 +419,7 @@ function AppContent() {
                   className="sidebar-language-list"
                   role="listbox"
                   aria-label={t('app.language')}
+                  onKeyDown={handleLanguageListKeyDown}
                 >
                   {languageOptions.map((option) => {
                     const selected = option.value === locale;
@@ -411,6 +433,7 @@ function AppContent() {
                         onClick={() => {
                           setLocale(option.value);
                           setLanguageMenuOpen(false);
+                          window.requestAnimationFrame(() => languageButtonRef.current?.focus());
                         }}
                       >
                         <span lang={option.value}>{option.nativeLabel}</span>
@@ -466,11 +489,6 @@ function AppContent() {
             aria-modal="true"
             aria-labelledby="close-dialog-title"
             aria-describedby="close-dialog-description"
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault();
-              }
-            }}
           >
             <button
               type="button"

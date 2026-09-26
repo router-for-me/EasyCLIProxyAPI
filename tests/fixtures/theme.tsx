@@ -6,7 +6,7 @@ import App from '../../src/App';
 import { I18nProvider } from '../../src/i18n';
 import { initializeTheme } from '../../src/theme';
 import type { AppTheme } from '../../src/themeController';
-import '../../src/styles.css';
+import '../../src/styles/index.css';
 
 const params = new URLSearchParams(location.search);
 const platform = params.get('platform') || 'windows';

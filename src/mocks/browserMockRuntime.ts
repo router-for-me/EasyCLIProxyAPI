@@ -458,7 +458,7 @@ function createState(scenario: BrowserMockScenario) {
       tps: 58.4,
       tpsSampleCount: 284,
       averageLatencyMs: 1_284,
-      cacheHitRate: 38.6,
+      cacheHitRate: 0.386,
       estimatedCost: 3.8421,
       pricedRequests: 296,
       timeline,

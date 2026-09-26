@@ -13,6 +13,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Download, RefreshCw } from 'lucide-react';
 import { getCurrentLocale, translate, useI18n, type AppLocale } from './i18n';
+import { useDialogFocusTrap } from './components/useDialogFocusTrap';
 
 export type AppUpdateInfo = {
   currentVersion: string;
@@ -197,6 +198,11 @@ export function AppUpdateDialog() {
     install,
     cancel,
   } = useAppUpdate();
+  const dialogRef = useDialogFocusTrap<HTMLElement>({
+    active: confirmOpen || task.running,
+    onEscape: confirmOpen ? dismissConfirm : undefined,
+    preventEscape: task.running,
+  });
 
   if (!confirmOpen && !task.running) return null;
 
@@ -210,6 +216,7 @@ export function AppUpdateDialog() {
   return (
     <div className="install-dialog-backdrop app-update-dialog-backdrop">
       <section
+        ref={dialogRef}
         className="install-dialog app-update-dialog"
         role="dialog"
         aria-modal="true"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Check,
@@ -30,6 +30,7 @@ import {
 import { AuthFileManagementPage } from './AuthFileManagementPage';
 import { QuotaPage } from './QuotaPage';
 import { validateDevinCallback } from '../services/devinOAuth';
+import { handleHorizontalTabKey } from '../components/tabKeyboardNavigation';
 
 type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'devin';
 type OAuthFlowStatus = 'idle' | 'waiting' | 'success' | 'error';
@@ -115,6 +116,16 @@ const cachedOAuthProviderStates = (): Partial<Record<OAuthProviderId, OAuthProvi
 export function OAuthManagementPage() {
   const { t } = useI18n();
   const [activeSubpage, setActiveSubpage] = useState<OAuthSubpage>('login');
+  const subpageIds = oauthSubpages.map((subpage) => subpage.id);
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, subpage: OAuthSubpage) => {
+    handleHorizontalTabKey(
+      event,
+      subpageIds,
+      subpage,
+      setActiveSubpage,
+      (next) => document.getElementById(`oauth-subpage-tab-${next}`),
+    );
+  };
 
   return (
     <section className="page oauth-management-page">
@@ -133,9 +144,10 @@ export function OAuthManagementPage() {
               role="tab"
               className={active ? 'active' : ''}
               aria-selected={active}
-              aria-controls={`oauth-subpage-panel-${subpage.id}`}
+              aria-controls="oauth-subpage-panel"
               tabIndex={active ? 0 : -1}
               onClick={() => setActiveSubpage(subpage.id)}
+              onKeyDown={(event) => handleTabKeyDown(event, subpage.id)}
             >
               {t(subpage.labelKey)}
             </button>
@@ -145,7 +157,7 @@ export function OAuthManagementPage() {
 
       <div
         className="oauth-subpage-panel"
-        id={`oauth-subpage-panel-${activeSubpage}`}
+        id="oauth-subpage-panel"
         role="tabpanel"
         aria-labelledby={`oauth-subpage-tab-${activeSubpage}`}
       >

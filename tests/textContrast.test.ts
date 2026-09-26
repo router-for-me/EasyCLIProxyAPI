@@ -2,7 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import postcss from 'postcss';
 
-const stylesheet = postcss.parse(readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8'));
+const stylesheet = postcss.parse([
+  '../src/styles.css',
+  '../src/styles/feature-pages.css',
+  '../src/styles/ui-refinements.css',
+].map((file) => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n'));
 const aliases: Record<string, string> = {
   '--theme-4b4742': '--text-secondary',
   '--theme-59544d': '--text-secondary',

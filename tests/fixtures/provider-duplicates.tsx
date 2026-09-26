@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { I18nProvider } from '../../src/i18n';
 import { ApiAccessPage, providerRemarkIdentity, type ApiAccessRemarkLocator, type ProviderSection } from '../../src/pages/ApiAccessPage';
-import '../../src/styles.css';
+import '../../src/styles/index.css';
 
 localStorage.setItem('easy-cli-proxy-api.locale', 'en');
 const fixture = window as typeof window & {

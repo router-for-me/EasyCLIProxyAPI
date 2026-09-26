@@ -9,6 +9,7 @@ import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { AuthFileModelsDialog } from '../components/AuthFileModelsDialog';
 import { AuthFileRequestStatus } from '../components/AuthFileRequestStatus';
 import { AuthFileHealthStatus } from '../components/AuthFileHealthStatus';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 import {
   Check,
   Copy,
@@ -189,6 +190,11 @@ export function AuthFileManagementPage() {
     setOauthModelTarget(null);
     setOauthModelSettings(null);
   };
+  const oauthModelsDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: Boolean(oauthModelTarget),
+    onEscape: oauthModelSaving ? undefined : closeOauthModels,
+    preventEscape: oauthModelSaving,
+  });
 
   const openOauthModelSettings = async (target: OAuthModelTarget) => {
     if (oauthModelSaveRef.current) return;
@@ -445,9 +451,9 @@ export function AuthFileManagementPage() {
                   <footer className="auth-card-actions">
                     <button type="button" className="secondary-button compact-button" onClick={() => setSettingsName(name)} disabled={busy || !isOAuthCredentialFile(file)} title={t(isOAuthCredentialFile(file) ? 'authFiles.settings.title' : 'authFiles.fileOnly')}><Settings2 size={14} />{t('authFiles.settings.button')}</button>
                     {providerKey(file) ? <button type="button" className="secondary-button compact-button" onClick={() => setModelViewName(name)} disabled={busy} title={t('authFiles.models.viewTitle')}>{t('authFiles.models.button')}</button> : null}
-                    <button type="button" className="icon-button quiet" onClick={() => void copyName(name)} disabled={busy} title={t('authFiles.copyName')}>{copied === name ? <Check size={15} /> : <Copy size={15} />}</button>
+                    <button type="button" className="icon-button quiet" onClick={() => void copyName(name)} disabled={busy} title={t('authFiles.copyName')} aria-label={t('authFiles.copyName')}>{copied === name ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}</button>
                     <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`} onClick={() => void toggleStatus(file)} disabled={busy || !isOAuthCredentialFile(file)} title={isOAuthCredentialFile(file) ? undefined : t('authFiles.fileOnly')}>{disabled ? t('common.enable') : t('common.disable')}</button>
-                    <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.delete')}><Trash2 size={15} /></button>
+                    <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.delete')} aria-label={t('common.delete')}><Trash2 size={15} aria-hidden="true" /></button>
                   </footer>
                 </article>
               );
@@ -467,7 +473,7 @@ export function AuthFileManagementPage() {
 
       {oauthModelTarget ? (
         <div className="model-discovery-backdrop" onMouseDown={(event) => event.currentTarget === event.target && !oauthModelSaving && closeOauthModels()}>
-          <section className="model-discovery-dialog auth-model-dialog" role="dialog" aria-modal="true" aria-labelledby="oauth-model-title" onKeyDown={(event) => { if (event.key === 'Escape') closeOauthModels(); }}>
+          <section ref={oauthModelsDialogRef} className="model-discovery-dialog auth-model-dialog" role="dialog" aria-modal="true" aria-labelledby="oauth-model-title">
             <div className="model-discovery-header">
               <div>
                 <h2 id="oauth-model-title">{t(oauthModelTarget.scope === 'credential' ? 'authFiles.models.title' : 'authFiles.models.globalButton')}</h2>
@@ -486,7 +492,7 @@ export function AuthFileManagementPage() {
                 )}
                 <span>{t(oauthModelTarget.scope === 'credential' ? 'authFiles.models.description' : 'authFiles.models.globalDescription', { provider: oauthModelTarget.label })}</span>
               </div>
-              <button type="button" className="icon-button quiet" onClick={closeOauthModels} disabled={oauthModelSaving} title={t('common.close')}><X size={18} /></button>
+              <button type="button" className="icon-button quiet" onClick={closeOauthModels} disabled={oauthModelSaving} title={t('common.close')} aria-label={t('common.close')}><X size={18} aria-hidden="true" /></button>
             </div>
 
             <div className="model-discovery-search">

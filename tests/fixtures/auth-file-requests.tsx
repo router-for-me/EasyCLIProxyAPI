@@ -5,7 +5,7 @@ import { I18nProvider } from '../../src/i18n';
 import { AuthFileManagementPage } from '../../src/pages/AuthFileManagementPage';
 import { QuotaPage } from '../../src/pages/QuotaPage';
 import { updateQuotaCache } from '../../src/services/quotaCache';
-import '../../src/styles.css';
+import '../../src/styles/index.css';
 
 const params = new URLSearchParams(location.search);
 localStorage.setItem('easy-cli-proxy-api.locale', params.get('locale') || 'zh-CN');

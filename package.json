@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "check": "tsc --noEmit",
     "preview": "vite preview",
+    "test:ui:accessibility": "node tests/app-shell-accessibility-ui.cjs",
+    "screenshots": "node scripts/capture-readme-screenshots.cjs",
     "tauri": "tauri"
   },
   "dependencies": {

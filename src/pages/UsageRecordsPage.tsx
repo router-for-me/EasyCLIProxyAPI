@@ -25,6 +25,8 @@ import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatUsageNumber } from '../services/usageNumber';
+import { handleHorizontalTabKey } from '../components/tabKeyboardNavigation';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 import {
   OTHER_TREND_MODEL_KEY,
   buildUsageTrendSeries,
@@ -45,6 +47,8 @@ import { usageViewScopeKey } from '../services/usageViewScope';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
+
+const USAGE_TABS: readonly UsageTab[] = ['overview', 'analysis', 'events', 'pricing', 'data-management'];
 
 type CollectorStatus = {
   state: 'waiting-core' | 'collecting' | 'error';
@@ -539,52 +543,95 @@ export function UsageRecordsPage() {
           (activeTab === 'events' && !events) ||
           (activeTab === 'pricing' && !pricing))));
 
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: UsageTab) => {
+    handleHorizontalTabKey(
+      event,
+      USAGE_TABS,
+      tab,
+      setActiveTab,
+      (next) => document.getElementById(`usage-tab-${next}`),
+    );
+  };
+
   return (
     <section className="page management-page usage-records-page">
       {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
 
       <div className="usage-topbar">
-        <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
+        <div className="usage-page-navigation">
+          <h1>{t('usage.title')}</h1>
+          <div className="usage-tabs" role="tablist" aria-label={t('usage.pageLabel')}>
           <button
             type="button"
+            id="usage-tab-overview"
+            role="tab"
             className={activeTab === 'overview' ? 'active' : ''}
+            aria-selected={activeTab === 'overview'}
+            aria-controls="usage-tab-panel"
+            tabIndex={activeTab === 'overview' ? 0 : -1}
             onClick={() => setActiveTab('overview')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'overview')}
           >
             <BarChart3 size={15} />
             <span>{t('usage.tab.overview')}</span>
           </button>
           <button
             type="button"
+            id="usage-tab-analysis"
+            role="tab"
             className={activeTab === 'analysis' ? 'active' : ''}
+            aria-selected={activeTab === 'analysis'}
+            aria-controls="usage-tab-panel"
+            tabIndex={activeTab === 'analysis' ? 0 : -1}
             onClick={() => setActiveTab('analysis')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'analysis')}
           >
             <Activity size={15} />
             <span>{t('usage.tab.analysis')}</span>
           </button>
           <button
             type="button"
+            id="usage-tab-events"
+            role="tab"
             className={activeTab === 'events' ? 'active' : ''}
+            aria-selected={activeTab === 'events'}
+            aria-controls="usage-tab-panel"
+            tabIndex={activeTab === 'events' ? 0 : -1}
             onClick={() => setActiveTab('events')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'events')}
           >
             <List size={15} />
             <span>{t('usage.tab.events')}</span>
           </button>
           <button
             type="button"
+            id="usage-tab-pricing"
+            role="tab"
             className={activeTab === 'pricing' ? 'active' : ''}
+            aria-selected={activeTab === 'pricing'}
+            aria-controls="usage-tab-panel"
+            tabIndex={activeTab === 'pricing' ? 0 : -1}
             onClick={() => setActiveTab('pricing')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'pricing')}
           >
             <CircleDollarSign size={15} />
             <span>{t('usage.tab.pricing')}</span>
           </button>
           <button
             type="button"
+            id="usage-tab-data-management"
+            role="tab"
             className={activeTab === 'data-management' ? 'active' : ''}
+            aria-selected={activeTab === 'data-management'}
+            aria-controls="usage-tab-panel"
+            tabIndex={activeTab === 'data-management' ? 0 : -1}
             onClick={() => setActiveTab('data-management')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'data-management')}
           >
             <Wrench size={15} />
             <span>{t('usage.tab.dataManagement')}</span>
           </button>
+          </div>
         </div>
 
         <div className="usage-topbar-actions">
@@ -612,6 +659,13 @@ export function UsageRecordsPage() {
         </div>
       </div>
 
+      <div
+        className="usage-tab-panel"
+        id="usage-tab-panel"
+        role="tabpanel"
+        aria-labelledby={`usage-tab-${activeTab}`}
+      >
+      {activeTab !== 'data-management' ? (
       <section className="panel usage-filter-panel">
         <div className="usage-filter-row">
           <div className="usage-filter-group">
@@ -745,6 +799,7 @@ export function UsageRecordsPage() {
           </div>
         ) : null}
       </section>
+      ) : null}
 
       {showInitialLoading ? (
         <div className="usage-initial-loading">
@@ -770,6 +825,7 @@ export function UsageRecordsPage() {
         <PricingView pricing={pricing} query={buildQueries().query} onChanged={() => loadData(true)} />
       ) : null}
       {activeTab === 'data-management' ? <UsageDataManagementView /> : null}
+      </div>
     </section>
   );
 }
@@ -1935,17 +1991,16 @@ function EventsView({
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
 
-  const columnDialogRef = useRef<HTMLElement | null>(null);
+  const columnDialogRef = useDialogFocusTrap<HTMLElement>({
+    active: columnSettingsOpen,
+    onEscape: () => setColumnSettingsOpen(false),
+  });
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
 
   const visibleColumnKeySet = new Set(visibleColumnKeys);
   const visibleColumns = EVENT_COLUMNS.filter((column) => visibleColumnKeySet.has(column.key));
   const isCustomized = EVENT_COLUMNS.some((col) => widths[col.key] !== col.defaultWidth);
   const noRemarkLabel = t('usage.key.noRemark');
-
-  useEffect(() => {
-    if (columnSettingsOpen) columnDialogRef.current?.focus();
-  }, [columnSettingsOpen]);
 
   const resetAllWidths = () => {
     const defaults: Record<EventColumnKey, number> = {} as any;
@@ -2000,6 +2055,33 @@ function EventsView({
       } catch {}
       return next;
     });
+  };
+
+  const persistColumnWidth = (key: EventColumnKey, width: number) => {
+    setWidths((current) => {
+      const next = { ...current, [key]: width };
+      try {
+        localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleResizeKeyDown = (key: EventColumnKey, event: KeyboardEvent<HTMLDivElement>) => {
+    const column = EVENT_COLUMNS.find((item) => item.key === key);
+    if (!column) return;
+    const current = widths[key] ?? column.defaultWidth;
+    const step = event.shiftKey ? 25 : 10;
+    const next = event.key === 'Home'
+      ? column.defaultWidth
+      : event.key === 'ArrowLeft'
+        ? Math.max(column.minWidth, current - step)
+        : event.key === 'ArrowRight'
+          ? Math.min(800, current + step)
+          : null;
+    if (next === null) return;
+    event.preventDefault();
+    persistColumnWidth(key, next);
   };
 
   const handleResizeStart = (key: EventColumnKey, e: React.PointerEvent<HTMLDivElement>) => {
@@ -2159,8 +2241,16 @@ function EventsView({
                       </div>
                       <div
                         className={`usage-col-resizer ${resizingCol === col.key ? 'active' : ''}`}
+                        role="separator"
+                        tabIndex={0}
+                        aria-label={`${label}: ${t('usage.events.resizeHint')}`}
+                        aria-orientation="vertical"
+                        aria-valuemin={col.minWidth}
+                        aria-valuemax={800}
+                        aria-valuenow={widths[col.key]}
                         onPointerDown={(e) => handleResizeStart(col.key, e)}
                         onDoubleClick={(e) => resetSingleColumn(col.key, e)}
+                        onKeyDown={(event) => handleResizeKeyDown(col.key, event)}
                         title={t('usage.events.resizeHint')}
                       />
                     </th>
@@ -2216,6 +2306,7 @@ function EventsView({
                 className="icon-button quiet"
                 onClick={() => setColumnSettingsOpen(false)}
                 title={t('common.close')}
+                aria-label={t('common.close')}
               >
                 <X size={17} />
               </button>
@@ -2638,18 +2729,20 @@ function PricingView({
                         type="button"
                         className="icon-button"
                         title={t('common.edit')}
+                        aria-label={`${t('common.edit')}: ${row.model}`}
                         onClick={() => setDraft(priceDraftFor(row.model, row.price))}
                       >
-                        <Pencil size={14} />
+                        <Pencil size={14} aria-hidden="true" />
                       </button>
                       {row.price?.source === 'manual' ? (
                         <button
                           type="button"
                           className="icon-button danger"
                           title={t('common.delete')}
+                          aria-label={`${t('common.delete')}: ${row.model}`}
                           onClick={() => void deletePrice(row.model)}
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size={14} aria-hidden="true" />
                         </button>
                       ) : null}
                     </div>

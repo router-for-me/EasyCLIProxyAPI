@@ -5,7 +5,7 @@ import { AppErrorBoundary } from './AppErrorBoundary';
 import App from './App';
 import { I18nProvider } from './i18n';
 import { initializeTheme } from './theme';
-import './styles.css';
+import './styles/index.css';
 
 async function bootstrap() {
   if (import.meta.env.DEV && !isTauri()) {

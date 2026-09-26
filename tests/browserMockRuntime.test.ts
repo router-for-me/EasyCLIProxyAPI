@@ -63,6 +63,14 @@ describe('browser mock runtime', () => {
     });
   });
 
+  test('uses normalized ratios for percentage-based usage metrics', async () => {
+    const runtime = createBrowserMockRuntime('running');
+    expect(await runtime.invoke('get_usage_overview')).toMatchObject({
+      successRate: 96.47,
+      cacheHitRate: 0.386,
+    });
+  });
+
   test('provides an explicit error scenario', async () => {
     const runtime = createBrowserMockRuntime('error');
     await expect(runtime.invoke('get_core_status')).rejects.toThrow('Browser Mock error scenario');

@@ -5,7 +5,7 @@ import { OAuthLoginPage } from '../../src/pages/ManagementPages';
 import { QuotaPage } from '../../src/pages/QuotaPage';
 import { AuthFileManagementPage } from '../../src/pages/AuthFileManagementPage';
 import { EasyModePage } from '../../src/pages/EasyModePage';
-import '../../src/styles.css';
+import '../../src/styles/index.css';
 
 const params = new URLSearchParams(location.search);
 const view = params.get('view');

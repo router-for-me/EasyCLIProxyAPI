@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, LoaderCircle, RefreshCw, RotateCcw, Search, X } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 import {
   cloneCodexModelConfiguration,
   codexContextSourceHint,
@@ -123,14 +124,13 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
     else onClose();
   };
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (discardConfirmOpen) setDiscardConfirmOpen(false);
-      else requestClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+  const dialogRef = useDialogFocusTrap<HTMLElement>({
+    onEscape: requestClose,
+    preventEscape: saving,
+  });
+  const discardDialogRef = useDialogFocusTrap<HTMLDivElement>({
+    active: discardConfirmOpen,
+    onEscape: () => setDiscardConfirmOpen(false),
   });
 
   const restoreModel = () => {
@@ -191,14 +191,14 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
     <div className="config-dialog-backdrop codex-catalog-backdrop" onMouseDown={(event) => {
       if (event.currentTarget === event.target) requestClose();
     }}>
-      <section className="config-dialog codex-catalog-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-catalog-title">
+      <section ref={dialogRef} className="config-dialog codex-catalog-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-catalog-title">
         <header className="config-dialog-heading codex-catalog-heading">
           <div>
             <h2 id="codex-catalog-title">{t('agents.catalog.title')}</h2>
             <p>{t('agents.catalog.subtitle')}</p>
           </div>
           <button type="button" className="icon-button quiet" onClick={requestClose} disabled={saving} aria-label={t('common.close')}>
-            <X size={18} />
+            <X size={18} aria-hidden="true" />
           </button>
         </header>
 
@@ -310,7 +310,7 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
 
         {discardConfirmOpen ? (
           <div className="codex-catalog-confirm">
-            <div role="alertdialog" aria-modal="true">
+            <div ref={discardDialogRef} role="alertdialog" aria-modal="true">
               <strong>{t('agents.catalog.unsaved')}</strong>
               <span>{t('agents.catalog.discardHint')}</span>
               <div>

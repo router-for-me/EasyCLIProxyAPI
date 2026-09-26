@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -36,6 +36,8 @@ import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { webUiManagementUrl } from '../services/clientAccess';
 import { ThinkingAliasesPage } from './ThinkingAliasesPage';
 import { SensitiveWordsPage } from './SensitiveWordsPage';
+import { handleHorizontalTabKey } from '../components/tabKeyboardNavigation';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 
 type CoreConfigSettings = {
   apiKeys: CoreApiKey[];
@@ -80,6 +82,7 @@ type ConfigAction =
   | 'software'
   | null;
 type ConfigSubpage = 'general' | 'network' | 'routing' | 'software' | 'aliases' | 'sensitive-words';
+const CONFIG_SUBPAGES: readonly ConfigSubpage[] = ['general', 'network', 'routing', 'aliases', 'software', 'sensitive-words'];
 type CloseBehavior = 'ask' | 'exit' | 'minimize-to-tray';
 type NetworkDraftField =
   | 'port'
@@ -955,9 +958,35 @@ export function ConfigPanelPage() {
   const keyMutationBusy = busyAction === 'add-key' || busyAction === 'update-key';
   const managementSecretBusy = busyAction === 'management-secret';
   const loggingSettingsBusy = busyAction === 'logging';
+  const addDialogRef = useDialogFocusTrap<HTMLFormElement>({
+    active: addDialogOpen,
+    onEscape: keyMutationBusy ? undefined : closeAddDialog,
+    preventEscape: keyMutationBusy,
+  });
+  const deleteDialogRef = useDialogFocusTrap<HTMLDivElement>({
+    active: deleteIndex !== null,
+    onEscape: busyAction === 'delete-key' ? undefined : () => setDeleteIndex(null),
+    preventEscape: busyAction === 'delete-key',
+  });
+  const activateConfigSubpage = (subpage: ConfigSubpage) => {
+    if (subpage === 'sensitive-words') setSensitiveWordsVisited(true);
+    setActiveSubpage(subpage);
+  };
+  const handleConfigTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, subpage: ConfigSubpage) => {
+    handleHorizontalTabKey(
+      event,
+      CONFIG_SUBPAGES,
+      subpage,
+      activateConfigSubpage,
+      (next) => document.getElementById(`config-subpage-tab-${next}`),
+    );
+  };
 
   return (
     <section className="page config-page">
+      <header className="management-header config-page-header">
+        <div><h1>{t('app.nav.config')}</h1></div>
+      </header>
       <div className="agent-subpage-tabs config-subpage-tabs" role="tablist" aria-label={t('config.tabs.label')}>
         <button
           type="button"
@@ -965,9 +994,10 @@ export function ConfigPanelPage() {
           role="tab"
           className={activeSubpage === 'general' ? 'active' : ''}
           aria-selected={activeSubpage === 'general'}
-          aria-controls="config-subpage-panel-general"
+          aria-controls="config-subpage-panel"
           tabIndex={activeSubpage === 'general' ? 0 : -1}
-          onClick={() => setActiveSubpage('general')}
+          onClick={() => activateConfigSubpage('general')}
+          onKeyDown={(event) => handleConfigTabKeyDown(event, 'general')}
         >
           {t('config.tabs.general')}
         </button>
@@ -977,9 +1007,10 @@ export function ConfigPanelPage() {
           role="tab"
           className={activeSubpage === 'network' ? 'active' : ''}
           aria-selected={activeSubpage === 'network'}
-          aria-controls="config-subpage-panel-network"
+          aria-controls="config-subpage-panel"
           tabIndex={activeSubpage === 'network' ? 0 : -1}
-          onClick={() => setActiveSubpage('network')}
+          onClick={() => activateConfigSubpage('network')}
+          onKeyDown={(event) => handleConfigTabKeyDown(event, 'network')}
         >
           {t('config.tabs.network')}
         </button>
@@ -989,9 +1020,10 @@ export function ConfigPanelPage() {
           role="tab"
           className={activeSubpage === 'routing' ? 'active' : ''}
           aria-selected={activeSubpage === 'routing'}
-          aria-controls="config-subpage-panel-routing"
+          aria-controls="config-subpage-panel"
           tabIndex={activeSubpage === 'routing' ? 0 : -1}
-          onClick={() => setActiveSubpage('routing')}
+          onClick={() => activateConfigSubpage('routing')}
+          onKeyDown={(event) => handleConfigTabKeyDown(event, 'routing')}
         >
           {t('config.tabs.routing')}
         </button>
@@ -1001,9 +1033,10 @@ export function ConfigPanelPage() {
           role="tab"
           className={activeSubpage === 'aliases' ? 'active' : ''}
           aria-selected={activeSubpage === 'aliases'}
-          aria-controls="config-subpage-panel-aliases"
+          aria-controls="config-subpage-panel"
           tabIndex={activeSubpage === 'aliases' ? 0 : -1}
-          onClick={() => setActiveSubpage('aliases')}
+          onClick={() => activateConfigSubpage('aliases')}
+          onKeyDown={(event) => handleConfigTabKeyDown(event, 'aliases')}
         >
           {t('app.nav.thinkingAliases')}
         </button>
@@ -1013,9 +1046,10 @@ export function ConfigPanelPage() {
           role="tab"
           className={activeSubpage === 'software' ? 'active' : ''}
           aria-selected={activeSubpage === 'software'}
-          aria-controls="config-subpage-panel-software"
+          aria-controls="config-subpage-panel"
           tabIndex={activeSubpage === 'software' ? 0 : -1}
-          onClick={() => setActiveSubpage('software')}
+          onClick={() => activateConfigSubpage('software')}
+          onKeyDown={(event) => handleConfigTabKeyDown(event, 'software')}
         >
           {t('config.tabs.software')}
         </button>
@@ -1025,12 +1059,10 @@ export function ConfigPanelPage() {
           role="tab"
           className={activeSubpage === 'sensitive-words' ? 'active' : ''}
           aria-selected={activeSubpage === 'sensitive-words'}
-          aria-controls="config-subpage-panel-sensitive-words"
+          aria-controls="config-subpage-panel"
           tabIndex={activeSubpage === 'sensitive-words' ? 0 : -1}
-          onClick={() => {
-            setSensitiveWordsVisited(true);
-            setActiveSubpage('sensitive-words');
-          }}
+          onClick={() => activateConfigSubpage('sensitive-words')}
+          onKeyDown={(event) => handleConfigTabKeyDown(event, 'sensitive-words')}
         >
           {t('config.tabs.sensitiveWords')}
         </button>
@@ -1039,7 +1071,7 @@ export function ConfigPanelPage() {
       {activeSubpage === 'general' ? (
         <div
           className="config-subpage-panel config-general-subpage"
-          id="config-subpage-panel-general"
+          id="config-subpage-panel"
           role="tabpanel"
           aria-labelledby="config-subpage-tab-general"
         >
@@ -1447,7 +1479,7 @@ export function ConfigPanelPage() {
       ) : activeSubpage === 'network' || activeSubpage === 'routing' ? (
         <div
           className="config-subpage-panel config-network-subpage"
-          id={`config-subpage-panel-${activeSubpage}`}
+          id="config-subpage-panel"
           role="tabpanel"
           aria-labelledby={`config-subpage-tab-${activeSubpage}`}
         >
@@ -1962,7 +1994,7 @@ export function ConfigPanelPage() {
       ) : activeSubpage === 'software' ? (
         <div
           className="config-subpage-panel"
-          id="config-subpage-panel-software"
+          id="config-subpage-panel"
           role="tabpanel"
           aria-labelledby="config-subpage-tab-software"
         >
@@ -2130,20 +2162,21 @@ export function ConfigPanelPage() {
       ) : activeSubpage === 'aliases' ? (
         <div
           className="config-subpage-panel"
-          id="config-subpage-panel-aliases"
+          id="config-subpage-panel"
           role="tabpanel"
           aria-labelledby="config-subpage-tab-aliases"
         >
-          <ThinkingAliasesPage />
+          <ThinkingAliasesPage embedded />
         </div>
       ) : null}
 
       {sensitiveWordsVisited ? (
         <div
           className="config-subpage-panel"
-          id="config-subpage-panel-sensitive-words"
+          id={activeSubpage === 'sensitive-words' ? 'config-subpage-panel' : undefined}
           role="tabpanel"
           aria-labelledby="config-subpage-tab-sensitive-words"
+          aria-hidden={activeSubpage === 'sensitive-words' ? undefined : true}
           style={{ display: activeSubpage === 'sensitive-words' ? undefined : 'none' }}
         >
           <SensitiveWordsPage />
@@ -2155,6 +2188,7 @@ export function ConfigPanelPage() {
           if (event.currentTarget === event.target) closeAddDialog();
         }}>
           <form
+            ref={addDialogRef}
             className="config-dialog"
             role="dialog"
             aria-modal="true"
@@ -2260,6 +2294,7 @@ export function ConfigPanelPage() {
           }
         }}>
           <div
+            ref={deleteDialogRef}
             className={`config-dialog config-delete-dialog ${deletingLastKey ? 'has-warning' : ''}`}
             role="alertdialog"
             aria-modal="true"

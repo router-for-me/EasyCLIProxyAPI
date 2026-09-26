@@ -15,8 +15,16 @@ const technicalText = new Set([
   'headers',
   'ms',
   'note',
+  'Models.dev',
+  'LiteLLM',
 ]);
-const technicalPlaceholders = new Set(['1h', 'sk-...', 'gpt-5.6-terra', 'https://...']);
+const technicalPlaceholders = new Set([
+  '1h',
+  'sk-...',
+  'gpt-5.6-terra',
+  'https://...',
+  'socks5://127.0.0.1:1080',
+]);
 
 function componentFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

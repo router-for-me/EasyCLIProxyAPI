@@ -215,6 +215,9 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
 
   return (
     <section className="page kernel-page home-page">
+      <header className="management-header home-page-header">
+        <div><h1>{t('app.nav.home')}</h1></div>
+      </header>
       <div className="kernel-layout home-layout">
         <div className="panel control-panel">
           <div className="panel-heading">
@@ -349,15 +352,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
               <div className="client-api-values">
                 <div className="client-api-value-row">
                   <span>{t('kernel.access.apiUrl')}</span>
-                  <code
-                    title={profile.baseUrl}
-                    onClick={() =>
-                      void copyApiValue(
-                        profile.baseUrl,
-                        `${profile.id}:base`,
-                      )
-                    }
-                  >
+                  <code title={profile.baseUrl}>
                     {profile.baseUrl}
                   </code>
                   <button

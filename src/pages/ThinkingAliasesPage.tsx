@@ -24,6 +24,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
+import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 
 type PresetThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -187,7 +188,7 @@ const thinkingAliasSourceDetail = (source: ThinkingAliasSource) => (
   thinkingAliasProviderDetail(source.kind, source.provider)
 );
 
-export function ThinkingAliasesPage() {
+export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const { t } = useI18n();
   const [thinkingEntries, setThinkingEntries] = useState<ThinkingAliasEntry[]>([]);
@@ -207,7 +208,6 @@ export function ThinkingAliasesPage() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [activeSourceIndex, setActiveSourceIndex] = useState(0);
   const modelPickerRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<HTMLElement>(null);
   const generatedAliasRef = useRef('');
   const [loading, setLoading] = useState(true);
   const [busyAlias, setBusyAlias] = useState('');
@@ -483,6 +483,12 @@ export function ThinkingAliasesPage() {
     resetEditor();
   };
 
+  const editorRef = useDialogFocusTrap<HTMLElement>({
+    active: editorOpen,
+    onEscape: busyAlias ? undefined : closeEditor,
+    preventEscape: Boolean(busyAlias),
+  });
+
   const addAlias = () => {
     resetEditor();
     setError('');
@@ -516,36 +522,6 @@ export function ThinkingAliasesPage() {
       setBusyAction('');
     }
   };
-
-  useEffect(() => {
-    if (!editorOpen) return;
-    const previousFocus = document.activeElement;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    editorRef.current?.querySelector<HTMLInputElement>('input')?.focus();
-    const trapFocus = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Tab') return;
-      const controls = Array.from(editorRef.current?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), input:not(:disabled), [tabindex="0"]',
-      ) ?? []);
-      const first = controls[0];
-      const last = controls[controls.length - 1];
-      const outside = !editorRef.current?.contains(document.activeElement);
-      if (event.shiftKey && (outside || document.activeElement === first)) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && (outside || document.activeElement === last)) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    document.addEventListener('keydown', trapFocus);
-    return () => {
-      document.removeEventListener('keydown', trapFocus);
-      document.body.style.overflow = previousOverflow;
-      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
-    };
-  }, [editorOpen]);
 
   const deleteAlias = async (entry: AliasListEntry) => {
     if (!await askConfirmation({ title: t('common.delete'), message: t('aliases.deleteConfirm', { alias: entry.alias }), confirmText: t('common.delete'), variant: 'danger' })) return;
@@ -583,7 +559,9 @@ export function ThinkingAliasesPage() {
 
       <header className="management-header">
         <div>
-          <h1>{t('app.nav.thinkingAliases')}</h1>
+          {embedded
+            ? <h2>{t('app.nav.thinkingAliases')}</h2>
+            : <h1>{t('app.nav.thinkingAliases')}</h1>}
         </div>
         <div className="management-heading-actions">
           <span className="muted-summary">{entries.length}</span>
@@ -608,7 +586,6 @@ export function ThinkingAliasesPage() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="thinking-alias-editor-title"
-          onKeyDown={(event) => { if (event.key === 'Escape') closeEditor(); }}
         >
             <div className="thinking-alias-panel-heading">
               <span><GitFork size={18} /></span>
@@ -631,6 +608,7 @@ export function ThinkingAliasesPage() {
                 <input
                   id="thinking-model-search"
                   role="combobox"
+                  autoFocus
                   aria-autocomplete="list"
                   aria-expanded={modelPickerOpen}
                   aria-controls="thinking-model-options"
@@ -884,6 +862,7 @@ export function ThinkingAliasesPage() {
                   onClick={() => void deleteAlias(entry)}
                   disabled={Boolean(busyAlias)}
                   title={t('aliases.delete', { alias: entry.alias })}
+                  aria-label={t('aliases.delete', { alias: entry.alias })}
                 >
                   {busyAction === 'delete' && busyAlias === entry.alias
                     ? <LoaderCircle size={15} className="spin" />

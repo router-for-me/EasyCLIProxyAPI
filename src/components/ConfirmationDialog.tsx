@@ -60,7 +60,7 @@ export function ConfirmationDialog({ title, message, confirmText, warning, detai
       <section ref={dialogRef} className="config-dialog app-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
         <div className="config-dialog-heading">
           <div><AlertTriangle size={20} aria-hidden="true" /><h2 id={titleId}>{title}</h2></div>
-          <button type="button" className="icon-button quiet" onClick={() => onDecision(false)} title={t('common.close')}><X size={18} /></button>
+          <button type="button" className="icon-button quiet" onClick={() => onDecision(false)} title={t('common.close')} aria-label={t('common.close')}><X size={18} aria-hidden="true" /></button>
         </div>
         <p id={descriptionId}>{message}</p>
         {details?.length ? <dl className="app-confirm-details">{details.map((detail) => <div key={detail.label}><dt>{detail.label}</dt><dd>{detail.value}</dd></div>)}</dl> : null}
