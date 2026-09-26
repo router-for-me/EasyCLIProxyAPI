@@ -1,7 +1,7 @@
 #browser-mock-toolbar {
   position: fixed;
-  top: 10px;
   right: 12px;
+  bottom: 12px;
   z-index: 2147483647;
   display: flex;
   align-items: center;
@@ -14,7 +14,15 @@
   box-shadow: 0 7px 24px rgb(0 0 0 / 22%);
   color: var(--text-primary, #f3f4f6);
   font: 12px/1.2 system-ui, sans-serif;
+  opacity: 0.82;
   backdrop-filter: blur(10px);
+  transition: opacity 160ms ease, box-shadow 160ms ease;
+}
+
+#browser-mock-toolbar:hover,
+#browser-mock-toolbar:focus-within {
+  opacity: 1;
+  box-shadow: 0 9px 28px rgb(0 0 0 / 28%);
 }
 
 #browser-mock-toolbar strong {
@@ -42,7 +50,6 @@
 
 @media (max-width: 760px) {
   #browser-mock-toolbar {
-    top: auto;
     right: 8px;
     bottom: 8px;
   }

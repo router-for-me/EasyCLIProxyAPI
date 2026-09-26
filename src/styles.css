@@ -9758,6 +9758,7 @@ body.table-col-resizing * {
 .usage-pricing-panel {
   display: grid;
   min-width: 0;
+  align-content: start;
   gap: 14px;
   padding: 16px;
   border: 1px solid var(--theme-e3e1db);
