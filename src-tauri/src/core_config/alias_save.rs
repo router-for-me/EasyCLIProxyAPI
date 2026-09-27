@@ -5,6 +5,40 @@ fn alias_config_is_unchanged(current: &str, latest: &str) -> Result<bool, String
     Ok(changes.oauth_model_aliases.is_none() && !changes.update_config_yaml)
 }
 
+fn validate_alias_transaction_state(
+    current: &str,
+    updated: &str,
+    latest: &str,
+) -> Result<(), String> {
+    let parse = |content: &str| {
+        serde_norway::from_str::<serde_norway::Value>(content)
+            .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?
+            .as_mapping()
+            .cloned()
+            .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())
+    };
+    let mut current = parse(current)?;
+    let mut updated = parse(updated)?;
+    let mut latest = parse(latest)?;
+    for key in ["oauth-model-alias", "payload"]
+        .into_iter()
+        .chain(V8_PROVIDER_FAMILIES.iter().map(|(legacy, _)| *legacy))
+    {
+        let current_value = current.remove(yaml_key(key));
+        let updated_value = updated.remove(yaml_key(key));
+        let latest_value = latest.remove(yaml_key(key));
+        if latest_value != current_value && latest_value != updated_value {
+            return Err(
+                "Other configuration changes were detected and were not overwritten".to_string(),
+            );
+        }
+    }
+    if current != updated || latest != current {
+        return Err("Other configuration changes were detected and were not overwritten".to_string());
+    }
+    Ok(())
+}
+
 fn validate_alias_api_access_preserved(current: &str, updated: &str) -> Result<(), String> {
     let parse = |content: &str| {
         serde_norway::from_str::<serde_norway::Value>(content)
@@ -97,21 +131,15 @@ async fn restore_management_alias_config(
     updated: &str,
 ) -> Result<(), String> {
     let latest = fetch_management_config_yaml(config).await?;
+    validate_alias_transaction_state(current, updated, &latest)?;
     let from_current = management_alias_config_changes(current, &latest)?;
-    let from_updated = management_alias_config_changes(updated, &latest)?;
-    if (from_current.update_config_yaml && from_updated.update_config_yaml)
-        || (from_current.oauth_model_aliases.is_some()
-            && from_updated.oauth_model_aliases.is_some())
-    {
-        return Err("Other configuration changes were detected and were not overwritten".to_string());
-    }
     let mut errors = Vec::new();
     if from_current.update_config_yaml {
         if let Err(error) = put_management_config_yaml(config, current).await {
             errors.push(error);
         }
     }
-    if let Some(aliases) = management_alias_config_changes(updated, current)?.oauth_model_aliases {
+    if let Some(aliases) = management_alias_config_changes(&latest, current)?.oauth_model_aliases {
         if let Err(error) = put_management_oauth_model_aliases(config, &aliases).await {
             errors.push(error);
         }

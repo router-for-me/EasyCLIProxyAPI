@@ -9,6 +9,108 @@ type ManagementRequestOptions = {
   timeoutMs?: number;
 };
 
+const PROVIDER_PATHS = {
+  '/gemini-api-key': { provider: 'gemini', legacy: 'gemini-api-key' },
+  '/interactions-api-key': { provider: 'interactions', legacy: 'interactions-api-key' },
+  '/vertex-api-key': { provider: 'vertex', legacy: 'vertex-api-key' },
+  '/codex-api-key': { provider: 'codex', legacy: 'codex-api-key' },
+  '/claude-api-key': { provider: 'claude', legacy: 'claude-api-key' },
+  '/xai-api-key': { provider: 'xai', legacy: 'xai-api-key' },
+  '/meta-api-key': { provider: 'meta', legacy: 'meta-api-key' },
+  '/openai-compatibility': { provider: 'openai-compatibility', legacy: 'openai-compatibility' },
+} as const;
+
+type ProviderPath = keyof typeof PROVIDER_PATHS;
+
+const SHARED_PROVIDER_FIELDS = new Set([
+  'priority',
+  'prefix',
+  'proxy-url',
+  'headers',
+  'models',
+  'excluded-models',
+  'disable-cooling',
+  'request-retry',
+  'request-scoped-errors',
+]);
+
+const providerDefinition = (path: string) => PROVIDER_PATHS[path as ProviderPath];
+
+async function optionalConfigValue(
+  path: string, fallback: ManagementJson, options: ManagementRequestOptions,
+): Promise<unknown> {
+  try {
+    return await invoke<unknown>('management_request', {
+      request: { method: 'GET', path, query: normalizeQuery(options.query), timeoutMs: options.timeoutMs },
+    });
+  } catch (error) {
+    // Only an absent v8 config node is optional, not an unavailable endpoint or server.
+    const message = error instanceof Error ? error.message : error;
+    if (message === 'Management API error (404): not_found') return fallback;
+    throw error;
+  }
+}
+
+export function flattenV8ProviderGroups(provider: string, payload: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(payload)) return [];
+  return payload.filter(isRecord).flatMap((group) => {
+    const keys = Array.isArray(group.keys) ? group.keys.filter(isRecord) : [];
+    if (provider === 'openai-compatibility') {
+      const record: Record<string, unknown> = { ...group };
+      delete record.keys;
+      if (keys.length > 0) record['api-key-entries'] = keys.map((key) => ({ ...key }));
+      return [record];
+    }
+    const shared = Object.fromEntries(
+      Object.entries(group).filter(([key]) => key === 'base-url' || SHARED_PROVIDER_FIELDS.has(key)),
+    );
+    return keys.map((key) => {
+      const overrides = Object.fromEntries(Object.entries(key).filter(([, value]) => value !== null));
+      return { ...shared, ...overrides };
+    });
+  });
+}
+
+export function groupLegacyProviderRecords(provider: string, payload: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(payload)) return [];
+  return payload.filter(isRecord).map((record, index) => {
+    if (provider === 'openai-compatibility') {
+      const group: Record<string, unknown> = {
+        ...record,
+        keys: Array.isArray(record['api-key-entries'])
+          ? record['api-key-entries'].filter(isRecord).map((key) => ({ ...key }))
+          : [],
+      };
+      delete group['api-key-entries'];
+      return group;
+    }
+    const group: Record<string, unknown> = { name: `${provider}-${index + 1}` };
+    const key: Record<string, unknown> = {};
+    Object.entries(record).forEach(([field, value]) => {
+      if (field === 'base-url' || SHARED_PROVIDER_FIELDS.has(field)) group[field] = value;
+      else key[field] = value;
+    });
+    group.keys = [key];
+    return group;
+  });
+}
+
+export function legacyManagementConfigView(payload: unknown): unknown {
+  if (!isRecord(payload)) return payload;
+  const legacy: Record<string, unknown> = { ...payload };
+  const upstream = isRecord(payload['api-keys']) ? payload['api-keys'] : {};
+  Object.values(PROVIDER_PATHS).forEach(({ provider, legacy: legacyKey }) => {
+    legacy[legacyKey] = flattenV8ProviderGroups(provider, upstream[provider]);
+  });
+  const access = isRecord(payload.access) ? payload.access : null;
+  if (access && Array.isArray(access['api-keys'])) legacy['api-keys'] = access['api-keys'];
+  const oauth = isRecord(payload.oauth) ? payload.oauth : null;
+  if (oauth && oauth['model-alias'] !== undefined) legacy['oauth-model-alias'] = oauth['model-alias'];
+  const requests = isRecord(payload.requests) ? payload.requests : null;
+  if (requests && requests.payload !== undefined) legacy.payload = requests.payload;
+  return legacy;
+}
+
 const normalizeQuery = (
   query?: Record<string, string | number | boolean | undefined>,
 ): Record<string, string> | undefined => {
@@ -29,15 +131,93 @@ async function request<T = ManagementJson>(
   path: string,
   options: ManagementRequestOptions = {},
 ): Promise<T> {
-  return invoke<T>('management_request', {
+  if (path === '/oauth-excluded-models') {
+    if (method === 'PATCH' && isRecord(options.body)) {
+      const provider = readString(options.body, 'provider');
+      if (!provider || !Array.isArray(options.body.models)) {
+        throw new Error('Invalid OAuth model exclusion update');
+      }
+      return invoke<T>('management_request', {
+        request: {
+          method: 'PUT',
+          path: `/config/oauth/excluded-models/${encodeURIComponent(provider)}`,
+          body: options.body.models,
+        },
+      });
+    }
+    if (method === 'DELETE') {
+      const provider = options.query?.provider;
+      if (typeof provider !== 'string' || !provider.trim()) {
+        throw new Error('Invalid OAuth model exclusion delete');
+      }
+      return invoke<T>('management_request', {
+        request: {
+          method: 'DELETE',
+          path: `/config/oauth/excluded-models/${encodeURIComponent(provider.trim())}`,
+        },
+      });
+    }
+    if (method === 'GET') {
+      const exclusions = await optionalConfigValue('/config/oauth/excluded-models', {}, options);
+      return { 'oauth-excluded-models': exclusions } as T;
+    }
+  }
+  const definition = providerDefinition(path);
+  if (method === 'GET' && definition) {
+    const groups = await optionalConfigValue(`/config/api-keys/${definition.provider}`, [], options);
+    return { [definition.legacy]: flattenV8ProviderGroups(definition.provider, groups) } as T;
+  }
+  if (method === 'PATCH' && path === '/openai-compatibility' && isRecord(options.body)) {
+    const index = Number(options.body.index);
+    const value = options.body.value;
+    if (!Number.isInteger(index) || index < 0 || !isRecord(value)) {
+      throw new Error('Invalid OpenAI compatibility update');
+    }
+    const groups = await invoke<unknown>('management_request', {
+      request: { method: 'GET', path: '/config/api-keys/openai-compatibility' },
+    });
+    const records = flattenV8ProviderGroups('openai-compatibility', groups);
+    if (!records[index]) throw new Error('OpenAI compatibility entry no longer exists');
+    records[index] = { ...records[index], ...value };
+    return invoke<T>('management_request', {
+      request: {
+        method: 'PUT',
+        path: '/config/api-keys/openai-compatibility',
+        body: groupLegacyProviderRecords('openai-compatibility', records),
+      },
+    });
+  }
+
+  let apiPath = path;
+  let body = options.body;
+  if (definition) {
+    apiPath = `/config/api-keys/${definition.provider}`;
+    if (method === 'PUT' || method === 'PATCH') {
+      body = groupLegacyProviderRecords(definition.provider, body);
+    }
+  } else if (path === '/api-call') {
+    apiPath = '/requests/api-call';
+  } else if (path === '/oauth-session') {
+    apiPath = '/oauth/session';
+  } else if (path.startsWith('/auth-files')) {
+    apiPath = `/credentials${path.slice('/auth-files'.length)}`;
+  } else if (path.startsWith('/model-definitions/')) {
+    apiPath = `/routing${path}`;
+  }
+
+  const payload = await invoke<unknown>('management_request', {
     request: {
       method,
-      path,
+      path: apiPath,
       query: normalizeQuery(options.query),
-      body: options.body,
+      body,
       timeoutMs: options.timeoutMs,
     },
   });
+  if (method === 'GET' && path === '/config') {
+    return legacyManagementConfigView(payload) as T;
+  }
+  return payload as T;
 }
 
 export const managementApi = {

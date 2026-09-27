@@ -21,6 +21,16 @@ const PROVIDER_SECTIONS = [
   'claude-api-key',
   'openai-compatibility',
 ] as const;
+const V8_PROVIDER_BY_SECTION = {
+  'gemini-api-key': 'gemini',
+  'codex-api-key': 'codex',
+  'claude-api-key': 'claude',
+  'openai-compatibility': 'openai-compatibility',
+} as const;
+const SHARED_PROVIDER_FIELDS = new Set([
+  'priority', 'prefix', 'proxy-url', 'headers', 'models', 'excluded-models',
+  'disable-cooling', 'request-retry', 'request-scoped-errors',
+]);
 
 const clone = <Value,>(value: Value): Value => structuredClone(value);
 const sleep = (delayMs: number) => delayMs > 0
@@ -640,8 +650,53 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   const query = asObject(request.query);
   const body = request.body;
 
+  const v8Provider = Object.entries(V8_PROVIDER_BY_SECTION).find(
+    ([, provider]) => path === `/config/api-keys/${provider}`,
+  );
+  const groupRecords = (section: (typeof PROVIDER_SECTIONS)[number], records: JsonObject[]) => records.map((record, index) => {
+    if (section === 'openai-compatibility') {
+      const group: JsonObject = { ...record, keys: asArray(record['api-key-entries']).map((item) => clone(asObject(item))) };
+      delete group['api-key-entries'];
+      return group;
+    }
+    const group: JsonObject = { name: `${V8_PROVIDER_BY_SECTION[section]}-${index + 1}` };
+    const key: JsonObject = {};
+    Object.entries(record).forEach(([field, value]) => {
+      if (field === 'base-url' || SHARED_PROVIDER_FIELDS.has(field)) group[field] = value;
+      else key[field] = value;
+    });
+    group.keys = [key];
+    return group;
+  });
+  const flattenGroups = (section: (typeof PROVIDER_SECTIONS)[number], groups: unknown) => asArray(groups).flatMap((item) => {
+    const group = asObject(item);
+    const keys = asArray(group.keys).map(asObject);
+    if (section === 'openai-compatibility') {
+      const record: JsonObject = { ...group };
+      delete record.keys;
+      if (keys.length > 0) record['api-key-entries'] = keys;
+      return [record];
+    }
+    const shared = Object.fromEntries(Object.entries(group).filter(([field]) => field === 'base-url' || SHARED_PROVIDER_FIELDS.has(field)));
+    return keys.map((key) => ({ ...shared, ...Object.fromEntries(Object.entries(key).filter(([, value]) => value !== null)) }));
+  });
+
   if (method === 'GET' && path === '/config') {
-    return clone(state.providerConfig);
+    return {
+      'config-version': 8,
+      'api-keys': Object.fromEntries(PROVIDER_SECTIONS.map((section) => [
+        V8_PROVIDER_BY_SECTION[section],
+        groupRecords(section, state.providerConfig[section]),
+      ])),
+    };
+  }
+  if (v8Provider) {
+    const section = v8Provider[0] as (typeof PROVIDER_SECTIONS)[number];
+    if (method === 'GET') return groupRecords(section, state.providerConfig[section]);
+    if (method === 'PUT') {
+      state.providerConfig[section] = flattenGroups(section, body).map((item) => clone(asObject(item)));
+      return { status: 'ok', 'config-version': 8 };
+    }
   }
   if (PROVIDER_SECTIONS.some((section) => path === `/${section}`)) {
     const section = path.slice(1) as (typeof PROVIDER_SECTIONS)[number];
@@ -658,15 +713,24 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
       return { [section]: clone(state.providerConfig[section]) };
     }
   }
-  if (method === 'GET' && path === '/auth-files') {
+  if (method === 'GET' && path === '/credentials') {
     return { files: clone(state.authFiles), observed_at: new Date().toISOString() };
   }
-  if (method === 'GET' && path === '/auth-files/download') {
+  if (method === 'GET' && path === '/credentials/download') {
     const file = findAuthFile(state, readString(query.name));
     return clone(file ?? { name: query.name, excluded_models: [] });
   }
-  if (method === 'GET' && path === '/auth-files/models') return mockModelDefinitions();
-  if (method === 'GET' && path.startsWith('/model-definitions/')) return mockModelDefinitions();
+  if (method === 'GET' && path === '/credentials/models') return mockModelDefinitions();
+  if (method === 'GET' && path.startsWith('/routing/model-definitions/')) return mockModelDefinitions();
+  if (method === 'GET' && path === '/config/oauth/excluded-models') {
+    return clone(state.oauthExcludedModels);
+  }
+  if (path.startsWith('/config/oauth/excluded-models/')) {
+    const provider = decodeURIComponent(path.slice('/config/oauth/excluded-models/'.length));
+    if (method === 'PUT') state.oauthExcludedModels[provider] = asArray(body).map(String);
+    if (method === 'DELETE') delete state.oauthExcludedModels[provider];
+    return { status: 'ok', 'config-version': 8 };
+  }
   if (method === 'GET' && path === '/oauth-excluded-models') {
     return { 'oauth-excluded-models': clone(state.oauthExcludedModels) };
   }
@@ -679,19 +743,19 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
     delete state.oauthExcludedModels[readString(query.provider)];
     return null;
   }
-  if (method === 'PATCH' && (path === '/auth-files/fields' || path === '/auth-files/status')) {
+  if (method === 'PATCH' && (path === '/credentials/fields' || path === '/credentials/status')) {
     const patch = asObject(body);
     const file = findAuthFile(state, readString(patch.name));
     if (file) Object.assign(file, patch);
     return clone(file ?? null);
   }
-  if (method === 'DELETE' && path === '/auth-files') {
+  if (method === 'DELETE' && path === '/credentials') {
     const index = state.authFiles.findIndex((file) => file.name === query.name);
     if (index >= 0) state.authFiles.splice(index, 1);
     return null;
   }
-  if (method === 'POST' && path === '/api-call') return mockApiCall(asObject(body));
-  if (method === 'DELETE' && path === '/oauth-session') return null;
+  if (method === 'POST' && path === '/requests/api-call') return mockApiCall(asObject(body));
+  if (method === 'DELETE' && path === '/oauth/session') return null;
   return {};
 }
 

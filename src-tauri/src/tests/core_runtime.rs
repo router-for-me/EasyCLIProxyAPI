@@ -594,6 +594,24 @@ fn replacing_a_core_migrates_old_fields_into_the_new_template() {
 }
 
 #[test]
+fn replacing_v7_with_v8_preserves_the_legacy_config_byte_for_byte() {
+    let root = agent_test_home("core-config-v8-preserve");
+    let source = root.join("source");
+    let target = root.join("target");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    let old_config = "# User v7 config\nhost: 127.0.0.1\nport: 9527\nremote-management:\n  secret-key: user-secret\napi-keys: [client-key]\nproxy-url: direct\n";
+    let v8_template = "config-version: 8\nserver: {host: '', port: 8317}\nmanagement: {secret-key: ''}\naccess: {api-keys: [template-key]}\nrequests: {proxy-url: ''}\n";
+    fs::write(source.join(CORE_CONFIG_FILE), old_config).unwrap();
+    fs::write(target.join(CORE_EXAMPLE_CONFIG_FILE), v8_template).unwrap();
+
+    migrate_core_config_for_update(&source, &target).unwrap();
+
+    assert_eq!(fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap(), old_config);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn replacing_a_core_rejects_invalid_config_without_overwriting_files() {
     let root = agent_test_home("core-config-migrate-invalid");
     let source = root.join("source");

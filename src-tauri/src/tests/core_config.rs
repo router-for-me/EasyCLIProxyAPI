@@ -911,6 +911,42 @@ fn core_config_reads_logging_settings_and_applies_defaults() {
 }
 
 #[test]
+fn v8_core_config_reads_and_writes_canonical_nested_fields() {
+    let input = "config-version: 8\nserver:\n  host: 0.0.0.0\n  port: 9527\n  commercial-mode: true\n  tls: {enable: true, cert: cert.pem, key: key.pem}\nmanagement: {secret-key: management-key}\naccess: {api-keys: [client-key]}\noauth: {auth-dir: oauth-data}\nrequests:\n  proxy-url: direct\n  streaming: {bootstrap-retries: 4}\nrouting:\n  strategy: fill-first\n  retry: {request-retry: 5, max-retry-credentials: 6, max-retry-interval: 7}\n  cooldown: {disable-cooling: true}\nobservability:\n  logs: {debug: true, logging-to-file: true, logs-max-total-size-mb: 128, error-logs-max-files: 12, request-log: true}\n  usage: {usage-statistics-enabled: false, redis-usage-queue-retention-seconds: 90}\nplugins: {enabled: true}\n";
+    let document = serde_norway::from_str::<serde_norway::Value>(input).unwrap();
+    let settings = core_config_settings_from_value(&document).unwrap();
+    assert_eq!(settings.host, "0.0.0.0");
+    assert_eq!(settings.port, 9527);
+    assert_eq!(settings.api_keys, vec!["client-key"]);
+    assert_eq!(settings.management_secret_key.as_deref(), Some("management-key"));
+    assert_eq!(settings.proxy_url, "direct");
+    assert_eq!(settings.request_retry, 5);
+    assert_eq!(settings.max_retry_credentials, 6);
+    assert_eq!(settings.max_retry_interval, 7);
+    assert_eq!(settings.streaming_bootstrap_retries, 4);
+    assert!(settings.debug && settings.commercial_mode && settings.request_log);
+
+    let mut config = GuiConfigFile::default();
+    config.host = "127.0.0.1".into();
+    config.port = 8318;
+    config.management_secret_key = "new-management-key".into();
+    config.api_keys = vec![GuiApiKeyEntry { key: "new-client-key".into(), remark: String::new() }];
+    config.proxy_url = "socks5://127.0.0.1:1080".into();
+    config.request_retry = 2;
+    let updated = apply_gui_managed_settings(input, &config).unwrap();
+    let updated = serde_norway::from_str::<serde_norway::Value>(&updated).unwrap();
+    assert_eq!(updated["server"]["host"], "127.0.0.1");
+    assert_eq!(updated["server"]["port"], 8318);
+    assert_eq!(updated["management"]["secret-key"], "new-management-key");
+    assert_eq!(updated["access"]["api-keys"][0], "new-client-key");
+    assert_eq!(updated["requests"]["proxy-url"], "socks5://127.0.0.1:1080");
+    assert_eq!(updated["routing"]["retry"]["request-retry"], 2);
+    for legacy in ["host", "port", "remote-management", "proxy-url", "request-retry"] {
+        assert!(updated.get(legacy).is_none(), "legacy field leaked into v8 config: {legacy}");
+    }
+}
+
+#[test]
 fn core_config_reads_proxy_and_session_affinity_fields() {
     let canonical = serde_norway::from_str::<serde_norway::Value>(
             "proxy-url: socks5://127.0.0.1:7890\nrouting:\n  session-affinity: true\n  session-affinity-ttl: 2h\n",

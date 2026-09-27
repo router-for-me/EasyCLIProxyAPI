@@ -6,10 +6,81 @@ use std::sync::Arc;
 
 const CURRENT: &str = "oauth-model-alias:\n  codex:\n    - name: gpt-test\n      alias: my-alias\n      fork: true\npayload:\n  override:\n    - models: [{name: my-alias, protocol: codex}]\n      params: {reasoning.effort: high}\n";
 
+#[test]
+fn v8_management_yaml_is_projected_to_the_legacy_alias_editor_view() {
+    let input = "config-version: 8\naccess: {api-keys: [client-key]}\noauth:\n  model-alias: {codex: [{name: upstream, alias: public, fork: true}]}\nrequests:\n  payload: {override: [{models: [{name: public}], params: {reasoning.effort: high}}]}\napi-keys:\n  codex:\n    - name: codex-group\n      base-url: https://codex.example/v1\n      models: [{name: model-a}]\n      keys:\n        - {api-key: first, priority: 7}\n        - {api-key: second, priority: null}\n  openai-compatibility:\n    - name: openai-group\n      base-url: https://openai.example/v1\n      keys: [{api-key: third}]\n    - name: empty-openai-group\n      base-url: https://empty.example/v1\n      keys: []\n";
+    let view = yaml_json(&management_v8_yaml_to_legacy_view(input).unwrap());
+    assert_eq!(view["api-keys"], serde_json::json!(["client-key"]));
+    assert_eq!(view["oauth-model-alias"]["codex"][0]["alias"], "public");
+    assert_eq!(view["payload"]["override"][0]["params"]["reasoning.effort"], "high");
+    assert!(view["access"].get("api-keys").is_none());
+    assert!(view["oauth"].get("model-alias").is_none());
+    assert!(view["requests"].get("payload").is_none());
+    assert_eq!(view["codex-api-key"][0]["api-key"], "first");
+    assert_eq!(view["codex-api-key"][0]["priority"], 7);
+    assert_eq!(view["codex-api-key"][0]["models"][0]["name"], "model-a");
+    assert_eq!(view["codex-api-key"][1]["api-key"], "second");
+    assert!(view["codex-api-key"][1].get("priority").is_none());
+    assert_eq!(
+        view["openai-compatibility"][0]["api-key-entries"][0]["api-key"],
+        "third"
+    );
+    assert!(view["openai-compatibility"][1]
+        .get("api-key-entries")
+        .is_none());
+    assert_eq!(view["gemini-api-key"], serde_json::json!([]));
+}
+
+#[test]
+fn non_v8_management_yaml_is_returned_without_reformatting() {
+    let input = "# mock legacy config\nport: 8317\n";
+    assert_eq!(management_v8_yaml_to_legacy_view(input).unwrap(), input);
+}
+
+#[test]
+fn v8_alias_projection_normalizes_empty_parents_but_preserves_siblings() {
+    let project = |input| yaml_json(&management_v8_yaml_to_legacy_view(input).unwrap());
+    assert_eq!(
+        project("config-version: 8\n"),
+        project("config-version: 8\naccess: {}\noauth: {}\nrequests: {}\n")
+    );
+    let view = project("config-version: 8\noauth: {auth-dir: credentials, model-alias: {}}\nrequests: {proxy-url: direct, payload: {}}\n");
+    assert_eq!(view["oauth"]["auth-dir"], "credentials");
+    assert_eq!(view["requests"]["proxy-url"], "direct");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn alias_save_creates_first_oauth_and_payload_nodes() {
+    let core = MockCore::new_v8("config-version: 8\n", Failure::None);
+    let current = fetch_management_config_yaml(&core.config).await.unwrap();
+    let updated = format!("{current}{CURRENT}");
+    put_management_alias_config_changes(&core.config, &current, &updated)
+        .await
+        .unwrap();
+    let (persisted, _) = core.finish();
+    assert_eq!(persisted["oauth-model-alias"], yaml_json(CURRENT)["oauth-model-alias"]);
+    assert_eq!(persisted["payload"], yaml_json(CURRENT)["payload"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn alias_save_rolls_back_a_new_payload_parent() {
+    let initial = "oauth-model-alias: {codex: [{name: gpt-test, alias: my-alias, fork: true}]}\n";
+    let core = MockCore::new_v8(initial, Failure::YamlAfterWrite);
+    let current = fetch_management_config_yaml(&core.config).await.unwrap();
+    let updated = format!("{}payload: {{override: []}}\n", current.replace("my-alias", "renamed"));
+    let error = put_management_alias_config_changes(&core.config, &current, &updated)
+        .await
+        .unwrap_err();
+    assert!(error.contains("Original configuration was restored"), "{error}");
+    let (persisted, _) = core.finish();
+    assert_eq!(persisted, yaml_json(initial));
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Failure {
     None,
     YamlBeforeWrite,
+    SecondYamlBeforeWrite,
     YamlAfterWrite,
     OauthAfterWrite,
     Rollback,
@@ -60,6 +131,14 @@ struct MockCore {
 
 impl MockCore {
     fn new(initial: &str, failure: Failure) -> Self {
+        Self::with_response_layout(initial, failure, false)
+    }
+
+    fn new_v8(initial: &str, failure: Failure) -> Self {
+        Self::with_response_layout(initial, failure, true)
+    }
+
+    fn with_response_layout(initial: &str, failure: Failure, v8_response: bool) -> Self {
         assert!(!current_core_tls_settings().unwrap().enabled);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -120,9 +199,13 @@ impl MockCore {
                 let mut status = "200 OK";
                 let mut response = "{\"status\":\"ok\"}".to_string();
                 if method == "GET" {
-                    assert_eq!(path, "/v0/management/config.yaml");
-                    response = serde_norway::to_string(&persisted).unwrap();
-                } else if path == "/v0/management/oauth-model-alias" {
+                    assert_eq!(path, "/v8/management/config.yaml");
+                    response = if v8_response {
+                        v8_yaml_from_legacy_json(&persisted)
+                    } else {
+                        serde_norway::to_string(&persisted).unwrap()
+                    };
+                } else if path == "/v8/management/config/oauth/model-alias" {
                     oauth_writes += 1;
                     if failure == Failure::Rollback && oauth_writes == 2 {
                         status = "500 Internal Server Error";
@@ -134,20 +217,65 @@ impl MockCore {
                         }
                     }
                 } else {
-                    assert_eq!(path, "/v0/management/config.yaml");
                     yaml_writes += 1;
-                    if yaml_writes == 1
+                    if (yaml_writes == 1
                         && matches!(
                             failure,
                             Failure::YamlBeforeWrite | Failure::Rollback | Failure::ForeignChange
-                        )
+                        ))
+                        || (yaml_writes == 2 && failure == Failure::SecondYamlBeforeWrite)
                     {
                         status = "500 Internal Server Error";
                         if failure == Failure::ForeignChange {
                             persisted["debug"] = serde_json::json!(true);
                         }
                     } else {
-                        persisted = yaml_json(std::str::from_utf8(request_body).unwrap());
+                        let suffix = path
+                            .strip_prefix("/v8/management/config/")
+                            .unwrap_or_else(|| panic!("unexpected management path: {path}"));
+                        match (method, suffix) {
+                            ("PUT", "requests/payload") => {
+                                persisted["payload"] =
+                                    serde_json::from_slice(request_body).unwrap();
+                            }
+                            ("DELETE", "requests/payload") => {
+                                persisted.as_object_mut().unwrap().remove("payload");
+                            }
+                            ("PUT", provider_path)
+                                if provider_path.starts_with("api-keys/") =>
+                            {
+                                let provider = provider_path
+                                    .strip_prefix("api-keys/")
+                                    .unwrap();
+                                let legacy = V8_PROVIDER_FAMILIES
+                                    .iter()
+                                    .find_map(|(legacy, candidate)| {
+                                        (*candidate == provider).then_some(*legacy)
+                                    })
+                                    .unwrap();
+                                let groups: serde_norway::Value =
+                                    serde_json::from_slice(request_body).unwrap();
+                                persisted[legacy] = serde_json::to_value(
+                                    flatten_v8_provider_groups(provider, &groups).unwrap(),
+                                )
+                                .unwrap();
+                            }
+                            ("DELETE", provider_path)
+                                if provider_path.starts_with("api-keys/") =>
+                            {
+                                let provider = provider_path
+                                    .strip_prefix("api-keys/")
+                                    .unwrap();
+                                let legacy = V8_PROVIDER_FAMILIES
+                                    .iter()
+                                    .find_map(|(legacy, candidate)| {
+                                        (*candidate == provider).then_some(*legacy)
+                                    })
+                                    .unwrap();
+                                persisted.as_object_mut().unwrap().remove(legacy);
+                            }
+                            _ => panic!("unexpected management request: {method} {path}"),
+                        }
                         if yaml_writes == 1 && failure == Failure::YamlAfterWrite {
                             status = "500 Internal Server Error";
                         }
@@ -190,6 +318,79 @@ fn yaml_json(content: &str) -> serde_json::Value {
     serde_json::to_value(serde_norway::from_str::<serde_norway::Value>(content).unwrap()).unwrap()
 }
 
+fn v8_yaml_from_legacy_json(legacy: &serde_json::Value) -> String {
+    let mut root = legacy.as_object().unwrap().clone();
+    root.insert("config-version".into(), serde_json::json!(8));
+    if let Some(client_keys) = root.remove("api-keys") {
+        root.entry("access")
+            .or_insert_with(|| serde_json::json!({}))["api-keys"] = client_keys;
+    }
+    if let Some(aliases) = root.remove("oauth-model-alias") {
+        root.entry("oauth")
+            .or_insert_with(|| serde_json::json!({}))["model-alias"] = aliases;
+    }
+    if let Some(payload) = root.remove("payload") {
+        root.entry("requests")
+            .or_insert_with(|| serde_json::json!({}))["payload"] = payload;
+    }
+    let mut upstreams = serde_json::Map::new();
+    for (legacy, provider) in V8_PROVIDER_FAMILIES {
+        let records: serde_norway::Value = serde_json::from_value(
+            root.remove(legacy).unwrap_or_else(|| serde_json::json!([])),
+        )
+        .unwrap();
+        upstreams.insert(
+            provider.into(),
+            serde_json::to_value(group_legacy_provider_records(provider, &records).unwrap())
+                .unwrap(),
+        );
+    }
+    root.insert("api-keys".into(), serde_json::Value::Object(upstreams));
+    serde_norway::to_string(&serde_json::Value::Object(root)).unwrap()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn alias_save_uses_only_targeted_writes_with_a_real_v8_config_view() {
+    let core = MockCore::new_v8(CURRENT, Failure::None);
+    let current = fetch_management_config_yaml(&core.config).await.unwrap();
+    let updated = current.replace("my-alias", "renamed");
+    put_management_alias_config_changes(&core.config, &current, &updated)
+        .await
+        .unwrap();
+    let (persisted, requests) = core.finish();
+    assert_eq!(persisted, yaml_json(&CURRENT.replace("my-alias", "renamed")));
+    assert!(requests
+        .iter()
+        .any(|request| request == "PUT /v8/management/config/oauth/model-alias"));
+    assert!(requests
+        .iter()
+        .any(|request| request == "PUT /v8/management/config/requests/payload"));
+    assert!(!requests
+        .iter()
+        .any(|request| request == "PUT /v8/management/config.yaml"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_alias_edits_round_trip_through_v8_key_groups() {
+    let initial = format!(
+        "{CURRENT}codex-api-key:\n  - api-key: preserved-secret\n    base-url: https://codex.example/v1\n    models: [{{name: model-a}}]\n"
+    );
+    let core = MockCore::new_v8(&initial, Failure::None);
+    let current = fetch_management_config_yaml(&core.config).await.unwrap();
+    let updated = current.replace("name: model-a\n", "name: model-b\n");
+    put_management_alias_config_changes(&core.config, &current, &updated)
+        .await
+        .unwrap();
+    let (persisted, requests) = core.finish();
+    let mut expected = yaml_json(&initial);
+    expected["codex-api-key"][0]["models"][0]["name"] = serde_json::json!("model-b");
+    assert_eq!(persisted, expected);
+    assert_eq!(persisted["codex-api-key"][0]["api-key"], "preserved-secret");
+    assert!(requests
+        .iter()
+        .any(|request| request == "PUT /v8/management/config/api-keys/codex"));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn alias_save_recovers_failures_before_and_after_writes() {
     for failure in [
@@ -206,11 +407,33 @@ async fn alias_save_recovers_failures_before_and_after_writes() {
         assert_eq!(
             requests
                 .iter()
-                .filter(|request| request.ends_with("oauth-model-alias"))
+                .filter(|request| request.ends_with("oauth/model-alias"))
                 .count(),
             2
         );
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn alias_save_restores_a_partial_v8_multi_path_write() {
+    let initial = format!(
+        "{CURRENT}codex-api-key:\n  - api-key: preserved-secret\n    models: [{{name: my-alias}}]\n"
+    );
+    let core = MockCore::new_v8(&initial, Failure::SecondYamlBeforeWrite);
+    let current = fetch_management_config_yaml(&core.config).await.unwrap();
+    let updated = current.replace("my-alias", "renamed");
+    assert!(put_management_alias_config_changes(&core.config, &current, &updated)
+        .await
+        .unwrap_err()
+        .contains("Original configuration was restored"));
+    let (persisted, requests) = core.finish();
+    assert_eq!(persisted, yaml_json(&initial));
+    assert!(requests
+        .iter()
+        .any(|request| request == "PUT /v8/management/config/requests/payload"));
+    assert!(requests
+        .iter()
+        .any(|request| request == "PUT /v8/management/config/api-keys/codex"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -267,7 +490,7 @@ async fn alias_save_rejects_stale_snapshot_before_any_write() {
     .await;
     assert!(result.unwrap_err().contains("Configuration changed"));
     let (_, requests) = core.finish();
-    assert_eq!(requests, ["GET /v0/management/config.yaml"]);
+    assert_eq!(requests, ["GET /v8/management/config.yaml"]);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -566,7 +789,9 @@ async fn desktop_backup_restore_rejects_core_changes_since_preview() {
     let preview = prepare_restore_plan(&core.config, "claude-desktop", &fixture.home, &fixture.id)
         .await
         .unwrap();
-    let changed = format!("{}debug: true\n", fixture.core_b);
+    let changed = fixture
+        .core_b
+        .replace("model-b", "externally-changed-model");
     put_management_alias_config_changes(&core.config, &fixture.core_b, &changed)
         .await
         .unwrap();

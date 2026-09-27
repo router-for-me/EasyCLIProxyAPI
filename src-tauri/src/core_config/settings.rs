@@ -327,9 +327,10 @@ pub(crate) fn patch_core_network_routing_yaml(
     patch_core_yaml_document(content, |document| {
         let original = document.clone();
         apply_network_settings(document, config)?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "proxy-url",
+            &["proxy-url"],
+            &["requests", "proxy-url"],
             serde_norway::Value::String(config.proxy_url.clone()),
         )?;
         set_core_yaml_nested_value(
@@ -344,33 +345,37 @@ pub(crate) fn patch_core_network_routing_yaml(
             "session-affinity-ttl",
             serde_norway::Value::String(config.routing_session_affinity_ttl.clone()),
         )?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "disable-cooling",
+            &["disable-cooling"],
+            &["routing", "cooldown", "disable-cooling"],
             serde_norway::Value::Bool(config.disable_cooling),
         )?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "request-retry",
+            &["request-retry"],
+            &["routing", "retry", "request-retry"],
             serde_norway::to_value(config.request_retry)
                 .map_err(|err| format!("Failed to serialize request retry count: {err}"))?,
         )?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "max-retry-credentials",
+            &["max-retry-credentials"],
+            &["routing", "retry", "max-retry-credentials"],
             serde_norway::to_value(config.max_retry_credentials)
                 .map_err(|err| format!("Failed to serialize maximum retry credentials: {err}"))?,
         )?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "max-retry-interval",
+            &["max-retry-interval"],
+            &["routing", "retry", "max-retry-interval"],
             serde_norway::to_value(config.max_retry_interval)
                 .map_err(|err| format!("Failed to serialize maximum retry interval: {err}"))?,
         )?;
-        set_core_yaml_nested_value(
+        set_core_yaml_schema_value(
             document,
-            "streaming",
-            "bootstrap-retries",
+            &["streaming", "bootstrap-retries"],
+            &["requests", "streaming", "bootstrap-retries"],
             serde_norway::to_value(config.streaming_bootstrap_retries)
                 .map_err(|err| format!("Failed to serialize streaming bootstrap retry count: {err}"))?,
         )?;
@@ -385,9 +390,10 @@ pub(crate) fn patch_core_network_endpoint_yaml(
     patch_core_yaml_document(content, |document| {
         let original = document.clone();
         apply_network_settings(document, config)?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "proxy-url",
+            &["proxy-url"],
+            &["requests", "proxy-url"],
             serde_norway::Value::String(config.proxy_url.clone()),
         )?;
         Ok(*document != original)
@@ -400,30 +406,34 @@ pub(crate) fn patch_core_retry_yaml(
 ) -> Result<Option<String>, String> {
     patch_core_yaml_document(content, |document| {
         let original = document.clone();
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "disable-cooling",
+            &["disable-cooling"],
+            &["routing", "cooldown", "disable-cooling"],
             serde_norway::Value::Bool(config.disable_cooling),
         )?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "request-retry",
+            &["request-retry"],
+            &["routing", "retry", "request-retry"],
             serde_norway::to_value(config.request_retry).map_err(|err| err.to_string())?,
         )?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "max-retry-credentials",
+            &["max-retry-credentials"],
+            &["routing", "retry", "max-retry-credentials"],
             serde_norway::to_value(config.max_retry_credentials).map_err(|err| err.to_string())?,
         )?;
-        set_core_yaml_top_level_value(
+        set_core_yaml_schema_value(
             document,
-            "max-retry-interval",
+            &["max-retry-interval"],
+            &["routing", "retry", "max-retry-interval"],
             serde_norway::to_value(config.max_retry_interval).map_err(|err| err.to_string())?,
         )?;
-        set_core_yaml_nested_value(
+        set_core_yaml_schema_value(
             document,
-            "streaming",
-            "bootstrap-retries",
+            &["streaming", "bootstrap-retries"],
+            &["requests", "streaming", "bootstrap-retries"],
             serde_norway::to_value(config.streaming_bootstrap_retries)
                 .map_err(|err| err.to_string())?,
         )?;
@@ -475,19 +485,19 @@ pub(crate) fn apply_network_settings(
     document: &mut serde_norway::Value,
     config: &GuiConfigFile,
 ) -> Result<(), String> {
-    let mapping = document
-        .as_mapping_mut()
-        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
-
     let host = config.host.trim();
-    mapping.insert(
-        serde_norway::Value::String("host".to_string()),
+    set_core_yaml_schema_value(
+        document,
+        &["host"],
+        &["server", "host"],
         serde_norway::Value::String(host.to_string()),
-    );
-    mapping.insert(
-        serde_norway::Value::String("port".to_string()),
+    )?;
+    set_core_yaml_schema_value(
+        document,
+        &["port"],
+        &["server", "port"],
         serde_norway::to_value(config.port).map_err(|err| format!("Failed to serialize kernel port: {err}"))?,
-    );
+    )?;
     Ok(())
 }
 
@@ -498,69 +508,80 @@ pub(crate) fn apply_gui_managed_settings(
     let host = config.host.trim();
     let updated = patch_core_yaml_document(content, |document| {
         let mut changed = false;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "host",
+            &["host"],
+            &["server", "host"],
             serde_norway::Value::String(host.to_string()),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "port",
+            &["port"],
+            &["server", "port"],
             serde_norway::to_value(config.port)
                 .map_err(|err| format!("Failed to serialize kernel port: {err}"))?,
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "auth-dir",
+            &["auth-dir"],
+            &["oauth", "auth-dir"],
             serde_norway::Value::String(config.auth_dir.clone()),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "debug",
+            &["debug"],
+            &["observability", "logs", "debug"],
             serde_norway::Value::Bool(config.debug),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "commercial-mode",
+            &["commercial-mode"],
+            &["server", "commercial-mode"],
             serde_norway::Value::Bool(config.commercial_mode),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "logging-to-file",
+            &["logging-to-file"],
+            &["observability", "logs", "logging-to-file"],
             serde_norway::Value::Bool(config.logging_to_file),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "logs-max-total-size-mb",
+            &["logs-max-total-size-mb"],
+            &["observability", "logs", "logs-max-total-size-mb"],
             serde_norway::to_value(config.logs_max_total_size_mb)
                 .map_err(|err| format!("Failed to serialize log size limit: {err}"))?,
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "error-logs-max-files",
+            &["error-logs-max-files"],
+            &["observability", "logs", "error-logs-max-files"],
             serde_norway::to_value(config.error_logs_max_files)
                 .map_err(|err| format!("Failed to serialize error log retention count: {err}"))?,
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "usage-statistics-enabled",
+            &["usage-statistics-enabled"],
+            &["observability", "usage", "usage-statistics-enabled"],
             serde_norway::Value::Bool(config.usage_statistics_enabled),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "redis-usage-queue-retention-seconds",
+            &["redis-usage-queue-retention-seconds"],
+            &["observability", "usage", "redis-usage-queue-retention-seconds"],
             serde_norway::to_value(config.redis_usage_queue_retention_seconds)
                 .map_err(|err| format!("Failed to serialize Redis usage queue retention: {err}"))?,
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "request-log",
+            &["request-log"],
+            &["observability", "logs", "request-log"],
             serde_norway::Value::Bool(config.request_log),
         )?;
-        changed |= set_core_yaml_nested_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "remote-management",
-            "secret-key",
+            &["remote-management", "secret-key"],
+            &["management", "secret-key"],
             serde_norway::Value::String(config.management_secret_key.clone()),
         )?;
         changed |= set_core_yaml_nested_value(
@@ -575,9 +596,10 @@ pub(crate) fn apply_gui_managed_settings(
             "strategy",
             serde_norway::Value::String(config.routing_strategy.clone()),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "proxy-url",
+            &["proxy-url"],
+            &["requests", "proxy-url"],
             serde_norway::Value::String(config.proxy_url.clone()),
         )?;
         changed |= set_core_yaml_nested_value(
@@ -592,33 +614,37 @@ pub(crate) fn apply_gui_managed_settings(
             "session-affinity-ttl",
             serde_norway::Value::String(config.routing_session_affinity_ttl.clone()),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "disable-cooling",
+            &["disable-cooling"],
+            &["routing", "cooldown", "disable-cooling"],
             serde_norway::Value::Bool(config.disable_cooling),
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "request-retry",
+            &["request-retry"],
+            &["routing", "retry", "request-retry"],
             serde_norway::to_value(config.request_retry)
                 .map_err(|err| format!("Failed to serialize request retry count: {err}"))?,
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "max-retry-credentials",
+            &["max-retry-credentials"],
+            &["routing", "retry", "max-retry-credentials"],
             serde_norway::to_value(config.max_retry_credentials)
                 .map_err(|err| format!("Failed to serialize maximum retry credentials: {err}"))?,
         )?;
-        changed |= set_core_yaml_top_level_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "max-retry-interval",
+            &["max-retry-interval"],
+            &["routing", "retry", "max-retry-interval"],
             serde_norway::to_value(config.max_retry_interval)
                 .map_err(|err| format!("Failed to serialize maximum retry interval: {err}"))?,
         )?;
-        changed |= set_core_yaml_nested_value(
+        changed |= set_core_yaml_schema_value(
             document,
-            "streaming",
-            "bootstrap-retries",
+            &["streaming", "bootstrap-retries"],
+            &["requests", "streaming", "bootstrap-retries"],
             serde_norway::to_value(config.streaming_bootstrap_retries)
                 .map_err(|err| format!("Failed to serialize streaming bootstrap retry count: {err}"))?,
         )?;

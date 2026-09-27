@@ -116,7 +116,7 @@ pub(crate) async fn upload_auth_file(
     let mut query = HashMap::new();
     query.insert("name".to_string(), name);
     let response = client
-        .post(management_endpoint(&config, "auth-files")?)
+        .post(management_endpoint(&config, "credentials")?)
         .header("Authorization", management_authorization(&config)?)
         .query(&query)
         .header("Content-Type", "application/json")
@@ -184,11 +184,9 @@ pub(crate) async fn start_oauth_login(
     let provider_key = normalize_management_oauth_provider(&provider)?;
     let client = management_http_client()?;
     let mut request = client
-        .get(management_endpoint(
-            &config,
-            &format!("{provider_key}-auth-url"),
-        )?)
+        .get(management_endpoint(&config, "oauth/auth-url")?)
         .header("Authorization", management_authorization(&config)?);
+    request = request.query(&[("provider", provider_key.as_str())]);
     if management_oauth_uses_webui_callback(&provider_key) {
         request = request.query(&[("is_webui", "true")]);
     }
@@ -239,7 +237,7 @@ pub(crate) async fn get_oauth_status(
     let config = gui_config_state.snapshot()?;
     let client = management_http_client()?;
     let response = client
-        .get(management_endpoint(&config, "get-auth-status")?)
+        .get(management_endpoint(&config, "oauth/status")?)
         .header("Authorization", management_authorization(&config)?)
         .query(&[("state", state)])
         .send()
@@ -279,7 +277,7 @@ pub(crate) async fn submit_oauth_callback(
         "redirect_url": redirect_url,
     });
     let response = client
-        .post(management_endpoint(&config, "oauth-callback")?)
+        .post(management_endpoint(&config, "oauth/callback")?)
         .header("Authorization", management_authorization(&config)?)
         .json(&body)
         .send()
@@ -354,13 +352,13 @@ pub(crate) fn management_endpoint(config: &GuiConfigFile, path: &str) -> Result<
         config.port,
         current_core_tls_settings()?.enabled,
     );
-    Ok(format!("{origin}/v0/management/{path}"))
+    Ok(format!("{origin}/v8/management/{path}"))
 }
 
 fn normalize_management_oauth_provider(provider: &str) -> Result<String, String> {
     let key = provider.trim().to_ascii_lowercase().replace('_', "-");
     let key = match key.as_str() {
-        "claude" | "anthropic" => "anthropic".to_string(),
+        "claude" | "anthropic" => "claude".to_string(),
         "anti-gravity" => "antigravity".to_string(),
         "cognition" => "devin".to_string(),
         "grok" | "x-ai" | "x.ai" => "xai".to_string(),
@@ -377,7 +375,7 @@ fn normalize_management_oauth_provider(provider: &str) -> Result<String, String>
 }
 
 fn management_oauth_uses_webui_callback(provider_key: &str) -> bool {
-    matches!(provider_key, "codex" | "anthropic" | "antigravity" | "xai" | "devin")
+    matches!(provider_key, "codex" | "claude" | "antigravity" | "xai" | "devin")
 }
 
 async fn read_management_json<T>(response: reqwest::Response) -> Result<T, String>

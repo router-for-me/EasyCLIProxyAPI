@@ -39,15 +39,15 @@ mockIPC(async (cmd, args) => {
   if (cmd === 'set_app_locale') return null;
   if (cmd === 'management_request') {
     const request = args?.request as { path: string; method: string; query?: Record<string, string>; body?: Record<string, unknown> };
-    if (request.path === '/auth-files/download') {
+    if (request.path === '/credentials/download') {
       if (params.has('metadataError')) throw new Error('Fixture metadata read failed');
       return { ...settingsFor(request.query?.name ?? '') };
     }
-    if (request.path === '/auth-files/models') {
+    if (request.path === '/credentials/models') {
       if (params.has('catalogError')) throw new Error('Fixture catalog read failed');
       return { models: [{ id: 'gpt-example' }, { id: 'gpt-old-example' }, { id: 'claude-example' }] };
     }
-    if (request.path === '/auth-files/fields' && request.method === 'PATCH') {
+    if (request.path === '/credentials/fields' && request.method === 'PATCH') {
       if (params.has('saveError')) throw new Error('Fixture settings save failed');
       const { name, headers, ...patch } = request.body ?? {};
       const target = settingsFor(String(name));
@@ -64,7 +64,7 @@ mockIPC(async (cmd, args) => {
       if (output) output.textContent = JSON.stringify(request.body, null, 2);
       return { status: 'ok' };
     }
-    if (request.path === '/api-call') {
+    if (request.path === '/requests/api-call') {
       await new Promise((resolve) => setTimeout(resolve, 800));
       if (params.has('quotaError')) throw new Error('Fixture quota unavailable');
       if (String(request.body?.url).endsWith('/consume')) {
@@ -77,7 +77,7 @@ mockIPC(async (cmd, args) => {
         ? { available_count: Math.max(0, 2 - resetCount), applicable_available_count: 0, credits: [{ reset_type: 'codex_rate_limits', status: 'available', expires_at: '2030-01-01T00:00:00Z' }] }
         : { plan_type: 'Plus', rate_limit: { primary_window: { used_percent: resetCount ? 0 : 16, limit_window_seconds: 18000, reset_after_seconds: 3600 }, secondary_window: { used_percent: resetCount ? 0 : 72, limit_window_seconds: 604800, reset_after_seconds: 86400 } } }) };
     }
-    if (request.path === '/auth-files' && request.method === 'GET') {
+    if (request.path === '/credentials' && request.method === 'GET') {
       refreshCount += 1;
       if (params.has('cards')) return { files: cardFiles.map((file) => ({ source: 'file', size: 2048, updated_at: '2026-09-20T01:20:00Z', success: 1200, failed: 28, recent_requests: buckets, ...file, ...settingsFor(file.name) })) };
       if (params.has('health')) {

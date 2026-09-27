@@ -150,7 +150,9 @@ pub(crate) fn core_tls_settings_from_value(
     let root = document
         .as_mapping()
         .ok_or_else(|| "Core configuration must be a YAML mapping".to_string())?;
-    let tls = yaml_mapping_value(root, "tls").and_then(serde_norway::Value::as_mapping);
+    let tls = nested_yaml_value(root, &["server", "tls"])
+        .or_else(|| yaml_mapping_value(root, "tls"))
+        .and_then(serde_norway::Value::as_mapping);
     let enabled = tls
         .and_then(|mapping| yaml_mapping_value(mapping, "enable"))
         .map(|value| {
@@ -183,23 +185,21 @@ pub(crate) fn patch_core_tls_settings_yaml(
     settings: &CoreTlsSettings,
 ) -> Result<Option<String>, String> {
     patch_core_yaml_document(content, |document| {
+        let v8 = core_config_uses_v8(document);
         let mut changed = false;
-        changed |= set_core_yaml_nested_value(
+        changed |= set_core_yaml_path_value(
             document,
-            "tls",
-            "enable",
+            if v8 { &["server", "tls", "enable"] } else { &["tls", "enable"] },
             serde_norway::Value::Bool(settings.enabled),
         )?;
-        changed |= set_core_yaml_nested_value(
+        changed |= set_core_yaml_path_value(
             document,
-            "tls",
-            "cert",
+            if v8 { &["server", "tls", "cert"] } else { &["tls", "cert"] },
             serde_norway::Value::String(settings.cert.clone()),
         )?;
-        changed |= set_core_yaml_nested_value(
+        changed |= set_core_yaml_path_value(
             document,
-            "tls",
-            "key",
+            if v8 { &["server", "tls", "key"] } else { &["tls", "key"] },
             serde_norway::Value::String(settings.key.clone()),
         )?;
         Ok(changed)
@@ -247,7 +247,8 @@ pub(crate) fn core_sensitive_words_settings_from_value(
         .as_mapping()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let read_words = |provider: &str| -> Result<Vec<String>, String> {
-        let Some(section) = yaml_mapping_value(root, provider) else {
+        let Some(section) = nested_yaml_value(root, &["oauth", "providers", provider])
+            .or_else(|| yaml_mapping_value(root, provider)) else {
             return Ok(Vec::new());
         };
         if section.is_null() {
@@ -333,6 +334,7 @@ pub(crate) fn patch_core_sensitive_words_yaml(
         prepared = replace_top_level_yaml_block(&prepared, provider, &block);
     }
     let updated = patch_core_yaml_document(&prepared, |document| {
+        let v8 = core_config_uses_v8(document);
         let mut changed = false;
         for (provider, words) in [
             ("antigravity", &settings.antigravity_sensitive_words),
@@ -341,7 +343,11 @@ pub(crate) fn patch_core_sensitive_words_yaml(
             let root = document
                 .as_mapping()
                 .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
-            let section = yaml_mapping_value(root, provider);
+            let section = if v8 {
+                nested_yaml_value(root, &["oauth", "providers", provider])
+            } else {
+                yaml_mapping_value(root, provider)
+            };
             let current_words = section
                 .and_then(serde_norway::Value::as_mapping)
                 .and_then(|mapping| yaml_mapping_value(mapping, "sensitive-words"));
@@ -349,16 +355,25 @@ pub(crate) fn patch_core_sensitive_words_yaml(
                 continue;
             }
             if section.is_none_or(serde_norway::Value::is_null) {
-                changed |= set_core_yaml_top_level_value(
+                let section_path = if v8 {
+                    vec!["oauth", "providers", provider]
+                } else {
+                    vec![provider]
+                };
+                changed |= set_core_yaml_path_value(
                     document,
-                    provider,
+                    &section_path,
                     serde_norway::Value::Mapping(serde_norway::Mapping::new()),
                 )?;
             }
-            changed |= set_core_yaml_nested_value(
+            let sensitive_words_path = if v8 {
+                vec!["oauth", "providers", provider, "sensitive-words"]
+            } else {
+                vec![provider, "sensitive-words"]
+            };
+            changed |= set_core_yaml_path_value(
                 document,
-                provider,
-                "sensitive-words",
+                &sensitive_words_path,
                 serde_norway::Value::Sequence(
                     words
                         .iter()
@@ -407,10 +422,10 @@ pub(crate) fn patch_core_api_keys(api_keys: &[String]) -> Result<(), String> {
 pub(crate) fn patch_core_management_secret_key(secret_key: &str) -> Result<(), String> {
     let secret_key = secret_key.to_string();
     patch_existing_core_config(move |document| {
-        set_core_yaml_nested_value(
+        let v8 = core_config_uses_v8(document);
+        set_core_yaml_path_value(
             document,
-            "remote-management",
-            "secret-key",
+            if v8 { &["management", "secret-key"] } else { &["remote-management", "secret-key"] },
             serde_norway::Value::String(secret_key),
         )
     })
@@ -420,7 +435,12 @@ pub(crate) fn patch_core_management_secret_key(secret_key: &str) -> Result<(), S
 pub(crate) fn patch_core_auth_dir(auth_dir: &str) -> Result<(), String> {
     let auth_dir = auth_dir.to_string();
     patch_existing_core_config(move |document| {
-        set_core_yaml_top_level_value(document, "auth-dir", serde_norway::Value::String(auth_dir))
+        let v8 = core_config_uses_v8(document);
+        set_core_yaml_path_value(
+            document,
+            if v8 { &["oauth", "auth-dir"] } else { &["auth-dir"] },
+            serde_norway::Value::String(auth_dir),
+        )
     })
 }
 
@@ -437,13 +457,19 @@ pub(crate) fn patch_core_plugins_enabled(enabled: bool) -> Result<(), String> {
 
 pub(crate) fn patch_core_request_log(enabled: bool) -> Result<(), String> {
     patch_existing_core_config(|document| {
-        set_core_yaml_top_level_value(document, "request-log", serde_norway::Value::Bool(enabled))
+        let v8 = core_config_uses_v8(document);
+        set_core_yaml_path_value(
+            document,
+            if v8 { &["observability", "logs", "request-log"] } else { &["request-log"] },
+            serde_norway::Value::Bool(enabled),
+        )
     })
 }
 
 pub(crate) fn patch_core_logging_settings(settings: &CoreConfigSettings) -> Result<(), String> {
     let settings = settings.clone();
     patch_existing_core_config(move |document| {
+        let v8 = core_config_uses_v8(document);
         let mut changed = false;
         for (key, value) in [
             ("debug", serde_norway::Value::Bool(settings.debug)),
@@ -475,7 +501,16 @@ pub(crate) fn patch_core_logging_settings(settings: &CoreConfigSettings) -> Resu
                     .map_err(|err| format!("Failed to serialize Redis usage queue retention: {err}"))?,
             ),
         ] {
-            changed |= set_core_yaml_top_level_value(document, key, value)?;
+            let path: &[&str] = if v8 {
+                match key {
+                    "commercial-mode" => &["server", "commercial-mode"],
+                    "usage-statistics-enabled" | "redis-usage-queue-retention-seconds" => &["observability", "usage", key],
+                    _ => &["observability", "logs", key],
+                }
+            } else {
+                &[key]
+            };
+            changed |= set_core_yaml_path_value(document, path, value)?;
         }
         Ok(changed)
     })
@@ -496,9 +531,10 @@ pub(crate) fn patch_core_routing_strategy(strategy: &str) -> Result<(), String> 
 pub(crate) fn patch_core_proxy_url(proxy_url: &str) -> Result<(), String> {
     let proxy_url = proxy_url.to_string();
     patch_existing_core_config(move |document| {
-        set_core_yaml_top_level_value(
+        let v8 = core_config_uses_v8(document);
+        set_core_yaml_path_value(
             document,
-            "proxy-url",
+            if v8 { &["requests", "proxy-url"] } else { &["proxy-url"] },
             serde_norway::Value::String(proxy_url),
         )
     })
@@ -1136,6 +1172,50 @@ pub(crate) fn set_core_yaml_nested_value(
     Ok(true)
 }
 
+pub(crate) fn core_config_uses_v8(document: &serde_norway::Value) -> bool {
+    document
+        .as_mapping()
+        .and_then(|root| yaml_mapping_value(root, "config-version"))
+        .and_then(serde_norway::Value::as_u64)
+        .is_some_and(|version| version >= 8)
+}
+
+pub(crate) fn set_core_yaml_path_value(
+    document: &mut serde_norway::Value,
+    path: &[&str],
+    value: serde_norway::Value,
+) -> Result<bool, String> {
+    let Some((key, parents)) = path.split_last() else {
+        return Err("Kernel configuration path cannot be empty".to_string());
+    };
+    let mut mapping = document
+        .as_mapping_mut()
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+    for section in parents {
+        mapping = mapping
+            .entry(yaml_key(section))
+            .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
+            .as_mapping_mut()
+            .ok_or_else(|| format!("Kernel configuration section {section} must be a YAML mapping"))?;
+    }
+    let key = yaml_key(key);
+    if mapping.get(&key) == Some(&value) {
+        return Ok(false);
+    }
+    mapping.insert(key, value);
+    Ok(true)
+}
+
+pub(crate) fn set_core_yaml_schema_value(
+    document: &mut serde_norway::Value,
+    legacy_path: &[&str],
+    v8_path: &[&str],
+    value: serde_norway::Value,
+) -> Result<bool, String> {
+    let path = if core_config_uses_v8(document) { v8_path } else { legacy_path };
+    set_core_yaml_path_value(document, path, value)
+}
+
 pub(crate) fn patch_core_api_keys_yaml(
     content: &str,
     api_keys: &[String],
@@ -1145,6 +1225,18 @@ pub(crate) fn patch_core_api_keys_yaml(
     let root = parsed
         .as_mapping()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+    if core_config_uses_v8(&parsed) {
+        return patch_core_yaml_document(content, |document| {
+            set_core_yaml_path_value(
+                document,
+                &["access", "api-keys"],
+                serde_norway::Value::Sequence(
+                    api_keys.iter().cloned().map(serde_norway::Value::String).collect(),
+                ),
+            )
+        })
+        .map(|updated| updated.unwrap_or_else(|| content.to_string()));
+    }
     let has_legacy_api_keys = nested_yaml_value(
         root,
         &["auth", "providers", "config-api-key", "api-key-entries"],
@@ -1322,7 +1414,10 @@ pub(crate) fn core_config_settings_from_value(
     let root = document
         .as_mapping()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
-    let host = yaml_mapping_value(root, "host")
+    let v8_or_legacy = |v8: &[&str], legacy: &[&str]| {
+        nested_yaml_value(root, v8).or_else(|| nested_yaml_value(root, legacy))
+    };
+    let host = v8_or_legacy(&["server", "host"], &["host"])
         .map(|value| {
             value
                 .as_str()
@@ -1331,7 +1426,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or_else(|| "127.0.0.1".to_string());
-    let port = yaml_mapping_value(root, "port")
+    let port = v8_or_legacy(&["server", "port"], &["port"])
         .map(|value| {
             value
                 .as_u64()
@@ -1341,7 +1436,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(8317);
-    let auth_dir = yaml_mapping_value(root, "auth-dir")
+    let auth_dir = v8_or_legacy(&["oauth", "auth-dir"], &["auth-dir"])
         .map(|value| {
             value
                 .as_str()
@@ -1350,7 +1445,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or_else(|| OAUTH_DIR_NAME.to_string());
-    let debug = yaml_mapping_value(root, "debug")
+    let debug = v8_or_legacy(&["observability", "logs", "debug"], &["debug"])
         .map(|value| {
             value
                 .as_bool()
@@ -1358,7 +1453,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(false);
-    let commercial_mode = yaml_mapping_value(root, "commercial-mode")
+    let commercial_mode = v8_or_legacy(&["server", "commercial-mode"], &["commercial-mode"])
         .map(|value| {
             value
                 .as_bool()
@@ -1366,7 +1461,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(false);
-    let logging_to_file = yaml_mapping_value(root, "logging-to-file")
+    let logging_to_file = v8_or_legacy(&["observability", "logs", "logging-to-file"], &["logging-to-file"])
         .map(|value| {
             value
                 .as_bool()
@@ -1374,7 +1469,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(false);
-    let logs_max_total_size_mb = yaml_mapping_value(root, "logs-max-total-size-mb")
+    let logs_max_total_size_mb = v8_or_legacy(&["observability", "logs", "logs-max-total-size-mb"], &["logs-max-total-size-mb"])
         .map(|value| {
             value
                 .as_u64()
@@ -1383,7 +1478,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(DEFAULT_LOGS_MAX_TOTAL_SIZE_MB);
-    let error_logs_max_files = yaml_mapping_value(root, "error-logs-max-files")
+    let error_logs_max_files = v8_or_legacy(&["observability", "logs", "error-logs-max-files"], &["error-logs-max-files"])
         .map(|value| {
             value
                 .as_u64()
@@ -1392,7 +1487,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(DEFAULT_ERROR_LOGS_MAX_FILES);
-    let usage_statistics_enabled = yaml_mapping_value(root, "usage-statistics-enabled")
+    let usage_statistics_enabled = v8_or_legacy(&["observability", "usage", "usage-statistics-enabled"], &["usage-statistics-enabled"])
         .map(|value| {
             value
                 .as_bool()
@@ -1401,7 +1496,7 @@ pub(crate) fn core_config_settings_from_value(
         .transpose()?
         .unwrap_or(true);
     let redis_usage_queue_retention_seconds =
-        yaml_mapping_value(root, "redis-usage-queue-retention-seconds")
+        v8_or_legacy(&["observability", "usage", "redis-usage-queue-retention-seconds"], &["redis-usage-queue-retention-seconds"])
             .map(|value| {
                 value
                     .as_u64()
@@ -1415,7 +1510,7 @@ pub(crate) fn core_config_settings_from_value(
     } else {
         redis_usage_queue_retention_seconds.min(3600)
     };
-    let request_log = yaml_mapping_value(root, "request-log")
+    let request_log = v8_or_legacy(&["observability", "logs", "request-log"], &["request-log"])
         .map(|value| {
             value
                 .as_bool()
@@ -1445,7 +1540,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or_else(|| "round-robin".to_string());
-    let proxy_url = yaml_mapping_value(root, "proxy-url")
+    let proxy_url = v8_or_legacy(&["requests", "proxy-url"], &["proxy-url"])
         .map(|value| {
             value
                 .as_str()
@@ -1474,7 +1569,7 @@ pub(crate) fn core_config_settings_from_value(
             })
             .transpose()?
             .unwrap_or_default();
-    let disable_cooling = yaml_mapping_value(root, "disable-cooling")
+    let disable_cooling = v8_or_legacy(&["routing", "cooldown", "disable-cooling"], &["disable-cooling"])
         .map(|value| {
             value
                 .as_bool()
@@ -1482,7 +1577,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(DEFAULT_DISABLE_COOLING);
-    let request_retry = yaml_mapping_value(root, "request-retry")
+    let request_retry = v8_or_legacy(&["routing", "retry", "request-retry"], &["request-retry"])
         .map(|value| {
             value
                 .as_u64()
@@ -1491,7 +1586,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(DEFAULT_REQUEST_RETRY);
-    let max_retry_credentials = yaml_mapping_value(root, "max-retry-credentials")
+    let max_retry_credentials = v8_or_legacy(&["routing", "retry", "max-retry-credentials"], &["max-retry-credentials"])
         .map(|value| {
             value
                 .as_u64()
@@ -1500,7 +1595,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(DEFAULT_MAX_RETRY_CREDENTIALS);
-    let max_retry_interval = yaml_mapping_value(root, "max-retry-interval")
+    let max_retry_interval = v8_or_legacy(&["routing", "retry", "max-retry-interval"], &["max-retry-interval"])
         .map(|value| {
             value
                 .as_u64()
@@ -1509,7 +1604,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(DEFAULT_MAX_RETRY_INTERVAL);
-    let streaming_bootstrap_retries = nested_yaml_value(root, &["streaming", "bootstrap-retries"])
+    let streaming_bootstrap_retries = v8_or_legacy(&["requests", "streaming", "bootstrap-retries"], &["streaming", "bootstrap-retries"])
         .map(|value| {
             value
                 .as_u64()
@@ -1550,7 +1645,13 @@ pub(crate) fn core_config_settings_from_value(
 }
 
 pub(crate) fn extract_core_api_keys(root: &serde_norway::Mapping) -> Result<Vec<String>, String> {
+    if let Some(value) = nested_yaml_value(root, &["access", "api-keys"]) {
+        return extract_api_key_sequence(value, "access.api-keys");
+    }
     if let Some(value) = yaml_mapping_value(root, "api-keys") {
+        if value.is_mapping() {
+            return Ok(Vec::new());
+        }
         return extract_api_key_sequence(value, "api-keys");
     }
 
@@ -1609,7 +1710,8 @@ pub(crate) fn extract_api_key_value(value: &serde_norway::Value) -> Option<Resul
 pub(crate) fn extract_core_management_secret_key(
     root: &serde_norway::Mapping,
 ) -> Result<Option<String>, String> {
-    let Some(value) = nested_yaml_value(root, &["remote-management", "secret-key"]) else {
+    let Some(value) = nested_yaml_value(root, &["management", "secret-key"])
+        .or_else(|| nested_yaml_value(root, &["remote-management", "secret-key"])) else {
         return Ok(None);
     };
     let value = value

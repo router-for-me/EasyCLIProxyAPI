@@ -45,14 +45,14 @@ mockIPC(async (cmd, args: any) => {
   if (cmd === 'open_oauth_url') return null;
   if (cmd === 'management_request') {
     const request = args.request;
-    if (request.path === '/auth-files') return { files: fixture.files };
+    if (request.path === '/credentials') return { files: fixture.files };
     if (request.path === '/config') return {};
-    if (request.path === '/auth-files/fields') return {};
-    if (request.path === '/oauth-session') {
+    if (request.path === '/credentials/fields') return {};
+    if (request.path === '/oauth/session') {
       if (fixture.cancelError) throw new Error('Cancellation failed');
       return { status: 'ok', cancelled: true };
     }
-    if (request.path === '/api-call') return fixture.quotaError
+    if (request.path === '/requests/api-call') return fixture.quotaError
       ? { status_code: 401, body: { error: 'Session expired' } }
       : { status_code: 200, body: { userStatus: { planStatus: {
         dailyQuotaRemainingPercent: 75, weeklyQuotaRemainingPercent: 0,

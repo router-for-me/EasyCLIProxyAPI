@@ -2132,7 +2132,7 @@ async fn wait_or_cancel(token: &CancellationToken, seconds: u64) {
 async fn fetch_usage_queue(config: &GuiConfigFile) -> Result<Vec<Value>, String> {
     let client = management_http_client()?;
     let response = client
-        .get(management_endpoint(config, "usage-queue")?)
+        .get(management_endpoint(config, "observability/usage/queue")?)
         .header("Authorization", management_authorization(config)?)
         .query(&[("count", USAGE_QUEUE_BATCH_SIZE)])
         .send()

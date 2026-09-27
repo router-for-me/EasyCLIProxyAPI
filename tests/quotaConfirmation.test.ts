@@ -26,7 +26,7 @@ beforeEach(() => {
   mockIPC((command, payload) => {
     if (command !== 'management_request') throw new Error('Unexpected IPC command: ' + command);
     const request = (payload as { request: { path: string; body: { url: string; method: string } } }).request;
-    expect(request.path).toBe('/api-call');
+    expect(request.path).toBe('/requests/api-call');
     upstreamCalls.push(request.body);
     if (request.body.url.endsWith('/consume') && consumeError) return { status_code: 409, body: 'reset denied' };
     if (request.body.url.endsWith('/usage') && refreshError) return { status_code: 503, body: 'usage unavailable' };

@@ -31,7 +31,7 @@ fixture.fixtureSaved = null;
 mockIPC(async (cmd, rawArgs) => {
   if (cmd === 'set_app_locale') return null;
   const args = rawArgs as { request?: { path?: string } };
-  if (cmd === 'management_request' && args.request?.path === '/api-call') {
+  if (cmd === 'management_request' && args.request?.path === '/requests/api-call') {
     const response = fixture.fixtureFailFetch
       ? { status_code: 503, body: 'Fixture discovery failed' }
       : { status_code: 200, body: { data: fixture.fixtureCatalog.slice() } };

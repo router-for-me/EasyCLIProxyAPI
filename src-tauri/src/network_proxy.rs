@@ -583,7 +583,7 @@ pub(crate) async fn verify_core_proxy(config: &GuiConfigFile) -> Result<(), Stri
     let mut updated = false;
     for attempt in 0..10 {
         let response = client
-            .get(management_api::management_endpoint(config, "proxy-url")?)
+            .get(management_api::management_endpoint(config, "config/requests/proxy-url")?)
             .header(
                 "Authorization",
                 management_api::management_authorization(config)?,
@@ -594,18 +594,18 @@ pub(crate) async fn verify_core_proxy(config: &GuiConfigFile) -> Result<(), Stri
         if let Ok(response) = response {
             if response.status().is_success() {
                 if let Ok(value) = response.json::<serde_json::Value>().await {
-                    if let Some(actual) = value.get("proxy-url").and_then(|v| v.as_str()) {
+                    if let Some(actual) = value.as_str() {
                         if actual == config.proxy_url {
                             return Ok(());
                         }
                         if attempt >= 2 && !updated {
                             let response = client
-                                .put(management_api::management_endpoint(config, "proxy-url")?)
+                                .put(management_api::management_endpoint(config, "config/requests/proxy-url")?)
                                 .header(
                                     "Authorization",
                                     management_api::management_authorization(config)?,
                                 )
-                                .json(&serde_json::json!({"value": config.proxy_url}))
+                                .json(&config.proxy_url)
                                 .timeout(Duration::from_secs(3))
                                 .send()
                                 .await

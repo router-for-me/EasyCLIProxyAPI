@@ -1951,7 +1951,21 @@ pub(crate) fn migrate_core_config_for_update(
             path_to_string(&template_path)
         )
     })?;
-    let migrated = merge_core_config_fields(&template, Some(&old_config))?;
+    let old_document = serde_norway::from_str::<serde_norway::Value>(&old_config)
+        .map_err(|error| format!("Failed to parse existing kernel configuration; update canceled to prevent configuration loss: {error}"))?;
+    if !old_document.is_mapping() {
+        return Err("Existing kernel configuration root must be a YAML mapping; update canceled".to_string());
+    }
+    let template_document = serde_norway::from_str::<serde_norway::Value>(&template)
+        .map_err(|error| format!("Failed to parse new kernel configuration template: {error}"))?;
+    let migrated = if core_config_uses_v8(&template_document) && !core_config_uses_v8(&old_document) {
+        // v8 accepts legacy-only files and migrates them atomically on the first
+        // successful v8 Management API write. Mixing both layouts here would let
+        // v8 template defaults override the user's legacy values.
+        old_config
+    } else {
+        merge_core_config_fields(&template, Some(&old_config))?
+    };
     let config_path = target_dir.join(CORE_CONFIG_FILE);
     fs::write(&config_path, migrated).map_err(|error| {
         format!(
