@@ -205,6 +205,71 @@ fn default_auth_directory_is_relative_and_legacy_absolute_value_is_migrated() {
 }
 
 #[test]
+fn macos_relative_oauth_dir_recovers_existing_persistent_credentials() {
+    let root = agent_test_home("macos-relative-oauth-dir");
+    let install_dir = root.join("cpa-core");
+    let persistent_auth_dir = root.join(OAUTH_DIR_NAME);
+    let misplaced_auth_dir = install_dir.join(OAUTH_DIR_NAME);
+    fs::create_dir_all(&persistent_auth_dir).unwrap();
+    fs::create_dir_all(&misplaced_auth_dir).unwrap();
+    fs::write(
+        persistent_auth_dir.join("account.json"),
+        b"existing-credential",
+    )
+    .unwrap();
+    fs::write(misplaced_auth_dir.join("core-start-output.log"), b"log").unwrap();
+    let mut config = GuiConfigFile {
+        auth_dir: OAUTH_DIR_NAME.to_string(),
+        ..GuiConfigFile::default()
+    };
+
+    assert!(
+        recover_macos_relative_oauth_dir(&mut config, &install_dir, &persistent_auth_dir).unwrap()
+    );
+    assert_eq!(config.auth_dir, DEFAULT_AUTH_DIR);
+    assert_eq!(
+        auth_dir_path_for_core(&config.auth_dir, &install_dir),
+        persistent_auth_dir
+    );
+    assert_eq!(
+        fs::read(persistent_auth_dir.join("account.json")).unwrap(),
+        b"existing-credential"
+    );
+    assert!(!misplaced_auth_dir.join("account.json").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn macos_relative_oauth_dir_preserves_populated_or_custom_paths() {
+    let root = agent_test_home("macos-relative-oauth-dir-custom");
+    let install_dir = root.join("cpa-core");
+    let persistent_auth_dir = root.join(OAUTH_DIR_NAME);
+    let active_auth_dir = install_dir.join(OAUTH_DIR_NAME);
+    fs::create_dir_all(&persistent_auth_dir).unwrap();
+    fs::create_dir_all(&active_auth_dir).unwrap();
+    fs::write(persistent_auth_dir.join("old.json"), b"old-credential").unwrap();
+    fs::write(active_auth_dir.join("current.json"), b"current-credential").unwrap();
+    let mut config = GuiConfigFile {
+        auth_dir: OAUTH_DIR_NAME.to_string(),
+        ..GuiConfigFile::default()
+    };
+
+    assert!(
+        !recover_macos_relative_oauth_dir(&mut config, &install_dir, &persistent_auth_dir).unwrap()
+    );
+    assert_eq!(config.auth_dir, OAUTH_DIR_NAME);
+    fs::remove_file(active_auth_dir.join("current.json")).unwrap();
+    config.auth_dir = "other/oauth".to_string();
+    assert!(
+        !recover_macos_relative_oauth_dir(&mut config, &install_dir, &persistent_auth_dir).unwrap()
+    );
+    assert_eq!(config.auth_dir, "other/oauth");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn packaged_macos_auth_directory_is_copied_before_config_is_repointed() {
     let root = agent_test_home("packaged-macos-auth-migration");
     let contents_dir = root.join("EasyCLIProxyAPI.app").join("Contents");

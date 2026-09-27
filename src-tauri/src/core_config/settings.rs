@@ -1085,6 +1085,55 @@ pub(crate) fn migrate_auth_dir_from_macos_app_bundle(
     Ok(true)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn auth_directory_has_json_files(path: &Path) -> Result<bool, String> {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect OAuth directory {}: {error}",
+                path_to_string(path)
+            ));
+        }
+    };
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Failed to inspect OAuth directory entry: {error}"))?;
+        if entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect OAuth file type: {error}"))?
+            .is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn recover_macos_relative_oauth_dir(
+    config: &mut GuiConfigFile,
+    install_dir: &Path,
+    persistent_auth_dir: &Path,
+) -> Result<bool, String> {
+    if Path::new(config.auth_dir.trim()) != Path::new(OAUTH_DIR_NAME) {
+        return Ok(false);
+    }
+    let current_auth_dir = auth_dir_path_for_core(&config.auth_dir, install_dir);
+    if !auth_directory_has_json_files(persistent_auth_dir)?
+        || auth_directory_has_json_files(&current_auth_dir)?
+    {
+        return Ok(false);
+    }
+    config.auth_dir = DEFAULT_AUTH_DIR.to_string();
+    Ok(true)
+}
+
 #[cfg(target_os = "macos")]
 fn migrate_packaged_macos_auth_dir(config: &mut GuiConfigFile) -> Result<bool, String> {
     let previous_auth_dir = config.auth_dir.clone();
@@ -1092,13 +1141,14 @@ fn migrate_packaged_macos_auth_dir(config: &mut GuiConfigFile) -> Result<bool, S
     let persistent_auth_dir = fixed_oauth_dir()?;
     let migrated =
         migrate_auth_dir_from_macos_app_bundle(config, &install_dir, &persistent_auth_dir)?;
-    if migrated {
+    let recovered = recover_macos_relative_oauth_dir(config, &install_dir, &persistent_auth_dir)?;
+    if migrated || recovered {
         if let Err(error) = patch_core_auth_dir(&config.auth_dir) {
             config.auth_dir = previous_auth_dir;
             return Err(format!("Failed to update kernel OAuth directory: {error}"));
         }
     }
-    Ok(migrated)
+    Ok(migrated || recovered)
 }
 
 pub(crate) fn should_import_core_api_keys(
