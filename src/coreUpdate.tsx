@@ -194,7 +194,7 @@ export function CoreUpdateProvider({ children }: { children: ReactNode }) {
 export function useCoreUpdate() {
   const context = useContext(CoreUpdateContext);
   if (!context) {
-    throw new Error('useCoreUpdate 必须在 CoreUpdateProvider 内使用');
+    throw new Error('useCoreUpdate must be used inside CoreUpdateProvider');
   }
   return context;
 }

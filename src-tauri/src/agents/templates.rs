@@ -35,7 +35,7 @@ pub(crate) fn build_codex_template_auth(home: &Path) -> Result<AgentFileUpdate, 
     }
     Ok(AgentFileUpdate {
         path,
-        after: serde_json::to_string_pretty(&target).map_err(|_| "生成认证模板失败")?,
+        after: serde_json::to_string_pretty(&target).map_err(|_| "Failed to generate authentication template")?,
     })
 }
 
@@ -46,7 +46,7 @@ pub(crate) fn build_pi_template_updates(
     model: &str,
 ) -> Result<Vec<AgentFileUpdate>, String> {
     if port == 0 || api_key.trim().is_empty() {
-        return Err("CPA 地址或密钥无效".into());
+        return Err("Invalid CPA address or key".into());
     }
     let settings = serde_json::json!({"packages": [PI_CLIPROXYAPI_PACKAGE]}).to_string();
     Ok(vec![
@@ -86,29 +86,36 @@ pub(crate) async fn prepare_desktop_core_update(
 }
 
 pub(crate) fn agent_core_error(error: String) -> String {
-    if error.contains("自动恢复失败") || error.contains("回滚失败") {
-        "内核别名或智能体配置写入失败且回滚失败，请检查当前配置".into()
-    } else if error.contains("已恢复原配置") {
-        "内核别名或智能体配置写入失败，已恢复原配置，请检查连接和模型映射后重试".into()
-    } else if error.contains("配置已变化") {
-        "内核配置已变化，请重新预览后重试".into()
-    } else if error.contains("已被其他模型使用") {
-        "模型别名已被其他模型占用，请切换其他别名后重试".into()
-    } else if error.contains("无法确定模型") && error.contains("CPA 配置来源") {
-        "无法找到原模型的有效接入来源，请确认接入已启用且未屏蔽原模型或别名，刷新模型列表后重试".into()
-    } else if error.starts_with("更新后的内核配置与预期值不一致")
-        || error.starts_with("验证更新后的内核配置失败")
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("automatic restoration failed")
+        || normalized.contains("rollback failed")
+        || normalized.contains("rollback both failed")
     {
-        "内核配置格式兼容性校验失败，已取消别名同步，原配置未写入".into()
-    } else if error.starts_with("解析内核 YAML 配置失败") {
-        "内核 YAML 配置格式无效，请检查配置格式后重试".into()
-    } else if error.starts_with("管理 API 错误 (401)")
-        || error.starts_with("管理 API 错误 (403)")
-        || error.starts_with("管理接口不可用")
+        "Kernel alias or agent configuration write failed, and rollback also failed. Check the current configuration".into()
+    } else if normalized.contains("original configuration was restored") {
+        "Kernel alias or agent configuration write failed. Original configuration was restored. Check the connection and model mapping, then try again".into()
+    } else if normalized.contains("configuration changed") {
+        "Kernel configuration changed. Preview it again and retry".into()
+    } else if normalized.contains("already used by another model") {
+        "Model alias is already used by another model. Choose a different alias and try again".into()
+    } else if normalized.contains("unable to determine")
+        && normalized.contains("cpa configuration source")
+        && normalized.contains("model")
     {
-        "内核管理接口认证失败，请检查管理密钥后重试".into()
+        "Unable to find a valid access source for the original model. Make sure access is enabled and the original model or alias is not blocked, then refresh the model list and try again".into()
+    } else if normalized.starts_with("updated kernel configuration does not match the expected value")
+        || normalized.starts_with("failed to validate updated kernel configuration")
+    {
+        "Kernel configuration format compatibility check failed. Alias synchronization was canceled, and the original configuration was not written".into()
+    } else if normalized.starts_with("failed to parse kernel yaml configuration") {
+        "Invalid kernel YAML configuration format. Check the format and try again".into()
+    } else if normalized.starts_with("management api error (401)")
+        || normalized.starts_with("management api error (403)")
+        || normalized.starts_with("management interface unavailable")
+    {
+        "Kernel management interface authentication failed. Check the management key and try again".into()
     } else {
-        "内核模型别名同步失败，请检查内核连接和模型映射".into()
+        "Kernel model alias synchronization failed. Check the kernel connection and model mapping".into()
     }
 }
 
@@ -144,7 +151,7 @@ async fn prepare_template_plan(
         let model = resolve_pi_default_model(config, model).await?;
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
-            .map_err(|_| "配置文件锁已损坏")?;
+            .map_err(|_| "Configuration file lock is poisoned")?;
         let before = config_images(&paths)?;
         let updates = build_pi_template_updates(home, config.port, api_key, &model)?;
         let after = prepare_config_updates(client, &paths, &before, &updates, true)?;
@@ -169,7 +176,7 @@ async fn prepare_template_plan(
         )?;
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
-            .map_err(|_| "配置文件锁已损坏")?;
+            .map_err(|_| "Configuration file lock is poisoned")?;
         let before = config_images(&paths)?;
         let updates = build_agent_template_updates(AgentDefaultConfiguration {
             client: parsed,
@@ -210,7 +217,7 @@ async fn prepare_template_plan(
             &mappings,
             core_revision,
         ))
-        .map_err(|_| "生成模板预览失败")?,
+        .map_err(|_| "Failed to generate template preview")?,
     );
     let preview = TemplatePreview {
         revision,
@@ -235,14 +242,14 @@ async fn execute_template_plan(
     revision: &str,
 ) -> Result<AgentConfigActionResult, String> {
     if revision != plan.preview.revision {
-        return Err("预览后配置或模板发生变化，请重新预览基础配置模板".into());
+        return Err("Configuration or template changed after preview. Preview the base configuration template again".into());
     }
     let commit = || {
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
-            .map_err(|_| "配置文件锁已损坏")?;
+            .map_err(|_| "Configuration file lock is poisoned")?;
         if mapping_revision(&plan.client, &plan.paths)? != plan.mapping_revision {
-            return Err("模型映射已变化，请重新预览".into());
+            return Err("Model mapping changed. Preview it again".into());
         }
         commit_config_with_mappings(
             &plan.client,
@@ -273,7 +280,7 @@ pub(crate) async fn preview_agent_config_template(
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
 ) -> Result<TemplatePreview, String> {
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let config = app.state::<GuiConfigState>().snapshot()?;
     Ok(prepare_template_plan(
         &config,
@@ -298,7 +305,7 @@ pub(crate) async fn apply_agent_config_template(
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
     revision: String,
 ) -> Result<AgentConfigActionResult, String> {
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let config = app.state::<GuiConfigState>().snapshot()?;
     let plan = prepare_template_plan(
         &config,

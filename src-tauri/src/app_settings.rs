@@ -20,7 +20,7 @@ pub(crate) async fn get_core_status(app: tauri::AppHandle) -> Result<CoreStatus,
         )
     })
     .await
-    .map_err(|error| format!("内核状态后台任务失败: {error}"))?
+    .map_err(|error| format!("Kernel status background task failed: {error}"))?
 }
 
 pub(crate) fn emit_core_status(app: &tauri::AppHandle, status: &CoreStatus) {
@@ -580,10 +580,10 @@ pub(crate) fn resolve_windows_close_request(
         WindowsCloseAction::MinimizeToTray => {
             let window = app
                 .get_webview_window("main")
-                .ok_or_else(|| "主窗口不存在".to_string())?;
+                .ok_or_else(|| "Main window does not exist".to_string())?;
             window
                 .hide()
-                .map_err(|error| format!("隐藏主窗口失败: {error}"))?;
+                .map_err(|error| format!("Failed to hide main window: {error}"))?;
         }
     }
 
@@ -593,7 +593,7 @@ pub(crate) fn resolve_windows_close_request(
 pub(crate) fn app_autostart_enabled(app: &tauri::AppHandle) -> Result<bool, String> {
     app.autolaunch()
         .is_enabled()
-        .map_err(|error| format!("读取系统开机自启状态失败: {error}"))
+        .map_err(|error| format!("Failed to read system startup status: {error}"))
 }
 
 pub(crate) fn set_app_autostart_enabled(
@@ -604,11 +604,11 @@ pub(crate) fn set_app_autostart_enabled(
     if enabled {
         manager
             .enable()
-            .map_err(|error| format!("启用开机自启失败: {error}"))
+            .map_err(|error| format!("Failed to enable launch at startup: {error}"))
     } else {
         manager
             .disable()
-            .map_err(|error| format!("关闭开机自启失败: {error}"))
+            .map_err(|error| format!("Failed to disable launch at startup: {error}"))
     }
 }
 
@@ -670,7 +670,7 @@ pub(crate) fn save_software_settings(
                     .flatten();
                 return Err(match rollback_error {
                     Some(rollback_error) => {
-                        format!("{error}; 回滚开机自启设置也失败: {rollback_error}")
+                        format!("{error}; failed to roll back startup settings: {rollback_error}")
                     }
                     None => error,
                 });

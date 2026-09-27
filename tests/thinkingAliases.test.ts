@@ -61,7 +61,7 @@ describe('思考别名来源', () => {
   test('区分同名模型的接入来源', () => {
     expect(thinkingAliasSourceKindLabel('codex-oauth')).toBe('Codex OAuth');
     expect(thinkingAliasSourceKindLabel('claude-api')).toBe('Claude API');
-    expect(thinkingAliasSourceKindLabel('openai-compatible')).toBe('OpenAI 兼容');
+    expect(thinkingAliasSourceKindLabel('openai-compatible')).toBe('OpenAI Compatible');
   });
 
   test('仅把内核报告了思考等级的来源标为可覆写', () => {

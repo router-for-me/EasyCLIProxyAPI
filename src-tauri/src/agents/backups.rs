@@ -80,14 +80,14 @@ pub(crate) fn agent_data_directory(paths: &[PathBuf]) -> Result<PathBuf, String>
         let temp = std::env::temp_dir();
         let relative = paths
             .first()
-            .ok_or("没有配置路径")?
+            .ok_or("No configuration path")?
             .strip_prefix(&temp)
-            .map_err(|_| "测试配置必须位于临时目录")?;
+            .map_err(|_| "Test configuration must be in the temporary directory")?;
         let directory = temp.join(
             relative
                 .components()
                 .next()
-                .ok_or("缺少测试目录")?
+                .ok_or("Test directory is missing")?
                 .as_os_str(),
         );
         assert!(paths.iter().all(|p| p.starts_with(&directory)));
@@ -120,7 +120,7 @@ fn valid_version_id(id: &str) -> bool {
 
 fn version_path(client: &str, paths: &[PathBuf], id: &str) -> Result<PathBuf, String> {
     if !valid_version_id(id) {
-        return Err("备份版本编号无效".into());
+        return Err("Invalid backup version number".into());
     }
     Ok(backup_directory(client, paths)?.join(format!("{id}.json")))
 }
@@ -156,14 +156,14 @@ fn make_version(client: &str, paths: &[PathBuf], images: &Images) -> BackupVersi
 fn write_version(paths: &[PathBuf], version: &BackupVersion) -> Result<(), String> {
     let path = version_path(&version.client, paths, &version.id)?;
     validate_config_path(&path)?;
-    let parent = path.parent().ok_or("备份目录无效")?;
-    fs::create_dir_all(parent).map_err(|_| "创建手动备份目录失败")?;
+    let parent = path.parent().ok_or("Invalid backup directory")?;
+    fs::create_dir_all(parent).map_err(|_| "Failed to create manual backup directory")?;
     validate_config_path(&path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-            .map_err(|_| "设置备份目录权限失败")?;
+            .map_err(|_| "Failed to set backup directory permissions")?;
     }
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -172,15 +172,15 @@ fn write_version(paths: &[PathBuf], version: &BackupVersion) -> Result<(), Strin
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let payload = serde_json::to_vec(version).map_err(|_| "生成备份失败")?;
+    let payload = serde_json::to_vec(version).map_err(|_| "Failed to generate backup")?;
     let package = BackupPackage {
         payload: version.clone(),
         checksum: sha256_bytes(&payload),
     };
-    let bytes = serde_json::to_vec(&package).map_err(|_| "生成备份失败")?;
+    let bytes = serde_json::to_vec(&package).map_err(|_| "Failed to generate backup")?;
     let mut file = options
         .open(&path)
-        .map_err(|_| "创建手动备份失败，请检查备份目录权限")?;
+        .map_err(|_| "Failed to create manual backup. Check backup directory permissions")?;
     if file
         .write_all(&bytes)
         .and_then(|_| file.sync_all())
@@ -188,23 +188,23 @@ fn write_version(paths: &[PathBuf], version: &BackupVersion) -> Result<(), Strin
     {
         drop(file);
         let _ = fs::remove_file(&path);
-        return Err("保存手动备份失败".into());
+        return Err("Failed to save manual backup".into());
     }
     drop(file);
     if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
         let _ = fs::remove_file(&path);
-        return Err("手动备份写后校验失败".into());
+        return Err("Manual backup post-write verification failed".into());
     }
     Ok(())
 }
 
 fn read_version(client: &str, paths: &[PathBuf], id: &str) -> Result<BackupVersion, String> {
     let path = version_path(client, paths, id)?;
-    let bytes = read_agent_bytes(&path)?.ok_or("备份文件缺失")?;
+    let bytes = read_agent_bytes(&path)?.ok_or("Backup file is missing")?;
     let package: BackupPackage =
-        serde_json::from_slice(&bytes).map_err(|_| "备份包损坏，无法恢复，可删除此版本")?;
+        serde_json::from_slice(&bytes).map_err(|_| "Backup package is corrupted and cannot be restored. You can delete this version")?;
     let version = package.payload;
-    if package.checksum != sha256_bytes(&serde_json::to_vec(&version).map_err(|_| "备份校验失败")?)
+    if package.checksum != sha256_bytes(&serde_json::to_vec(&version).map_err(|_| "Backup verification failed")?)
         || version.version != 1
         || version.client != client
         || version.id != id
@@ -213,7 +213,7 @@ fn read_version(client: &str, paths: &[PathBuf], id: &str) -> Result<BackupVersi
             file.path != *path || file.hash != image_hash(file.bytes.as_deref())
         })
     {
-        return Err("备份包路径或内容校验失败，无法恢复，可删除此版本".into());
+        return Err("Backup package path or content verification failed; it cannot be restored. You can delete this version".into());
     }
     Ok(version)
 }
@@ -229,12 +229,12 @@ fn backup_images(version: &BackupVersion) -> Images {
 fn validate_restorable(version: &BackupVersion) -> Result<(), String> {
     let images = backup_images(version);
     validate_client_config_images(&version.client, &images)
-        .map_err(|_| "备份含有无法解析的配置，已保留原文但不可恢复".to_string())?;
+        .map_err(|_| "Backup contains an unparseable configuration; the original text was preserved but cannot be restored".to_string())?;
     if version.client == "claude-desktop"
         && desktop_profile_needs_mapping(&images)?
         && version.mappings.is_none()
     {
-        return Err("备份缺少可靠的 Claude Desktop 模型映射，请重新选择模型后创建备份".into());
+        return Err("Backup lacks a reliable Claude Desktop model mapping. Select the models again and create a new backup".into());
     }
     Ok(())
 }
@@ -288,7 +288,7 @@ pub(crate) fn create_backup(client: &str, home: &Path) -> Result<BackupSummary, 
     let state_revision = mapping_revision(client, &paths)?;
     let version = make_version(client, &paths, &images);
     if config_images(&paths)? != images || mapping_revision(client, &paths)? != state_revision {
-        return Err("备份期间配置发生变化，请重试".into());
+        return Err("Configuration changed during backup. Try again".into());
     }
     write_version(&paths, &version)?;
     backup_summary(client, &paths, &version.id)
@@ -305,11 +305,11 @@ pub(crate) fn list_backups(client: &str, home: &Path) -> Result<BackupList, Stri
                 versions: Vec::new(),
             })
         }
-        Err(_) => return Err("读取手动备份目录失败".into()),
+        Err(_) => return Err("Failed to read manual backup directory".into()),
     };
     let mut versions = Vec::new();
     for entry in entries {
-        let path = entry.map_err(|_| "读取手动备份目录失败")?.path();
+        let path = entry.map_err(|_| "Failed to read manual backup directory")?.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
@@ -328,8 +328,8 @@ pub(crate) fn list_backups(client: &str, home: &Path) -> Result<BackupList, Stri
 pub(crate) fn delete_backup(client: &str, home: &Path, id: &str) -> Result<(), String> {
     let paths = config_paths(client, home)?;
     let path = version_path(client, &paths, id)?;
-    validate_config_path(&path.parent().ok_or("备份目录无效")?.join(".path-check"))?;
-    fs::remove_file(&path).map_err(|_| "删除手动备份失败，请刷新列表后重试".to_string())
+    validate_config_path(&path.parent().ok_or("Invalid backup directory")?.join(".path-check"))?;
+    fs::remove_file(&path).map_err(|_| "Failed to delete manual backup. Refresh the list and try again".to_string())
 }
 
 fn preview(
@@ -337,13 +337,13 @@ fn preview(
     paths: &[PathBuf],
     id: &str,
 ) -> Result<(BackupPreview, Images, Images), String> {
-    let package = read_agent_bytes(&version_path(client, paths, id)?)?.ok_or("备份文件缺失")?;
+    let package = read_agent_bytes(&version_path(client, paths, id)?)?.ok_or("Backup file is missing")?;
     let version = read_version(client, paths, id)?;
     validate_restorable(&version)?;
     let current = config_images(paths)?;
     let after = backup_images(&version);
     if read_agent_bytes(&version_path(client, paths, id)?)?.as_deref() != Some(&package) {
-        return Err("备份在预览期间发生变化，请重新预览".into());
+        return Err("Backup changed during preview. Preview it again".into());
     }
     let revision = sha256_bytes(
         format!(
@@ -426,13 +426,13 @@ pub(crate) fn desktop_mapping_bytes(
     mappings
         .map(|mappings| {
             let profile_models_hash =
-                profile_models_hash(images).ok_or("Claude Desktop 模型配置无效")?;
+                profile_models_hash(images).ok_or("Invalid Claude Desktop model configuration")?;
             serde_json::to_vec(&DesktopMappingState {
                 version: 1,
                 profile_models_hash,
                 mappings: mappings.clone(),
             })
-            .map_err(|_| "生成当前模型映射失败".into())
+            .map_err(|_| "Failed to generate current model mapping".into())
         })
         .transpose()
 }
@@ -469,10 +469,10 @@ pub(crate) fn create_agent_config_backup(
     app: tauri::AppHandle,
     client: String,
 ) -> Result<BackupSummary, String> {
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "配置文件锁已损坏")?;
+        .map_err(|_| "Configuration file lock is poisoned")?;
     create_backup(&client, &home)
 }
 
@@ -481,10 +481,10 @@ pub(crate) fn list_agent_config_backups(
     app: tauri::AppHandle,
     client: String,
 ) -> Result<BackupList, String> {
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "配置文件锁已损坏")?;
+        .map_err(|_| "Configuration file lock is poisoned")?;
     list_backups(&client, &home)
 }
 
@@ -494,10 +494,10 @@ pub(crate) fn delete_agent_config_backup(
     client: String,
     id: String,
 ) -> Result<(), String> {
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "配置文件锁已损坏")?;
+        .map_err(|_| "Configuration file lock is poisoned")?;
     delete_backup(&client, &home, &id)
 }
 

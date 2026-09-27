@@ -9,21 +9,21 @@ pub(crate) fn merge_core_config_for_start(
     let example_config_path = install_dir.join(CORE_EXAMPLE_CONFIG_FILE);
     if !example_config_path.is_file() {
         return Err(format!(
-            "未找到内核配置模板: {}",
+            "Kernel configuration template not found: {}",
             path_to_string(&example_config_path)
         ));
     }
 
     let template = fs::read_to_string(&example_config_path).map_err(|err| {
         format!(
-            "读取内核配置模板失败 {}: {err}",
+            "Failed to read kernel configuration template {}: {err}",
             path_to_string(&example_config_path)
         )
     })?;
     let current = if config_path.is_file() {
         Some(fs::read_to_string(&config_path).map_err(|err| {
             format!(
-                "读取现有内核配置失败 {}: {err}",
+                "Failed to read existing kernel configuration {}: {err}",
                 path_to_string(&config_path)
             )
         })?)
@@ -45,7 +45,7 @@ pub(crate) fn patch_core_network_settings(config: &GuiConfigFile) -> Result<(), 
     }
 
     let content = fs::read_to_string(&config_path)
-        .map_err(|err| format!("读取内核配置失败 {}: {err}", path_to_string(&config_path)))?;
+        .map_err(|err| format!("Failed to read kernel configuration {}: {err}", path_to_string(&config_path)))?;
     let Some(updated) = patch_core_network_yaml(&content, config)? else {
         return Ok(());
     };
@@ -60,7 +60,7 @@ pub(crate) fn patch_core_network_routing_settings(config: &GuiConfigFile) -> Res
     }
 
     let content = fs::read_to_string(&config_path)
-        .map_err(|err| format!("读取内核配置失败 {}: {err}", path_to_string(&config_path)))?;
+        .map_err(|err| format!("Failed to read kernel configuration {}: {err}", path_to_string(&config_path)))?;
     let Some(updated) = patch_core_network_routing_yaml(&content, config)? else {
         return Ok(());
     };
@@ -102,7 +102,7 @@ pub(crate) fn patch_core_session_routing_settings(config: &GuiConfigFile) -> Res
 pub(crate) fn lock_core_config_file() -> Result<std::sync::MutexGuard<'static, ()>, String> {
     CORE_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "内核配置文件锁已损坏".to_string())
+        .map_err(|_| "Kernel configuration file lock is poisoned".to_string())
 }
 
 pub(crate) fn read_installed_core_config_settings() -> Result<CoreConfigSettings, String> {
@@ -245,7 +245,7 @@ pub(crate) fn core_sensitive_words_settings_from_value(
 ) -> Result<CoreSensitiveWordsSettings, String> {
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let read_words = |provider: &str| -> Result<Vec<String>, String> {
         let Some(section) = yaml_mapping_value(root, provider) else {
             return Ok(Vec::new());
@@ -255,7 +255,7 @@ pub(crate) fn core_sensitive_words_settings_from_value(
         }
         let section = section
             .as_mapping()
-            .ok_or_else(|| format!("{provider} 必须是 YAML 映射"))?;
+            .ok_or_else(|| format!("{provider} must be a YAML mapping"))?;
         let Some(value) = yaml_mapping_value(section, "sensitive-words") else {
             return Ok(Vec::new());
         };
@@ -264,13 +264,13 @@ pub(crate) fn core_sensitive_words_settings_from_value(
         }
         value
             .as_sequence()
-            .ok_or_else(|| format!("{provider}.sensitive-words 必须是字符串列表"))?
+            .ok_or_else(|| format!("{provider}.sensitive-words must be a list of strings"))?
             .iter()
             .map(|entry| {
                 entry
                     .as_str()
                     .map(str::to_string)
-                    .ok_or_else(|| format!("{provider}.sensitive-words 必须是字符串列表"))
+                    .ok_or_else(|| format!("{provider}.sensitive-words must be a list of strings"))
             })
             .collect()
     };
@@ -291,10 +291,10 @@ pub(crate) fn patch_core_sensitive_words_yaml(
     settings: &CoreSensitiveWordsSettings,
 ) -> Result<Option<String>, String> {
     let original = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|error| format!("解析内核配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel configuration: {error}"))?;
     let root = original
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let mut prepared = content.to_string();
     for (provider, words) in [
         ("antigravity", &settings.antigravity_sensitive_words),
@@ -319,17 +319,17 @@ pub(crate) fn patch_core_sensitive_words_yaml(
         } else {
             section
                 .as_mapping()
-                .ok_or_else(|| format!("{provider} 必须是 YAML 映射"))?
+                .ok_or_else(|| format!("{provider} must be a YAML mapping"))?
                 .clone()
         };
         section.insert(
             yaml_key("sensitive-words"),
-            serde_norway::to_value(words).map_err(|error| format!("序列化敏感词失败: {error}"))?,
+            serde_norway::to_value(words).map_err(|error| format!("Failed to serialize sensitive words: {error}"))?,
         );
         let mut replacement = serde_norway::Mapping::new();
         replacement.insert(yaml_key(provider), serde_norway::Value::Mapping(section));
         let block = serde_norway::to_string(&replacement)
-            .map_err(|error| format!("序列化内核配置区段失败: {error}"))?;
+            .map_err(|error| format!("Failed to serialize kernel configuration section: {error}"))?;
         prepared = replace_top_level_yaml_block(&prepared, provider, &block);
     }
     let updated = patch_core_yaml_document(&prepared, |document| {
@@ -340,7 +340,7 @@ pub(crate) fn patch_core_sensitive_words_yaml(
         ] {
             let root = document
                 .as_mapping()
-                .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+                .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
             let section = yaml_mapping_value(root, provider);
             let current_words = section
                 .and_then(serde_norway::Value::as_mapping)
@@ -380,10 +380,10 @@ pub(crate) fn patch_core_sensitive_words_settings(
     let _config_guard = lock_core_config_file()?;
     let config_path = core_install_dir()?.join(CORE_CONFIG_FILE);
     if !config_path.is_file() {
-        return Err("内核配置尚未生成，请先启动 CPA 内核".to_string());
+        return Err("Kernel configuration has not been generated. Start the CPA kernel first".to_string());
     }
     let content = fs::read_to_string(&config_path)
-        .map_err(|error| format!("读取内核配置失败 {}: {error}", path_to_string(&config_path)))?;
+        .map_err(|error| format!("Failed to read kernel configuration {}: {error}", path_to_string(&config_path)))?;
     if let Some(updated) = patch_core_sensitive_words_yaml(&content, settings)? {
         write_yaml_if_changed(&config_path, &updated)?;
     }
@@ -398,7 +398,7 @@ pub(crate) fn patch_core_api_keys(api_keys: &[String]) -> Result<(), String> {
     }
 
     let content = fs::read_to_string(&config_path)
-        .map_err(|err| format!("读取内核配置失败 {}: {err}", path_to_string(&config_path)))?;
+        .map_err(|err| format!("Failed to read kernel configuration {}: {err}", path_to_string(&config_path)))?;
     let updated = patch_core_api_keys_yaml(&content, api_keys)?;
     write_yaml_if_changed(&config_path, &updated)?;
     Ok(())
@@ -458,12 +458,12 @@ pub(crate) fn patch_core_logging_settings(settings: &CoreConfigSettings) -> Resu
             (
                 "logs-max-total-size-mb",
                 serde_norway::to_value(settings.logs_max_total_size_mb)
-                    .map_err(|err| format!("序列化日志容量限制失败: {err}"))?,
+                    .map_err(|err| format!("Failed to serialize log size limit: {err}"))?,
             ),
             (
                 "error-logs-max-files",
                 serde_norway::to_value(settings.error_logs_max_files)
-                    .map_err(|err| format!("序列化错误日志保留数失败: {err}"))?,
+                    .map_err(|err| format!("Failed to serialize error log retention count: {err}"))?,
             ),
             (
                 "usage-statistics-enabled",
@@ -472,7 +472,7 @@ pub(crate) fn patch_core_logging_settings(settings: &CoreConfigSettings) -> Resu
             (
                 "redis-usage-queue-retention-seconds",
                 serde_norway::to_value(settings.redis_usage_queue_retention_seconds)
-                    .map_err(|err| format!("序列化 Redis 用量队列保留时间失败: {err}"))?,
+                    .map_err(|err| format!("Failed to serialize Redis usage queue retention: {err}"))?,
             ),
         ] {
             changed |= set_core_yaml_top_level_value(document, key, value)?;
@@ -538,7 +538,7 @@ where
     }
 
     let content = fs::read_to_string(&config_path)
-        .map_err(|err| format!("读取内核配置失败 {}: {err}", path_to_string(&config_path)))?;
+        .map_err(|err| format!("Failed to read kernel configuration {}: {err}", path_to_string(&config_path)))?;
     let Some(updated) = patch_core_yaml_document(&content, update)? else {
         return Ok(());
     };
@@ -556,7 +556,7 @@ where
     F: FnOnce(&mut serde_norway::Value) -> Result<bool, String>,
 {
     let original = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|err| format!("解析内核配置失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse kernel configuration: {err}"))?;
     let mut updated = original.clone();
     if !update(&mut updated)? {
         return Ok(None);
@@ -640,24 +640,24 @@ pub(crate) fn render_yaml_value_changes(
     remaining_changes = yaml_edit_changes;
     let file = editable_content
         .parse::<yaml_edit::YamlFile>()
-        .map_err(|err| format!("解析可编辑内核配置失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse editable kernel configuration: {err}"))?;
     let document = file
         .document()
-        .ok_or_else(|| "内核配置没有 YAML 文档".to_string())?;
+        .ok_or_else(|| "Kernel configuration has no YAML document".to_string())?;
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     for change in remaining_changes {
         set_yaml_edit_mapping_path(&root, &change.path, &change.value)?;
     }
     let rendered = file.to_string();
     let validated = serde_norway::from_str::<serde_norway::Value>(&rendered)
-        .map_err(|err| format!("验证更新后的内核配置失败: {err}"))?;
+        .map_err(|err| format!("Failed to validate updated kernel configuration: {err}"))?;
     if validated != *updated {
         let path = first_yaml_mismatch_path(updated, &validated, &mut Vec::new())
             .unwrap_or_else(|| "<unknown>".to_string());
         return Err(format!(
-            "更新后的内核配置与预期值不一致（路径: {path}），已拒绝写入"
+            "Updated kernel configuration does not match the expected value (path: {path}); write rejected"
         ));
     }
     Ok(rendered)
@@ -787,13 +787,13 @@ pub(crate) fn collect_yaml_value_changes(
         ) => {
             for key in original_mapping.keys() {
                 if !updated_mapping.contains_key(key) {
-                    return Err("当前内核配置更新不支持删除任意 YAML 字段".to_string());
+                    return Err("The current kernel configuration update does not support deleting arbitrary YAML fields".to_string());
                 }
             }
             for (key, updated_value) in updated_mapping {
                 let key = key
                     .as_str()
-                    .ok_or_else(|| "内核配置映射键必须是字符串".to_string())?;
+                    .ok_or_else(|| "Kernel configuration mapping keys must be strings".to_string())?;
                 path.push(key.to_string());
                 if let Some(original_value) = original_mapping.get(yaml_key(key)) {
                     collect_yaml_value_changes(original_value, updated_value, path, changes)?;
@@ -807,7 +807,7 @@ pub(crate) fn collect_yaml_value_changes(
             }
             Ok(())
         }
-        _ if path.is_empty() => Err("内核配置顶层必须保持为 YAML 映射".to_string()),
+        _ if path.is_empty() => Err("Kernel configuration root must remain a YAML mapping".to_string()),
         _ => {
             changes.push(YamlValueChange {
                 path: path.clone(),
@@ -880,7 +880,7 @@ pub(crate) fn insert_yaml_block_mapping_values_at_path(
     let mut insertion = String::new();
     for (key, value) in entries {
         let value = serde_json::to_string(value)
-            .map_err(|error| format!("序列化内核配置值失败: {error}"))?;
+            .map_err(|error| format!("Failed to serialize kernel configuration value: {error}"))?;
         insertion.push_str(&indent);
         insertion.push_str(&render_yaml_mapping_key(key));
         insertion.push_str(": ");
@@ -932,18 +932,18 @@ pub(crate) fn replace_yaml_sequence_value(
 ) -> Result<String, String> {
     let file = content
         .parse::<yaml_edit::YamlFile>()
-        .map_err(|err| format!("解析可编辑内核配置失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse editable kernel configuration: {err}"))?;
     let document = file
         .document()
-        .ok_or_else(|| "内核配置没有 YAML 文档".to_string())?;
+        .ok_or_else(|| "Kernel configuration has no YAML document".to_string())?;
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let node = yaml_edit_node_at_path(&root, path)
-        .ok_or_else(|| format!("未找到内核配置序列 {}", path.join(".")))?;
+        .ok_or_else(|| format!("Kernel configuration sequence {} not found", path.join(".")))?;
     let sequence = node
         .as_sequence()
-        .ok_or_else(|| format!("内核配置字段 {} 必须是 YAML 序列", path.join(".")))?;
+        .ok_or_else(|| format!("Kernel configuration field {} must be a YAML sequence", path.join(".")))?;
     let range = sequence.byte_range();
     let start = range.start as usize;
     let end = range.end as usize;
@@ -958,7 +958,7 @@ pub(crate) fn replace_yaml_sequence_value(
 
     let serialized = if prefix.trim().is_empty() {
         let serialized = serde_norway::to_string(value)
-            .map_err(|err| format!("序列化内核配置序列失败: {err}"))?;
+            .map_err(|err| format!("Failed to serialize kernel configuration sequence: {err}"))?;
         let serialized = serialized.trim_end_matches(['\r', '\n']);
         let mut indented = String::with_capacity(serialized.len() + prefix.len() * 2);
         for (index, line) in serialized.split('\n').enumerate() {
@@ -970,7 +970,7 @@ pub(crate) fn replace_yaml_sequence_value(
         }
         indented
     } else {
-        serde_json::to_string(value).map_err(|err| format!("序列化内核配置序列失败: {err}"))?
+        serde_json::to_string(value).map_err(|err| format!("Failed to serialize kernel configuration sequence: {err}"))?
     };
 
     Ok(format!(
@@ -1001,7 +1001,7 @@ pub(crate) fn set_yaml_edit_mapping_path(
     value: &serde_norway::Value,
 ) -> Result<(), String> {
     let Some((key, remaining)) = path.split_first() else {
-        return Err("内核配置更新路径不能为空".to_string());
+        return Err("Kernel configuration update path cannot be empty".to_string());
     };
     if remaining.is_empty() {
         return set_yaml_edit_mapping_value(mapping, key, value);
@@ -1009,7 +1009,7 @@ pub(crate) fn set_yaml_edit_mapping_path(
     if let Some(child) = mapping.get(key.as_str()) {
         let child = child
             .as_mapping()
-            .ok_or_else(|| format!("内核配置区段 {key} 必须是 YAML 映射"))?;
+            .ok_or_else(|| format!("Kernel configuration section {key} must be a YAML mapping"))?;
         return set_yaml_edit_mapping_path(child, remaining, value);
     }
     let nested_value = nested_yaml_value_for_path(remaining, value.clone());
@@ -1050,12 +1050,12 @@ pub(crate) fn set_yaml_edit_mapping_value(
         if let Some(node) = mapping.get(key) {
             if let Some(sequence) = node.as_sequence() {
                 if sequence.len() != values.len() {
-                    return Err(format!("内核配置序列 {key} 长度变化未被预处理"));
+                    return Err(format!("Length change in kernel configuration sequence {key} was not preprocessed"));
                 }
                 for (index, value) in values.iter().enumerate() {
                     let value = yaml_edit_node_from_value(value)?;
                     if !sequence.set(index, value) {
-                        return Err(format!("更新内核配置序列 {key}[{index}] 失败"));
+                        return Err(format!("Failed to update kernel configuration sequence {key}[{index}]"));
                     }
                 }
                 return Ok(());
@@ -1088,14 +1088,14 @@ pub(crate) fn yaml_edit_node_from_value(
 ) -> Result<yaml_edit::YamlNode, String> {
     const WRAPPER_KEY: &str = "__cpa_gui_value__";
     let value =
-        serde_json::to_string(value).map_err(|err| format!("序列化内核配置值失败: {err}"))?;
+        serde_json::to_string(value).map_err(|err| format!("Failed to serialize kernel configuration value: {err}"))?;
     let serialized = format!("{WRAPPER_KEY}: {value}\n");
     let file = serialized
         .parse::<yaml_edit::YamlFile>()
-        .map_err(|err| format!("解析内核配置值失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse kernel configuration value: {err}"))?;
     file.document()
         .and_then(|document| document.get(WRAPPER_KEY))
-        .ok_or_else(|| "无法构造内核配置值".to_string())
+        .ok_or_else(|| "Unable to construct kernel configuration value".to_string())
 }
 
 pub(crate) fn set_core_yaml_top_level_value(
@@ -1105,7 +1105,7 @@ pub(crate) fn set_core_yaml_top_level_value(
 ) -> Result<bool, String> {
     let root = document
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let key = yaml_key(key);
     if root.get(&key) == Some(&value) {
         return Ok(false);
@@ -1122,12 +1122,12 @@ pub(crate) fn set_core_yaml_nested_value(
 ) -> Result<bool, String> {
     let root = document
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let section = root
         .entry(yaml_key(section))
         .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置区段必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration section must be a YAML mapping".to_string())?;
     let key = yaml_key(key);
     if section.get(&key) == Some(&value) {
         return Ok(false);
@@ -1141,10 +1141,10 @@ pub(crate) fn patch_core_api_keys_yaml(
     api_keys: &[String],
 ) -> Result<String, String> {
     let parsed = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|err| format!("解析内核配置失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse kernel configuration: {err}"))?;
     let root = parsed
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let has_legacy_api_keys = nested_yaml_value(
         root,
         &["auth", "providers", "config-api-key", "api-key-entries"],
@@ -1154,10 +1154,10 @@ pub(crate) fn patch_core_api_keys_yaml(
     let content = if has_legacy_api_keys {
         let file = content
             .parse::<yaml_edit::YamlFile>()
-            .map_err(|err| format!("解析内核配置失败: {err}"))?;
+            .map_err(|err| format!("Failed to parse kernel configuration: {err}"))?;
         let document = file
             .document()
-            .ok_or_else(|| "内核配置没有 YAML 文档".to_string())?;
+            .ok_or_else(|| "Kernel configuration has no YAML document".to_string())?;
         clear_legacy_api_key_paths(&document);
         file.to_string()
     } else {
@@ -1166,7 +1166,7 @@ pub(crate) fn patch_core_api_keys_yaml(
     let block = render_core_api_keys_yaml(api_keys)?;
     let updated = replace_top_level_yaml_block(&content, "api-keys", &block);
     serde_norway::from_str::<serde_norway::Value>(&updated)
-        .map_err(|err| format!("验证更新后的内核配置失败: {err}"))?;
+        .map_err(|err| format!("Failed to validate updated kernel configuration: {err}"))?;
     Ok(updated)
 }
 
@@ -1183,7 +1183,7 @@ pub(crate) fn render_core_api_keys_yaml(api_keys: &[String]) -> Result<String, S
             .collect(),
     );
     let serialized = serde_norway::to_string(&sequence)
-        .map_err(|err| format!("生成内核鉴权密钥配置失败: {err}"))?;
+        .map_err(|err| format!("Failed to generate kernel authentication key configuration: {err}"))?;
     let mut block = String::from("api-keys:\n");
     for line in serialized.lines() {
         block.push_str("  ");
@@ -1306,13 +1306,13 @@ pub(crate) fn set_yaml_edit_nested_value(
 pub(crate) fn read_core_config_document() -> Result<(PathBuf, yaml_serde_edit::YamlValue), String> {
     let config_path = core_install_dir()?.join(CORE_CONFIG_FILE);
     if !config_path.is_file() {
-        return Err("内核配置尚未生成，请先启动 CPA 内核".to_string());
+        return Err("Kernel configuration has not been generated. Start the CPA kernel first".to_string());
     }
 
     let content = fs::read_to_string(&config_path)
-        .map_err(|err| format!("读取内核配置失败 {}: {err}", path_to_string(&config_path)))?;
+        .map_err(|err| format!("Failed to read kernel configuration {}: {err}", path_to_string(&config_path)))?;
     let document = yaml_serde_edit::YamlValue::parse(&content)
-        .map_err(|err| format!("解析内核配置失败: {err}"))?;
+        .map_err(|err| format!("Failed to parse kernel configuration: {err}"))?;
     Ok((config_path, document))
 }
 
@@ -1321,13 +1321,13 @@ pub(crate) fn core_config_settings_from_value(
 ) -> Result<CoreConfigSettings, String> {
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let host = yaml_mapping_value(root, "host")
         .map(|value| {
             value
                 .as_str()
                 .map(str::to_string)
-                .ok_or_else(|| "host 必须是字符串".to_string())
+                .ok_or_else(|| "host must be a string".to_string())
         })
         .transpose()?
         .unwrap_or_else(|| "127.0.0.1".to_string());
@@ -1337,7 +1337,7 @@ pub(crate) fn core_config_settings_from_value(
                 .as_u64()
                 .and_then(|value| u16::try_from(value).ok())
                 .filter(|value| *value != 0)
-                .ok_or_else(|| "port 必须是 1 到 65535 之间的整数".to_string())
+                .ok_or_else(|| "port must be an integer between 1 and 65535".to_string())
         })
         .transpose()?
         .unwrap_or(8317);
@@ -1346,7 +1346,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_str()
                 .map(str::to_string)
-                .ok_or_else(|| "auth-dir 必须是字符串".to_string())
+                .ok_or_else(|| "auth-dir must be a string".to_string())
         })
         .transpose()?
         .unwrap_or_else(|| OAUTH_DIR_NAME.to_string());
@@ -1354,7 +1354,7 @@ pub(crate) fn core_config_settings_from_value(
         .map(|value| {
             value
                 .as_bool()
-                .ok_or_else(|| "debug 必须是布尔值".to_string())
+                .ok_or_else(|| "debug must be a boolean".to_string())
         })
         .transpose()?
         .unwrap_or(false);
@@ -1362,7 +1362,7 @@ pub(crate) fn core_config_settings_from_value(
         .map(|value| {
             value
                 .as_bool()
-                .ok_or_else(|| "commercial-mode 必须是布尔值".to_string())
+                .ok_or_else(|| "commercial-mode must be a boolean".to_string())
         })
         .transpose()?
         .unwrap_or(false);
@@ -1370,7 +1370,7 @@ pub(crate) fn core_config_settings_from_value(
         .map(|value| {
             value
                 .as_bool()
-                .ok_or_else(|| "logging-to-file 必须是布尔值".to_string())
+                .ok_or_else(|| "logging-to-file must be a boolean".to_string())
         })
         .transpose()?
         .unwrap_or(false);
@@ -1379,7 +1379,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_u64()
                 .and_then(|value| u32::try_from(value).ok())
-                .ok_or_else(|| "logs-max-total-size-mb 必须是非负整数".to_string())
+                .ok_or_else(|| "logs-max-total-size-mb must be a non-negative integer".to_string())
         })
         .transpose()?
         .unwrap_or(DEFAULT_LOGS_MAX_TOTAL_SIZE_MB);
@@ -1388,7 +1388,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_u64()
                 .and_then(|value| u32::try_from(value).ok())
-                .ok_or_else(|| "error-logs-max-files 必须是非负整数".to_string())
+                .ok_or_else(|| "error-logs-max-files must be a non-negative integer".to_string())
         })
         .transpose()?
         .unwrap_or(DEFAULT_ERROR_LOGS_MAX_FILES);
@@ -1396,7 +1396,7 @@ pub(crate) fn core_config_settings_from_value(
         .map(|value| {
             value
                 .as_bool()
-                .ok_or_else(|| "usage-statistics-enabled 必须是布尔值".to_string())
+                .ok_or_else(|| "usage-statistics-enabled must be a boolean".to_string())
         })
         .transpose()?
         .unwrap_or(true);
@@ -1406,7 +1406,7 @@ pub(crate) fn core_config_settings_from_value(
                 value
                     .as_u64()
                     .and_then(|value| u32::try_from(value).ok())
-                    .ok_or_else(|| "redis-usage-queue-retention-seconds 必须是非负整数".to_string())
+                    .ok_or_else(|| "redis-usage-queue-retention-seconds must be a non-negative integer".to_string())
             })
             .transpose()?
             .unwrap_or(DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS);
@@ -1419,7 +1419,7 @@ pub(crate) fn core_config_settings_from_value(
         .map(|value| {
             value
                 .as_bool()
-                .ok_or_else(|| "request-log 必须是布尔值".to_string())
+                .ok_or_else(|| "request-log must be a boolean".to_string())
         })
         .transpose()?
         .unwrap_or(false);
@@ -1432,7 +1432,7 @@ pub(crate) fn core_config_settings_from_value(
         .map(|value| {
             value
                 .as_bool()
-                .ok_or_else(|| "plugins.enabled 必须是布尔值".to_string())
+                .ok_or_else(|| "plugins.enabled must be a boolean".to_string())
         })
         .transpose()?
         .unwrap_or(false);
@@ -1441,7 +1441,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_str()
                 .map(str::to_string)
-                .ok_or_else(|| "routing.strategy 必须是字符串".to_string())
+                .ok_or_else(|| "routing.strategy must be a string".to_string())
         })
         .transpose()?
         .unwrap_or_else(|| "round-robin".to_string());
@@ -1450,7 +1450,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_str()
                 .map(str::to_string)
-                .ok_or_else(|| "proxy-url 必须是字符串".to_string())
+                .ok_or_else(|| "proxy-url must be a string".to_string())
         })
         .transpose()?
         .unwrap_or_default();
@@ -1459,7 +1459,7 @@ pub(crate) fn core_config_settings_from_value(
         .map(|value| {
             value
                 .as_bool()
-                .ok_or_else(|| "routing.session-affinity 必须是布尔值".to_string())
+                .ok_or_else(|| "routing.session-affinity must be a boolean".to_string())
         })
         .transpose()?
         .unwrap_or(false);
@@ -1470,7 +1470,7 @@ pub(crate) fn core_config_settings_from_value(
                 value
                     .as_str()
                     .map(str::to_string)
-                    .ok_or_else(|| "routing.session-affinity-ttl 必须是字符串".to_string())
+                    .ok_or_else(|| "routing.session-affinity-ttl must be a string".to_string())
             })
             .transpose()?
             .unwrap_or_default();
@@ -1478,7 +1478,7 @@ pub(crate) fn core_config_settings_from_value(
         .map(|value| {
             value
                 .as_bool()
-                .ok_or_else(|| "disable-cooling 必须是布尔值".to_string())
+                .ok_or_else(|| "disable-cooling must be a boolean".to_string())
         })
         .transpose()?
         .unwrap_or(DEFAULT_DISABLE_COOLING);
@@ -1487,7 +1487,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_u64()
                 .and_then(|value| u32::try_from(value).ok())
-                .ok_or_else(|| "request-retry 必须是非负整数".to_string())
+                .ok_or_else(|| "request-retry must be a non-negative integer".to_string())
         })
         .transpose()?
         .unwrap_or(DEFAULT_REQUEST_RETRY);
@@ -1496,7 +1496,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_u64()
                 .and_then(|value| u32::try_from(value).ok())
-                .ok_or_else(|| "max-retry-credentials 必须是非负整数".to_string())
+                .ok_or_else(|| "max-retry-credentials must be a non-negative integer".to_string())
         })
         .transpose()?
         .unwrap_or(DEFAULT_MAX_RETRY_CREDENTIALS);
@@ -1505,7 +1505,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_u64()
                 .and_then(|value| u32::try_from(value).ok())
-                .ok_or_else(|| "max-retry-interval 必须是非负整数".to_string())
+                .ok_or_else(|| "max-retry-interval must be a non-negative integer".to_string())
         })
         .transpose()?
         .unwrap_or(DEFAULT_MAX_RETRY_INTERVAL);
@@ -1514,7 +1514,7 @@ pub(crate) fn core_config_settings_from_value(
             value
                 .as_u64()
                 .and_then(|value| u32::try_from(value).ok())
-                .ok_or_else(|| "streaming.bootstrap-retries 必须是非负整数".to_string())
+                .ok_or_else(|| "streaming.bootstrap-retries must be a non-negative integer".to_string())
         })
         .transpose()?
         .unwrap_or(DEFAULT_STREAMING_BOOTSTRAP_RETRIES);
@@ -1577,7 +1577,7 @@ pub(crate) fn extract_api_key_sequence(
 
     let sequence = value
         .as_sequence()
-        .ok_or_else(|| format!("{field_name} 必须是数组"))?;
+        .ok_or_else(|| format!("{field_name} must be an array"))?;
     sequence
         .iter()
         .filter_map(extract_api_key_value)
@@ -1602,7 +1602,7 @@ pub(crate) fn extract_api_key_value(value: &serde_norway::Value) -> Option<Resul
     }
 
     Some(Err(
-        "鉴权密钥条目必须是字符串或包含 key 字段的映射".to_string()
+        "Authentication key entry must be a string or a mapping containing a key field".to_string()
     ))
 }
 
@@ -1614,7 +1614,7 @@ pub(crate) fn extract_core_management_secret_key(
     };
     let value = value
         .as_str()
-        .ok_or_else(|| "remote-management.secret-key 必须是字符串".to_string())?
+        .ok_or_else(|| "remote-management.secret-key must be a string".to_string())?
         .trim()
         .to_string();
     if value.is_empty() {
@@ -1630,7 +1630,7 @@ pub(crate) fn set_core_api_keys(
 ) -> Result<(), String> {
     let root = document
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     root.insert(
         yaml_key("api-keys"),
         serde_norway::Value::Sequence(
@@ -1675,18 +1675,18 @@ where
     T: Into<serde_norway::Value>,
 {
     if path.len() != 2 {
-        return Err("内核配置路径无效".to_string());
+        return Err("Invalid kernel configuration path".to_string());
     }
 
     let root = document
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let section = root
         .entry(yaml_key(path[0]))
         .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()));
     let section = section
         .as_mapping_mut()
-        .ok_or_else(|| format!("{} 必须是 YAML 映射", path[0]))?;
+        .ok_or_else(|| format!("{} must be a YAML mapping", path[0]))?;
     section.insert(yaml_key(path[1]), value.into());
     Ok(())
 }

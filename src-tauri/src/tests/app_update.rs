@@ -496,7 +496,7 @@ async fn failed_or_cancelled_refresh_never_downloads_the_previous_offer() {
     let (result, _) = tokio::join!(refresh, async {
         state.cancel();
     });
-    assert_eq!(result.err().as_deref(), Some("应用更新下载已取消"));
+    assert_eq!(result.err().as_deref(), Some("Application update download canceled"));
     assert!(state.snapshot().target_version.is_none());
     let pending = PendingAppUpdate {
         version: "v0.3.3".to_string(),

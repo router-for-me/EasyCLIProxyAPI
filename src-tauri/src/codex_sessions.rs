@@ -197,7 +197,7 @@ pub(crate) async fn list_codex_sessions(
     let user_home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let codex_home = resolve_codex_home(&user_home);
     let request = request.unwrap_or(ListCodexSessionsRequest {
         offset: 0,
@@ -207,7 +207,7 @@ pub(crate) async fn list_codex_sessions(
         list_codex_sessions_from_home(&codex_home, request.offset, request.limit)
     })
     .await
-    .map_err(|error| format!("读取 Codex 会话任务失败: {error}"))?
+    .map_err(|error| format!("Failed to read Codex session task: {error}"))?
 }
 
 #[tauri::command]
@@ -218,13 +218,13 @@ pub(crate) async fn delete_codex_sessions(
     let user_home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let codex_home = resolve_codex_home(&user_home);
     tauri::async_runtime::spawn_blocking(move || {
         delete_codex_sessions_from_home(&codex_home, request.session_ids)
     })
     .await
-    .map_err(|error| format!("删除 Codex 会话任务失败: {error}"))?
+    .map_err(|error| format!("Failed to delete Codex session task: {error}"))?
 }
 
 #[tauri::command]
@@ -234,7 +234,7 @@ pub(crate) async fn repair_codex_session_metadata(
     let user_home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let codex_home = resolve_codex_home(&user_home);
     let progress_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -244,7 +244,7 @@ pub(crate) async fn repair_codex_session_metadata(
         })
     })
     .await
-    .map_err(|error| format!("恢复 Codex 历史会话任务失败: {error}"))?
+    .map_err(|error| format!("Failed to restore Codex historical session task: {error}"))?
 }
 
 #[tauri::command]
@@ -254,13 +254,13 @@ pub(crate) async fn preview_codex_session_index_cleanup(
     let user_home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let codex_home = resolve_codex_home(&user_home);
     tauri::async_runtime::spawn_blocking(move || {
         preview_session_index_cleanup_from_home(&codex_home)
     })
     .await
-    .map_err(|error| format!("预览 Codex 会话索引任务失败: {error}"))?
+    .map_err(|error| format!("Failed to preview Codex session index task: {error}"))?
 }
 
 #[tauri::command]
@@ -271,7 +271,7 @@ pub(crate) async fn apply_codex_session_index_cleanup(
     let user_home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let codex_home = resolve_codex_home(&user_home);
     tauri::async_runtime::spawn_blocking(move || {
         apply_session_index_cleanup_from_home(
@@ -282,7 +282,7 @@ pub(crate) async fn apply_codex_session_index_cleanup(
         )
     })
     .await
-    .map_err(|error| format!("清理 Codex 会话索引任务失败: {error}"))?
+    .map_err(|error| format!("Failed to clean up Codex session index task: {error}"))?
 }
 
 fn resolve_codex_home(user_home: &Path) -> PathBuf {
@@ -303,10 +303,10 @@ fn open_read_only(path: &Path) -> Result<Connection, String> {
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|error| format!("打开数据库失败 {}: {error}", path.display()))?;
+    .map_err(|error| format!("Failed to open database {}: {error}", path.display()))?;
     connection
         .busy_timeout(SQLITE_BUSY_TIMEOUT)
-        .map_err(|error| format!("设置数据库等待时间失败 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to set database timeout {}: {error}", path.display()))?;
     Ok(connection)
 }
 
@@ -315,10 +315,10 @@ fn open_read_write(path: &Path) -> Result<Connection, String> {
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|error| format!("打开数据库失败 {}: {error}", path.display()))?;
+    .map_err(|error| format!("Failed to open database {}: {error}", path.display()))?;
     connection
         .busy_timeout(SQLITE_BUSY_TIMEOUT)
-        .map_err(|error| format!("设置数据库等待时间失败 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to set database timeout {}: {error}", path.display()))?;
     Ok(connection)
 }
 
@@ -384,7 +384,7 @@ fn discover_database_paths(codex_home: &Path, reference_only: bool) -> (Vec<Path
                 Ok(true) => has_supported_table = true,
                 Ok(false) => {}
                 Err(error) => {
-                    warnings.push(format!("检查数据库结构失败 {}: {error}", path.display()))
+                    warnings.push(format!("Failed to inspect database schema {}: {error}", path.display()))
                 }
             }
         }
@@ -403,7 +403,7 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
     ) {
         Ok(()) => Ok(true),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
-        Err(error) => Err(format!("读取 SQLite 表清单失败: {error}")),
+        Err(error) => Err(format!("Failed to read SQLite table list: {error}")),
     }
 }
 
@@ -416,12 +416,12 @@ fn table_columns(connection: &Connection, table: &str) -> Result<HashSet<String>
             "PRAGMA table_info(\"{}\")",
             table.replace('"', "\"\"")
         ))
-        .map_err(|error| format!("读取 {table} 表结构失败: {error}"))?;
+        .map_err(|error| format!("Failed to read {table} table schema: {error}"))?;
     let rows = statement
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| format!("读取 {table} 表结构失败: {error}"))?;
+        .map_err(|error| format!("Failed to read {table} table schema: {error}"))?;
     rows.collect::<rusqlite::Result<HashSet<_>>>()
-        .map_err(|error| format!("读取 {table} 表结构失败: {error}"))
+        .map_err(|error| format!("Failed to read {table} table schema: {error}"))
 }
 
 fn optional_column<'a>(columns: &HashSet<String>, column: &'a str, fallback: &'a str) -> &'a str {
@@ -556,7 +556,7 @@ fn list_sessions_from_rollouts(codex_home: &Path) -> (Vec<CodexSessionSummary>, 
             Ok(None) => {}
             Err(error) if is_locked_error_message(&error) => {
                 warnings.push(format!(
-                    "会话文件正在使用，已跳过 {}: {error}",
+                    "Session file is in use; skipped {}: {error}",
                     path.display()
                 ));
             }
@@ -574,7 +574,7 @@ fn read_session_index_metadata(
         return Ok(HashMap::new());
     }
     let content = fs::read_to_string(&path)
-        .map_err(|error| format!("读取 session_index.jsonl 失败: {error}"))?;
+        .map_err(|error| format!("Failed to read session_index.jsonl: {error}"))?;
     let mut metadata = HashMap::new();
     for line in content.lines() {
         let Ok(record) = serde_json::from_str::<Value>(line) else {
@@ -617,7 +617,7 @@ fn summarize_rollout_session(
     metadata: &HashMap<String, SessionIndexMetadata>,
 ) -> Result<Option<CodexSessionSummary>, String> {
     let file = fs::File::open(path)
-        .map_err(|error| format!("读取 rollout 失败 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to read rollout {}: {error}", path.display()))?;
     let mut id = None;
     let mut title = String::new();
     let mut cwd = String::new();
@@ -625,7 +625,7 @@ fn summarize_rollout_session(
     let mut updated_at_ms = None;
     for line in BufReader::new(file).lines() {
         let line =
-            line.map_err(|error| format!("读取 rollout 失败 {}: {error}", path.display()))?;
+            line.map_err(|error| format!("Failed to read rollout {}: {error}", path.display()))?;
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -740,13 +740,13 @@ fn list_session_ids_from_database(path: &Path) -> Result<HashSet<String>, String
         );
         let mut statement = connection
             .prepare(&sql)
-            .map_err(|error| format!("统计会话总数失败 {}: {error}", path.display()))?;
+            .map_err(|error| format!("Failed to count sessions {}: {error}", path.display()))?;
         let rows = statement
             .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| format!("统计会话总数失败 {}: {error}", path.display()))?;
+            .map_err(|error| format!("Failed to count sessions {}: {error}", path.display()))?;
         for id in rows
             .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(|error| format!("统计会话总数失败 {}: {error}", path.display()))?
+            .map_err(|error| format!("Failed to count sessions {}: {error}", path.display()))?
         {
             let id = session_identity_key(&id);
             if !id.is_empty() {
@@ -790,7 +790,7 @@ fn list_thread_rows(
     );
     let mut statement = connection
         .prepare(&sql)
-        .map_err(|error| format!("读取会话数据库失败 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to read session database {}: {error}", path.display()))?;
     let rows = statement
         .query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
             Ok(CodexSessionSummary {
@@ -803,9 +803,9 @@ fn list_thread_rows(
                 database_path: path.to_string_lossy().to_string(),
             })
         })
-        .map_err(|error| format!("读取会话数据库失败 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to read session database {}: {error}", path.display()))?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|error| format!("读取会话数据库失败 {}: {error}", path.display()))
+        .map_err(|error| format!("Failed to read session database {}: {error}", path.display()))
 }
 
 fn list_automation_rows(
@@ -832,7 +832,7 @@ fn list_automation_rows(
     );
     let mut statement = connection
         .prepare(&sql)
-        .map_err(|error| format!("读取自动化会话数据库失败 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to read automation session database {}: {error}", path.display()))?;
     let rows = statement
         .query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
             let status = row.get::<_, Option<String>>(3)?.unwrap_or_default();
@@ -846,9 +846,9 @@ fn list_automation_rows(
                 database_path: path.to_string_lossy().to_string(),
             })
         })
-        .map_err(|error| format!("读取自动化会话数据库失败 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to read automation session database {}: {error}", path.display()))?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|error| format!("读取自动化会话数据库失败 {}: {error}", path.display()))
+        .map_err(|error| format!("Failed to read automation session database {}: {error}", path.display()))
 }
 
 fn normalize_thread_id(value: &str) -> String {
@@ -875,7 +875,7 @@ fn delete_codex_sessions_from_home(
 ) -> Result<CodexSessionDeleteBatchResult, String> {
     let _guard = CODEX_SESSION_WRITE_LOCK
         .lock()
-        .map_err(|_| "Codex 会话写入锁已损坏".to_string())?;
+        .map_err(|_| "Codex session write lock is poisoned".to_string())?;
     let mut unique = Vec::new();
     let mut seen = HashSet::new();
     for value in session_ids {
@@ -885,15 +885,15 @@ fn delete_codex_sessions_from_home(
         }
     }
     if unique.is_empty() {
-        return Err("请至少选择一个有效的会话 ID".to_string());
+        return Err("Select at least one valid session ID".to_string());
     }
     if unique.len() > MAX_PAGE_SIZE {
-        return Err(format!("一次最多删除 {MAX_PAGE_SIZE} 个会话"));
+        return Err(format!("You can delete up to {MAX_PAGE_SIZE} sessions at a time"));
     }
     let (database_paths, database_warnings) = discover_database_paths(codex_home, false);
     if !database_warnings.is_empty() {
         return Err(format!(
-            "无法安全检查全部 Codex 会话数据库，删除已中止：{}",
+            "Unable to safely inspect all Codex session databases; deletion aborted: {}",
             database_warnings.join("；")
         ));
     }
@@ -929,7 +929,7 @@ fn delete_one_session(
             return Ok(CodexSessionDeleteResult {
                 session_id: session_id.to_string(),
                 status: "notFound".to_string(),
-                message: "未在本地数据库中找到该会话".to_string(),
+                message: "Session not found in the local database".to_string(),
                 backup_path: None,
             });
         }
@@ -945,7 +945,7 @@ fn delete_one_session(
                     session_id: session_id.to_string(),
                     status: status.to_string(),
                     message: format!(
-                        "已提交 {committed_databases} 个数据库事务，其余数据库删除失败：{error}"
+                        "Committed {committed_databases} database transactions; deletion failed for the remaining databases: {error}"
                     ),
                     backup_path: Some(backup_dir.to_string_lossy().to_string()),
                 });
@@ -971,19 +971,19 @@ fn delete_one_session(
                     }
                 }
                 Ok(None) => rollout_errors.push(format!(
-                    "已保留不在 Codex 会话目录中的 rollout：{}",
+                    "Preserved rollout outside the Codex session directory: {}",
                     path.display()
                 )),
                 Err(error) => rollout_errors.push(error),
             }
         }
         let (status, message) = if rollout_errors.is_empty() {
-            ("deleted", "已删除本地数据库记录和 rollout 文件".to_string())
+            ("deleted", "Deleted local database records and rollout files".to_string())
         } else {
             (
                 "partial",
                 format!(
-                    "数据库记录已删除，但部分 rollout 未删除：{}",
+                    "Database records were deleted, but some rollouts were not: {}",
                     rollout_errors.join("；")
                 ),
             )
@@ -1140,7 +1140,7 @@ fn select_json_rows(
 ) -> Result<Vec<Value>, String> {
     let mut statement = connection
         .prepare(sql)
-        .map_err(|error| format!("准备会话备份查询失败: {error}"))?;
+        .map_err(|error| format!("Failed to prepare session backup query: {error}"))?;
     let columns = statement
         .column_names()
         .iter()
@@ -1154,9 +1154,9 @@ fn select_json_rows(
             }
             Ok(Value::Object(value))
         })
-        .map_err(|error| format!("读取会话备份数据失败: {error}"))?;
+        .map_err(|error| format!("Failed to read session backup data: {error}"))?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|error| format!("读取会话备份数据失败: {error}"))
+        .map_err(|error| format!("Failed to read session backup data: {error}"))
 }
 
 fn sql_value_to_json(value: ValueRef<'_>) -> Value {
@@ -1198,7 +1198,7 @@ fn create_operation_directory(
         .join(category)
         .join(name);
     fs::create_dir_all(&directory)
-        .map_err(|error| format!("创建会话备份目录失败 {}: {error}", directory.display()))?;
+        .map_err(|error| format!("Failed to create session backup directory {}: {error}", directory.display()))?;
     Ok(directory)
 }
 
@@ -1246,7 +1246,7 @@ fn create_delete_backup(
         }
         fs::create_dir_all(&rollout_directory).map_err(|error| {
             format!(
-                "创建 rollout 备份目录失败 {}: {error}",
+                "Failed to create rollout backup directory {}: {error}",
                 rollout_directory.display()
             )
         })?;
@@ -1259,7 +1259,7 @@ fn create_delete_backup(
         );
         let target = rollout_directory.join(&file_name);
         fs::copy(&validated, &target)
-            .map_err(|error| format!("备份 rollout 失败 {}: {error}", validated.display()))?;
+            .map_err(|error| format!("Failed to back up rollout {}: {error}", validated.display()))?;
         rollout_files.push(json!({
             "originalPath": validated.to_string_lossy(),
             "backupPath": format!("rollouts/{file_name}")
@@ -1295,7 +1295,7 @@ fn validated_rollout_path(codex_home: &Path, path: &Path) -> Result<Option<PathB
         return Ok(None);
     }
     let canonical = fs::canonicalize(&candidate)
-        .map_err(|error| format!("解析 rollout 路径失败 {}: {error}", candidate.display()))?;
+        .map_err(|error| format!("Failed to resolve rollout path {}: {error}", candidate.display()))?;
     for directory in SESSION_DIRS {
         let root = codex_home.join(directory);
         if let Ok(root) = fs::canonicalize(root) {
@@ -1313,7 +1313,7 @@ fn apply_database_delete_plan(plan: &DatabaseDeletePlan, session_id: &str) -> Re
     let mut connection = open_read_write(&plan.path)?;
     let transaction = connection
         .transaction()
-        .map_err(|error| format!("开始数据库事务失败 {}: {error}", plan.path.display()))?;
+        .map_err(|error| format!("Failed to begin database transaction {}: {error}", plan.path.display()))?;
     if plan.has_thread_row {
         delete_where_if_supported(
             &transaction,
@@ -1352,7 +1352,7 @@ fn apply_database_delete_plan(plan: &DatabaseDeletePlan, session_id: &str) -> Re
                     "UPDATE agent_job_items SET assigned_thread_id = NULL WHERE assigned_thread_id = ?1",
                     [session_id],
                 )
-                .map_err(|error| format!("更新 agent_job_items 失败: {error}"))?;
+                .map_err(|error| format!("Failed to update agent_job_items: {error}"))?;
         }
         delete_where_if_supported(&transaction, "threads", &["id"], "id = ?1", &[&session_id])?;
     }
@@ -1388,7 +1388,7 @@ fn apply_database_delete_plan(plan: &DatabaseDeletePlan, session_id: &str) -> Re
     )?;
     transaction
         .commit()
-        .map_err(|error| format!("提交数据库删除失败 {}: {error}", plan.path.display()))
+        .map_err(|error| format!("Failed to commit database deletion {}: {error}", plan.path.display()))
 }
 
 fn delete_where_if_supported(
@@ -1415,12 +1415,12 @@ fn delete_where_if_supported(
             params,
         )
         .map(|_| ())
-        .map_err(|error| format!("删除 {table} 关联记录失败: {error}"))
+        .map_err(|error| format!("Failed to delete related records from {table}: {error}"))
 }
 
 fn write_json_atomically(path: &Path, value: &Value) -> Result<(), String> {
     let bytes =
-        serde_json::to_vec_pretty(value).map_err(|error| format!("序列化会话备份失败: {error}"))?;
+        serde_json::to_vec_pretty(value).map_err(|error| format!("Failed to serialize session backup: {error}"))?;
     crate::write_bytes_atomically(path, &bytes)
 }
 
@@ -1430,10 +1430,10 @@ fn resolve_current_codex_provider(codex_home: &Path) -> Result<String, String> {
         return Ok("openai".to_string());
     }
     let text = fs::read_to_string(&path)
-        .map_err(|error| format!("读取 Codex 配置失败 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Failed to read Codex configuration {}: {error}", path.display()))?;
     let document = text
         .parse::<toml::Value>()
-        .map_err(|error| format!("Codex 配置无法解析: {error}"))?;
+        .map_err(|error| format!("Failed to parse Codex configuration: {error}"))?;
     Ok(document
         .get("model_provider")
         .and_then(toml::Value::as_str)
@@ -1453,11 +1453,11 @@ where
 {
     let target_provider = target_provider.trim();
     if target_provider.is_empty() {
-        return Err("当前 Codex provider 不能为空".to_string());
+        return Err("Current Codex provider cannot be empty".to_string());
     }
     let _guard = CODEX_SESSION_WRITE_LOCK
         .lock()
-        .map_err(|_| "Codex 会话写入锁已损坏".to_string())?;
+        .map_err(|_| "Codex session write lock is poisoned".to_string())?;
     progress(CodexSessionRepairProgress {
         phase: "scanning".to_string(),
         percent: 10,
@@ -1541,7 +1541,7 @@ where
                     let _ = crate::write_bytes_atomically(&previous.path, &previous.original);
                     restore_modified_time(&previous.path, previous.original_mtime);
                 }
-                return Err(format!("写入历史会话失败；已尝试回滚：{error}"));
+                return Err(format!("Failed to write historical session; rollback attempted: {error}"));
             }
         }
         progress(CodexSessionRepairProgress {
@@ -1569,7 +1569,7 @@ where
                     restore_modified_time(&previous.path, previous.original_mtime);
                 }
                 return Err(format!(
-                    "更新会话数据库失败；rollout 已尝试回滚，备份仍保留：{error}"
+                    "Failed to update session database; rollout rollback attempted and backup retained: {error}"
                 ));
             }
         };
@@ -1608,12 +1608,12 @@ fn collect_rollout_files_recursive(root: &Path, files: &mut Vec<PathBuf>) -> Res
         return Ok(());
     }
     let entries = fs::read_dir(root)
-        .map_err(|error| format!("扫描会话目录失败 {}: {error}", root.display()))?;
+        .map_err(|error| format!("Failed to scan session directory {}: {error}", root.display()))?;
     for entry in entries {
-        let entry = entry.map_err(|error| format!("读取会话目录项失败: {error}"))?;
+        let entry = entry.map_err(|error| format!("Failed to read session directory entry: {error}"))?;
         let file_type = entry
             .file_type()
-            .map_err(|error| format!("读取会话目录项类型失败: {error}"))?;
+            .map_err(|error| format!("Failed to read session directory entry type: {error}"))?;
         if file_type.is_symlink() {
             continue;
         }
@@ -1632,9 +1632,9 @@ fn build_rollout_repair(
     target_provider: &str,
 ) -> Result<Option<RolloutRepair>, String> {
     let original =
-        fs::read(path).map_err(|error| format!("读取 rollout 失败 {}: {error}", path.display()))?;
+        fs::read(path).map_err(|error| format!("Failed to read rollout {}: {error}", path.display()))?;
     let text = String::from_utf8(original.clone())
-        .map_err(|error| format!("rollout 不是 UTF-8 {}: {error}", path.display()))?;
+        .map_err(|error| format!("Rollout is not UTF-8 {}: {error}", path.display()))?;
     let mut next = String::with_capacity(text.len());
     let mut changed = false;
     let mut session_meta_count = 0usize;
@@ -1674,7 +1674,7 @@ fn build_rollout_repair(
                     {
                         payload.insert("model_provider".to_string(), json!(target_provider));
                         output = serde_json::to_string(&record)
-                            .map_err(|error| format!("序列化 session_meta 失败: {error}"))?;
+                            .map_err(|error| format!("Failed to serialize session_meta: {error}"))?;
                         changed = true;
                     }
                 }
@@ -1737,9 +1737,9 @@ fn load_projectless_thread_ids(codex_home: &Path) -> Result<HashSet<String>, Str
         return Ok(HashSet::new());
     }
     let value = serde_json::from_str::<Value>(
-        &fs::read_to_string(&path).map_err(|error| format!("读取 Codex 全局状态失败: {error}"))?,
+        &fs::read_to_string(&path).map_err(|error| format!("Failed to read Codex global state: {error}"))?,
     )
-    .map_err(|error| format!("解析 Codex 全局状态失败: {error}"))?;
+    .map_err(|error| format!("Failed to parse Codex global state: {error}"))?;
     Ok(value
         .get("projectless-thread-ids")
         .and_then(Value::as_array)
@@ -1789,7 +1789,7 @@ fn count_sqlite_repairs(
                         [target_provider],
                         |row| row.get::<_, i64>(0),
                     )
-                    .map_err(|error| format!("统计 Provider 迁移行失败: {error}"))?
+                    .map_err(|error| format!("Failed to count provider migration rows: {error}"))?
                     as usize;
             }
             if columns.contains("has_user_event") {
@@ -1800,7 +1800,7 @@ fn count_sqlite_repairs(
                             [id],
                             |row| row.get::<_, i64>(0),
                         )
-                        .map_err(|error| format!("统计会话可见性更新行失败: {error}"))?
+                        .map_err(|error| format!("Failed to count session visibility update rows: {error}"))?
                         as usize;
                 }
             }
@@ -1812,7 +1812,7 @@ fn count_sqlite_repairs(
                             (id, cwd),
                             |row| row.get::<_, i64>(0),
                         )
-                        .map_err(|error| format!("统计项目路径更新行失败: {error}"))?
+                        .map_err(|error| format!("Failed to count project path update rows: {error}"))?
                         as usize;
                 }
             }
@@ -1821,7 +1821,7 @@ fn count_sqlite_repairs(
         match count_result {
             Ok(count) => total += count,
             Err(error) if is_locked_error_message(&error) => warnings.push(format!(
-                "数据库正在使用，无法预统计同步行 {}: {error}",
+                "Database is in use; cannot pre-count synchronization rows {}: {error}",
                 path.display()
             )),
             Err(error) => return Err(error),
@@ -1848,7 +1848,7 @@ fn apply_sqlite_repairs(
             }
             let transaction = connection
                 .transaction()
-                .map_err(|error| format!("开始历史会话恢复事务失败 {}: {error}", path.display()))?;
+                .map_err(|error| format!("Failed to begin historical session restoration transaction {}: {error}", path.display()))?;
             let mut updated = 0usize;
             if columns.contains("model_provider") {
                 updated += transaction
@@ -1856,7 +1856,7 @@ fn apply_sqlite_repairs(
                         "UPDATE threads SET model_provider = ?1 WHERE COALESCE(model_provider, '') <> ?1",
                         [target_provider],
                     )
-                    .map_err(|error| format!("更新会话 provider 失败: {error}"))?;
+                    .map_err(|error| format!("Failed to update session provider: {error}"))?;
             }
             if columns.contains("has_user_event") {
                 for id in &user_event_ids {
@@ -1865,7 +1865,7 @@ fn apply_sqlite_repairs(
                             "UPDATE threads SET has_user_event = 1 WHERE id = ?1 AND COALESCE(has_user_event, 0) <> 1",
                             [id],
                         )
-                        .map_err(|error| format!("更新会话用户事件标记失败: {error}"))?;
+                        .map_err(|error| format!("Failed to update session user-event flag: {error}"))?;
                 }
             }
             if columns.contains("cwd") {
@@ -1875,18 +1875,18 @@ fn apply_sqlite_repairs(
                             "UPDATE threads SET cwd = ?1 WHERE id = ?2 AND COALESCE(cwd, '') <> ?1",
                             (cwd, id),
                         )
-                        .map_err(|error| format!("更新会话项目路径失败: {error}"))?;
+                        .map_err(|error| format!("Failed to update session project path: {error}"))?;
                 }
             }
             transaction
                 .commit()
-                .map_err(|error| format!("提交历史会话恢复事务失败 {}: {error}", path.display()))?;
+                .map_err(|error| format!("Failed to commit historical session restoration transaction {}: {error}", path.display()))?;
             Ok(updated)
         })();
         match update_result {
             Ok(updated) => total += updated,
             Err(error) if is_locked_error_message(&error) => warnings.push(format!(
-                "数据库正在使用，已跳过本次同步 {}: {error}",
+                "Database is in use; skipped this synchronization {}: {error}",
                 path.display()
             )),
             Err(error) => return Err(error),
@@ -1911,7 +1911,7 @@ fn create_repair_backup(
         let source = codex_home.join(name);
         if source.is_file() {
             fs::copy(&source, directory.join(name))
-                .map_err(|error| format!("备份 {name} 失败: {error}"))?;
+                .map_err(|error| format!("Failed to back up {name}: {error}"))?;
         }
     }
     let sqlite_home = resolve_sqlite_home(codex_home);
@@ -1928,10 +1928,10 @@ fn create_repair_backup(
             let target = directory.join("databases").join(&relative);
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|error| format!("创建数据库备份目录失败: {error}"))?;
+                    .map_err(|error| format!("Failed to create database backup directory: {error}"))?;
             }
             fs::copy(&source, &target)
-                .map_err(|error| format!("备份数据库失败 {}: {error}", source.display()))?;
+                .map_err(|error| format!("Failed to back up database {}: {error}", source.display()))?;
             database_files.push(relative.to_string_lossy().replace('\\', "/"));
         }
     }
@@ -1948,10 +1948,10 @@ fn create_repair_backup(
         let target = directory.join("rollouts").join(&file_name);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)
-                .map_err(|error| format!("创建 rollout 备份目录失败: {error}"))?;
+                .map_err(|error| format!("Failed to create rollout backup directory: {error}"))?;
         }
         fs::write(&target, &repair.original)
-            .map_err(|error| format!("备份 rollout 失败 {}: {error}", repair.path.display()))?;
+            .map_err(|error| format!("Failed to back up rollout {}: {error}", repair.path.display()))?;
         rollout_files.push(json!({
             "originalPath": repair.path.to_string_lossy(),
             "backupPath": format!("rollouts/{file_name}")
@@ -2002,7 +2002,7 @@ fn encrypted_content_warning(repairs: &[RolloutRepair], target_provider: &str) -
         return None;
     }
     Some(format!(
-        "部分历史会话包含来自 {} 的 encrypted_content；元数据已同步到 {}，但继续或压缩这些会话可能失败。",
+        "Some historical sessions contain encrypted_content from {}; metadata was synchronized to {}, but continuing or compacting these sessions may fail.",
         providers.join("、"),
         target_provider
     ))
@@ -2017,7 +2017,7 @@ fn prune_repair_backups(codex_home: &Path) -> Result<(), String> {
         return Ok(());
     }
     let mut directories = fs::read_dir(&root)
-        .map_err(|error| format!("读取历史会话恢复备份失败: {error}"))?
+        .map_err(|error| format!("Failed to read historical session restoration backup: {error}"))?
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_dir())
         .collect::<Vec<_>>();
@@ -2027,7 +2027,7 @@ fn prune_repair_backups(codex_home: &Path) -> Result<(), String> {
         let path = entry.path();
         if path.starts_with(&root) {
             fs::remove_dir_all(&path).map_err(|error| {
-                format!("清理旧的历史会话恢复备份失败 {}: {error}", path.display())
+                format!("Failed to clean up old historical session restoration backup {}: {error}", path.display())
             })?;
         }
     }
@@ -2060,7 +2060,7 @@ fn collect_live_thread_ids(codex_home: &Path) -> Result<HashSet<String>, String>
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if is_locked_io_error(&error) => continue,
-            Err(error) => return Err(format!("读取 rollout 失败 {}: {error}", path.display())),
+            Err(error) => return Err(format!("Failed to read rollout {}: {error}", path.display())),
         };
         for line in text.lines() {
             let Ok(record) = serde_json::from_str::<Value>(line) else {
@@ -2084,7 +2084,7 @@ fn collect_live_thread_ids(codex_home: &Path) -> Result<HashSet<String>, String>
     let (database_paths, database_warnings) = discover_database_paths(codex_home, true);
     if !database_warnings.is_empty() {
         return Err(format!(
-            "无法完整核对全部 Codex 数据库，无效会话记录检查已中止：{}",
+            "Unable to fully verify all Codex databases; invalid session record check aborted: {}",
             database_warnings.join("；")
         ));
     }
@@ -2101,13 +2101,13 @@ fn collect_live_thread_ids(codex_home: &Path) -> Result<HashSet<String>, String>
             );
             let mut statement = connection
                 .prepare(&sql)
-                .map_err(|error| format!("读取会话引用失败 {}: {error}", path.display()))?;
+                .map_err(|error| format!("Failed to read session reference {}: {error}", path.display()))?;
             let rows = statement
                 .query_map([], |row| row.get::<_, String>(0))
-                .map_err(|error| format!("读取会话引用失败 {}: {error}", path.display()))?;
+                .map_err(|error| format!("Failed to read session reference {}: {error}", path.display()))?;
             for id in rows
                 .collect::<rusqlite::Result<HashSet<_>>>()
-                .map_err(|error| format!("读取会话引用失败 {}: {error}", path.display()))?
+                .map_err(|error| format!("Failed to read session reference {}: {error}", path.display()))?
             {
                 ids.insert(normalize_thread_id(&id));
                 ids.insert(id);
@@ -2142,9 +2142,9 @@ fn build_session_index_plan(
         return Ok(None);
     }
     let original =
-        fs::read(path).map_err(|error| format!("读取 session_index.jsonl 失败: {error}"))?;
+        fs::read(path).map_err(|error| format!("Failed to read session_index.jsonl: {error}"))?;
     let original_text = String::from_utf8(original.clone())
-        .map_err(|error| format!("session_index.jsonl 不是 UTF-8: {error}"))?;
+        .map_err(|error| format!("session_index.jsonl is not UTF-8: {error}"))?;
     let mut seen_candidates = HashSet::new();
     let candidates = original_text
         .lines()
@@ -2195,16 +2195,16 @@ fn apply_session_index_cleanup_from_home(
 ) -> Result<SessionIndexCleanupResult, String> {
     let _guard = CODEX_SESSION_WRITE_LOCK
         .lock()
-        .map_err(|_| "Codex 会话写入锁已损坏".to_string())?;
+        .map_err(|_| "Codex session write lock is poisoned".to_string())?;
     if require_stopped_app {
         ensure_codex_apps_stopped()?;
     }
     let live_ids = collect_live_thread_ids(codex_home)?;
     let path = codex_home.join("session_index.jsonl");
     let plan = build_session_index_plan(&path, &live_ids)?
-        .ok_or_else(|| "session_index.jsonl 不存在，无法清理".to_string())?;
+        .ok_or_else(|| "session_index.jsonl does not exist and cannot be cleaned".to_string())?;
     if plan.snapshot_sha256 != expected_snapshot {
-        return Err("session_index.jsonl 已在预览后发生变化，请重新预览".to_string());
+        return Err("session_index.jsonl changed after preview. Preview it again".to_string());
     }
     let candidate_ids = plan
         .candidates
@@ -2221,7 +2221,7 @@ fn apply_session_index_cleanup_from_home(
         .iter()
         .any(|id| !candidate_ids.contains(id.as_str()))
     {
-        return Err("确认列表已经过期或包含非候选会话，请重新预览".to_string());
+        return Err("The confirmation list has expired or contains non-candidate sessions. Preview again".to_string());
     }
     if selected.is_empty() {
         return Ok(SessionIndexCleanupResult {
@@ -2239,7 +2239,7 @@ fn apply_session_index_cleanup_from_home(
     let backup_dir =
         create_operation_directory(codex_home, "session-index-cleanup", "index-cleanup")?;
     fs::write(backup_dir.join("session_index.jsonl"), &plan.original)
-        .map_err(|error| format!("备份 session_index.jsonl 失败: {error}"))?;
+        .map_err(|error| format!("Failed to back up session_index.jsonl: {error}"))?;
     write_json_atomically(
         &backup_dir.join("metadata.json"),
         &json!({
@@ -2252,10 +2252,10 @@ fn apply_session_index_cleanup_from_home(
         }),
     )?;
     let current = fs::read(&plan.path)
-        .map_err(|error| format!("写入前重新读取 session_index.jsonl 失败: {error}"))?;
+        .map_err(|error| format!("Failed to reread session_index.jsonl before writing: {error}"))?;
     if current != plan.original {
         return Err(format!(
-            "session_index.jsonl 在写入前再次发生变化；未覆盖新内容，备份位于 {}",
+            "session_index.jsonl changed again before writing; new content was not overwritten, and the backup is at {}",
             backup_dir.display()
         ));
     }
@@ -2265,10 +2265,10 @@ fn apply_session_index_cleanup_from_home(
     let expected_after_sha256 = sha256_hex(next.as_bytes());
     crate::write_bytes_atomically(&plan.path, next.as_bytes())?;
     let written = fs::read(&plan.path)
-        .map_err(|error| format!("写入后校验 session_index.jsonl 失败: {error}"))?;
+        .map_err(|error| format!("Failed to verify session_index.jsonl after writing: {error}"))?;
     if sha256_hex(&written) != expected_after_sha256 {
         return Err(format!(
-            "session_index.jsonl 写入后 SHA-256 校验失败；原文件备份位于 {}",
+            "session_index.jsonl SHA-256 verification failed after writing; the original file backup is at {}",
             backup_dir.display()
         ));
     }
@@ -2313,7 +2313,7 @@ fn ensure_codex_apps_stopped() -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "Codex App / ChatGPT 仍在运行（进程：{}），请完全退出后重新预览并清理",
+        "Codex App / ChatGPT is still running (process: {}). Exit it completely, then preview and clean again",
         running
             .iter()
             .map(u32::to_string)
@@ -2338,10 +2338,10 @@ fn windows_app_process_ids(names: &[&str]) -> Result<Vec<u32>, String> {
             .args(["/FI", &filter, "/FO", "CSV", "/NH"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map_err(|error| format!("无法检查 {name} 进程状态: {error}"))?;
+            .map_err(|error| format!("Failed to check {name} process status: {error}"))?;
         if !output.status.success() {
             return Err(format!(
-                "检查 {name} 进程状态失败: {}",
+                "Error checking {name} process status: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             ));
         }
@@ -2379,7 +2379,7 @@ fn unix_app_process_ids(names: &[&str]) -> Result<Vec<u32>, String> {
         let output = Command::new("pgrep")
             .args(["-x", name])
             .output()
-            .map_err(|error| format!("无法检查 {name} 进程状态: {error}"))?;
+            .map_err(|error| format!("Failed to check {name} process status: {error}"))?;
         match output.status.code() {
             Some(0) => ids.extend(
                 String::from_utf8_lossy(&output.stdout)
@@ -2389,7 +2389,7 @@ fn unix_app_process_ids(names: &[&str]) -> Result<Vec<u32>, String> {
             Some(1) => {}
             _ => {
                 return Err(format!(
-                    "检查 {name} 进程状态失败: {}",
+                    "Error checking {name} process status: {}",
                     String::from_utf8_lossy(&output.stderr).trim()
                 ));
             }
@@ -3020,7 +3020,7 @@ mod tests {
         .unwrap();
 
         let error = preview_session_index_cleanup_from_home(&root).unwrap_err();
-        assert!(error.contains("无效会话记录检查已中止"));
+        assert!(error.contains("invalid session record check aborted"));
         assert!(root.join("session_index.jsonl").is_file());
         fs::remove_dir_all(root).unwrap();
     }

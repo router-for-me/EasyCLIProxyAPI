@@ -8,17 +8,17 @@ pub(crate) fn write_codex_private_file(path: &Path, content: &[u8]) -> Result<()
     #[cfg(unix)]
     {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        fs::create_dir_all(path.parent().ok_or("Codex 凭据路径无效")?)
-            .map_err(|_| "创建 Codex 凭据目录失败")?;
+        fs::create_dir_all(path.parent().ok_or("Invalid Codex credentials path")?)
+            .map_err(|_| "Failed to create Codex credentials directory")?;
         let file = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(false)
             .mode(0o600)
             .open(path)
-            .map_err(|_| "无法打开 Codex 凭据文件")?;
+            .map_err(|_| "Unable to open Codex credentials file")?;
         file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|_| "设置 Codex 凭据文件权限失败")?;
+            .map_err(|_| "Failed to set Codex credentials file permissions")?;
     }
     write_bytes_directly(path, content)
 }
@@ -57,9 +57,9 @@ fn parse_state(bytes: Option<&[u8]>) -> Result<NativeOAuthState, String> {
         });
     };
     let state: NativeOAuthState = serde_json::from_slice(bytes)
-        .map_err(|_| "无法读取 Codex 接入方式切换记录，请检查配置文件".to_string())?;
+        .map_err(|_| "Unable to read Codex access mode switch record. Check the configuration file".to_string())?;
     if state.version != 1 {
-        return Err("不支持的 Codex 接入方式切换记录版本".into());
+        return Err("Unsupported Codex access mode switch record version".into());
     }
     Ok(state)
 }
@@ -90,7 +90,7 @@ pub(crate) fn codex_native_oauth_enabled(home: &Path) -> Result<bool, String> {
 
 pub(crate) fn ensure_codex_cpa_mode(home: &Path) -> Result<(), String> {
     if codex_native_oauth_enabled(home)? {
-        return Err("请点击“更新配置”或“一键接入”恢复 CPA 配置".into());
+        return Err("Click “Update Configuration” or “One-Click Setup” to restore the CPA configuration".into());
     }
     Ok(())
 }
@@ -278,7 +278,7 @@ pub(crate) fn close_codex_configuration(home: &Path) -> Result<AgentConfigAction
     let after = vec![
         (
             paths[0].clone(),
-            Some(serde_json::to_vec_pretty(&state).map_err(|_| "保存 Codex 切换记录失败")?),
+            Some(serde_json::to_vec_pretty(&state).map_err(|_| "Failed to save Codex switch record")?),
         ),
         (paths[1].clone(), next_auth.map(String::into_bytes)),
         (
@@ -299,10 +299,10 @@ pub(crate) fn close_codex_configuration(home: &Path) -> Result<AgentConfigAction
 pub(crate) fn close_codex_config_modification(
     app: tauri::AppHandle,
 ) -> Result<AgentConfigActionResult, String> {
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "智能体配置文件锁已损坏")?;
+        .map_err(|_| "Agent configuration file lock is poisoned")?;
     let result = close_codex_configuration(&home)?;
     app.state::<AgentConfigStatusCache>().clear()?;
     Ok(result)
@@ -362,7 +362,7 @@ fn prepare_native_oauth_switch(home: &Path, enabled: bool) -> Result<(Images, Im
             .get("model")
             .and_then(toml_edit::Item::as_str)
             .map(str::to_string);
-        let saved = parse_codex_document(Some(&state.cpa_settings), "Codex CPA 接入配置")?;
+        let saved = parse_codex_document(Some(&state.cpa_settings), "Codex CPA access configuration")?;
         for key in ROUTING_KEYS {
             restore_codex_table_item(document.as_table_mut(), Some(saved.as_table()), key);
         }
@@ -377,7 +377,7 @@ fn prepare_native_oauth_switch(home: &Path, enabled: bool) -> Result<(Images, Im
             }
             document["model_providers"]
                 .as_table_like_mut()
-                .ok_or("Codex model_providers 格式无效")?
+                .ok_or("Invalid Codex model_providers format")?
                 .insert("openai", openai.clone());
         }
         if oauth_auth(state.cpa_auth.as_deref())?.is_some() {
@@ -391,7 +391,7 @@ fn prepare_native_oauth_switch(home: &Path, enabled: bool) -> Result<(Images, Im
     let rendered = document.to_string();
     parse_codex_document(Some(&rendered), "Codex config.toml")?;
     let state_bytes =
-        serde_json::to_vec_pretty(&state).map_err(|_| "保存 Codex 接入方式切换记录失败")?;
+        serde_json::to_vec_pretty(&state).map_err(|_| "Failed to save Codex access mode switch record")?;
     let after = vec![
         (paths[0].clone(), Some(state_bytes)),
         (paths[1].clone(), next_auth.map(String::into_bytes)),
@@ -444,7 +444,7 @@ pub(crate) fn apply_codex_cpa_configuration(
         state.native_auth = None;
     }
     native_after[0].1 =
-        Some(serde_json::to_vec_pretty(&state).map_err(|_| "保存 Codex 切换记录失败")?);
+        Some(serde_json::to_vec_pretty(&state).map_err(|_| "Failed to save Codex switch record")?);
     let config_paths = config_paths("codex", home)?;
     let current = config_images(&config_paths)?;
     for image in &current {
@@ -452,12 +452,12 @@ pub(crate) fn apply_codex_cpa_configuration(
             .iter()
             .any(|(path, bytes)| path == &image.0 && bytes != &image.1)
         {
-            return Err("配置已被其他程序修改，请刷新后重试".into());
+            return Err("Configuration was modified by another program. Refresh and try again".into());
         }
     }
     let mut restored_config = native_after[2].clone();
     let mut restored_document =
-        parse_codex_document(text(restored_config.1.as_deref())?, "Codex CPA 配置")?;
+        parse_codex_document(text(restored_config.1.as_deref())?, "Codex CPA configuration")?;
     if restored_document.contains_key("forced_login_method") {
         restored_document["forced_login_method"] =
             toml_edit::value(if options.oauth_configuration {
@@ -471,9 +471,9 @@ pub(crate) fn apply_codex_cpa_configuration(
     baseline
         .iter_mut()
         .find(|(path, _)| path == &restored_config.0)
-        .ok_or("Codex 配置路径不匹配")?
+        .ok_or("Codex configuration path mismatch")?
         .1 = restored_config.1.clone();
-    let catalog = options.codex_catalog.ok_or("无法生成 Codex 模型目录")?;
+    let catalog = options.codex_catalog.ok_or("Unable to generate Codex model catalog")?;
     validate_codex_catalog(catalog, model)?;
     let updates = vec![
         AgentFileUpdate {
@@ -518,10 +518,10 @@ pub(crate) fn apply_codex_cpa_configuration(
 pub(crate) fn restore_codex_official_config(
     app: tauri::AppHandle,
 ) -> Result<AgentConfigActionResult, String> {
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "智能体配置文件锁已损坏")?;
+        .map_err(|_| "Agent configuration file lock is poisoned")?;
     let result = switch_codex_native_oauth(&home, true)?;
     app.state::<AgentConfigStatusCache>().clear()?;
     Ok(result)

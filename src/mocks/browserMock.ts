@@ -35,18 +35,18 @@ function installToolbar(scenario: BrowserMockScenario, delayMs: number) {
   const toolbar = document.createElement('aside');
   toolbar.id = 'browser-mock-toolbar';
   toolbar.setAttribute('aria-label', 'Browser Mock controls');
-  toolbar.title = '仅在普通浏览器开发模式中显示；Tauri 和正式构建不会启用 Mock。';
+  toolbar.title = 'Shown only in regular browser development mode; Mock is disabled in Tauri and production builds.';
 
   const badge = document.createElement('strong');
   badge.textContent = 'MOCK';
 
   const select = document.createElement('select');
-  select.setAttribute('aria-label', 'Browser Mock 场景');
+  select.setAttribute('aria-label', 'Browser Mock scenario');
   const scenarios: Array<[BrowserMockScenario, string]> = [
-    ['running', '内核运行'],
-    ['stopped', '内核停止'],
-    ['empty', '未安装内核'],
-    ['error', '请求错误'],
+    ['running', 'Core running'],
+    ['stopped', 'Core stopped'],
+    ['empty', 'Core not installed'],
+    ['error', 'Request error'],
   ];
   scenarios.forEach(([value, label]) => {
     const option = document.createElement('option');
@@ -64,7 +64,7 @@ function installToolbar(scenario: BrowserMockScenario, delayMs: number) {
   });
 
   const hint = document.createElement('span');
-  hint.textContent = delayMs > 0 ? `${delayMs} ms` : '浏览器调试';
+  hint.textContent = delayMs > 0 ? `${delayMs} ms` : 'Browser debugging';
 
   toolbar.append(badge, select, hint);
   document.body.append(toolbar);
@@ -74,7 +74,7 @@ function installToolbar(scenario: BrowserMockScenario, delayMs: number) {
 export function installBrowserMock(): InstalledBrowserMock | null {
   const options = resolveBrowserMockOptions(window.location.search, readStoredScenario());
   if (options.mode === 'off') {
-    console.info('[Browser Mock] 已通过 ?mock=off 禁用。');
+    console.info('[Browser Mock] Disabled via ?mock=off.');
     return null;
   }
 
@@ -98,8 +98,8 @@ export function installBrowserMock(): InstalledBrowserMock | null {
   installToolbar(options.mode, options.delayMs);
 
   console.info(
-    `[Browser Mock] 已启用场景“${options.mode}”${options.delayMs ? `，延迟 ${options.delayMs} ms` : ''}。`,
-    '使用 ?mock=running|stopped|empty|error 切换，?mock=off 禁用。',
+    `[Browser Mock] Enabled scenario “${options.mode}”${options.delayMs ? ` with a ${options.delayMs} ms delay` : ''}.`,
+    'Use ?mock=running|stopped|empty|error to switch scenarios, or ?mock=off to disable.',
   );
   return { scenario: options.mode, delayMs: options.delayMs };
 }

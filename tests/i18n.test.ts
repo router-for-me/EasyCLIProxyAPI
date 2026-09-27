@@ -36,14 +36,14 @@ describe('i18n', () => {
     expect(translate('zh-CN', 'authFiles.models.globalDescription', { provider: 'Codex' })).toContain('不影响 API 接入');
   });
 
-  it('normalizes English variants and keeps Chinese as the fallback', () => {
+  it('normalizes supported variants and keeps English as the fallback', () => {
     expect(normalizeLocale('en-US')).toBe('en');
     expect(normalizeLocale('en')).toBe('en');
     expect(normalizeLocale('zh-CN')).toBe('zh-CN');
     expect(normalizeLocale('zh-TW')).toBe('zh-TW');
     expect(normalizeLocale('zh-Hant-HK')).toBe('zh-TW');
     expect(normalizeLocale('ja-JP')).toBe('ja');
-    expect(normalizeLocale('unsupported')).toBe('zh-CN');
+    expect(normalizeLocale('unsupported')).toBe('en');
   });
 
   it('translates messages and interpolates variables', () => {

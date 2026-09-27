@@ -9089,7 +9089,7 @@ textarea:focus-visible {
   transition: width 0.3s ease;
 }
 
-/* Events Tab (请求明细) */
+/* Events tab (request details) */
 .usage-events-panel {
   display: flex;
   width: 100%;

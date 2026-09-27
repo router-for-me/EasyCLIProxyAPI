@@ -121,11 +121,11 @@ fn exiting_rejects_new_core_operations_and_cleans_up_an_in_flight_child() {
 
     assert!(lock_core_operation(&state)
         .unwrap_err()
-        .contains("应用正在退出"));
+        .contains("Application is exiting"));
     assert!(state
         .store_child(child)
         .unwrap_err()
-        .contains("应用正在退出"));
+        .contains("Application is exiting"));
     assert!(!is_process_alive(child_id));
     assert_eq!(state.managed_pid(), None);
 }
@@ -416,7 +416,7 @@ fn successful_core_install_reports_automatic_restart_failure() {
     let result = combine_install_and_restart_results(Ok("installed"), Err("port busy".into()));
     assert_eq!(
         result.unwrap_err(),
-        "内核已安装，但自动恢复运行失败: port busy"
+        "Kernel installed, but failed to automatically resume operation: port busy"
     );
 }
 
@@ -435,7 +435,7 @@ fn failed_core_install_reports_restart_failure_too() {
     );
     assert_eq!(
         result.unwrap_err(),
-        "checksum mismatch；自动恢复原内核运行状态也失败: port busy"
+        "checksum mismatch; failed to automatically restore the previous kernel running state: port busy"
     );
 }
 
@@ -534,7 +534,7 @@ fn overlaying_a_core_updates_packaged_files_and_preserves_plugins() {
             .unwrap()
             .ino(),
         original_binary_inode,
-        "更新后的内核必须使用新 inode"
+        "The updated kernel must use a new inode"
     );
     assert!(!staging_dir.exists());
     fs::remove_dir_all(root).unwrap();
@@ -959,7 +959,7 @@ fn core_start_log_captures_stdout_and_stderr() {
     assert!(command.status().unwrap().success());
 
     let output = fs::read_to_string(&log_path).unwrap();
-    assert!(output.contains("===== CPA 内核启动"));
+    assert!(output.contains("===== CPA kernel startup"));
     assert!(output.contains("core stdout marker"));
     assert!(output.contains("core stderr marker"));
     assert!(!output.contains("stale startup output"));

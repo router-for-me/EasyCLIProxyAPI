@@ -71,7 +71,7 @@ describe('quota API compatibility', () => {
     const result = await loadQuota(codexFile);
     expect(result.status).toBe('success');
     expect(result.resetCredits).toBe(2);
-    expect(result.resetCreditsError).toContain('无法识别');
+    expect(result.resetCreditsError).toContain('unrecognized data');
   });
 
   it('Claude profile 查询失败不影响现代 Fable 额度', async () => {
@@ -79,7 +79,7 @@ describe('quota API compatibility', () => {
       ? { status_code: 500 }
       : success({ limits: [{ kind: 'weekly_scoped', percent: 40, scope: { model: { display_name: 'Fable 5' } } }] });
     expect(await loadQuota({ name: 'claude.json', provider: 'claude', auth_index: 'c' })).toMatchObject({
-      status: 'success', rows: [{ label: '7 天 Fable 窗口', remainingPercent: 60 }],
+      status: 'success', rows: [{ label: '7-day Fable window', remainingPercent: 60 }],
     });
   });
 
@@ -141,7 +141,7 @@ describe('xAI quota queries aligned with Management Center', () => {
     const result = await loadQuota({ ...file, using_api: true, prefix: 'paid' });
     expect(result).toMatchObject({ status: 'success', plan: 'Paid' });
     expect(result.rows[0].remainingPercent).toBeNull();
-    expect(result.rows[0].detail).toContain('付费 API 对话可用');
+    expect(result.rows[0].detail).toContain('Paid API chat is available');
     expect(calls).toHaveLength(2);
     expect(calls.map((request) => request.url)).toEqual([
       'https://api.x.ai/v1/me', 'https://api.x.ai/v1/chat/completions',

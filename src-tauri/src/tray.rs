@@ -1,4 +1,5 @@
 use super::*;
+use crate::native_i18n::{native_operation_failed, native_text, NativeText};
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSStatusItemBehavior;
@@ -18,7 +19,7 @@ pub(crate) struct MacosTrayClickState {
 #[cfg(target_os = "macos")]
 pub(crate) fn set_macos_dock_visible(app_handle: &tauri::AppHandle, visible: bool) {
     if let Err(error) = app_handle.set_dock_visibility(visible) {
-        eprintln!("更新 Dock 图标状态失败: {error}");
+        eprintln!("Failed to update Dock icon visibility: {error}");
     }
 }
 
@@ -29,17 +30,17 @@ pub(crate) fn show_main_window_on_main_thread(app_handle: &tauri::AppHandle) {
     };
     set_macos_dock_visible(app_handle, true);
     if let Err(error) = window.show() {
-        eprintln!("显示主窗口失败: {error}");
+        eprintln!("Failed to show the main window: {error}");
         set_macos_dock_visible(app_handle, false);
         return;
     }
     if window.is_minimized().unwrap_or(false) {
         if let Err(error) = window.unminimize() {
-            eprintln!("恢复主窗口失败: {error}");
+            eprintln!("Failed to restore the main window: {error}");
         }
     }
     if let Err(error) = window.set_focus() {
-        eprintln!("聚焦主窗口失败: {error}");
+        eprintln!("Failed to focus the main window: {error}");
     }
 }
 
@@ -54,7 +55,7 @@ pub(crate) fn show_main_window(app_handle: &tauri::AppHandle) {
     if let Err(error) = app_handle.clone().run_on_main_thread(move || {
         show_main_window_on_main_thread(&app_handle);
     }) {
-        eprintln!("调度主窗口显示失败: {error}");
+        eprintln!("Failed to schedule showing the main window: {error}");
     }
 }
 
@@ -72,7 +73,7 @@ pub(crate) fn show_macos_tray_menu<R: tauri::Runtime>(tray: &TrayIcon<R>) {
     });
 
     if let Err(error) = result {
-        eprintln!("显示托盘菜单失败: {error}");
+        eprintln!("Failed to show the tray menu: {error}");
     }
 }
 
@@ -82,18 +83,18 @@ pub(crate) fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Resul
         .state::<GuiConfigState>()
         .snapshot()
         .map(|config| config.locale)
-        .unwrap_or_else(|_| "zh-CN".to_string());
+        .unwrap_or_else(|_| "en".to_string());
     let open_main_window = MenuItem::with_id(
         app,
         "open-main-window",
-        locale_text(&locale, "打开主界面", "Open Main Window"),
+        native_text(&locale, NativeText::OpenMainWindow),
         true,
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(
         app,
         "quit",
-        locale_text(&locale, "退出", "Quit"),
+        native_text(&locale, NativeText::Quit),
         true,
         None::<&str>,
     )?;
@@ -128,7 +129,7 @@ pub(crate) fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Resul
 
             let now = Instant::now();
             let Ok(mut state) = click_state.lock() else {
-                eprintln!("读取托盘点击状态失败");
+                eprintln!("Failed to read tray click state");
                 return;
             };
             state.sequence += 1;
@@ -159,7 +160,7 @@ pub(crate) fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Resul
                     }
                     Ok(_) => false,
                     Err(_) => {
-                        eprintln!("读取托盘点击状态失败");
+                        eprintln!("Failed to read tray click state");
                         false
                     }
                 };
@@ -220,45 +221,29 @@ pub(crate) fn windows_tray_presentation(
     locale: &str,
 ) -> WindowsTrayPresentation {
     let status_text = if busy {
-        locale_text(locale, "内核状态：处理中", "Core status: Working")
+        native_text(locale, NativeText::CoreStatusWorking)
     } else if !status.installed {
-        locale_text(locale, "内核状态：未安装", "Core status: Not installed")
+        native_text(locale, NativeText::CoreStatusNotInstalled)
     } else if status.running {
-        locale_text(locale, "内核状态：运行中", "Core status: Running")
+        native_text(locale, NativeText::CoreStatusRunning)
     } else {
-        locale_text(locale, "内核状态：已停止", "Core status: Stopped")
+        native_text(locale, NativeText::CoreStatusStopped)
     };
     let toggle_text = if busy {
-        locale_text(locale, "处理中...", "Working...")
+        native_text(locale, NativeText::Working)
     } else if status.running {
-        locale_text(locale, "停止内核", "Stop Core")
+        native_text(locale, NativeText::StopCore)
     } else {
-        locale_text(locale, "启动内核", "Start Core")
+        native_text(locale, NativeText::StartCore)
     };
     let tooltip = if busy {
-        locale_text(
-            locale,
-            "EasyCLIProxyAPI · 内核处理中",
-            "EasyCLIProxyAPI · Core working",
-        )
+        native_text(locale, NativeText::TooltipCoreWorking)
     } else if !status.installed {
-        locale_text(
-            locale,
-            "EasyCLIProxyAPI · 内核未安装",
-            "EasyCLIProxyAPI · Core not installed",
-        )
+        native_text(locale, NativeText::TooltipCoreNotInstalled)
     } else if status.running {
-        locale_text(
-            locale,
-            "EasyCLIProxyAPI · 内核运行中",
-            "EasyCLIProxyAPI · Core running",
-        )
+        native_text(locale, NativeText::TooltipCoreRunning)
     } else {
-        locale_text(
-            locale,
-            "EasyCLIProxyAPI · 内核已停止",
-            "EasyCLIProxyAPI · Core stopped",
-        )
+        native_text(locale, NativeText::TooltipCoreStopped)
     };
 
     WindowsTrayPresentation {
@@ -287,7 +272,7 @@ impl WindowsTrayState {
         self.locale
             .lock()
             .map(|locale| locale.clone())
-            .unwrap_or_else(|_| "zh-CN".to_string())
+            .unwrap_or_else(|_| "en".to_string())
     }
 
     fn set_locale(&self, locale: &str) {
@@ -298,17 +283,17 @@ impl WindowsTrayState {
         let labels = [
             (
                 &self.open_main_window,
-                locale_text(normalized, "打开主界面", "Open Main Window"),
+                native_text(normalized, NativeText::OpenMainWindow),
             ),
             (
                 &self.restart_core_item,
-                locale_text(normalized, "重启内核", "Restart Core"),
+                native_text(normalized, NativeText::RestartCore),
             ),
-            (&self.quit_item, locale_text(normalized, "退出", "Quit")),
+            (&self.quit_item, native_text(normalized, NativeText::Quit)),
         ];
         for (item, label) in labels {
             if let Err(error) = item.set_text(label) {
-                eprintln!("更新 Windows 托盘语言失败: {error}");
+                eprintln!("Failed to update Windows tray language: {error}");
             }
         }
     }
@@ -323,24 +308,22 @@ impl WindowsTrayState {
         }
 
         let locale = self.locale();
-        if let Err(error) = self.status_item.set_text(locale_text(
-            &locale,
-            "内核状态：处理中",
-            "Core status: Working",
-        )) {
-            eprintln!("更新 Windows 托盘内核状态失败: {error}");
+        if let Err(error) = self
+            .status_item
+            .set_text(native_text(&locale, NativeText::CoreStatusWorking)) {
+            eprintln!("Failed to update Windows tray core status: {error}");
         }
         if let Err(error) =
             self.toggle_core_item
-                .set_text(locale_text(&locale, "处理中...", "Working..."))
+                .set_text(native_text(&locale, NativeText::Working))
         {
-            eprintln!("更新 Windows 托盘操作文本失败: {error}");
+            eprintln!("Failed to update Windows tray action text: {error}");
         }
         if let Err(error) = self.toggle_core_item.set_enabled(false) {
-            eprintln!("更新 Windows 托盘操作状态失败: {error}");
+            eprintln!("Failed to update Windows tray action state: {error}");
         }
         if let Err(error) = self.restart_core_item.set_enabled(false) {
-            eprintln!("更新 Windows 托盘重启状态失败: {error}");
+            eprintln!("Failed to update Windows tray restart state: {error}");
         }
         true
     }
@@ -353,25 +336,25 @@ impl WindowsTrayState {
         let presentation =
             windows_tray_presentation(status, self.busy.load(Ordering::Acquire), &self.locale());
         if let Err(error) = self.status_item.set_text(presentation.status_text.clone()) {
-            eprintln!("更新 Windows 托盘内核状态失败: {error}");
+            eprintln!("Failed to update Windows tray core status: {error}");
         }
         if let Err(error) = self
             .toggle_core_item
             .set_text(presentation.toggle_text.clone())
         {
-            eprintln!("更新 Windows 托盘操作文本失败: {error}");
+            eprintln!("Failed to update Windows tray action text: {error}");
         }
         if let Err(error) = self
             .toggle_core_item
             .set_enabled(presentation.toggle_enabled)
         {
-            eprintln!("更新 Windows 托盘操作状态失败: {error}");
+            eprintln!("Failed to update Windows tray action state: {error}");
         }
         if let Err(error) = self
             .restart_core_item
             .set_enabled(presentation.restart_enabled)
         {
-            eprintln!("更新 Windows 托盘重启状态失败: {error}");
+            eprintln!("Failed to update Windows tray restart state: {error}");
         }
         presentation.tooltip
     }
@@ -381,14 +364,9 @@ impl WindowsTrayState {
         if error.chars().count() > 48 {
             summary.push('…');
         }
-        let text = match normalize_app_locale(&self.locale()) {
-            "en" => format!("Operation failed: {summary}"),
-            "zh-TW" => format!("操作失敗：{summary}"),
-            "ja" => format!("操作に失敗しました：{summary}"),
-            _ => format!("操作失败：{summary}"),
-        };
+        let text = native_operation_failed(&self.locale(), &summary);
         if let Err(update_error) = self.status_item.set_text(text) {
-            eprintln!("更新 Windows 托盘错误状态失败: {update_error}");
+            eprintln!("Failed to update Windows tray error state: {update_error}");
         }
     }
 }
@@ -399,16 +377,16 @@ pub(crate) fn show_windows_main_window(app_handle: &tauri::AppHandle) {
         return;
     };
     if let Err(error) = window.show() {
-        eprintln!("显示主窗口失败: {error}");
+        eprintln!("Failed to show the main window: {error}");
         return;
     }
     if window.is_minimized().unwrap_or(false) {
         if let Err(error) = window.unminimize() {
-            eprintln!("恢复主窗口失败: {error}");
+            eprintln!("Failed to restore the main window: {error}");
         }
     }
     if let Err(error) = window.set_focus() {
-        eprintln!("聚焦主窗口失败: {error}");
+        eprintln!("Failed to focus the main window: {error}");
     }
 }
 
@@ -417,11 +395,11 @@ pub(crate) fn update_windows_tray_status(app_handle: &tauri::AppHandle, status: 
     let tooltip = app_handle
         .try_state::<WindowsTrayState>()
         .map(|tray_state| tray_state.update(status))
-        .unwrap_or_else(|| windows_tray_presentation(status, false, "zh-CN").tooltip);
+        .unwrap_or_else(|| windows_tray_presentation(status, false, "en").tooltip);
 
     if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
         if let Err(error) = tray.set_tooltip(Some(&tooltip)) {
-            eprintln!("更新 Windows 托盘提示失败: {error}");
+            eprintln!("Failed to update Windows tray tooltip: {error}");
         }
     }
 }
@@ -440,21 +418,20 @@ pub(crate) fn update_windows_tray_locale(
 
 #[cfg(target_os = "windows")]
 pub(crate) fn show_windows_tray_action_error(app_handle: &tauri::AppHandle, error: &str) {
-    eprintln!("Windows 托盘内核操作失败: {error}");
+    eprintln!("Windows tray core operation failed: {error}");
     let locale = app_handle
         .try_state::<WindowsTrayState>()
         .map(|state| state.locale())
-        .unwrap_or_else(|| "zh-CN".to_string());
+        .unwrap_or_else(|| "en".to_string());
     if let Some(tray_state) = app_handle.try_state::<WindowsTrayState>() {
         tray_state.show_error(error);
     }
     if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
-        if let Err(update_error) = tray.set_tooltip(Some(locale_text(
+        if let Err(update_error) = tray.set_tooltip(Some(native_text(
             &locale,
-            "EasyCLIProxyAPI · 内核操作失败",
-            "EasyCLIProxyAPI · Core operation failed",
+            NativeText::TooltipCoreOperationFailed,
         ))) {
-            eprintln!("更新 Windows 托盘错误提示失败: {update_error}");
+            eprintln!("Failed to update Windows tray error tooltip: {update_error}");
         }
     }
 }
@@ -471,12 +448,11 @@ pub(crate) fn run_windows_tray_core_action(
         return;
     }
     if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
-        if let Err(error) = tray.set_tooltip(Some(locale_text(
+        if let Err(error) = tray.set_tooltip(Some(native_text(
             &tray_state.locale(),
-            "EasyCLIProxyAPI · 内核处理中",
-            "EasyCLIProxyAPI · Core working",
+            NativeText::TooltipCoreWorking,
         ))) {
-            eprintln!("更新 Windows 托盘处理中提示失败: {error}");
+            eprintln!("Failed to update Windows tray busy tooltip: {error}");
         }
     }
 
@@ -535,39 +511,39 @@ pub(crate) fn setup_windows_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Res
         .state::<GuiConfigState>()
         .snapshot()
         .map(|config| config.locale)
-        .unwrap_or_else(|_| "zh-CN".to_string());
+        .unwrap_or_else(|_| "en".to_string());
     let open_main_window = MenuItem::with_id(
         app,
         WINDOWS_TRAY_OPEN_MENU_ID,
-        locale_text(&locale, "打开主界面", "Open Main Window"),
+        native_text(&locale, NativeText::OpenMainWindow),
         true,
         None::<&str>,
     )?;
     let status_item = MenuItem::with_id(
         app,
         WINDOWS_TRAY_STATUS_MENU_ID,
-        locale_text(&locale, "内核状态：正在检查", "Core status: Checking"),
+        native_text(&locale, NativeText::CoreStatusChecking),
         false,
         None::<&str>,
     )?;
     let toggle_core_item = MenuItem::with_id(
         app,
         WINDOWS_TRAY_TOGGLE_CORE_MENU_ID,
-        locale_text(&locale, "启动内核", "Start Core"),
+        native_text(&locale, NativeText::StartCore),
         false,
         None::<&str>,
     )?;
     let restart_core_item = MenuItem::with_id(
         app,
         WINDOWS_TRAY_RESTART_CORE_MENU_ID,
-        locale_text(&locale, "重启内核", "Restart Core"),
+        native_text(&locale, NativeText::RestartCore),
         false,
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(
         app,
         WINDOWS_TRAY_QUIT_MENU_ID,
-        locale_text(&locale, "退出", "Quit"),
+        native_text(&locale, NativeText::Quit),
         true,
         None::<&str>,
     )?;

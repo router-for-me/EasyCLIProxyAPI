@@ -93,7 +93,7 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("auth-dir = \"../oauth\""));
     assert!(content.contains("[[api-keys]]"));
     assert!(content.contains("key = \"123456\""));
-    assert!(content.contains("remark = \"默认密钥\""));
+    assert!(content.contains("remark = \"Default key\""));
     assert!(content.contains("management-secret-key = \"\""));
     assert!(content.contains("plugins-enabled = false"));
     assert!(content.contains("routing-strategy = \"round-robin\""));

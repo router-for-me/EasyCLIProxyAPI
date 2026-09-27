@@ -83,7 +83,7 @@ function createCoreStatus(scenario: BrowserMockScenario) {
     currentVersion: installed ? '7.3.15' : null,
     installDir: 'C:\\EasyCLIProxyAPI\\cpa-core',
     binaryPath: installed ? 'C:\\EasyCLIProxyAPI\\cpa-core\\cli-proxy-api.exe' : null,
-    message: running ? 'Browser Mock 内核运行中' : installed ? 'Browser Mock 内核已停止' : 'Browser Mock 内核未安装',
+    message: running ? 'Browser Mock core is running' : installed ? 'Browser Mock core is stopped' : 'Browser Mock core is not installed',
   };
 }
 
@@ -138,7 +138,7 @@ function createUsageEvents() {
       endpoint: '/v1/responses',
       api_key_hash: 'mock-key-hash',
       api_key_display: 'sk-mock••••••••2026',
-      api_key_remark: '浏览器 Mock 密钥',
+      api_key_remark: 'Browser Mock key',
       tokens: {
         input_tokens: input,
         output_tokens: output,
@@ -186,10 +186,10 @@ function createAgentStatuses() {
     pluginInstalled: id === 'pi',
     launchTargets: id === 'codex' || id === 'opencode'
       ? [
-          { id: 'app', label: 'Desktop App', detail: 'Browser Mock 桌面入口' },
-          { id: 'cli', label: 'CLI', detail: 'Browser Mock 命令行入口' },
+          { id: 'app', label: 'Desktop App', detail: 'Browser Mock desktop entry point' },
+          { id: 'cli', label: 'CLI', detail: 'Browser Mock command-line entry point' },
         ]
-      : [{ id: id === 'claude-desktop' ? 'app' : 'cli', label: '启动', detail: 'Browser Mock 启动目标' }],
+      : [{ id: id === 'claude-desktop' ? 'app' : 'cli', label: 'Launch', detail: 'Browser Mock launch target' }],
     version: `1.${index + 4}.0`,
     cliVersion: id === 'claude-desktop' ? null : `1.${index + 4}.0`,
     appVersion: id === 'claude-desktop' ? '0.12.8' : null,
@@ -217,7 +217,7 @@ function createAgentStatuses() {
           ],
         }
       : null,
-    warnings: id === 'openclaw' ? ['Mock：尚未应用配置'] : [],
+    warnings: id === 'openclaw' ? ['Mock: configuration has not been applied'] : [],
     error: null,
   }));
 }
@@ -345,7 +345,7 @@ function createState(scenario: BrowserMockScenario) {
       { key: 'other', label: 'Other', requests: 34, failures: 1, tokens: 333_300 },
     ],
     apiKeys: [
-      { key: 'mock-key-hash', label: '浏览器 Mock 密钥', requests: 312, failures: 7, tokens: 2_187_300 },
+      { key: 'mock-key-hash', label: 'Browser Mock key', requests: 312, failures: 7, tokens: 2_187_300 },
     ],
   };
   return {
@@ -359,8 +359,8 @@ function createState(scenario: BrowserMockScenario) {
     },
     coreConfig: {
       apiKeys: [
-        { apiKey: 'sk-browser-mock-2026', remark: '浏览器 Mock 密钥' },
-        { apiKey: 'sk-browser-demo-secondary', remark: '备用演示密钥' },
+        { apiKey: 'sk-browser-mock-2026', remark: 'Browser Mock key' },
+        { apiKey: 'sk-browser-demo-secondary', remark: 'Secondary demo key' },
       ],
       debug: false,
       commercialMode: false,
@@ -390,7 +390,7 @@ function createState(scenario: BrowserMockScenario) {
       silentStartEnabled: false,
       defaultTerminal: 'auto',
       availableTerminals: [
-        { id: 'auto', label: '自动选择' },
+        { id: 'auto', label: 'Automatic selection' },
         { id: 'windows-terminal', label: 'Windows Terminal' },
         { id: 'powershell', label: 'PowerShell' },
       ],
@@ -512,7 +512,7 @@ function createState(scenario: BrowserMockScenario) {
       models: ['gpt-5.2-codex', 'gpt-5.1-codex'].map((slug) => {
         const configuration = {
           display_name: slug === 'gpt-5.2-codex' ? 'GPT-5.2 Codex' : 'GPT-5.1 Codex',
-          description: 'Browser Mock 模型目录',
+          description: 'Browser Mock model catalog',
           context_window: 272_000,
           max_context_window: 400_000,
           effective_context_window_percent: 90,
@@ -545,9 +545,9 @@ function createState(scenario: BrowserMockScenario) {
       configured: true,
     },
     codexSessions: [
-      { id: 'mock-session-1', title: '实现 Browser Mock', cwd: 'E:\\projects\\mock-demo', modelProvider: 'cpa-gui', archived: false, updatedAtMs: Date.now() - 20 * 60_000, databasePath: 'C:\\Users\\Mock\\.codex\\state.sqlite' },
-      { id: 'mock-session-2', title: 'TypeScript 类型学习', cwd: 'E:\\projects\\typescript-study', modelProvider: 'openai', archived: false, updatedAtMs: Date.now() - 3 * 60 * 60_000, databasePath: 'C:\\Users\\Mock\\.codex\\state.sqlite' },
-      { id: 'mock-session-3', title: '旧版界面检查', cwd: 'E:\\projects\\legacy-ui', modelProvider: 'cpa-gui', archived: true, updatedAtMs: Date.now() - 3 * 24 * 60 * 60_000, databasePath: 'C:\\Users\\Mock\\.codex\\state.sqlite' },
+      { id: 'mock-session-1', title: 'Implement Browser Mock', cwd: 'E:\\projects\\mock-demo', modelProvider: 'cpa-gui', archived: false, updatedAtMs: Date.now() - 20 * 60_000, databasePath: 'C:\\Users\\Mock\\.codex\\state.sqlite' },
+      { id: 'mock-session-2', title: 'Learn TypeScript types', cwd: 'E:\\projects\\typescript-study', modelProvider: 'openai', archived: false, updatedAtMs: Date.now() - 3 * 60 * 60_000, databasePath: 'C:\\Users\\Mock\\.codex\\state.sqlite' },
+      { id: 'mock-session-3', title: 'Review legacy UI', cwd: 'E:\\projects\\legacy-ui', modelProvider: 'cpa-gui', archived: true, updatedAtMs: Date.now() - 3 * 24 * 60 * 60_000, databasePath: 'C:\\Users\\Mock\\.codex\\state.sqlite' },
     ],
   };
 }
@@ -769,21 +769,21 @@ export function createBrowserMockRuntime(
 
       case 'get_core_status': return clone(state.coreStatus);
       case 'start_core_process': {
-        if (!state.coreStatus.installed) throw new Error('Browser Mock：请先安装内核');
-        Object.assign(state.coreStatus, { running: true, ready: true, managed: true, starting: false, processId: 42817, message: 'Browser Mock 内核运行中' });
+        if (!state.coreStatus.installed) throw new Error('Browser Mock: install the core first');
+        Object.assign(state.coreStatus, { running: true, ready: true, managed: true, starting: false, processId: 42817, message: 'Browser Mock core is running' });
         state.guiSettings.runOnStartup = true;
         emit('core-status-changed', state.coreStatus);
         return clone(state.coreStatus);
       }
       case 'stop_core_process': {
-        Object.assign(state.coreStatus, { running: false, ready: false, managed: false, starting: false, processId: null, message: 'Browser Mock 内核已停止' });
+        Object.assign(state.coreStatus, { running: false, ready: false, managed: false, starting: false, processId: null, message: 'Browser Mock core is stopped' });
         state.guiSettings.runOnStartup = false;
         emit('core-status-changed', state.coreStatus);
         return clone(state.coreStatus);
       }
       case 'restart_core_process': {
-        if (!state.coreStatus.installed) throw new Error('Browser Mock：请先安装内核');
-        Object.assign(state.coreStatus, { running: true, ready: true, managed: true, starting: false, processId: 42818, message: 'Browser Mock 内核已重启' });
+        if (!state.coreStatus.installed) throw new Error('Browser Mock: install the core first');
+        Object.assign(state.coreStatus, { running: true, ready: true, managed: true, starting: false, processId: 42818, message: 'Browser Mock core restarted' });
         emit('core-status-changed', state.coreStatus);
         return clone(state.coreStatus);
       }
@@ -853,13 +853,13 @@ export function createBrowserMockRuntime(
           downloadedBytes: 18 * 1024 * 1024,
           totalBytes: state.appUpdateInfo.downloadSizeBytes,
           percent: 38,
-          message: 'Browser Mock 正在下载更新',
+          message: 'Browser Mock is downloading an update',
         });
         emit('app-update-progress', state.appUpdateTask);
         return null;
       }
       case 'cancel_app_update': {
-        Object.assign(state.appUpdateTask, { running: false, cancellable: false, phase: 'cancelled', message: 'Browser Mock 已取消更新' });
+        Object.assign(state.appUpdateTask, { running: false, cancellable: false, phase: 'cancelled', message: 'Browser Mock update canceled' });
         emit('app-update-progress', state.appUpdateTask);
         return null;
       }
@@ -873,8 +873,8 @@ export function createBrowserMockRuntime(
           installDir: state.coreStatus.installDir,
           binaryPath: 'C:\\EasyCLIProxyAPI\\cpa-core\\cli-proxy-api.exe',
         };
-        Object.assign(state.coreStatus, { installed: true, currentVersion: result.version, binaryPath: result.binaryPath, message: 'Browser Mock 内核已安装' });
-        Object.assign(state.coreInstallTask, { running: false, cancellable: false, phase: 'completed', downloaded: 64 * 1024 * 1024, total: 64 * 1024 * 1024, percent: 100, message: 'Browser Mock 安装完成', result });
+        Object.assign(state.coreStatus, { installed: true, currentVersion: result.version, binaryPath: result.binaryPath, message: 'Browser Mock core installed' });
+        Object.assign(state.coreInstallTask, { running: false, cancellable: false, phase: 'completed', downloaded: 64 * 1024 * 1024, total: 64 * 1024 * 1024, percent: 100, message: 'Browser Mock installation complete', result });
         emit('core-install-progress', state.coreInstallTask);
         emit('core-status-changed', state.coreStatus);
         return clone(result);
@@ -915,7 +915,7 @@ export function createBrowserMockRuntime(
       case 'provider_health_probe': return { firstTokenLatencyMs: 184, responseLatencyMs: 642 };
 
       case 'list_oauth_browsers': return [
-        { id: 'default', label: '系统默认浏览器' },
+        { id: 'default', label: 'System default browser' },
         { id: 'chrome', label: 'Google Chrome (Mock)' },
         { id: 'edge', label: 'Microsoft Edge (Mock)' },
       ];
@@ -940,7 +940,7 @@ export function createBrowserMockRuntime(
 
       case 'get_usage_collector_status': return {
         state: state.coreStatus.ready ? 'collecting' : 'waiting-core',
-        message: state.coreStatus.ready ? 'Browser Mock 正在采集使用记录' : '等待内核启动',
+        message: state.coreStatus.ready ? 'Browser Mock is collecting usage records' : 'Waiting for the core to start',
         lastCollectedAt: new Date().toISOString(),
         totalRecords: state.usageOverview.totalRequests,
       };
@@ -1152,7 +1152,7 @@ export function createBrowserMockRuntime(
         const ids = asArray(request.sessionIds).map(String);
         state.codexSessions = state.codexSessions.filter((session) => !ids.includes(session.id));
         return {
-          results: ids.map((id) => ({ sessionId: id, status: 'deleted', message: 'Browser Mock 已删除', backupPath: 'C:\\Users\\Mock\\.codex\\backups\\mock.zip' })),
+          results: ids.map((id) => ({ sessionId: id, status: 'deleted', message: 'Deleted by Browser Mock', backupPath: 'C:\\Users\\Mock\\.codex\\backups\\mock.zip' })),
           deletedCount: ids.length,
           failedCount: 0,
         };
@@ -1167,15 +1167,15 @@ export function createBrowserMockRuntime(
       }
       case 'preview_codex_session_index_cleanup': return {
         snapshotSha256: 'mock-snapshot-sha256',
-        candidates: [{ id: 'stale-thread-1', threadName: '已不存在的会话', updatedAt: isoHoursAgo(72) }],
+        candidates: [{ id: 'stale-thread-1', threadName: 'Missing session', updatedAt: isoHoursAgo(72) }],
       };
       case 'apply_codex_session_index_cleanup': return { prunedEntries: asArray(asObject(payload.request).threadIds).length, backupPath: 'C:\\Users\\Mock\\.codex\\backups\\index.json' };
 
       case 'get_lan_ipv4': return ['192.168.100.100'];
       default:
         if (command.startsWith('plugin:window|') || command.startsWith('plugin:webview|')) return null;
-        console.warn(`[Browser Mock] 尚未实现命令：${command}`, rawPayload);
-        throw new Error(`Browser Mock 尚未实现命令：${command}`);
+        console.warn(`[Browser Mock] Command not implemented: ${command}`, rawPayload);
+        throw new Error(`Browser Mock command not implemented: ${command}`);
     }
   };
 

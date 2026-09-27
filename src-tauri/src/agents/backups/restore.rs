@@ -18,7 +18,7 @@ pub(crate) struct RestorePlan {
 fn local_restore_plan(client: &str, home: &Path, id: &str) -> Result<RestorePlan, String> {
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "配置文件锁已损坏")?;
+        .map_err(|_| "Configuration file lock is poisoned")?;
     let paths = config_paths(client, home)?;
     let (preview, before, after) = preview(client, &paths, id)?;
     let version = read_version(client, &paths, id)?;
@@ -55,7 +55,7 @@ fn desktop_restore_configuration(
         .filter_map(|m| m.get("name").and_then(Value::as_str))
         .collect::<Vec<_>>();
     let mut mappings = plan.version.mappings.as_ref().ok_or(
-            "此备份版本缺少 Claude Desktop 模型映射，无法安全恢复内核路由，请重新配置模型",
+            "This backup version lacks Claude Desktop model mappings and cannot safely restore kernel routing. Reconfigure the models",
         )?.clone();
     if mappings.desktop_models.is_none() {
         let roles = [
@@ -71,7 +71,7 @@ fn desktop_restore_configuration(
                     current.eq_ignore_ascii_case(id) || legacy.eq_ignore_ascii_case(id)
                 }))
             else {
-                return Err("此备份中的模型 ID 缺少对应来源，无法安全恢复内核路由".into());
+                return Err("A model ID in this backup has no corresponding source, so kernel routing cannot be safely restored".into());
             };
             if let Some(existing) = entries.iter_mut()
                 .find(|entry| entry.model_id().eq_ignore_ascii_case(id))
@@ -91,7 +91,7 @@ fn desktop_restore_configuration(
         }
         mappings.desktop_models = Some(entries);
     }
-    let entries = mappings.desktop_models.as_ref().ok_or("缺少备份模型映射")?;
+    let entries = mappings.desktop_models.as_ref().ok_or("Backup model mapping is missing")?;
     validate_claude_desktop_entries(entries)?;
     let models = entries.iter()
         .map(|entry| AgentModelOption {
@@ -206,19 +206,19 @@ pub(crate) async fn execute_restore_plan(
     revision: &str,
 ) -> Result<AgentConfigActionResult, String> {
     if plan.preview.revision != revision {
-        return Err("预览后配置发生变化，请重新选择备份版本".into());
+        return Err("Configuration changed after preview. Select the backup version again".into());
     }
     let commit = || {
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
-            .map_err(|_| "配置文件锁已损坏")?;
+            .map_err(|_| "Configuration file lock is poisoned")?;
         let latest = preview(&plan.version.client, &plan.paths, &plan.version.id)?.0;
         let version = read_version(&plan.version.client, &plan.paths, &plan.version.id)?;
         if latest.revision != plan.local_revision
             || serde_json::to_vec(&version).map_err(|e| e.to_string())?
                 != serde_json::to_vec(&plan.version).map_err(|e| e.to_string())?
         {
-            return Err("恢复期间配置或备份发生变化，请重新选择备份版本".into());
+            return Err("Configuration or backup changed during restoration. Select the backup version again".into());
         }
         commit_config_with_mappings(
             &plan.version.client,

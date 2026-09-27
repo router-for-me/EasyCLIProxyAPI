@@ -1632,7 +1632,7 @@ fn deepseek_harness_credentials_reject_legacy_flat_layout() {
     )
     .unwrap_err();
 
-    assert!(error.contains("缺少 version 字段"), "{error}");
+    assert!(error.contains("missing the version field"), "{error}");
 }
 
 #[test]

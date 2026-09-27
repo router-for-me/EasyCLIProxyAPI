@@ -3,7 +3,7 @@ use super::*;
 pub(crate) fn normalize_proxy_url(value: &str) -> Result<String, String> {
     let value = value.trim();
     let invalid = || {
-        "代理地址无效，请使用 http://host:port、https://host:port 或 socks5://host:port（不是 PAC 地址）".to_string()
+        "Invalid proxy address. Use http://host:port, https://host:port, or socks5://host:port (not a PAC address)".to_string()
     };
     if value.is_empty() || value.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err(invalid());
@@ -38,7 +38,7 @@ fn fixed_proxy(value: &str, scheme: &str) -> Result<String, String> {
 fn parse_detected_proxy(value: &str) -> Result<String, String> {
     let value = value.trim().trim_matches('\'').trim_matches('"');
     if value.is_empty() {
-        return Err("系统代理地址为空".to_string());
+        return Err("System proxy address is empty".to_string());
     }
     if value.contains("://") {
         normalize_proxy_url(value)
@@ -51,7 +51,7 @@ fn parse_detected_proxy(value: &str) -> Result<String, String> {
 fn parse_env_proxy(name: &str, value: &str) -> Result<String, String> {
     let value = value.trim().trim_matches('\'').trim_matches('"');
     if value.is_empty() {
-        return Err("系统代理地址为空".to_string());
+        return Err("System proxy address is empty".to_string());
     }
     if !value.contains("://") && name.eq_ignore_ascii_case("socks_proxy") {
         return normalize_proxy_url(&format!("socks5://{value}"));
@@ -90,12 +90,12 @@ fn parse_windows_proxy(value: &str) -> Result<String, String> {
             );
         }
     }
-    Err("系统代理没有可用的 HTTP / HTTPS / SOCKS 地址".to_string())
+    Err("System proxy has no available HTTP / HTTPS / SOCKS address".to_string())
 }
 
 #[cfg(any(target_os = "windows", test))]
 fn pac_error() -> String {
-    "检测到 PAC / 自动发现代理，暂不支持转换为内核固定代理".to_string()
+    "PAC / auto-discovery proxy detected; conversion to a fixed kernel proxy is not supported yet".to_string()
 }
 
 #[cfg(target_os = "windows")]
@@ -119,7 +119,7 @@ fn detect_system_proxy() -> Result<String, String> {
     unsafe {
         let mut config: WINHTTP_CURRENT_USER_IE_PROXY_CONFIG = std::mem::zeroed();
         if WinHttpGetIEProxyConfigForCurrentUser(&mut config) == 0 {
-            return Err("无法读取当前用户的 Windows 系统代理".to_string());
+            return Err("Unable to read Windows system proxy for the current user".to_string());
         }
         let proxy = read_wide(config.lpszProxy);
         let pac = read_wide(config.lpszAutoConfigUrl);
@@ -181,17 +181,17 @@ fn desktop_setting(program: &str, args: &[&str]) -> Result<String, String> {
         .stderr(Stdio::null());
     let mut child = command
         .spawn()
-        .map_err(|_| format!("无法运行 {program} 读取系统代理"))?;
+        .map_err(|_| format!("Unable to run {program} to read system proxy"))?;
     let deadline = std::time::Instant::now() + Duration::from_millis(400);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
                 if !status.success() {
-                    return Err(format!("{program} 读取系统代理失败"));
+                    return Err(format!("{program} failed to read system proxy"));
                 }
                 let output = child
                     .wait_with_output()
-                    .map_err(|_| "读取系统代理失败".to_string())?;
+                    .map_err(|_| "Failed to read system proxy".to_string())?;
                 return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
             Ok(None) if std::time::Instant::now() < deadline => {
@@ -200,7 +200,7 @@ fn desktop_setting(program: &str, args: &[&str]) -> Result<String, String> {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("读取系统代理超时".to_string());
+                return Err("Timed out while reading system proxy".to_string());
             }
         }
     }
@@ -300,10 +300,10 @@ fn parse_networksetup_proxy(output: &str, scheme: &str) -> Result<String, String
         let key = key.trim();
         let value = value.trim();
         if key.eq_ignore_ascii_case("Enabled") {
-            enabled = value.eq_ignore_ascii_case("Yes") || value == "是";
-        } else if key.eq_ignore_ascii_case("Server") || key == "服务器" {
+            enabled = value.eq_ignore_ascii_case("Yes") || value == "Yes";
+        } else if key.eq_ignore_ascii_case("Server") || key == "Server" {
             host = value.to_string();
-        } else if key.eq_ignore_ascii_case("Port") || key == "端口" {
+        } else if key.eq_ignore_ascii_case("Port") || key == "Port" {
             port = value.to_string();
         }
     }
@@ -420,7 +420,7 @@ fn kde_config(key: &str) -> Result<String, String> {
             return Ok(value);
         }
     }
-    Err("无法读取 KDE 系统代理".to_string())
+    Err("Unable to read KDE system proxy".to_string())
 }
 
 #[cfg(target_os = "linux")]
@@ -511,7 +511,7 @@ fn apply(state: &GuiConfigState) -> Result<GuiConfigFile, String> {
     let snapshot = state
         .inner
         .lock()
-        .map_err(|_| "代理配置锁已损坏".to_string())?
+        .map_err(|_| "Proxy configuration lock is poisoned".to_string())?
         .clone();
     let detected = if snapshot.proxy_override {
         None
@@ -521,7 +521,7 @@ fn apply(state: &GuiConfigState) -> Result<GuiConfigFile, String> {
     let mut current = state
         .inner
         .lock()
-        .map_err(|_| "代理配置锁已损坏".to_string())?;
+        .map_err(|_| "Proxy configuration lock is poisoned".to_string())?;
     let mut next = current.clone();
     next.proxy_url = if next.proxy_override {
         next.proxy_url.clone()
@@ -567,7 +567,7 @@ pub(crate) fn set_manual(state: &GuiConfigState, proxy_url: String) -> Result<()
     let mut current = state
         .inner
         .lock()
-        .map_err(|_| "代理配置锁已损坏".to_string())?;
+        .map_err(|_| "Proxy configuration lock is poisoned".to_string())?;
     let mut next = current.clone();
     next.proxy_override = !proxy_url.is_empty();
     next.proxy_url = if next.proxy_override {
@@ -609,10 +609,10 @@ pub(crate) async fn verify_core_proxy(config: &GuiConfigFile) -> Result<(), Stri
                                 .timeout(Duration::from_secs(3))
                                 .send()
                                 .await
-                                .map_err(|_| "无法更新内核代理，请重启内核后重试".to_string())?;
+                                .map_err(|_| "Unable to update kernel proxy. Restart the kernel and try again".to_string())?;
                             if !response.status().is_success() {
                                 return Err(
-                                    "内核拒绝代理更新，请重启内核或升级内核后重试".to_string()
+                                    "Kernel rejected the proxy update. Restart or upgrade the kernel and try again".to_string()
                                 );
                             }
                             updated = true;
@@ -624,7 +624,7 @@ pub(crate) async fn verify_core_proxy(config: &GuiConfigFile) -> Result<(), Stri
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     Err(
-        "代理配置已保存，但尚未确认内核已应用。请确认内核正在运行，必要时重启内核后重试。"
+        "Proxy configuration was saved, but the kernel has not confirmed applying it. Make sure the kernel is running and restart it if necessary."
             .to_string(),
     )
 }

@@ -823,7 +823,7 @@ pub(crate) fn stop_windows_matching_processes(
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(format!(
-                "{label} 未能完全关闭; remaining process IDs: {ids}"
+                "{label} did not close completely; remaining process IDs: {ids}"
             ));
         }
         for process_id in remaining {

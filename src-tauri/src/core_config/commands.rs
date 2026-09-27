@@ -63,13 +63,13 @@ pub(crate) fn save_gui_settings(
     settings: GuiNetworkSettings,
 ) -> Result<GuiSettings, String> {
     if settings.port == 0 {
-        return Err("端口必须在 1 到 65535 之间".to_string());
+        return Err("Port must be between 1 and 65535".to_string());
     }
 
     let _refresh_guard = cache
         .refresh_lock
         .lock()
-        .map_err(|_| "智能体配置状态刷新锁已损坏".to_string())?;
+        .map_err(|_| "Agent configuration status refresh lock is poisoned".to_string())?;
     let previous = gui_config_state.snapshot()?;
     let mut next = previous.clone();
     next.port = settings.port;
@@ -87,7 +87,7 @@ pub(crate) fn save_gui_settings(
             let rollback_error = patch_core_network_settings(&previous).err();
             return Err(match rollback_error {
                 Some(rollback_error) => {
-                    format!("{error}；回滚内核网络配置也失败: {rollback_error}")
+                    format!("{error}; failed to roll back kernel network configuration: {rollback_error}")
                 }
                 None => error,
             });
@@ -96,7 +96,7 @@ pub(crate) fn save_gui_settings(
 
     if config.port != previous.port {
         if let Err(error) = cache.clear() {
-            eprintln!("清空智能体配置状态缓存失败: {error}");
+            eprintln!("Failed to clear agent configuration status cache: {error}");
         }
     }
 
@@ -110,15 +110,15 @@ pub(crate) fn save_network_routing_settings(
     settings: GuiNetworkRoutingSettings,
 ) -> Result<CoreConfigView, String> {
     if settings.port == 0 {
-        return Err("端口必须在 1 到 65535 之间".to_string());
+        return Err("Port must be between 1 and 65535".to_string());
     }
     let routing_session_affinity_ttl =
-        normalize_optional_config_string(settings.routing_session_affinity_ttl, "会话粘性 TTL")?;
+        normalize_optional_config_string(settings.routing_session_affinity_ttl, "Session affinity TTL")?;
 
     let _refresh_guard = cache
         .refresh_lock
         .lock()
-        .map_err(|_| "智能体配置状态刷新锁已损坏".to_string())?;
+        .map_err(|_| "Agent configuration status refresh lock is poisoned".to_string())?;
     let previous = gui_config_state.snapshot()?;
     let mut next = previous.clone();
     next.port = settings.port;
@@ -149,7 +149,7 @@ pub(crate) fn save_network_routing_settings(
 
     if config.port != previous.port {
         if let Err(error) = cache.clear() {
-            eprintln!("清空智能体配置状态缓存失败: {error}");
+            eprintln!("Failed to clear agent configuration status cache: {error}");
         }
     }
 
@@ -273,7 +273,7 @@ pub(crate) fn save_core_logging_settings(
     settings: CoreLoggingSettingsInput,
 ) -> Result<CoreConfigView, String> {
     if !(1..=3600).contains(&settings.redis_usage_queue_retention_seconds) {
-        return Err("Redis 用量队列保留时间必须在 1 到 3600 秒之间".to_string());
+        return Err("Redis usage queue retention must be between 1 and 3600 seconds".to_string());
     }
 
     let previous = current_core_config_settings(gui_config_state.inner())?;
@@ -313,7 +313,7 @@ pub(crate) fn add_core_api_key(
         .iter()
         .any(|existing| existing == &api_key)
     {
-        return Err("该鉴权密钥已经存在".to_string());
+        return Err("This authentication key already exists".to_string());
     }
     settings.api_keys.push(api_key);
     patch_core_api_keys(&settings.api_keys)?;
@@ -333,13 +333,13 @@ pub(crate) fn replace_core_api_key_value(
     let index = api_keys
         .iter()
         .position(|existing| existing == original_api_key)
-        .ok_or_else(|| "要编辑的鉴权密钥不存在，请刷新后重试".to_string())?;
+        .ok_or_else(|| "The authentication key to edit does not exist. Refresh and try again".to_string())?;
     if replacement_api_key != original_api_key
         && api_keys
             .iter()
             .any(|existing| existing == &replacement_api_key)
     {
-        return Err("该鉴权密钥已经存在".to_string());
+        return Err("This authentication key already exists".to_string());
     }
     api_keys[index] = replacement_api_key;
     Ok(())
@@ -352,7 +352,7 @@ pub(crate) fn remove_core_api_key_value(
     let index = api_keys
         .iter()
         .position(|existing| existing == api_key)
-        .ok_or_else(|| "要删除的鉴权密钥不存在，请刷新后重试".to_string())?;
+        .ok_or_else(|| "The authentication key to delete does not exist. Refresh and try again".to_string())?;
     api_keys.remove(index);
     Ok(())
 }
@@ -368,7 +368,7 @@ pub(crate) fn update_core_api_key(
     let api_key = api_key.trim().to_string();
     let remark = remark.trim().to_string();
     if original_api_key.is_empty() {
-        return Err("要编辑的鉴权密钥不能为空".to_string());
+        return Err("The authentication key to edit cannot be empty".to_string());
     }
     validate_core_api_key(&api_key)?;
     validate_api_key_remark(&remark)?;
@@ -393,7 +393,7 @@ pub(crate) fn delete_core_api_key(
 ) -> Result<CoreConfigView, String> {
     let api_key = api_key.trim();
     if api_key.is_empty() {
-        return Err("要删除的鉴权密钥不能为空".to_string());
+        return Err("The authentication key to delete cannot be empty".to_string());
     }
     let mut settings = current_core_config_settings(gui_config_state.inner())?;
     remove_core_api_key_value(&mut settings.api_keys, api_key)?;
@@ -515,7 +515,7 @@ pub(crate) fn set_core_session_affinity_ttl(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     ttl: String,
 ) -> Result<CoreConfigView, String> {
-    let ttl = normalize_optional_config_string(ttl, "会话粘性 TTL")?;
+    let ttl = normalize_optional_config_string(ttl, "Session affinity TTL")?;
     let mut settings = current_core_config_settings(gui_config_state.inner())?;
     let previous_ttl = settings.routing_session_affinity_ttl.clone();
     settings.routing_session_affinity_ttl = ttl;

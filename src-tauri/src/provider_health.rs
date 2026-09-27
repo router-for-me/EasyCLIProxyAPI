@@ -272,7 +272,7 @@ fn persist_provider_health_success(
         },
     });
     if let Err(error) = usage::persist_local_usage_event(app, "desktop_health_check", event) {
-        eprintln!("保存桌面健康检测使用记录失败: {error}");
+        eprintln!("Failed to save desktop health check usage record: {error}");
     }
 }
 
@@ -290,19 +290,19 @@ pub(crate) async fn provider_health_probe(
     request: ProviderHealthProbeRequest,
 ) -> Result<ProviderHealthProbeResponse, String> {
     let url = reqwest::Url::parse(request.url.trim())
-        .map_err(|error| format!("健康检测地址无效: {error}"))?;
+        .map_err(|error| format!("Invalid health check URL: {error}"))?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err("健康检测仅支持 HTTP 或 HTTPS 地址".to_string());
+        return Err("Health checks support only HTTP or HTTPS URLs".to_string());
     }
     if !matches!(
         request.protocol.as_str(),
         "openai-chat" | "openai-responses" | "claude" | "gemini"
     ) {
-        return Err("不支持的健康检测协议".to_string());
+        return Err("Unsupported health check protocol".to_string());
     }
     let endpoint = format!("POST {}", url.path());
     if request.data.len() > 64 * 1024 {
-        return Err("健康检测请求体过大".to_string());
+        return Err("Health check request body is too large".to_string());
     }
 
     let _permit = PROVIDER_HEALTH_SLOTS
@@ -321,14 +321,14 @@ pub(crate) async fn provider_health_probe(
             .connect_timeout(Duration::from_secs(10))
             .timeout(timeout),
         proxy_url,
-        "创建健康检测客户端失败",
+        "Failed to create health check client",
     )?;
     let mut headers = reqwest::header::HeaderMap::new();
     for (name, value) in &request.header {
         let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
-            .map_err(|error| format!("健康检测请求头名称无效: {error}"))?;
+            .map_err(|error| format!("Invalid health check request header name: {error}"))?;
         let value = reqwest::header::HeaderValue::from_str(value)
-            .map_err(|error| format!("健康检测请求头值无效: {error}"))?;
+            .map_err(|error| format!("Invalid health check request header value: {error}"))?;
         headers.insert(name, value);
     }
     if !headers.contains_key(reqwest::header::USER_AGENT) {
@@ -345,15 +345,15 @@ pub(crate) async fn provider_health_probe(
         .body(request.data.clone())
         .send()
         .await
-        .map_err(|error| format!("健康检测请求失败: {error}"))?;
+        .map_err(|error| format!("Health check request failed: {error}"))?;
     let status = response.status();
     if !status.is_success() {
         let detail = response.text().await.unwrap_or_default();
         let detail = detail.trim();
         return Err(if detail.is_empty() {
-            format!("上游返回 HTTP {}", status.as_u16())
+            format!("Upstream returned HTTP {}", status.as_u16())
         } else {
-            format!("上游返回 HTTP {}: {}", status.as_u16(), detail)
+            format!("Upstream returned HTTP {}: {}", status.as_u16(), detail)
         });
     }
     let content_type = response
@@ -363,15 +363,15 @@ pub(crate) async fn provider_health_probe(
         .unwrap_or("")
         .to_ascii_lowercase();
     if !provider_health_content_type_is_streaming(&content_type) {
-        return Err("上游未返回流式响应，无法测量首字延迟".to_string());
+        return Err("Upstream did not return a streaming response; time to first token cannot be measured".to_string());
     }
 
     let mut stream = response.bytes_stream();
     let mut received = Vec::new();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| format!("读取健康检测流失败: {error}"))?;
+        let chunk = chunk.map_err(|error| format!("Failed to read health check stream: {error}"))?;
         if received.len().saturating_add(chunk.len()) > MAX_PROVIDER_HEALTH_STREAM_BYTES {
-            return Err("健康检测在限制范围内未收到模型首字".to_string());
+            return Err("Health check did not receive the model's first token within the limit".to_string());
         }
         received.extend_from_slice(&chunk);
         let elapsed_ms = started_at.elapsed().as_millis().max(1) as u64;
@@ -397,5 +397,5 @@ pub(crate) async fn provider_health_probe(
             });
         }
     }
-    Err("健康检测未收到模型首字".to_string())
+    Err("Health check did not receive the model's first token".to_string())
 }

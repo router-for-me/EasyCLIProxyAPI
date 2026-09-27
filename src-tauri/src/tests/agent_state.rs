@@ -664,7 +664,7 @@ fn applied_state_rejects_backup_paths_outside_the_managed_config_set() {
     let error = load_agent_applied_state(AgentClient::OpenCode, &home)
         .err()
         .unwrap();
-    assert!(error.contains("非预期备份路径"));
+    assert!(error.contains("unexpected backup path"));
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -707,7 +707,7 @@ fn missing_session_backup_is_detected_before_any_file_is_restored() {
         restore_agent_applied_state_configuration(AgentClient::Codex, &paths, &state_path, &state)
             .err()
             .unwrap();
-    assert!(error.contains("读取智能体备份失败"));
+    assert!(error.contains("Failed to read agent backup"));
     assert_eq!(fs::read_to_string(&config_path).unwrap(), "managed-config");
     assert_eq!(
         fs::read_to_string(&catalog_path).unwrap(),

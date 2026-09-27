@@ -5,10 +5,10 @@ pub(crate) fn apply_configured_context_limits(
     content: &str,
 ) -> Result<(), String> {
     let document: serde_norway::Value = serde_norway::from_str(content)
-        .map_err(|error| format!("解析内核模型上下文配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel model context configuration: {error}"))?;
     let root = document
         .as_mapping()
-        .ok_or("内核配置顶层必须是 YAML 映射")?;
+        .ok_or("Kernel configuration root must be a YAML mapping")?;
     let mut limits: HashMap<String, u64> = HashMap::new();
     for section in crate::MODEL_ALIAS_CONFIG_SECTIONS {
         let Some(providers) =

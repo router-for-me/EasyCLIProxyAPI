@@ -4,14 +4,14 @@ use super::*;
 fn core_failure_messages_expose_outcomes_without_secret_source_text() {
     for detail in [
         "YAML source: key: secret-token",
-        "已恢复原配置 secret-token",
-        "自动恢复失败 secret-token",
-        "配置已变化 secret-token",
+        "Original configuration restored secret-token",
+        "Automatic restoration failed secret-token",
+        "Configuration changed secret-token",
     ] {
         let rendered = agent_core_error(detail.into());
         assert!(!rendered.contains("secret-token"));
-        if detail.contains("自动恢复失败") {
-            assert!(rendered.contains("回滚失败"));
+        if detail.contains("Automatic restoration failed") {
+            assert!(rendered.contains("rollback also failed"));
         }
     }
 }
@@ -19,13 +19,28 @@ fn core_failure_messages_expose_outcomes_without_secret_source_text() {
 #[test]
 fn core_failure_messages_distinguish_alias_and_configuration_failures() {
     for (detail, expected) in [
-        ("别名 claude-sonnet-5 已被其他模型使用，请更换别名 secret-token", "请切换其他别名"),
-        ("无法确定模型 private-model 的 CPA 配置来源，无法创建 Claude Desktop 别名 secret-token", "有效接入来源"),
-        ("更新后的内核配置与预期值不一致（路径: secret-token），已拒绝写入", "格式兼容性校验失败"),
-        ("验证更新后的内核配置失败: secret-token", "原配置未写入"),
-        ("解析内核 YAML 配置失败: secret-token", "YAML 配置格式无效"),
-        ("管理 API 错误 (401): secret-token", "认证失败"),
-        ("管理 API 错误 (403): secret-token", "认证失败"),
+        (
+            "Already used by another model: claude-sonnet-5 secret-token",
+            "Choose a different alias",
+        ),
+        (
+            "Unable to determine model private-model CPA configuration source; cannot create Claude Desktop alias secret-token",
+            "valid access source",
+        ),
+        (
+            "Updated kernel configuration does not match the expected value (path: secret-token); write rejected",
+            "format compatibility check failed",
+        ),
+        (
+            "Failed to validate updated kernel configuration: secret-token",
+            "original configuration was not written",
+        ),
+        (
+            "Failed to parse kernel YAML configuration: secret-token",
+            "Invalid kernel YAML configuration format",
+        ),
+        ("Management API error (401): secret-token", "authentication failed"),
+        ("Management API error (403): secret-token", "authentication failed"),
     ] {
         let rendered = agent_core_error(detail.into());
         assert!(rendered.contains(expected), "{rendered}");

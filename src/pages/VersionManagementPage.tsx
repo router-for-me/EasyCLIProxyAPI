@@ -163,7 +163,7 @@ export function VersionManagementPage() {
     }
 
     if (task.message && !task.running) {
-      showNotice(task.message, task.phase === '安装失败' ? 'error' : 'info');
+      showNotice(task.message, task.phase === 'Installation failed' ? 'error' : 'info');
     }
   };
 
@@ -252,7 +252,7 @@ export function VersionManagementPage() {
     setProgress({
       running: true,
       cancellable: true,
-      phase: '准备下载',
+      phase: 'Preparing download',
       downloaded: 0,
       total: null,
       percent: null,
@@ -267,7 +267,7 @@ export function VersionManagementPage() {
       setProgress({
         running: false,
         cancellable: false,
-        phase: '安装完成',
+        phase: 'Installation complete',
         downloaded: 1,
         total: 1,
         percent: 100,
@@ -281,11 +281,12 @@ export function VersionManagementPage() {
     } catch (error) {
       manualInstallInProgressRef.current = false;
       const errorMessage = String(error);
-      showNotice(errorMessage, errorMessage.includes('取消') ? 'info' : 'error');
+      const cancelled = /cancel/i.test(errorMessage);
+      showNotice(errorMessage, cancelled ? 'info' : 'error');
       setProgress((current) => ({
         running: false,
         cancellable: false,
-        phase: errorMessage.includes('取消') ? '已取消' : '安装失败',
+        phase: cancelled ? 'Canceled' : 'Installation failed',
         downloaded: current?.downloaded ?? 0,
         total: current?.total ?? null,
         percent: current?.percent ?? null,
@@ -444,9 +445,9 @@ export function VersionManagementPage() {
   const progressKnown = computedPercent !== null;
   const progressPercent = clampPercent(computedPercent ?? 0);
   const progressText = progress
-    ? progress.phase === '安装完成'
+    ? progress.phase === 'Installation complete'
       ? t('kernel.progress.completed')
-      : progress.phase === '解压中'
+      : progress.phase === 'Extracting'
         ? t('kernel.progress.extracting')
         : progress.total
           ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
@@ -457,7 +458,7 @@ export function VersionManagementPage() {
 
   const installDialogTone: MessageType = progress?.result
     ? 'success'
-    : progress?.phase === '安装失败'
+    : progress?.phase === 'Installation failed'
       ? 'error'
       : 'info';
 
@@ -467,7 +468,7 @@ export function VersionManagementPage() {
       : t('kernel.install.titleInstalling')
     : progress?.result
       ? t('kernel.install.titleCompleted')
-      : progress?.phase === '已取消'
+      : progress?.phase === 'Canceled'
         ? t('kernel.install.titleCancelled')
         : t('kernel.install.titleFailed');
 
@@ -895,16 +896,21 @@ function localizeInstallPhase(
   t: ReturnType<typeof useI18n>['t'],
 ) {
   const keys = {
-    '准备下载': 'kernel.phase.preparingDownload',
-    '下载中': 'kernel.phase.downloading',
-    '解压中': 'kernel.phase.extracting',
-    '准备内置内核': 'kernel.phase.preparingBundled',
-    '安装完成': 'kernel.phase.completed',
-    '安装失败': 'kernel.phase.failed',
-    '已取消': 'kernel.phase.cancelled',
+    'Preparing download': 'kernel.phase.preparingDownload',
+    Downloading: 'kernel.phase.downloading',
+    Extracting: 'kernel.phase.extracting',
+    'Extract bundled kernel': 'kernel.phase.preparingBundled',
+    'Installation complete': 'kernel.phase.completed',
+    'Installation failed': 'kernel.phase.failed',
+    Canceled: 'kernel.phase.cancelled',
   } as const;
   const key = keys[phase as keyof typeof keys];
-  return key ? t(key) : phase;
+  if (key) return t(key);
+  if (phase === 'Preparing to install the latest version') {
+    return t('kernel.install.installingLatest');
+  }
+  const version = phase.match(/^Preparing to install (.+)$/)?.[1];
+  return version ? t('kernel.install.installingVersion', { version }) : phase;
 }
 
 function clampPercent(percent: number) {

@@ -193,7 +193,7 @@ function AppContent() {
           return;
         }
       } catch (error) {
-        console.error('读取关闭行为设置失败', error);
+        console.error('Failed to read close behavior settings', error);
       }
 
       setWindowsClosePrompt((current) =>
@@ -216,7 +216,7 @@ function AppContent() {
         }
       })
       .catch((error) => {
-        console.error('监听 Windows 关闭确认事件失败', error);
+        console.error('Failed to listen for Windows close confirmation events', error);
       });
 
     return () => {
@@ -252,7 +252,7 @@ function AppContent() {
     try {
       await invoke('open_external_url', { url: CONTACT_URL });
     } catch (error) {
-      console.error('打开联系我们链接失败', error);
+      console.error('Failed to open the contact link', error);
     }
   };
 

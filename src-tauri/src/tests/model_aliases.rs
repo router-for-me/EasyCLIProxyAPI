@@ -565,10 +565,10 @@ fn thinking_alias_effort_accepts_provider_defined_levels() {
 #[test]
 fn existing_aliases_with_spaces_can_be_loaded_and_deleted() {
     assert_eq!(
-        existing_thinking_alias_model_id(" Codex Auto Review ", "别名模型").unwrap(),
+        existing_thinking_alias_model_id(" Codex Auto Review ", "Alias model").unwrap(),
         "Codex Auto Review"
     );
-    assert!(validate_thinking_alias_model_id("Codex Auto Review", "别名模型").is_err());
+    assert!(validate_thinking_alias_model_id("Codex Auto Review", "Alias model").is_err());
     let content = "codex-api-key:\n  - name: provider\n    base-url: https://www.loomex.cc\n    models:\n      - name: codex-auto-review\n        alias: Codex Auto Review\n      - name: keep-me\n";
     let entries = thinking_aliases_from_yaml(content).unwrap();
     assert_eq!(entries.len(), 1);
@@ -615,7 +615,7 @@ fn thinking_alias_rejects_duplicate_client_visible_name() {
     assert!(
         add_model_alias_to_yaml(input, &source, "GPT-5.5-HIGH", "high", false)
             .unwrap_err()
-            .contains("已存在")
+            .contains("already exists")
     );
 }
 

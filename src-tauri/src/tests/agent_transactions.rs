@@ -82,7 +82,7 @@ custom_option = "keep-original"
     assert!(inspection
         .warnings
         .iter()
-        .any(|warning| warning.contains("自动重新同步")));
+        .any(|warning| warning.contains("resynchronized automatically")));
 
     let updated = update_agent_modification(
         AgentClient::Codex,

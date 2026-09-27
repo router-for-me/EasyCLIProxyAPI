@@ -33,7 +33,7 @@ fn object_at<'a>(root: &'a mut Value, keys: &[&str]) -> Result<&'a mut Value, St
     let mut value = root;
     for key in keys {
         if !value.is_object() {
-            return Err("Antigravity 配置字段必须是对象".into());
+            return Err("Antigravity configuration field must be an object".into());
         }
         value = value
             .as_object_mut()
@@ -42,7 +42,7 @@ fn object_at<'a>(root: &'a mut Value, keys: &[&str]) -> Result<&'a mut Value, St
             .or_insert_with(|| json!({}));
     }
     if !value.is_object() {
-        return Err("Antigravity 配置字段必须是对象".into());
+        return Err("Antigravity configuration field must be an object".into());
     }
     Ok(value)
 }
@@ -57,7 +57,7 @@ pub(crate) fn build_antigravity_config(
 ) -> Result<String, String> {
     let mut root = parse(path, existing)?;
     if !root.is_object() {
-        return Err("Antigravity 配置根节点必须是对象".into());
+        return Err("Antigravity configuration root must be an object".into());
     }
     if path
         .file_name()
@@ -178,7 +178,7 @@ pub(crate) fn antigravity_has_marker(
     _client: AgentClient,
     paths: &[PathBuf],
 ) -> Result<bool, String> {
-    let path = paths.get(1).ok_or("Antigravity CLI 配置路径缺失")?;
+    let path = paths.get(1).ok_or("Antigravity CLI configuration path is missing")?;
     let root = parse(path, read_optional_text(path)?.as_deref())?;
     Ok(root.get("provider").and_then(Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID))
 }
@@ -191,7 +191,7 @@ pub(crate) fn inspect_antigravity_config(
 ) -> Result<(bool, Option<String>), String> {
     let settings = parse(&paths[0], read_optional_text(&paths[0])?.as_deref())?;
     let origin = managed_core_loopback_origin(port);
-    let path = paths.get(1).ok_or("Antigravity CLI 配置路径缺失")?;
+    let path = paths.get(1).ok_or("Antigravity CLI configuration path is missing")?;
     let connection = parse(path, read_optional_text(path)?.as_deref())?;
     let model = connection
         .get("model")
@@ -247,32 +247,32 @@ pub(crate) fn antigravity_helper_requested(args: &[std::ffi::OsString]) -> bool 
 
 fn antigravity_helper_command(args: &[std::ffi::OsString]) -> Result<Command, String> {
     if !args.get(1).is_some_and(|a| a == "--cpa-antigravity-cli") {
-        return Err("未知的 Antigravity 启动参数".into());
+        return Err("Unknown Antigravity launch argument".into());
     }
     let home = args
         .get(2)
         .map(PathBuf::from)
-        .ok_or("Antigravity CLI 启动参数缺少用户目录")?;
+        .ok_or("Antigravity CLI launch arguments are missing the user directory")?;
     let paths = antigravity_config_paths(AgentClient::AntigravityCli, &home);
     let connection = parse(&paths[1], read_optional_text(&paths[1])?.as_deref())?;
     if connection.get("provider").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID) {
-        return Err("Antigravity CLI 的 CPA 配置已关闭，请重新应用配置".into());
+        return Err("CPA configuration is disabled in Antigravity CLI. Apply the configuration again".into());
     }
     let key = connection
         .get("apiKey")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .ok_or("Antigravity CLI 密钥缺失")?;
+        .ok_or("Antigravity CLI key is missing")?;
     let url = connection
         .get("baseUrl")
         .and_then(Value::as_str)
         .filter(|s| !s.trim().is_empty())
-        .ok_or("Antigravity CLI 地址缺失")?;
+        .ok_or("Antigravity CLI address is missing")?;
     let model = connection
         .get("model")
         .and_then(Value::as_str)
         .filter(|s| !s.trim().is_empty())
-        .ok_or("Antigravity CLI 模型缺失")?;
+        .ok_or("Antigravity CLI model is missing")?;
     let settings = parse(&paths[0], read_optional_text(&paths[0])?.as_deref())?;
     if settings.get("modelProvider").and_then(Value::as_str) != Some("gemini")
         || field(
@@ -287,9 +287,9 @@ fn antigravity_helper_command(args: &[std::ffi::OsString]) -> Result<Command, St
         .and_then(Value::as_str)
             != Some(model)
     {
-        return Err("Antigravity CLI 配置已变化，请重新应用配置".into());
+        return Err("Antigravity CLI configuration has changed. Apply the configuration again".into());
     }
-    let executable = find_antigravity_cli(&home).ok_or("未找到 Antigravity CLI")?;
+    let executable = find_antigravity_cli(&home).ok_or("Antigravity CLI not found")?;
     let mut command = Command::new(executable);
     command
         .arg(format!("--gemini_dir={}", home.join(".gemini").display()))
@@ -312,13 +312,13 @@ pub(crate) fn run_antigravity_helper(args: &[std::ffi::OsString]) -> Result<i32,
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        return Err(format!("启动 Antigravity 失败: {}", command.exec()));
+        return Err(format!("Failed to start Antigravity: {}", command.exec()));
     }
     #[cfg(not(unix))]
     {
         let mut child = command
             .spawn()
-            .map_err(|error| format!("启动 Antigravity 失败: {error}"))?;
+            .map_err(|error| format!("Failed to start Antigravity: {error}"))?;
         #[cfg(target_os = "windows")]
         let job = match attach_child_to_windows_job(&child) {
             Ok(job) => job,
@@ -337,6 +337,6 @@ pub(crate) fn run_antigravity_helper(args: &[std::ffi::OsString]) -> Result<i32,
         }
         result
             .map(|s| s.code().unwrap_or(1))
-            .map_err(|error| format!("等待 Antigravity 退出失败: {error}"))
+            .map_err(|error| format!("Failed while waiting for Antigravity to exit: {error}"))
     }
 }

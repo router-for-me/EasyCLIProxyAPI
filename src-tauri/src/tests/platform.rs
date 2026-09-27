@@ -51,14 +51,14 @@ fn windows_tray_presentation_tracks_core_state_and_busy_actions() {
 }
 
 #[test]
-fn app_locale_normalization_has_a_stable_chinese_fallback() {
+fn app_locale_normalization_has_a_stable_english_fallback() {
     assert_eq!(normalize_app_locale("en"), "en");
     assert_eq!(normalize_app_locale("en-US"), "en");
     assert_eq!(normalize_app_locale("ja-JP"), "ja");
     assert_eq!(normalize_app_locale("zh-TW"), "zh-TW");
     assert_eq!(normalize_app_locale("zh-Hant-HK"), "zh-TW");
-    assert_eq!(normalize_app_locale("unsupported"), "zh-CN");
-    assert_eq!(GuiConfigFile::default().locale, "zh-CN");
+    assert_eq!(normalize_app_locale("unsupported"), "en");
+    assert_eq!(GuiConfigFile::default().locale, "en");
 }
 
 #[cfg(target_os = "windows")]

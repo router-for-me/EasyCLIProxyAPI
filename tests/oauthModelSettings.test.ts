@@ -186,6 +186,6 @@ describe('credential model exclusion metadata', () => {
       expect(() => authFileExcludedRulesFromPayload(payload)).toThrow();
     }
     expect(() => authFileExcludedRulesFromPayload('{"access_token": "sensitive-token"'))
-      .toThrow('无法读取凭证文件内容，未加载模型设置');
+      .toThrow('Could not read the credential file; model settings were not loaded');
   });
 });

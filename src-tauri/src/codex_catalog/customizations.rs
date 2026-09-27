@@ -80,7 +80,7 @@ fn editable_configuration(model: &Map<String, Value>) -> Map<String, Value> {
 fn validate_configuration(model: &Map<String, Value>) -> Result<(), String> {
     for field in model.keys() {
         if !EDITABLE_FIELDS.contains(&field.as_str()) {
-            return Err(format!("不允许修改模型字段 {field}"));
+            return Err(format!("Model field {field} cannot be modified"));
         }
     }
     for field in [
@@ -96,7 +96,7 @@ fn validate_configuration(model: &Map<String, Value>) -> Result<(), String> {
                 .as_u64()
                 .is_some_and(|value| (1..=9_007_199_254_740_991).contains(&value))
             {
-                return Err(format!("{field} 必须是有效的正整数"));
+                return Err(format!("{field} must be a valid positive integer"));
             }
         }
     }
@@ -105,14 +105,14 @@ fn validate_configuration(model: &Map<String, Value>) -> Result<(), String> {
         model.get("max_context_window").and_then(Value::as_u64),
     ) {
         if maximum < context {
-            return Err("最大上下文窗口不能小于上下文窗口".to_string());
+            return Err("Maximum context window cannot be smaller than the context window".to_string());
         }
         if model
             .get("auto_compact_token_limit")
             .and_then(Value::as_u64)
             .is_some_and(|limit| limit > context)
         {
-            return Err("自动压缩阈值不能大于上下文窗口".to_string());
+            return Err("Automatic compaction threshold cannot exceed the context window".to_string());
         }
     }
     if let Some(value) = model.get("effective_context_window_percent") {
@@ -120,7 +120,7 @@ fn validate_configuration(model: &Map<String, Value>) -> Result<(), String> {
             .as_u64()
             .is_some_and(|value| (1..=100).contains(&value))
         {
-            return Err("有效上下文比例必须为 1 到 100 的整数".to_string());
+            return Err("Effective context percentage must be an integer from 1 to 100".to_string());
         }
     }
     for field in ["display_name", "description"] {
@@ -131,61 +131,61 @@ fn validate_configuration(model: &Map<String, Value>) -> Result<(), String> {
             if !value.as_str().is_some_and(|text| {
                 text.len() <= 4_000 && (field == "description" || !text.trim().is_empty())
             }) {
-                return Err(format!("{field} 必须是有效的文本"));
+                return Err(format!("{field} must be valid text"));
             }
         }
     }
     if let Some(value) = model.get("visibility") {
         if !matches!(value.as_str(), Some("list" | "hide" | "none")) {
-            return Err("模型显示状态无效".to_string());
+            return Err("Invalid model display status".to_string());
         }
     }
     if let Some(value) = model.get("supports_parallel_tool_calls") {
         if !value.is_boolean() {
-            return Err("并行工具调用必须为布尔值".to_string());
+            return Err("Parallel tool calls must be a boolean".to_string());
         }
     }
     if let Some(value) = model.get("input_modalities") {
-        let modalities = value.as_array().ok_or("输入类型必须为数组")?;
+        let modalities = value.as_array().ok_or("Input types must be an array")?;
         let mut seen = HashSet::new();
         if modalities.is_empty()
             || modalities.iter().any(|value| {
                 !matches!(value.as_str(), Some("text" | "image")) || !seen.insert(value.as_str())
             })
         {
-            return Err("输入类型仅允许不重复的 text 和 image，且至少选择一项".to_string());
+            return Err("Input types may contain only unique text and image values, with at least one selected".to_string());
         }
     }
     let default = model.get("default_reasoning_level");
     if let Some(value) = default {
         if !value.is_null() && !value.as_str().is_some_and(is_allowed_reasoning_level) {
-            return Err("默认思考等级无效".to_string());
+            return Err("Invalid default reasoning level".to_string());
         }
     }
     if let Some(value) = model.get("supported_reasoning_levels") {
-        let levels = value.as_array().ok_or("思考等级必须为数组")?;
+        let levels = value.as_array().ok_or("Reasoning levels must be an array")?;
         let mut seen = HashSet::new();
         for level in levels {
             let effort = level
                 .get("effort")
                 .and_then(Value::as_str)
-                .ok_or("思考等级缺少 effort")?;
+                .ok_or("Reasoning level is missing effort")?;
             if !is_allowed_reasoning_level(effort) || !seen.insert(effort) {
-                return Err(format!("思考等级无效或重复: {effort}"));
+                return Err(format!("Invalid or duplicate reasoning level: {effort}"));
             }
             if !level
                 .get("description")
                 .and_then(Value::as_str)
                 .is_some_and(|text| text.len() <= 4_000)
             {
-                return Err("思考等级说明必须是有效的文本".to_string());
+                return Err("Reasoning level description must be valid text".to_string());
             }
         }
         if default
             .and_then(Value::as_str)
             .is_some_and(|effort| !seen.contains(effort))
         {
-            return Err("默认思考等级必须包含在可选等级中".to_string());
+            return Err("Default reasoning level must be included in the available levels".to_string());
         }
     }
     Ok(())
@@ -199,7 +199,7 @@ pub(super) fn apply_customizations(
     if let Some(customization) = customizations.get(&normalize_id(&slug)) {
         model.extend(customization.clone());
         validate_configuration(&editable_configuration(model))
-            .map_err(|error| format!("模型 {slug} 的自定义配置无效: {error}"))?;
+            .map_err(|error| format!("Invalid custom configuration for model {slug}: {error}"))?;
         enable_fast_mode(model);
     }
     Ok(())
@@ -219,9 +219,9 @@ pub(super) fn snapshot_for_state(
     let mut models = Vec::new();
     for value in root["models"]
         .as_array()
-        .ok_or("模型目录缺少 models 数组")?
+        .ok_or("Model catalog is missing a models array")?
     {
-        let mut model = value.as_object().cloned().ok_or("模型目录条目必须为对象")?;
+        let mut model = value.as_object().cloned().ok_or("Model catalog entry must be an object")?;
         let slug = string_value(&model, "slug");
         let key = normalize_id(&slug);
         let defaults = editable_configuration(&model);
@@ -252,7 +252,7 @@ pub(crate) fn editor_snapshot(
 ) -> Result<CatalogEditorSnapshot, String> {
     let state = catalog_state()?
         .read()
-        .map_err(|_| "Codex 模型目录内存锁已损坏")?;
+        .map_err(|_| "Codex model catalog memory lock is poisoned")?;
     snapshot_for_state(runtime_models, &state)
 }
 
@@ -264,7 +264,7 @@ fn customizations_from_request(
         return Err("CODEX_MODEL_CATALOG_CHANGED".to_string());
     }
     if request.models.len() != snapshot.models.len() {
-        return Err("模型列表已变化，请重新加载后编辑".to_string());
+        return Err("Model list has changed. Reload it before editing".to_string());
     }
     let mut seen = HashSet::new();
     let mut customizations = BTreeMap::new();
@@ -274,15 +274,15 @@ fn customizations_from_request(
             .models
             .iter()
             .find(|model| normalize_id(&model.slug) == key)
-            .ok_or_else(|| format!("模型 {} 已不在当前列表中", requested.slug))?;
+            .ok_or_else(|| format!("Model {} is no longer in the current list", requested.slug))?;
         if !seen.insert(key.clone()) {
-            return Err(format!("模型 {} 重复", requested.slug));
+            return Err(format!("Duplicate model {}", requested.slug));
         }
         if requested.configuration.len() != EDITABLE_FIELDS.len() {
-            return Err(format!("模型 {} 的配置字段不完整", requested.slug));
+            return Err(format!("Model {} has incomplete configuration fields", requested.slug));
         }
         validate_configuration(&requested.configuration)
-            .map_err(|error| format!("模型 {}: {error}", requested.slug))?;
+            .map_err(|error| format!("Model {}: {error}", requested.slug))?;
         let mut changes: Map<String, Value> = requested
             .configuration
             .iter()
@@ -313,18 +313,18 @@ fn customizations_from_request(
 
 fn decode_customizations(content: &[u8]) -> Result<ModelCustomizations, String> {
     if content.len() > crate::MAX_CODEX_MODEL_CATALOG_BYTES {
-        return Err("Codex 自定义模型配置超过大小限制".to_string());
+        return Err("Codex custom model configuration exceeds the size limit".to_string());
     }
     let saved: SavedCustomizations =
         serde_json::from_slice(content).map_err(|error| error.to_string())?;
     if saved.version != 1 {
-        return Err("不支持的 Codex 自定义模型配置版本".to_string());
+        return Err("Unsupported Codex custom model configuration version".to_string());
     }
     let mut normalized = BTreeMap::new();
     for (slug, model) in saved.models {
         let key = normalize_id(&slug);
         if key.is_empty() || normalized.contains_key(&key) {
-            return Err("自定义模型 ID 为空或重复".to_string());
+            return Err("Custom model ID is empty or duplicated".to_string());
         }
         validate_configuration(&model)?;
         normalized.insert(key, model);
@@ -336,12 +336,12 @@ pub(crate) fn load_customizations(path: &Path) -> Result<(), String> {
     let content = match std::fs::read(path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("读取 Codex 自定义模型配置失败: {error}")),
+        Err(error) => return Err(format!("Failed to read Codex custom model configuration: {error}")),
     };
     let customizations = decode_customizations(&content)?;
     let mut state = catalog_state()?
         .write()
-        .map_err(|_| "Codex 模型目录内存锁已损坏")?;
+        .map_err(|_| "Codex model catalog memory lock is poisoned")?;
     state.customizations = customizations;
     Ok(())
 }
@@ -360,7 +360,7 @@ fn save_for_state(
     };
     let content = serde_json::to_vec_pretty(&saved).map_err(|error| error.to_string())?;
     if content.len() > crate::MAX_CODEX_MODEL_CATALOG_BYTES {
-        return Err("Codex 自定义模型配置超过大小限制".to_string());
+        return Err("Codex custom model configuration exceeds the size limit".to_string());
     }
     crate::write_bytes_atomically(path, &content)?;
     state.customizations = saved.models;
@@ -374,7 +374,7 @@ pub(crate) fn save_customizations(
 ) -> Result<CatalogEditorSnapshot, String> {
     let mut state = catalog_state()?
         .write()
-        .map_err(|_| "Codex 模型目录内存锁已损坏")?;
+        .map_err(|_| "Codex model catalog memory lock is poisoned")?;
     save_for_state(path, runtime_models, request, &mut state)
 }
 

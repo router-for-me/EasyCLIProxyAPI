@@ -47,13 +47,13 @@ pub(crate) fn acquire_app_instance_guard_for(
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, wide_name.as_ptr()) };
     if handle.is_null() {
         return Err(format!(
-            "创建当前目录的软件实例锁失败: {}",
+            "Failed to create application instance lock for the current directory: {}",
             std::io::Error::last_os_error()
         ));
     }
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         unsafe { CloseHandle(handle) };
-        return Err("当前 EasyCLIProxyAPI 目录已经有一个软件实例在运行".to_string());
+        return Err("An application instance is already running in the current EasyCLIProxyAPI directory".to_string());
     }
 
     Ok(AppInstanceGuard {
@@ -76,15 +76,15 @@ pub(crate) fn acquire_app_instance_guard_for(
         .write(true)
         .create(true)
         .open(&lock_path)
-        .map_err(|error| format!("打开当前目录的软件实例锁失败: {error}"))?;
+        .map_err(|error| format!("Failed to open application instance lock for the current directory: {error}"))?;
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result != 0 {
         let error = std::io::Error::last_os_error();
         let raw_error = error.raw_os_error();
         if raw_error == Some(libc::EWOULDBLOCK) || raw_error == Some(libc::EAGAIN) {
-            return Err("当前 EasyCLIProxyAPI 目录已经有一个软件实例在运行".to_string());
+            return Err("An application instance is already running in the current EasyCLIProxyAPI directory".to_string());
         }
-        return Err(format!("锁定当前 EasyCLIProxyAPI 目录失败: {error}"));
+        return Err(format!("Failed to lock the current EasyCLIProxyAPI directory: {error}"));
     }
 
     Ok(AppInstanceGuard { _file: file })

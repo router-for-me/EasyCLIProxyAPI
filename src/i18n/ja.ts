@@ -1461,6 +1461,7 @@ export const jaOverrides = {
   'kernel.error.port': 'ポートは 1～65535 の範囲で指定してください',
   'kernel.error.installTask': 'インストールタスクを読み込めませんでした：{error}',
   'kernel.install.installingVersion': '{version} をインストールしています',
+  'kernel.install.installingLatest': '最新バージョンをインストールしています',
   'kernel.phase.preparingDownload': 'ダウンロードを準備中',
   'kernel.phase.downloading': 'ダウンロード中',
   'kernel.phase.extracting': '展開中',

@@ -1461,6 +1461,7 @@ export const en: Record<MessageKey, string> = {
   'kernel.error.port': 'The port must be between 1 and 65535',
   'kernel.error.installTask': 'Failed to read the installation task: {error}',
   'kernel.install.installingVersion': 'Installing {version}',
+  'kernel.install.installingLatest': 'Installing the latest version',
   'kernel.phase.preparingDownload': 'Preparing Download',
   'kernel.phase.downloading': 'Downloading',
   'kernel.phase.extracting': 'Extracting',

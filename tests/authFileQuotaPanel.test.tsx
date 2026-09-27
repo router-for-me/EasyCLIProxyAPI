@@ -53,10 +53,10 @@ it.each([
   const credentialHtml = renderToStaticMarkup(<I18nProvider><AuthFileQuotaPanel file={file} quota={quota} disabled={file.disabled} onRefresh={() => {}} onReset={onReset} /></I18nProvider>);
   const quotaHtml = renderToStaticMarkup(<I18nProvider><QuotaCard file={file} quota={quota} onRefresh={() => {}} onReset={onReset} /></I18nProvider>);
   const buttonState = (html: string) => {
-    const button = html.match(/<button[^>]*title="重置额度"[^>]*>重置额度<\/button>/)?.[0];
+    const button = html.match(/<button[^>]*title="Reset Quota"[^>]*>Reset Quota<\/button>/)?.[0];
     return { visible: Boolean(button), disabled: Boolean(button?.includes('disabled=""')) };
   };
   expect(buttonState(credentialHtml)).toEqual({ visible: values.visible, disabled: values.disabled });
   expect(buttonState(credentialHtml)).toEqual(buttonState(quotaHtml));
-  if (values.loading) expect(credentialHtml).toContain('正在提交重置并刷新额度');
+  if (values.loading) expect(credentialHtml).toContain('Submitting reset and refreshing quota');
 });

@@ -113,11 +113,11 @@ describe('credential health and cooldowns', () => {
   });
 
   it('does not render elapsed timers as healthy, or hide disabled state behind a cooldown', () => {
-    expect(render({ status: 'active', cooldowns: [record] }, receivedAtMs - 60_000)).toContain('冷却计时已到期');
-    expect(render({ disabled: true, status: 'error', cooldowns: [record] })).toContain('已停用');
-    expect(render({ status: 'error', unavailable: true })).toContain('无法确定恢复时间');
-    expect(render({ status: 'active', cooldowns: null })).toContain('冷却状态未知');
+    expect(render({ status: 'active', cooldowns: [record] }, receivedAtMs - 60_000)).toContain('Cooldown timer elapsed');
+    expect(render({ disabled: true, status: 'error', cooldowns: [record] })).toContain('Disabled');
+    expect(render({ status: 'error', unavailable: true })).toContain('recovery time is unknown');
+    expect(render({ status: 'active', cooldowns: null })).toContain('Cooldown state is unknown');
     const expiredToken = render({ status: 'error', status_message: 'token expired', cooldowns: [record] }, receivedAtMs - 60_000);
-    expect(expiredToken.slice(0, expiredToken.indexOf('</summary>'))).toContain('访问令牌已过期');
+    expect(expiredToken.slice(0, expiredToken.indexOf('</summary>'))).toContain('Access token expired');
   });
 });

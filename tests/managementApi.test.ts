@@ -15,6 +15,6 @@ describe('apiCallErrorMessage', () => {
   });
 
   it('没有错误体时回退到 HTTP 状态', () => {
-    expect(apiCallErrorMessage({ status_code: 429 })).toBe('上游返回 HTTP 429');
+    expect(apiCallErrorMessage({ status_code: 429 })).toBe('Upstream returned HTTP 429');
   });
 });

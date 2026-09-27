@@ -8,7 +8,7 @@ fn alias_config_is_unchanged(current: &str, latest: &str) -> Result<bool, String
 fn validate_alias_api_access_preserved(current: &str, updated: &str) -> Result<(), String> {
     let parse = |content: &str| {
         serde_norway::from_str::<serde_norway::Value>(content)
-            .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))
+            .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))
     };
     let current = parse(current)?;
     let updated = parse(updated)?;
@@ -27,7 +27,7 @@ fn validate_alias_api_access_preserved(current: &str, updated: &str) -> Result<(
             }
             let providers = value
                 .as_sequence_mut()
-                .ok_or_else(|| format!("{section} 必须是数组，已拒绝保存别名"))?;
+                .ok_or_else(|| format!("{section} must be an array; alias was not saved"))?;
             if MODEL_ALIAS_CONFIG_SECTIONS.contains(&section) {
                 for provider in providers {
                     if let Some(provider) = provider.as_mapping_mut() {
@@ -39,7 +39,7 @@ fn validate_alias_api_access_preserved(current: &str, updated: &str) -> Result<(
         };
         if without_models(&current)? != without_models(&updated)? {
             return Err(format!(
-                "别名更新意外改变了 API 接入配置（{section}），已拒绝写入"
+                "The alias update unexpectedly changed API access configuration ({section}); write rejected"
             ));
         }
     }
@@ -70,7 +70,7 @@ pub(crate) async fn commit_management_alias_config_changes<T>(
     let changes = management_alias_config_changes(current, updated)?;
     let latest = fetch_management_config_yaml(config).await?;
     if !alias_config_is_unchanged(current, &latest)? {
-        return Err("配置已变化，请关闭编辑器并刷新后重试".to_string());
+        return Err("Configuration changed. Close the editor, refresh, and try again".to_string());
     }
     let result = async {
         if let Some(aliases) = changes.oauth_model_aliases.as_ref() {
@@ -85,8 +85,8 @@ pub(crate) async fn commit_management_alias_config_changes<T>(
     match result {
         Ok(value) => Ok(value),
         Err(error) => Err(match restore_management_alias_config(config, current, updated).await {
-            Ok(()) => format!("保存失败，已恢复原配置，可重试：{error}"),
-            Err(restore_error) => format!("保存失败：{error}；自动恢复失败，配置可能已部分写入，请关闭编辑器并刷新检查：{restore_error}"),
+            Ok(()) => format!("Save failed. Original configuration was restored; you can retry: {error}"),
+            Err(restore_error) => format!("Save failed: {error}; automatic restoration failed, and the configuration may be partially written. Close the editor, refresh, and inspect it: {restore_error}"),
         }),
     }
 }
@@ -103,7 +103,7 @@ async fn restore_management_alias_config(
         || (from_current.oauth_model_aliases.is_some()
             && from_updated.oauth_model_aliases.is_some())
     {
-        return Err("检测到其他配置修改，未覆盖这些修改".to_string());
+        return Err("Other configuration changes were detected and were not overwritten".to_string());
     }
     let mut errors = Vec::new();
     if from_current.update_config_yaml {
@@ -120,7 +120,7 @@ async fn restore_management_alias_config(
         return Err(errors.join("；"));
     }
     if !alias_config_is_unchanged(current, &fetch_management_config_yaml(config).await?)? {
-        return Err("恢复后配置与原配置不一致".to_string());
+        return Err("Restored configuration does not match the original configuration".to_string());
     }
     Ok(())
 }

@@ -43,8 +43,8 @@ describe('Devin live quota', () => {
       { id: 'weekly', remainingPercent: 81.25, resetAtMs: 1893542400000 },
     ] });
     expect(quotaRowsFor('devin', liveStatus({ dailyQuotaRemainingPercent: 0 }))).toEqual([
-      { label: '每日额度', remainingPercent: 0, resetAtMs: undefined },
-      { label: '每周额度', remainingPercent: null, resetAtMs: undefined },
+      { label: 'Daily quota', remainingPercent: 0, resetAtMs: undefined },
+      { label: 'Weekly quota', remainingPercent: null, resetAtMs: undefined },
     ]);
   });
   it('does not turn malformed, missing or cached metadata into live quota', () => {

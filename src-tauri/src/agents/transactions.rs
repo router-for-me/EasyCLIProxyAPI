@@ -31,7 +31,7 @@ fn integration_managed_paths<'a>(client: &str, paths: &'a [PathBuf]) -> &'a [Pat
 fn integration_state_path(client: &str, paths: &[PathBuf]) -> Result<PathBuf, String> {
     let paths = integration_managed_paths(client, paths);
     let identity = sha256_bytes(
-        &serde_json::to_vec(paths).map_err(|_| "生成接入配置标识失败".to_string())?,
+        &serde_json::to_vec(paths).map_err(|_| "Failed to generate access configuration marker".to_string())?,
     );
     Ok(agent_data_directory(paths)?
         .join("agents")
@@ -49,7 +49,7 @@ fn parse_integration_state(
         return Ok(None);
     };
     let state: AgentIntegrationState = serde_json::from_slice(bytes)
-        .map_err(|_| "接入配置合并状态损坏，请先手动备份配置".to_string())?;
+        .map_err(|_| "Access configuration merge state is corrupted. Back up the configuration manually first".to_string())?;
     let paths = integration_managed_paths(client, paths);
     let valid_images = |images: &Images| {
         images.len() == paths.len()
@@ -64,13 +64,13 @@ fn parse_integration_state(
         || !valid_images(&state.original)
         || !valid_images(&state.applied)
     {
-        return Err("接入配置合并状态与当前客户端不匹配，请先手动备份配置".into());
+        return Err("Access configuration merge state does not match the current client. Back up the configuration manually first".into());
     }
     Ok(Some(state))
 }
 
 fn integration_state_bytes(state: &AgentIntegrationState) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(state).map_err(|_| "生成接入配置合并状态失败".to_string())
+    serde_json::to_vec(state).map_err(|_| "Failed to generate access configuration merge state".to_string())
 }
 
 fn merge_user_value(
@@ -126,18 +126,18 @@ fn merge_user_image(
         return Ok(None);
     };
     let current_text = std::str::from_utf8(current)
-        .map_err(|_| format!("配置不是 UTF-8 文本: {}", path_to_string(path)))?;
+        .map_err(|_| format!("Configuration is not UTF-8 text: {}", path_to_string(path)))?;
     let applied_value = parse(
         path,
         applied
-            .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "接入状态不是 UTF-8 文本"))
+            .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "Access state is not UTF-8 text"))
             .transpose()?,
     )?;
     let current_value = parse(path, Some(current_text))?;
     let baseline_value = parse(
         path,
         baseline
-            .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "原始状态不是 UTF-8 文本"))
+            .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "Original state is not UTF-8 text"))
             .transpose()?,
     )?;
     let mut merged = merge_user_value(
@@ -240,7 +240,7 @@ pub(crate) fn config_paths(client: &str, home: &Path) -> Result<Vec<PathBuf>, St
     }
     let client = AgentClient::parse(client)?;
     if !client.supported_platform() {
-        return Err("当前平台不支持此智能体配置".into());
+        return Err("The current platform does not support this agent configuration".into());
     }
     Ok(expected_agent_record_paths(
         client,
@@ -254,7 +254,7 @@ pub(crate) fn validate_config_path(path: &Path) -> Result<(), String> {
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))
     {
-        return Err("配置路径必须是绝对路径且不能越界".into());
+        return Err("Configuration path must be absolute and remain within bounds".into());
     }
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
@@ -267,16 +267,16 @@ pub(crate) fn validate_config_path(path: &Path) -> Result<(), String> {
                 };
                 if linked {
                     return Err(format!(
-                        "配置路径不能包含符号链接: {}",
+                        "Configuration path cannot contain symbolic links: {}",
                         path_to_string(ancestor)
                     ));
                 }
                 if ancestor == path && !meta.is_file() {
-                    return Err("配置路径不是普通文件".into());
+                    return Err("Configuration path is not a regular file".into());
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(_) => return Err("无法检查配置路径".into()),
+            Err(_) => return Err("Unable to check configuration path".into()),
         }
     }
     Ok(())
@@ -321,10 +321,10 @@ pub(crate) fn write_config_images(client: &str, images: &Images) -> Result<(), S
                 write_agent_configuration_file(AgentClient::parse(client)?, path, bytes)?;
             }
         } else {
-            fs::remove_file(path).map_err(|_| "删除配置文件失败".to_string())?;
+            fs::remove_file(path).map_err(|_| "Failed to delete configuration file".to_string())?;
         }
         if read_agent_bytes(path)? != *bytes {
-            return Err("配置写后校验失败".into());
+            return Err("Configuration post-write verification failed".into());
         }
     }
     Ok(())
@@ -401,10 +401,10 @@ fn commit_config_transaction(
             .zip(paths)
             .any(|((p, _), expected)| p != expected)
     {
-        return Err("配置更新路径不匹配".into());
+        return Err("Configuration update path mismatch".into());
     }
     if config_images(paths)? != *before {
-        return Err("配置已被其他程序修改，请刷新后重试".into());
+        return Err("Configuration was modified by another program. Refresh and try again".into());
     }
     let mut previous = before.clone();
     let mut target = after.clone();
@@ -500,14 +500,14 @@ fn commit_config_transaction(
     }
     let all_paths = previous.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
     if config_images(&all_paths)? != previous {
-        return Err("配置已被其他程序修改，请刷新后重试".into());
+        return Err("Configuration was modified by another program. Refresh and try again".into());
     }
     let mut attempted = Vec::new();
     let result = (if checked {
         (|| {
             for (index, ((path, old), (_, next))) in previous.iter().zip(&target).enumerate() {
                 if read_agent_bytes(path)? != *old {
-                    return Err("配置已被其他程序修改".into());
+                    return Err("Configuration was modified by another program".into());
                 }
                 if old == next {
                     continue;
@@ -525,7 +525,7 @@ fn commit_config_transaction(
         if config_images(&all_paths)? == target {
             Ok(())
         } else {
-            Err("配置写后校验失败".into())
+            Err("Configuration post-write verification failed".into())
         }
     });
     if result.is_err() {
@@ -540,7 +540,7 @@ fn commit_config_transaction(
                 failed |= writer(client, &vec![previous[index].clone()]).is_err();
             }
             if failed {
-                Err("回滚失败".into())
+                Err("Rollback failed".into())
             } else {
                 Ok(())
             }
@@ -551,13 +551,13 @@ fn commit_config_transaction(
             if config_images(&all_paths)? == previous {
                 Ok(())
             } else {
-                Err("回滚校验失败".into())
+                Err("Rollback verification failed".into())
             }
         });
         return Err(if rollback.is_ok() {
-            "配置写入失败，已回滚本次修改"
+            "Configuration write failed; this change was rolled back"
         } else {
-            "配置写入失败且回滚失败，请检查配置并使用手动备份恢复或基础配置模板修复"
+            "Configuration write and rollback both failed. Check the configuration and restore it from a manual backup or repair it with the base configuration template"
         }
         .into());
     }
@@ -581,7 +581,7 @@ pub(crate) fn validate_client_config_images(client: &str, images: &Images) -> Re
     }
     for (path, bytes) in images {
         if !parse(path, text(bytes.as_deref())?)?.is_object() {
-            return Err("配置根节点必须是对象".into());
+            return Err("Configuration root must be an object".into());
         }
     }
     if matches!(client, "opencode" | "openclaw") {
@@ -597,7 +597,7 @@ pub(crate) fn validate_client_config_images(client: &str, images: &Images) -> Re
         if let Some(content) = text(bytes.as_deref())? {
             serde_json::from_str::<Value>(content.strip_prefix('\u{feff}').unwrap_or(content))
                 .map_err(|_| {
-                    "配置 JSON 格式错误，请使用手动备份恢复或基础配置模板修复".to_string()
+                    "Invalid configuration JSON. Restore it from a manual backup or repair it with the base configuration template".to_string()
                 })?;
         }
     }
@@ -619,7 +619,7 @@ pub(crate) fn prepare_config_updates(
         let entry = after
             .iter_mut()
             .find(|(path, _)| path == &update.path)
-            .ok_or("配置更新路径不匹配")?;
+            .ok_or("Configuration update path mismatch")?;
         let mut rendered = update.after.clone();
         let mut generated = parse(&update.path, Some(&rendered))?;
         if !template {
@@ -653,7 +653,7 @@ pub(crate) fn prepare_config_updates(
                 .iter()
                 .any(|p| updates.iter().filter(|u| &u.path == p).count() != 1))
     {
-        return Err("基础配置模板必须覆盖整组文件".into());
+        return Err("Base configuration template must cover the entire file group".into());
     }
     validate_client_config_images(client, &after)?;
     Ok(after)
@@ -809,7 +809,7 @@ pub(crate) fn config_package_operation(
 ) -> Result<(), String> {
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "配置文件锁已损坏")?;
+        .map_err(|_| "Configuration file lock is poisoned")?;
     let paths = config_paths(PI_AGENT_ID, home)?;
     let before = config_images(&paths)?;
     validate_config_images(&before)?;
@@ -818,8 +818,8 @@ pub(crate) fn config_package_operation(
         .is_err()
     {
         return match write_config_images(PI_AGENT_ID, &before) {
-            Ok(()) => Err("插件操作失败，已回滚本次配置修改".into()),
-            Err(_) => Err("插件操作失败且配置回滚失败，请检查配置".into()),
+            Ok(()) => Err("Plugin operation failed; this configuration change was rolled back".into()),
+            Err(_) => Err("Plugin operation and configuration rollback both failed. Check the configuration".into()),
         };
     }
     Ok(())
@@ -894,7 +894,7 @@ fn validate_unmanaged_preserved(
     };
     if project(before)? != project(after)? {
         return Err(format!(
-            "更新意外改变了自定义配置，已拒绝写入: {}",
+            "The update unexpectedly changed custom configuration and was not written: {}",
             path_to_string(path)
         ));
     }
@@ -903,7 +903,7 @@ fn validate_unmanaged_preserved(
 
 pub(crate) fn text(bytes: Option<&[u8]>) -> Result<Option<&str>, String> {
     bytes
-        .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "配置不是 UTF-8 文本".to_string()))
+        .map(|bytes| std::str::from_utf8(bytes).map_err(|_| "Configuration is not UTF-8 text".to_string()))
         .transpose()
 }
 
@@ -921,13 +921,13 @@ pub(crate) fn parse(path: &Path, content: Option<&str>) -> Result<Value, String>
     };
     let value = result.map_err(|_| {
         format!(
-            "{} 配置格式错误，请使用手动备份恢复或基础配置模板修复",
+            "Invalid {} configuration format. Restore it from a manual backup or repair it with the base configuration template",
             path_to_string(path)
         )
     })?;
     // WorkBuddy also saves models.json as a top-level array.
     if !value.is_object() && !(path.file_name().is_some_and(|n| n == "models.json") && value.is_array()) {
-        return Err(format!("{} 配置根节点必须是对象", path_to_string(path)));
+        return Err(format!("{} configuration root must be an object", path_to_string(path)));
     }
     Ok(value)
 }

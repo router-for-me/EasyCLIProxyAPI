@@ -604,7 +604,7 @@ describe('API 接入配置合并', () => {
     expect(parseProviderHeaders('Authorization: Bearer abc:def')).toEqual({
       Authorization: 'Bearer abc:def',
     });
-    expect(() => parseProviderHeaders('Invalid header')).toThrow('缺少冒号');
+    expect(() => parseProviderHeaders('Invalid header')).toThrow('missing a colon');
   });
 
   it('把未勾选的上游模型写入排除列表', () => {

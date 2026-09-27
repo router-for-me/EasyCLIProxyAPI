@@ -18,7 +18,7 @@ pub(crate) fn inspect_agent_config_statuses(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let api_key = effective_agent_api_key(config);
     let targets = [
         AgentStatusDetectionTarget::Client(AgentClient::ClaudeCode),
@@ -47,7 +47,7 @@ pub(crate) fn inspect_agent_config_statuses(
                 loop {
                     let next = queue
                         .lock()
-                        .map_err(|_| "智能体检测任务队列锁已损坏".to_string())?
+                        .map_err(|_| "Agent detection task queue lock is poisoned".to_string())?
                         .next();
                     let Some((index, target)) = next else {
                         return Ok(());
@@ -62,22 +62,22 @@ pub(crate) fn inspect_agent_config_statuses(
                     };
                     results
                         .lock()
-                        .map_err(|_| "智能体检测结果锁已损坏".to_string())?[index] = Some(status);
+                        .map_err(|_| "Agent detection result lock is poisoned".to_string())?[index] = Some(status);
                 }
             }));
         }
         for worker in workers {
             worker
                 .join()
-                .map_err(|_| "智能体检测工作线程异常退出".to_string())??;
+                .map_err(|_| "Agent detection worker thread exited unexpectedly".to_string())??;
         }
         Ok::<(), String>(())
     })?;
     results
         .into_inner()
-        .map_err(|_| "智能体检测结果锁已损坏".to_string())?
+        .map_err(|_| "Agent detection result lock is poisoned".to_string())?
         .into_iter()
-        .map(|status| status.ok_or_else(|| "智能体检测结果不完整".to_string()))
+        .map(|status| status.ok_or_else(|| "Agent detection result is incomplete".to_string()))
         .collect()
 }
 
@@ -89,7 +89,7 @@ pub(crate) fn refresh_agent_config_status_cache(
     let _refresh_guard = cache
         .refresh_lock
         .lock()
-        .map_err(|_| "智能体配置状态刷新锁已损坏".to_string())?;
+        .map_err(|_| "Agent configuration status refresh lock is poisoned".to_string())?;
     let config = gui_config_state.snapshot()?;
     let port = config.port;
     let api_key = effective_agent_api_key(&config);
@@ -109,7 +109,7 @@ pub(crate) async fn get_agent_config_statuses(
             let _refresh_guard = cache
                 .refresh_lock
                 .lock()
-                .map_err(|_| "智能体配置状态刷新锁已损坏".to_string())?;
+                .map_err(|_| "Agent configuration status refresh lock is poisoned".to_string())?;
             let config = gui_config_state.snapshot()?;
             let port = config.port;
             if let Some(statuses) = cache.get(port, effective_agent_api_key(&config))? {
@@ -119,7 +119,7 @@ pub(crate) async fn get_agent_config_statuses(
         refresh_agent_config_status_cache(&app, gui_config_state.inner(), cache.inner())
     })
     .await
-    .map_err(|error| format!("智能体检测后台任务失败: {error}"))?
+    .map_err(|error| format!("Agent detection background task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -132,7 +132,7 @@ pub(crate) async fn refresh_agent_config_statuses(
         refresh_agent_config_status_cache(&app, gui_config_state.inner(), cache.inner())
     })
     .await
-    .map_err(|error| format!("智能体检测后台任务失败: {error}"))?
+    .map_err(|error| format!("Agent detection background task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -171,7 +171,7 @@ pub(crate) async fn check_pi_provider_update(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let installed_version = read_pi_provider_version(&home)?;
     let Some(installed_version_value) = installed_version.as_deref() else {
         return Ok(PiProviderUpdateStatus {
@@ -200,14 +200,14 @@ pub(crate) async fn install_pi_provider(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
     let executable = find_pi_executable(&home);
     if executable.is_none()
         && !inspect_pi_provider_status(&home, config.port, effective_agent_api_key(&config))
             .config_exists
     {
-        return Err("未检测到 Pi CLI 或 Pi 配置文件".to_string());
+        return Err("Pi CLI and Pi configuration file were not detected".to_string());
     }
     let model = resolve_pi_default_model(&config, &model).await?;
     let port = config.port;
@@ -221,7 +221,7 @@ pub(crate) async fn install_pi_provider(
         }
     })
     .await
-    .map_err(|error| format!("安装 Pi CLIProxyAPI provider 任务失败: {error}"))??;
+    .map_err(|error| format!("Pi CLIProxyAPI provider installation task failed: {error}"))??;
     cache.clear()?;
     Ok(result)
 }
@@ -236,10 +236,10 @@ pub(crate) async fn update_pi_provider(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
     let executable = find_pi_executable(&home)
-        .ok_or_else(|| "未检测到 Pi CLI，请先安装 Pi 并确保 pi 命令在 PATH 中".to_string())?;
+        .ok_or_else(|| "Pi CLI was not detected. Install Pi and ensure the pi command is in PATH".to_string())?;
     let model = resolve_pi_default_model(&config, &model).await?;
     let port = config.port;
     let api_key = effective_agent_api_key(&config).to_string();
@@ -248,7 +248,7 @@ pub(crate) async fn update_pi_provider(
         update_pi_provider_inner(&home, &executable, port, &api_key, &model, &proxy_url)
     })
     .await
-    .map_err(|error| format!("更新 Pi 插件任务失败: {error}"))??;
+    .map_err(|error| format!("Pi plugin update task failed: {error}"))??;
     cache.clear()?;
     Ok(result)
 }
@@ -263,7 +263,7 @@ pub(crate) async fn repair_pi_provider(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
     let model = resolve_pi_default_model(&config, &model).await?;
     let port = config.port;
@@ -272,7 +272,7 @@ pub(crate) async fn repair_pi_provider(
         repair_pi_provider_inner(&home, port, &api_key, &model)
     })
     .await
-    .map_err(|error| format!("修复 Pi 配置任务失败: {error}"))??;
+    .map_err(|error| format!("Pi configuration repair task failed: {error}"))??;
     cache.clear()?;
     Ok(result)
 }
@@ -285,14 +285,14 @@ pub(crate) async fn uninstall_pi_provider(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("鏃犳硶鑾峰彇鐢ㄦ埛鐩綍: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let executable =
-        find_pi_executable(&home).ok_or_else(|| "鏈娴嬪埌 Pi CLI锛岃鍏堝畨瑁?Pi".to_string())?;
+        find_pi_executable(&home).ok_or_else(|| "Pi CLI was not detected. Install Pi first".to_string())?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         uninstall_pi_provider_inner(&home, &executable)
     })
     .await
-    .map_err(|error| format!("鍗歌浇 Pi 鎻掍欢浠诲姟澶辫触: {error}"))??;
+    .map_err(|error| format!("Pi plugin uninstall task failed: {error}"))??;
     cache.clear()?;
     Ok(result)
 }
@@ -302,7 +302,7 @@ pub(crate) fn check_codex_oauth_login(app: tauri::AppHandle) -> Result<(), Strin
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     validate_codex_oauth_login(&home)
 }
 
@@ -325,7 +325,7 @@ pub(crate) async fn update_codex_model_catalog_inner(
             .read_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(25)),
         &proxy_url,
-        "创建 Codex 模型目录更新客户端失败",
+        "Failed to create Codex model catalog update client",
     )?;
     let response = client
         .get(CODEX_MODEL_CATALOG_URL)
@@ -333,11 +333,11 @@ pub(crate) async fn update_codex_model_catalog_inner(
         .header(reqwest::header::USER_AGENT, APP_USER_AGENT)
         .send()
         .await
-        .map_err(|error| format!("从 GitHub 读取 Codex 模型目录失败: {error}"))?;
+        .map_err(|error| format!("Failed to read Codex model catalog from GitHub: {error}"))?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!(
-            "从 GitHub 读取 Codex 模型目录失败: HTTP {}",
+            "Failed to read Codex model catalog from GitHub: HTTP {}",
             status.as_u16()
         ));
     }
@@ -346,7 +346,7 @@ pub(crate) async fn update_codex_model_catalog_inner(
         .is_some_and(|size| size > MAX_CODEX_MODEL_CATALOG_BYTES as u64)
     {
         return Err(format!(
-            "GitHub Codex 模型目录超过 {} MiB 限制",
+            "GitHub Codex model catalog exceeds the {} MiB limit",
             MAX_CODEX_MODEL_CATALOG_BYTES / 1024 / 1024
         ));
     }
@@ -354,19 +354,19 @@ pub(crate) async fn update_codex_model_catalog_inner(
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| format!("读取 GitHub Codex 模型目录失败: {error}"))?;
+        let chunk = chunk.map_err(|error| format!("Failed to read GitHub Codex model catalog: {error}"))?;
         if bytes.len().saturating_add(chunk.len()) > MAX_CODEX_MODEL_CATALOG_BYTES {
             return Err(format!(
-                "GitHub Codex 模型目录超过 {} MiB 限制",
+                "GitHub Codex model catalog exceeds the {} MiB limit",
                 MAX_CODEX_MODEL_CATALOG_BYTES / 1024 / 1024
             ));
         }
         bytes.extend_from_slice(&chunk);
     }
     let catalog_json = String::from_utf8(bytes)
-        .map_err(|_| "GitHub Codex 模型目录不是有效的 UTF-8 文件".to_string())?;
+        .map_err(|_| "GitHub Codex model catalog is not a valid UTF-8 file".to_string())?;
     let revision = codex_catalog::validate_catalog_json(&catalog_json)
-        .map_err(|error| format!("GitHub Codex 模型目录校验失败: {error}"))?;
+        .map_err(|error| format!("GitHub Codex model catalog verification failed: {error}"))?;
 
     if revision < codex_catalog::current_catalog_revision()?
         || codex_catalog::current_catalog_json()? == catalog_json
@@ -388,7 +388,7 @@ pub(crate) fn codex_model_catalog_override_path(app: &tauri::AppHandle) -> Resul
     let app_data = app
         .path()
         .app_data_dir()
-        .map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+        .map_err(|error| format!("Failed to get application data directory: {error}"))?;
     Ok(app_data
         .join(CODEX_MODEL_CATALOG_OVERRIDE_DIR)
         .join(CODEX_MODEL_CATALOG_SOURCE_FILE))
@@ -400,9 +400,9 @@ pub(crate) fn load_codex_model_catalog_override(app: &tauri::AppHandle) -> Resul
         return Ok(());
     }
     let catalog_json = fs::read_to_string(&path)
-        .map_err(|error| format!("读取本地 Codex 模型目录更新文件失败: {error}"))?;
+        .map_err(|error| format!("Failed to read local Codex model catalog update file: {error}"))?;
     codex_catalog::activate_catalog_json(&catalog_json)
-        .map_err(|error| format!("本地 Codex 模型目录更新文件无效: {error}"))?;
+        .map_err(|error| format!("Invalid local Codex model catalog update file: {error}"))?;
     Ok(())
 }
 
@@ -509,7 +509,7 @@ pub(crate) async fn get_model_alias_edit_source(
     alias: String,
 ) -> Result<ModelAliasEditContext, String> {
     let config = gui_config_state.snapshot()?;
-    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
     let content = fetch_management_config_yaml(&config).await?;
     let definitions = fetch_oauth_model_definitions(&config).await;
     model_alias_edit_context(&content, &alias, &definitions)
@@ -528,17 +528,17 @@ pub(crate) async fn create_thinking_alias(
     let config = gui_config_state.snapshot()?;
     let source_id = source_id.trim().to_string();
     if source_id.is_empty() {
-        return Err("请先选择原模型".to_string());
+        return Err("Select the source model first".to_string());
     }
     let original_alias = original_alias
         .as_deref()
-        .map(|original| existing_thinking_alias_model_id(original, "别名模型"))
+        .map(|original| existing_thinking_alias_model_id(original, "Alias model"))
         .transpose()?;
     let alias = match original_alias.as_deref() {
         Some(original) if original.eq_ignore_ascii_case(alias.trim()) => {
-            existing_thinking_alias_model_id(&alias, "别名模型")?
+            existing_thinking_alias_model_id(&alias, "Alias model")?
         }
-        _ => validate_thinking_alias_model_id(&alias, "别名模型")?,
+        _ => validate_thinking_alias_model_id(&alias, "Alias model")?,
     };
     let effort = if effort.trim().is_empty() {
         String::new()
@@ -569,11 +569,11 @@ pub(crate) async fn create_thinking_alias(
             .into_iter()
             .find(|source| source.source.id == source_id)
             .ok_or_else(|| {
-                "原模型已不在内核当前可用模型中，或其配置来源已经变化，请刷新后重新选择".to_string()
+                "The source model is no longer available in the kernel, or its configuration source has changed. Refresh and select it again".to_string()
             })?
     };
     if fast && !alias_source_supports_fast(&source) {
-        return Err("Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 模型源".to_string());
+        return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
     if !effort.is_empty()
         && !source
@@ -583,12 +583,12 @@ pub(crate) async fn create_thinking_alias(
             .any(|level| level.eq_ignore_ascii_case(&effort))
     {
         return Err(format!(
-            "思考强度 {effort} 不在模型 {} 当前支持的等级中",
+            "Reasoning effort {effort} is not among the levels currently supported by model {}",
             source.source.model
         ));
     }
     if source.source.model.eq_ignore_ascii_case(&alias) {
-        return Err("别名模型不能和原模型相同".to_string());
+        return Err("Alias model cannot be the same as the source model".to_string());
     }
 
     if available_models.iter().any(|model| {
@@ -597,7 +597,7 @@ pub(crate) async fn create_thinking_alias(
                 .as_deref()
                 .is_some_and(|original| original.eq_ignore_ascii_case(&alias))
     }) {
-        return Err(format!("{alias} 已经是实际模型 ID，不能再作为别名"));
+        return Err(format!("{alias} is already an actual model ID and cannot also be used as an alias"));
     }
     let updated = match original_alias.as_deref() {
         Some(original) => edit_model_alias_in_yaml(&content, original, &source, &alias, &effort, fast)?,
@@ -614,7 +614,7 @@ pub(crate) async fn delete_thinking_alias(
     oauth_channel: Option<String>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
-    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
     let content = fetch_management_config_yaml(&config).await?;
     let updated =
         remove_thinking_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?;
@@ -660,9 +660,9 @@ pub(crate) async fn create_speed_alias(
     let config = gui_config_state.snapshot()?;
     let source_id = source_id.trim().to_string();
     if source_id.is_empty() {
-        return Err("请先选择原模型".to_string());
+        return Err("Select the source model first".to_string());
     }
-    let alias = validate_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = validate_thinking_alias_model_id(&alias, "Alias model")?;
     let content = fetch_management_config_yaml(&config).await?;
     let available_models =
         fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
@@ -678,24 +678,24 @@ pub(crate) async fn create_speed_alias(
         .find(|source| source.source.id == source_id)
         .cloned()
         .ok_or_else(|| {
-            "原模型已不在内核当前可用模型中，或其配置来源已经变化，请刷新后重试".to_string()
+            "The source model is no longer available in the kernel, or its configuration source has changed. Refresh and try again".to_string()
         })?;
     if source.source.model.eq_ignore_ascii_case(&alias) {
-        return Err("别名模型不能和原模型相同".to_string());
+        return Err("Alias model cannot be the same as the source model".to_string());
     }
     if available_models
         .iter()
         .any(|model| model.name.eq_ignore_ascii_case(&alias))
     {
-        return Err(format!("{alias} 已经是实际模型 ID，不能再作为别名"));
+        return Err(format!("{alias} is already an actual model ID and cannot also be used as an alias"));
     }
     let document = serde_norway::from_str::<serde_norway::Value>(&content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     if configured_model_alias_exists(root, &alias) {
-        return Err(format!("别名模型 {alias} 已存在"));
+        return Err(format!("Alias model {alias} already exists"));
     }
 
     let updated = add_speed_alias_to_yaml(&content, &source, &alias)?;
@@ -710,7 +710,7 @@ pub(crate) async fn delete_speed_alias(
     oauth_channel: Option<String>,
 ) -> Result<Vec<SpeedAliasEntry>, String> {
     let config = gui_config_state.snapshot()?;
-    let alias = existing_thinking_alias_model_id(&alias, "别名模型")?;
+    let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
     let content = fetch_management_config_yaml(&config).await?;
     let updated =
         remove_speed_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?;
@@ -723,7 +723,7 @@ pub(crate) async fn fetch_agent_models(
     api_key: &str,
 ) -> Result<Vec<AgentModelOption>, String> {
     if port == 0 {
-        return Err("内核端口无效".to_string());
+        return Err("Invalid kernel port".to_string());
     }
     let tls_enabled = managed_core_tls_enabled();
     let client = reqwest::Client::builder()
@@ -732,7 +732,7 @@ pub(crate) async fn fetch_agent_models(
         .timeout(Duration::from_secs(15))
         .danger_accept_invalid_certs(tls_enabled)
         .build()
-        .map_err(|error| format!("创建模型列表客户端失败: {error}"))?;
+        .map_err(|error| format!("Failed to create model list client: {error}"))?;
     let base_url = managed_core_loopback_origin(port);
     let endpoints = [
         format!("{base_url}/v1/models"),
@@ -747,16 +747,16 @@ pub(crate) async fn fetch_agent_models(
             .header(reqwest::header::USER_AGENT, USER_AGENT)
             .send()
             .await
-            .map_err(|error| format!("请求本机模型列表失败: {error}"))?;
+            .map_err(|error| format!("Failed to request local model list: {error}"))?;
         let status = response.status();
         let body = response
             .text()
             .await
-            .map_err(|error| format!("读取本机模型列表失败: {error}"))?;
+            .map_err(|error| format!("Failed to read local model list: {error}"))?;
         if status.is_success() {
             let payload = serde_json::from_str::<serde_json::Value>(&body).map_err(|error| {
                 format!(
-                    "解析本机模型列表失败: {error}; body={}",
+                    "Failed to parse local model list: {error}; body={}",
                     truncate_for_error(&body)
                 )
             })?;
@@ -769,7 +769,7 @@ pub(crate) async fn fetch_agent_models(
         }
     }
 
-    Err("本机内核不支持模型列表接口".to_string())
+    Err("Local kernel does not support the model list endpoint".to_string())
 }
 
 pub(crate) async fn fetch_codex_runtime_models(
@@ -777,7 +777,7 @@ pub(crate) async fn fetch_codex_runtime_models(
     api_key: &str,
 ) -> Result<Vec<codex_catalog::CodexRuntimeModel>, String> {
     if port == 0 {
-        return Err("内核端口无效".to_string());
+        return Err("Invalid kernel port".to_string());
     }
     let tls_enabled = managed_core_tls_enabled();
     let client = reqwest::Client::builder()
@@ -786,7 +786,7 @@ pub(crate) async fn fetch_codex_runtime_models(
         .timeout(Duration::from_secs(15))
         .danger_accept_invalid_certs(tls_enabled)
         .build()
-        .map_err(|error| format!("创建 Codex 模型列表客户端失败: {error}"))?;
+        .map_err(|error| format!("Failed to create Codex model list client: {error}"))?;
     let base_url = managed_core_loopback_origin(port);
     let endpoints = [
         format!("{base_url}/v1/models"),
@@ -802,16 +802,16 @@ pub(crate) async fn fetch_codex_runtime_models(
             .header(reqwest::header::USER_AGENT, USER_AGENT)
             .send()
             .await
-            .map_err(|error| format!("请求本地 Codex 模型列表失败: {error}"))?;
+            .map_err(|error| format!("Failed to request local Codex model list: {error}"))?;
         let status = response.status();
         let body = response
             .text()
             .await
-            .map_err(|error| format!("读取本地 Codex 模型列表失败: {error}"))?;
+            .map_err(|error| format!("Failed to read local Codex model list: {error}"))?;
         if status.is_success() {
             let payload = serde_json::from_str::<serde_json::Value>(&body).map_err(|error| {
                 format!(
-                    "解析本地 Codex 模型列表失败: {error}; body={}",
+                    "Failed to parse local Codex model list: {error}; body={}",
                     truncate_for_error(&body)
                 )
             })?;
@@ -824,7 +824,7 @@ pub(crate) async fn fetch_codex_runtime_models(
         }
     }
 
-    Err("本地内核不支持 Codex 模型列表接口".to_string())
+    Err("Local kernel does not support the Codex model list endpoint".to_string())
 }
 
 pub(crate) async fn fetch_codex_catalog_runtime_models(
@@ -890,7 +890,7 @@ fn sync_prepared_codex_model_catalog(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let changed = sync_codex_model_catalog_if_configured(
         &home,
         config.port,
@@ -958,7 +958,7 @@ pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
                 continue;
             }
             if let Err(error) = refresh_applied_codex_model_catalog(&app, &config).await {
-                eprintln!("后台同步 Codex 模型目录失败，保留现有配置: {error}");
+                eprintln!("Failed to synchronize Codex model catalog in the background; keeping the existing configuration: {error}");
             }
         }
     });
@@ -1001,7 +1001,7 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
     if client != AgentClient::ClaudeDesktop {
         return Ok(None);
     }
-    let mut requested = requested.ok_or("请重新配置 Claude Desktop 的模型与别名")?;
+    let mut requested = requested.ok_or("Reconfigure the Claude Desktop model and alias")?;
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
     if let Some(entries) = requested.desktop_models.as_mut() {
@@ -1044,10 +1044,10 @@ pub(crate) fn resolve_claude_code_model_mappings(
     }
     let requested = requested.unwrap_or_else(|| ClaudeDesktopModelMappings::all(selected_model));
     if !(100_000..=1_000_000).contains(&requested.max_context_tokens) {
-        return Err("Claude Code 最大窗口必须介于 100000 和 1000000 之间".to_string());
+        return Err("Claude Code maximum context window must be between 100000 and 1000000".to_string());
     }
     if !(1..=100).contains(&requested.auto_compact_pct) {
-        return Err("Claude Code 触发压缩百分比必须介于 1 和 100 之间".to_string());
+        return Err("Claude Code compaction trigger percentage must be between 1 and 100".to_string());
     }
     let max_context_tokens = if requested.opus_1m || requested.sonnet_1m || requested.haiku_1m {
         CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW
@@ -1078,7 +1078,7 @@ pub(crate) fn prepare_codex_agent_models(
             models: catalog.models,
             codex_catalog: Some(catalog.json),
         }),
-        Err(error) if error.contains("CPA 当前没有可写入 Codex 的模型") => {
+        Err(error) if error.contains("CPA currently has no models that can be written to Codex") => {
             Ok(PreparedAgentModels {
                 models: Vec::new(),
                 codex_catalog: Some("{\n  \"models\": []\n}\n".to_string()),
@@ -1102,7 +1102,7 @@ pub(crate) async fn apply_agent_config(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
     let api_key = effective_agent_api_key(&config);
     if client == AgentClient::Codex && oauth_configuration {
@@ -1128,7 +1128,7 @@ pub(crate) async fn apply_agent_config(
     commit_agent_with_core(&config, claude_desktop_model_mappings.as_ref(), &prepared.models, || {
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
-            .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+            .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
         apply_agent_configuration_with_oauth(
             client,
             &home,
@@ -1151,10 +1151,10 @@ pub(crate) fn clear_codex_config(app: tauri::AppHandle) -> Result<Vec<String>, S
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+        .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
     clear_codex_config_files(&home)
 }
 
@@ -1174,7 +1174,7 @@ pub(crate) async fn set_agent_config_enabled(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     if enabled {
         let config = gui_config_state.snapshot()?;
         let port = config.port;
@@ -1199,7 +1199,7 @@ pub(crate) async fn set_agent_config_enabled(
         commit_agent_with_core(&config, claude_desktop_model_mappings.as_ref(), &prepared.models, || {
             let _guard = AGENT_CONFIG_FILE_LOCK
                 .lock()
-                .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+                .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
             let oauth_configuration = if client == AgentClient::Codex {
                 current_codex_oauth_configuration(&home)?
             } else {
@@ -1224,7 +1224,7 @@ pub(crate) async fn set_agent_config_enabled(
         let config = gui_config_state.snapshot()?;
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
-            .map_err(|_| "智能体配置文件锁已损坏".to_string())?;
+            .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
         let _ = force_restore;
         let result = clear_agent_managed_configuration(client, &home, config.port)?;
         app.state::<AgentConfigStatusCache>().clear()?;
@@ -1275,10 +1275,10 @@ pub(crate) fn validate_agent_can_enable(
 pub(crate) fn validate_agent_model(value: &str) -> Result<String, String> {
     let model = value.trim();
     if model.is_empty() {
-        return Err("请先选择模型".to_string());
+        return Err("Select a model first".to_string());
     }
     if model.len() > 240 || model.chars().any(char::is_control) {
-        return Err("模型名称格式无效".to_string());
+        return Err("Invalid model name format".to_string());
     }
     Ok(model.to_string())
 }
@@ -1288,13 +1288,13 @@ pub(crate) fn resolve_available_agent_model(
     model: &str,
 ) -> Result<String, String> {
     if models.is_empty() {
-        return Err("当前内核没有可选模型，无法应用配置修改".to_string());
+        return Err("The current kernel has no selectable models, so configuration changes cannot be applied".to_string());
     }
     models
         .iter()
         .find(|available| available.name.eq_ignore_ascii_case(model))
         .map(|available| available.name.clone())
-        .ok_or_else(|| format!("模型 {model} 不在当前可用模型列表中，请刷新后重新选择"))
+        .ok_or_else(|| format!("Model {model} is not in the current list of available models. Refresh and select it again"))
 }
 
 pub(crate) fn parse_agent_model_options(
@@ -1311,7 +1311,7 @@ pub(crate) fn parse_agent_model_options(
         .or_else(|| payload.get("data").and_then(serde_json::Value::as_array))
         .or_else(|| payload.get("models").and_then(serde_json::Value::as_array))
         .or(object_models.as_ref())
-        .ok_or_else(|| "本机模型列表响应缺少 data 数组或 models 目录".to_string())?;
+        .ok_or_else(|| "Local model list response is missing a data array or models catalog".to_string())?;
     let mut models = Vec::new();
     for item in source {
         let name = if let Some(name) = item.as_str() {
@@ -1407,10 +1407,10 @@ pub(crate) fn mark_configured_agent_model_aliases(
     content: &str,
 ) -> Result<(), String> {
     let document = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
 
     for section in MODEL_ALIAS_CONFIG_SECTIONS {
         let Some(providers) = yaml_mapping_value(root, section) else {
@@ -1418,7 +1418,7 @@ pub(crate) fn mark_configured_agent_model_aliases(
         };
         let providers = providers
             .as_sequence()
-            .ok_or_else(|| format!("{section} 必须是数组"))?;
+            .ok_or_else(|| format!("{section} must be an array"))?;
         for provider in providers {
             let Some(provider) = provider.as_mapping() else {
                 continue;
@@ -1431,7 +1431,7 @@ pub(crate) fn mark_configured_agent_model_aliases(
             };
             let configured_models = configured_models
                 .as_sequence()
-                .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+                .ok_or_else(|| format!("{section}.models must be an array"))?;
             for configured in configured_models {
                 if configured_model_identity(configured).is_some_and(|(_, client_model, _)| {
                     configured_provider_model_is_enabled(provider, &client_model)
@@ -1445,7 +1445,7 @@ pub(crate) fn mark_configured_agent_model_aliases(
     if let Some(oauth_aliases) = yaml_mapping_value(root, "oauth-model-alias") {
         let oauth_aliases = oauth_aliases
             .as_mapping()
-            .ok_or_else(|| "oauth-model-alias 必须是 YAML 映射".to_string())?;
+            .ok_or_else(|| "oauth-model-alias must be a YAML mapping".to_string())?;
         for entries in oauth_aliases.values() {
             let Some(entries) = entries.as_sequence() else {
                 continue;
@@ -1485,7 +1485,7 @@ pub(crate) fn parse_codex_model_definitions(
         .as_array()
         .or_else(|| payload.get("models").and_then(serde_json::Value::as_array))
         .or_else(|| payload.get("data").and_then(serde_json::Value::as_array))
-        .ok_or_else(|| "Codex 模型定义响应缺少 models 或 data 数组".to_string())?;
+        .ok_or_else(|| "Codex model definition response is missing a models or data array".to_string())?;
     let mut definitions = Vec::new();
     for item in source {
         let id = ["id", "ID", "name"]
@@ -1589,15 +1589,15 @@ pub(crate) fn format_agent_models_error(status: u16, body: &str) -> String {
             .map(str::trim)
             .filter(|message| !message.is_empty());
         if let Some(message) = message {
-            return format!("获取本机模型列表失败 ({status}): {message}");
+            return format!("Failed to get local model list ({status}): {message}");
         }
     }
     let body = body.trim();
     if body.is_empty() {
-        format!("获取本机模型列表失败 ({status})")
+        format!("Failed to get local model list ({status})")
     } else {
         format!(
-            "获取本机模型列表失败 ({status}): {}",
+            "Failed to get local model list ({status}): {}",
             truncate_for_error(body)
         )
     }

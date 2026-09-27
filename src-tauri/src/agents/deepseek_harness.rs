@@ -58,7 +58,7 @@ fn read_harness_state(bytes: Option<&[u8]>) -> Result<DeepSeekHarnessCatalogStat
     bytes
         .map(|bytes| {
             serde_json::from_slice(bytes)
-                .map_err(|_| "读取 DSH 模型配置状态失败，请检查 catalog-state.json".into())
+                .map_err(|_| "Failed to read DSH model configuration state. Check catalog-state.json".into())
         })
         .unwrap_or_else(|| Ok(Default::default()))
 }
@@ -74,7 +74,7 @@ fn harness_root(existing: Option<&str>) -> Result<Value, String> {
         existing,
         "DeepSeek Harness settings",
     )?)
-    .map_err(|_| "DSH settings 必须是有效的配置映射".into())
+    .map_err(|_| "DSH settings must be a valid configuration mapping".into())
 }
 
 fn selected_fields(value: &Value, group: &str) -> Profile {
@@ -284,13 +284,13 @@ pub(crate) fn validate_harness_profile(
         let field = definitions
             .iter()
             .find(|field| field["name"] == key.as_str())
-            .ok_or_else(|| format!("{path}.{key}: 不支持的配置字段"))?;
+            .ok_or_else(|| format!("{path}.{key}: unsupported configuration field"))?;
         validate_harness_field(value, field, api, &format!("{path}.{key}"))?;
     }
     for field in definitions {
         if field["required"] == true && !profile.contains_key(field["name"].as_str().unwrap()) {
             return Err(format!(
-                "{path}.{}: 必须填写",
+                "{path}.{}: required",
                 field["name"].as_str().unwrap()
             ));
         }
@@ -305,7 +305,7 @@ pub(crate) fn validate_harness_profile(
                 .and_then(Value::as_f64)
                 .unwrap_or(10000.0)
     {
-        return Err(format!("{path}: initialDelayMs 不能大于 maxDelayMs"));
+        return Err(format!("{path}: initialDelayMs cannot be greater than maxDelayMs"));
     }
     Ok(())
 }
@@ -316,14 +316,14 @@ fn validate_harness_field(
     api: &str,
     path: &str,
 ) -> Result<(), String> {
-    let invalid = || format!("{path}: 配置值不符合 DSH 文档要求");
+    let invalid = || format!("{path}: configuration value does not meet DSH documentation requirements");
     if !api.is_empty()
         && field
             .get("apis")
             .and_then(Value::as_array)
             .is_some_and(|apis| !apis.contains(&json!(api)))
     {
-        return Err(format!("{path}: 不适用于 {api}，请恢复自动或选择对应协议"));
+        return Err(format!("{path}: not applicable to {api}; restore automatic selection or choose the matching protocol"));
     }
     let valid = match field["kind"].as_str().unwrap() {
         "group" => {
@@ -407,7 +407,7 @@ fn render_harness_profiles(
     state: &mut DeepSeekHarnessCatalogState,
 ) -> Result<String, String> {
     if models.is_empty() {
-        return Err("DSH 模型列表为空，已保留现有配置，请刷新后重试".into());
+        return Err("DSH model list is empty. Existing configuration was preserved; refresh and try again".into());
     }
     let root = harness_root(existing)?;
     let old = harness_provider(&root);
@@ -452,7 +452,7 @@ fn render_harness_profiles(
                 .and_then(|v| v.get_mut("providers"))
                 .and_then(|v| v.get_mut(DEEPSEEK_HARNESS_PROVIDER_ID))
                 .and_then(serde_norway::Value::as_mapping_mut)
-                .ok_or("DSH provider 配置缺失")?;
+                .ok_or("DSH provider configuration is missing")?;
             managed.insert(
                 yaml_key("baseURL"),
                 serde_norway::Value::String(
@@ -470,12 +470,12 @@ fn render_harness_profiles(
             for (key, value) in &provider {
                 managed.insert(
                     yaml_key(key),
-                    serde_norway::to_value(value).map_err(|_| "序列化 DSH provider 失败")?,
+                    serde_norway::to_value(value).map_err(|_| "Failed to serialize DSH provider")?,
                 );
             }
             managed.insert(
                 yaml_key("models"),
-                serde_norway::to_value(&published).map_err(|_| "序列化 DSH 模型失败")?,
+                serde_norway::to_value(&published).map_err(|_| "Failed to serialize DSH model")?,
             );
             Ok(())
         })?;
@@ -486,7 +486,7 @@ fn render_harness_profiles(
 
 pub(crate) fn deepseek_harness_template_catalog_state(images: &Images) -> Result<Vec<u8>, String> {
     let root = harness_root(text(
-        images.first().ok_or("缺少 DSH settings")?.1.as_deref(),
+        images.first().ok_or("DSH settings are missing")?.1.as_deref(),
     )?)?;
     let mut state = DeepSeekHarnessCatalogState::default();
     if let Some(provider) = harness_provider(&root) {
@@ -501,7 +501,7 @@ pub(crate) fn deepseek_harness_template_catalog_state(images: &Images) -> Result
             }
         }
     }
-    serde_json::to_vec(&state).map_err(|_| "生成 DSH 模型配置状态失败".into())
+    serde_json::to_vec(&state).map_err(|_| "Failed to generate DSH model configuration state".into())
 }
 
 pub(crate) fn build_deepseek_harness_catalog_settings(
@@ -559,7 +559,7 @@ pub(crate) fn prepare_deepseek_harness_configuration(
     )?;
     after.push((
         paths[2].clone(),
-        Some(serde_json::to_vec(&state).map_err(|_| "生成 DSH 模型配置状态失败")?),
+        Some(serde_json::to_vec(&state).map_err(|_| "Failed to generate DSH model configuration state")?),
     ));
     Ok((paths, before, after))
 }
@@ -607,7 +607,7 @@ fn harness_editor_from_images(
     let base_url = format!("{}/v1", managed_core_loopback_origin(port));
     let revision = sha256_bytes(
         &serde_json::to_vec(&(image_revision(before), &models, &base_url))
-            .map_err(|_| "生成 DSH 配置版本失败")?,
+            .map_err(|_| "Failed to generate DSH configuration version")?,
     );
     Ok((
         HarnessEditorSnapshot {
@@ -648,15 +648,15 @@ pub(crate) fn save_harness_editor(
     let before = config_images(&paths)?;
     let (snapshot, mut state) = harness_editor_from_images(&before, models, port)?;
     if request.revision != snapshot.revision {
-        return Err("DSH_MODEL_CATALOG_CHANGED: 模型列表或配置已变化，请重新加载".into());
+        return Err("DSH_MODEL_CATALOG_CHANGED: Model list or configuration has changed. Reload it".into());
     }
     if request.models.len() != models.len() {
-        return Err("DSH 模型列表不完整，请重新加载".into());
+        return Err("DSH model list is incomplete. Reload it".into());
     }
     let mut seen = std::collections::HashSet::new();
     for model in request.models {
         if !seen.insert(model.id.clone()) || !models.iter().any(|m| m.name == model.id) {
-            return Err("DSH 模型列表包含重复或不可用的 ID".into());
+            return Err("DSH model list contains duplicate or unavailable IDs".into());
         }
         state.models.insert(model.id, model.configuration);
     }
@@ -685,7 +685,7 @@ pub(crate) fn save_harness_editor(
             .as_ref()
             .is_some_and(|id| !models.iter().any(|m| &m.name == id))
         {
-            return Err("当前默认模型已不可用，请先更新默认模型".into());
+            return Err("The current default model is no longer available. Update the default model first".into());
         }
         let settings = render_harness_profiles(
             text(before[0].1.as_deref())?,
@@ -707,7 +707,7 @@ pub(crate) fn save_harness_editor(
         after[0] = prepared[0].clone();
     }
     state.models.retain(|_, profile| !profile.is_empty());
-    after[2].1 = Some(serde_json::to_vec(&state).map_err(|_| "生成 DSH 模型配置状态失败")?);
+    after[2].1 = Some(serde_json::to_vec(&state).map_err(|_| "Failed to generate DSH model configuration state")?);
     commit_config(
         "deepseek-harness",
         &paths,
@@ -726,10 +726,10 @@ pub(crate) async fn get_deepseek_harness_model_catalog_editor(
 ) -> Result<HarnessEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
     let models = fetch_deepseek_harness_models(&config).await?;
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "智能体配置文件锁已损坏")?;
+        .map_err(|_| "Agent configuration file lock is poisoned")?;
     harness_editor_snapshot(&home, &models, config.port)
 }
 
@@ -741,9 +741,9 @@ pub(crate) async fn save_deepseek_harness_model_catalog_editor(
 ) -> Result<HarnessEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
     let models = fetch_deepseek_harness_models(&config).await?;
-    let home = app.path().home_dir().map_err(|_| "无法获取用户目录")?;
+    let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
         .lock()
-        .map_err(|_| "智能体配置文件锁已损坏")?;
+        .map_err(|_| "Agent configuration file lock is poisoned")?;
     save_harness_editor(&home, &models, config.port, request)
 }

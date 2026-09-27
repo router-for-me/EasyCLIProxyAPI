@@ -104,7 +104,7 @@ pub(crate) fn activate_catalog_json(catalog_json: &str) -> Result<bool, String> 
     let parsed = parse_sources(catalog_json)?;
     let mut state = catalog_state()?
         .write()
-        .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
+        .map_err(|_| "Codex model catalog memory lock is poisoned".to_string())?;
     Ok(state.activate(catalog_json, parsed))
 }
 
@@ -115,14 +115,14 @@ pub(crate) fn validate_catalog_json(catalog_json: &str) -> Result<u64, String> {
 pub(crate) fn current_catalog_revision() -> Result<u64, String> {
     let state = catalog_state()?
         .read()
-        .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
+        .map_err(|_| "Codex model catalog memory lock is poisoned".to_string())?;
     Ok(state.sources.revision)
 }
 
 pub(crate) fn current_catalog_json() -> Result<String, String> {
     let state = catalog_state()?
         .read()
-        .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
+        .map_err(|_| "Codex model catalog memory lock is poisoned".to_string())?;
     Ok(state.json.clone())
 }
 
@@ -132,7 +132,7 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
         .and_then(Value::as_array)
         .or_else(|| payload.get("data").and_then(Value::as_array))
         .or_else(|| payload.as_array())
-        .ok_or_else(|| "Codex 模型列表响应缺少 models 或 data 数组".to_string())?;
+        .ok_or_else(|| "Codex model list response is missing a models or data array".to_string())?;
 
     let mut seen = HashSet::with_capacity(values.len());
     let mut models = Vec::with_capacity(values.len());
@@ -209,7 +209,7 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
         }
     }
     if !values.is_empty() && models.is_empty() {
-        return Err("Codex 模型列表响应未包含有效的模型 ID".to_string());
+        return Err("Codex model list response contains no valid model ID".to_string());
     }
     Ok(models)
 }
@@ -239,7 +239,7 @@ pub(crate) fn prepare_catalog(
 ) -> Result<PreparedCodexCatalog, String> {
     let state = catalog_state()?
         .read()
-        .map_err(|_| "Codex 模型目录内存锁已损坏".to_string())?;
+        .map_err(|_| "Codex model catalog memory lock is poisoned".to_string())?;
     prepare_catalog_with_customizations(runtime_models, &state.sources, &state.customizations)
 }
 
@@ -265,11 +265,11 @@ fn parse_sources(catalog_json: &str) -> Result<CatalogSources, String> {
 
 fn parse_fallback_model(fallback_json: &str) -> Result<Map<String, Value>, String> {
     let fallback: Value = serde_json::from_str(fallback_json)
-        .map_err(|error| format!("解析内置 fallback-model.json 失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse bundled fallback-model.json: {error}"))?;
     let fallback = fallback
         .as_object()
         .cloned()
-        .ok_or_else(|| "内置 fallback-model.json 根节点必须是对象".to_string())?;
+        .ok_or_else(|| "Bundled fallback-model.json root must be an object".to_string())?;
     validate_model(&fallback, "fallback-model.json", false)?;
     Ok(fallback)
 }
@@ -279,15 +279,15 @@ fn parse_catalog_sources(
     fallback: Map<String, Value>,
 ) -> Result<CatalogSources, String> {
     let root: Value = serde_json::from_str(catalog_json)
-        .map_err(|error| format!("解析内置 model-catalog.json 失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse bundled model-catalog.json: {error}"))?;
     let root = root
         .as_object()
-        .ok_or_else(|| "内置 model-catalog.json 根节点必须是对象".to_string())?;
+        .ok_or_else(|| "Bundled model-catalog.json root must be an object".to_string())?;
 
     let revision = match root.get("catalog_revision") {
         Some(value) => value
             .as_u64()
-            .ok_or_else(|| "Codex 模型目录 catalog_revision 必须为非负整数".to_string())?,
+            .ok_or_else(|| "Codex model catalog catalog_revision must be a non-negative integer".to_string())?,
         None => 0,
     };
 
@@ -295,20 +295,20 @@ fn parse_catalog_sources(
         .get("models")
         .and_then(Value::as_array)
         .filter(|models| !models.is_empty())
-        .ok_or_else(|| "内置 model-catalog.json 必须包含非空 models 数组".to_string())?;
+        .ok_or_else(|| "Bundled model-catalog.json must contain a non-empty models array".to_string())?;
     let mut templates = HashMap::with_capacity(values.len());
     let mut max_template_priority = 0;
     for (order, value) in values.iter().enumerate() {
         let model = value
             .as_object()
             .cloned()
-            .ok_or_else(|| format!("内置 model-catalog.json 第 {} 个模型必须是对象", order + 1))?;
-        validate_model(&model, &format!("第 {} 个正式模板", order + 1), true)?;
+            .ok_or_else(|| format!("Model {} in bundled model-catalog.json must be an object", order + 1))?;
+        validate_model(&model, &format!("Official template {}", order + 1), true)?;
         let slug = string_value(&model, "slug");
         let key = normalize_id(&slug);
         if templates.contains_key(&key) {
             return Err(format!(
-                "内置 model-catalog.json 模型 slug 大小写重复: {slug}"
+                "Bundled model-catalog.json contains duplicate model slugs differing only by case: {slug}"
             ));
         }
         max_template_priority = max_template_priority.max(priority_value(&model));
@@ -332,13 +332,13 @@ fn parse_catalog_sources(
 #[cfg(test)]
 fn parse_combined_sources_for_test(catalog_json: &str) -> Result<CatalogSources, String> {
     let mut root: Value = serde_json::from_str(catalog_json)
-        .map_err(|error| format!("解析测试 model-catalog.json 失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse test model-catalog.json: {error}"))?;
     let fallback = root
         .as_object_mut()
         .and_then(|root| root.remove("fallback_model"))
         .and_then(|fallback| fallback.as_object().cloned())
-        .ok_or_else(|| "测试 model-catalog.json 缺少 fallback_model 对象".to_string())?;
-    validate_model(&fallback, "测试 fallback_model", false)?;
+        .ok_or_else(|| "Test model-catalog.json is missing a fallback_model object".to_string())?;
+    validate_model(&fallback, "Test fallback_model", false)?;
     parse_catalog_sources(&root.to_string(), fallback)
 }
 
@@ -348,23 +348,23 @@ fn validate_model(
     require_slug: bool,
 ) -> Result<(), String> {
     if require_slug && string_value(model, "slug").is_empty() {
-        return Err(format!("内置 model-catalog.json {label} 的 slug 不能为空"));
+        return Err(format!("The slug of {label} in bundled model-catalog.json cannot be empty"));
     }
     if string_value(model, "base_instructions").is_empty() {
         return Err(format!(
-            "内置 model-catalog.json {label} 的 base_instructions 不能为空"
+            "The base_instructions of {label} in bundled model-catalog.json cannot be empty"
         ));
     }
     validate_required_codex_fields(model, label)?;
     let context_window = positive_u64_value(model.get("context_window"))
-        .ok_or_else(|| format!("内置 model-catalog.json {label} 的 context_window 必须为正数"))?;
+        .ok_or_else(|| format!("The context_window of {label} in bundled model-catalog.json must be positive"))?;
     let max_context_window =
         positive_u64_value(model.get("max_context_window")).ok_or_else(|| {
-            format!("内置 model-catalog.json {label} 的 max_context_window 必须为正数")
+            format!("The max_context_window of {label} in bundled model-catalog.json must be positive")
         })?;
     if max_context_window < context_window {
         return Err(format!(
-            "内置 model-catalog.json {label} 的 max_context_window 不能小于 context_window"
+            "The max_context_window of {label} in bundled model-catalog.json cannot be less than context_window"
         ));
     }
     Ok(())
@@ -374,13 +374,13 @@ fn validate_required_codex_fields(model: &Map<String, Value>, label: &str) -> Re
     for field in ["display_name", "shell_type", "visibility"] {
         if string_value(model, field).is_empty() {
             return Err(format!(
-                "Codex 模型 {label} 的必填字段 {field} 必须是非空字符串"
+                "Required field {field} of Codex model {label} must be a non-empty string"
             ));
         }
     }
     for field in ["supported_reasoning_levels", "experimental_supported_tools"] {
         if !model.get(field).is_some_and(Value::is_array) {
-            return Err(format!("Codex 模型 {label} 的必填字段 {field} 必须是数组"));
+            return Err(format!("Required field {field} of Codex model {label} must be an array"));
         }
     }
     for field in [
@@ -390,7 +390,7 @@ fn validate_required_codex_fields(model: &Map<String, Value>, label: &str) -> Re
     ] {
         if !model.get(field).is_some_and(Value::is_boolean) {
             return Err(format!(
-                "Codex 模型 {label} 的必填字段 {field} 必须是布尔值"
+                "Required field {field} of Codex model {label} must be a boolean"
             ));
         }
     }
@@ -398,26 +398,26 @@ fn validate_required_codex_fields(model: &Map<String, Value>, label: &str) -> Re
         .get("priority")
         .is_some_and(|value| value.as_i64().is_some() || value.as_u64().is_some())
     {
-        return Err(format!("Codex 模型 {label} 的必填字段 priority 必须是整数"));
+        return Err(format!("Required field priority of Codex model {label} must be an integer"));
     }
     if !model
         .get("default_reasoning_summary")
         .is_some_and(Value::is_string)
     {
         return Err(format!(
-            "Codex 模型 {label} 的必填字段 default_reasoning_summary 必须是字符串"
+            "Required field default_reasoning_summary of Codex model {label} must be a string"
         ));
     }
     let truncation = model
         .get("truncation_policy")
         .and_then(Value::as_object)
-        .ok_or_else(|| format!("Codex 模型 {label} 缺少 truncation_policy 对象"))?;
+        .ok_or_else(|| format!("Codex model {label} is missing a truncation_policy object"))?;
     if string_value(truncation, "mode").is_empty()
         || !truncation
             .get("limit")
             .is_some_and(|value| value.as_i64().is_some() || value.as_u64().is_some())
     {
-        return Err(format!("Codex 模型 {label} 的 truncation_policy 无效"));
+        return Err(format!("Invalid truncation_policy for Codex model {label}"));
     }
     Ok(())
 }
@@ -436,7 +436,7 @@ fn prepare_catalog_with_customizations(
     customizations: &customizations::ModelCustomizations,
 ) -> Result<PreparedCodexCatalog, String> {
     if runtime_models.is_empty() {
-        return Err("CPA 当前没有可写入 Codex 的模型".to_string());
+        return Err("CPA currently has no models that can be written to Codex".to_string());
     }
 
     let mut entries = Vec::with_capacity(runtime_models.len());
@@ -471,7 +471,7 @@ fn prepare_catalog_with_customizations(
         }
     }
     if entries.is_empty() {
-        return Err("CPA 当前没有有效的 Codex 模型 ID".to_string());
+        return Err("CPA currently has no valid Codex model ID".to_string());
     }
 
     for entry in &mut entries {
@@ -532,7 +532,7 @@ fn prepare_catalog_with_customizations(
         .map(|entry| Value::Object(entry.value))
         .collect::<Vec<_>>();
     let mut json = serde_json::to_string_pretty(&serde_json::json!({ "models": values }))
-        .map_err(|error| format!("生成 Codex 模型目录失败: {error}"))?;
+        .map_err(|error| format!("Failed to generate Codex model catalog: {error}"))?;
     json.push('\n');
     Ok(PreparedCodexCatalog { models, json })
 }

@@ -154,7 +154,10 @@ const formatDateTime = (date: Date): string | undefined => {
   }).format(date);
 };
 
-export const formatQuotaTimestamp = (value: string | undefined, locale: AppLocale = 'zh-CN'): string => {
+export const formatQuotaTimestamp = (
+  value: string | undefined,
+  locale: AppLocale = getCurrentLocale(),
+): string => {
   if (!value) return '—';
   const ms = quotaResetInstant(value);
   if (ms === undefined) return '—';

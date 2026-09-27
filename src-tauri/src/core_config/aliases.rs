@@ -151,13 +151,13 @@ pub(crate) async fn fetch_active_oauth_alias_channels(
         .header(reqwest::header::ACCEPT, "application/json")
         .send()
         .await
-        .map_err(|error| format_management_request_error("读取 OAuth 凭据来源失败", &error))?;
+        .map_err(|error| format_management_request_error("Failed to read OAuth credential sources", &error))?;
     let payload = read_management_value(response).await?;
     let files = payload
         .get("files")
         .and_then(serde_json::Value::as_array)
         .or_else(|| payload.as_array())
-        .ok_or_else(|| "OAuth 凭据来源响应缺少 files 数组".to_string())?;
+        .ok_or_else(|| "OAuth credential source response is missing a files array".to_string())?;
     Ok(files
         .iter()
         .filter(|file| {
@@ -188,10 +188,10 @@ pub(crate) async fn fetch_active_oauth_alias_channels(
 pub(crate) fn existing_thinking_alias_model_id(value: &str, label: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
-        return Err(format!("{label}不能为空"));
+        return Err(format!("{label} cannot be empty"));
     }
     if value.len() > 240 || value.chars().any(char::is_control) {
-        return Err(format!("{label}格式无效"));
+        return Err(format!("Invalid {label} format"));
     }
     Ok(value.to_string())
 }
@@ -202,7 +202,7 @@ pub(crate) fn validate_thinking_alias_model_id(value: &str, label: &str) -> Resu
         .chars()
         .any(|character| character.is_whitespace() || character.is_control())
     {
-        return Err(format!("{label}格式无效，不能包含空白字符"));
+        return Err(format!("Invalid {label} format; whitespace is not allowed"));
     }
     Ok(value)
 }
@@ -210,17 +210,17 @@ pub(crate) fn validate_thinking_alias_model_id(value: &str, label: &str) -> Resu
 pub(crate) fn validate_thinking_alias_effort(value: &str) -> Result<String, String> {
     let effort = value.trim().to_ascii_lowercase();
     if effort.is_empty() {
-        return Err("思考强度不能为空".to_string());
+        return Err("Reasoning effort cannot be empty".to_string());
     }
     if effort.chars().all(|character| character.is_ascii_digit()) {
-        return Err("固定思考别名不支持纯数字预算，请输入思考等级名称".to_string());
+        return Err("Fixed reasoning aliases do not support numeric-only budgets. Enter a reasoning level name".to_string());
     }
     if effort.len() > 64
         || !effort.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
         })
     {
-        return Err("思考强度格式无效，仅支持字母、数字、短横线、下划线和点".to_string());
+        return Err("Invalid reasoning effort format. Only letters, numbers, hyphens, underscores, and periods are allowed".to_string());
     }
     Ok(effort)
 }
@@ -236,7 +236,7 @@ pub(crate) async fn fetch_management_config_yaml(config: &GuiConfigFile) -> Resu
         )
         .send()
         .await
-        .map_err(|error| format_management_request_error("读取内核 YAML 配置失败", &error))?;
+        .map_err(|error| format_management_request_error("Failed to read kernel YAML configuration", &error))?;
     read_management_text(response).await
 }
 
@@ -252,7 +252,7 @@ pub(crate) async fn put_management_config_yaml(
         .body(content.to_string())
         .send()
         .await
-        .map_err(|error| format_management_request_error("保存内核 YAML 配置失败", &error))?;
+        .map_err(|error| format_management_request_error("Failed to save kernel YAML configuration", &error))?;
     read_management_value(response).await.map(|_| ())
 }
 
@@ -267,7 +267,7 @@ pub(crate) async fn put_management_oauth_model_aliases(
         .json(aliases)
         .send()
         .await
-        .map_err(|error| format_management_request_error("保存 OAuth 模型别名失败", &error))?;
+        .map_err(|error| format_management_request_error("Failed to save OAuth model alias", &error))?;
     read_management_value(response).await.map(|_| ())
 }
 
@@ -283,10 +283,10 @@ pub(crate) fn management_alias_config_changes(
 ) -> Result<ManagementAliasConfigChanges, String> {
     let split = |content: &str| {
         let mut document = serde_norway::from_str::<serde_norway::Value>(content)
-            .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+            .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
         let root = document
             .as_mapping_mut()
-            .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+            .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
         let oauth_aliases = root
             .remove(yaml_key("oauth-model-alias"))
             .unwrap_or_else(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()));
@@ -299,7 +299,7 @@ pub(crate) fn management_alias_config_changes(
     } else {
         Some(
             serde_json::to_value(updated_oauth)
-                .map_err(|error| format!("序列化 OAuth 模型别名失败: {error}"))?,
+                .map_err(|error| format!("Failed to serialize OAuth model alias: {error}"))?,
         )
     };
     Ok(ManagementAliasConfigChanges {
@@ -323,7 +323,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_codex_oauth_in_yaml(
     codex_oauth_models: &[CodexModelDefinition],
 ) -> Result<String, String> {
     let codex_channel = oauth_alias_channel("codex")
-        .ok_or_else(|| "缺少 Codex OAuth 别名 channel 定义".to_string())?;
+        .ok_or_else(|| "Codex OAuth alias channel definition is missing".to_string())?;
     let definitions = [OAuthModelDefinitions {
         channel: codex_channel,
         models: codex_oauth_models.to_vec(),
@@ -363,11 +363,11 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
     routes: [&str; 3],
 ) -> Result<String, String> {
     let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
 
     let sources = root.clone();
     if let Some(entries) = &mappings.desktop_models {
@@ -393,7 +393,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
                 || (occupied && !managed_aliases.iter()
                     .any(|alias| alias.eq_ignore_ascii_case(&entry.alias)))
             {
-                return Err(format!("别名 {} 已被其他模型使用，请更换别名", entry.alias));
+                return Err(format!("Alias {} is already used by another model. Choose a different alias", entry.alias));
             }
         }
         for alias in managed_aliases {
@@ -467,21 +467,21 @@ pub(crate) fn validate_claude_desktop_entries(
     entries: &[ClaudeDesktopModelMapping],
 ) -> Result<(), String> {
     if entries.is_empty() {
-        return Err("请至少添加一个 Claude Desktop 模型".into());
+        return Err("Add at least one Claude Desktop model".into());
     }
     let mut ids = HashSet::new();
     for entry in entries {
         validate_agent_model(entry.source_or_alias())?;
         if entry.source_or_alias().chars().any(char::is_whitespace) {
-            return Err("原模型 ID 不能包含空白字符".into());
+            return Err("Source model ID cannot contain whitespace".into());
         }
         let alias = entry.alias.trim();
         if !alias.is_empty() && !alias.eq_ignore_ascii_case(entry.source_or_alias()) && !valid_claude_desktop_alias(alias) {
-            return Err(format!("Claude Desktop 别名 {alias} 必须以 claude- 开头，只能包含小写字母、数字、连字符和小数点，且不能包含 gpt、grok、gemini、deepseek 等其他模型系列名称"));
+            return Err(format!("Claude Desktop alias {alias} must start with claude-, may contain only lowercase letters, numbers, hyphens, and periods, and cannot contain other model family names such as gpt, grok, gemini, or deepseek"));
         }
         let id = entry.model_id();
         if !ids.insert(id.to_ascii_lowercase()) {
-            return Err(format!("Claude Desktop 模型 ID 重复: {id}"));
+            return Err(format!("Duplicate Claude Desktop model ID: {id}"));
         }
     }
     Ok(())
@@ -556,11 +556,11 @@ pub(crate) fn managed_claude_desktop_aliases(root: &serde_norway::Mapping) -> Ve
 #[cfg(test)]
 pub(crate) fn remove_managed_claude_model_aliases_in_yaml(content: &str) -> Result<String, String> {
     let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let mut changed = false;
     for alias in [
         CLAUDE_DESKTOP_OPUS_MODEL_ID,
@@ -589,7 +589,7 @@ pub(crate) fn remove_managed_claude_model_alias(
         };
         let providers = providers
             .as_sequence_mut()
-            .ok_or_else(|| format!("{section} 必须是数组"))?;
+            .ok_or_else(|| format!("{section} must be an array"))?;
         for provider in providers {
             let Some(provider) = provider.as_mapping_mut() else {
                 continue;
@@ -599,7 +599,7 @@ pub(crate) fn remove_managed_claude_model_alias(
             };
             let models = models
                 .as_sequence_mut()
-                .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+                .ok_or_else(|| format!("{section}.models must be an array"))?;
             let before = models.len();
             models.retain(|model| !is_managed_claude_model_alias(model, alias));
             changed |= models.len() != before;
@@ -620,7 +620,7 @@ pub(crate) fn remove_existing_claude_model_alias(
         };
         let providers = providers
             .as_sequence_mut()
-            .ok_or_else(|| format!("{section} 必须是数组"))?;
+            .ok_or_else(|| format!("{section} must be an array"))?;
         for provider in providers {
             let Some(provider) = provider.as_mapping_mut() else {
                 continue;
@@ -630,7 +630,7 @@ pub(crate) fn remove_existing_claude_model_alias(
             };
             let models = models
                 .as_sequence_mut()
-                .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+                .ok_or_else(|| format!("{section}.models must be an array"))?;
             let before = models.len();
             models.retain(|model| !occupies_claude_client_alias(model, alias));
             changed |= models.len() != before;
@@ -650,14 +650,14 @@ pub(crate) fn remove_oauth_claude_model_alias(
     };
     let oauth_aliases = oauth_aliases
         .as_mapping_mut()
-        .ok_or_else(|| "oauth-model-alias 必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "oauth-model-alias must be a YAML mapping".to_string())?;
     let mut changed = false;
     let mut empty_channels = Vec::new();
     for (channel, entries) in oauth_aliases.iter_mut() {
         let channel_name = channel.as_str().unwrap_or("unknown");
         let entries = entries
             .as_sequence_mut()
-            .ok_or_else(|| format!("oauth-model-alias.{channel_name} 必须是数组"))?;
+            .ok_or_else(|| format!("oauth-model-alias.{channel_name} must be an array"))?;
         let before = entries.len();
         entries.retain(|entry| {
             if managed_only {
@@ -850,7 +850,7 @@ pub(crate) fn ensure_claude_desktop_model_alias(
         return Ok(());
     }
     Err(format!(
-        "无法确定模型 {source_model} 的 CPA 配置来源，无法创建 Claude Desktop 别名 {alias}"
+        "Unable to determine the CPA configuration source for model {source_model}; cannot create Claude Desktop alias {alias}"
     ))
 }
 
@@ -978,7 +978,7 @@ fn resolve_claude_desktop_alias_source(
             };
             let providers = providers
                 .as_sequence()
-                .ok_or_else(|| format!("{section} 必须是数组"))?;
+                .ok_or_else(|| format!("{section} must be an array"))?;
             for (provider_index, provider) in providers.iter().enumerate() {
                 let Some(provider) = provider.as_mapping() else {
                     continue;
@@ -991,7 +991,7 @@ fn resolve_claude_desktop_alias_source(
                 };
                 let models = models
                     .as_sequence()
-                    .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+                    .ok_or_else(|| format!("{section}.models must be an array"))?;
                 if let Some(model) = models.iter().find_map(|model| {
                     let (_, client_model, _) = configured_model_identity(model)?;
                     if !configured_provider_model_is_enabled(provider, &client_model) {
@@ -1043,7 +1043,7 @@ fn append_claude_desktop_model_alias(
                 .and_then(serde_norway::Value::as_mapping_mut)
                 .and_then(|provider| yaml_mapping_value_mut(provider, "models"))
                 .and_then(serde_norway::Value::as_sequence_mut)
-                .ok_or("模型来源配置已变化，请刷新后重试")?;
+                .ok_or("Model source configuration changed. Refresh and try again")?;
             (models, model)
         }
         ClaudeDesktopAliasSource::OAuth { channel, mut model } => {
@@ -1051,12 +1051,12 @@ fn append_claude_desktop_model_alias(
                 .entry(yaml_key("oauth-model-alias"))
                 .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
                 .as_mapping_mut()
-                .ok_or("oauth-model-alias 必须是 YAML 映射")?;
+                .ok_or("oauth-model-alias must be a YAML mapping")?;
             let models = aliases
                 .entry(yaml_key(&channel))
                 .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
                 .as_sequence_mut()
-                .ok_or_else(|| format!("oauth-model-alias.{channel} 必须是数组"))?;
+                .ok_or_else(|| format!("oauth-model-alias.{channel} must be an array"))?;
             model.insert(yaml_key("fork"), serde_norway::Value::Bool(true));
             if oauth_alias_channel(&channel).is_some_and(|channel| channel.force_mapping) {
                 model.insert(yaml_key("force-mapping"), serde_norway::Value::Bool(true));
@@ -1069,7 +1069,7 @@ fn append_claude_desktop_model_alias(
         serde_norway::Value::String(alias.to_string()),
     );
     let display_name = managed_claude_alias_display_name(alias)
-        .ok_or_else(|| format!("不支持的 Claude 托管别名: {alias}"))?;
+        .ok_or_else(|| format!("Unsupported Claude managed alias: {alias}"))?;
     model.insert(
         yaml_key("display-name"),
         serde_norway::Value::String(display_name.to_string()),
@@ -1089,14 +1089,14 @@ pub(crate) fn append_managed_oauth_model_alias(
         .entry(yaml_key("oauth-model-alias"))
         .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
         .as_mapping_mut()
-        .ok_or_else(|| "oauth-model-alias 必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "oauth-model-alias must be a YAML mapping".to_string())?;
     let channel_aliases = oauth_aliases
         .entry(yaml_key(channel))
         .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
         .as_sequence_mut()
-        .ok_or_else(|| format!("oauth-model-alias.{channel} 必须是数组"))?;
+        .ok_or_else(|| format!("oauth-model-alias.{channel} must be an array"))?;
     let display_name = managed_claude_alias_display_name(alias)
-        .ok_or_else(|| format!("不支持的 Claude 托管别名: {alias}"))?;
+        .ok_or_else(|| format!("Unsupported Claude managed alias: {alias}"))?;
     let mut alias_mapping = serde_norway::Mapping::new();
     alias_mapping.insert(
         yaml_key("name"),
@@ -1133,7 +1133,7 @@ pub(crate) async fn fetch_oauth_channel_model_definitions(
         .send()
         .await
         .map_err(|error| {
-            format_management_request_error(&format!("读取 {channel} OAuth 模型定义失败"), &error)
+            format_management_request_error(&format!("Failed to read {channel} OAuth model definition"), &error)
         })?;
     let payload = read_management_value(response).await?;
     parse_codex_model_definitions(&payload)
@@ -1229,10 +1229,10 @@ pub(crate) fn resolved_oauth_alias_sources(
     capability: AliasSourceCapability,
 ) -> Result<Vec<ResolvedThinkingAliasSource>, String> {
     let document = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let mut sources = Vec::new();
     collect_config_thinking_alias_sources(
         root,
@@ -1246,7 +1246,7 @@ pub(crate) fn resolved_oauth_alias_sources(
     collect_config_thinking_alias_sources(
         root,
         "openai-compatibility",
-        "OpenAI 兼容",
+        "OpenAI-compatible",
         "openai-compatible",
         "openai",
         available_models,
@@ -1356,7 +1356,7 @@ pub(crate) fn collect_config_thinking_alias_sources(
     };
     let providers = providers
         .as_sequence()
-        .ok_or_else(|| format!("{section} 必须是数组"))?;
+        .ok_or_else(|| format!("{section} must be an array"))?;
     for (provider_index, provider) in providers.iter().enumerate() {
         let Some(provider) = provider.as_mapping() else {
             continue;
@@ -1371,7 +1371,7 @@ pub(crate) fn collect_config_thinking_alias_sources(
             thinking_alias_provider_name(provider, fallback_provider, provider_index);
         let provider_revision = sha256_bytes(
             serde_norway::to_string(provider)
-                .map_err(|error| format!("读取模型源配置失败: {error}"))?
+                .map_err(|error| format!("Failed to read model source configuration: {error}"))?
                 .as_bytes(),
         );
         let Some(models) = yaml_mapping_value(provider, "models") else {
@@ -1379,7 +1379,7 @@ pub(crate) fn collect_config_thinking_alias_sources(
         };
         let models = models
             .as_sequence()
-            .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+            .ok_or_else(|| format!("{section}.models must be an array"))?;
         for (model_index, model) in models.iter().enumerate() {
             let Some((upstream_model, client_model, display_name)) =
                 configured_model_identity(model)
@@ -1495,7 +1495,7 @@ pub(crate) fn configured_model_identity(
 
 pub(crate) fn thinking_aliases_from_yaml(content: &str) -> Result<Vec<ThinkingAliasEntry>, String> {
     let document = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     thinking_aliases_from_value(&document)
 }
 
@@ -1504,17 +1504,17 @@ pub(crate) fn thinking_aliases_from_value(
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let mut entries = Vec::new();
     if let Some(oauth_aliases) = yaml_mapping_value(root, "oauth-model-alias") {
         let oauth_aliases = oauth_aliases
             .as_mapping()
-            .ok_or_else(|| "oauth-model-alias 必须是 YAML 映射".to_string())?;
+            .ok_or_else(|| "oauth-model-alias must be a YAML mapping".to_string())?;
         for (channel, channel_aliases) in oauth_aliases {
             let channel = channel.as_str().unwrap_or("unknown");
             let channel_aliases = channel_aliases
                 .as_sequence()
-                .ok_or_else(|| format!("oauth-model-alias.{channel} 必须是数组"))?;
+                .ok_or_else(|| format!("oauth-model-alias.{channel} must be an array"))?;
             let (provider, kind, protocol) = oauth_alias_channel_details(channel);
             for entry in channel_aliases {
                 let Some(mapping) = entry.as_mapping() else {
@@ -1556,7 +1556,7 @@ pub(crate) fn thinking_aliases_from_value(
     collect_config_thinking_alias_entries(
         root,
         "openai-compatibility",
-        "OpenAI 兼容",
+        "OpenAI-compatible",
         "openai-compatible",
         "openai",
         &mut entries,
@@ -1592,7 +1592,7 @@ pub(crate) fn thinking_aliases_from_value(
 
 pub(crate) fn speed_aliases_from_yaml(content: &str) -> Result<Vec<SpeedAliasEntry>, String> {
     let document = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     speed_aliases_from_value(&document)
 }
 
@@ -1601,17 +1601,17 @@ pub(crate) fn speed_aliases_from_value(
 ) -> Result<Vec<SpeedAliasEntry>, String> {
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let mut entries = Vec::new();
     if let Some(oauth_aliases) = yaml_mapping_value(root, "oauth-model-alias") {
         let oauth_aliases = oauth_aliases
             .as_mapping()
-            .ok_or_else(|| "oauth-model-alias 必须是 YAML 映射".to_string())?;
+            .ok_or_else(|| "oauth-model-alias must be a YAML mapping".to_string())?;
         for (channel, channel_aliases) in oauth_aliases {
             let channel = channel.as_str().unwrap_or("unknown");
             let channel_aliases = channel_aliases
                 .as_sequence()
-                .ok_or_else(|| format!("oauth-model-alias.{channel} 必须是数组"))?;
+                .ok_or_else(|| format!("oauth-model-alias.{channel} must be an array"))?;
             let (provider, kind, protocol) = oauth_alias_channel_details(channel);
             for entry in channel_aliases {
                 let Some(mapping) = entry.as_mapping() else {
@@ -1657,7 +1657,7 @@ pub(crate) fn speed_aliases_from_value(
     collect_config_speed_alias_entries(
         root,
         "openai-compatibility",
-        "OpenAI 兼容",
+        "OpenAI-compatible",
         "openai-compatible",
         "openai",
         &mut entries,
@@ -1688,7 +1688,7 @@ pub(crate) fn collect_config_thinking_alias_entries(
     };
     let providers = providers
         .as_sequence()
-        .ok_or_else(|| format!("{section} 必须是数组"))?;
+        .ok_or_else(|| format!("{section} must be an array"))?;
     for (provider_index, provider) in providers.iter().enumerate() {
         let Some(provider) = provider.as_mapping() else {
             continue;
@@ -1700,7 +1700,7 @@ pub(crate) fn collect_config_thinking_alias_entries(
         };
         let models = models
             .as_sequence()
-            .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+            .ok_or_else(|| format!("{section}.models must be an array"))?;
         for model in models {
             let Some((source_model, alias, _)) = configured_model_identity(model) else {
                 continue;
@@ -1738,7 +1738,7 @@ pub(crate) fn collect_config_speed_alias_entries(
     };
     let providers = providers
         .as_sequence()
-        .ok_or_else(|| format!("{section} 必须是数组"))?;
+        .ok_or_else(|| format!("{section} must be an array"))?;
     for (provider_index, provider) in providers.iter().enumerate() {
         let Some(provider) = provider.as_mapping() else {
             continue;
@@ -1750,7 +1750,7 @@ pub(crate) fn collect_config_speed_alias_entries(
         };
         let models = models
             .as_sequence()
-            .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+            .ok_or_else(|| format!("{section}.models must be an array"))?;
         for model in models {
             let Some((source_model, alias, _)) = configured_model_identity(model) else {
                 continue;
@@ -1960,7 +1960,7 @@ pub(crate) fn insert_thinking_effort_params(
                 effort,
             ),
             protocol => {
-                return Err(format!("暂不支持为 {protocol} 来源强制覆写思考强度"));
+                return Err(format!("Forcing a reasoning effort override is not yet supported for {protocol} sources"));
             }
         },
     }
@@ -1975,17 +1975,17 @@ pub(crate) fn add_model_alias_to_yaml(
     fast: bool,
 ) -> Result<String, String> {
     if fast && !alias_source_supports_fast(source) {
-        return Err("Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 模型源".to_string());
+        return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
     let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
 
     if configured_model_alias_exists(root, alias) {
-        return Err(format!("别名模型 {alias} 已存在"));
+        return Err(format!("Alias model {alias} already exists"));
     }
 
     match &source.location {
@@ -2040,12 +2040,12 @@ pub(crate) fn append_alias_payload_override(
         .entry(yaml_key("payload"))
         .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
         .as_mapping_mut()
-        .ok_or_else(|| "payload 必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "payload must be a YAML mapping".to_string())?;
     let override_rules = payload
         .entry(yaml_key("override"))
         .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
         .as_sequence_mut()
-        .ok_or_else(|| "payload.override 必须是数组".to_string())?;
+        .ok_or_else(|| "payload.override must be an array".to_string())?;
 
     let mut model_mapping = serde_norway::Mapping::new();
     model_mapping.insert(
@@ -2075,17 +2075,17 @@ pub(crate) fn add_speed_alias_to_yaml(
     alias: &str,
 ) -> Result<String, String> {
     if !alias_source_supports_fast(source) {
-        return Err("Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 模型源".to_string());
+        return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
     let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
 
     if configured_model_alias_exists(root, alias) {
-        return Err(format!("别名模型 {alias} 已存在"));
+        return Err(format!("Alias model {alias} already exists"));
     }
 
     match &source.location {
@@ -2133,12 +2133,12 @@ pub(crate) fn append_oauth_model_alias(
         .entry(yaml_key("oauth-model-alias"))
         .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
         .as_mapping_mut()
-        .ok_or_else(|| "oauth-model-alias 必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "oauth-model-alias must be a YAML mapping".to_string())?;
     let channel_aliases = oauth_aliases
         .entry(yaml_key(channel))
         .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
         .as_sequence_mut()
-        .ok_or_else(|| format!("oauth-model-alias.{channel} 必须是数组"))?;
+        .ok_or_else(|| format!("oauth-model-alias.{channel} must be an array"))?;
     let mut alias_mapping = serde_norway::Mapping::new();
     alias_mapping.insert(
         yaml_key("name"),
@@ -2167,22 +2167,22 @@ pub(crate) fn append_config_thinking_alias(
 ) -> Result<(), String> {
     let providers = yaml_mapping_value_mut(root, section)
         .and_then(serde_norway::Value::as_sequence_mut)
-        .ok_or_else(|| format!("{section} 必须是数组"))?;
+        .ok_or_else(|| format!("{section} must be an array"))?;
     let provider = providers
         .get_mut(provider_index)
         .and_then(serde_norway::Value::as_mapping_mut)
-        .ok_or_else(|| "模型提供商已经变化，请刷新后重试".to_string())?;
+        .ok_or_else(|| "Model provider changed. Refresh and try again".to_string())?;
     let models = yaml_mapping_value_mut(provider, "models")
         .and_then(serde_norway::Value::as_sequence_mut)
-        .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+        .ok_or_else(|| format!("{section}.models must be an array"))?;
     let source = models
         .get(model_index)
         .cloned()
-        .ok_or_else(|| "原模型已经变化，请刷新后重试".to_string())?;
+        .ok_or_else(|| "Source model changed. Refresh and try again".to_string())?;
     let (_, current_model, _) =
-        configured_model_identity(&source).ok_or_else(|| "原模型配置格式无效".to_string())?;
+        configured_model_identity(&source).ok_or_else(|| "Invalid source model configuration format".to_string())?;
     if !current_model.eq_ignore_ascii_case(expected_model) {
-        return Err("原模型已经变化，请刷新后重试".to_string());
+        return Err("Source model changed. Refresh and try again".to_string());
     }
     let mut alias_model = source.as_mapping().cloned().unwrap_or_else(|| {
         let mut mapping = serde_norway::Mapping::new();
@@ -2223,22 +2223,22 @@ pub(crate) fn append_config_speed_alias(
 ) -> Result<(), String> {
     let providers = yaml_mapping_value_mut(root, section)
         .and_then(serde_norway::Value::as_sequence_mut)
-        .ok_or_else(|| format!("{section} 必须是数组"))?;
+        .ok_or_else(|| format!("{section} must be an array"))?;
     let provider = providers
         .get_mut(provider_index)
         .and_then(serde_norway::Value::as_mapping_mut)
-        .ok_or_else(|| "模型提供商已经变化，请刷新后重试".to_string())?;
+        .ok_or_else(|| "Model provider changed. Refresh and try again".to_string())?;
     let models = yaml_mapping_value_mut(provider, "models")
         .and_then(serde_norway::Value::as_sequence_mut)
-        .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+        .ok_or_else(|| format!("{section}.models must be an array"))?;
     let source = models
         .get(model_index)
         .cloned()
-        .ok_or_else(|| "原模型已经变化，请刷新后重试".to_string())?;
+        .ok_or_else(|| "Source model changed. Refresh and try again".to_string())?;
     let (_, current_model, _) =
-        configured_model_identity(&source).ok_or_else(|| "原模型配置格式无效".to_string())?;
+        configured_model_identity(&source).ok_or_else(|| "Invalid source model configuration format".to_string())?;
     if !current_model.eq_ignore_ascii_case(expected_model) {
-        return Err("原模型已经变化，请刷新后重试".to_string());
+        return Err("Source model changed. Refresh and try again".to_string());
     }
     let mut alias_model = source.as_mapping().cloned().unwrap_or_else(|| {
         let mut mapping = serde_norway::Mapping::new();
@@ -2281,11 +2281,11 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
     oauth_channel: Option<&str>,
 ) -> Result<String, String> {
     let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let mut removed = remove_oauth_model_alias(root, alias, oauth_channel)?;
     if oauth_channel.is_none() {
         removed |= remove_config_model_alias(root, "codex-api-key", alias)?;
@@ -2294,7 +2294,7 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
         removed |= remove_config_model_alias(root, "gemini-api-key", alias)?;
     }
     if !removed {
-        return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
+        return Err(format!("Alias model {alias} does not exist. Refresh and try again"));
     }
     let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
     remove_alias_payload_options(root, alias, &scope)?;
@@ -2312,18 +2312,18 @@ pub(crate) fn remove_speed_alias_from_yaml_for_channel(
     oauth_channel: Option<&str>,
 ) -> Result<String, String> {
     let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let mut removed = remove_oauth_model_alias(root, alias, oauth_channel)?;
     if oauth_channel.is_none() {
         removed |= remove_config_speed_alias(root, "codex-api-key", "codex", alias)?;
         removed |= remove_config_speed_alias(root, "openai-compatibility", "openai", alias)?;
     }
     if !removed {
-        return Err(format!("别名模型 {alias} 不存在，请刷新后重试"));
+        return Err(format!("Alias model {alias} does not exist. Refresh and try again"));
     }
     let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
     remove_alias_payload_options(root, alias, &scope)?;
@@ -2340,7 +2340,7 @@ pub(crate) fn remove_oauth_model_alias(
     };
     let oauth_aliases = oauth_aliases
         .as_mapping_mut()
-        .ok_or_else(|| "oauth-model-alias 必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "oauth-model-alias must be a YAML mapping".to_string())?;
     let mut removed = false;
     let mut empty_channels = Vec::new();
     for (channel, entries) in oauth_aliases.iter_mut() {
@@ -2350,7 +2350,7 @@ pub(crate) fn remove_oauth_model_alias(
         }
         let entries = entries
             .as_sequence_mut()
-            .ok_or_else(|| format!("oauth-model-alias.{channel_name} 必须是数组"))?;
+            .ok_or_else(|| format!("oauth-model-alias.{channel_name} must be an array"))?;
         entries.retain(|entry| {
             let matches = entry
                 .as_mapping()
@@ -2414,7 +2414,7 @@ pub(crate) fn remove_config_model_alias(
     };
     let providers = providers
         .as_sequence_mut()
-        .ok_or_else(|| format!("{section} 必须是数组"))?;
+        .ok_or_else(|| format!("{section} must be an array"))?;
     let mut removed = false;
     for provider in providers {
         let Some(provider) = provider.as_mapping_mut() else {
@@ -2425,7 +2425,7 @@ pub(crate) fn remove_config_model_alias(
         };
         let models = models
             .as_sequence_mut()
-            .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+            .ok_or_else(|| format!("{section}.models must be an array"))?;
         models.retain(|model| {
             let matches = configured_model_identity(model)
                 .map(|(source, model_alias, _)| {
@@ -2453,7 +2453,7 @@ pub(crate) fn remove_config_speed_alias(
     };
     let providers = providers
         .as_sequence_mut()
-        .ok_or_else(|| format!("{section} 必须是数组"))?;
+        .ok_or_else(|| format!("{section} must be an array"))?;
     let mut removed = false;
     for provider in providers {
         let Some(provider) = provider.as_mapping_mut() else {
@@ -2464,7 +2464,7 @@ pub(crate) fn remove_config_speed_alias(
         };
         let models = models
             .as_sequence_mut()
-            .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+            .ok_or_else(|| format!("{section}.models must be an array"))?;
         models.retain(|model| {
             let matches = configured_model_identity(model)
                 .map(|(source, model_alias, _)| {
@@ -2572,14 +2572,14 @@ fn remove_alias_payload_options(
     let Some(payload) = yaml_mapping_value_mut(root, "payload") else {
         return Ok(());
     };
-    let payload = payload.as_mapping_mut().ok_or("payload 必须是 YAML 映射")?;
+    let payload = payload.as_mapping_mut().ok_or("payload must be a YAML mapping")?;
     for section in ["override", "override-raw"] {
         let Some(rules) = yaml_mapping_value_mut(payload, section) else {
             continue;
         };
         let rules = rules
             .as_sequence_mut()
-            .ok_or_else(|| format!("payload.{section} 必须是数组"))?;
+            .ok_or_else(|| format!("payload.{section} must be an array"))?;
         let mut next = Vec::with_capacity(rules.len());
         for rule in rules.iter() {
             let Some(mapping) = rule.as_mapping() else {
@@ -2606,7 +2606,7 @@ fn remove_alias_payload_options(
             };
             let models = models
                 .as_sequence()
-                .ok_or_else(|| format!("payload.{section}.models 必须是数组"))?;
+                .ok_or_else(|| format!("payload.{section}.models must be an array"))?;
             let (target, others): (Vec<_>, Vec<_>) = models
                 .iter()
                 .cloned()
@@ -2649,12 +2649,12 @@ pub(crate) fn render_updated_core_yaml(
     let rendered = expand_top_level_flow_style_collections(&document.get_string(), document.get())?;
     let rendered = indent_indentationless_yaml_sequences(&rendered);
     let validated = serde_norway::from_str::<serde_norway::Value>(&rendered)
-        .map_err(|error| format!("验证更新后的内核配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to validate updated kernel configuration: {error}"))?;
     if &validated != document.get() {
         let path = first_yaml_mismatch_path(document.get(), &validated, &mut Vec::new())
             .unwrap_or_else(|| "<unknown>".to_string());
         return Err(format!(
-            "更新后的内核配置与预期值不一致（路径: {path}），已拒绝写入"
+            "Updated kernel configuration does not match the expected value (path: {path}); write rejected"
         ));
     }
     Ok(rendered)
@@ -2666,7 +2666,7 @@ pub(crate) fn expand_top_level_flow_style_collections(
 ) -> Result<String, String> {
     let root = document
         .as_mapping()
-        .ok_or_else(|| "内核配置顶层必须是 YAML 映射".to_string())?;
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let mut rendered = content.to_string();
     for (key, value) in root {
         let Some(key) = key.as_str() else {
@@ -2683,7 +2683,7 @@ pub(crate) fn expand_top_level_flow_style_collections(
         let mut wrapper = serde_norway::Mapping::new();
         wrapper.insert(yaml_key(key), value.clone());
         let block = serde_norway::to_string(&serde_norway::Value::Mapping(wrapper))
-            .map_err(|error| format!("格式化内核 YAML 配置失败: {error}"))?;
+            .map_err(|error| format!("Failed to format kernel YAML configuration: {error}"))?;
         rendered = replace_top_level_yaml_block(&rendered, key, &block);
     }
     Ok(rendered)
@@ -2783,13 +2783,13 @@ pub(crate) fn truncate_for_error(value: &str) -> String {
 pub(crate) fn open_external_url_inner(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
     let url = url.trim();
     if url.is_empty() {
-        return Err("链接为空".to_string());
+        return Err("Link is empty".to_string());
     }
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("只允许打开 http/https 链接".to_string());
+        return Err("Only http/https links can be opened".to_string());
     }
 
     app.opener()
         .open_url(url, None::<&str>)
-        .map_err(|err| format!("打开浏览器失败: {err}"))
+        .map_err(|err| format!("Failed to open browser: {err}"))
 }

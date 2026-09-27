@@ -52,22 +52,22 @@ fn catalog_state() -> Result<&'static ClaudeCatalog, String> {
 
 fn parse_catalog(content: &str) -> Result<ClaudeCatalog, String> {
     let root: Value = serde_json::from_str(content)
-        .map_err(|error| format!("解析内置 Claude model-catalog.json 失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse bundled Claude model-catalog.json: {error}"))?;
     let root = root
         .as_object()
-        .ok_or_else(|| "内置 Claude model-catalog.json 根节点必须是对象".to_string())?;
+        .ok_or_else(|| "Bundled Claude model-catalog.json root must be an object".to_string())?;
     let fallback_context_window = root
         .get("fallback_model")
         .and_then(Value::as_object)
         .and_then(|model| model.get("context_window"))
         .and_then(positive_u64)
         .ok_or_else(|| {
-            "内置 Claude model-catalog.json 缺少有效的 fallback_model.context_window".to_string()
+            "Bundled Claude model-catalog.json is missing a valid fallback_model.context_window".to_string()
         })?;
     let models = root
         .get("models")
         .and_then(Value::as_array)
-        .ok_or_else(|| "内置 Claude model-catalog.json 必须包含 models 数组".to_string())?;
+        .ok_or_else(|| "Bundled Claude model-catalog.json must contain a models array".to_string())?;
     let mut context_windows = HashMap::with_capacity(models.len());
     let mut display_names = HashMap::with_capacity(models.len());
     let mut claude_code_effort_levels = HashMap::with_capacity(models.len());
@@ -75,7 +75,7 @@ fn parse_catalog(content: &str) -> Result<ClaudeCatalog, String> {
     for (index, model) in models.iter().enumerate() {
         let model = model.as_object().ok_or_else(|| {
             format!(
-                "内置 Claude model-catalog.json 第 {} 个模型必须是对象",
+                "Model {} in bundled Claude model-catalog.json must be an object",
                 index + 1
             )
         })?;
@@ -86,14 +86,14 @@ fn parse_catalog(content: &str) -> Result<ClaudeCatalog, String> {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
                 format!(
-                    "内置 Claude model-catalog.json 第 {} 个模型的 slug 不能为空",
+                    "The slug of model {} in bundled Claude model-catalog.json cannot be empty",
                     index + 1
                 )
             })?;
         let key = normalize_id(slug);
         if !model_ids.insert(key.clone()) {
             return Err(format!(
-                "内置 Claude model-catalog.json 模型 slug 大小写重复: {slug}"
+                "Bundled Claude model-catalog.json contains duplicate model slugs differing only by case: {slug}"
             ));
         }
         if let Some(context_window) = model.get("context_window").and_then(positive_u64) {
@@ -194,7 +194,7 @@ mod tests {
             }"#,
         )
         .unwrap_err();
-        assert!(error.contains("slug 大小写重复"));
+        assert!(error.contains("duplicate model slugs differing only by case"));
     }
 
     #[test]

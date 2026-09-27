@@ -1460,6 +1460,7 @@ export const zhCN = {
   'kernel.error.port': '端口必须在 1 到 65535 之间',
   'kernel.error.installTask': '读取安装任务失败: {error}',
   'kernel.install.installingVersion': '正在安装 {version}',
+  'kernel.install.installingLatest': '正在安装最新版本',
   'kernel.phase.preparingDownload': '准备下载',
   'kernel.phase.downloading': '下载中',
   'kernel.phase.extracting': '解压中',

@@ -12,7 +12,7 @@ import {
 const notice: AppNotice = {
   owner: 'api-page',
   source: 'app.nav.api',
-  message: '接入已启用',
+  message: 'Connection enabled',
   tone: 'success',
 };
 
@@ -31,11 +31,11 @@ describe('统一操作提示', () => {
     const first = appNoticeReducer(initialAppNoticeState, { type: 'show', notice });
     const next = appNoticeReducer(first, {
       type: 'show',
-      notice: { ...notice, message: '接入已停用' },
+      notice: { ...notice, message: 'Connection disabled' },
     });
-    expect(next.notice?.message).toBe('接入已停用');
+    expect(next.notice?.message).toBe('Connection disabled');
     expect(next.revision).toBe(2);
-    expect(first.notice?.message).toBe('接入已启用');
+    expect(first.notice?.message).toBe('Connection enabled');
   });
 
   it('重复的操作结果也产生新的可播报版本', () => {
@@ -76,12 +76,12 @@ describe('统一操作提示', () => {
   it('操作结果包含来源、完整消息和可访问的关闭按钮', () => {
     const html = renderNotice(appNoticeReducer(initialAppNoticeState, { type: 'show', notice }));
     expect(html).toContain('action-feedback inline-notice success');
-    expect(html).toContain('API 接入');
-    expect(html).toContain('接入已启用');
+    expect(html).toContain('API Access');
+    expect(html).toContain('Connection enabled');
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain('aria-atomic="true"');
-    expect(html).toContain('aria-label="关闭操作提示"');
+    expect(html).toContain('aria-label="Dismiss operation feedback"');
     expect(html).not.toContain('config-toast');
     expect(html).not.toContain('<footer');
     expect(html).not.toContain('app-notice-bar');
@@ -89,19 +89,19 @@ describe('统一操作提示', () => {
 
   it('局部操作可省略重复的模块标题', () => {
     const html = renderNotice({ notice: { ...notice, source: undefined }, revision: 1 });
-    expect(html).toContain('接入已启用');
+    expect(html).toContain('Connection enabled');
     expect(html).not.toContain('action-feedback-source');
   });
 
   it('长错误保留全文、换行且转义外部内容', () => {
-    const message = `失败：${'详细错误'.repeat(160)}\n<script>alert(1)</script>`;
+    const message = `Failure: ${'Detailed error'.repeat(160)}\n<script>alert(1)</script>`;
     const html = renderNotice(appNoticeReducer(initialAppNoticeState, {
       type: 'show', notice: { ...notice, message, tone: 'error' },
     }));
     expect(html).toContain('action-feedback inline-notice error');
     expect(html).toContain('role="alert"');
     expect(html).toContain('aria-live="assertive"');
-    expect(html).toContain('详细错误'.repeat(160));
+    expect(html).toContain('Detailed error'.repeat(160));
     expect(html).toContain('\n&lt;script&gt;');
     expect(html).not.toContain('<script>');
   });
@@ -112,7 +112,7 @@ describe('统一操作提示', () => {
       type: 'show', notice: { ...notice, message },
     });
     expect(shown.notice?.message).toBe(message);
-    expect(renderNotice(shown)).toContain('&lt;QA&gt; 登录成功');
+    expect(renderNotice(shown)).toContain('&lt;QA&gt; sign-in succeeded');
     for (const locale of supportedLocales) {
       expect(translate(locale, message.key, message.variables)).toContain('<QA>');
     }

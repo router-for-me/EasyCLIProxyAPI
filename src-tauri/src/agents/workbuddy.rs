@@ -112,7 +112,7 @@ pub(crate) fn read_workbuddy_app_version(executable: &Path) -> Option<String> {
 pub(crate) fn parse_workbuddy_config(content: Option<&str>) -> Result<Value, String> {
     let value = match content {
         Some(content) => serde_json::from_str(content.strip_prefix('\u{feff}').unwrap_or(content))
-            .map_err(|_| "WorkBuddy models.json 格式无效，请使用手动备份恢复或基础配置模板修复")?,
+            .map_err(|_| "Invalid WorkBuddy models.json format. Restore it from a manual backup or repair it with the base configuration template")?,
         None => json!({}),
     };
     validate_workbuddy_config(&value)?;
@@ -127,14 +127,14 @@ pub(crate) fn validate_workbuddy_config(value: &Value) -> Result<(), String> {
             v.as_array()
                 .is_none_or(|a| a.iter().any(|v| !v.is_string()))
         }) {
-            return Err("WorkBuddy availableModels 必须是字符串数组".into());
+            return Err("WorkBuddy availableModels must be an array of strings".into());
         }
         match root.get("models") {
             None => None,
-            Some(v) => Some(v.as_array().ok_or("WorkBuddy models 必须是数组")?),
+            Some(v) => Some(v.as_array().ok_or("WorkBuddy models must be an array")?),
         }
     } else {
-        return Err("WorkBuddy models.json 根节点必须是对象或数组".into());
+        return Err("WorkBuddy models.json root must be an object or array".into());
     };
     let mut ids = std::collections::HashSet::new();
     for entry in entries.into_iter().flatten() {
@@ -142,9 +142,9 @@ pub(crate) fn validate_workbuddy_config(value: &Value) -> Result<(), String> {
             .get("id")
             .and_then(Value::as_str)
             .filter(|id| !id.trim().is_empty())
-            .ok_or("WorkBuddy 模型缺少有效 id")?;
+            .ok_or("WorkBuddy model is missing a valid id")?;
         if !ids.insert(workbuddy_request_model(id)) {
-            return Err("WorkBuddy 存在重复模型 id，请先修复配置".into());
+            return Err("WorkBuddy contains duplicate model IDs. Fix the configuration first".into());
         }
     }
     Ok(())
@@ -195,7 +195,7 @@ pub(crate) fn build_workbuddy_agent_config(
             .is_some_and(|id| workbuddy_request_model(id) == model)
     }) {
         return Err(
-            "WorkBuddy 已有同名自定义模型，请先在 WorkBuddy 中修改该模型 ID，或选择其他 CPA 模型"
+            "WorkBuddy already has a custom model with the same name. Change that model ID in WorkBuddy or select another CPA model"
                 .into(),
         );
     }
@@ -217,7 +217,7 @@ pub(crate) fn build_workbuddy_agent_config(
         .iter()
         .filter(|m| workbuddy_managed_model(m))
     {
-        let id = previous["id"].as_str().ok_or("WorkBuddy 模型缺少有效 id")?;
+        let id = previous["id"].as_str().ok_or("WorkBuddy model is missing a valid id")?;
         let previous_model = workbuddy_request_model(id);
         if previous_model == model {
             continue;
@@ -245,7 +245,7 @@ pub(crate) fn build_workbuddy_agent_config(
             visible.push(json!(model));
         }
     }
-    serde_json::to_string_pretty(&root).map_err(|_| "生成 WorkBuddy 配置失败".into())
+    serde_json::to_string_pretty(&root).map_err(|_| "Failed to generate WorkBuddy configuration".into())
 }
 
 fn update_workbuddy_model(
@@ -415,7 +415,7 @@ pub(crate) fn validate_workbuddy_unmanaged_preserved(
         value
     };
     if project(before) != project(after) {
-        return Err("更新意外改变了 WorkBuddy 自定义配置，已拒绝写入".into());
+        return Err("The update unexpectedly changed WorkBuddy custom configuration and was not written".into());
     }
     Ok(())
 }
@@ -449,11 +449,11 @@ pub(crate) fn build_restored_workbuddy_config(
     }
     serde_json::to_string_pretty(&root)
         .map(Some)
-        .map_err(|_| "恢复 WorkBuddy 配置失败".into())
+        .map_err(|_| "Failed to restore WorkBuddy configuration".into())
 }
 
 pub(crate) fn prepare_workbuddy_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
-    let path = paths.first().ok_or("WorkBuddy 配置路径不可用")?;
+    let path = paths.first().ok_or("WorkBuddy configuration path is unavailable")?;
     let Some(current) = read_optional_text(path)? else {
         return Ok(Vec::new());
     };
@@ -467,7 +467,7 @@ pub(crate) fn prepare_workbuddy_managed_removal(paths: &[PathBuf]) -> Result<Ima
     {
         None
     } else {
-        Some(serde_json::to_vec_pretty(&value).map_err(|_| "生成 WorkBuddy 配置失败")?)
+        Some(serde_json::to_vec_pretty(&value).map_err(|_| "Failed to generate WorkBuddy configuration")?)
     };
     Ok(vec![(path.clone(), bytes)])
 }

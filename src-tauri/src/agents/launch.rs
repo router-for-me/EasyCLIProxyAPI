@@ -131,7 +131,7 @@ pub(crate) fn launch_agent(
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
     let terminal = normalize_agent_terminal(&config.default_terminal);
     let requested_target = target
@@ -140,20 +140,20 @@ pub(crate) fn launch_agent(
         .filter(|value| !value.is_empty());
     if deepseek_harness_options.is_some() && !client.trim().eq_ignore_ascii_case("deepseek-harness")
     {
-        return Err("DeepSeek Harness 启动选项不能用于其他客户端".to_string());
+        return Err("DeepSeek Harness launch options cannot be used with other clients".to_string());
     }
 
     if client.trim().eq_ignore_ascii_case(PI_AGENT_ID) {
         if requested_target.is_some_and(|value| value != "cli") {
-            return Err("Pi 只支持 CLI 启动方式".to_string());
+            return Err("Pi supports only CLI launch mode".to_string());
         }
         let status =
             inspect_pi_provider_status(&home, config.port, effective_agent_api_key(&config));
         if !status.installed {
-            return Err("未检测到 Pi CLI，请先安装 Pi 并重新检测".to_string());
+            return Err("Pi CLI was not detected. Install Pi and detect it again".to_string());
         }
         let executable =
-            find_pi_executable(&home).ok_or_else(|| "未找到 Pi CLI 可执行文件".to_string())?;
+            find_pi_executable(&home).ok_or_else(|| "Pi CLI executable not found".to_string())?;
         let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
         return launch_cli_agent(
             &executable,
@@ -167,11 +167,11 @@ pub(crate) fn launch_agent(
 
     let client = AgentClient::parse(&client)?;
     if !client.supported_platform() {
-        return Err(format!("当前平台不支持启动 {}", client.name()));
+        return Err(format!("The current platform does not support launching {}", client.name()));
     }
     let status = inspect_agent_config(client, &home, config.port, effective_agent_api_key(&config));
     if !status.installed {
-        return Err(format!("未检测到 {}，请先安装并重新检测", client.name()));
+        return Err(format!("{} was not detected. Install it and detect it again", client.name()));
     }
     let default_target = status
         .launch_targets
@@ -184,30 +184,30 @@ pub(crate) fn launch_agent(
         (AgentClient::AntigravityCli, "cli")
             if antigravity_has_marker(client, &agent_config_paths(client, &home))? => {
             if !status.configured {
-                return Err("Antigravity CLI 配置与 CPA 不一致，请重新应用配置".into());
+                return Err("Antigravity CLI configuration does not match CPA. Apply the configuration again".into());
             }
-            let executable = env::current_exe().map_err(|_| "无法定位 CPA 启动适配程序")?;
+            let executable = env::current_exe().map_err(|_| "Unable to locate CPA launch adapter")?;
             let directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
             launch_cli_agent(&executable, client.name(), &directory, &antigravity_cli_helper_arguments(&home), &[], &terminal)
         }
         (AgentClient::WorkBuddy, "app") => {
             let executable = find_workbuddy_desktop_executable(&home)
-                .ok_or_else(|| "未找到 WorkBuddy 应用程序".to_string())?;
+                .ok_or_else(|| "WorkBuddy application not found".to_string())?;
             launch_desktop_agent(&executable, client.name())
         }
         (AgentClient::ZCode, "app") => {
             let executable = find_zcode_desktop_executable(&home)
-                .ok_or_else(|| "未找到 ZCode 应用程序".to_string())?;
+                .ok_or_else(|| "ZCode application not found".to_string())?;
             launch_desktop_agent(&executable, client.name())
         }
         (AgentClient::Codex, "app") => launch_codex_desktop(&home),
         (AgentClient::OpenCode, "app") => launch_opencode_desktop(&home),
         (AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy, "cli") => {
-            Err(format!("{} 不支持 CLI 启动方式", client.name()))
+            Err(format!("{} does not support CLI launch mode", client.name()))
         }
         (_, "cli") => {
             let executable = find_agent_executable(client, &home)
-                .ok_or_else(|| format!("未找到 {} 的可执行文件", client.name()))?;
+                .ok_or_else(|| format!("Executable for {} not found", client.name()))?;
             let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
             if client == AgentClient::DeepSeekHarness {
                 let mode = deepseek_harness_launch_mode(deepseek_harness_options.as_ref())?;
@@ -237,8 +237,8 @@ pub(crate) fn launch_agent(
                 &terminal,
             )
         }
-        (_, "app") => Err(format!("{} 不支持桌面 App 启动方式", client.name())),
-        _ => Err("不支持的智能体启动方式".to_string()),
+        (_, "app") => Err(format!("{} does not support desktop App launch mode", client.name())),
+        _ => Err("Unsupported agent launch mode".to_string()),
     }
 }
 
@@ -255,7 +255,7 @@ fn deepseek_harness_launch_mode(
     ) {
         Ok(mode)
     } else {
-        Err(format!("不支持的 DeepSeek Harness 启动模式: {mode}"))
+        Err(format!("Unsupported DeepSeek Harness launch mode: {mode}"))
     }
 }
 
@@ -265,7 +265,7 @@ fn agent_cli_launch_arguments(
 ) -> Result<Vec<String>, String> {
     if client != AgentClient::DeepSeekHarness {
         if deepseek_harness_options.is_some() {
-            return Err("DeepSeek Harness 启动选项不能用于其他客户端".to_string());
+            return Err("DeepSeek Harness launch options cannot be used with other clients".to_string());
         }
         return Ok(Vec::new());
     }
@@ -284,7 +284,7 @@ fn build_deepseek_harness_launch_arguments(
                 .and_then(|options| options.profile.as_deref())
                 .unwrap_or_default(),
         )?,
-        _ => return Err(format!("不支持的 DeepSeek Harness 启动模式: {mode}")),
+        _ => return Err(format!("Unsupported DeepSeek Harness launch mode: {mode}")),
     };
     let mut arguments = if profile == "web" {
         vec!["web".to_string()]
@@ -295,7 +295,7 @@ fn build_deepseek_harness_launch_arguments(
     if let Some(options) = options {
         for patch in &options.patches {
             arguments.push("--patch".to_string());
-            arguments.push(validate_deepseek_harness_argument(patch, "patch 路径")?);
+            arguments.push(validate_deepseek_harness_argument(patch, "Patch path")?);
         }
     }
 
@@ -330,7 +330,7 @@ fn build_deepseek_harness_launch_arguments(
             let task = options
                 .and_then(|options| options.task.as_deref())
                 .unwrap_or_default();
-            arguments.push(validate_deepseek_harness_argument(task, "Headless 任务")?);
+            arguments.push(validate_deepseek_harness_argument(task, "Headless task")?);
         }
         "acp" | "sdk" | "sdk-minimal" | "custom" => {}
         _ => unreachable!(),
@@ -343,7 +343,7 @@ impl DeepSeekHarnessProcessState {
         let mut process = self
             .process
             .lock()
-            .map_err(|_| "DeepSeek Harness 进程状态锁已损坏".to_string())?;
+            .map_err(|_| "DeepSeek Harness process status lock is poisoned".to_string())?;
         let Some(managed) = process.as_mut() else {
             return Ok(DeepSeekHarnessProcessStatus::default());
         };
@@ -357,7 +357,7 @@ impl DeepSeekHarnessProcessState {
                 *process = None;
                 Ok(DeepSeekHarnessProcessStatus::default())
             }
-            Err(error) => Err(format!("检查 DeepSeek Harness 进程状态失败: {error}")),
+            Err(error) => Err(format!("Failed to check DeepSeek Harness process status: {error}")),
         }
     }
 }
@@ -388,17 +388,17 @@ fn launch_managed_deepseek_harness(
     let mut process = process_state
         .process
         .lock()
-        .map_err(|_| "DeepSeek Harness 进程状态锁已损坏".to_string())?;
+        .map_err(|_| "DeepSeek Harness process status lock is poisoned".to_string())?;
     if let Some(managed) = process.as_mut() {
         match managed.child.try_wait() {
             Ok(None) => {
                 return Err(format!(
-                    "DeepSeek Harness 已在运行（PID {}），请先关闭当前进程",
+                    "DeepSeek Harness is already running (PID {}). Stop the current process first",
                     managed.child.id()
                 ));
             }
             Ok(Some(_)) => *process = None,
-            Err(error) => return Err(format!("检查 DeepSeek Harness 进程状态失败: {error}")),
+            Err(error) => return Err(format!("Failed to check DeepSeek Harness process status: {error}")),
         }
     }
 
@@ -428,7 +428,7 @@ pub(crate) async fn restart_deepseek_harness_process(
         restart_managed_deepseek_harness(app.state::<DeepSeekHarnessProcessState>().inner())
     })
     .await
-    .map_err(|error| format!("重启 DeepSeek Harness Web 任务失败: {error}"))?
+    .map_err(|error| format!("DeepSeek Harness Web restart task failed: {error}"))?
 }
 
 fn restart_managed_deepseek_harness(
@@ -449,25 +449,25 @@ fn restart_managed_deepseek_harness_with(
     let mut process = process_state
         .process
         .lock()
-        .map_err(|_| "DeepSeek Harness 进程状态锁已损坏".to_string())?;
+        .map_err(|_| "DeepSeek Harness process status lock is poisoned".to_string())?;
     let managed = process
         .as_mut()
-        .ok_or_else(|| "没有正在运行的 DeepSeek Harness Web 服务".to_string())?;
+        .ok_or_else(|| "No DeepSeek Harness Web service is running".to_string())?;
     if managed
         .child
         .try_wait()
-        .map_err(|error| format!("检查 DeepSeek Harness 进程状态失败: {error}"))?
+        .map_err(|error| format!("Failed to check DeepSeek Harness process status: {error}"))?
         .is_some()
     {
         *process = None;
-        return Err("DeepSeek Harness Web 已退出，请重新启动".to_string());
+        return Err("DeepSeek Harness Web has exited. Start it again".to_string());
     }
     if managed.mode != "web" {
-        return Err("只有 Web 模式支持重启".to_string());
+        return Err("Only Web mode supports restart".to_string());
     }
     let launch = managed.launch.clone();
     if !launch.executable.is_file() || !launch.working_directory.is_dir() {
-        return Err("DeepSeek Harness 启动程序或工作目录已不存在".to_string());
+        return Err("DeepSeek Harness launcher or working directory no longer exists".to_string());
     }
     stop(&mut managed.child)?;
     *process = None;
@@ -507,10 +507,10 @@ fn ensure_deepseek_harness_web_endpoint_available(
     let listener = TcpListener::bind((host, port)).map_err(|error| {
         if error.kind() == io::ErrorKind::AddrInUse {
             format!(
-                "DeepSeek Harness Web 地址 {host}:{port} 已被占用，请关闭已有服务或选择其他端口"
+                "DeepSeek Harness Web address {host}:{port} is in use. Stop the existing service or choose another port"
             )
         } else {
-            format!("无法使用 DeepSeek Harness Web 地址 {host}:{port}: {error}")
+            format!("Cannot use DeepSeek Harness Web address {host}:{port}: {error}")
         }
     })?;
     drop(listener);
@@ -541,7 +541,7 @@ fn spawn_managed_deepseek_harness(
             );
         return command
             .spawn()
-            .map_err(|error| format!("启动 DeepSeek Harness 失败: {error}"));
+            .map_err(|error| format!("Failed to start DeepSeek Harness: {error}"));
     }
 
     #[cfg(unix)]
@@ -555,13 +555,13 @@ fn spawn_managed_deepseek_harness(
             .process_group(0);
         return command
             .spawn()
-            .map_err(|error| format!("启动 DeepSeek Harness 失败: {error}"));
+            .map_err(|error| format!("Failed to start DeepSeek Harness: {error}"));
     }
 
     #[cfg(not(any(windows, unix)))]
     {
         let _ = (executable, working_directory, arguments);
-        Err("当前平台不支持受控启动 DeepSeek Harness".to_string())
+        Err("The current platform does not support managed DeepSeek Harness startup".to_string())
     }
 }
 
@@ -571,14 +571,14 @@ pub(crate) fn stop_managed_deepseek_harness(
     let mut process = process_state
         .process
         .lock()
-        .map_err(|_| "DeepSeek Harness 进程状态锁已损坏".to_string())?;
+        .map_err(|_| "DeepSeek Harness process status lock is poisoned".to_string())?;
     let Some(managed) = process.as_mut() else {
         return Ok(());
     };
     if managed
         .child
         .try_wait()
-        .map_err(|error| format!("检查 DeepSeek Harness 进程状态失败: {error}"))?
+        .map_err(|error| format!("Failed to check DeepSeek Harness process status: {error}"))?
         .is_some()
     {
         *process = None;
@@ -602,10 +602,10 @@ fn terminate_deepseek_harness_process_tree(child: &mut Child) -> Result<(), Stri
         configure_background_command(&mut command);
         let status = command
             .status()
-            .map_err(|error| format!("关闭 DeepSeek Harness 进程树失败: {error}"))?;
+            .map_err(|error| format!("Failed to stop DeepSeek Harness process tree: {error}"))?;
         if !status.success() {
             return Err(format!(
-                "关闭 DeepSeek Harness 进程树失败: PID {process_id}"
+                "Failed to stop DeepSeek Harness process tree: PID {process_id}"
             ));
         }
         let _ = child.wait();
@@ -618,10 +618,10 @@ fn terminate_deepseek_harness_process_tree(child: &mut Child) -> Result<(), Stri
         let term_status = Command::new("kill")
             .args(["-TERM", &process_group])
             .status()
-            .map_err(|error| format!("关闭 DeepSeek Harness 进程组失败: {error}"))?;
+            .map_err(|error| format!("Failed to stop DeepSeek Harness process group: {error}"))?;
         if !term_status.success() {
             return Err(format!(
-                "关闭 DeepSeek Harness 进程组失败: PID {}",
+                "Failed to stop DeepSeek Harness process group: PID {}",
                 child.id()
             ));
         }
@@ -630,23 +630,23 @@ fn terminate_deepseek_harness_process_tree(child: &mut Child) -> Result<(), Stri
                 Ok(Some(_)) => return Ok(()),
                 Ok(None) => thread::sleep(Duration::from_millis(100)),
                 Err(error) => {
-                    return Err(format!("检查 DeepSeek Harness 进程状态失败: {error}"));
+                    return Err(format!("Failed to check DeepSeek Harness process status: {error}"));
                 }
             }
         }
         let kill_status = Command::new("kill")
             .args(["-KILL", &process_group])
             .status()
-            .map_err(|error| format!("强制关闭 DeepSeek Harness 进程组失败: {error}"))?;
+            .map_err(|error| format!("Failed to force-stop DeepSeek Harness process group: {error}"))?;
         if !kill_status.success() {
             return Err(format!(
-                "强制关闭 DeepSeek Harness 进程组失败: PID {}",
+                "Failed to force-stop DeepSeek Harness process group: PID {}",
                 child.id()
             ));
         }
         child
             .wait()
-            .map_err(|error| format!("等待 DeepSeek Harness 进程退出失败: {error}"))?;
+            .map_err(|error| format!("Failed while waiting for DeepSeek Harness process to exit: {error}"))?;
         return Ok(());
     }
 
@@ -654,10 +654,10 @@ fn terminate_deepseek_harness_process_tree(child: &mut Child) -> Result<(), Stri
     {
         child
             .kill()
-            .map_err(|error| format!("关闭 DeepSeek Harness 进程失败: {error}"))?;
+            .map_err(|error| format!("Failed to stop DeepSeek Harness process: {error}"))?;
         child
             .wait()
-            .map_err(|error| format!("等待 DeepSeek Harness 进程退出失败: {error}"))?;
+            .map_err(|error| format!("Failed while waiting for DeepSeek Harness process to exit: {error}"))?;
         Ok(())
     }
 }
@@ -665,7 +665,7 @@ fn terminate_deepseek_harness_process_tree(child: &mut Child) -> Result<(), Stri
 fn validate_deepseek_harness_profile(profile: &str) -> Result<&str, String> {
     let profile = profile.trim();
     if profile.is_empty() {
-        return Err("请输入 DeepSeek Harness profile 名称".to_string());
+        return Err("Enter a DeepSeek Harness profile name".to_string());
     }
     if matches!(profile, "." | "..")
         || !profile.chars().all(|character| {
@@ -673,7 +673,7 @@ fn validate_deepseek_harness_profile(profile: &str) -> Result<&str, String> {
         })
     {
         return Err(
-            "DeepSeek Harness profile 名称只能包含字母、数字、点、连字符和下划线".to_string(),
+            "DeepSeek Harness profile name may contain only letters, numbers, periods, hyphens, and underscores".to_string(),
         );
     }
     Ok(profile)
@@ -682,10 +682,10 @@ fn validate_deepseek_harness_profile(profile: &str) -> Result<&str, String> {
 fn validate_deepseek_harness_argument(value: &str, label: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
-        return Err(format!("{label}不能为空"));
+        return Err(format!("{label} cannot be empty"));
     }
     if value.chars().any(char::is_control) {
-        return Err(format!("{label}不能包含控制字符"));
+        return Err(format!("{label} cannot contain control characters"));
     }
     Ok(value.to_string())
 }
@@ -711,19 +711,19 @@ pub(crate) async fn restart_agent_app(app: tauri::AppHandle, client: String) -> 
             | AgentClient::ZCode
             | AgentClient::WorkBuddy
     ) {
-        return Err(format!("{} 不支持桌面应用重启", client.name()));
+        return Err(format!("{} does not support restarting the desktop application", client.name()));
     }
     let home = app
         .path()
         .home_dir()
-        .map_err(|error| format!("无法获取用户目录: {error}"))?;
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
     tauri::async_runtime::spawn_blocking(move || {
         let target = find_desktop_restart_target(client, &home)?;
         match client {
             AgentClient::Codex => stop_codex_desktop(&target)?,
             AgentClient::OpenCode => {
                 let DesktopAppTarget::Application(path) = &target else {
-                    return Err("OpenCode 桌面安装类型无效".to_string());
+                    return Err("Invalid OpenCode desktop installation type".to_string());
                 };
                 stop_opencode_desktop(path)?;
             }
@@ -738,7 +738,7 @@ pub(crate) async fn restart_agent_app(app: tauri::AppHandle, client: String) -> 
         }
     })
     .await
-    .map_err(|error| format!("重启桌面应用任务失败: {error}"))?
+    .map_err(|error| format!("Desktop application restart task failed: {error}"))?
 }
 
 fn find_desktop_restart_target(
@@ -771,7 +771,7 @@ fn find_desktop_restart_target(
         }
         _ => None,
     };
-    target.ok_or_else(|| format!("未检测到 {} 桌面应用，请重新检测", client.name()))
+    target.ok_or_else(|| format!("{} desktop application was not detected. Detect it again", client.name()))
 }
 
 #[cfg(target_os = "windows")]
@@ -794,7 +794,7 @@ fn stop_other_desktop(target: &DesktopAppTarget, label: &str) -> Result<(), Stri
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn stop_other_desktop(_target: &DesktopAppTarget, label: &str) -> Result<(), String> {
-    Err(format!("当前平台不支持重启 {label}"))
+    Err(format!("The current platform does not support restarting {label}"))
 }
 
 fn resolve_launch_directory(value: Option<&str>, fallback: &Path) -> Result<PathBuf, String> {
@@ -802,21 +802,21 @@ fn resolve_launch_directory(value: Option<&str>, fallback: &Path) -> Result<Path
         return Ok(fallback.to_path_buf());
     };
     if value.chars().any(char::is_control) {
-        return Err("工作目录包含无效字符".to_string());
+        return Err("Working directory contains invalid characters".to_string());
     }
     let path = PathBuf::from(value);
     if !path.is_absolute() {
-        return Err("工作目录必须是绝对路径".to_string());
+        return Err("Working directory must be an absolute path".to_string());
     }
     if !path.is_dir() {
-        return Err(format!("工作目录不存在: {}", path_to_string(&path)));
+        return Err(format!("Working directory does not exist: {}", path_to_string(&path)));
     }
     Ok(path)
 }
 
 fn launch_codex_desktop(home: &Path) -> Result<(), String> {
     let target = find_codex_app_installation(home)
-        .ok_or_else(|| "未检测到 Codex 桌面应用，请重新检测或改用 Codex CLI".to_string())?;
+        .ok_or_else(|| "Codex desktop application was not detected. Detect it again or use Codex CLI".to_string())?;
     launch_codex_target(&target)
 }
 
@@ -886,9 +886,9 @@ fn macos_processes_for_application(application: &Path) -> Result<Vec<i32>, Strin
     let output = Command::new("ps")
         .args(["-axww", "-o", "pid=", "-o", "comm="])
         .output()
-        .map_err(|error| format!("读取桌面应用进程失败: {error}"))?;
+        .map_err(|error| format!("Failed to read desktop application processes: {error}"))?;
     if !output.status.success() {
-        return Err("读取桌面应用进程失败".to_string());
+        return Err("Failed to read desktop application processes".to_string());
     }
     Ok(desktop_process_ids_from_ps(
         &String::from_utf8_lossy(&output.stdout),
@@ -921,7 +921,7 @@ fn stop_macos_desktop_application(application: &Path, label: &str) -> Result<(),
         if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
             let error = io::Error::last_os_error();
             if error.raw_os_error() != Some(libc::ESRCH) {
-                return Err(format!("关闭 {label} 进程 {pid} 失败: {error}"));
+                return Err(format!("Failed to stop {label} process {pid}: {error}"));
             }
         }
     }
@@ -931,7 +931,7 @@ fn stop_macos_desktop_application(application: &Path, label: &str) -> Result<(),
         }
         thread::sleep(Duration::from_millis(100));
     }
-    Err(format!("{label} 未能完全关闭"))
+    Err(format!("{label} did not close completely"))
 }
 
 #[cfg(target_os = "linux")]
@@ -977,7 +977,7 @@ fn stop_linux_desktop_application(application: &Path, label: &str) -> Result<(),
         Err(error)
     } else {
         Err(format!(
-            "{label} 未能完全关闭；剩余进程 ID: {}",
+            "{label} did not close completely; remaining process IDs: {}",
             remaining
                 .iter()
                 .map(i32::to_string)
@@ -1080,18 +1080,18 @@ fn signal_linux_process(process_id: i32, signal: i32) -> Result<(), String> {
     if error.raw_os_error() == Some(libc::ESRCH) {
         Ok(())
     } else {
-        Err(format!("关闭桌面应用进程 {process_id} 失败: {error}"))
+        Err(format!("Failed to stop desktop application process {process_id}: {error}"))
     }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn stop_codex_desktop(_target: &DesktopAppTarget) -> Result<(), String> {
-    Err("当前平台不支持重启 Codex App".to_string())
+    Err("The current platform does not support restarting Codex App".to_string())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn stop_opencode_desktop(_application: &Path) -> Result<(), String> {
-    Err("当前平台不支持重启 OpenCode Desktop".to_string())
+    Err("The current platform does not support restarting OpenCode Desktop".to_string())
 }
 
 fn launch_claude_desktop(home: &Path) -> Result<(), String> {
@@ -1103,12 +1103,12 @@ fn launch_claude_desktop(home: &Path) -> Result<(), String> {
         launch_windows_claude_store_app()
     }
     #[cfg(not(target_os = "windows"))]
-    Err("未检测到 Claude Desktop 应用，请先安装或重新检测".to_string())
+    Err("Claude Desktop application was not detected. Install or detect it again".to_string())
 }
 
 fn launch_opencode_desktop(home: &Path) -> Result<(), String> {
     let application = find_opencode_desktop_application(home)
-        .ok_or_else(|| "未检测到 OpenCode Desktop 应用，请先安装或重新检测".to_string())?;
+        .ok_or_else(|| "OpenCode Desktop application was not detected. Install or detect it again".to_string())?;
     launch_desktop_agent(&application, "OpenCode Desktop")
 }
 
@@ -1130,7 +1130,7 @@ fn launch_desktop_agent(executable: &Path, label: &str) -> Result<(), String> {
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = (executable, label);
-        return Err("当前平台不支持桌面智能体".to_string());
+        return Err("The current platform does not support desktop agents".to_string());
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -1143,7 +1143,7 @@ fn launch_desktop_agent(executable: &Path, label: &str) -> Result<(), String> {
         command
             .spawn()
             .map(|_| ())
-            .map_err(|error| format!("启动 {label} 失败: {error}"))
+            .map_err(|error| format!("Failed to start {label}: {error}"))
     }
 }
 
@@ -1159,13 +1159,13 @@ fn launch_windows_store_app(app_id: &str, label: &str) -> Result<(), String> {
     command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("启动 {label} 失败: {error}"))
+        .map_err(|error| format!("Failed to start {label}: {error}"))
 }
 
 #[cfg(target_os = "windows")]
 fn launch_windows_claude_store_app() -> Result<(), String> {
     let app_id = find_windows_claude_app_id()
-        .ok_or_else(|| "未找到可启动的 Claude Desktop 应用".to_string())?;
+        .ok_or_else(|| "No launchable Claude Desktop application found".to_string())?;
     launch_windows_store_app(&app_id, "Claude Desktop")
 }
 
@@ -1218,18 +1218,18 @@ fn launch_cli_agent(
             command_line.replace('\\', "\\\\").replace('"', "\\\"")
         )
     } else {
-        return Err(format!("启动 {label} 失败：不支持所选终端"));
+        return Err(format!("Failed to start {label}: selected terminal is unsupported"));
     };
     let output = Command::new("osascript")
         .arg("-e")
         .arg(script)
         .output()
-        .map_err(|error| format!("启动 {label} 终端失败: {error}"))?;
+        .map_err(|error| format!("Failed to start {label} terminal: {error}"))?;
     if output.status.success() {
         Ok(())
     } else {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(format!("启动 {label} 终端失败: {detail}"))
+        Err(format!("Failed to start {label} terminal: {detail}"))
     }
 }
 
@@ -1270,11 +1270,11 @@ fn launch_cli_agent(
         }
     }
     if terminal != "auto" && last_error.is_none() {
-        return Err(format!("启动 {label} 失败：未找到所选终端"));
+        return Err(format!("Failed to start {label}: selected terminal not found"));
     }
     Err(match last_error {
-        Some(error) => format!("启动 {label} 失败: {error}"),
-        None => format!("启动 {label} 失败：未找到可用的终端程序"),
+        Some(error) => format!("Failed to start {label}: {error}"),
+        None => format!("Failed to start {label}: no available terminal program found"),
     })
 }
 
@@ -1365,7 +1365,7 @@ fn launch_cli_agent(
         }
         "windows-terminal" => {
             let terminal_executable = program_on_path("wt.exe")
-                .ok_or_else(|| format!("启动 {label} 失败：未找到 Windows Terminal"))?;
+                .ok_or_else(|| format!("Failed to start {label}: Windows Terminal not found"))?;
             let directory = path_to_string(working_directory);
             let mut command = Command::new(terminal_executable);
             command.args(["-d", &directory, "--"]);
@@ -1403,7 +1403,7 @@ fn launch_cli_agent(
             command.creation_flags(CREATE_NEW_CONSOLE);
             command
         }
-        _ => return Err(format!("启动 {label} 失败：不支持所选终端")),
+        _ => return Err(format!("Failed to start {label}: selected terminal is unsupported")),
     };
     for key in environment_to_remove {
         command.env_remove(key);
@@ -1411,7 +1411,7 @@ fn launch_cli_agent(
     command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("启动 {label} 失败: {error}"))
+        .map_err(|error| format!("Failed to start {label}: {error}"))
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -1423,7 +1423,7 @@ fn launch_cli_agent(
     _environment_to_remove: &[&str],
     _terminal: &str,
 ) -> Result<(), String> {
-    Err(format!("当前平台不支持启动 {label}"))
+    Err(format!("The current platform does not support launching {label}"))
 }
 
 #[cfg(test)]
@@ -1464,7 +1464,7 @@ mod tests {
                     .unwrap()
                     .as_nanos(),
             ))
-            .join("用户's [workspace] $value");
+            .join("User's [workspace] $value");
         fs::create_dir_all(&directory).unwrap();
         let executable = directory.join("GUI helper.exe");
         let compiled = directory.parent().unwrap().join("helper.exe");
@@ -1811,7 +1811,7 @@ class GuiHelper {
     fn relative_launch_directory_is_rejected() {
         let error = resolve_launch_directory(Some("relative/project"), Path::new("/fallback"))
             .expect_err("relative path should be rejected");
-        assert!(error.contains("绝对路径"));
+        assert!(error.contains("absolute path"));
     }
 
     #[test]
@@ -1966,7 +1966,7 @@ class GuiHelper {
 
         let error = ensure_deepseek_harness_web_endpoint_available(Some(&options)).unwrap_err();
 
-        assert!(error.contains("已被占用"), "{error}");
+        assert!(error.contains("is in use"), "{error}");
     }
 
     #[test]

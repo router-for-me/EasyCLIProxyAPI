@@ -54,7 +54,7 @@ impl UsageSubscription {
             .await?;
         let acknowledgement = subscription.read_frame().await?;
         if !is_subscription_ack(&acknowledgement) {
-            return Err("CPA 未确认 usage 订阅".to_string());
+            return Err("CPA did not confirm the usage subscription".to_string());
         }
         Ok(subscription)
     }
@@ -63,8 +63,8 @@ impl UsageSubscription {
         let address = format!("127.0.0.1:{port}");
         let stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(&address))
             .await
-            .map_err(|_| format!("连接 CPA usage 订阅超时: {address}"))?
-            .map_err(|error| format!("连接 CPA usage 订阅失败 {address}: {error}"))?;
+            .map_err(|_| format!("Timed out connecting to CPA usage subscription: {address}"))?
+            .map_err(|error| format!("Failed to connect to CPA usage subscription {address}: {error}"))?;
         let mut subscription = Self {
             stream,
             read_buffer: Vec::new(),
@@ -72,8 +72,8 @@ impl UsageSubscription {
         subscription.send_command(&["AUTH", management_key]).await?;
         match subscription.read_frame().await? {
             RespValue::Simple(value) if value.eq_ignore_ascii_case("OK") => {}
-            RespValue::Error(error) => return Err(format!("CPA usage 订阅认证失败: {error}")),
-            value => return Err(format!("CPA usage 订阅认证响应无效: {}", value.kind())),
+            RespValue::Error(error) => return Err(format!("CPA usage subscription authentication failed: {error}")),
+            value => return Err(format!("Invalid CPA usage subscription authentication response: {}", value.kind())),
         }
         Ok(subscription)
     }
@@ -85,7 +85,7 @@ impl UsageSubscription {
                 return Ok(payload);
             }
             if let RespValue::Error(error) = frame {
-                return Err(format!("CPA usage 订阅返回错误: {error}"));
+                return Err(format!("CPA usage subscription returned an error: {error}"));
             }
         }
     }
@@ -99,8 +99,8 @@ impl UsageSubscription {
         }
         timeout(IO_TIMEOUT, self.stream.write_all(&command))
             .await
-            .map_err(|_| "写入 CPA usage 订阅命令超时".to_string())?
-            .map_err(|error| format!("写入 CPA usage 订阅命令失败: {error}"))
+            .map_err(|_| "Timed out writing CPA usage subscription command".to_string())?
+            .map_err(|error| format!("Failed to write CPA usage subscription command: {error}"))
     }
 
     async fn read_frame(&mut self) -> Result<RespValue, String> {
@@ -119,7 +119,7 @@ impl UsageSubscription {
             )? {
                 ParseResult::Complete(value, consumed) => {
                     if consumed > limits.max_frame_bytes {
-                        return Err("CPA usage RESP 响应超过大小限制".to_string());
+                        return Err("CPA usage RESP response exceeds the size limit".to_string());
                     }
                     self.read_buffer.drain(..consumed);
                     return Ok(value);
@@ -127,15 +127,15 @@ impl UsageSubscription {
                 ParseResult::Incomplete => {}
             }
             if self.read_buffer.len() >= limits.max_frame_bytes {
-                return Err("CPA usage RESP 响应超过大小限制".to_string());
+                return Err("CPA usage RESP response exceeds the size limit".to_string());
             }
             let mut chunk = [0_u8; 8192];
             let read = timeout(IO_TIMEOUT, self.stream.read(&mut chunk))
                 .await
-                .map_err(|_| "读取 CPA usage 订阅响应超时".to_string())?
-                .map_err(|error| format!("读取 CPA usage 订阅响应失败: {error}"))?;
+                .map_err(|_| "Timed out reading CPA usage subscription response".to_string())?
+                .map_err(|error| format!("Failed to read CPA usage subscription response: {error}"))?;
             if read == 0 {
-                return Err("CPA usage 订阅连接已关闭".to_string());
+                return Err("CPA usage subscription connection was closed".to_string());
             }
             self.read_buffer.extend_from_slice(&chunk[..read]);
         }
@@ -150,7 +150,7 @@ pub(super) async fn pull_usage_queue(
 ) -> Result<Vec<String>, String> {
     if count == 0 || count > QUEUE_MAX_ARRAY_LENGTH {
         return Err(format!(
-            "CPA usage 队列批量大小必须在 1..={QUEUE_MAX_ARRAY_LENGTH} 之间"
+            "CPA usage queue batch size must be between 1..={QUEUE_MAX_ARRAY_LENGTH}"
         ));
     }
     let mut connection = UsageSubscription::connect_authenticated(port, management_key).await?;
@@ -167,15 +167,15 @@ pub(super) async fn pull_usage_queue(
             .map(|value| {
                 value
                     .text()
-                    .ok_or_else(|| "CPA usage 队列包含非文本消息".to_string())
+                    .ok_or_else(|| "CPA usage queue contains a non-text message".to_string())
             })
             .collect(),
         RespValue::Bulk(Some(value)) => String::from_utf8(value)
             .map(|value| vec![value])
-            .map_err(|_| "CPA usage 队列消息不是 UTF-8".to_string()),
+            .map_err(|_| "CPA usage queue message is not UTF-8".to_string()),
         RespValue::Array(None) | RespValue::Bulk(None) => Ok(Vec::new()),
-        RespValue::Error(error) => Err(format!("CPA usage 队列 LPOP 失败: {error}")),
-        value => Err(format!("CPA usage 队列 LPOP 响应无效: {}", value.kind())),
+        RespValue::Error(error) => Err(format!("CPA usage queue LPOP failed: {error}")),
+        value => Err(format!("Invalid CPA usage queue LPOP response: {}", value.kind())),
     }
 }
 
@@ -222,7 +222,7 @@ fn parse_resp_frame_with_limits(
     remaining_bulk_bytes: &mut usize,
 ) -> Result<ParseResult, String> {
     if depth > MAX_NESTING_DEPTH {
-        return Err("CPA usage RESP 响应嵌套过深".to_string());
+        return Err("CPA usage RESP response nesting is too deep".to_string());
     }
     let Some(prefix) = input.get(offset).copied() else {
         return Ok(ParseResult::Incomplete);
@@ -233,13 +233,13 @@ fn parse_resp_frame_with_limits(
                 return Ok(ParseResult::Incomplete);
             };
             let text = String::from_utf8(line.to_vec())
-                .map_err(|_| "CPA usage RESP 文本响应不是 UTF-8".to_string())?;
+                .map_err(|_| "CPA usage RESP text response is not UTF-8".to_string())?;
             let value = match prefix {
                 b'+' => RespValue::Simple(text),
                 b'-' => RespValue::Error(text),
                 _ => RespValue::Integer(
                     text.parse::<i64>()
-                        .map_err(|_| "CPA usage RESP 整数响应无效".to_string())?,
+                        .map_err(|_| "Invalid CPA usage RESP integer response".to_string())?,
                 ),
             };
             Ok(ParseResult::Complete(value, next - offset))
@@ -256,12 +256,12 @@ fn parse_resp_frame_with_limits(
                 ));
             }
             let length =
-                usize::try_from(length).map_err(|_| "CPA usage RESP 字符串长度无效".to_string())?;
+                usize::try_from(length).map_err(|_| "Invalid CPA usage RESP string length".to_string())?;
             if length > MAX_BULK_BYTES {
-                return Err("CPA usage RESP 字符串超过大小限制".to_string());
+                return Err("CPA usage RESP string exceeds the size limit".to_string());
             }
             if length > *remaining_bulk_bytes {
-                return Err("CPA usage RESP 响应超过总字符串大小限制".to_string());
+                return Err("CPA usage RESP response exceeds the total string size limit".to_string());
             }
             let data_end = data_start.saturating_add(length);
             let frame_end = data_end.saturating_add(2);
@@ -269,7 +269,7 @@ fn parse_resp_frame_with_limits(
                 return Ok(ParseResult::Incomplete);
             }
             if input.get(data_end..frame_end) != Some(b"\r\n") {
-                return Err("CPA usage RESP 字符串结尾无效".to_string());
+                return Err("Invalid CPA usage RESP string terminator".to_string());
             }
             *remaining_bulk_bytes -= length;
             Ok(ParseResult::Complete(
@@ -286,9 +286,9 @@ fn parse_resp_frame_with_limits(
                 return Ok(ParseResult::Complete(RespValue::Array(None), next - offset));
             }
             let length =
-                usize::try_from(length).map_err(|_| "CPA usage RESP 数组长度无效".to_string())?;
+                usize::try_from(length).map_err(|_| "Invalid CPA usage RESP array length".to_string())?;
             if length > limits.max_array_length {
-                return Err("CPA usage RESP 数组超过大小限制".to_string());
+                return Err("CPA usage RESP array exceeds the size limit".to_string());
             }
             let mut values = Vec::with_capacity(length);
             for _ in 0..length {
@@ -311,7 +311,7 @@ fn parse_resp_frame_with_limits(
                 next - offset,
             ))
         }
-        _ => Err("CPA usage RESP 响应类型无效".to_string()),
+        _ => Err("Invalid CPA usage RESP response type".to_string()),
     }
 }
 
@@ -321,12 +321,12 @@ fn resp_line(input: &[u8], start: usize) -> Result<Option<(&[u8], usize)>, Strin
     };
     let Some(relative_end) = remaining.windows(2).position(|pair| pair == b"\r\n") else {
         if remaining.len() > MAX_RESP_LINE_BYTES + 1 {
-            return Err("CPA usage RESP 行超过大小限制".to_string());
+            return Err("CPA usage RESP line exceeds the size limit".to_string());
         }
         return Ok(None);
     };
     if relative_end > MAX_RESP_LINE_BYTES {
-        return Err("CPA usage RESP 行超过大小限制".to_string());
+        return Err("CPA usage RESP line exceeds the size limit".to_string());
     }
     let end = start + relative_end;
     Ok(Some((&input[start..end], end + 2)))
@@ -334,9 +334,9 @@ fn resp_line(input: &[u8], start: usize) -> Result<Option<(&[u8], usize)>, Strin
 
 fn parse_resp_length(value: &[u8]) -> Result<i64, String> {
     std::str::from_utf8(value)
-        .map_err(|_| "CPA usage RESP 长度不是 UTF-8".to_string())?
+        .map_err(|_| "CPA usage RESP length is not UTF-8".to_string())?
         .parse::<i64>()
-        .map_err(|_| "CPA usage RESP 长度无效".to_string())
+        .map_err(|_| "Invalid CPA usage RESP length".to_string())
 }
 
 fn is_subscription_ack(value: &RespValue) -> bool {
@@ -404,7 +404,7 @@ mod tests {
             Err(error) => error,
             _ => panic!("expected oversized RESP array to fail"),
         };
-        assert!(error.contains("数组超过大小限制"));
+        assert!(error.contains("RESP array exceeds the size limit"));
     }
 
     #[tokio::test]

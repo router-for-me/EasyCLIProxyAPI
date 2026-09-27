@@ -156,7 +156,7 @@ fn desktop_custom_alias_edits_remove_old_managed_routes_and_preserve_user_routes
     assert!(entries.iter().any(|m| m["alias"] == "claude-user-model"));
     assert!(!entries.iter().any(|m| m["alias"] == "claude-opus-4-6" || m["alias"] == "claude-sonnet-4-6"));
     assert!(ensure_claude_desktop_model_aliases_in_yaml(input,
-        &custom_mappings(&[("gpt-two", "claude-user-model")]), &models).unwrap_err().contains("已被其他模型使用"));
+        &custom_mappings(&[("gpt-two", "claude-user-model")]), &models).unwrap_err().contains("already used by another model"));
     assert!(ensure_claude_desktop_model_aliases_in_yaml(input,
         &custom_mappings(&[("gpt-two", "claude-native-model")]),
         &test_agent_models(&["gpt-two", "claude-native-model"])).is_err());
@@ -195,7 +195,7 @@ fn desktop_manual_source_can_create_an_alias_when_missing_from_the_loaded_model_
     assert!(routed["openai-compatibility"][0]["models"].as_array().unwrap().iter()
         .any(|entry| entry["name"] == model && entry["alias"] == "claude-opus-5"));
     assert!(ensure_claude_desktop_model_aliases_in_yaml("{}", &mappings, &[])
-        .unwrap_err().contains("无法确定模型 manual-model"));
+        .unwrap_err().contains("CPA configuration source for model manual-model"));
 }
 
 #[test]

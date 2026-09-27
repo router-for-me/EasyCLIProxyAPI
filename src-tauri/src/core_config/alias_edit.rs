@@ -20,18 +20,18 @@ pub(crate) fn validate_model_alias_revision(
     revision: Option<&str>,
 ) -> Result<(), String> {
     if revision != Some(model_alias_config_revision(content)?.as_str()) {
-        return Err("配置已变化，请关闭编辑器并刷新后重试".to_string());
+        return Err("Configuration changed. Close the editor, refresh, and try again".to_string());
     }
     Ok(())
 }
 
 pub(crate) fn model_alias_config_revision(content: &str) -> Result<String, String> {
     let document = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let mut value = serde_json::to_value(document).map_err(|error| error.to_string())?;
     let root = value
         .as_object_mut()
-        .ok_or("内核配置顶层必须是 YAML 映射")?;
+        .ok_or("Kernel configuration root must be a YAML mapping")?;
     if root
         .get("oauth-model-alias")
         .and_then(serde_json::Value::as_object)
@@ -57,7 +57,7 @@ pub(crate) fn model_alias_edit_context(
         .map_err(|error| error.to_string())?;
     let root = document
         .as_mapping()
-        .ok_or("内核配置顶层必须是 YAML 映射")?;
+        .ok_or("Kernel configuration root must be a YAML mapping")?;
     Ok(ModelAliasEditContext {
         effort: find_thinking_alias_effort(root, alias, &source.protocol),
         fast: find_speed_alias_service_tier(root, alias, &source.protocol).as_deref()
@@ -81,7 +81,7 @@ fn editable_model_alias(
         ("codex-api-key", "Codex API", "codex-api", "codex"),
         (
             "openai-compatibility",
-            "OpenAI 兼容",
+            "OpenAI-compatible",
             "openai-compatible",
             "openai",
         ),
@@ -93,7 +93,7 @@ fn editable_model_alias(
         };
         let providers = providers
             .as_sequence()
-            .ok_or_else(|| format!("{section} 必须是数组"))?;
+            .ok_or_else(|| format!("{section} must be an array"))?;
         for (provider_index, value) in providers.iter().enumerate() {
             let Some(value) = value.as_mapping() else {
                 continue;
@@ -103,7 +103,7 @@ fn editable_model_alias(
             };
             let models = models
                 .as_sequence()
-                .ok_or_else(|| format!("{section}.models 必须是数组"))?;
+                .ok_or_else(|| format!("{section}.models must be an array"))?;
             for (model_index, model) in models.iter().enumerate() {
                 let Some((upstream, client, display_name)) = configured_model_identity(model)
                 else {
@@ -142,11 +142,11 @@ fn editable_model_alias(
     if let Some(channels) = yaml_mapping_value(root, "oauth-model-alias") {
         let channels = channels
             .as_mapping()
-            .ok_or("oauth-model-alias 必须是 YAML 映射")?;
+            .ok_or("oauth-model-alias must be a YAML mapping")?;
         for (channel_name, models) in channels {
             let models = models
                 .as_sequence()
-                .ok_or("oauth-model-alias 的通道配置必须是数组")?;
+                .ok_or("oauth-model-alias channel configuration must be an array")?;
             for (model_index, model) in models.iter().enumerate() {
                 let Some((upstream, client, display_name)) = configured_model_identity(model)
                 else {
@@ -162,7 +162,7 @@ fn editable_model_alias(
                 let channel = channel_name
                     .as_str()
                     .and_then(oauth_alias_channel)
-                    .ok_or("暂不支持编辑此 OAuth 通道的模型别名")?;
+                    .ok_or("Editing model aliases for this OAuth channel is not supported yet")?;
                 matches.push(EditableModelAlias {
                     source: ResolvedThinkingAliasSource {
                         source: ThinkingAliasSource {
@@ -186,7 +186,7 @@ fn editable_model_alias(
         }
     }
     if matching_names != 1 || matches.len() != 1 {
-        return Err("别名不存在或存在多个同名映射，请刷新并检查配置后重试".to_string());
+        return Err("Alias does not exist or has multiple mappings with the same name. Refresh, check the configuration, and try again".to_string());
     }
     Ok(matches.remove(0))
 }
@@ -197,10 +197,10 @@ pub(crate) fn resolve_model_alias_edit_source(
     definitions: &[OAuthModelDefinitions],
 ) -> Result<ResolvedThinkingAliasSource, String> {
     let document = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let root = document
         .as_mapping()
-        .ok_or("内核配置顶层必须是 YAML 映射")?;
+        .ok_or("Kernel configuration root must be a YAML mapping")?;
     let mut source = editable_model_alias(root, alias)?.source;
     if let ThinkingAliasSourceLocation::Oauth { channel, .. } = source.location {
         if let Some(model) = definitions
@@ -229,17 +229,17 @@ pub(crate) fn edit_model_alias_in_yaml(
     fast: bool,
 ) -> Result<String, String> {
     if fast && !alias_source_supports_fast(source) {
-        return Err("Fast 仅支持 OpenAI 兼容 API、Codex API 或 Codex OAuth 模型源".to_string());
+        return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
     let mut document = yaml_serde_edit::YamlValue::parse(content)
-        .map_err(|error| format!("解析内核 YAML 配置失败: {error}"))?;
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
-        .ok_or("内核配置顶层必须是 YAML 映射")?;
+        .ok_or("Kernel configuration root must be a YAML mapping")?;
     let original = editable_model_alias(root, original_alias)?;
     if !alias.eq_ignore_ascii_case(original_alias) && configured_model_alias_exists(root, alias) {
-        return Err(format!("别名模型 {alias} 已存在"));
+        return Err(format!("Alias model {alias} already exists"));
     }
     let mut replacement = match &source.location {
         ThinkingAliasSourceLocation::ConfigModel {
@@ -254,8 +254,8 @@ pub(crate) fn edit_model_alias_in_yaml(
                 .and_then(|provider| yaml_mapping_value(provider, "models"))
                 .and_then(serde_norway::Value::as_sequence)
                 .and_then(|models| models.get(*model_index))
-                .ok_or("原模型配置已经变化，请刷新后重试")?;
-            let (upstream, _, _) = configured_model_identity(model).ok_or("原模型配置格式无效")?;
+                .ok_or("Source model configuration changed. Refresh and try again")?;
+            let (upstream, _, _) = configured_model_identity(model).ok_or("Invalid source model configuration format")?;
             let same_model = matches!(&original.source.location,
                 ThinkingAliasSourceLocation::ConfigModel { section: old_section, provider_index: old_provider, .. }
                 if old_section == section && old_provider == provider_index)
@@ -359,21 +359,21 @@ pub(crate) fn edit_model_alias_in_yaml(
             .and_then(serde_norway::Value::as_mapping_mut)
             .and_then(|provider| yaml_mapping_value_mut(provider, "models"))
             .and_then(serde_norway::Value::as_sequence_mut)
-            .ok_or("模型提供商已经变化，请刷新后重试")?,
+            .ok_or("Model provider changed. Refresh and try again")?,
         ThinkingAliasSourceLocation::Oauth { channel, .. } => root
             .entry(yaml_key("oauth-model-alias"))
             .or_insert_with(|| serde_norway::Value::Mapping(Default::default()))
             .as_mapping_mut()
-            .ok_or("oauth-model-alias 必须是 YAML 映射")?
+            .ok_or("oauth-model-alias must be a YAML mapping")?
             .entry(yaml_key(channel))
             .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
             .as_sequence_mut()
-            .ok_or("oauth-model-alias 的通道配置必须是数组")?,
+            .ok_or("oauth-model-alias channel configuration must be an array")?,
     };
     if same_group {
         let model = models
             .get_mut(original.model_index)
-            .ok_or("原别名已经变化，请刷新后重试")?;
+            .ok_or("Original alias changed. Refresh and try again")?;
         *model = serde_norway::Value::Mapping(replacement);
     } else {
         models.push(serde_norway::Value::Mapping(replacement));
@@ -436,7 +436,7 @@ fn edit_alias_payload(
     let payload = root
         .entry(yaml_key("payload"))
         .or_insert_with(|| serde_norway::Value::Mapping(Default::default()));
-    let payload = payload.as_mapping_mut().ok_or("payload 必须是 YAML 映射")?;
+    let payload = payload.as_mapping_mut().ok_or("payload must be a YAML mapping")?;
     for section in [
         "default",
         "default-raw",
@@ -449,7 +449,7 @@ fn edit_alias_payload(
         };
         let rules = rules
             .as_sequence_mut()
-            .ok_or_else(|| format!("payload.{section} 必须是数组"))?;
+            .ok_or_else(|| format!("payload.{section} must be an array"))?;
         let mut result = Vec::new();
         for rule in rules.iter() {
             let Some(mapping) = rule.as_mapping() else {
@@ -460,7 +460,7 @@ fn edit_alias_payload(
                 result.push(rule.clone());
                 continue;
             };
-            let models = models.as_sequence().ok_or("payload.models 必须是数组")?;
+            let models = models.as_sequence().ok_or("payload.models must be an array")?;
             let (mut target, others): (Vec<_>, Vec<_>) =
                 models.iter().cloned().partition(|model| {
                     thinking_payload_model_matches(model, original_alias, original_protocol)
@@ -472,7 +472,7 @@ fn edit_alias_payload(
             for model in &mut target {
                 let model = model
                     .as_mapping_mut()
-                    .ok_or("payload.models 条目必须是映射")?;
+                    .ok_or("payload.models entries must be mappings")?;
                 model.insert(
                     yaml_key("name"),
                     serde_norway::Value::String(alias.to_string()),
@@ -494,7 +494,7 @@ fn edit_alias_payload(
                 if let Some(params) = yaml_mapping_value_mut(&mut edited, "params") {
                     let params = params
                         .as_mapping_mut()
-                        .ok_or("payload.override.params 必须是映射")?;
+                        .ok_or("payload.override.params must be a mapping")?;
                     let has_effort = ALIAS_EFFORT_KEYS
                         .iter()
                         .any(|key| params.contains_key(yaml_key(key)));
@@ -507,7 +507,7 @@ fn edit_alias_payload(
                             edit.effort.to_string()
                         } else {
                             thinking_effort_from_params(params, original_protocol, raw).ok_or(
-                                "此规则的思考配置无法转换，请先在配置中调整后再切换模型协议",
+                                "This rule's reasoning configuration cannot be converted. Adjust it in the configuration before switching model protocols",
                             )?
                         };
                         for key in ALIAS_EFFORT_KEYS {

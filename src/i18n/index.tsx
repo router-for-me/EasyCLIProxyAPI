@@ -16,7 +16,7 @@ export const languageOptions: ReadonlyArray<{
 
 const STORAGE_KEY = 'easy-cli-proxy-api.locale';
 const resources = { 'zh-CN': zhCN, 'zh-TW': zhTW, ja, en } as const;
-let currentLocale: AppLocale = 'zh-CN';
+let currentLocale: AppLocale = 'en';
 
 export const supportedLocales: readonly AppLocale[] = ['zh-CN', 'zh-TW', 'ja', 'en'];
 
@@ -26,7 +26,6 @@ export function getCurrentLocale(): AppLocale {
 
 export function normalizeLocale(value: string | null | undefined): AppLocale {
   const normalized = value?.trim().toLowerCase() ?? '';
-  if (normalized.startsWith('en')) return 'en';
   if (normalized.startsWith('ja')) return 'ja';
   if (
     normalized === 'zh-tw'
@@ -34,11 +33,12 @@ export function normalizeLocale(value: string | null | undefined): AppLocale {
     || normalized === 'zh-mo'
     || normalized.startsWith('zh-hant')
   ) return 'zh-TW';
-  return 'zh-CN';
+  if (normalized.startsWith('zh')) return 'zh-CN';
+  return 'en';
 }
 
 function detectInitialLocale(): AppLocale {
-  if (typeof window === 'undefined') return 'zh-CN';
+  if (typeof window === 'undefined') return 'en';
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY);
     if (saved) return normalizeLocale(saved);
@@ -55,7 +55,7 @@ function interpolate(template: string, variables?: MessageVariables): string {
 }
 
 export function translate(locale: AppLocale, key: MessageKey, variables?: MessageVariables): string {
-  return interpolate(resources[locale][key] ?? zhCN[key], variables);
+  return interpolate(resources[locale][key] ?? en[key], variables);
 }
 
 type I18nContextValue = {

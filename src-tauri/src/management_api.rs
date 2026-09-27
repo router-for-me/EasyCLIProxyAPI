@@ -72,11 +72,11 @@ pub(crate) async fn management_request(
         "PUT" => reqwest::Method::PUT,
         "PATCH" => reqwest::Method::PATCH,
         "DELETE" => reqwest::Method::DELETE,
-        _ => return Err("不支持的管理 API 请求方法".to_string()),
+        _ => return Err("Unsupported management API request method".to_string()),
     };
     let path = request.path.trim();
     if path.is_empty() || path.contains("://") || path.contains("..") {
-        return Err("无效的管理 API 路径".to_string());
+        return Err("Invalid management API path".to_string());
     }
 
     let client = management_http_client()?;
@@ -96,7 +96,7 @@ pub(crate) async fn management_request(
     let response = builder
         .send()
         .await
-        .map_err(|err| format_management_request_error("请求管理 API 失败", &err))?;
+        .map_err(|err| format_management_request_error("Management API request failed", &err))?;
     read_management_value(response).await
 }
 
@@ -108,7 +108,7 @@ pub(crate) async fn upload_auth_file(
 ) -> Result<serde_json::Value, String> {
     let name = name.trim().to_string();
     if name.is_empty() || !name.to_ascii_lowercase().ends_with(".json") {
-        return Err("凭证文件名必须以 .json 结尾".to_string());
+        return Err("Credential filename must end with .json".to_string());
     }
 
     let config = gui_config_state.snapshot()?;
@@ -123,7 +123,7 @@ pub(crate) async fn upload_auth_file(
         .body(data)
         .send()
         .await
-        .map_err(|err| format_management_request_error("上传凭证文件失败", &err))?;
+        .map_err(|err| format_management_request_error("Failed to upload credential file", &err))?;
     read_management_value(response).await
 }
 
@@ -135,7 +135,7 @@ pub(crate) fn open_auth_files_directory(
     let install_dir = core_install_dir()?;
     let auth_dir = auth_dir_path_for_core(&config.auth_dir, &install_dir);
     fs::create_dir_all(&auth_dir)
-        .map_err(|error| format!("创建凭证目录失败 {}: {error}", path_to_string(&auth_dir)))?;
+        .map_err(|error| format!("Failed to create credentials directory {}: {error}", path_to_string(&auth_dir)))?;
     open_directory_in_file_manager(&auth_dir)
 }
 
@@ -147,7 +147,7 @@ pub(crate) fn open_core_logs_directory(
     let install_dir = core_install_dir()?;
     let logs_dir = core_logs_dir_path(&config.auth_dir, &install_dir);
     fs::create_dir_all(&logs_dir)
-        .map_err(|error| format!("创建日志目录失败 {}: {error}", path_to_string(&logs_dir)))?;
+        .map_err(|error| format!("Failed to create log directory {}: {error}", path_to_string(&logs_dir)))?;
 
     open_directory_in_file_manager(&logs_dir)
 }
@@ -169,7 +169,7 @@ fn open_directory_in_file_manager(path: &Path) -> Result<(), String> {
     command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("打开目录失败 {}: {error}", path_to_string(path)))
+        .map_err(|error| format!("Failed to open directory {}: {error}", path_to_string(path)))
 }
 
 #[tauri::command]
@@ -195,7 +195,7 @@ pub(crate) async fn start_oauth_login(
     let response = request
         .send()
         .await
-        .map_err(|err| format_management_request_error("请求 OAuth 登录链接失败", &err))?;
+        .map_err(|err| format_management_request_error("Failed to request OAuth login URL", &err))?;
     let payload = read_management_json::<OAuthStartApiResponse>(response).await?;
     if let Some(error) = payload
         .error
@@ -208,7 +208,7 @@ pub(crate) async fn start_oauth_login(
         .url
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "内核未返回 OAuth 登录链接".to_string())?;
+        .ok_or_else(|| "Kernel did not return an OAuth login URL".to_string())?;
     let state = payload
         .state
         .map(|value| value.trim().to_string())
@@ -234,7 +234,7 @@ pub(crate) async fn get_oauth_status(
 ) -> Result<OAuthStatusResult, String> {
     let state = state.trim().to_string();
     if state.is_empty() {
-        return Err("OAuth state 不能为空".to_string());
+        return Err("OAuth state cannot be empty".to_string());
     }
     let config = gui_config_state.snapshot()?;
     let client = management_http_client()?;
@@ -244,7 +244,7 @@ pub(crate) async fn get_oauth_status(
         .query(&[("state", state)])
         .send()
         .await
-        .map_err(|err| format_management_request_error("查询 OAuth 状态失败", &err))?;
+        .map_err(|err| format_management_request_error("Failed to query OAuth status", &err))?;
     let payload = read_management_json::<OAuthStatusApiResponse>(response).await?;
     let status = payload
         .status
@@ -269,7 +269,7 @@ pub(crate) async fn submit_oauth_callback(
 ) -> Result<(), String> {
     let redirect_url = redirect_url.trim().to_string();
     if redirect_url.is_empty() {
-        return Err("回调链接不能为空".to_string());
+        return Err("Callback URL cannot be empty".to_string());
     }
     let config = gui_config_state.snapshot()?;
     let provider_key = normalize_management_oauth_provider(&provider)?;
@@ -284,12 +284,12 @@ pub(crate) async fn submit_oauth_callback(
         .json(&body)
         .send()
         .await
-        .map_err(|err| format_management_request_error("提交 OAuth 回调失败", &err))?;
+        .map_err(|err| format_management_request_error("Failed to submit OAuth callback", &err))?;
     let status = response.status();
     let text = response
         .text()
         .await
-        .map_err(|err| format_management_request_error("读取 OAuth 回调响应失败", &err))?;
+        .map_err(|err| format_management_request_error("Failed to read OAuth callback response", &err))?;
     if !status.is_success() {
         return Err(format_management_error(status.as_u16(), &text));
     }
@@ -304,7 +304,7 @@ pub(crate) fn management_http_client() -> Result<reqwest::Client, String> {
             .timeout(Duration::from_secs(30))
             .danger_accept_invalid_certs(true)
             .build()
-            .map_err(|err| format_management_request_error("创建管理 API 客户端失败", &err))
+            .map_err(|err| format_management_request_error("Failed to create management API client", &err))
     });
     CLIENT.as_ref().cloned().map_err(Clone::clone)
 }
@@ -339,14 +339,14 @@ pub(crate) fn format_management_request_error(
 pub(crate) fn management_authorization(config: &GuiConfigFile) -> Result<String, String> {
     let secret_key = config.management_secret_key.trim();
     if secret_key.is_empty() || is_hashed_management_secret_key(secret_key) {
-        return Err("管理接口不可用：没有可用的明文管理密钥".to_string());
+        return Err("Management interface unavailable: no plaintext management key is available".to_string());
     }
     Ok(format!("Bearer {secret_key}"))
 }
 
 pub(crate) fn management_endpoint(config: &GuiConfigFile, path: &str) -> Result<String, String> {
     if config.port == 0 {
-        return Err("内核端口无效".to_string());
+        return Err("Invalid kernel port".to_string());
     }
     let path = path.trim_start_matches('/');
     let origin = core_origin(
@@ -371,7 +371,7 @@ fn normalize_management_oauth_provider(provider: &str) -> Result<String, String>
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
     {
-        return Err("无效的 OAuth 提供商".to_string());
+        return Err("Invalid OAuth provider".to_string());
     }
     Ok(key)
 }
@@ -388,16 +388,16 @@ where
     let text = response
         .text()
         .await
-        .map_err(|err| format_management_request_error("读取管理 API 响应失败", &err))?;
+        .map_err(|err| format_management_request_error("Failed to read management API response", &err))?;
     if !status.is_success() {
         return Err(format_management_error(status.as_u16(), &text));
     }
     if text.trim().is_empty() {
-        return Err("管理 API 返回了空响应".to_string());
+        return Err("Management API returned an empty response".to_string());
     }
     serde_json::from_str::<T>(&text).map_err(|err| {
         format!(
-            "解析管理 API 响应失败: {err}; body={}",
+            "Failed to parse management API response: {err}; body={}",
             truncate_for_error(&text)
         )
     })
@@ -410,7 +410,7 @@ pub(crate) async fn read_management_value(
     let text = response
         .text()
         .await
-        .map_err(|err| format_management_request_error("读取管理 API 响应失败", &err))?;
+        .map_err(|err| format_management_request_error("Failed to read management API response", &err))?;
     if !status.is_success() {
         return Err(format_management_error(status.as_u16(), &text));
     }
@@ -428,7 +428,7 @@ pub(crate) async fn read_management_text(response: reqwest::Response) -> Result<
     let text = response
         .text()
         .await
-        .map_err(|err| format_management_request_error("读取管理 API 响应失败", &err))?;
+        .map_err(|err| format_management_request_error("Failed to read management API response", &err))?;
     if !status.is_success() {
         return Err(format_management_error(status.as_u16(), &text));
     }
@@ -444,15 +444,15 @@ fn format_management_error(status: u16, body: &str) -> String {
         {
             let message = message.trim();
             if !message.is_empty() {
-                return format!("管理 API 错误 ({status}): {message}");
+                return format!("Management API error ({status}): {message}");
             }
         }
     }
     let body = body.trim();
     if body.is_empty() {
-        format!("管理 API 错误 ({status})")
+        format!("Management API error ({status})")
     } else {
-        format!("管理 API 错误 ({status}): {}", truncate_for_error(body))
+        format!("Management API error ({status}): {}", truncate_for_error(body))
     }
 }
 

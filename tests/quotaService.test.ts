@@ -19,7 +19,7 @@ describe('quotaRowsFor', () => {
     });
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].label).toBe('周限额');
+    expect(rows[0].label).toBe('Weekly limit');
     expect(rows[0].remainingPercent).toBe(3);
     expect(rows[0].reset).toBeTruthy();
   });
@@ -38,7 +38,7 @@ describe('quotaRowsFor', () => {
       },
       additional_rate_limits: [
         {
-          limit_name: '代码审查增强',
+          limit_name: 'Enhanced code review',
           rate_limit: {
             primary_window: {
               used_percent: 30,
@@ -50,9 +50,9 @@ describe('quotaRowsFor', () => {
     });
 
     expect(rows.map((row) => row.label)).toEqual([
-      '5 小时限额',
-      '月限额',
-      '代码审查增强 周限额',
+      '5-hour limit',
+      'Monthly limit',
+      'Enhanced code review Weekly limit',
     ]);
   });
 
@@ -65,7 +65,7 @@ describe('quotaRowsFor', () => {
       },
     });
 
-    expect(rows.map((row) => row.label)).toEqual(['5 小时限额', '周限额']);
+    expect(rows.map((row) => row.label)).toEqual(['5-hour limit', 'Weekly limit']);
   });
 
   it('支持反序窗口且只在有重置时间时推断已耗尽额度', () => {
@@ -76,7 +76,7 @@ describe('quotaRowsFor', () => {
         secondaryWindow: { limitWindowSeconds: 18000, resetAfterSeconds: 3600 },
       },
     });
-    expect(rows.map((row) => row.label)).toEqual(['5 小时限额', '周限额']);
+    expect(rows.map((row) => row.label)).toEqual(['5-hour limit', 'Weekly limit']);
     expect(rows.map((row) => row.remainingPercent)).toEqual([0, null]);
     expect(rows[0].resetAtMs).toBeGreaterThan(Date.now());
   });
@@ -168,7 +168,7 @@ describe('quotaRowsFor', () => {
       limits: [null, limit(null, true), limit(12, false, 'Fable 5'), limit(64, true), limit(99, true, 'Sonnet')],
     });
     expect(rows.map((row) => [row.label, row.remainingPercent])).toEqual([
-      ['5 小时窗口', 90], ['7 天 Fable 窗口', 36],
+      ['5-hour window', 90], ['7-day Fable window', 36],
     ]);
     expect(rows[1].resetAtMs).toBe(Date.parse('2030-01-01T00:00:00Z'));
   });
@@ -179,7 +179,7 @@ describe('quotaRowsFor', () => {
       limits: [{ kind: 'weekly_scoped', percent: null, scope: { model: { display_name: 'Fable' } } }],
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ label: '7 天 Fable 窗口', remainingPercent: 59 });
+    expect(rows[0]).toMatchObject({ label: '7-day Fable window', remainingPercent: 59 });
   });
 
   it('显示 Claude 已启用的额外用量', () => {
@@ -194,7 +194,7 @@ describe('quotaRowsFor', () => {
     });
 
     expect(rows.at(-1)).toMatchObject({
-      label: '额外用量',
+      label: 'Extra usage',
       remainingPercent: 75,
     });
     expect(rows.at(-1)?.detail).toContain('$12.50');
@@ -228,7 +228,7 @@ describe('quotaRowsFor', () => {
         { window: { duration: 90, timeUnit: 'TIME_UNIT_SECOND' }, detail: { limit: 100, used: 0 } },
       ],
     });
-    expect(rows.map((row) => row.label)).toEqual(['5 小时窗口', '7 天窗口', '5 小时窗口', '90 秒窗口', '每周额度']);
+    expect(rows.map((row) => row.label)).toEqual(['5 hours window', '7 days window', '5 hours window', '90 seconds window', 'Weekly quota']);
     expect(rows.at(-1)?.remainingPercent).toBeCloseTo(0.5);
     expect(rows[0].remainingPercent).toBe(80);
     expect(rows[0].resetAtMs).toBeGreaterThan(Date.now());
@@ -266,7 +266,7 @@ describe('quotaRowsFor', () => {
     expect(quotaRowsFor('xai', { config: { productUsage: [{ product: 'grok', usagePercent: 20 }] } })[1])
       .toMatchObject({ label: 'grok', remainingPercent: 80 });
     expect(quotaRowsFor('xai', { mode: 'paid-info' })[0])
-      .toMatchObject({ label: '付费 API 账号', remainingPercent: null });
+      .toMatchObject({ label: 'Paid API account', remainingPercent: null });
   });
 
   it('xAI 不从月账单借用周窗口的重置时间', () => {
@@ -297,10 +297,10 @@ describe('quotaRowsFor', () => {
       },
     });
 
-    expect(rows.find((row) => row.label === '每周额度')?.remainingPercent).toBe(75);
+    expect(rows.find((row) => row.label === 'Weekly quota')?.remainingPercent).toBe(75);
     expect(rows.find((row) => row.label === 'grok-code')?.remainingPercent).toBe(60);
-    expect(rows.find((row) => row.label === '月度包含额度')?.remainingPercent).toBe(0);
-    expect(rows.find((row) => row.label === '按量付费额度')?.remainingPercent).toBe(60);
+    expect(rows.find((row) => row.label === 'Monthly included quota')?.remainingPercent).toBe(0);
+    expect(rows.find((row) => row.label === 'On-demand quota')?.remainingPercent).toBe(60);
   });
 
   it('xAI 保留 0 和 100 的边界值，缺失用量不显示全额余额', () => {
