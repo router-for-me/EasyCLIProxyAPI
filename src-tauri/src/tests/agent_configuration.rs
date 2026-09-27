@@ -5,7 +5,7 @@ use super::*;
 fn claude_agent_config_preserves_existing_fields() {
     let rendered = build_claude_agent_config(
             Some(
-                r#"{"theme":"dark","env":{"KEEP":"yes","ANTHROPIC_API_KEY":"legacy-key","CLAUDE_CODE_EFFORT_LEVEL":"max"}}"#,
+                r#"{"theme":"dark","env":{"KEEP":"yes","ANTHROPIC_API_KEY":"legacy-key","CLAUDE_CODE_EFFORT_LEVEL":"max","CLAUDE_CODE_AUTO_MODE_SERVER":"1"}}"#,
             ),
             "http://127.0.0.1:8317",
             DEFAULT_API_KEY,
@@ -26,6 +26,7 @@ fn claude_agent_config_preserves_existing_fields() {
         value["env"][CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV],
         "1"
     );
+    assert_eq!(value["env"][CLAUDE_CODE_AUTO_MODE_SERVER_ENV], "0");
     assert_eq!(value["env"][CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV], "200000");
     assert_eq!(value["env"][CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV], "90");
     assert!(value["env"].get(DISABLE_AUTO_COMPACT_ENV).is_none());
@@ -49,6 +50,7 @@ fn claude_code_inspection_normalizes_legacy_1m_suffix() {
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317",
                     "ANTHROPIC_AUTH_TOKEN": "test-key",
                     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+                    "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
                     "ANTHROPIC_MODEL": "deepseek-v4-pro[1m]",
                     "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]",
@@ -87,7 +89,33 @@ fn claude_code_requires_gateway_model_discovery_to_be_enabled() {
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317",
                     "ANTHROPIC_AUTH_TOKEN": "test-key",
                     "ANTHROPIC_MODEL": "gpt-test",
-                    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "0"
+                    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "0",
+                    "CLAUDE_CODE_AUTO_MODE_SERVER": "0"
+                }
+            }"#,
+    )
+    .unwrap();
+
+    let (configured, model) = inspect_claude_agent_config(&path, 8317, "test-key").unwrap();
+
+    assert!(!configured);
+    assert_eq!(model.as_deref(), Some("gpt-test"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn claude_code_requires_server_classifier_to_be_disabled_for_gateway() {
+    let directory = agent_test_home("claude-code-auto-mode-server");
+    let path = directory.join("settings.json");
+    fs::write(
+        &path,
+        r#"{
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317",
+                    "ANTHROPIC_AUTH_TOKEN": "test-key",
+                    "ANTHROPIC_MODEL": "gpt-test",
+                    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+                    "CLAUDE_CODE_AUTO_MODE_SERVER": "1"
                 }
             }"#,
     )

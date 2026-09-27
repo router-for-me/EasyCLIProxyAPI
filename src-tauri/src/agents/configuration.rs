@@ -590,6 +590,7 @@ pub(crate) fn build_claude_agent_config(
     env.remove("ANTHROPIC_API_KEY");
     env.remove("CLAUDE_CODE_EFFORT_LEVEL");
     env.remove(CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV);
+    env.remove(CLAUDE_CODE_AUTO_MODE_SERVER_ENV);
     env.remove(CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV);
     env.remove(DISABLE_AUTO_COMPACT_ENV);
     for (key, value) in [
@@ -624,6 +625,10 @@ pub(crate) fn build_claude_agent_config(
     env.insert(
         CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV.to_string(),
         serde_json::Value::String("1".to_string()),
+    );
+    env.insert(
+        CLAUDE_CODE_AUTO_MODE_SERVER_ENV.to_string(),
+        serde_json::Value::String("0".to_string()),
     );
     env.insert(
         CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV.to_string(),
@@ -1159,6 +1164,7 @@ pub(crate) fn prepare_claude_code_managed_removal(
                 "ANTHROPIC_DEFAULT_FABLE_MODEL",
                 CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV,
                 CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
+                CLAUDE_CODE_AUTO_MODE_SERVER_ENV,
                 CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
                 DISABLE_AUTO_COMPACT_ENV,
                 "CLAUDE_CODE_SUBAGENT_MODEL",
@@ -1800,6 +1806,7 @@ pub(crate) fn build_restored_claude_code_config(
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
             CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV,
             CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
+            CLAUDE_CODE_AUTO_MODE_SERVER_ENV,
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
             DISABLE_AUTO_COMPACT_ENV,
             "CLAUDE_CODE_SUBAGENT_MODEL",

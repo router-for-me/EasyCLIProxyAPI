@@ -201,7 +201,7 @@ fn kimi_and_grok_status_does_not_depend_on_legacy_state() {
 
 #[test]
 fn session_merge_preserves_runtime_fields_for_other_agent_formats() {
-    let claude_original = r#"{"env":{"KEEP_ENV":"original","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"0"},"keep":"claude"}"#;
+    let claude_original = r#"{"env":{"KEEP_ENV":"original","CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":"0","CLAUDE_CODE_AUTO_MODE_SERVER":"1"},"keep":"claude"}"#;
     let claude_managed = build_claude_agent_config(
         Some(claude_original),
         "http://127.0.0.1:8317",
@@ -230,6 +230,7 @@ fn session_merge_preserves_runtime_fields_for_other_agent_formats() {
         claude["env"][CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV],
         "0"
     );
+    assert_eq!(claude["env"][CLAUDE_CODE_AUTO_MODE_SERVER_ENV], "1");
     assert!(claude["env"].get("ANTHROPIC_BASE_URL").is_none());
     assert!(claude.get("model").is_none());
 

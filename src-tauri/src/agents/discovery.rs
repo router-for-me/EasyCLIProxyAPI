@@ -2790,7 +2790,11 @@ pub(crate) fn inspect_claude_agent_config(
         && env
             .and_then(|env| env.get(CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV))
             .and_then(serde_json::Value::as_str)
-            == Some("1");
+            == Some("1")
+        && env
+            .and_then(|env| env.get(CLAUDE_CODE_AUTO_MODE_SERVER_ENV))
+            .and_then(serde_json::Value::as_str)
+            == Some("0");
     let model = env
         .and_then(|env| env.get("ANTHROPIC_MODEL"))
         .and_then(serde_json::Value::as_str)
