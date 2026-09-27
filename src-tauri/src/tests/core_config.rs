@@ -241,6 +241,249 @@ fn macos_relative_oauth_dir_recovers_existing_persistent_credentials() {
 }
 
 #[test]
+fn macos_oauth_recovery_accepts_equivalent_directory_paths() {
+    let root = agent_test_home("macos-oauth-equivalent-paths");
+    let install_dir = root.join("cpa-core");
+    let persistent_auth_dir = root.join(OAUTH_DIR_NAME);
+    fs::create_dir_all(&persistent_auth_dir).unwrap();
+    fs::write(persistent_auth_dir.join("account.json"), b"credential").unwrap();
+    for auth_dir in [
+        "./oauth".to_string(),
+        "oauth/./".to_string(),
+        "../cpa-core/oauth".to_string(),
+        path_to_string(&install_dir.join(OAUTH_DIR_NAME)),
+    ] {
+        let mut config = GuiConfigFile {
+            auth_dir: auth_dir.clone(),
+            ..GuiConfigFile::default()
+        };
+        assert!(
+            recover_macos_relative_oauth_dir(&mut config, &install_dir, &persistent_auth_dir).unwrap(),
+            "failed to recover {auth_dir}"
+        );
+        assert_eq!(config.auth_dir, DEFAULT_AUTH_DIR);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn macos_oauth_recovery_preserves_credentials_behind_parent_components() {
+    let root = agent_test_home("macos-oauth-parent-components");
+    let install_dir = root.join("cpa-core");
+    let active_auth_dir = install_dir.join(OAUTH_DIR_NAME);
+    let persistent_auth_dir = root.join(OAUTH_DIR_NAME);
+    fs::create_dir_all(&active_auth_dir).unwrap();
+    fs::create_dir_all(&persistent_auth_dir).unwrap();
+    fs::write(active_auth_dir.join("current.json"), b"current-credential").unwrap();
+    fs::write(persistent_auth_dir.join("old.json"), b"old-credential").unwrap();
+    assert!(!install_dir.join("missing").exists());
+
+    for auth_dir in [
+        "missing/../oauth".to_string(),
+        path_to_string(&install_dir.join("missing").join("..").join(OAUTH_DIR_NAME)),
+    ] {
+        #[cfg(unix)]
+        assert_eq!(
+            fs::read_dir(auth_dir_path_for_core(&auth_dir, &install_dir))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        let mut config = GuiConfigFile {
+            auth_dir: auth_dir.clone(),
+            ..GuiConfigFile::default()
+        };
+        assert!(
+            !migrate_macos_auth_dir_at(&mut config, &install_dir, &persistent_auth_dir).unwrap()
+        );
+        assert_eq!(config.auth_dir, auth_dir);
+    }
+    assert_eq!(
+        fs::read(active_auth_dir.join("current.json")).unwrap(),
+        b"current-credential"
+    );
+    assert_eq!(
+        fs::read(persistent_auth_dir.join("old.json")).unwrap(),
+        b"old-credential"
+    );
+    assert!(!install_dir.join("missing").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn oauth_directory_write_updates_the_effective_v8_field_without_version_marker() {
+    for input in [
+        "oauth: {auth-dir: oauth}\n",
+        "auth-dir: ../oauth\noauth: {auth-dir: oauth}\n",
+    ] {
+        let config = GuiConfigFile::default();
+        let updated = apply_gui_managed_settings(input, &config).unwrap();
+        let document = serde_norway::from_str(&updated).unwrap();
+        assert_eq!(
+            core_config_settings_from_value(&document).unwrap().auth_dir,
+            DEFAULT_AUTH_DIR
+        );
+    }
+}
+
+#[test]
+fn macos_oauth_recovery_survives_config_reload_and_v8_upgrade() {
+    for input in [
+        "auth-dir: oauth\n",
+        "config-version: 8\noauth:\n  auth-dir: oauth\n",
+        "oauth:\n  auth-dir: ./oauth\n",
+        "auth-dir: ../oauth\noauth: {auth-dir: oauth}\n",
+    ] {
+        let root = agent_test_home("macos-oauth-recovery-reload");
+        let install_dir = root.join("cpa-core");
+        let persistent_auth_dir = root.join(OAUTH_DIR_NAME);
+        let core_config_path = install_dir.join(CORE_CONFIG_FILE);
+        let gui_config_path = root.join(GUI_CONFIG_FILE);
+        let credential_path = persistent_auth_dir.join("account.json");
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&persistent_auth_dir).unwrap();
+        fs::write(&credential_path, b"existing-credential").unwrap();
+        fs::write(&core_config_path, format!("# user comment\n{input}")).unwrap();
+        let original_document = serde_norway::from_str(input).unwrap();
+        let mut config = GuiConfigFile {
+            auth_dir: core_config_settings_from_value(&original_document)
+                .unwrap()
+                .auth_dir,
+            ..GuiConfigFile::default()
+        };
+        ensure_strong_management_secret(&mut config).unwrap();
+        write_gui_config_to_path(&config, &gui_config_path).unwrap();
+
+        assert!(
+            migrate_macos_auth_dir_at(&mut config, &install_dir, &persistent_auth_dir).unwrap()
+        );
+        let patched = fs::read_to_string(&core_config_path).unwrap();
+        assert!(patched.contains("# user comment"));
+        let patched_document: serde_norway::Value = serde_norway::from_str(&patched).unwrap();
+        assert_eq!(
+            core_config_settings_from_value(&patched_document).unwrap().auth_dir,
+            DEFAULT_AUTH_DIR
+        );
+        if let Some(legacy) = patched_document.get("auth-dir") {
+            assert_eq!(legacy.as_str(), Some(DEFAULT_AUTH_DIR));
+        }
+
+        write_gui_config_to_path(&config, &gui_config_path).unwrap();
+        let mut reloaded: GuiConfigFile =
+            toml::from_str(&fs::read_to_string(&gui_config_path).unwrap()).unwrap();
+        assert_eq!(reloaded.auth_dir, DEFAULT_AUTH_DIR);
+        assert!(
+            !migrate_macos_auth_dir_at(&mut reloaded, &install_dir, &persistent_auth_dir).unwrap()
+        );
+        assert_eq!(fs::read_to_string(&core_config_path).unwrap(), patched);
+
+        let staging_dir = root.join("next-core");
+        fs::create_dir_all(&staging_dir).unwrap();
+        fs::write(
+            staging_dir.join(CORE_EXAMPLE_CONFIG_FILE),
+            "config-version: 8\noauth:\n  auth-dir: oauth\n",
+        )
+        .unwrap();
+        migrate_core_config_for_update(&install_dir, &staging_dir).unwrap();
+        let upgraded = fs::read_to_string(staging_dir.join(CORE_CONFIG_FILE)).unwrap();
+        let started = apply_gui_managed_settings(&upgraded, &reloaded).unwrap();
+        let started_document = serde_norway::from_str(&started).unwrap();
+        let effective = core_config_settings_from_value(&started_document).unwrap();
+        assert_eq!(effective.auth_dir, DEFAULT_AUTH_DIR);
+        assert_eq!(
+            auth_dir_path_for_core(&effective.auth_dir, &install_dir),
+            persistent_auth_dir
+        );
+        assert_eq!(fs::read(&credential_path).unwrap(), b"existing-credential");
+        assert!(!install_dir.join(OAUTH_DIR_NAME).join("account.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn macos_oauth_recovery_preserves_config_when_inspection_or_patch_fails() {
+    for failure in ["invalid-yaml", "unreadable-config", "invalid-auth-directory"] {
+        let root = agent_test_home("macos-oauth-recovery-failure");
+        let install_dir = root.join("cpa-core");
+        let persistent_auth_dir = root.join(OAUTH_DIR_NAME);
+        let core_config_path = install_dir.join(CORE_CONFIG_FILE);
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&persistent_auth_dir).unwrap();
+        fs::write(persistent_auth_dir.join("account.json"), b"existing-credential").unwrap();
+        match failure {
+            "invalid-yaml" => fs::write(&core_config_path, "oauth: [\n").unwrap(),
+            "unreadable-config" => fs::create_dir(&core_config_path).unwrap(),
+            _ => {
+                fs::write(&core_config_path, "auth-dir: oauth\n").unwrap();
+                fs::write(install_dir.join(OAUTH_DIR_NAME), b"not a directory").unwrap();
+            }
+        }
+        let mut config = GuiConfigFile {
+            auth_dir: OAUTH_DIR_NAME.to_string(),
+            port: 9123,
+            ..GuiConfigFile::default()
+        };
+        let original_config = toml::to_string(&config).unwrap();
+        let original_yaml = fs::read(&core_config_path).ok();
+
+        assert!(migrate_macos_auth_dir_at(&mut config, &install_dir, &persistent_auth_dir).is_err());
+        assert_eq!(toml::to_string(&config).unwrap(), original_config);
+        assert_eq!(fs::read(&core_config_path).ok(), original_yaml);
+        assert_eq!(
+            fs::read(persistent_auth_dir.join("account.json")).unwrap(),
+            b"existing-credential"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn macos_oauth_recovery_requires_existing_persistent_credentials() {
+    let root = agent_test_home("macos-oauth-recovery-empty");
+    let install_dir = root.join("cpa-core");
+    let persistent_auth_dir = root.join(OAUTH_DIR_NAME);
+    let mut config = GuiConfigFile {
+        auth_dir: OAUTH_DIR_NAME.to_string(),
+        ..GuiConfigFile::default()
+    };
+    assert!(
+        !migrate_macos_auth_dir_at(&mut config, &install_dir, &persistent_auth_dir).unwrap()
+    );
+    fs::create_dir_all(persistent_auth_dir.join("nested")).unwrap();
+    fs::write(persistent_auth_dir.join("core.log"), b"log").unwrap();
+    fs::write(persistent_auth_dir.join("nested").join("account.json"), b"nested").unwrap();
+    assert!(
+        !migrate_macos_auth_dir_at(&mut config, &install_dir, &persistent_auth_dir).unwrap()
+    );
+    assert_eq!(config.auth_dir, OAUTH_DIR_NAME);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn macos_oauth_recovery_preserves_active_linked_credentials() {
+    let root = agent_test_home("macos-oauth-recovery-symlink");
+    let install_dir = root.join("cpa-core");
+    let active_auth_dir = install_dir.join(OAUTH_DIR_NAME);
+    let persistent_auth_dir = root.join(OAUTH_DIR_NAME);
+    fs::create_dir_all(&active_auth_dir).unwrap();
+    fs::create_dir_all(&persistent_auth_dir).unwrap();
+    let credential_path = persistent_auth_dir.join("account.json");
+    fs::write(&credential_path, b"existing-credential").unwrap();
+    std::os::unix::fs::symlink(&credential_path, active_auth_dir.join("linked.json")).unwrap();
+    let mut config = GuiConfigFile {
+        auth_dir: OAUTH_DIR_NAME.to_string(),
+        ..GuiConfigFile::default()
+    };
+    assert!(
+        !migrate_macos_auth_dir_at(&mut config, &install_dir, &persistent_auth_dir).unwrap()
+    );
+    assert_eq!(config.auth_dir, OAUTH_DIR_NAME);
+    assert_eq!(fs::read(active_auth_dir.join("linked.json")).unwrap(), b"existing-credential");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn macos_relative_oauth_dir_preserves_populated_or_custom_paths() {
     let root = agent_test_home("macos-relative-oauth-dir-custom");
     let install_dir = root.join("cpa-core");

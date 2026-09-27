@@ -521,12 +521,7 @@ pub(crate) fn apply_gui_managed_settings(
             serde_norway::to_value(config.port)
                 .map_err(|err| format!("Failed to serialize kernel port: {err}"))?,
         )?;
-        changed |= set_core_yaml_schema_value(
-            document,
-            &["auth-dir"],
-            &["oauth", "auth-dir"],
-            serde_norway::Value::String(config.auth_dir.clone()),
-        )?;
+        changed |= set_core_yaml_auth_dir(document, &config.auth_dir)?;
         changed |= set_core_yaml_schema_value(
             document,
             &["debug"],
@@ -1100,10 +1095,10 @@ fn auth_directory_has_json_files(path: &Path) -> Result<bool, String> {
     for entry in entries {
         let entry =
             entry.map_err(|error| format!("Failed to inspect OAuth directory entry: {error}"))?;
-        if entry
+        let file_type = entry
             .file_type()
-            .map_err(|error| format!("Failed to inspect OAuth file type: {error}"))?
-            .is_file()
+            .map_err(|error| format!("Failed to inspect OAuth file type: {error}"))?;
+        if (file_type.is_file() || file_type.is_symlink())
             && entry
                 .path()
                 .extension()
@@ -1121,12 +1116,13 @@ pub(crate) fn recover_macos_relative_oauth_dir(
     install_dir: &Path,
     persistent_auth_dir: &Path,
 ) -> Result<bool, String> {
-    if Path::new(config.auth_dir.trim()) != Path::new(OAUTH_DIR_NAME) {
+    let current_auth_dir =
+        normalize_path_lexically(&auth_dir_path_for_core(&config.auth_dir, install_dir));
+    if current_auth_dir != normalize_path_lexically(&install_dir.join(OAUTH_DIR_NAME)) {
         return Ok(false);
     }
-    let current_auth_dir = auth_dir_path_for_core(&config.auth_dir, install_dir);
-    if !auth_directory_has_json_files(persistent_auth_dir)?
-        || auth_directory_has_json_files(&current_auth_dir)?
+    if auth_directory_has_json_files(&current_auth_dir)?
+        || !auth_directory_has_json_files(persistent_auth_dir)?
     {
         return Ok(false);
     }
@@ -1136,17 +1132,25 @@ pub(crate) fn recover_macos_relative_oauth_dir(
 
 #[cfg(target_os = "macos")]
 fn migrate_packaged_macos_auth_dir(config: &mut GuiConfigFile) -> Result<bool, String> {
-    let previous_auth_dir = config.auth_dir.clone();
     let install_dir = core_install_dir()?;
     let persistent_auth_dir = fixed_oauth_dir()?;
+    migrate_macos_auth_dir_at(config, &install_dir, &persistent_auth_dir)
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn migrate_macos_auth_dir_at(
+    config: &mut GuiConfigFile,
+    install_dir: &Path,
+    persistent_auth_dir: &Path,
+) -> Result<bool, String> {
+    let mut candidate = config.clone();
     let migrated =
-        migrate_auth_dir_from_macos_app_bundle(config, &install_dir, &persistent_auth_dir)?;
-    let recovered = recover_macos_relative_oauth_dir(config, &install_dir, &persistent_auth_dir)?;
+        migrate_auth_dir_from_macos_app_bundle(&mut candidate, install_dir, persistent_auth_dir)?;
+    let recovered = recover_macos_relative_oauth_dir(&mut candidate, install_dir, persistent_auth_dir)?;
     if migrated || recovered {
-        if let Err(error) = patch_core_auth_dir(&config.auth_dir) {
-            config.auth_dir = previous_auth_dir;
-            return Err(format!("Failed to update kernel OAuth directory: {error}"));
-        }
+        patch_core_auth_dir_at(&install_dir.join(CORE_CONFIG_FILE), &candidate.auth_dir)
+            .map_err(|error| format!("Failed to update kernel OAuth directory: {error}"))?;
+        *config = candidate;
     }
     Ok(migrated || recovered)
 }
@@ -1679,7 +1683,12 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
     }
     #[cfg(target_os = "macos")]
     {
-        changed |= migrate_packaged_macos_auth_dir(config)?;
+        match migrate_packaged_macos_auth_dir(config) {
+            Ok(migrated) => changed |= migrated,
+            Err(error) => {
+                eprintln!("Failed to recover macOS OAuth directory; keeping existing configuration: {error}");
+            }
+        }
     }
     let legacy_default_auth_dir = fixed_oauth_dir()?;
     if config.auth_dir.trim().is_empty()

@@ -431,17 +431,37 @@ pub(crate) fn patch_core_management_secret_key(secret_key: &str) -> Result<(), S
     })
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn patch_core_auth_dir(auth_dir: &str) -> Result<(), String> {
-    let auth_dir = auth_dir.to_string();
-    patch_existing_core_config(move |document| {
-        let v8 = core_config_uses_v8(document);
-        set_core_yaml_path_value(
-            document,
-            if v8 { &["oauth", "auth-dir"] } else { &["auth-dir"] },
-            serde_norway::Value::String(auth_dir),
-        )
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn patch_core_auth_dir_at(config_path: &Path, auth_dir: &str) -> Result<(), String> {
+    patch_existing_core_config_at(config_path, |document| {
+        set_core_yaml_auth_dir(document, auth_dir)
     })
+}
+
+pub(crate) fn set_core_yaml_auth_dir(
+    document: &mut serde_norway::Value,
+    auth_dir: &str,
+) -> Result<bool, String> {
+    let root = document
+        .as_mapping()
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+    let nested = core_config_uses_v8(document)
+        || nested_yaml_value(root, &["oauth", "auth-dir"]).is_some();
+    let has_legacy = yaml_mapping_value(root, "auth-dir").is_some();
+    let value = serde_norway::Value::String(auth_dir.to_string());
+    let mut changed = set_core_yaml_path_value(
+        document,
+        if nested {
+            &["oauth", "auth-dir"]
+        } else {
+            &["auth-dir"]
+        },
+        value.clone(),
+    )?;
+    if nested && has_legacy {
+        changed |= set_core_yaml_path_value(document, &["auth-dir"], value)?;
+    }
+    Ok(changed)
 }
 
 pub(crate) fn patch_core_plugins_enabled(enabled: bool) -> Result<(), String> {
@@ -567,19 +587,30 @@ pub(crate) fn patch_existing_core_config<F>(update: F) -> Result<(), String>
 where
     F: FnOnce(&mut serde_norway::Value) -> Result<bool, String>,
 {
-    let _config_guard = lock_core_config_file()?;
     let config_path = core_install_dir()?.join(CORE_CONFIG_FILE);
-    if !config_path.is_file() {
-        return Ok(());
-    }
+    patch_existing_core_config_at(&config_path, update)
+}
 
-    let content = fs::read_to_string(&config_path)
-        .map_err(|err| format!("Failed to read kernel configuration {}: {err}", path_to_string(&config_path)))?;
+fn patch_existing_core_config_at<F>(config_path: &Path, update: F) -> Result<(), String>
+where
+    F: FnOnce(&mut serde_norway::Value) -> Result<bool, String>,
+{
+    let _config_guard = lock_core_config_file()?;
+    let content = match fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to read kernel configuration {}: {error}",
+                path_to_string(config_path)
+            ));
+        }
+    };
     let Some(updated) = patch_core_yaml_document(&content, update)? else {
         return Ok(());
     };
 
-    write_yaml_if_changed(&config_path, &updated)?;
+    write_yaml_if_changed(config_path, &updated)?;
 
     Ok(())
 }
