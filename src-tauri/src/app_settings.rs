@@ -24,7 +24,7 @@ pub(crate) async fn get_core_status(app: tauri::AppHandle) -> Result<CoreStatus,
 }
 
 pub(crate) fn emit_core_status(app: &tauri::AppHandle, status: &CoreStatus) {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     update_windows_tray_status(app, status);
     let _ = app.emit(CORE_STATUS_EVENT, status);
 }
@@ -551,11 +551,11 @@ pub(crate) fn set_app_locale(
     locale: String,
 ) -> Result<String, String> {
     let config = gui_config_state.set_locale(locale)?;
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     if let Ok(status) = current_core_status(Some(process_state.inner()), Some(config.port)) {
         update_windows_tray_locale(&app, &config.locale, &status);
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     let _ = (app, process_state);
     Ok(config.locale)
 }
@@ -567,6 +567,13 @@ pub(crate) fn resolve_windows_close_request(
     action: WindowsCloseAction,
     remember: Option<bool>,
 ) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if action == WindowsCloseAction::MinimizeToTray && !linux_tray_available(&app) {
+        return Err(
+            "System tray is unavailable; keep the main window open or exit the app".to_string(),
+        );
+    }
+
     if remember.unwrap_or(false) {
         let close_behavior = match action {
             WindowsCloseAction::Exit => WindowsCloseBehavior::Exit,

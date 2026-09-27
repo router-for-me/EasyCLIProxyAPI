@@ -185,27 +185,54 @@ pub(crate) fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Resul
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_TRAY_ID: &str = "windows-tray";
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_TRAY_OPEN_MENU_ID: &str = "windows-tray-open-main-window";
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_TRAY_STATUS_MENU_ID: &str = "windows-tray-core-status";
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_TRAY_TOGGLE_CORE_MENU_ID: &str = "windows-tray-toggle-core";
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_TRAY_RESTART_CORE_MENU_ID: &str = "windows-tray-restart-core";
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_TRAY_QUIT_MENU_ID: &str = "windows-tray-quit";
 
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_tray_available(app_handle: &tauri::AppHandle) -> bool {
+    use dbus::{arg::Variant, blocking::Connection};
+
+    if app_handle.tray_by_id(WINDOWS_TRAY_ID).is_none() {
+        return false;
+    }
+
+    let Ok(connection) = Connection::new_session() else {
+        return false;
+    };
+    let proxy = connection.with_proxy(
+        "org.kde.StatusNotifierWatcher",
+        "/StatusNotifierWatcher",
+        Duration::from_millis(500),
+    );
+    let host_registered: Result<(Variant<bool>,), _> = proxy.method_call(
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        (
+            "org.kde.StatusNotifierWatcher",
+            "IsStatusNotifierHostRegistered",
+        ),
+    );
+    matches!(host_registered, Ok((Variant(true),)))
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[derive(Clone, Copy)]
 pub(crate) enum WindowsTrayCoreAction {
     Toggle,
     Restart,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) struct WindowsTrayPresentation {
     pub(crate) status_text: String,
     pub(crate) toggle_text: String,
@@ -214,7 +241,7 @@ pub(crate) struct WindowsTrayPresentation {
     pub(crate) tooltip: String,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn windows_tray_presentation(
     status: &CoreStatus,
     busy: bool,
@@ -255,7 +282,7 @@ pub(crate) fn windows_tray_presentation(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) struct WindowsTrayState {
     open_main_window: MenuItem<tauri::Wry>,
     status_item: MenuItem<tauri::Wry>,
@@ -266,7 +293,7 @@ pub(crate) struct WindowsTrayState {
     busy: AtomicBool,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl WindowsTrayState {
     fn locale(&self) -> String {
         self.locale
@@ -293,7 +320,7 @@ impl WindowsTrayState {
         ];
         for (item, label) in labels {
             if let Err(error) = item.set_text(label) {
-                eprintln!("Failed to update Windows tray language: {error}");
+                eprintln!("Failed to update desktop tray language: {error}");
             }
         }
     }
@@ -311,19 +338,19 @@ impl WindowsTrayState {
         if let Err(error) = self
             .status_item
             .set_text(native_text(&locale, NativeText::CoreStatusWorking)) {
-            eprintln!("Failed to update Windows tray core status: {error}");
+            eprintln!("Failed to update desktop tray core status: {error}");
         }
         if let Err(error) =
             self.toggle_core_item
                 .set_text(native_text(&locale, NativeText::Working))
         {
-            eprintln!("Failed to update Windows tray action text: {error}");
+            eprintln!("Failed to update desktop tray action text: {error}");
         }
         if let Err(error) = self.toggle_core_item.set_enabled(false) {
-            eprintln!("Failed to update Windows tray action state: {error}");
+            eprintln!("Failed to update desktop tray action state: {error}");
         }
         if let Err(error) = self.restart_core_item.set_enabled(false) {
-            eprintln!("Failed to update Windows tray restart state: {error}");
+            eprintln!("Failed to update desktop tray restart state: {error}");
         }
         true
     }
@@ -336,25 +363,25 @@ impl WindowsTrayState {
         let presentation =
             windows_tray_presentation(status, self.busy.load(Ordering::Acquire), &self.locale());
         if let Err(error) = self.status_item.set_text(presentation.status_text.clone()) {
-            eprintln!("Failed to update Windows tray core status: {error}");
+            eprintln!("Failed to update desktop tray core status: {error}");
         }
         if let Err(error) = self
             .toggle_core_item
             .set_text(presentation.toggle_text.clone())
         {
-            eprintln!("Failed to update Windows tray action text: {error}");
+            eprintln!("Failed to update desktop tray action text: {error}");
         }
         if let Err(error) = self
             .toggle_core_item
             .set_enabled(presentation.toggle_enabled)
         {
-            eprintln!("Failed to update Windows tray action state: {error}");
+            eprintln!("Failed to update desktop tray action state: {error}");
         }
         if let Err(error) = self
             .restart_core_item
             .set_enabled(presentation.restart_enabled)
         {
-            eprintln!("Failed to update Windows tray restart state: {error}");
+            eprintln!("Failed to update desktop tray restart state: {error}");
         }
         presentation.tooltip
     }
@@ -366,12 +393,12 @@ impl WindowsTrayState {
         }
         let text = native_operation_failed(&self.locale(), &summary);
         if let Err(update_error) = self.status_item.set_text(text) {
-            eprintln!("Failed to update Windows tray error state: {update_error}");
+            eprintln!("Failed to update desktop tray error state: {update_error}");
         }
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn show_windows_main_window(app_handle: &tauri::AppHandle) {
     let Some(window) = app_handle.get_webview_window("main") else {
         return;
@@ -390,7 +417,7 @@ pub(crate) fn show_windows_main_window(app_handle: &tauri::AppHandle) {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn update_windows_tray_status(app_handle: &tauri::AppHandle, status: &CoreStatus) {
     let tooltip = app_handle
         .try_state::<WindowsTrayState>()
@@ -399,12 +426,12 @@ pub(crate) fn update_windows_tray_status(app_handle: &tauri::AppHandle, status: 
 
     if let Some(tray) = app_handle.tray_by_id(WINDOWS_TRAY_ID) {
         if let Err(error) = tray.set_tooltip(Some(&tooltip)) {
-            eprintln!("Failed to update Windows tray tooltip: {error}");
+            eprintln!("Failed to update desktop tray tooltip: {error}");
         }
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn update_windows_tray_locale(
     app_handle: &tauri::AppHandle,
     locale: &str,
@@ -416,9 +443,9 @@ pub(crate) fn update_windows_tray_locale(
     update_windows_tray_status(app_handle, status);
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn show_windows_tray_action_error(app_handle: &tauri::AppHandle, error: &str) {
-    eprintln!("Windows tray core operation failed: {error}");
+    eprintln!("Desktop tray core operation failed: {error}");
     let locale = app_handle
         .try_state::<WindowsTrayState>()
         .map(|state| state.locale())
@@ -431,12 +458,12 @@ pub(crate) fn show_windows_tray_action_error(app_handle: &tauri::AppHandle, erro
             &locale,
             NativeText::TooltipCoreOperationFailed,
         ))) {
-            eprintln!("Failed to update Windows tray error tooltip: {update_error}");
+            eprintln!("Failed to update desktop tray error tooltip: {update_error}");
         }
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn run_windows_tray_core_action(
     app_handle: &tauri::AppHandle,
     action: WindowsTrayCoreAction,
@@ -452,7 +479,7 @@ pub(crate) fn run_windows_tray_core_action(
             &tray_state.locale(),
             NativeText::TooltipCoreWorking,
         ))) {
-            eprintln!("Failed to update Windows tray busy tooltip: {error}");
+            eprintln!("Failed to update desktop tray busy tooltip: {error}");
         }
     }
 
@@ -505,7 +532,7 @@ pub(crate) fn run_windows_tray_core_action(
     });
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn setup_windows_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
     let locale = app
         .state::<GuiConfigState>()
@@ -562,6 +589,10 @@ pub(crate) fn setup_windows_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Res
         ],
     )?;
 
+    // Linux AppIndicator implementations always open the menu when the icon is
+    // activated and do not emit tray click events. Keeping "Open Main Window"
+    // as the first item provides the reliable restore path on Linux; Windows
+    // additionally supports the double-click shortcut below.
     TrayIconBuilder::with_id(WINDOWS_TRAY_ID)
         .icon(
             app.default_window_icon()

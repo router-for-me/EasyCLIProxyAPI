@@ -2,7 +2,7 @@
 use super::support::agent_test_home;
 use super::*;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[test]
 fn windows_tray_presentation_tracks_core_state_and_busy_actions() {
     let mut status = CoreStatus {

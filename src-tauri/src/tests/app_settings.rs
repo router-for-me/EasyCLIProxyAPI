@@ -140,7 +140,11 @@ fn silent_start_defaults_off_and_requires_tray_support() {
     };
     assert_eq!(
         should_start_hidden(&enabled),
-        cfg!(any(target_os = "windows", target_os = "macos"))
+        cfg!(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows"
+        ))
     );
 }
 

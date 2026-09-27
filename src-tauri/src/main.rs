@@ -13,12 +13,20 @@ mod desktop_theme;
 mod instance_lock;
 mod management_api;
 mod network_proxy;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+))]
 mod native_i18n;
 mod oauth_browser;
 mod progress;
 mod provider_health;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+))]
 mod tray;
 mod usage;
 
@@ -65,11 +73,15 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tar::Archive;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use tauri::menu::PredefinedMenuItem;
 #[cfg(target_os = "macos")]
 use tauri::tray::{MouseButtonState, TrayIcon};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
@@ -78,7 +90,11 @@ use tauri::{Emitter, LogicalSize, Manager};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_opener::OpenerExt;
 use tokio_util::sync::CancellationToken;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+))]
 use tray::*;
 use zip::ZipArchive;
 
@@ -115,7 +131,7 @@ const CORE_STATUS_EVENT: &str = "core-status-changed";
 const CONFIG_FILES_CHANGED_EVENT: &str = "config-files-changed";
 const VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT: &str = "version-download-source-changed";
 static VERSION_SOURCE_DETECTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_CLOSE_REQUEST_EVENT: &str = "windows-close-requested";
 const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";
 const CORE_CONFIG_FILE: &str = "config.yaml";
@@ -2439,13 +2455,13 @@ fn main() {
         }
     });
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let app = app.on_window_event(|window, event| {
         if window.label() == "main" {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 if let Err(error) = window.emit(WINDOWS_CLOSE_REQUEST_EVENT, ()) {
-                    eprintln!("Failed to show Windows close confirmation: {error}");
+                    eprintln!("Failed to show desktop close confirmation: {error}");
                 }
             }
         }
@@ -2477,6 +2493,12 @@ fn main() {
 
             #[cfg(target_os = "macos")]
             setup_macos_tray(app)?;
+            #[cfg(target_os = "linux")]
+            if let Err(error) = setup_windows_tray(app) {
+                eprintln!(
+                    "Failed to set up Linux tray; keeping the main window available: {error}"
+                );
+            }
             #[cfg(target_os = "windows")]
             setup_windows_tray(app)?;
 

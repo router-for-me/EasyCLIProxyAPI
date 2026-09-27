@@ -2748,7 +2748,12 @@ pub(crate) fn core_binary_name() -> &'static str {
 }
 
 pub(crate) fn should_start_hidden(config: &GuiConfigFile) -> bool {
-    config.silent_start && cfg!(any(target_os = "windows", target_os = "macos"))
+    config.silent_start
+        && cfg!(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows"
+        ))
 }
 
 pub(crate) fn should_start_core_on_launch(config: &GuiConfigFile) -> bool {
@@ -2765,6 +2770,16 @@ pub(crate) fn configure_initial_main_window(
 
     #[cfg(target_os = "macos")]
     set_macos_dock_visible(app_handle, !start_hidden);
+
+    #[cfg(target_os = "linux")]
+    let start_hidden = if start_hidden && !linux_tray_available(app_handle) {
+        eprintln!(
+            "System tray is unavailable; showing the main window instead of starting hidden"
+        );
+        false
+    } else {
+        start_hidden
+    };
 
     if start_hidden {
         return window
