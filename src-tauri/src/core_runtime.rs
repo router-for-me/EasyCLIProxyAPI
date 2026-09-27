@@ -1388,8 +1388,8 @@ impl std::fmt::Display for CoreStartupFailure {
     }
 }
 
-pub(crate) fn core_start_log_path(install_dir: &Path, auth_dir: &str) -> PathBuf {
-    core_logs_dir_path(auth_dir, install_dir).join("core-start-output.log")
+pub(crate) fn core_start_log_path(install_dir: &Path, auth_dir: &str) -> Result<PathBuf, String> {
+    Ok(core_logs_dir_path(auth_dir, install_dir)?.join("core-start-output.log"))
 }
 
 pub(crate) fn core_start_stdio(log_path: &Path) -> io::Result<(Stdio, Stdio)> {
@@ -1510,7 +1510,7 @@ pub(crate) fn start_core_process_inner(
     let gui_config = &resolved_config;
     let install_dir = core_install_dir()?;
     if !gui_config.auth_dir.trim().is_empty() {
-        let auth_dir = auth_dir_path_for_core(&gui_config.auth_dir, &install_dir);
+        let auth_dir = auth_dir_path_for_core(&gui_config.auth_dir, &install_dir)?;
         fs::create_dir_all(&auth_dir)
             .map_err(|error| format!("Failed to create credentials directory {}: {error}", path_to_string(&auth_dir)))?;
     }
@@ -1534,7 +1534,7 @@ pub(crate) fn start_core_process_inner(
 
     let config_path = merge_core_config_for_start(&install_dir, gui_config)?;
     let config_path = path_to_string(&config_path);
-    let log_path = core_start_log_path(&install_dir, &gui_config.auth_dir);
+    let log_path = core_start_log_path(&install_dir, &gui_config.auth_dir)?;
     let start_once = || {
         start_core_process_once(
             process_state,

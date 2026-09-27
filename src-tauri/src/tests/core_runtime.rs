@@ -930,14 +930,14 @@ fn core_start_log_path_follows_the_managed_logs_directory() {
     let install_dir = base_dir.join("cpa-core");
 
     assert_eq!(
-        core_start_log_path(&install_dir, DEFAULT_AUTH_DIR),
+        core_start_log_path(&install_dir, DEFAULT_AUTH_DIR).unwrap(),
         base_dir
             .join("oauth")
             .join("logs")
             .join("core-start-output.log")
     );
     assert_eq!(
-        core_start_log_path(&install_dir, "custom-auth"),
+        core_start_log_path(&install_dir, "custom-auth").unwrap(),
         install_dir
             .join("custom-auth")
             .join("logs")

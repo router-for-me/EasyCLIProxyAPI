@@ -185,23 +185,29 @@ pub(crate) fn patch_core_tls_settings_yaml(
     settings: &CoreTlsSettings,
 ) -> Result<Option<String>, String> {
     patch_core_yaml_document(content, |document| {
-        let v8 = core_config_uses_v8(document);
+        let root = document.as_mapping()
+            .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+        let v8 = core_config_uses_v8(document)
+            || nested_yaml_value(root, &["server", "tls"]).is_some();
+        let has_legacy_mapping = yaml_mapping_value(root, "tls")
+            .is_some_and(serde_norway::Value::is_mapping);
         let mut changed = false;
-        changed |= set_core_yaml_path_value(
-            document,
-            if v8 { &["server", "tls", "enable"] } else { &["tls", "enable"] },
-            serde_norway::Value::Bool(settings.enabled),
-        )?;
-        changed |= set_core_yaml_path_value(
-            document,
-            if v8 { &["server", "tls", "cert"] } else { &["tls", "cert"] },
-            serde_norway::Value::String(settings.cert.clone()),
-        )?;
-        changed |= set_core_yaml_path_value(
-            document,
-            if v8 { &["server", "tls", "key"] } else { &["tls", "key"] },
-            serde_norway::Value::String(settings.key.clone()),
-        )?;
+        for (key, value) in [
+            ("enable", serde_norway::Value::Bool(settings.enabled)),
+            ("cert", serde_norway::Value::String(settings.cert.clone())),
+            ("key", serde_norway::Value::String(settings.key.clone())),
+        ] {
+            let legacy_path = ["tls", key];
+            let v8_path = ["server", "tls", key];
+            changed |= set_core_yaml_path_value(
+                document,
+                if v8 { &v8_path } else { &legacy_path },
+                value.clone(),
+            )?;
+            if v8 && has_legacy_mapping {
+                changed |= set_core_yaml_path_value(document, &["tls", key], value)?;
+            }
+        }
         Ok(changed)
     })
 }
@@ -431,7 +437,6 @@ pub(crate) fn patch_core_management_secret_key(secret_key: &str) -> Result<(), S
     })
 }
 
-#[cfg(any(target_os = "macos", test))]
 pub(crate) fn patch_core_auth_dir_at(config_path: &Path, auth_dir: &str) -> Result<(), String> {
     patch_existing_core_config_at(config_path, |document| {
         set_core_yaml_auth_dir(document, auth_dir)
@@ -442,26 +447,12 @@ pub(crate) fn set_core_yaml_auth_dir(
     document: &mut serde_norway::Value,
     auth_dir: &str,
 ) -> Result<bool, String> {
-    let root = document
-        .as_mapping()
-        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
-    let nested = core_config_uses_v8(document)
-        || nested_yaml_value(root, &["oauth", "auth-dir"]).is_some();
-    let has_legacy = yaml_mapping_value(root, "auth-dir").is_some();
-    let value = serde_norway::Value::String(auth_dir.to_string());
-    let mut changed = set_core_yaml_path_value(
+    set_core_yaml_schema_value(
         document,
-        if nested {
-            &["oauth", "auth-dir"]
-        } else {
-            &["auth-dir"]
-        },
-        value.clone(),
-    )?;
-    if nested && has_legacy {
-        changed |= set_core_yaml_path_value(document, &["auth-dir"], value)?;
-    }
-    Ok(changed)
+        &["auth-dir"],
+        &["oauth", "auth-dir"],
+        serde_norway::Value::String(auth_dir.to_string()),
+    )
 }
 
 pub(crate) fn patch_core_plugins_enabled(enabled: bool) -> Result<(), String> {
@@ -477,63 +468,64 @@ pub(crate) fn patch_core_plugins_enabled(enabled: bool) -> Result<(), String> {
 
 pub(crate) fn patch_core_request_log(enabled: bool) -> Result<(), String> {
     patch_existing_core_config(|document| {
-        let v8 = core_config_uses_v8(document);
-        set_core_yaml_path_value(
+        set_core_yaml_schema_value(
             document,
-            if v8 { &["observability", "logs", "request-log"] } else { &["request-log"] },
+            &["request-log"],
+            &["observability", "logs", "request-log"],
             serde_norway::Value::Bool(enabled),
         )
     })
 }
 
 pub(crate) fn patch_core_logging_settings(settings: &CoreConfigSettings) -> Result<(), String> {
-    let settings = settings.clone();
-    patch_existing_core_config(move |document| {
-        let v8 = core_config_uses_v8(document);
-        let mut changed = false;
-        for (key, value) in [
-            ("debug", serde_norway::Value::Bool(settings.debug)),
-            (
-                "commercial-mode",
-                serde_norway::Value::Bool(settings.commercial_mode),
-            ),
-            (
-                "logging-to-file",
-                serde_norway::Value::Bool(settings.logging_to_file),
-            ),
-            (
-                "logs-max-total-size-mb",
-                serde_norway::to_value(settings.logs_max_total_size_mb)
-                    .map_err(|err| format!("Failed to serialize log size limit: {err}"))?,
-            ),
-            (
-                "error-logs-max-files",
-                serde_norway::to_value(settings.error_logs_max_files)
-                    .map_err(|err| format!("Failed to serialize error log retention count: {err}"))?,
-            ),
-            (
-                "usage-statistics-enabled",
-                serde_norway::Value::Bool(settings.usage_statistics_enabled),
-            ),
-            (
-                "redis-usage-queue-retention-seconds",
-                serde_norway::to_value(settings.redis_usage_queue_retention_seconds)
-                    .map_err(|err| format!("Failed to serialize Redis usage queue retention: {err}"))?,
-            ),
-        ] {
-            let path: &[&str] = if v8 {
-                match key {
-                    "commercial-mode" => &["server", "commercial-mode"],
-                    "usage-statistics-enabled" | "redis-usage-queue-retention-seconds" => &["observability", "usage", key],
-                    _ => &["observability", "logs", key],
-                }
-            } else {
-                &[key]
-            };
-            changed |= set_core_yaml_path_value(document, path, value)?;
-        }
-        Ok(changed)
-    })
+    patch_existing_core_config(|document| apply_core_logging_settings(document, settings))
+}
+
+pub(crate) fn apply_core_logging_settings(
+    document: &mut serde_norway::Value,
+    settings: &CoreConfigSettings,
+) -> Result<bool, String> {
+    let mut changed = false;
+    for (key, value) in [
+        ("debug", serde_norway::Value::Bool(settings.debug)),
+        (
+            "commercial-mode",
+            serde_norway::Value::Bool(settings.commercial_mode),
+        ),
+        (
+            "logging-to-file",
+            serde_norway::Value::Bool(settings.logging_to_file),
+        ),
+        (
+            "logs-max-total-size-mb",
+            serde_norway::to_value(settings.logs_max_total_size_mb)
+                .map_err(|err| format!("Failed to serialize log size limit: {err}"))?,
+        ),
+        (
+            "error-logs-max-files",
+            serde_norway::to_value(settings.error_logs_max_files)
+                .map_err(|err| format!("Failed to serialize error log retention count: {err}"))?,
+        ),
+        (
+            "usage-statistics-enabled",
+            serde_norway::Value::Bool(settings.usage_statistics_enabled),
+        ),
+        (
+            "redis-usage-queue-retention-seconds",
+            serde_norway::to_value(settings.redis_usage_queue_retention_seconds)
+                .map_err(|err| format!("Failed to serialize Redis usage queue retention: {err}"))?,
+        ),
+    ] {
+        let path: &[&str] = match key {
+            "commercial-mode" => &["server", "commercial-mode"],
+            "usage-statistics-enabled" | "redis-usage-queue-retention-seconds" => {
+                &["observability", "usage", key]
+            }
+            _ => &["observability", "logs", key],
+        };
+        changed |= set_core_yaml_schema_value(document, &[key], path, value)?;
+    }
+    Ok(changed)
 }
 
 pub(crate) fn patch_core_routing_strategy(strategy: &str) -> Result<(), String> {
@@ -693,7 +685,7 @@ pub(crate) fn render_yaml_value_changes(
     }
     for (parent_path, entries) in missing_nested_groups {
         if let Some(updated_content) =
-            insert_yaml_block_mapping_values_at_path(&editable_content, &parent_path, &entries)?
+            insert_yaml_mapping_values_at_path(&editable_content, &parent_path, &entries)?
         {
             editable_content = updated_content;
         } else {
@@ -894,11 +886,38 @@ pub(crate) fn yaml_value_at_path<'a>(
     })
 }
 
-pub(crate) fn insert_yaml_block_mapping_values_at_path(
+pub(crate) fn insert_yaml_mapping_values_at_path(
     content: &str,
     parent_path: &[String],
     entries: &[(String, serde_norway::Value)],
 ) -> Result<Option<String>, String> {
+    let file = content.parse::<yaml_edit::YamlFile>()
+        .map_err(|error| format!("Failed to parse editable kernel configuration: {error}"))?;
+    let document = file.document()
+        .ok_or_else(|| "Kernel configuration has no YAML document".to_string())?;
+    let root = document.as_mapping()
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+    let node = yaml_edit_node_at_path(&root, parent_path);
+    if let Some(mapping) = node.as_ref().and_then(|node| node.as_mapping())
+        .filter(|mapping| mapping.is_flow_style())
+    {
+        let range = mapping.byte_range();
+        let start = range.start as usize;
+        let opening = content[start..range.end as usize].find('{')
+            .ok_or_else(|| "Flow mapping has no opening brace".to_string())?;
+        let insertion_point = start + opening + 1;
+        let fields = entries.iter().map(|(key, value)| {
+            serde_json::to_string(value)
+                .map(|value| format!("{}: {value}", render_yaml_mapping_key(key)))
+                .map_err(|error| format!("Failed to serialize kernel configuration value: {error}"))
+        }).collect::<Result<Vec<_>, _>>()?.join(", ");
+        let separator = if mapping.is_empty() { " " } else { ", " };
+        return Ok(Some(format!(
+            "{} {fields}{separator}{}",
+            &content[..insertion_point],
+            &content[insertion_point..]
+        )));
+    }
     let mut offset = 0;
     let mut parent_end = None;
     let mut parent_indent = 0;
@@ -1243,8 +1262,19 @@ pub(crate) fn set_core_yaml_schema_value(
     v8_path: &[&str],
     value: serde_norway::Value,
 ) -> Result<bool, String> {
-    let path = if core_config_uses_v8(document) { v8_path } else { legacy_path };
-    set_core_yaml_path_value(document, path, value)
+    let root = document.as_mapping()
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+    let v8 = core_config_uses_v8(document) || nested_yaml_value(root, v8_path).is_some();
+    let has_legacy = nested_yaml_value(root, legacy_path).is_some();
+    let mut changed = set_core_yaml_path_value(
+        document,
+        if v8 { v8_path } else { legacy_path },
+        value.clone(),
+    )?;
+    if v8 && has_legacy {
+        changed |= set_core_yaml_path_value(document, legacy_path, value)?;
+    }
+    Ok(changed)
 }
 
 pub(crate) fn patch_core_api_keys_yaml(

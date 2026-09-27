@@ -837,26 +837,78 @@ pub(crate) fn fixed_oauth_dir() -> Result<PathBuf, String> {
     Ok(core_base_dir()?.join(OAUTH_DIR_NAME))
 }
 
-pub(crate) fn auth_dir_path_for_core(auth_dir: &str, install_dir: &Path) -> PathBuf {
-    if auth_dir.trim() == DEFAULT_AUTH_DIR {
-        return install_dir
-            .parent()
-            .map(|parent| parent.join(OAUTH_DIR_NAME))
-            .unwrap_or_else(|| install_dir.join(auth_dir));
-    }
-    let auth_dir = PathBuf::from(auth_dir);
-    if auth_dir.is_absolute() {
-        auth_dir
+pub(crate) fn auth_dir_path_for_core(auth_dir: &str, install_dir: &Path) -> Result<PathBuf, String> {
+    let variable = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let user_home = env::var_os(variable).filter(|value| !value.is_empty()).map(PathBuf::from);
+    auth_dir_path_for_core_with_home(auth_dir, install_dir, user_home.as_deref())
+}
+
+pub(crate) fn auth_dir_path_for_core_with_home(
+    auth_dir: &str,
+    install_dir: &Path,
+    user_home: Option<&Path>,
+) -> Result<PathBuf, String> {
+    let auth_dir = if auth_dir.is_empty() { "~/.cli-proxy-api" } else { auth_dir };
+    let path = if let Some(remainder) = auth_dir.strip_prefix('~') {
+        let home = user_home.ok_or_else(|| "Unable to determine user home for credentials directory".to_string())?;
+        home.join(remainder.trim_start_matches(['/', '\\']).replace('\\', "/"))
     } else {
-        install_dir.join(auth_dir)
+        PathBuf::from(auth_dir)
+    };
+    Ok(resolve_core_relative_path(&path, install_dir))
+}
+
+fn resolve_core_relative_path(path: &Path, install_dir: &Path) -> PathBuf {
+    normalize_path_lexically(&if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        install_dir.join(path)
+    })
+}
+
+pub(crate) fn core_logs_dir_path(auth_dir: &str, install_dir: &Path) -> Result<PathBuf, String> {
+    let writable_base = ["WRITABLE_PATH", "writable_path"].into_iter().find_map(|key| {
+        env::var(key).ok().filter(|value| !value.trim().is_empty())
+    });
+    core_logs_dir_path_with_base(auth_dir, install_dir, writable_base.as_deref())
+}
+
+pub(crate) fn core_logs_dir_path_with_base(
+    auth_dir: &str,
+    install_dir: &Path,
+    writable_base: Option<&str>,
+) -> Result<PathBuf, String> {
+    if let Some(base) = writable_base.map(str::trim).filter(|base| !base.is_empty()) {
+        return Ok(resolve_core_relative_path(&Path::new(base).join("logs"), install_dir));
     }
+    let local_logs = install_dir.join("logs");
+    if directory_is_writable(&local_logs) {
+        return Ok(normalize_path_lexically(&local_logs));
+    }
+    Ok(auth_dir_path_for_core(auth_dir, install_dir)?.join("logs"))
 }
 
-pub(crate) fn core_logs_dir_path(auth_dir: &str, install_dir: &Path) -> PathBuf {
-    auth_dir_path_for_core(auth_dir, install_dir).join("logs")
+fn directory_is_writable(path: &Path) -> bool {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    if !path.is_dir() {
+        return false;
+    }
+    let probe = path.join(format!(
+        ".cpa-gui-log-probe-{}-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let Ok(file) = File::options().write(true).create_new(true).open(&probe) else {
+        return false;
+    };
+    drop(file);
+    let _ = fs::remove_file(probe);
+    true
 }
 
-#[cfg(any(target_os = "macos", test))]
 fn normalize_path_lexically(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -1063,7 +1115,7 @@ pub(crate) fn migrate_auth_dir_from_macos_app_bundle(
     install_dir: &Path,
     persistent_auth_dir: &Path,
 ) -> Result<bool, String> {
-    let source = normalize_path_lexically(&auth_dir_path_for_core(&config.auth_dir, install_dir));
+    let source = auth_dir_path_for_core(&config.auth_dir, install_dir)?;
     if !auth_dir_is_inside_macos_app_bundle(&source) {
         return Ok(false);
     }
@@ -1080,7 +1132,6 @@ pub(crate) fn migrate_auth_dir_from_macos_app_bundle(
     Ok(true)
 }
 
-#[cfg(any(target_os = "macos", test))]
 fn auth_directory_has_json_files(path: &Path) -> Result<bool, String> {
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
@@ -1110,14 +1161,12 @@ fn auth_directory_has_json_files(path: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn recover_macos_relative_oauth_dir(
+pub(crate) fn recover_relative_oauth_dir(
     config: &mut GuiConfigFile,
     install_dir: &Path,
     persistent_auth_dir: &Path,
 ) -> Result<bool, String> {
-    let current_auth_dir =
-        normalize_path_lexically(&auth_dir_path_for_core(&config.auth_dir, install_dir));
+    let current_auth_dir = auth_dir_path_for_core(&config.auth_dir, install_dir)?;
     if current_auth_dir != normalize_path_lexically(&install_dir.join(OAUTH_DIR_NAME)) {
         return Ok(false);
     }
@@ -1130,23 +1179,18 @@ pub(crate) fn recover_macos_relative_oauth_dir(
     Ok(true)
 }
 
-#[cfg(target_os = "macos")]
-fn migrate_packaged_macos_auth_dir(config: &mut GuiConfigFile) -> Result<bool, String> {
-    let install_dir = core_install_dir()?;
-    let persistent_auth_dir = fixed_oauth_dir()?;
-    migrate_macos_auth_dir_at(config, &install_dir, &persistent_auth_dir)
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn migrate_macos_auth_dir_at(
+pub(crate) fn migrate_auth_dir_at(
     config: &mut GuiConfigFile,
     install_dir: &Path,
     persistent_auth_dir: &Path,
 ) -> Result<bool, String> {
     let mut candidate = config.clone();
+    #[cfg(target_os = "macos")]
     let migrated =
         migrate_auth_dir_from_macos_app_bundle(&mut candidate, install_dir, persistent_auth_dir)?;
-    let recovered = recover_macos_relative_oauth_dir(&mut candidate, install_dir, persistent_auth_dir)?;
+    #[cfg(not(target_os = "macos"))]
+    let migrated = false;
+    let recovered = recover_relative_oauth_dir(&mut candidate, install_dir, persistent_auth_dir)?;
     if migrated || recovered {
         patch_core_auth_dir_at(&install_dir.join(CORE_CONFIG_FILE), &candidate.auth_dir)
             .map_err(|error| format!("Failed to update kernel OAuth directory: {error}"))?;
@@ -1411,7 +1455,7 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     }
     if !config.auth_dir.trim().is_empty() {
         let install_dir = core_install_dir()?;
-        let auth_dir = auth_dir_path_for_core(&config.auth_dir, &install_dir);
+        let auth_dir = auth_dir_path_for_core(&config.auth_dir, &install_dir)?;
         fs::create_dir_all(&auth_dir)
             .map_err(|error| format!("Failed to create credentials directory {}: {error}", path_to_string(&auth_dir)))?;
     }
@@ -1651,6 +1695,16 @@ pub(crate) fn is_loopback_host(host: &str) -> bool {
 }
 
 pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, String> {
+    let install_dir = core_install_dir()?;
+    let persistent_auth_dir = fixed_oauth_dir()?;
+    sanitize_gui_config_at(config, &install_dir, &persistent_auth_dir)
+}
+
+pub(crate) fn sanitize_gui_config_at(
+    config: &mut GuiConfigFile,
+    install_dir: &Path,
+    persistent_auth_dir: &Path,
+) -> Result<bool, String> {
     let mut changed = false;
     let normalized_locale = normalize_app_locale(&config.locale);
     if config.locale != normalized_locale {
@@ -1681,18 +1735,14 @@ pub(crate) fn sanitize_gui_config(config: &mut GuiConfigFile) -> Result<bool, St
         config.allow_lan = allow_lan;
         changed = true;
     }
-    #[cfg(target_os = "macos")]
-    {
-        match migrate_packaged_macos_auth_dir(config) {
-            Ok(migrated) => changed |= migrated,
-            Err(error) => {
-                eprintln!("Failed to recover macOS OAuth directory; keeping existing configuration: {error}");
-            }
+    match migrate_auth_dir_at(config, install_dir, persistent_auth_dir) {
+        Ok(migrated) => changed |= migrated,
+        Err(error) => {
+            eprintln!("Failed to recover OAuth directory; keeping existing configuration: {error}");
         }
     }
-    let legacy_default_auth_dir = fixed_oauth_dir()?;
     if config.auth_dir.trim().is_empty()
-        || Path::new(config.auth_dir.trim()) == legacy_default_auth_dir
+        || Path::new(config.auth_dir.trim()) == persistent_auth_dir
     {
         config.auth_dir = DEFAULT_AUTH_DIR.to_string();
         changed = true;
@@ -1958,7 +2008,7 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
     }
     #[cfg(target_os = "macos")]
     {
-        let auth_dir = auth_dir_path_for_core(&config.auth_dir, &core_install_dir()?);
+        let auth_dir = auth_dir_path_for_core(&config.auth_dir, &core_install_dir()?)?;
         if auth_dir_is_inside_macos_app_bundle(&auth_dir) {
             return Err("OAuth credentials directory cannot be inside a macOS application bundle".to_string());
         }

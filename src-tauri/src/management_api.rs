@@ -133,7 +133,7 @@ pub(crate) fn open_auth_files_directory(
 ) -> Result<(), String> {
     let config = gui_config_state.snapshot()?;
     let install_dir = core_install_dir()?;
-    let auth_dir = auth_dir_path_for_core(&config.auth_dir, &install_dir);
+    let auth_dir = auth_dir_path_for_core(&config.auth_dir, &install_dir)?;
     fs::create_dir_all(&auth_dir)
         .map_err(|error| format!("Failed to create credentials directory {}: {error}", path_to_string(&auth_dir)))?;
     open_directory_in_file_manager(&auth_dir)
@@ -145,7 +145,7 @@ pub(crate) fn open_core_logs_directory(
 ) -> Result<(), String> {
     let config = gui_config_state.snapshot()?;
     let install_dir = core_install_dir()?;
-    let logs_dir = core_logs_dir_path(&config.auth_dir, &install_dir);
+    let logs_dir = core_logs_dir_path(&config.auth_dir, &install_dir)?;
     fs::create_dir_all(&logs_dir)
         .map_err(|error| format!("Failed to create log directory {}: {error}", path_to_string(&logs_dir)))?;
 
@@ -474,7 +474,7 @@ mod tests {
         let install_dir = base_dir.join("cpa-core");
 
         assert_eq!(
-            core_logs_dir_path("../oauth", &install_dir),
+            core_logs_dir_path("../oauth", &install_dir).unwrap(),
             base_dir.join("oauth").join("logs")
         );
     }
@@ -485,7 +485,7 @@ mod tests {
         let auth_dir = PathBuf::from("custom-auth");
 
         assert_eq!(
-            core_logs_dir_path(auth_dir.to_str().unwrap(), &install_dir),
+            core_logs_dir_path(auth_dir.to_str().unwrap(), &install_dir).unwrap(),
             install_dir.join(auth_dir).join("logs")
         );
     }
