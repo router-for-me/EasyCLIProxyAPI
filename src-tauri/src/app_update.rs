@@ -971,8 +971,12 @@ pub(crate) async fn download_and_stage_portable_app_update(
             launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor).await
         }
         .await;
+        // A busy DMG may still be mounted here. Never recursively clean its mount point.
         if result.is_err() {
-            let _ = fs::remove_dir_all(&work_dir);
+            cleanup_macos_update_dmg(&work_dir);
+            if !work_dir.join("mount").exists() {
+                let _ = fs::remove_dir_all(&work_dir);
+            }
         }
         result
     }
@@ -2113,7 +2117,13 @@ fn run_macos_update_command(command: &mut Command, action: &str) -> Result<(), S
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!("Failed to {action}: {}", stderr.trim()))
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let details = [stderr.trim(), stdout.trim()]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(format!("Failed to {action} ({}): {details}", output.status))
 }
 
 #[cfg(target_os = "macos")]
@@ -2121,6 +2131,23 @@ pub(crate) fn stage_macos_application_from_dmg(
     dmg_path: &Path,
     work_dir: &Path,
     staged_app: &Path,
+) -> Result<(), String> {
+    stage_macos_application_from_dmg_with_commands(
+        dmg_path,
+        work_dir,
+        staged_app,
+        run_macos_update_command,
+        thread::sleep,
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn stage_macos_application_from_dmg_with_commands(
+    dmg_path: &Path,
+    work_dir: &Path,
+    staged_app: &Path,
+    mut run: impl FnMut(&mut Command, &str) -> Result<(), String>,
+    mut wait: impl FnMut(Duration),
 ) -> Result<(), String> {
     let mount_dir = work_dir.join("mount");
     fs::create_dir_all(&mount_dir).map_err(|error| format!("Failed to create DMG mount directory: {error}"))?;
@@ -2130,7 +2157,7 @@ pub(crate) fn stage_macos_application_from_dmg(
         .arg(dmg_path)
         .args(["-nobrowse", "-readonly", "-mountpoint"])
         .arg(&mount_dir);
-    run_macos_update_command(&mut attach, "Mount application update DMG")?;
+    run(&mut attach, "Mount application update DMG")?;
 
     let source_app = mount_dir.join("EasyCLIProxyAPI.app");
     let stage_result = (|| -> Result<(), String> {
@@ -2144,27 +2171,79 @@ pub(crate) fn stage_macos_application_from_dmg(
             .map_err(|error| format!("Failed to create application update staging directory: {error}"))?;
         let mut ditto = Command::new("ditto");
         ditto.arg(&source_app).arg(staged_app);
-        run_macos_update_command(&mut ditto, "Stage new macOS application")?;
+        run(&mut ditto, "Stage new macOS application")?;
         let mut codesign = Command::new("codesign");
         codesign
             .args(["--verify", "--deep", "--strict"])
             .arg(staged_app);
-        run_macos_update_command(&mut codesign, "Verify new macOS application signature")?;
+        run(&mut codesign, "Verify new macOS application signature")?;
         let mut gatekeeper = Command::new("spctl");
         gatekeeper
             .args(["--assess", "--type", "execute", "--verbose=2"])
             .arg(staged_app);
-        run_macos_update_command(&mut gatekeeper, "Verify new macOS application system trust status")
+        run(&mut gatekeeper, "Verify new macOS application system trust status")
     })();
 
-    let mut detach = Command::new("hdiutil");
-    detach.arg("detach").arg(&mount_dir);
-    let detach_result = run_macos_update_command(&mut detach, "Unmount application update DMG");
-    match (stage_result, detach_result) {
-        (Err(error), _) => Err(error),
-        (Ok(()), Err(error)) => Err(error),
-        (Ok(()), Ok(())) => Ok(()),
+    match eject_macos_update_dmg_with_commands(&mount_dir, &mut run, &mut wait) {
+        Ok(()) => {
+            let _ = fs::remove_dir(&mount_dir);
+        }
+        Err(error) => {
+            // A successfully staged app no longer depends on the read-only DMG.
+            // Preserve staging errors, but never fail an update just for cleanup.
+            eprintln!("Application update DMG cleanup deferred: {error}");
+        }
     }
+    stage_result
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn eject_macos_update_dmg_with_commands(
+    mount_dir: &Path,
+    mut run: impl FnMut(&mut Command, &str) -> Result<(), String>,
+    mut wait: impl FnMut(Duration),
+) -> Result<(), String> {
+    let mut last_error = String::new();
+    // Spotlight or security scanning can briefly hold the newly mounted image busy.
+    for attempt in 0..3 {
+        if attempt > 0 {
+            wait(Duration::from_millis(500));
+        }
+        let mut eject = Command::new("diskutil");
+        eject.arg("eject").arg(mount_dir);
+        match run(&mut eject, "Eject application update DMG") {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+    }
+
+    // Compatibility fallback, limited to this updater's private read-only mount.
+    let mut detach = Command::new("hdiutil");
+    detach.args(["detach", "-force"]).arg(mount_dir);
+    run(&mut detach, "Force unmount application update DMG")
+        .map_err(|error| format!("{last_error}; {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn cleanup_macos_update_dmg(work_dir: &Path) {
+    cleanup_macos_update_dmg_with_commands(work_dir, run_macos_update_command, thread::sleep);
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn cleanup_macos_update_dmg_with_commands(
+    work_dir: &Path,
+    run: impl FnMut(&mut Command, &str) -> Result<(), String>,
+    wait: impl FnMut(Duration),
+) {
+    let mount_dir = work_dir.join("mount");
+    if mount_dir.exists() {
+        if let Err(error) = eject_macos_update_dmg_with_commands(&mount_dir, run, wait) {
+            eprintln!("Application update DMG cleanup deferred: {error}");
+            return;
+        }
+        let _ = fs::remove_dir(&mount_dir);
+    }
+    let _ = fs::remove_file(work_dir.join("update.dmg"));
 }
 
 #[cfg(target_os = "macos")]
@@ -2374,9 +2453,8 @@ pub(crate) fn replace_macos_application(descriptor: &MacosUpdateDescriptor) -> R
 
 #[cfg(target_os = "macos")]
 fn cleanup_macos_update_payload(descriptor_path: &Path, descriptor: &MacosUpdateDescriptor) {
-    let _ = fs::remove_file(descriptor.work_dir.join("update.dmg"));
+    cleanup_macos_update_dmg(&descriptor.work_dir);
     let _ = fs::remove_dir_all(descriptor.work_dir.join("staging"));
-    let _ = fs::remove_dir_all(descriptor.work_dir.join("mount"));
     let _ = fs::remove_file(&descriptor.ack_path);
     let _ = fs::remove_file(portable_update_helper_ack_path(&descriptor.work_dir));
     let _ = fs::remove_file(descriptor_path);

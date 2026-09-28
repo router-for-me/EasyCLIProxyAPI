@@ -51,6 +51,190 @@ fn macos_update_helper_stays_inside_the_signed_app_bundle() {
     assert_eq!(macos_update_helper_path(&current_exe), current_exe);
 }
 
+#[test]
+fn macos_dmg_eject_retries_busy_mounts_and_stops_after_success() {
+    let mount_dir = Path::new("/private/tmp/update with spaces/mount");
+    for busy_attempts in 0..3 {
+        let mut attempts = 0;
+        let mut waits = Vec::new();
+        eject_macos_update_dmg_with_commands(
+            mount_dir,
+            |command, _| {
+                assert_eq!(command.get_program(), "diskutil");
+                assert_eq!(
+                    command.get_args().collect::<Vec<_>>(),
+                    [std::ffi::OsStr::new("eject"), mount_dir.as_os_str()]
+                );
+                attempts += 1;
+                if attempts <= busy_attempts {
+                    Err("Resource busy".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+            |duration| waits.push(duration),
+        )
+        .unwrap();
+        assert_eq!(attempts, busy_attempts + 1);
+        assert_eq!(waits, vec![Duration::from_millis(500); busy_attempts]);
+    }
+}
+
+#[test]
+fn macos_dmg_eject_falls_back_only_for_the_update_mount() {
+    let mount_dir = Path::new("/private/tmp/update with spaces/mount");
+    for force_succeeds in [true, false] {
+        let mut eject_attempts = 0;
+        let mut force_attempts = 0;
+        let result = eject_macos_update_dmg_with_commands(
+            mount_dir,
+            |command, _| {
+                if command.get_program() == "diskutil" {
+                    eject_attempts += 1;
+                    return Err("diskutil: Resource busy".to_string());
+                }
+                assert_eq!(command.get_program(), "hdiutil");
+                assert_eq!(
+                    command.get_args().collect::<Vec<_>>(),
+                    [
+                        std::ffi::OsStr::new("detach"),
+                        std::ffi::OsStr::new("-force"),
+                        mount_dir.as_os_str(),
+                    ]
+                );
+                force_attempts += 1;
+                if force_succeeds {
+                    Ok(())
+                } else {
+                    Err("hdiutil: Resource busy".to_string())
+                }
+            },
+            |_| {},
+        );
+        assert_eq!(eject_attempts, 3);
+        assert_eq!(force_attempts, 1);
+        if force_succeeds {
+            result.unwrap();
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.contains("diskutil: Resource busy"));
+            assert!(error.contains("hdiutil: Resource busy"));
+        }
+    }
+}
+
+#[test]
+fn macos_dmg_staging_survives_cleanup_failure_without_bypassing_verification() {
+    // Exercise successful staging and each fatal preparation step, even when
+    // every eject attempt fails with the error reported in issue #301.
+    for failure in [None, Some("ditto"), Some("codesign"), Some("spctl")] {
+        let root = agent_test_home("macos-dmg-stage-busy");
+        let source_app = root.join("mount").join("EasyCLIProxyAPI.app");
+        let staged_app = root.join("staging/EasyCLIProxyAPI.app");
+        fs::create_dir_all(&source_app).unwrap();
+        fs::write(source_app.join("payload"), b"application").unwrap();
+        let mut preparation = Vec::new();
+        let mut cleanup_attempts = 0;
+        let result = stage_macos_application_from_dmg_with_commands(
+            &root.join("update.dmg"),
+            &root,
+            &staged_app,
+            |command, _| {
+                let program = command.get_program().to_str().unwrap();
+                let args = command.get_args().collect::<Vec<_>>();
+                if program == "diskutil" || args.first().is_some_and(|arg| *arg == "detach") {
+                    cleanup_attempts += 1;
+                    return Err("Resource busy".to_string());
+                }
+                preparation.push(program.to_string());
+                if failure == Some(program) {
+                    return Err(format!("{program} failed"));
+                }
+                if program == "ditto" {
+                    assert_eq!(args, [source_app.as_os_str(), staged_app.as_os_str()]);
+                    fs::create_dir_all(&staged_app).unwrap();
+                    fs::copy(source_app.join("payload"), staged_app.join("payload")).unwrap();
+                } else if program == "codesign" || program == "spctl" {
+                    assert_eq!(args.last().copied(), Some(staged_app.as_os_str()));
+                }
+                Ok(())
+            },
+            |_| {},
+        );
+        assert_eq!(cleanup_attempts, 4);
+        if let Some(failure) = failure {
+            assert_eq!(result.unwrap_err(), format!("{failure} failed"));
+            assert_eq!(preparation.last().map(String::as_str), Some(failure));
+        } else {
+            result.unwrap();
+            assert_eq!(preparation, ["hdiutil", "ditto", "codesign", "spctl"]);
+            assert_eq!(fs::read(staged_app.join("payload")).unwrap(), b"application");
+        }
+        assert!(source_app.join("payload").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn macos_dmg_missing_app_is_rejected_and_still_ejected() {
+    let root = agent_test_home("macos-dmg-missing-app");
+    let mut commands = Vec::new();
+    let error = stage_macos_application_from_dmg_with_commands(
+        &root.join("update.dmg"),
+        &root,
+        &root.join("staging/EasyCLIProxyAPI.app"),
+        |command, _| {
+            commands.push(command.get_program().to_string_lossy().into_owned());
+            Ok(())
+        },
+        |_| panic!("Successful ejection should not wait"),
+    )
+    .unwrap_err();
+    assert!(error.contains("missing EasyCLIProxyAPI.app"));
+    assert_eq!(commands, ["hdiutil", "diskutil"]);
+    assert!(!root.join("mount").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn macos_dmg_cleanup_preserves_busy_images_and_retries_later() {
+    let root = agent_test_home("macos-dmg-cleanup");
+    let mount_dir = root.join("mount");
+    let archive = root.join("update.dmg");
+    let mounted_file = mount_dir.join("mounted-file");
+    fs::create_dir_all(&mount_dir).unwrap();
+    fs::write(&archive, b"disk image").unwrap();
+    fs::write(&mounted_file, b"mounted contents").unwrap();
+
+    cleanup_macos_update_dmg_with_commands(
+        &root,
+        |_, _| Err("Resource busy".to_string()),
+        |_| {},
+    );
+    assert_eq!(fs::read(&archive).unwrap(), b"disk image");
+    assert_eq!(fs::read(&mounted_file).unwrap(), b"mounted contents");
+
+    cleanup_macos_update_dmg_with_commands(
+        &root,
+        |command, _| {
+            assert_eq!(command.get_program(), "diskutil");
+            // Simulate the mounted contents disappearing after a successful eject.
+            fs::remove_file(&mounted_file).unwrap();
+            Ok(())
+        },
+        |_| panic!("Successful ejection should not wait"),
+    );
+    assert!(!archive.exists());
+    assert!(!mount_dir.exists());
+
+    cleanup_macos_update_dmg_with_commands(
+        &root,
+        |_, _| panic!("An already cleaned image should not be ejected again"),
+        |_| panic!("An already cleaned image should not wait"),
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn portable_update_test_asset(version: &str, arch: &str) -> PortableUpdateAsset {
     let (_, display, suffix) = portable_update_asset_platform().unwrap();
     let name = format!("EasyCLIProxyAPI-v{version}-{display}-{arch}.{suffix}");
