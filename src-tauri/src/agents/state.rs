@@ -731,10 +731,9 @@ pub(crate) fn fresh_agent_contents_with_oauth(
         AgentClient::WorkBuddy => Ok(vec![build_workbuddy_agent_config(
             None, &openai_base, api_key, model, models,
         )?]),
-        AgentClient::ZCode => Ok(vec![
-            build_zcode_agent_config(None, &root_base, api_key, model, models)?,
-            build_zcode_cli_agent_config(None, &root_base, api_key, model, models)?,
-        ]),
+        AgentClient::ZCode => Ok(vec![build_zcode_agent_config(
+            None, &root_base, api_key, model, models,
+        )?]),
         AgentClient::KimiCode => Ok(vec![build_kimi_code_agent_config(
             None,
             &openai_base,

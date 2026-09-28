@@ -675,7 +675,7 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
         let mut extensions = before.clone();
         let owned: &[&str] = match client {
             "claude-desktop" => &["name", "labelOverride", "anthropicFamilyTier", "isFamilyDefault", "contextWindow", "supports1m", "prefer1m"],
-            "opencode" | "zcode" => &["name"],
+            "opencode" => &["name"],
             "openclaw" => &["id", "name", "alias"],
             "deepseek-harness" => &["id", "name", "contextWindow", "input", "maxTokens", "reasoningEfforts", "compat"],
             "kimi-code" => &[
@@ -702,9 +702,6 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
             for key in owned {
                 object.remove(*key);
             }
-        }
-        if client == "zcode" {
-            set(&mut extensions, &["limit".into(), "context".into()], None);
         }
         fill_missing(&extensions, after);
     }
@@ -735,7 +732,7 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
             &["/models"]
         }
         "claude-desktop" => &["/inferenceModels"],
-        "opencode" | "zcode" => &["/provider/cpa-gui/models"],
+        "opencode" => &["/provider/cpa-gui/models"],
         "openclaw" => &[
             "/models/providers/cpa-gui/models",
             "/agents/defaults/models",

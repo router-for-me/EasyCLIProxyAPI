@@ -196,29 +196,11 @@ pub(crate) fn build_agent_updates_with_oauth(
             }])
         }
         AgentClient::ZCode => {
-            let app_before = read_optional_text(&paths[0])?;
-            let cli_before = read_optional_text(&paths[1])?;
-            let app_after =
-                build_zcode_agent_config(app_before.as_deref(), &root_base, api_key, model, models)
-                    ?;
-            let cli_after = build_zcode_cli_agent_config(
-                cli_before.as_deref(),
-                &root_base,
-                api_key,
-                model,
-                models,
-            )
-            ?;
-            Ok(vec![
-                AgentFileUpdate {
-                    path: paths[0].clone(),
-                    after: app_after,
-                },
-                AgentFileUpdate {
-                    path: paths[1].clone(),
-                    after: cli_after,
-                },
-            ])
+            let before = read_optional_text(&paths[0])?;
+            let after = build_zcode_agent_config(
+                before.as_deref(), &root_base, api_key, model, models,
+            )?;
+            Ok(vec![AgentFileUpdate { path: paths[0].clone(), after }])
         }
         AgentClient::KimiCode => {
             let before = read_optional_text(&paths[0])?;
@@ -1273,59 +1255,47 @@ pub(crate) fn prepare_opencode_managed_removal(paths: &[PathBuf]) -> Result<Imag
 }
 
 pub(crate) fn prepare_zcode_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
-    if paths.is_empty() {
-        return Err("ZCode configuration path is unavailable on the current platform".to_string());
-    }
-    let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
-    let mut changed_paths = Vec::new();
-    for path in paths {
-        let updated = prepare_agent_json_removal(path, "ZCode configuration", |root| {
-            let mut changed = false;
-            let remove_model = if root
-                .get("model")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|model| model.starts_with(&prefix))
-            {
-                true
-            } else if let Some(model) = root
-                .get_mut("model")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                if model
-                    .get("main")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|model| model.starts_with(&prefix))
-                {
-                    model.remove("main");
-                    changed = true;
-                }
-                model.is_empty()
-            } else {
-                false
-            };
-            if remove_model {
-                root.remove("model");
-                changed = true;
-            }
-            let providers_empty = if let Some(providers) = root
-                .get_mut("provider")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                changed |= providers.remove(MANAGED_AGENT_PROVIDER_ID).is_some();
-                providers.is_empty()
-            } else {
-                false
-            };
-            if providers_empty {
-                root.remove("provider");
-            }
-            changed
-        })?;
-        if let Some(update) = updated {
-            changed_paths.push(update);
+    let path = paths.first().ok_or("ZCode provider configuration path is unavailable")?;
+    let updated = prepare_agent_json_removal(path, "ZCode provider configuration", |root| {
+        let Some(config) = root.get_mut("config").and_then(serde_json::Value::as_object_mut) else {
+            return false;
+        };
+        let mut changed = false;
+        if config.get("defaultModelSelection")
+            .and_then(|selection| selection.get("providerId"))
+            .and_then(serde_json::Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)
+        {
+            config.remove("defaultModelSelection");
+            changed = true;
         }
-    }
-    Ok(changed_paths)
+        if let Some(order) = config.get_mut("providerOrder").and_then(serde_json::Value::as_array_mut) {
+            let old_len = order.len();
+            order.retain(|item| item.as_str() != Some(MANAGED_AGENT_PROVIDER_ID));
+            changed |= order.len() != old_len;
+        }
+        if let Some(rules) = config.get_mut("providerConfigRules")
+            .and_then(|value| value.get_mut("providerRules"))
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            let old_len = rules.len();
+            rules.retain(|rule| rule.get("providerId").and_then(serde_json::Value::as_str)
+                != Some(MANAGED_AGENT_PROVIDER_ID));
+            changed |= rules.len() != old_len;
+        }
+        for key in ["providerModelRules", "manualProviderModelRules"] {
+            if let Some(rules) = config.get_mut("modelConfigRules")
+                .and_then(|value| value.get_mut(key))
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                let old_len = rules.len();
+                rules.retain(|rule| rule.get("providerId").and_then(serde_json::Value::as_str)
+                    != Some(MANAGED_AGENT_PROVIDER_ID));
+                changed |= rules.len() != old_len;
+            }
+        }
+        changed
+    })?;
+    Ok(updated.into_iter().collect())
 }
 
 pub(crate) fn prepare_kimi_code_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
@@ -1972,84 +1942,96 @@ pub(crate) fn build_restored_opencode_config(
     }))
 }
 
-pub(crate) fn build_restored_zcode_config(
+pub(crate) fn build_restored_zcode_provider_config(
     current: &str,
     original: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let mut root = parse_agent_json_object(Some(current), "Current ZCode configuration")?;
-    let original_root = parse_restored_json_object(original, "Original ZCode configuration")?;
-    restore_json_key(&mut root, original_root.as_ref(), "model");
-    let original_provider = original_root
-        .as_ref()
-        .and_then(|root| root.get("provider"))
-        .and_then(serde_json::Value::as_object);
-    let original_managed = original_provider
-        .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID))
-        .and_then(serde_json::Value::as_object);
-    if root
-        .get("provider")
-        .is_some_and(serde_json::Value::is_object)
-    {
-        let providers = root
-            .get_mut("provider")
-            .and_then(serde_json::Value::as_object_mut)
-            .expect("ZCode provider was checked as an object");
-        if providers
-            .get(MANAGED_AGENT_PROVIDER_ID)
-            .is_some_and(serde_json::Value::is_object)
-        {
-            let managed = providers
-                .get_mut(MANAGED_AGENT_PROVIDER_ID)
-                .and_then(serde_json::Value::as_object_mut)
-                .expect("ZCode managed provider was checked as an object");
-            for key in [
-                "enabled",
-                "name",
-                "source",
-                "kind",
-                "defaultKind",
-                "apiFormat",
-                "npm",
-                "models",
-            ] {
-                restore_json_key(managed, original_managed, key);
-            }
-            let original_options = original_managed
-                .and_then(|managed| managed.get("options"))
-                .and_then(serde_json::Value::as_object);
-            if managed
-                .get("options")
-                .is_some_and(serde_json::Value::is_object)
-            {
-                let options = managed
-                    .get_mut("options")
-                    .and_then(serde_json::Value::as_object_mut)
-                    .expect("ZCode options were checked as an object");
-                for key in ["baseURL", "apiKey"] {
-                    restore_json_key(options, original_options, key);
-                }
-                if options.is_empty() && original_options.is_none() {
-                    managed.remove("options");
-                }
-            } else {
-                restore_json_key(managed, original_managed, "options");
-            }
-            if managed.is_empty() && original_managed.is_none() {
-                providers.remove(MANAGED_AGENT_PROVIDER_ID);
-            }
-        } else if let Some(original_managed) = original_provider
-            .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID))
-            .cloned()
-        {
-            providers.insert(MANAGED_AGENT_PROVIDER_ID.to_string(), original_managed);
-        }
-        if providers.is_empty() && original_provider.is_none() {
-            root.remove("provider");
-        }
-    } else {
-        restore_json_key(&mut root, original_root.as_ref(), "provider");
+    let mut root = serde_json::Value::Object(parse_agent_json_object(
+        Some(current), "Current ZCode provider configuration",
+    )?);
+    let original_root = parse_restored_json_object(original, "Original ZCode provider configuration")?
+        .map(serde_json::Value::Object);
+    if root.pointer("/config").is_none() {
+        return render_restored_json(
+            root.as_object().cloned().ok_or("Invalid ZCode provider configuration")?,
+            original.is_some(),
+            "Restored ZCode provider configuration",
+        );
     }
-    render_restored_json(root, original.is_some(), "Restored ZCode configuration")
+    let config = root.pointer_mut("/config").and_then(serde_json::Value::as_object_mut)
+        .ok_or("ZCode provider configuration has invalid config")?;
+    let original_config = original_root.as_ref().and_then(|value| value.pointer("/config"));
+    if original.is_none() || config.get("defaultModelSelection")
+        .and_then(|selection| selection.get("providerId"))
+        .and_then(serde_json::Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)
+    {
+        if let Some(selection) = original_config.and_then(|value| value.get("defaultModelSelection")) {
+            config.insert("defaultModelSelection".to_string(), selection.clone());
+        } else {
+            config.remove("defaultModelSelection");
+        }
+    }
+    if let Some(order) = config.get_mut("providerOrder").and_then(serde_json::Value::as_array_mut) {
+        order.retain(|item| item.as_str() != Some(MANAGED_AGENT_PROVIDER_ID));
+        if let Some(original_order) = original_config
+            .and_then(|value| value.get("providerOrder"))
+            .and_then(serde_json::Value::as_array)
+        {
+            if let Some(index) = original_order.iter().position(|item| item.as_str() == Some(MANAGED_AGENT_PROVIDER_ID)) {
+                order.insert(index.min(order.len()), serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
+            }
+        }
+    }
+    for pointer in [
+        "/providerConfigRules/providerRules",
+        "/modelConfigRules/providerModelRules",
+        "/modelConfigRules/manualProviderModelRules",
+    ] {
+        let Some(rules) = root.pointer(&format!("/config{pointer}"))
+            .and_then(serde_json::Value::as_array).cloned() else {
+            continue;
+        };
+        let mut retained = rules.into_iter().filter(|rule| {
+            rule.get("providerId").and_then(serde_json::Value::as_str)
+                != Some(MANAGED_AGENT_PROVIDER_ID)
+        }).collect::<Vec<_>>();
+        if let Some(original_rules) = original_config.and_then(|value| value.pointer(pointer))
+            .and_then(serde_json::Value::as_array)
+        {
+            for (index, rule) in original_rules.iter().enumerate() {
+                if rule.get("providerId").and_then(serde_json::Value::as_str)
+                    == Some(MANAGED_AGENT_PROVIDER_ID)
+                {
+                    retained.insert(index.min(retained.len()), rule.clone());
+                }
+            }
+        }
+        if let Some(target) = root.pointer_mut(&format!("/config{pointer}")) {
+            *target = serde_json::Value::Array(retained);
+        }
+    }
+    if original.is_none() {
+        let config = root.get("config");
+        let only_empty_scaffold = config
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|config| {
+                config.get("defaultModelSelection").is_none()
+                    && config.get("providerOrder").and_then(serde_json::Value::as_array)
+                        .is_none_or(Vec::is_empty)
+                    && root.pointer("/config/providerConfigRules/providerRules")
+                        .and_then(serde_json::Value::as_array).is_some_and(Vec::is_empty)
+                    && root.pointer("/config/modelConfigRules/providerModelRules")
+                        .and_then(serde_json::Value::as_array).is_some_and(Vec::is_empty)
+                    && root.pointer("/config/modelConfigRules/manualProviderModelRules")
+                        .and_then(serde_json::Value::as_array).is_some_and(Vec::is_empty)
+                    && config.len() <= 3
+            });
+        if only_empty_scaffold && root.as_object().is_some_and(|root| root.len() <= 2) {
+            return Ok(None);
+        }
+    }
+    render_agent_json(root.as_object().cloned().ok_or("Invalid ZCode provider configuration")?,
+        "Restored ZCode provider configuration").map(Some)
 }
 
 pub(crate) fn build_restored_kimi_code_config(
@@ -2677,7 +2659,7 @@ pub(crate) fn build_agent_session_restored_bytes_with_preference(
                 _ => return Err("Invalid DeepSeek Harness restoration path index".to_string()),
             }
         }
-        AgentClient::ZCode => build_restored_zcode_config(current, original)?,
+        AgentClient::ZCode => build_restored_zcode_provider_config(current, original)?,
         AgentClient::WorkBuddy => build_restored_workbuddy_config(current, original)?,
         AgentClient::AntigravityCli => restore_antigravity_config(client, path, current, original)?,
         AgentClient::KimiCode => build_restored_kimi_code_config(current, original)?,
@@ -3077,67 +3059,149 @@ pub(crate) fn build_zcode_agent_config(
     model: &str,
     available_models: &[AgentModelOption],
 ) -> Result<String, String> {
-    build_zcode_config(existing, base_url, api_key, model, available_models, false)
-}
-
-pub(crate) fn build_zcode_cli_agent_config(
-    existing: Option<&str>,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    available_models: &[AgentModelOption],
-) -> Result<String, String> {
-    build_zcode_config(existing, base_url, api_key, model, available_models, true)
-}
-
-fn build_zcode_config(
-    existing: Option<&str>,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    available_models: &[AgentModelOption],
-    cli_config: bool,
-) -> Result<String, String> {
-    let mut root = parse_agent_json_object(existing, "ZCode config.json")?;
-    let providers = ensure_json_object_entry(&mut root, "provider");
-    let models = ordered_agent_models(available_models, model)
-        .into_iter()
-        .map(|model| {
-            let display_name = model.alias.as_deref().unwrap_or(&model.name).to_string();
-            let mut entry = serde_json::Map::new();
-            entry.insert("name".to_string(), serde_json::json!(display_name));
-            if let Some(context_window) = model.context_window {
-                entry.insert(
-                    "limit".to_string(),
-                    serde_json::json!({ "context": context_window }),
-                );
-            }
-            (model.name, serde_json::Value::Object(entry))
-        })
-        .collect::<serde_json::Map<_, _>>();
-    let managed_provider = ensure_json_object_entry(providers, MANAGED_AGENT_PROVIDER_ID);
-    managed_provider.remove("npm");
-    managed_provider.insert("enabled".to_string(), serde_json::json!(true));
-    managed_provider.insert("name".to_string(), serde_json::json!("EasyCLIProxyAPI"));
-    managed_provider.insert("source".to_string(), serde_json::json!("custom"));
-    managed_provider.insert("kind".to_string(), serde_json::json!("anthropic"));
-    managed_provider.insert("defaultKind".to_string(), serde_json::json!("anthropic"));
-    managed_provider.insert(
-        "apiFormat".to_string(),
-        serde_json::json!("anthropic-messages"),
-    );
-    let options = ensure_json_object_entry(managed_provider, "options");
-    options.insert("baseURL".to_string(), serde_json::json!(base_url));
-    options.insert("apiKey".to_string(), serde_json::json!(api_key));
-    managed_provider.insert("models".to_string(), serde_json::Value::Object(models));
-    let model = format!("{MANAGED_AGENT_PROVIDER_ID}/{model}");
-    if cli_config {
-        ensure_json_object_entry(&mut root, "model")
-            .insert("main".to_string(), serde_json::json!(model));
-    } else {
-        root.insert("model".to_string(), serde_json::json!(model));
+    let mut root = parse_agent_json_object(existing, "ZCode provider_config.json")?;
+    if root.get("schemaVersion").is_some_and(|version| version != 1) {
+        return Err("Unsupported ZCode provider configuration schemaVersion".to_string());
     }
-    render_agent_json(root, "ZCode configuration")
+    root.insert("schemaVersion".to_string(), serde_json::json!(1));
+    let config = ensure_json_object_entry(&mut root, "config");
+    let provider_rules = ensure_json_object_entry(config, "providerConfigRules");
+    let rules = provider_rules
+        .entry("providerRules")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or("ZCode providerRules must be an array")?;
+    let managed_index = rules.iter().position(|rule| {
+        rule.get("providerId").and_then(serde_json::Value::as_str)
+            == Some(MANAGED_AGENT_PROVIDER_ID)
+    });
+    let previous = managed_index.and_then(|index| rules.get(index));
+    let mut managed = previous.cloned().unwrap_or_else(|| serde_json::json!({}));
+    let managed_obj = managed.as_object_mut().ok_or("ZCode managed provider must be an object")?;
+    managed_obj.insert("providerId".to_string(), serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
+    managed_obj.insert("providerName".to_string(), serde_json::json!("EasyCLIProxyAPI"));
+    managed_obj.insert("enabled".to_string(), serde_json::json!(true));
+    let provider_config = ensure_json_object_entry(managed_obj, "config");
+    provider_config.insert("group".to_string(), serde_json::json!("standard-personal"));
+    let access = ensure_json_object_entry(provider_config, "access");
+    access.insert("type".to_string(), serde_json::json!("api-key"));
+    access.insert("apiKey".to_string(), serde_json::json!(api_key));
+    let api = ensure_json_object_entry(provider_config, "api");
+    api.insert("type".to_string(), serde_json::json!("anthropic-messages"));
+    api.insert("baseUrl".to_string(), serde_json::json!(base_url));
+    let ordered = ordered_agent_models(available_models, model);
+    let model_names = ordered.iter().map(|option| option.name.as_str()).collect::<Vec<_>>();
+    provider_config.insert("personalModelIds".to_string(), serde_json::json!(model_names));
+    provider_config.insert("modelOrder".to_string(), serde_json::json!(model_names));
+    rules.retain(|rule| {
+        rule.get("providerId").and_then(serde_json::Value::as_str)
+            != Some(MANAGED_AGENT_PROVIDER_ID)
+    });
+    rules.insert(managed_index.unwrap_or(rules.len()).min(rules.len()), managed);
+
+    let model_rules = ensure_json_object_entry(config, "modelConfigRules");
+    let manual_rules = model_rules
+        .entry("manualProviderModelRules")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array()
+        .ok_or("ZCode manualProviderModelRules must be an array")?;
+    let existing_manual_rules = manual_rules.iter().filter_map(|rule| {
+        if rule.get("providerId").and_then(serde_json::Value::as_str)
+            != Some(MANAGED_AGENT_PROVIDER_ID) {
+            return None;
+        }
+        Some((rule.get("modelId")?.as_str()?.to_string(), rule.clone()))
+    }).collect::<std::collections::HashMap<_, _>>();
+    let first_manual_index = manual_rules.iter().position(|rule| {
+        rule.get("providerId").and_then(serde_json::Value::as_str)
+            == Some(MANAGED_AGENT_PROVIDER_ID)
+    }).unwrap_or(manual_rules.len());
+    let rules = model_rules
+        .entry("providerModelRules")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or("ZCode providerModelRules must be an array")?;
+    let existing_rules = rules.iter().filter_map(|rule| {
+        if rule.get("providerId").and_then(serde_json::Value::as_str)
+            != Some(MANAGED_AGENT_PROVIDER_ID) {
+            return None;
+        }
+        Some((rule.get("modelId")?.as_str()?.to_string(), rule.clone()))
+    }).collect::<std::collections::HashMap<_, _>>();
+    let first_managed_index = rules.iter().position(|rule| {
+        rule.get("providerId").and_then(serde_json::Value::as_str)
+            == Some(MANAGED_AGENT_PROVIDER_ID)
+    }).unwrap_or(rules.len());
+    rules.retain(|rule| {
+        rule.get("providerId").and_then(serde_json::Value::as_str)
+            != Some(MANAGED_AGENT_PROVIDER_ID)
+    });
+    let mut manual_updates = Vec::new();
+    for option in ordered {
+        let manual = existing_manual_rules.get(&option.name);
+        if option.context_window.is_none()
+            && manual.is_none()
+            && !existing_rules.contains_key(&option.name)
+        {
+            continue;
+        }
+        let mut rule = manual.or_else(|| existing_rules.get(&option.name))
+            .cloned().unwrap_or_else(|| serde_json::json!({}));
+        let entry = rule.as_object_mut().ok_or("ZCode model rule must be an object")?;
+        entry.insert("providerId".to_string(), serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
+        entry.insert("modelId".to_string(), serde_json::json!(option.name));
+        let properties = ensure_json_object_entry(ensure_json_object_entry(entry, "config"), "properties");
+        if let Some(context_window) = option.context_window {
+            properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
+        } else {
+            properties.remove("contextWindow");
+        }
+        if properties.is_empty() {
+            entry.get_mut("config").and_then(serde_json::Value::as_object_mut)
+                .expect("ZCode model config was created").remove("properties");
+        }
+        if manual.is_some() {
+            manual_updates.push(rule);
+        } else {
+            rules.insert((first_managed_index + rules.iter().filter(|entry| {
+                entry.get("providerId").and_then(serde_json::Value::as_str)
+                    == Some(MANAGED_AGENT_PROVIDER_ID)
+            }).count()).min(rules.len()), rule);
+        }
+    }
+    let manual_rules = model_rules.get_mut("manualProviderModelRules")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("ZCode manual model rules were checked as an array");
+    manual_rules.retain(|rule| {
+        rule.get("providerId").and_then(serde_json::Value::as_str)
+            != Some(MANAGED_AGENT_PROVIDER_ID)
+    });
+    for (offset, rule) in manual_updates.into_iter().enumerate() {
+        manual_rules.insert((first_manual_index + offset).min(manual_rules.len()), rule);
+    }
+    if let Some(provider_order) = config.get_mut("providerOrder") {
+        let provider_order = provider_order.as_array_mut()
+            .ok_or("ZCode providerOrder must be an array")?;
+        if !provider_order.iter().any(|value| value.as_str() == Some(MANAGED_AGENT_PROVIDER_ID)) {
+            provider_order.push(serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
+        }
+    }
+    let mut selection = serde_json::json!({
+        "providerId": MANAGED_AGENT_PROVIDER_ID,
+        "modelId": model,
+    });
+    if let Some(previous) = config.get("defaultModelSelection") {
+        if previous.get("providerId").and_then(serde_json::Value::as_str)
+            == Some(MANAGED_AGENT_PROVIDER_ID)
+            && previous.get("modelId").and_then(serde_json::Value::as_str) == Some(model)
+        {
+            if let Some(options) = previous.get("options") {
+                selection["options"] = options.clone();
+            }
+        }
+    }
+    config.insert("defaultModelSelection".to_string(), selection);
+    render_agent_json(root, "ZCode provider configuration")
 }
 
 pub(crate) fn ensure_toml_child_table<'a>(

@@ -477,6 +477,37 @@ fn clear_integration_needs_no_backup_and_removes_state_for_each_client() {
 }
 
 #[test]
+fn zcode_provider_config_restores_an_existing_provider_selection() {
+    let home = Home::new();
+    let paths = config_paths("zcode", &home.0).unwrap();
+    let original = serde_json::json!({
+        "schemaVersion": 1,
+        "config": {
+            "providerConfigRules": {"providerRules": [{
+                "providerId": "other",
+                "providerName": "Other",
+                "config": {
+                    "group": "standard-personal",
+                    "access": {"type": "api-key", "apiKey": "other-secret"},
+                    "api": {"type": "anthropic-messages", "baseUrl": "https://example.com/api"},
+                    "personalModelIds": ["other-model"]
+                }
+            }]},
+            "modelConfigRules": {"providerModelRules": [], "manualProviderModelRules": []},
+            "defaultModelSelection": {"providerId": "other", "modelId": "other-model"}
+        }
+    });
+    save(&paths[0], render(&paths[0], &original).unwrap());
+    apply(&home.0, AgentClient::ZCode, "gpt-one").unwrap();
+    let applied = parse(&paths[0], text(read_agent_bytes(&paths[0]).unwrap().as_deref()).unwrap()).unwrap();
+    assert_eq!(applied["config"]["defaultModelSelection"]["providerId"], "cpa-gui");
+    assert_eq!(applied["config"]["providerConfigRules"]["providerRules"].as_array().unwrap().len(), 2);
+    clear_agent_managed_configuration(AgentClient::ZCode, &home.0, 8317).unwrap();
+    let restored = parse(&paths[0], text(read_agent_bytes(&paths[0]).unwrap().as_deref()).unwrap()).unwrap();
+    assert_eq!(restored, original);
+}
+
+#[test]
 fn clear_integration_removes_claude_model_overrides_but_keeps_custom_settings() {
     let home = Home::new();
     let paths = config_paths("claude-code", &home.0).unwrap();
@@ -1200,6 +1231,7 @@ fn nested_model_options_and_third_party_providers_survive_all_updates() {
             let mut root = parse(path, text(raw.as_deref()).unwrap()).unwrap();
             let container = match client {
                 AgentClient::Codex if path == &paths[0] => Some("/model_providers"),
+                AgentClient::ZCode if path == &paths[0] => None,
                 AgentClient::OpenCode | AgentClient::ZCode => Some("/provider"),
                 AgentClient::OpenClaw => Some("/models/providers"),
                 AgentClient::DeepSeekHarness if path == &paths[0] => Some("/llm-pi-ai/providers"),
@@ -1221,10 +1253,28 @@ fn nested_model_options_and_third_party_providers_survive_all_updates() {
                     serde_json::json!({"key":"keep-secret","nested":{"enabled":true}}),
                 ));
             }
+            if client == AgentClient::ZCode && path == &paths[0] {
+                let pointer = "/config/providerConfigRules/providerRules";
+                let third_party = serde_json::json!({
+                    "providerId": "third-party",
+                    "providerName": "Third Party",
+                    "config": {
+                        "group": "standard-personal",
+                        "access": {"type": "api-key", "apiKey": "keep-secret"},
+                        "api": {"type": "anthropic-messages", "baseUrl": "https://example.com/api"},
+                        "personalModelIds": ["third-model"]
+                    }
+                });
+                let rules = root.pointer_mut(pointer).unwrap().as_array_mut().unwrap();
+                let index = rules.len();
+                rules.push(third_party.clone());
+                touched.push((path.clone(), format!("{pointer}/{index}"), third_party));
+            }
             let inventory = match client {
                 AgentClient::ClaudeDesktop if path == &paths[2] => {
                     Some("/inferenceModels/0".to_string())
                 }
+                AgentClient::ZCode if path == &paths[0] => None,
                 AgentClient::OpenCode | AgentClient::ZCode => {
                     Some("/provider/cpa-gui/models/gpt-one".into())
                 }
@@ -1245,6 +1295,13 @@ fn nested_model_options_and_third_party_providers_survive_all_updates() {
                     .unwrap()
                     .insert("extensions".into(), extensions.clone());
                 touched.push((path.clone(), format!("{pointer}/extensions"), extensions));
+            }
+            if client == AgentClient::ZCode && path == &paths[0] {
+                let pointer = "/config/modelConfigRules/providerModelRules/0/config/properties/supportsToolCall";
+                root.pointer_mut("/config/modelConfigRules/providerModelRules/0/config/properties")
+                    .unwrap().as_object_mut().unwrap()
+                    .insert("supportsToolCall".into(), serde_json::json!(true));
+                touched.push((path.clone(), pointer.into(), serde_json::json!(true)));
             }
             save(path, render(path, &root).unwrap());
         }

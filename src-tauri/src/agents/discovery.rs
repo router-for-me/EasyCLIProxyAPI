@@ -49,10 +49,7 @@ pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBu
         }
         AgentClient::WorkBuddy => vec![workbuddy_home(home).join("models.json")],
         AgentClient::AntigravityCli => antigravity_config_paths(client, home),
-        AgentClient::ZCode => vec![
-            home.join(".zcode/v2").join(ZCODE_CONFIG_FILE),
-            home.join(".zcode/cli").join(ZCODE_CONFIG_FILE),
-        ],
+        AgentClient::ZCode => vec![home.join(".zcode/v2").join(ZCODE_PROVIDER_CONFIG_FILE)],
         AgentClient::KimiCode => vec![kimi_code_home(home).join(KIMI_CODE_CONFIG_FILE)],
         AgentClient::GrokBuild => vec![grok_build_home(home).join(GROK_BUILD_CONFIG_FILE)],
     }
@@ -1301,17 +1298,11 @@ pub(crate) fn inspect_agent_managed_config(
         AgentClient::DeepSeekHarness => inspect_deepseek_harness_config(paths, port, api_key)
             .map(|(configured, model)| (configured, model, false)),
         AgentClient::ZCode => {
-            if paths.len() != 2 {
+            if paths.len() != 1 {
                 return Err("Invalid number of ZCode configuration paths".to_string());
             }
-            let (app_configured, app_model) = inspect_zcode_agent_config(&paths[0], port, api_key)?;
-            let (cli_configured, cli_model) = inspect_zcode_agent_config(&paths[1], port, api_key)?;
-            let models_match = app_model.is_some() && app_model == cli_model;
-            Ok((
-                app_configured && cli_configured && models_match,
-                cli_model.or(app_model),
-                false,
-            ))
+            inspect_zcode_agent_config(&paths[0], port, api_key)
+                .map(|(configured, model)| (configured, model, false))
         }
         AgentClient::AntigravityCli => inspect_antigravity_config(client, paths, port, api_key).map(|(configured, model)| (configured, model, false)),
         AgentClient::WorkBuddy => inspect_workbuddy_agent_config(&paths[0], port, api_key)
@@ -1525,29 +1516,19 @@ pub(crate) fn agent_has_managed_marker(
         AgentClient::WorkBuddy => workbuddy_has_managed_marker(&paths[0]),
         AgentClient::AntigravityCli => antigravity_has_marker(client, paths),
         AgentClient::ZCode => {
-            let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
-            for path in paths {
-                if !path.is_file() {
-                    continue;
-                }
-                let root = read_agent_json_or_empty(path, "ZCode configuration")?;
-                let provider_exists = root
-                    .get("provider")
-                    .and_then(|value| value.get(MANAGED_AGENT_PROVIDER_ID))
-                    .is_some();
-                let model_selected = root
-                    .get("model")
-                    .and_then(|model| {
-                        model
-                            .as_str()
-                            .or_else(|| model.get("main").and_then(serde_json::Value::as_str))
-                    })
-                    .is_some_and(|model| model.starts_with(&prefix));
-                if provider_exists && model_selected {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
+            let Some(path) = paths.first() else { return Ok(false); };
+            if !path.is_file() { return Ok(false); }
+            let root = read_agent_json_or_empty(path, "ZCode provider configuration")?;
+            let provider_exists = root.pointer("/config/providerConfigRules/providerRules")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|rules| rules.iter().any(|rule| {
+                    rule.get("providerId").and_then(serde_json::Value::as_str)
+                        == Some(MANAGED_AGENT_PROVIDER_ID)
+                }));
+            let model_selected = root.pointer("/config/defaultModelSelection/providerId")
+                .and_then(serde_json::Value::as_str)
+                == Some(MANAGED_AGENT_PROVIDER_ID);
+            Ok(provider_exists && model_selected)
         }
         AgentClient::KimiCode => inspect_managed_toml_model_marker(
             &paths[0],
@@ -3300,59 +3281,57 @@ pub(crate) fn inspect_zcode_agent_config(
         return Ok((false, None));
     }
     let root: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(path).map_err(|error| format!("Failed to read ZCode configuration: {error}"))?,
+        &fs::read_to_string(path).map_err(|error| format!("Failed to read ZCode provider configuration: {error}"))?,
     )
-    .map_err(|error| format!("Failed to parse ZCode configuration: {error}"))?;
-    let provider = root
-        .get("provider")
-        .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID));
-    let expected_base = managed_core_loopback_origin(port);
-    let api_format_matches = provider
-        .and_then(|provider| provider.get("apiFormat"))
-        .and_then(serde_json::Value::as_str)
-        .is_none_or(|api_format| api_format == "anthropic-messages");
-    let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
-    let model = root
-        .get("model")
-        .and_then(|model| {
-            model
-                .as_str()
-                .or_else(|| model.get("main").and_then(serde_json::Value::as_str))
+    .map_err(|error| format!("Failed to parse ZCode provider configuration: {error}"))?;
+    if root.get("schemaVersion").and_then(serde_json::Value::as_u64) != Some(1) {
+        return Ok((false, None));
+    }
+    let config = root.get("config");
+    let provider = config
+        .and_then(|config| config.get("providerConfigRules"))
+        .and_then(|rules| rules.get("providerRules"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rules| rules.iter().find(|rule| {
+            rule.get("providerId").and_then(serde_json::Value::as_str)
+                == Some(MANAGED_AGENT_PROVIDER_ID)
+        }));
+    let selected = config
+        .and_then(|config| config.get("defaultModelSelection"));
+    let model = selected
+        .filter(|selection| {
+            selection.get("providerId").and_then(serde_json::Value::as_str)
+                == Some(MANAGED_AGENT_PROVIDER_ID)
         })
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.strip_prefix(&prefix))
+        .and_then(|selection| selection.get("modelId"))
+        .and_then(serde_json::Value::as_str)
         .map(str::to_string);
-    let selected_model_exists = model.as_deref().is_some_and(|selected_model| {
+    let configured = model.as_deref().is_some_and(|model| {
         provider
-            .and_then(|provider| provider.get("models"))
-            .and_then(serde_json::Value::as_object)
-            .is_some_and(|models| {
-                models
-                    .keys()
-                    .any(|model| model.eq_ignore_ascii_case(selected_model))
-            })
-    });
-    let configured = selected_model_exists
-        && api_format_matches
+            .and_then(|provider| provider.get("config"))
+            .and_then(|config| config.get("personalModelIds"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|models| models.iter().any(|value| value.as_str() == Some(model)))
+    }) && provider
+        .and_then(|provider| provider.get("enabled"))
+        .and_then(serde_json::Value::as_bool) == Some(true)
         && provider
-            .and_then(|provider| provider.get("enabled"))
-            .and_then(serde_json::Value::as_bool)
-            == Some(true)
+            .and_then(|provider| provider.get("config"))
+            .and_then(|config| config.get("group"))
+            .and_then(serde_json::Value::as_str) == Some("standard-personal")
         && provider
-            .and_then(|provider| provider.get("kind"))
+            .and_then(|provider| provider.pointer("/config/access/type"))
+            .and_then(serde_json::Value::as_str) == Some("api-key")
+        && provider
+            .and_then(|provider| provider.pointer("/config/access/apiKey"))
+            .and_then(serde_json::Value::as_str) == Some(api_key)
+        && provider
+            .and_then(|provider| provider.pointer("/config/api/type"))
+            .and_then(serde_json::Value::as_str) == Some("anthropic-messages")
+        && provider
+            .and_then(|provider| provider.pointer("/config/api/baseUrl"))
             .and_then(serde_json::Value::as_str)
-            == Some("anthropic")
-        && provider
-            .and_then(|provider| provider.get("options"))
-            .and_then(|options| options.get("baseURL"))
-            .and_then(serde_json::Value::as_str)
-            == Some(expected_base.as_str())
-        && provider
-            .and_then(|provider| provider.get("options"))
-            .and_then(|options| options.get("apiKey"))
-            .and_then(serde_json::Value::as_str)
-            == Some(api_key);
+            == Some(managed_core_loopback_origin(port).as_str());
     Ok((configured, model))
 }
 
