@@ -74,6 +74,8 @@ const path = require('node:path');
       await form.locator('.provider-advanced-settings summary').click();
       const headers = form.getByLabel(/Custom Headers/);
       await headers.fill('X-Layout-Test: reachable');
+      await form.getByRole('combobox', { name: 'Disable Cooldown', exact: true }).selectOption('false');
+      await form.getByRole('combobox', { name: 'Cache User ID', exact: true }).selectOption('false');
       await assertDialogControls(form);
       const scroll = await form.evaluate((element) => ({ top: element.scrollTop, max: element.scrollHeight - element.clientHeight }));
       assert.ok(scroll.top > 0 && scroll.max > 0, 'Advanced settings must be reachable by scrolling inside the dialog');
@@ -97,13 +99,30 @@ const path = require('node:path');
     const record = await page.evaluate(() => window.providerFixture.records[0]);
     assert.equal(record.headers['X-Layout-Test'], 'reachable');
     assert.equal(record.models.length, 30);
+    assert.equal(record['disable-cooling'], false);
+    assert.equal(record.cloak['cache-user-id'], false);
     assert.equal(await page.evaluate(() => document.body.style.overflow), '');
+
+    await page.locator('.real-provider-row').getByRole('button', { name: 'Edit', exact: true }).click();
+    await form.locator('.provider-advanced-settings summary').click();
+    for (const name of ['Disable Cooldown', 'Cache User ID']) {
+      const control = form.getByRole('combobox', { name, exact: true });
+      assert.equal(await control.inputValue(), 'false');
+      await control.selectOption('');
+    }
+    await form.getByRole('button', { name: 'Save', exact: true }).click();
+    await form.waitFor({ state: 'detached' });
+    const inherited = await page.evaluate(() => window.providerFixture.records[0]);
+    assert.equal(inherited['disable-cooling'], undefined);
+    assert.equal(inherited.cloak?.['cache-user-id'], undefined);
 
     await page.locator('.provider-category-panel button').filter({ hasText: 'OpenAI' }).click();
     await page.getByRole('button', { name: 'Add', exact: true }).click();
     const add = page.getByRole('dialog', { name: 'Add API Connection', exact: true });
     await assertViewportOverlay('.config-dialog-backdrop');
     await assertDialogControls(add);
+    await add.locator('.provider-advanced-settings summary').click();
+    assert.equal(await add.getByLabel('Test Model', { exact: true }).count(), 0);
     await add.getByRole('button', { name: 'Cancel', exact: true }).click();
     await add.waitFor({ state: 'detached' });
     assert.deepEqual(errors, []);

@@ -1435,7 +1435,7 @@ fn core_config_reads_logging_settings_and_applies_defaults() {
         DEFAULT_LOGS_MAX_TOTAL_SIZE_MB
     );
     assert_eq!(defaults.error_logs_max_files, DEFAULT_ERROR_LOGS_MAX_FILES);
-    assert!(defaults.usage_statistics_enabled);
+    assert!(!defaults.usage_statistics_enabled);
     assert_eq!(
         defaults.redis_usage_queue_retention_seconds,
         DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS
@@ -1486,6 +1486,65 @@ fn v8_core_config_reads_and_writes_canonical_nested_fields() {
     assert_eq!(updated["routing"]["retry"]["request-retry"], 2);
     for legacy in ["host", "port", "remote-management", "proxy-url", "request-retry"] {
         assert!(updated.get(legacy).is_none(), "legacy field leaked into v8 config: {legacy}");
+    }
+}
+
+#[test]
+fn v8_omitted_fields_use_runtime_defaults_instead_of_gui_presets() {
+    let settings = core_config_settings_from_value(
+        &serde_norway::from_str("config-version: 8\nserver: {port: 8317}\n").unwrap(),
+    ).unwrap();
+    assert_eq!(settings.host, "");
+    assert!(!settings.usage_statistics_enabled);
+    assert_eq!(settings.request_retry, 0);
+    assert_eq!(settings.max_retry_interval, 0);
+}
+
+#[test]
+fn v8_settings_can_populate_null_sections_without_losing_siblings() {
+    let input = "config-version: 8\nserver: null\nmanagement: null\naccess: null\noauth: null\nrequests: null\nrouting: null\nobservability: null\nplugins: null\napi-keys: {codex: [{name: keep, keys: [{api-key: test-key}]}]}\n";
+    let updated = apply_gui_managed_settings(input, &GuiConfigFile::default()).unwrap();
+    let document: serde_norway::Value = serde_norway::from_str(&updated).unwrap();
+    assert_eq!(document["server"]["port"], 8317);
+    assert_eq!(document["api-keys"]["codex"][0]["name"], "keep");
+    assert!(apply_gui_managed_settings("config-version: 8\nrequests: broken\n", &GuiConfigFile::default()).is_err());
+}
+
+#[test]
+fn v8_sensitive_words_fall_back_per_field_and_clear_legacy_values() {
+    let input = "config-version: 8\nantigravity: {sensitive-words: [old]}\ndevin: {sensitive-words: [old-devin]}\noauth:\n  providers:\n    antigravity: {signature-cache-enabled: true}\n    devin: {sensitive-words: [new-devin]}\n";
+    let document: serde_norway::Value = serde_norway::from_str(input).unwrap();
+    let settings = core_sensitive_words_settings_from_value(&document).unwrap();
+    assert_eq!(settings.antigravity_sensitive_words, vec!["old"]);
+    assert_eq!(settings.devin_sensitive_words, vec!["new-devin"]);
+    let updated = patch_core_sensitive_words_yaml(input, &CoreSensitiveWordsSettings::default()).unwrap().unwrap();
+    let document: serde_norway::Value = serde_norway::from_str(&updated).unwrap();
+    for path in [vec!["antigravity"], vec!["devin"], vec!["oauth", "providers", "antigravity"], vec!["oauth", "providers", "devin"]] {
+        let section = nested_yaml_value(document.as_mapping().unwrap(), &path).unwrap();
+        assert_eq!(section["sensitive-words"].as_sequence().unwrap().len(), 0);
+    }
+    assert_eq!(document["oauth"]["providers"]["antigravity"]["signature-cache-enabled"], true);
+}
+
+#[test]
+fn v8_tls_reads_mixed_layout_per_field() {
+    let document = serde_norway::from_str("config-version: 8\ntls: {enable: true, cert: old-cert, key: old-key}\nserver: {tls: {cert: new-cert}}\n").unwrap();
+    let settings = core_tls_settings_from_value(&document).unwrap();
+    assert!(settings.enabled);
+    assert_eq!(settings.cert, "new-cert");
+    assert_eq!(settings.key, "old-key");
+}
+
+#[test]
+fn session_ttl_rejects_values_that_the_core_silently_ignores() {
+    for value in ["", "30m", "1h30m", "+2h", "1.5s", ".5h", "1.s"] {
+        assert_eq!(normalize_session_affinity_ttl(format!(" {value} ")).unwrap(), value);
+    }
+    for value in ["500ms", "1ns", "2us", "2µs", "2μs"] {
+        assert_eq!(normalize_session_affinity_ttl(value.into()).unwrap(), "1s");
+    }
+    for value in ["0", "0s", "-1h", "1d", "30", "1h 30m", "1s junk", "+", "NaNh", "0.1ns", "999999999999h"] {
+        assert!(normalize_session_affinity_ttl(value.into()).is_err(), "accepted {value}");
     }
 }
 
@@ -1550,12 +1609,12 @@ fn core_config_reads_retry_fields_and_uses_core_defaults() {
 
     let defaults = core_config_settings_from_value(&serde_norway::from_str("{}").unwrap()).unwrap();
     assert_eq!(defaults.disable_cooling, DEFAULT_DISABLE_COOLING);
-    assert_eq!(defaults.request_retry, DEFAULT_REQUEST_RETRY);
+    assert_eq!(defaults.request_retry, 0);
     assert_eq!(
         defaults.max_retry_credentials,
         DEFAULT_MAX_RETRY_CREDENTIALS
     );
-    assert_eq!(defaults.max_retry_interval, DEFAULT_MAX_RETRY_INTERVAL);
+    assert_eq!(defaults.max_retry_interval, 0);
     assert_eq!(
         defaults.streaming_bootstrap_retries,
         DEFAULT_STREAMING_BOOTSTRAP_RETRIES
@@ -1793,6 +1852,7 @@ fn core_config_validates_keys_and_routing_strategy() {
     assert!(validate_core_api_key("").is_err());
     assert!(validate_core_api_key("contains space").is_err());
     assert!(validate_routing_strategy("round-robin").is_ok());
+    assert!(validate_routing_strategy("weighted-round-robin").is_ok());
     assert!(validate_routing_strategy("fill-first").is_ok());
     assert!(validate_routing_strategy("random").is_err());
 }

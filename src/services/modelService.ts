@@ -1,5 +1,6 @@
 import { apiCallErrorMessage, isRecord, managementApi, readString } from './managementApi';
 import { getCurrentLocale, translate } from '../i18n';
+import { normalizeThinkingConfig } from './providerModels';
 
 const modelText = (key: Parameters<typeof translate>[1]) => translate(getCurrentLocale(), key);
 
@@ -144,13 +145,13 @@ const normalizeModelList = (payload: unknown, preserveExistingAlias = false): Mo
     const alias = preserveExistingAlias ? rawAlias : usableModelAlias(rawAlias);
     const displayName = record ? readString(record, 'display-name', 'display_name', 'displayName') : '';
     const thinking = record && isRecord(record.thinking)
-      ? { ...record.thinking }
+      ? normalizeThinkingConfig(record.thinking, !preserveExistingAlias)
       : undefined;
     return {
       name,
       ...(alias && alias !== name ? { alias } : {}),
       ...(displayName && displayName !== name ? { displayName } : {}),
-      ...(thinking ? { thinking } : {}),
+      ...(thinking && (preserveExistingAlias || Object.keys(thinking).length > 0) ? { thinking } : {}),
     };
   }).filter((item): item is ModelOption => item !== null);
 };

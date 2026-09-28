@@ -291,6 +291,40 @@ fn is_v8_shared_provider_field(field: &str) -> bool {
     )
 }
 
+fn normalize_v8_provider_record(
+    provider: &str,
+    record: &serde_norway::Mapping,
+) -> serde_norway::Mapping {
+    let mut record = record.clone();
+    if provider == "openai-compatibility" {
+        record.remove(yaml_key("test-model"));
+        record.remove(yaml_key("testModel"));
+    }
+    if let Some(models) = record
+        .get_mut(yaml_key("models"))
+        .and_then(serde_norway::Value::as_sequence_mut)
+    {
+        for model in models {
+            let Some(thinking) = model
+                .as_mapping_mut()
+                .and_then(|model| model.get_mut(yaml_key("thinking")))
+                .and_then(serde_norway::Value::as_mapping_mut)
+            else {
+                continue;
+            };
+            for (json, yaml) in [
+                ("zero_allowed", "zero-allowed"),
+                ("dynamic_allowed", "dynamic-allowed"),
+            ] {
+                if let Some(value) = thinking.remove(yaml_key(json)) {
+                    thinking.entry(yaml_key(yaml)).or_insert(value);
+                }
+            }
+        }
+    }
+    record
+}
+
 pub(crate) fn flatten_v8_provider_groups(
     provider: &str,
     groups: &serde_norway::Value,
@@ -317,7 +351,9 @@ pub(crate) fn flatten_v8_provider_groups(
                     serde_norway::Value::Sequence(keys.clone()),
                 );
             }
-            records.push(serde_norway::Value::Mapping(record));
+            records.push(serde_norway::Value::Mapping(normalize_v8_provider_record(
+                provider, &record,
+            )));
             continue;
         }
         for (key_index, key) in keys.iter().enumerate() {
@@ -327,6 +363,20 @@ pub(crate) fn flatten_v8_provider_groups(
                 )
             })?;
             let mut record = serde_norway::Mapping::new();
+            if let Some(name) = yaml_mapping_value(group, "name")
+                .and_then(serde_norway::Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                let generated = name
+                    .strip_prefix(&format!("{provider}-"))
+                    .is_some_and(|suffix| {
+                        !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+                    });
+                if !generated {
+                    record.insert(yaml_key("name"), yaml_key(name));
+                }
+            }
             for (field, value) in group {
                 if field
                     .as_str()
@@ -340,7 +390,9 @@ pub(crate) fn flatten_v8_provider_groups(
                     record.insert(field.clone(), value.clone());
                 }
             }
-            records.push(serde_norway::Value::Mapping(record));
+            records.push(serde_norway::Value::Mapping(normalize_v8_provider_record(
+                provider, &record,
+            )));
         }
     }
     Ok(serde_norway::Value::Sequence(records))
@@ -358,6 +410,7 @@ pub(crate) fn group_legacy_provider_records(
         let record = record
             .as_mapping()
             .ok_or_else(|| format!("{provider} provider entry {index} must be an object"))?;
+        let record = normalize_v8_provider_record(provider, record);
         if provider == "openai-compatibility" {
             let mut group = record.clone();
             let keys = group
@@ -368,12 +421,18 @@ pub(crate) fn group_legacy_provider_records(
             continue;
         }
         let mut group = serde_norway::Mapping::new();
-        group.insert(
-            yaml_key("name"),
-            serde_norway::Value::String(format!("{provider}-{}", index + 1)),
-        );
+        let name = yaml_mapping_value(&record, "name")
+            .and_then(serde_norway::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{provider}-{}", index + 1));
+        group.insert(yaml_key("name"), serde_norway::Value::String(name));
         let mut key = serde_norway::Mapping::new();
-        for (field, value) in record {
+        for (field, value) in &record {
+            if field.as_str() == Some("name") {
+                continue;
+            }
             if field
                 .as_str()
                 .is_some_and(is_v8_shared_provider_field)

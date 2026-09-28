@@ -150,11 +150,9 @@ pub(crate) fn core_tls_settings_from_value(
     let root = document
         .as_mapping()
         .ok_or_else(|| "Core configuration must be a YAML mapping".to_string())?;
-    let tls = nested_yaml_value(root, &["server", "tls"])
-        .or_else(|| yaml_mapping_value(root, "tls"))
-        .and_then(serde_norway::Value::as_mapping);
-    let enabled = tls
-        .and_then(|mapping| yaml_mapping_value(mapping, "enable"))
+    let field = |key: &str| nested_yaml_value(root, &["server", "tls", key])
+        .or_else(|| nested_yaml_value(root, &["tls", key]));
+    let enabled = field("enable")
         .map(|value| {
             value
                 .as_bool()
@@ -163,7 +161,7 @@ pub(crate) fn core_tls_settings_from_value(
         .transpose()?
         .unwrap_or(false);
     let string_value = |key: &str| -> Result<String, String> {
-        tls.and_then(|mapping| yaml_mapping_value(mapping, key))
+        field(key)
             .map(|value| {
                 value
                     .as_str()
@@ -253,17 +251,15 @@ pub(crate) fn core_sensitive_words_settings_from_value(
         .as_mapping()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     let read_words = |provider: &str| -> Result<Vec<String>, String> {
-        let Some(section) = nested_yaml_value(root, &["oauth", "providers", provider])
-            .or_else(|| yaml_mapping_value(root, provider)) else {
-            return Ok(Vec::new());
-        };
-        if section.is_null() {
-            return Ok(Vec::new());
+        let current = nested_yaml_value(root, &["oauth", "providers", provider]);
+        let legacy = yaml_mapping_value(root, provider);
+        for section in [current, legacy].into_iter().flatten() {
+            if !section.is_null() && !section.is_mapping() {
+                return Err(format!("{provider} must be a YAML mapping"));
+            }
         }
-        let section = section
-            .as_mapping()
-            .ok_or_else(|| format!("{provider} must be a YAML mapping"))?;
-        let Some(value) = yaml_mapping_value(section, "sensitive-words") else {
+        let Some(value) = nested_yaml_value(root, &["oauth", "providers", provider, "sensitive-words"])
+            .or_else(|| nested_yaml_value(root, &[provider, "sensitive-words"])) else {
             return Ok(Vec::new());
         };
         if value.is_null() {
@@ -340,7 +336,6 @@ pub(crate) fn patch_core_sensitive_words_yaml(
         prepared = replace_top_level_yaml_block(&prepared, provider, &block);
     }
     let updated = patch_core_yaml_document(&prepared, |document| {
-        let v8 = core_config_uses_v8(document);
         let mut changed = false;
         for (provider, words) in [
             ("antigravity", &settings.antigravity_sensitive_words),
@@ -349,37 +344,15 @@ pub(crate) fn patch_core_sensitive_words_yaml(
             let root = document
                 .as_mapping()
                 .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
-            let section = if v8 {
-                nested_yaml_value(root, &["oauth", "providers", provider])
-            } else {
-                yaml_mapping_value(root, provider)
-            };
-            let current_words = section
-                .and_then(serde_norway::Value::as_mapping)
-                .and_then(|mapping| yaml_mapping_value(mapping, "sensitive-words"));
+            let current_words = nested_yaml_value(root, &["oauth", "providers", provider, "sensitive-words"])
+                .or_else(|| nested_yaml_value(root, &[provider, "sensitive-words"]));
             if words.is_empty() && current_words.is_none_or(serde_norway::Value::is_null) {
                 continue;
             }
-            if section.is_none_or(serde_norway::Value::is_null) {
-                let section_path = if v8 {
-                    vec!["oauth", "providers", provider]
-                } else {
-                    vec![provider]
-                };
-                changed |= set_core_yaml_path_value(
-                    document,
-                    &section_path,
-                    serde_norway::Value::Mapping(serde_norway::Mapping::new()),
-                )?;
-            }
-            let sensitive_words_path = if v8 {
-                vec!["oauth", "providers", provider, "sensitive-words"]
-            } else {
-                vec![provider, "sensitive-words"]
-            };
-            changed |= set_core_yaml_path_value(
+            changed |= set_core_yaml_schema_value(
                 document,
-                &sensitive_words_path,
+                &[provider, "sensitive-words"],
+                &["oauth", "providers", provider, "sensitive-words"],
                 serde_norway::Value::Sequence(
                     words
                         .iter()
@@ -1190,20 +1163,7 @@ pub(crate) fn set_core_yaml_nested_value(
     key: &str,
     value: serde_norway::Value,
 ) -> Result<bool, String> {
-    let root = document
-        .as_mapping_mut()
-        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
-    let section = root
-        .entry(yaml_key(section))
-        .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
-        .as_mapping_mut()
-        .ok_or_else(|| "Kernel configuration section must be a YAML mapping".to_string())?;
-    let key = yaml_key(key);
-    if section.get(&key) == Some(&value) {
-        return Ok(false);
-    }
-    section.insert(key, value);
-    Ok(true)
+    set_core_yaml_path_value(document, &[section, key], value)
 }
 
 pub(crate) fn core_config_uses_v8(document: &serde_norway::Value) -> bool {
@@ -1241,9 +1201,13 @@ pub(crate) fn set_core_yaml_path_value(
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
     for section in parents {
-        mapping = mapping
+        let parent = mapping
             .entry(yaml_key(section))
-            .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()))
+            .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()));
+        if parent.is_null() {
+            *parent = serde_norway::Value::Mapping(serde_norway::Mapping::new());
+        }
+        mapping = parent
             .as_mapping_mut()
             .ok_or_else(|| format!("Kernel configuration section {section} must be a YAML mapping"))?;
     }
@@ -1485,7 +1449,7 @@ pub(crate) fn core_config_settings_from_value(
                 .ok_or_else(|| "host must be a string".to_string())
         })
         .transpose()?
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+        .unwrap_or_default();
     let port = v8_or_legacy(&["server", "port"], &["port"])
         .map(|value| {
             value
@@ -1554,7 +1518,7 @@ pub(crate) fn core_config_settings_from_value(
                 .ok_or_else(|| "usage-statistics-enabled must be a boolean".to_string())
         })
         .transpose()?
-        .unwrap_or(true);
+        .unwrap_or(false);
     let redis_usage_queue_retention_seconds =
         v8_or_legacy(&["observability", "usage", "redis-usage-queue-retention-seconds"], &["redis-usage-queue-retention-seconds"])
             .map(|value| {
@@ -1645,7 +1609,7 @@ pub(crate) fn core_config_settings_from_value(
                 .ok_or_else(|| "request-retry must be a non-negative integer".to_string())
         })
         .transpose()?
-        .unwrap_or(DEFAULT_REQUEST_RETRY);
+        .unwrap_or(0);
     let max_retry_credentials = v8_or_legacy(&["routing", "retry", "max-retry-credentials"], &["max-retry-credentials"])
         .map(|value| {
             value
@@ -1663,7 +1627,7 @@ pub(crate) fn core_config_settings_from_value(
                 .ok_or_else(|| "max-retry-interval must be a non-negative integer".to_string())
         })
         .transpose()?
-        .unwrap_or(DEFAULT_MAX_RETRY_INTERVAL);
+        .unwrap_or(0);
     let streaming_bootstrap_retries = v8_or_legacy(&["requests", "streaming", "bootstrap-retries"], &["streaming", "bootstrap-retries"])
         .map(|value| {
             value

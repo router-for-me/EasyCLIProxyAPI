@@ -5324,7 +5324,8 @@ textarea:focus-visible {
   background: var(--theme-fffdf8);
 }
 
-.provider-cloak-settings select {
+.provider-cloak-settings select,
+.provider-advanced-toggle > select {
   width: 100%;
   min-width: 0;
   height: 40px;
@@ -5333,6 +5334,12 @@ textarea:focus-visible {
   border-radius: 6px;
   background: var(--theme-ffffff);
   color: var(--theme-2d2a26);
+}
+
+.provider-advanced-toggle > select {
+  width: auto;
+  max-width: 55%;
+  flex: 0 1 auto;
 }
 
 .thinking-alias-page {

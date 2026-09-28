@@ -1,4 +1,5 @@
 import { useConfirmation } from '../components/ConfirmationDialog';
+import { normalizeProviderModels } from '../services/providerModels';
 import { ModelSelectionPanel } from '../components/ModelSelectionPanel';
 import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 import {
@@ -219,15 +220,15 @@ export type ProviderDraft = {
   prefix?: string;
   headersText?: string;
   excludedModelsText?: string;
-  disableCooling?: boolean;
+  disableCooling?: boolean | null;
   websockets?: boolean;
-  testModel?: string;
   thinkingLevels?: string[];
+  thinkingLevelsEdited?: boolean;
   disabled?: boolean;
   cloakMode?: string;
   cloakStrictMode?: boolean;
   cloakSensitiveWordsText?: string;
-  cloakCacheUserId?: boolean;
+  cloakCacheUserId?: boolean | null;
 };
 
 const providerDefinitions: ProviderDefinition[] = [
@@ -362,7 +363,6 @@ const providerHealthIdentity = (row: ProviderRow) => [
   row.name,
   row.baseUrl,
   row.authIndex,
-  readString(row.record, 'test-model', 'testModel'),
   row.apiKeys.join('\u0000'),
   row.models.map((model) => model.name).join('\u0000'),
 ].join('\u0001');
@@ -384,7 +384,9 @@ const providerHeadersFromRecord = (record: Record<string, unknown>) =>
     : {};
 
 export const stripResponseFields = (record: Record<string, unknown>) => {
-  const next = { ...record };
+  const next = normalizeProviderModels(record);
+  delete next['test-model'];
+  delete next.testModel;
   delete next['auth-index'];
   delete next.authIndex;
   delete next.auth_index;
@@ -445,7 +447,9 @@ export const hasDuplicateProviderRecord = (
     return readString(record, 'api-key', 'apiKey') === readString(candidate, 'api-key', 'apiKey')
       && readString(record, 'base-url', 'baseUrl') === readString(candidate, 'base-url', 'baseUrl');
   }
-  return providerConfigIdentity(record) === providerConfigIdentity(candidate);
+  const { name: _recordName, ...recordConfig } = record;
+  const { name: _candidateName, ...candidateConfig } = candidate;
+  return providerConfigIdentity(recordConfig) === providerConfigIdentity(candidateConfig);
 }));
 
 const mergeModelRecords = (current: unknown, selected: ModelOption[]) => {
@@ -644,12 +648,12 @@ const draftFromRow = (row: ProviderRow): ProviderDraft => {
     excludedModelsText: Array.isArray(row.record['excluded-models'])
       ? row.record['excluded-models'].map(String).filter((model) => model.trim() !== '*').join('\n')
       : '',
-    disableCooling: readBoolean(row.record, 'disable-cooling', 'disableCooling'),
+    disableCooling: typeof row.record['disable-cooling'] === 'boolean' ? row.record['disable-cooling'] : null,
     websockets: readBoolean(row.record, 'websockets'),
-    testModel: readString(row.record, 'test-model', 'testModel'),
     thinkingLevels: definition.openAi
       ? thinkingLevelsFromModels(row.models)
       : undefined,
+    thinkingLevelsEdited: false,
     disabled: row.disabled,
     cloakMode: isRecord(row.record.cloak) ? readString(row.record.cloak, 'mode') : '',
     cloakStrictMode: isRecord(row.record.cloak)
@@ -659,9 +663,8 @@ const draftFromRow = (row: ProviderRow): ProviderDraft => {
       isRecord(row.record.cloak) && Array.isArray(row.record.cloak['sensitive-words'])
         ? row.record.cloak['sensitive-words'].map(String).join('\n')
         : '',
-    cloakCacheUserId: isRecord(row.record.cloak)
-      ? readBoolean(row.record.cloak, 'cache-user-id', 'cacheUserId')
-      : false,
+    cloakCacheUserId: isRecord(row.record.cloak) && typeof row.record.cloak['cache-user-id'] === 'boolean'
+      ? row.record.cloak['cache-user-id'] : null,
   };
 };
 
@@ -676,19 +679,18 @@ const emptyProviderDraft = (): ProviderDraft => ({
   prefix: '',
   headersText: '',
   excludedModelsText: '',
-  disableCooling: false,
+  disableCooling: null,
   websockets: false,
-  testModel: '',
   disabled: false,
   cloakMode: '',
   cloakStrictMode: false,
   cloakSensitiveWordsText: '',
-  cloakCacheUserId: false,
+  cloakCacheUserId: null,
 });
 
 export const createProviderDraft = (category: ProviderCategory): ProviderDraft => {
   const draft = emptyProviderDraft();
-  if (category === 'openai-compatibility') return { ...draft, thinkingLevels: [] };
+  if (category === 'openai-compatibility') return { ...draft, thinkingLevels: [], thinkingLevelsEdited: false };
   if (category !== 'deepseek') return draft;
   return {
     ...draft,
@@ -711,7 +713,7 @@ export const applyProviderPreset = (
   category: ProviderCategory,
   draft: ProviderDraft,
 ): ProviderDraft => {
-  if (!definitionFor(category).openAi || draft.thinkingLevels === undefined) return draft;
+  if (!definitionFor(category).openAi || draft.thinkingLevels === undefined || draft.thinkingLevelsEdited === false) return draft;
   const levels = draft.thinkingLevels;
   return {
     ...draft,
@@ -785,16 +787,11 @@ const applyAdvancedFields = (
     else delete next['excluded-models'];
   }
   if (draft.disableCooling !== undefined) {
-    if (draft.disableCooling) next['disable-cooling'] = true;
-    else delete next['disable-cooling'];
+    if (draft.disableCooling === null) delete next['disable-cooling'];
+    else next['disable-cooling'] = draft.disableCooling;
   }
   if (draft.websockets !== undefined && section === 'codex-api-key') {
     next.websockets = draft.websockets;
-  }
-  if (draft.testModel !== undefined && section === 'openai-compatibility') {
-    const testModel = draft.testModel.trim();
-    if (testModel) next['test-model'] = testModel;
-    else delete next['test-model'];
   }
   if (
     section === 'claude-api-key'
@@ -806,22 +803,29 @@ const applyAdvancedFields = (
     )
   ) {
     const cloak: Record<string, unknown> = isRecord(next.cloak) ? { ...next.cloak } : {};
-    const mode = draft.cloakMode?.trim();
-    if (mode) cloak.mode = mode;
-    else delete cloak.mode;
-    delete cloak.strictMode;
-    if (draft.cloakStrictMode) cloak['strict-mode'] = true;
-    else delete cloak['strict-mode'];
-    const sensitiveWords = (draft.cloakSensitiveWordsText ?? '')
-      .split(/[,\n]/)
-      .map((value) => value.trim())
-      .filter((value, index, values) => value && values.indexOf(value) === index);
-    if (sensitiveWords.length > 0) cloak['sensitive-words'] = sensitiveWords;
-    else delete cloak['sensitive-words'];
-    delete cloak.sensitiveWords;
-    delete cloak.cacheUserId;
-    if (draft.cloakCacheUserId) cloak['cache-user-id'] = true;
-    else delete cloak['cache-user-id'];
+    if (draft.cloakMode !== undefined) {
+      const mode = draft.cloakMode.trim();
+      if (mode) cloak.mode = mode;
+      else delete cloak.mode;
+    }
+    if (draft.cloakStrictMode !== undefined) {
+      delete cloak.strictMode;
+      if (draft.cloakStrictMode) cloak['strict-mode'] = true;
+      else delete cloak['strict-mode'];
+    }
+    if (draft.cloakSensitiveWordsText !== undefined) {
+      const sensitiveWords = draft.cloakSensitiveWordsText.split(/[,\n]/)
+        .map((value) => value.trim())
+        .filter((value, index, values) => value && values.indexOf(value) === index);
+      delete cloak.sensitiveWords;
+      if (sensitiveWords.length > 0) cloak['sensitive-words'] = sensitiveWords;
+      else delete cloak['sensitive-words'];
+    }
+    if (draft.cloakCacheUserId !== undefined) {
+      delete cloak.cacheUserId;
+      if (draft.cloakCacheUserId === null) delete cloak['cache-user-id'];
+      else cloak['cache-user-id'] = draft.cloakCacheUserId;
+    }
     if (Object.keys(cloak).length > 0) next.cloak = cloak;
     else delete next.cloak;
   }
@@ -836,8 +840,20 @@ export const buildProviderRecord = (
   const record = current ? stripResponseFields(current) : {};
   const priorityText = draft.priority.trim();
   const priority = priorityText ? Number(priorityText) : null;
+  if (priority !== null && !Number.isSafeInteger(priority)) {
+    throw new Error(translate(getCurrentLocale(), 'apiAccess.error.priorityInteger'));
+  }
   const models = mergeModelRecords(record.models, draft.models);
   if (definitionFor(section).openAi) {
+    if (draft.thinkingLevels !== undefined && draft.thinkingLevelsEdited !== false) {
+      for (const model of models) {
+        const thinking = isRecord(model.thinking) ? { ...model.thinking } : {};
+        if (draft.thinkingLevels.length) thinking.levels = [...draft.thinkingLevels];
+        else delete thinking.levels;
+        if (Object.keys(thinking).length) model.thinking = thinking;
+        else delete model.thinking;
+      }
+    }
     const entries = mergeOpenAiApiKeyEntries(record['api-key-entries'], draft.apiKey.trim());
     if (draft.proxyUrlEdited !== false && draft.proxyUrl !== undefined) {
       const proxyUrl = draft.proxyUrl.trim();
@@ -1842,7 +1858,7 @@ export function ApiProviderDialog({
   ), [modelOptions, selectedModelNames]);
 
   const updateTextField = (
-    field: 'apiKey' | 'remark' | 'baseUrl' | 'proxyUrl' | 'priority' | 'prefix' | 'headersText' | 'excludedModelsText' | 'testModel' | 'cloakMode' | 'cloakSensitiveWordsText',
+    field: 'apiKey' | 'remark' | 'baseUrl' | 'proxyUrl' | 'priority' | 'prefix' | 'headersText' | 'excludedModelsText' | 'cloakMode' | 'cloakSensitiveWordsText',
     value: string,
   ) => {
     setFormError('');
@@ -1861,11 +1877,16 @@ export function ApiProviderDialog({
   };
 
   const updateBooleanField = (
-    field: 'disableCooling' | 'websockets' | 'cloakStrictMode' | 'cloakCacheUserId',
+    field: 'websockets' | 'cloakStrictMode',
     value: boolean,
   ) => {
     setFormError('');
     setDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const updateOptionalBooleanField = (field: 'disableCooling' | 'cloakCacheUserId', value: string) => {
+    setFormError('');
+    setDraft((current) => ({ ...current, [field]: value === '' ? null : value === 'true' }));
   };
 
   const updateModels = (update: (models: ModelOption[]) => ModelOption[]) => {
@@ -1904,6 +1925,7 @@ export function ApiProviderDialog({
       return {
         ...current,
         thinkingLevels: [...levels, level],
+        thinkingLevelsEdited: true,
       };
     });
     setThinkingLevelInput('');
@@ -1913,6 +1935,7 @@ export function ApiProviderDialog({
     setDraft((current) => ({
       ...current,
       thinkingLevels: (current.thinkingLevels ?? []).filter((item) => item !== level),
+      thinkingLevelsEdited: true,
     }));
   };
 
@@ -2159,7 +2182,7 @@ export function ApiProviderDialog({
           </div>
           {modelError && !modelDiscoveryOpen ? <MessageNotice message={modelError} onDismiss={() => setModelError('')} /> : null}
         </div>
-        <label><span>{t('apiAccess.field.priority')}</span><input inputMode="numeric" value={draft.priority} onChange={(event) => updateTextField('priority', event.currentTarget.value.replace(/\D/g, ''))} placeholder={t('common.optional')} /></label>
+        <label><span>{t('apiAccess.field.priority')}</span><input type="number" step="1" value={draft.priority} onChange={(event) => updateTextField('priority', event.currentTarget.value)} placeholder={t('common.optional')} /></label>
         <details className="provider-advanced-settings">
           <summary>{t('apiAccess.advanced')}</summary>
           <div className="provider-advanced-fields">
@@ -2173,9 +2196,6 @@ export function ApiProviderDialog({
                 <span>{t('apiAccess.field.excludedModels')}</span>
                 <textarea value={draft.excludedModelsText ?? ''} onChange={(event) => updateTextField('excludedModelsText', event.currentTarget.value)} rows={3} placeholder={'model-old-*\nmodel-preview'} />
               </label>
-            ) : null}
-            {activeSection === 'openai-compatibility' ? (
-              <label><span>{t('apiAccess.field.testModel')}</span><input value={draft.testModel ?? ''} onChange={(event) => updateTextField('testModel', event.currentTarget.value)} placeholder={t('common.optional')} /></label>
             ) : null}
             {activeSection === 'claude-api-key' ? (
               <div className="provider-cloak-settings">
@@ -2198,7 +2218,11 @@ export function ApiProviderDialog({
                 </div>
                 <div className="provider-advanced-toggle">
                   <div><strong>{t('apiAccess.cloak.cacheUser')}</strong><span>{t('apiAccess.cloak.cacheUserDescription')}</span></div>
-                  <label className="switch-control" title={t('apiAccess.cloak.cacheUser')}><input type="checkbox" checked={Boolean(draft.cloakCacheUserId)} onChange={(event) => updateBooleanField('cloakCacheUserId', event.currentTarget.checked)} /><span className="switch-track" /></label>
+                  <select aria-label={t('apiAccess.cloak.cacheUser')} value={draft.cloakCacheUserId == null ? '' : String(draft.cloakCacheUserId)} onChange={(event) => updateOptionalBooleanField('cloakCacheUserId', event.currentTarget.value)}>
+                    <option value="">{t('apiAccess.option.inherit')}</option>
+                    <option value="true">{t('common.enabled')}</option>
+                    <option value="false">{t('common.disabled')}</option>
+                  </select>
                 </div>
               </div>
             ) : null}
@@ -2210,7 +2234,11 @@ export function ApiProviderDialog({
             ) : null}
             <div className="provider-advanced-toggle">
               <div><strong>{t('apiAccess.cooling.title')}</strong><span>{t('apiAccess.cooling.description')}</span></div>
-              <label className="switch-control" title={t('apiAccess.cooling.title')}><input type="checkbox" checked={Boolean(draft.disableCooling)} onChange={(event) => updateBooleanField('disableCooling', event.currentTarget.checked)} /><span className="switch-track" /></label>
+              <select aria-label={t('apiAccess.cooling.title')} value={draft.disableCooling == null ? '' : String(draft.disableCooling)} onChange={(event) => updateOptionalBooleanField('disableCooling', event.currentTarget.value)}>
+                <option value="">{t('apiAccess.option.inherit')}</option>
+                <option value="true">{t('apiAccess.cooling.disable')}</option>
+                <option value="false">{t('apiAccess.cooling.enable')}</option>
+              </select>
             </div>
           </div>
         </details>

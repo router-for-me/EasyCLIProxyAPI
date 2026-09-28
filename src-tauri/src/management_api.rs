@@ -435,15 +435,24 @@ pub(crate) async fn read_management_text(response: reqwest::Response) -> Result<
 
 fn format_management_error(status: u16, body: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(message) = value
-            .get("error")
-            .and_then(|item| item.as_str())
-            .or_else(|| value.get("message").and_then(|item| item.as_str()))
-        {
-            let message = message.trim();
-            if !message.is_empty() {
-                return format!("Management API error ({status}): {message}");
-            }
+        let field = |key| {
+            value.get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+        };
+        let error = field("error");
+        let message = field("message");
+        let detail = match (error, message) {
+            (Some(error), Some(message)) if error != message => Some(format!("{error}: {message}")),
+            (Some(text), _) | (_, Some(text)) => Some(text.to_string()),
+            _ => None,
+        };
+        if let Some(detail) = detail {
+            return format!(
+                "Management API error ({status}): {}",
+                truncate_for_error(&detail)
+            );
         }
     }
     let body = body.trim();
@@ -458,6 +467,32 @@ fn format_management_error(status: u16, body: &str) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn management_errors_include_v8_validation_details() {
+        assert_eq!(
+            format_management_error(400, r#"{"error":"invalid_config","message":"field name not found in type config.CodexKey"}"#),
+            "Management API error (400): invalid_config: field name not found in type config.CodexKey"
+        );
+        for body in [
+            r#"{"error":"not_found"}"#,
+            r#"{"error":"not_found","message":"not_found"}"#,
+        ] {
+            assert_eq!(
+                format_management_error(404, body),
+                "Management API error (404): not_found"
+            );
+        }
+        assert_eq!(
+            format_management_error(400, r#"{"error":" ","message":"validation failed"}"#),
+            "Management API error (400): validation failed"
+        );
+        assert_eq!(
+            format_management_error(502, "gateway unavailable"),
+            "Management API error (502): gateway unavailable"
+        );
+        assert_eq!(format_management_error(500, ""), "Management API error (500)");
+    }
 
     #[test]
     fn devin_oauth_uses_the_management_callback_flow() {

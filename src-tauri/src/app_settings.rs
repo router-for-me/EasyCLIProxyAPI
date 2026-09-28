@@ -94,41 +94,64 @@ fn api_access_locator_identity(
     Some((sha256_bytes(&identity), api_key_hashes))
 }
 
+fn find_api_access_record_remark(
+    config: &GuiConfigFile,
+    provider_section: &str,
+    locator: &ApiAccessRemarkLocator,
+) -> Option<String> {
+    let (record_hash, api_key_hashes) = api_access_locator_identity(provider_section, locator)?;
+    let exact_entries = config.api_access_remarks.iter().filter(|entry| {
+        entry.provider_section == provider_section
+            && entry.record_hash == record_hash
+            && api_key_hashes.contains(&entry.api_key_hash)
+    });
+    let mut exact_remark = None;
+    for entry in exact_entries {
+        exact_remark = Some(entry.remark.clone());
+        if !entry.remark.is_empty() {
+            break;
+        }
+    }
+    exact_remark
+}
+
 fn resolve_api_access_remark(
     config: &GuiConfigFile,
     query: &ApiAccessRemarkQuery,
 ) -> Result<String, String> {
     validate_api_access_provider_section(&query.provider_section)?;
-    let Some((record_hash, api_key_hashes)) =
+    let mut locators = vec![query.locator.clone()];
+    if matches!(
+        query.provider_section.as_str(),
+        "gemini-api-key" | "codex-api-key" | "claude-api-key"
+    ) && !query.locator.provider_name.trim().is_empty()
+    {
+        let mut unnamed = query.locator.clone();
+        unnamed.provider_name.clear();
+        locators.push(unnamed);
+    }
+
+    for mut locator in locators {
+        if let Some(remark) =
+            find_api_access_record_remark(config, &query.provider_section, &locator)
+        {
+            return Ok(remark);
+        }
+        if !locator.config_identity.is_empty() {
+            locator.config_identity.clear();
+            if let Some(remark) =
+                find_api_access_record_remark(config, &query.provider_section, &locator)
+            {
+                return Ok(remark);
+            }
+        }
+    }
+
+    let Some((_, api_key_hashes)) =
         api_access_locator_identity(&query.provider_section, &query.locator)
     else {
         return Ok(String::new());
     };
-
-    let exact_entries = config.api_access_remarks.iter().filter(|entry| {
-        entry.provider_section == query.provider_section
-            && entry.record_hash == record_hash
-            && api_key_hashes.contains(&entry.api_key_hash)
-    });
-    let mut exact_found = false;
-    let mut exact_remark = String::new();
-    for entry in exact_entries {
-        exact_found = true;
-        if !entry.remark.is_empty() {
-            exact_remark = entry.remark.clone();
-            break;
-        }
-    }
-    if exact_found {
-        return Ok(exact_remark);
-    }
-
-    if !query.locator.config_identity.is_empty() {
-        let mut legacy_query = query.clone();
-        legacy_query.locator.config_identity.clear();
-        return resolve_api_access_remark(config, &legacy_query);
-    }
-
     Ok(api_key_hashes
         .iter()
         .find_map(|hash| {
@@ -271,6 +294,166 @@ mod tests {
             records,
             all_records,
             remark: remark.to_string(),
+        }
+    }
+
+    fn store_record_remark(
+        config: &mut GuiConfigFile,
+        provider_section: &str,
+        locator: &ApiAccessRemarkLocator,
+        remark: &str,
+    ) {
+        let (record_hash, api_key_hashes) =
+            api_access_locator_identity(provider_section, locator).unwrap();
+        for api_key_hash in api_key_hashes {
+            config.api_access_remarks.push(GuiApiAccessRemark {
+                provider_section: provider_section.to_string(),
+                api_key_hash,
+                record_hash: record_hash.clone(),
+                remark: remark.to_string(),
+            });
+        }
+    }
+
+    #[test]
+    fn v8_group_names_preserve_and_migrate_unnamed_record_remarks() {
+        for provider_section in ["gemini-api-key", "codex-api-key", "claude-api-key"] {
+            for config_identity in ["", r#"{"models":[{"name":"a"}]}"#] {
+                let mut config = GuiConfigFile::default();
+                let mut legacy = locator("https://api.example/v1", &["shared-key"]);
+                legacy.config_identity = config_identity.into();
+                store_record_remark(&mut config, provider_section, &legacy, "original");
+                let legacy_hash = config.api_access_remarks[0].record_hash.clone();
+
+                let mut current = legacy.clone();
+                current.provider_name = "production".into();
+                current.config_identity = r#"{"models":[{"name":"a"}]}"#.into();
+                let current_query = ApiAccessRemarkQuery {
+                    provider_section: provider_section.into(),
+                    locator: current.clone(),
+                };
+                assert_eq!(
+                    resolve_api_access_remark(&config, &current_query).unwrap(),
+                    "original",
+                    "{provider_section}, legacy config identity: {config_identity}"
+                );
+
+                let mut other = current.clone();
+                other.provider_name = "staging".into();
+                other.config_identity = r#"{"models":[{"name":"b"}]}"#.into();
+                let mut other_update = update(
+                    Vec::new(),
+                    vec![other.clone()],
+                    vec![current.clone(), other.clone()],
+                    "other",
+                );
+                other_update.provider_section = provider_section.into();
+                apply_api_access_remark_update(&mut config, other_update).unwrap();
+
+                assert_eq!(config.api_access_remarks.len(), 2);
+                let current_hash = api_access_locator_identity(provider_section, &current)
+                    .unwrap()
+                    .0;
+                assert!(config.api_access_remarks.iter().any(|entry| {
+                    entry.record_hash == current_hash && entry.remark == "original"
+                }));
+                assert!(config
+                    .api_access_remarks
+                    .iter()
+                    .all(|entry| entry.record_hash != legacy_hash));
+                assert_eq!(
+                    resolve_api_access_remark(&config, &current_query).unwrap(),
+                    "original"
+                );
+                assert_eq!(
+                    resolve_api_access_remark(
+                        &config,
+                        &ApiAccessRemarkQuery {
+                            provider_section: provider_section.into(),
+                            locator: other,
+                        }
+                    )
+                    .unwrap(),
+                    "other"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn named_record_remarks_override_unnamed_fallbacks_including_empty_notes() {
+        for named_config_identity in ["", r#"{"models":[{"name":"a"}]}"#] {
+            for remark in ["updated", ""] {
+                let mut config = GuiConfigFile::default();
+                let mut legacy = locator("https://api.example/v1", &["shared-key"]);
+                legacy.config_identity = r#"{"models":[{"name":"a"}]}"#.into();
+                store_record_remark(&mut config, "codex-api-key", &legacy, "legacy");
+                let mut current = legacy.clone();
+                current.provider_name = "production".into();
+                let mut saved = current.clone();
+                saved.config_identity = named_config_identity.into();
+                store_record_remark(&mut config, "codex-api-key", &saved, remark);
+
+                assert_eq!(
+                    resolve_api_access_remark(&config, &query(current)).unwrap(),
+                    remark
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unnamed_fallback_preserves_config_scope_and_explicitly_empty_notes() {
+        let mut config = GuiConfigFile::default();
+        let legacy = locator("https://api.example/v1", &["shared-key"]);
+        store_record_remark(&mut config, "codex-api-key", &legacy, "unscoped");
+        for (model, remark) in [("a", "first"), ("b", "")] {
+            let mut scoped = legacy.clone();
+            scoped.config_identity = format!(r#"{{"models":[{{"name":"{model}"}}]}}"#);
+            store_record_remark(&mut config, "codex-api-key", &scoped, remark);
+        }
+
+        for (model, expected) in [("a", "first"), ("b", ""), ("c", "unscoped")] {
+            let mut current = legacy.clone();
+            current.provider_name = "production".into();
+            current.config_identity = format!(r#"{{"models":[{{"name":"{model}"}}]}}"#);
+            assert_eq!(
+                resolve_api_access_remark(&config, &query(current)).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn group_name_fallback_does_not_cross_openai_names_or_record_boundaries() {
+        let mut config = GuiConfigFile::default();
+        let legacy = locator("https://api.example/v1", &["shared-key"]);
+        for provider_section in ["codex-api-key", "openai-compatibility"] {
+            store_record_remark(&mut config, provider_section, &legacy, "legacy");
+        }
+        let mut named = legacy.clone();
+        named.provider_name = "production".into();
+        let mut different_url = named.clone();
+        different_url.base_url = "https://other.example/v1".into();
+        let mut different_key = named.clone();
+        different_key.api_keys = vec!["other-key".into()];
+        for (provider_section, locator) in [
+            ("openai-compatibility", named.clone()),
+            ("claude-api-key", named),
+            ("codex-api-key", different_url),
+            ("codex-api-key", different_key),
+        ] {
+            assert_eq!(
+                resolve_api_access_remark(
+                    &config,
+                    &ApiAccessRemarkQuery {
+                        provider_section: provider_section.into(),
+                        locator,
+                    }
+                )
+                .unwrap(),
+                ""
+            );
         }
     }
 

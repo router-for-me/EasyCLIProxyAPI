@@ -136,6 +136,7 @@ const cleanNetworkDraft = (): NetworkDraftDirty => ({
 
 const ROUTING_OPTIONS = [
   { value: 'round-robin', labelKey: 'config.routing.roundRobin' },
+  { value: 'weighted-round-robin', labelKey: 'config.routing.weightedRoundRobin' },
   { value: 'fill-first', labelKey: 'config.routing.fillFirst' },
 ] as const;
 

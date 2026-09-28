@@ -13,6 +13,7 @@ mod app_settings;
 mod app_update;
 mod core_config;
 mod core_runtime;
+mod core_v8_contract;
 mod desktop_alias_routing;
 #[cfg(windows)]
 mod file_replace;

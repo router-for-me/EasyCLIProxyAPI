@@ -113,7 +113,7 @@ pub(crate) fn save_network_routing_settings(
         return Err("Port must be between 1 and 65535".to_string());
     }
     let routing_session_affinity_ttl =
-        normalize_optional_config_string(settings.routing_session_affinity_ttl, "Session affinity TTL")?;
+        normalize_session_affinity_ttl(settings.routing_session_affinity_ttl)?;
 
     let _refresh_guard = cache
         .refresh_lock
@@ -235,10 +235,7 @@ pub(crate) fn save_session_routing_settings(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     settings: GuiSessionRoutingSettings,
 ) -> Result<CoreConfigView, String> {
-    let ttl = normalize_optional_config_string(
-        settings.routing_session_affinity_ttl,
-        "Session affinity TTL",
-    )?;
+    let ttl = normalize_session_affinity_ttl(settings.routing_session_affinity_ttl)?;
     let previous = gui_config_state.snapshot()?;
     let mut next = previous.clone();
     next.routing_session_affinity = settings.routing_session_affinity;
@@ -515,7 +512,7 @@ pub(crate) fn set_core_session_affinity_ttl(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     ttl: String,
 ) -> Result<CoreConfigView, String> {
-    let ttl = normalize_optional_config_string(ttl, "Session affinity TTL")?;
+    let ttl = normalize_session_affinity_ttl(ttl)?;
     let mut settings = current_core_config_settings(gui_config_state.inner())?;
     let previous_ttl = settings.routing_session_affinity_ttl.clone();
     settings.routing_session_affinity_ttl = ttl;

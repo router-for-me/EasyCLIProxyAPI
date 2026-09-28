@@ -155,10 +155,10 @@ pub(crate) fn is_hashed_management_secret_key(secret_key: &str) -> bool {
 }
 
 pub(crate) fn validate_routing_strategy(strategy: &str) -> Result<(), String> {
-    if matches!(strategy, "round-robin" | "fill-first") {
+    if matches!(strategy, "round-robin" | "weighted-round-robin" | "fill-first") {
         return Ok(());
     }
-    Err("Routing strategy supports only round-robin or fill-first".to_string())
+    Err("Routing strategy supports only round-robin, weighted-round-robin or fill-first".to_string())
 }
 
 pub(crate) fn normalize_optional_config_string(
@@ -170,6 +170,34 @@ pub(crate) fn normalize_optional_config_string(
         return Err(format!("{field_name} cannot contain control characters"));
     }
     Ok(value)
+}
+
+pub(crate) fn normalize_session_affinity_ttl(value: String) -> Result<String, String> {
+    let value = normalize_optional_config_string(value, "Session affinity TTL")?;
+    if value.is_empty() {
+        return Ok(value);
+    }
+    static PART: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)").unwrap()
+    });
+    let text = value.strip_prefix('+').unwrap_or(&value);
+    let mut end = 0;
+    let mut nanos = 0.0_f64;
+    for part in PART.captures_iter(text) {
+        let matched = part.get(0).unwrap();
+        if matched.start() != end { break; }
+        let multiplier = match &part[2] {
+            "ns" => 1.0, "us" | "µs" | "μs" => 1_000.0, "ms" => 1_000_000.0,
+            "s" => 1_000_000_000.0, "m" => 60_000_000_000.0, "h" => 3_600_000_000_000.0,
+            _ => unreachable!(),
+        };
+        nanos += (part[1].parse::<f64>().unwrap_or(f64::INFINITY) * multiplier).trunc();
+        end = matched.end();
+    }
+    if end != text.len() || nanos <= 0.0 || nanos >= i64::MAX as f64 {
+        return Err("Session affinity TTL must be a positive duration such as 30m or 1h30m; leave it blank to use the core default".to_string());
+    }
+    Ok(if nanos < 1_000_000_000.0 { "1s".to_string() } else { value })
 }
 
 pub(crate) fn normalize_core_tls_settings(

@@ -23,6 +23,7 @@ import {
   stripResponseFields,
 } from '../src/pages/ApiAccessPage';
 import { modelsFromRecord } from '../src/services/modelService';
+import { flattenV8ProviderGroups } from '../src/services/managementApi';
 
 describe('shared-credential provider entries (#276)', () => {
   const first = {
@@ -66,6 +67,39 @@ describe('shared-credential provider entries (#276)', () => {
     expect(hasDuplicateProviderRecord('openai-compatibility', [{ name: 'same' }], [{ name: 'same', models: first.models }])).toBe(true);
     expect(hasDuplicateProviderRecord('gemini-api-key', [first], [second])).toBe(true);
     expect(hasDuplicateProviderRecord('codex-api-key', [first], [second])).toBe(false);
+  });
+
+  it('rejects duplicate Codex and Claude credentials regardless of v8 group labels', () => {
+    for (const section of ['codex-api-key', 'claude-api-key'] as const) {
+      const records = flattenV8ProviderGroups(section.replace('-api-key', ''), [{
+        name: 'production', 'base-url': first['base-url'], priority: 10,
+        models: first.models, keys: [{ 'api-key': 'shared-key' }],
+      }]);
+      const candidate = buildProviderRecord(section, {
+        ...createProviderDraft(section), apiKey: 'shared-key',
+        baseUrl: first['base-url'], priority: '10', models: first.models,
+      });
+      expect(hasDuplicateProviderRecord(section, records, [candidate])).toBe(true);
+      expect(hasDuplicateProviderRecord(section, records, [{ ...candidate, name: 'another-group' }])).toBe(true);
+      expect(hasDuplicateProviderRecord(section, records, [candidate], 0)).toBe(false);
+      expect(hasDuplicateProviderRecord(section, records, [{ ...candidate, priority: 1 }])).toBe(false);
+      expect(hasDuplicateProviderRecord(section, records, [{ ...candidate, models: second.models }])).toBe(false);
+      expect(records[0].name).toBe('production');
+      expect(candidate).not.toHaveProperty('name');
+    }
+    expect(hasDuplicateProviderRecord('openai-compatibility', [{ ...first, name: 'production' }], [
+      { ...first, name: 'another-group' },
+    ])).toBe(false);
+  });
+
+  it('keeps group labels in edit and remark identities when checking for duplicates', () => {
+    const production = { ...first, name: 'production' };
+    const staging = { ...first, name: 'staging' };
+    expect(hasDuplicateProviderRecord('claude-api-key', [production], [staging])).toBe(true);
+    expect(resolveProviderRecordIndex([staging, production], row(production, 0))).toBe(1);
+    expect(apiAccessRemarkLocatorFromRecord('claude-api-key', production).providerName).toBe('production');
+    expect(providerRemarkIdentity('claude-api-key', apiAccessRemarkLocatorFromRecord('claude-api-key', production)))
+      .not.toBe(providerRemarkIdentity('claude-api-key', apiAccessRemarkLocatorFromRecord('claude-api-key', staging)));
   });
 
   it('locates the second entry for edit/toggle/delete, even after an external reorder', () => {
@@ -325,9 +359,10 @@ describe('API 接入配置合并', () => {
       name: 'custom-openai',
       baseUrl: 'https://api.example.com',
       thinkingLevels: ['fast', 'ultra'],
+      thinkingLevelsEdited: true,
       models: [
         { name: 'reasoning-a' },
-        { name: 'reasoning-b', thinking: { effort: 'high' } },
+        { name: 'reasoning-b', thinking: { min: 128, max: 8192 } },
       ],
     });
     const result = buildProviderRecord('openai-compatibility', draft);
@@ -336,7 +371,7 @@ describe('API 接入配置合并', () => {
       { name: 'reasoning-a', thinking: { levels: ['fast', 'ultra'] } },
       {
         name: 'reasoning-b',
-        thinking: { effort: 'high', levels: ['fast', 'ultra'] },
+        thinking: { min: 128, max: 8192, levels: ['fast', 'ultra'] },
       },
     ]);
   });

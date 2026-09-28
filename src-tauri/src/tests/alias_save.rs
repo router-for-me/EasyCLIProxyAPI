@@ -38,6 +38,23 @@ fn non_v8_management_yaml_is_returned_without_reformatting() {
 }
 
 #[test]
+fn v8_provider_names_belong_to_groups_and_preserve_legacy_view_identity() {
+    let groups = serde_norway::from_str(
+        "- name: codex-1\n  base-url: https://gateway.example/v1\n  models: [{name: deepseek-chat, alias: my-deepseek}]\n  keys:\n    - {name: DeepSeek, api-key: first, weight: 2}\n    - {api-key: second, priority: 0}\n",
+    )
+    .unwrap();
+    let records = flatten_v8_provider_groups("codex", &groups).unwrap();
+    let updated = group_legacy_provider_records("codex", &records).unwrap();
+    let json = serde_json::to_value(&updated).unwrap();
+    assert_eq!(json[0]["name"], "DeepSeek");
+    assert_eq!(json[0]["keys"][0]["weight"], 2);
+    assert!(json[0]["keys"][0].get("name").is_none());
+    assert_eq!(json[1]["name"], "codex-2");
+    assert!(json[1]["keys"][0].get("name").is_none());
+    assert_eq!(flatten_v8_provider_groups("codex", &updated).unwrap(), records);
+}
+
+#[test]
 fn v8_alias_projection_normalizes_empty_parents_but_preserves_siblings() {
     let project = |input| yaml_json(&management_v8_yaml_to_legacy_view(input).unwrap());
     assert_eq!(
@@ -47,6 +64,30 @@ fn v8_alias_projection_normalizes_empty_parents_but_preserves_siblings() {
     let view = project("config-version: 8\noauth: {auth-dir: credentials, model-alias: {}}\nrequests: {proxy-url: direct, payload: {}}\n");
     assert_eq!(view["oauth"]["auth-dir"], "credentials");
     assert_eq!(view["requests"]["proxy-url"], "direct");
+}
+
+#[test]
+fn v8_provider_fields_use_yaml_names_without_losing_explicit_false_or_extensions() {
+    for provider in ["codex", "claude", "gemini", "openai-compatibility"] {
+        let records = serde_norway::from_str(
+            "- name: provider\n  api-key: test-key\n  test-model: old\n  testModel: old\n  disable-cooling: false\n  request-retry: 0\n  models:\n    - name: model\n      max-context-length: 65536\n      thinking: {zero_allowed: true, zero-allowed: false, dynamic_allowed: true, levels: [low, high]}\n",
+        ).unwrap();
+        let groups = group_legacy_provider_records(provider, &records).unwrap();
+        let json = serde_json::to_value(&groups).unwrap();
+        assert_eq!(json[0]["disable-cooling"], false);
+        assert_eq!(json[0]["request-retry"], 0);
+        assert_eq!(json[0]["models"][0]["max-context-length"], 65536);
+        assert_eq!(json[0]["models"][0]["thinking"]["zero-allowed"], false);
+        assert_eq!(json[0]["models"][0]["thinking"]["dynamic-allowed"], true);
+        assert!(json[0]["models"][0]["thinking"].get("zero_allowed").is_none());
+        assert!(json[0]["models"][0]["thinking"].get("dynamic_allowed").is_none());
+        if provider == "openai-compatibility" {
+            assert!(json[0].get("test-model").is_none());
+            assert!(json[0].get("testModel").is_none());
+        }
+        let view = flatten_v8_provider_groups(provider, &groups).unwrap();
+        assert_eq!(group_legacy_provider_records(provider, &view).unwrap(), groups);
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -255,6 +296,13 @@ impl MockCore {
                                     .unwrap();
                                 let groups: serde_norway::Value =
                                     serde_json::from_slice(request_body).unwrap();
+                                if provider != "openai-compatibility" {
+                                    for group in groups.as_sequence().unwrap() {
+                                        for key in group["keys"].as_sequence().unwrap() {
+                                            assert!(key.get("name").is_none(), "v8 rejects credential names");
+                                        }
+                                    }
+                                }
                                 persisted[legacy] = serde_json::to_value(
                                     flatten_v8_provider_groups(provider, &groups).unwrap(),
                                 )
@@ -389,6 +437,21 @@ async fn provider_alias_edits_round_trip_through_v8_key_groups() {
     assert!(requests
         .iter()
         .any(|request| request == "PUT /v8/management/config/api-keys/codex"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn deepseek_alias_edits_keep_the_provider_name_out_of_v8_credentials() {
+    let initial = "codex-api-key:\n  - name: DeepSeek\n    api-key: preserved-secret\n    base-url: https://gateway.example/v1\n    models: [{name: deepseek-chat, alias: original}]\n";
+    let core = MockCore::new_v8(initial, Failure::None);
+    let current = fetch_management_config_yaml(&core.config).await.unwrap();
+    let updated = current.replace("alias: original", "alias: renamed");
+    put_management_alias_config_changes(&core.config, &current, &updated)
+        .await
+        .unwrap();
+    let (persisted, _) = core.finish();
+    let mut expected = yaml_json(initial);
+    expected["codex-api-key"][0]["models"][0]["alias"] = serde_json::json!("renamed");
+    assert_eq!(persisted, expected);
 }
 
 #[tokio::test(flavor = "current_thread")]
