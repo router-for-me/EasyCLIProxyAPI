@@ -9,34 +9,34 @@ import { coreUpdateAvailable } from '../src/coreUpdate';
 import { appUpdateIndicatorState } from '../src/appUpdateModel';
 import { createVersionManagementVisitTracker } from '../src/services/versionManagementVisits';
 
-describe('VersionManagement visit counting', () => {
-  it('checks on the fifth, tenth, and fifteenth visits, but not in between', () => {
+describe('VersionManagement visit checks', () => {
+  it('checks on every new page visit', () => {
     const recordVisit = createVersionManagementVisitTracker();
     const checkedVisits: number[] = [];
     for (let visitNumber = 1; visitNumber <= 15; visitNumber += 1) {
       if (recordVisit({})) checkedVisits.push(visitNumber);
     }
-    expect(checkedVisits).toEqual([5, 10, 15]);
+    expect(checkedVisits).toEqual(Array.from({ length: 15 }, (_, index) => index + 1));
   });
 
-  it('counts each mounted page once despite repeated effects or re-renders', () => {
+  it('checks each mounted page once despite repeated effects or re-renders', () => {
     const recordVisit = createVersionManagementVisitTracker();
     for (let visitNumber = 1; visitNumber <= 10; visitNumber += 1) {
       const visit = {};
-      expect(recordVisit(visit)).toBe(visitNumber % 5 === 0);
+      expect(recordVisit(visit)).toBe(true);
       expect(recordVisit(visit)).toBe(false);
       expect(recordVisit(visit)).toBe(false);
     }
   });
 
-  it('starts counting from zero for a new application session', () => {
+  it('starts with no recorded visits for a new application session', () => {
     const recordVisit = createVersionManagementVisitTracker();
-    for (let visitNumber = 1; visitNumber <= 4; visitNumber += 1) {
-      expect(recordVisit({})).toBe(false);
-    }
+    const visit = {};
+    expect(recordVisit(visit)).toBe(true);
+    expect(recordVisit(visit)).toBe(false);
     const recordNewSessionVisit = createVersionManagementVisitTracker();
-    expect(recordNewSessionVisit({})).toBe(false);
-    expect(recordVisit({})).toBe(true);
+    expect(recordNewSessionVisit(visit)).toBe(true);
+    expect(recordNewSessionVisit(visit)).toBe(false);
   });
 });
 

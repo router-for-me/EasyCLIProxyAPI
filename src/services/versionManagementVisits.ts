@@ -1,13 +1,9 @@
 export function createVersionManagementVisitTracker() {
-  const countedVisits = new WeakSet<object>();
-  let visitsSinceLastCheck = 0;
+  const seenVisits = new WeakSet<object>();
 
   return (visit: object) => {
-    if (countedVisits.has(visit)) return false;
-    countedVisits.add(visit);
-    visitsSinceLastCheck += 1;
-    if (visitsSinceLastCheck < 5) return false;
-    visitsSinceLastCheck = 0;
+    if (seenVisits.has(visit)) return false;
+    seenVisits.add(visit);
     return true;
   };
 }
