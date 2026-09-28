@@ -683,7 +683,6 @@ export const jaOverrides = {
   'aliases.unboundEffort': 'レベル未設定',
   'aliases.delete': '{alias} を削除',
   'config.routing.roundRobin': 'ラウンドロビン',
-  'config.routing.weightedRoundRobin': '重み付きラウンドロビン',
   'config.routing.fillFirst': '優先充填',
   'config.tabs.label': '詳細設定ページ',
   'config.tabs.general': '基本設定',

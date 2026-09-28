@@ -152,7 +152,7 @@ async fn v8_accepts_gui_settings_and_reloads_client_keys() {
             remark: String::new(),
         }],
         proxy_url: "direct".into(),
-        routing_strategy: "weighted-round-robin".into(),
+        routing_strategy: "round-robin".into(),
         routing_session_affinity: true,
         routing_session_affinity_ttl: "2h30m".into(),
         request_retry: 2,
@@ -184,7 +184,7 @@ async fn v8_accepts_gui_settings_and_reloads_client_keys() {
     fs::write(&core.config, &content).unwrap();
     core.start().await;
     let view = core.validate_save(&content).await;
-    assert_eq!(view["routing"]["strategy"], "weighted-round-robin");
+    assert_eq!(view["routing"]["strategy"], "round-robin");
     assert_eq!(view["routing"]["retry"]["request-retry"], 2);
     assert_eq!(view["routing"]["retry"]["max-retry-credentials"], 3);
     assert_eq!(view["routing"]["retry"]["max-retry-interval"], 5);

@@ -680,7 +680,6 @@ export const en: Record<MessageKey, string> = {
   'speedAliases.fast.title': 'Fast',
   'speedAliases.aliasName.example': 'For example: {model}-fast',
   'config.routing.roundRobin': 'Round Robin',
-  'config.routing.weightedRoundRobin': 'Weighted Round Robin',
   'config.routing.fillFirst': 'Fill First',
   'config.tabs.label': 'Advanced features sections',
   'config.tabs.general': 'General Settings',

@@ -679,7 +679,6 @@ export const zhCN = {
   'speedAliases.fast.title': 'Fast',
   'speedAliases.aliasName.example': '例如 {model}-fast',
   'config.routing.roundRobin': '轮询',
-  'config.routing.weightedRoundRobin': '加权轮询',
   'config.routing.fillFirst': '优先填充',
   'config.tabs.label': '高级功能子页面',
   'config.tabs.general': '基础设置',

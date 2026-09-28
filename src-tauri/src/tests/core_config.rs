@@ -1852,7 +1852,7 @@ fn core_config_validates_keys_and_routing_strategy() {
     assert!(validate_core_api_key("").is_err());
     assert!(validate_core_api_key("contains space").is_err());
     assert!(validate_routing_strategy("round-robin").is_ok());
-    assert!(validate_routing_strategy("weighted-round-robin").is_ok());
+    assert!(validate_routing_strategy("weighted-round-robin").is_err());
     assert!(validate_routing_strategy("fill-first").is_ok());
     assert!(validate_routing_strategy("random").is_err());
 }

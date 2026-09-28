@@ -155,10 +155,10 @@ pub(crate) fn is_hashed_management_secret_key(secret_key: &str) -> bool {
 }
 
 pub(crate) fn validate_routing_strategy(strategy: &str) -> Result<(), String> {
-    if matches!(strategy, "round-robin" | "weighted-round-robin" | "fill-first") {
+    if matches!(strategy, "round-robin" | "fill-first") {
         return Ok(());
     }
-    Err("Routing strategy supports only round-robin, weighted-round-robin or fill-first".to_string())
+    Err("Routing strategy supports only round-robin or fill-first".to_string())
 }
 
 pub(crate) fn normalize_optional_config_string(
