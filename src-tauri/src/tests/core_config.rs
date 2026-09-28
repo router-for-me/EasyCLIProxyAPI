@@ -757,6 +757,52 @@ fn packaged_macos_auth_directory_is_copied_before_config_is_repointed() {
 }
 
 #[test]
+fn packaged_macos_auth_migration_recovers_the_replaced_app_backup() {
+    let root = agent_test_home("macos-auth-update-backup");
+    let app = root.join("Applications/EasyCLIProxyAPI.app");
+    let relative = Path::new("Contents/MacOS/oauth");
+    let source = app.join(relative);
+    let backup = root.join("Applications/.EasyCLIProxyAPI.app.update-backup");
+    let old_auth = backup.join(relative);
+    let persistent = root.join("Library/Application Support/com.cpa.gui");
+    let install_dir = persistent.join("cpa-core");
+    let destination = persistent.join(OAUTH_DIR_NAME);
+    fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+    fs::create_dir_all(old_auth.join("logs/archive")).unwrap();
+    fs::write(old_auth.join("account.json"), b"existing-credential").unwrap();
+    fs::write(old_auth.join("logs/archive/core.log"), b"historical-log").unwrap();
+    let mut config = GuiConfigFile {
+        auth_dir: path_to_string(&source),
+        ..GuiConfigFile::default()
+    };
+
+    assert!(
+        migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination).unwrap()
+    );
+    assert_eq!(config.auth_dir, DEFAULT_AUTH_DIR);
+    assert_eq!(fs::read(destination.join("account.json")).unwrap(), b"existing-credential");
+    assert_eq!(fs::read(destination.join("logs/archive/core.log")).unwrap(), b"historical-log");
+    assert_eq!(fs::read(old_auth.join("account.json")).unwrap(), b"existing-credential");
+
+    config.auth_dir = path_to_string(&source);
+    fs::write(destination.join("account.json"), b"different-credential").unwrap();
+    let error = migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination)
+        .unwrap_err();
+    assert!(error.contains("not overwritten"), "{error}");
+    assert_eq!(config.auth_dir, path_to_string(&source));
+    assert_eq!(fs::read(destination.join("account.json")).unwrap(), b"different-credential");
+    assert_eq!(fs::read(old_auth.join("account.json")).unwrap(), b"existing-credential");
+
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("account.json"), b"different-credential").unwrap();
+    assert!(
+        migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination).unwrap()
+    );
+    assert_eq!(fs::read(destination.join("account.json")).unwrap(), b"different-credential");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn packaged_macos_auth_migration_does_not_overwrite_conflicting_credentials() {
     let root = agent_test_home("packaged-macos-auth-conflict");
     let source = root

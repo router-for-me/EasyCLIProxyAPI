@@ -2380,6 +2380,9 @@ fn main() {
         Ok(config) => config,
         Err(error) => {
             eprintln!("{error}");
+            if portable_update_ack.is_some() {
+                return;
+            }
             let mut config = GuiConfigFile::default();
             if let Err(secret_error) = ensure_strong_management_secret(&mut config) {
                 eprintln!("Failed to initialize WebUI security key: {secret_error}");

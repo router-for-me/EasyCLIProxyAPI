@@ -1127,7 +1127,33 @@ pub(crate) fn migrate_auth_dir_from_macos_app_bundle(
         ));
     }
 
-    copy_auth_directory(&source, &destination)?;
+    let migration_source = match fs::symlink_metadata(&source) {
+        Ok(_) => source.clone(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => source
+            .ancestors()
+            .find_map(|directory| {
+                if directory.file_name()? != std::ffi::OsStr::new("Contents") {
+                    return None;
+                }
+                let app = directory.parent()?;
+                if !app.extension()?.to_string_lossy().eq_ignore_ascii_case("app") {
+                    return None;
+                }
+                Some(
+                    app.parent()?
+                        .join(".EasyCLIProxyAPI.app.update-backup")
+                        .join(source.strip_prefix(app).ok()?),
+                )
+            })
+            .unwrap_or_else(|| source.clone()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to check old OAuth directory {}: {error}",
+                path_to_string(&source)
+            ));
+        }
+    };
+    copy_auth_directory(&migration_source, &destination)?;
     config.auth_dir = DEFAULT_AUTH_DIR.to_string();
     Ok(true)
 }

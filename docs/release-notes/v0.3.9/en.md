@@ -10,6 +10,7 @@
 
 ## Fixed
 
+- Fixed macOS updates losing access to OAuth credentials stored inside the old app bundle. Credentials and their logs are now recovered from the update backup into persistent storage. If configuration loading fails after an automatic update, startup stops so the updater can roll back instead of accepting default settings.
 - Fixed core updates overwriting existing settings with v8 template defaults. Upgrades from v7 and updates to partially migrated v8 configurations now preserve existing settings, including the OAuth credential directory, port, and access keys.
 - Fixed upstream API credentials being overwritten with client access keys during startup or access-key changes when a v8 configuration has no version marker.
 - Core startup logs now append to existing output, preserving startup history when the core starts or restarts.

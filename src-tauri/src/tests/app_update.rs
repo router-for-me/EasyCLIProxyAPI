@@ -627,10 +627,13 @@ fn portable_update_zip_accepts_the_complete_release_package() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 #[test]
 fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
     let root = agent_test_home("portable-replace");
+    let platform = current_core_platform().unwrap();
+    let old_archive = core_release_asset_name("v7.2.100", &platform);
+    let new_archive = core_release_asset_name("v7.2.109", &platform);
     let app_dir = root.join("app");
     let work_dir = root.join("work");
     let staging = work_dir.join("staging");
@@ -644,7 +647,7 @@ fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
     fs::write(
         app_dir
             .join("cpa-core")
-            .join("CLIProxyAPI_7.2.100_windows_amd64.zip"),
+            .join(&old_archive),
         b"old core archive",
     )
     .unwrap();
@@ -670,7 +673,7 @@ fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
     fs::write(
         staging
             .join("cpa-core")
-            .join("CLIProxyAPI_7.2.109_windows_amd64.zip"),
+            .join(&new_archive),
         b"new core archive",
     )
     .unwrap();
@@ -680,17 +683,17 @@ fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
         staged_exe: staging.join(PORTABLE_APP_BINARY),
         current_manifest: app_dir.join(PORTABLE_APP_MANIFEST_FILE),
         staged_manifest: staging.join(PORTABLE_APP_MANIFEST_FILE),
-        backup_exe: app_dir.join(".EasyCLIProxyAPI.exe.update-backup"),
+        backup_exe: app_dir.join(format!(".{PORTABLE_APP_BINARY}.update-backup")),
         backup_manifest: app_dir.join(".portable-app.json.update-backup"),
         current_core_version: app_dir.join(CORE_VERSION_FILE),
         staged_core_version: staging.join(CORE_VERSION_FILE),
         backup_core_version: app_dir.join(".core-version.txt.update-backup"),
         staged_core_archive: staging
             .join("cpa-core")
-            .join("CLIProxyAPI_7.2.109_windows_amd64.zip"),
+            .join(&new_archive),
         target_core_archive: app_dir
             .join("cpa-core")
-            .join("CLIProxyAPI_7.2.109_windows_amd64.zip"),
+            .join(&new_archive),
         install_core_archive: true,
         ack_path: work_dir.join("update-started.ack"),
         work_dir,
