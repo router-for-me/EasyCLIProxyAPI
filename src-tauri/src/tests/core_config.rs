@@ -1448,6 +1448,26 @@ fn v8_core_config_reads_and_writes_canonical_nested_fields() {
 }
 
 #[test]
+fn v8_startup_without_version_marker_preserves_upstream_credentials() {
+    let input = "server: {port: 9527}\noauth: {auth-dir: ../oauth}\naccess: {api-keys: [old-client-key]}\napi-keys:\n  codex:\n    - name: custom-provider\n      base-url: https://example.invalid/v1\n      keys: [{api-key: upstream-secret}]\n";
+    let original = serde_norway::from_str::<serde_norway::Value>(input).unwrap();
+    let config = GuiConfigFile {
+        api_keys: vec![GuiApiKeyEntry { key: "new-client-key".into(), remark: String::new() }],
+        management_secret_key: "management-secret".into(),
+        ..GuiConfigFile::default()
+    };
+    for keys in [config.api_keys.clone(), Vec::new()] {
+        let config = GuiConfigFile { api_keys: keys, ..config.clone() };
+        let updated = apply_gui_managed_settings(input, &config).unwrap();
+        let updated = serde_norway::from_str::<serde_norway::Value>(&updated).unwrap();
+        assert_eq!(updated["api-keys"], original["api-keys"], "upstream credentials must not be replaced by client keys");
+        let effective = core_config_settings_from_value(&updated).unwrap();
+        assert_eq!(effective.api_keys, gui_api_key_values(&config.api_keys));
+        assert_eq!(effective.auth_dir, "../oauth");
+    }
+}
+
+#[test]
 fn core_config_reads_proxy_and_session_affinity_fields() {
     let canonical = serde_norway::from_str::<serde_norway::Value>(
             "proxy-url: socks5://127.0.0.1:7890\nrouting:\n  session-affinity: true\n  session-affinity-ttl: 2h\n",

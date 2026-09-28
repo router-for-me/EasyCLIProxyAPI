@@ -1223,11 +1223,26 @@ pub(crate) fn set_core_yaml_nested_value(
 }
 
 pub(crate) fn core_config_uses_v8(document: &serde_norway::Value) -> bool {
-    document
-        .as_mapping()
-        .and_then(|root| yaml_mapping_value(root, "config-version"))
+    let Some(root) = document.as_mapping() else {
+        return false;
+    };
+    if yaml_mapping_value(root, "config-version")
         .and_then(serde_norway::Value::as_u64)
         .is_some_and(|version| version >= 8)
+    {
+        return true;
+    }
+    [
+        "server", "management", "access", "credentials", "requests", "oauth",
+        "multimedia", "observability",
+    ]
+    .iter()
+    .any(|section| yaml_mapping_value(root, section).is_some_and(serde_norway::Value::is_mapping))
+        || ["retry", "cooldown"].iter().any(|section| {
+            nested_yaml_value(root, &["routing", section])
+                .is_some_and(serde_norway::Value::is_mapping)
+        })
+        || yaml_mapping_value(root, "api-keys").is_some_and(serde_norway::Value::is_mapping)
 }
 
 pub(crate) fn set_core_yaml_path_value(

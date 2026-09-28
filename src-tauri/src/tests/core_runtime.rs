@@ -612,6 +612,53 @@ fn replacing_v7_with_v8_preserves_the_legacy_config_byte_for_byte() {
 }
 
 #[test]
+fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
+    let root = agent_test_home("core-v8-partial-migration");
+    let install_dir = root.join("cpa-core");
+    let staging_dir = root.join("cpa-core.staging");
+    fs::create_dir_all(&install_dir).unwrap();
+    fs::create_dir_all(root.join("oauth")).unwrap();
+    let credential_path = root.join("oauth/account.json");
+    fs::write(&credential_path, b"existing-credential").unwrap();
+    let legacy = "# User configuration\nhost: 127.0.0.1\nport: 9527\nauth-dir: ../oauth\napi-keys: [client-key]\nremote-management: {secret-key: user-secret}\nproxy-url: direct\nrequest-retry: 9\ncodex-api-key: [{api-key: upstream-key, base-url: 'https://example.invalid/v1'}]\noauth-model-alias: {codex: [{name: model, alias: custom-model}]}\n";
+    let template = "server: {host: '', port: 8317}\noauth: {auth-dir: '~/.cli-proxy-api'}\naccess: {api-keys: [your-api-key-1]}\nmanagement: {secret-key: ''}\nrequests: {proxy-url: ''}\nrouting: {retry: {request-retry: 3}}\n";
+
+    for prefix in ["", "config-version: 8\n", "server: {host: 127.0.0.1}\n", "config-version: 8\nserver: {host: 127.0.0.1}\n"] {
+        let original = format!("{prefix}{legacy}");
+        fs::write(install_dir.join(CORE_CONFIG_FILE), &original).unwrap();
+        for template_prefix in ["config-version: 8\n", ""] {
+            fs::create_dir_all(&staging_dir).unwrap();
+            fs::write(staging_dir.join(CORE_EXAMPLE_CONFIG_FILE), format!("{template_prefix}{template}")).unwrap();
+            migrate_core_config_for_update(&install_dir, &staging_dir).unwrap();
+            overlay_install_dir(&install_dir, &staging_dir).unwrap();
+
+            let migrated = fs::read_to_string(install_dir.join(CORE_CONFIG_FILE)).unwrap();
+            let document = serde_norway::from_str::<serde_norway::Value>(&migrated).unwrap();
+            let settings = core_config_settings_from_value(&document).unwrap();
+            assert_eq!(settings.auth_dir, "../oauth", "credential directory changed during update");
+            assert_eq!(settings.port, 9527);
+            assert_eq!(settings.api_keys, vec!["client-key"]);
+            assert_eq!(settings.management_secret_key.as_deref(), Some("user-secret"));
+            assert_eq!(settings.proxy_url, "direct");
+            assert_eq!(settings.request_retry, 9);
+            assert_eq!(migrated, original, "update must preserve every existing field and comment");
+
+            let mut gui = GuiConfigFile::default();
+            apply_core_settings_to_gui_config(&mut gui, &settings);
+            gui.proxy_url = settings.proxy_url.clone();
+            let startup = merge_core_config_yaml(template, Some(&migrated), &gui).unwrap();
+            let startup = serde_norway::from_str::<serde_norway::Value>(&startup).unwrap();
+            let effective = core_config_settings_from_value(&startup).unwrap();
+            assert_eq!(auth_dir_path_for_core(&effective.auth_dir, &install_dir).unwrap(), root.join("oauth"));
+            assert_eq!(startup["codex-api-key"], document["codex-api-key"]);
+            assert_eq!(startup["oauth-model-alias"], document["oauth-model-alias"]);
+            assert_eq!(fs::read(&credential_path).unwrap(), b"existing-credential");
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn replacing_a_core_rejects_invalid_config_without_overwriting_files() {
     let root = agent_test_home("core-config-migrate-invalid");
     let source = root.join("source");
@@ -980,6 +1027,10 @@ fn core_start_log_captures_stdout_and_stderr() {
     assert!(output.contains("===== CPA kernel startup"));
     assert!(output.contains("core stdout marker"));
     assert!(output.contains("core stderr marker"));
-    assert!(!output.contains("stale startup output"));
+    assert!(output.starts_with("stale startup output\n"));
+    drop(core_start_stdio(&log_path).unwrap());
+    let restarted_output = fs::read_to_string(&log_path).unwrap();
+    assert!(restarted_output.starts_with(&output));
+    assert_eq!(restarted_output.matches("===== CPA kernel startup").count(), 2);
     fs::remove_dir_all(root).unwrap();
 }

@@ -1398,11 +1398,10 @@ pub(crate) fn core_start_stdio(log_path: &Path) -> io::Result<(Stdio, Stdio)> {
     }
 
     let mut header_file = File::options()
-        .write(true)
+        .append(true)
         .create(true)
-        .truncate(true)
         .open(log_path)?;
-    writeln!(header_file, "===== CPA kernel startup {} =====", unix_now())?;
+    writeln!(header_file, "\n===== CPA kernel startup {} =====", unix_now())?;
     drop(header_file);
 
     let stdout_file = File::options().append(true).open(log_path)?;
@@ -1958,10 +1957,7 @@ pub(crate) fn migrate_core_config_for_update(
     }
     let template_document = serde_norway::from_str::<serde_norway::Value>(&template)
         .map_err(|error| format!("Failed to parse new kernel configuration template: {error}"))?;
-    let migrated = if core_config_uses_v8(&template_document) && !core_config_uses_v8(&old_document) {
-        // v8 accepts legacy-only files and migrates them atomically on the first
-        // successful v8 Management API write. Mixing both layouts here would let
-        // v8 template defaults override the user's legacy values.
+    let migrated = if core_config_uses_v8(&template_document) {
         old_config
     } else {
         merge_core_config_fields(&template, Some(&old_config))?

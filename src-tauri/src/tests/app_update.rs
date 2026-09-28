@@ -651,6 +651,19 @@ fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
     fs::write(app_dir.join(GUI_CONFIG_FILE), b"user config").unwrap();
     fs::create_dir_all(app_dir.join(OAUTH_DIR_NAME)).unwrap();
     fs::write(app_dir.join(OAUTH_DIR_NAME).join("account.json"), b"oauth").unwrap();
+    let preserved_paths = [
+        "cpa-core/config.yaml",
+        "cpa-core/oauth/account.json",
+        "cpa-core/custom-auth/account.json",
+        "cpa-core/logs/main.log",
+        "cpa-core/logs/archive/requests.log",
+        "oauth/logs/oauth.log",
+    ];
+    for path in preserved_paths {
+        let path = app_dir.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"existing user data").unwrap();
+    }
     fs::write(staging.join(PORTABLE_APP_BINARY), b"new exe").unwrap();
     fs::write(staging.join(PORTABLE_APP_MANIFEST_FILE), b"new manifest").unwrap();
     fs::write(staging.join(CORE_VERSION_FILE), b"7.2.109").unwrap();
@@ -685,6 +698,9 @@ fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
     };
 
     replace_portable_update_files(&descriptor).unwrap();
+    for path in preserved_paths {
+        assert_eq!(fs::read(app_dir.join(path)).unwrap(), b"existing user data");
+    }
     assert_eq!(fs::read(&descriptor.current_exe).unwrap(), b"new exe");
     assert_eq!(
         fs::read(&descriptor.current_manifest).unwrap(),
@@ -708,6 +724,9 @@ fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
     );
 
     restore_portable_update_backup(&descriptor).unwrap();
+    for path in preserved_paths {
+        assert_eq!(fs::read(app_dir.join(path)).unwrap(), b"existing user data");
+    }
     assert_eq!(fs::read(&descriptor.current_exe).unwrap(), b"old exe");
     assert_eq!(
         fs::read(&descriptor.current_manifest).unwrap(),
