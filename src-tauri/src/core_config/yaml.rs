@@ -1184,22 +1184,6 @@ pub(crate) fn yaml_edit_node_from_value(
         .ok_or_else(|| "Unable to construct kernel configuration value".to_string())
 }
 
-pub(crate) fn set_core_yaml_top_level_value(
-    document: &mut serde_norway::Value,
-    key: &str,
-    value: serde_norway::Value,
-) -> Result<bool, String> {
-    let root = document
-        .as_mapping_mut()
-        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
-    let key = yaml_key(key);
-    if root.get(&key) == Some(&value) {
-        return Ok(false);
-    }
-    root.insert(key, value);
-    Ok(true)
-}
-
 pub(crate) fn set_core_yaml_nested_value(
     document: &mut serde_norway::Value,
     section: &str,

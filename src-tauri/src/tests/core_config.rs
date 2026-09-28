@@ -1264,11 +1264,7 @@ fn yaml_edit_sequence_shrink_keeps_following_top_level_key_valid() {
 fn runtime_yaml_ast_patch_handles_core_comments_around_nested_mapping() {
     let input = "host: 127.0.0.1\nremote-management:\n# Whether to allow remote access.\n  allow-remote: false\n# Management key.\n# All requests require this key.\n  secret-key: old\n# Disable panel.\n  disable-control-panel: false\nauth-dir: /tmp/old\napi-keys:\n  - old-key\n";
     let rendered = patch_core_yaml_document(input, |document| {
-        let auth_changed = set_core_yaml_top_level_value(
-            document,
-            "auth-dir",
-            serde_norway::Value::String("/tmp/new".to_string()),
-        )?;
+        let auth_changed = set_core_yaml_auth_dir(document, "/tmp/new")?;
         let secret_changed = set_core_yaml_nested_value(
             document,
             "remote-management",
