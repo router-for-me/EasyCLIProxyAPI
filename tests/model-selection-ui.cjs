@@ -185,7 +185,7 @@ const { mkdirSync } = require('node:fs');
     for (const [locale, theme, width, height] of [['zh-CN', 'light', 1280, 820], ['en', 'dark', 1280, 820], ['ja', 'light', 390, 740]]) {
       await page.setViewportSize({ width, height });
       await page.goto(`http://127.0.0.1:1423/tests/fixtures/model-selection.html?locale=${locale}&theme=${theme}`);
-      await page.locator('.model-config-heading button').press('Enter');
+      await page.locator('.model-config-heading button').click();
       await ready();
       const popup = page.locator('.model-transfer-dialog');
       const rect = await popup.boundingBox();

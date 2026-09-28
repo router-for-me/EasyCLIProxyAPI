@@ -5108,17 +5108,16 @@ textarea:focus-visible {
   min-height: 360px;
 }
 
-.real-provider-workbench + .config-dialog-backdrop .management-dialog {
-  grid-template-rows: auto repeat(5, minmax(52px, auto)) auto;
-  height: auto;
-  max-height: min(720px, calc(100vh - 48px));
-  overflow: auto;
-}
-
-.real-provider-workbench + .config-dialog-backdrop .api-provider-dialog {
+.config-dialog.api-provider-dialog {
   grid-template-rows: auto;
   grid-auto-rows: auto;
   width: min(560px, 100%);
+  height: auto;
+  min-height: 0;
+  max-height: min(720px, calc(100vh - 48px));
+  max-height: min(720px, calc(100dvh - 48px));
+  overflow: auto;
+  overscroll-behavior: contain;
   gap: 10px;
   padding: 16px 18px;
   scrollbar-gutter: stable;

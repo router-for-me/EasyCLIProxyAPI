@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { I18nProvider } from '../../src/i18n';
 import { ApiAccessPage, providerRemarkIdentity, type ApiAccessRemarkLocator, type ProviderSection } from '../../src/pages/ApiAccessPage';
+import { flattenV8ProviderGroups, groupLegacyProviderRecords } from '../../src/services/managementApi';
 import '../../src/styles/index.css';
 
 localStorage.setItem('easy-cli-proxy-api.locale', 'en');
@@ -35,22 +36,24 @@ mockIPC((cmd, rawArgs) => {
   if (cmd === 'management_request') {
     const { request } = rawArgs as { request: { method: string; path: string; body: Record<string, unknown>[] } };
     const section = request.path.slice(1);
+    if (request.method === 'POST' && section === 'requests/api-call') {
+      return { status_code: 200, body: { data: [{ id: 'discovered-model' }] } };
+    }
     if (request.method === 'GET') {
-      if (section === 'config') return { 'claude-api-key': structuredClone(fixture.providerFixture.records) };
-      return { [section]: section === 'claude-api-key'
-        ? fixture.providerFixture.records.map((record, index) => ({ ...record, 'auth-index': `auth-${index}` }))
-        : [] };
+      const groups = groupLegacyProviderRecords('claude', fixture.providerFixture.records);
+      if (section === 'config') return { 'api-keys': { claude: groups } };
+      return section === 'config/api-keys/claude' ? groups : [];
     }
     fixture.providerFixture.writes.push({ method: request.method, body: structuredClone(request.body) });
-    if (request.method !== 'PUT' || section !== 'claude-api-key') throw new Error('Unexpected provider mutation');
-    fixture.providerFixture.records = structuredClone(request.body);
+    if (request.method !== 'PUT' || section !== 'config/api-keys/claude') throw new Error('Unexpected provider mutation');
+    fixture.providerFixture.records = flattenV8ProviderGroups('claude', structuredClone(request.body));
     return { status: 'ok' };
   }
   throw new Error(`Unhandled fixture command: ${cmd}`);
 });
 
 createRoot(document.getElementById('root')!).render(
-  <I18nProvider><div className="app-shell"><div className="workspace"><main className="content">
+  <I18nProvider><div className="app-shell"><aside className="sidebar" /><div className="workspace"><main className="content">
     <ApiAccessPage />
   </main></div></div></I18nProvider>,
 );

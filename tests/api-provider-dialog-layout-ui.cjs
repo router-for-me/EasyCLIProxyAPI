@@ -1,0 +1,115 @@
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+
+(async () => {
+  const { createServer } = await import('vite');
+  const react = (await import('@vitejs/plugin-react')).default;
+  const server = await createServer({
+    configFile: false,
+    root: path.resolve(__dirname, '..'),
+    plugins: [react()],
+    optimizeDeps: { entries: ['tests/fixtures/provider-duplicates.html'] },
+    logLevel: 'error',
+    server: { host: '127.0.0.1', port: 1421, strictPort: false, watch: null },
+  });
+  let browser;
+  try {
+    await server.listen();
+    const base = `http://127.0.0.1:${server.httpServer.address().port}`;
+    await (await fetch(base)).text();
+    const channel = process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined);
+    browser = await chromium.launch({ channel, headless: true, args: ['--no-proxy-server'] });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    page.setDefaultTimeout(10000);
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(String(error)));
+    await page.route('**/*', (route) => route.request().url().startsWith(`${base}/`) ? route.continue() : route.abort());
+    await page.goto(`${base}/tests/fixtures/provider-duplicates.html`, { waitUntil: 'domcontentloaded' });
+    await page.locator('.provider-category-panel button').filter({ hasText: 'Claude' }).click();
+    await page.locator('.real-provider-row').waitFor();
+    await page.evaluate(() => {
+      window.providerFixture.records[0].models = Array.from({ length: 30 }, (_, index) => ({ name: `model-${index}` }));
+    });
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await page.locator('.real-provider-row').getByRole('button', { name: 'Edit', exact: true }).click();
+    const form = page.getByRole('dialog', { name: 'Edit API Connection', exact: true });
+    assert.equal(await form.locator('.model-config-entry').count(), 30);
+
+    // Older WebKit makes an inline-size query container a fixed-position containing block.
+    // Explicit layout containment reproduces that behavior on current browser engines.
+    await page.addStyleTag({ content: '.content { contain: layout; min-height: 1400px; }' });
+
+    const assertViewportOverlay = async (selector) => {
+      const bounds = await page.locator(selector).evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      });
+      const viewport = page.viewportSize();
+      assert.deepEqual(bounds, { x: 0, y: 0, ...viewport }, `${selector} must cover the viewport independently of page containment`);
+    };
+    const assertDialogControls = async (dialog) => {
+      const bounds = await dialog.boundingBox();
+      const viewport = page.viewportSize();
+      assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width + 1
+        && bounds.y + bounds.height <= viewport.height + 1, 'Dialog must fit inside the window');
+      for (const button of ['Close', 'Cancel', 'Save']) {
+        const control = dialog.getByRole('button', { name: button, exact: true });
+        const visible = await control.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.top >= 0 && rect.bottom <= innerHeight
+            && element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+        });
+        assert.equal(visible, true, `${button} must remain visible and unobstructed`);
+      }
+      const dimensions = await dialog.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
+      assert.ok(dimensions.scroll <= dimensions.client + 1, 'Dialog must not overflow horizontally');
+    };
+
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 1024, height: 600 }, { width: 640, height: 600 }]) {
+      await page.setViewportSize(viewport);
+      await assertViewportOverlay('.config-dialog-backdrop');
+      await assertDialogControls(form);
+      await form.getByLabel('Remark', { exact: true }).fill('Small-window edit');
+      await form.locator('.provider-advanced-settings summary').click();
+      const headers = form.getByLabel(/Custom Headers/);
+      await headers.fill('X-Layout-Test: reachable');
+      await assertDialogControls(form);
+      const scroll = await form.evaluate((element) => ({ top: element.scrollTop, max: element.scrollHeight - element.clientHeight }));
+      assert.ok(scroll.top > 0 && scroll.max > 0, 'Advanced settings must be reachable by scrolling inside the dialog');
+      await form.locator('.provider-advanced-settings summary').click();
+    }
+
+    await form.getByRole('button', { name: 'Fetch Models', exact: true }).click();
+    const models = page.getByRole('dialog', { name: 'Select Models', exact: true });
+    await models.waitFor();
+    await assertViewportOverlay('.model-discovery-backdrop');
+    for (let index = 0; index < 5; index += 1) {
+      await page.keyboard.press('Tab');
+      assert.equal(await models.evaluate((element) => element.contains(document.activeElement)), true);
+    }
+    await page.keyboard.press('Escape');
+    await models.waitFor({ state: 'detached' });
+    assert.equal(await form.getByRole('button', { name: 'Fetch Models', exact: true }).evaluate((element) => element === document.activeElement), true);
+    await assertDialogControls(form);
+    await form.getByRole('button', { name: 'Save', exact: true }).click();
+    await form.waitFor({ state: 'detached' });
+    const record = await page.evaluate(() => window.providerFixture.records[0]);
+    assert.equal(record.headers['X-Layout-Test'], 'reachable');
+    assert.equal(record.models.length, 30);
+    assert.equal(await page.evaluate(() => document.body.style.overflow), '');
+
+    await page.locator('.provider-category-panel button').filter({ hasText: 'OpenAI' }).click();
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    const add = page.getByRole('dialog', { name: 'Add API Connection', exact: true });
+    await assertViewportOverlay('.config-dialog-backdrop');
+    await assertDialogControls(add);
+    await add.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await add.waitFor({ state: 'detached' });
+    assert.deepEqual(errors, []);
+    console.log('PASS: #321 provider dialogs fit small windows, escape page containment, scroll long forms, preserve nested focus, and save edits.');
+  } finally {
+    if (browser) await browser.close();
+    await server.close();
+  }
+})().catch((error) => { console.error(error); process.exitCode = 1; });

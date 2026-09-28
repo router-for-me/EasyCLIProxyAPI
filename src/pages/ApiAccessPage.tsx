@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import {
   closestCenter,
@@ -2049,7 +2050,7 @@ export function ApiProviderDialog({
         ? t('apiAccess.models.autoHint')
         : t('apiAccess.models.allHint');
 
-  return (
+  const content = (
     <>
       <div className="config-dialog-backdrop" onMouseDown={(event) => event.currentTarget === event.target && !busy && onClose()}>
       <form ref={providerDialogRef} className="config-dialog management-dialog api-provider-dialog" role="dialog" aria-modal="true" aria-labelledby="api-provider-dialog-title" onSubmit={(event) => void submit(event)}>
@@ -2257,4 +2258,6 @@ export function ApiProviderDialog({
       ) : null}
     </>
   );
+  // Keep both dialogs outside the page's query container, which can contain fixed elements in WebKit.
+  return typeof document === 'undefined' ? content : createPortal(content, document.body);
 }
