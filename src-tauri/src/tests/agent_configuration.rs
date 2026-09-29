@@ -1389,6 +1389,10 @@ fn hermes_agent_config_preserves_unknown_fields_and_uses_current_schema() {
     assert_eq!(managed["api_key"].as_str(), Some(DEFAULT_API_KEY));
     assert_eq!(managed["default_model"].as_str(), Some("gpt-test"));
     assert_eq!(managed["transport"].as_str(), Some("chat_completions"));
+    assert!(managed.get("name").is_none());
+    assert!(managed.get("base_url").is_none());
+    assert!(managed.get("api_mode").is_none());
+    assert!(managed.get("model").is_none());
     assert!(managed["models"]["gpt-test"].is_mapping());
     assert!(managed["models"]["deepseek-test"].is_mapping());
     assert_eq!(

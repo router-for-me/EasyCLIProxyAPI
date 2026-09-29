@@ -3589,6 +3589,9 @@ pub(crate) fn build_hermes_agent_config(
     for (key, value) in canonical_provider {
         managed_provider.insert(key.clone(), value.clone());
     }
+    for legacy_key in ["name", "base_url", "api_mode", "model"] {
+        managed_provider.remove(yaml_key(legacy_key));
+    }
     let providers = ensure_yaml_mapping_entry(mapping, "providers");
     providers.insert(
         yaml_key(MANAGED_AGENT_PROVIDER_ID),
