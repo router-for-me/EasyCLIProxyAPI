@@ -37,7 +37,8 @@ import { canOpenAppPage, isAlwaysAvailablePage } from './navigation';
 import { useThemePreference } from './theme';
 import { useDialogFocusTrap } from './components/useDialogFocusTrap';
 
-const CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
+const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
+const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
 
 const pages = [
   {
@@ -250,7 +251,9 @@ function AppContent() {
 
   const openContact = async () => {
     try {
-      await invoke('open_external_url', { url: CONTACT_URL });
+      await invoke('open_external_url', {
+        url: locale === 'zh-CN' ? QQ_CONTACT_URL : DISCORD_SERVER_URL,
+      });
     } catch (error) {
       console.error('Failed to open the contact link', error);
     }
