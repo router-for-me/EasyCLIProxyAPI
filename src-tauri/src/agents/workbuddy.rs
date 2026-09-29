@@ -60,6 +60,7 @@ fn workbuddy_resources(executable: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn find_workbuddy_desktop_executable(home: &Path) -> Option<PathBuf> {
+    #[cfg(not(target_os = "macos"))]
     let mut candidates = Vec::new();
     #[cfg(target_os = "windows")]
     {
@@ -85,11 +86,10 @@ pub(crate) fn find_workbuddy_desktop_executable(home: &Path) -> Option<PathBuf> 
         }
     }
     #[cfg(target_os = "macos")]
-    for root in [PathBuf::from("/Applications"), home.join("Applications")] {
-        for (app, executable) in [("WorkBuddy AI", "WorkBuddy AI"), ("WorkBuddy", "WorkBuddy")] {
-            candidates.push(root.join(format!("{app}.app/Contents/MacOS/{executable}")));
-        }
-    }
+    let found = find_workbuddy_macos_executable_in_roots(
+        &[PathBuf::from("/Applications"), home.join("Applications")],
+        read_workbuddy_bundle_executable,
+    );
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         candidates.extend([
@@ -98,10 +98,59 @@ pub(crate) fn find_workbuddy_desktop_executable(home: &Path) -> Option<PathBuf> 
             PathBuf::from("/opt/WorkBuddyAI/workbuddy"),
         ]);
     }
+    #[cfg(not(target_os = "macos"))]
     let found = candidates.into_iter().find(|path| path.is_file());
     #[cfg(all(target_os = "windows", not(test)))]
     let found = found.or_else(find_windows_registered_workbuddy_executable);
     found
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn find_workbuddy_macos_executable_in_roots(
+    roots: &[PathBuf],
+    mut read_bundle_executable: impl FnMut(&Path) -> Option<String>,
+) -> Option<PathBuf> {
+    for root in roots {
+        for (app, fallback) in [("WorkBuddy AI", "WorkBuddy AI"), ("WorkBuddy", "WorkBuddy")] {
+            let application = root.join(format!("{app}.app"));
+            let macos = application.join("Contents/MacOS");
+            let info_plist = application.join("Contents/Info.plist");
+            if info_plist.is_file() {
+                if let Some(name) = read_bundle_executable(&info_plist) {
+                    let name = name.trim();
+                    let mut components = Path::new(name).components();
+                    if matches!(components.next(), Some(Component::Normal(_)))
+                        && components.next().is_none()
+                    {
+                        let executable = macos.join(name);
+                        if executable.is_file() {
+                            return Some(executable);
+                        }
+                    }
+                }
+            }
+            let executable = macos.join(fallback);
+            if executable.is_file() {
+                return Some(executable);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn read_workbuddy_bundle_executable(info_plist: &Path) -> Option<String> {
+    let mut command = Command::new("/usr/bin/plutil");
+    command
+        .args(["-extract", "CFBundleExecutable", "raw", "-o", "-"])
+        .arg(info_plist);
+    let output = command_output_with_timeout(&mut command, Duration::from_secs(5)).ok()??;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8(output.stdout).ok()?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 pub(crate) fn read_workbuddy_app_version(executable: &Path) -> Option<String> {

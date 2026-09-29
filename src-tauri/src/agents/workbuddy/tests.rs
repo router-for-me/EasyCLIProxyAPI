@@ -478,6 +478,91 @@ fn workbuddy_paths_use_environment_then_installed_product_data_folder() {
     assert_eq!(resolve(Some(&home.0), Some(Path::new("unused"))), home.0);
 }
 
+#[test]
+fn workbuddy_macos_finds_plist_executable_before_legacy_name() {
+    let home = Home::new();
+    for (index, app) in ["WorkBuddy", "WorkBuddy AI"].into_iter().enumerate() {
+        let root = home.0.join(format!("install-{index}"));
+        let application = root.join(format!("{app}.app"));
+        let macos = application.join("Contents/MacOS");
+        fs::create_dir_all(&macos).unwrap();
+        fs::write(application.join("Contents/Info.plist"), "Electron").unwrap();
+        fs::write(macos.join(app), "legacy").unwrap();
+        let electron = macos.join("Electron");
+        fs::write(&electron, "electron").unwrap();
+
+        assert_eq!(
+            find_workbuddy_macos_executable_in_roots(&[root], |info| {
+                fs::read_to_string(info).ok()
+            }),
+            Some(electron)
+        );
+    }
+}
+
+#[test]
+fn workbuddy_macos_falls_back_for_missing_or_invalid_plist_executable() {
+    let home = Home::new();
+    let outside = home.0.join("outside");
+    fs::write(&outside, "outside").unwrap();
+    for (index, app, declared) in [
+        (0, "WorkBuddy", None),
+        (1, "WorkBuddy AI", Some("Electron".to_string())),
+        (2, "WorkBuddy", Some("../outside".to_string())),
+        (3, "WorkBuddy AI", Some(".".to_string())),
+        (4, "WorkBuddy", Some(outside.to_string_lossy().into_owned())),
+    ] {
+        let root = home.0.join(format!("install-{index}"));
+        let application = root.join(format!("{app}.app"));
+        let macos = application.join("Contents/MacOS");
+        fs::create_dir_all(&macos).unwrap();
+        if let Some(declared) = declared {
+            fs::write(application.join("Contents/Info.plist"), declared).unwrap();
+        }
+        fs::write(application.join("Contents/outside"), "outside").unwrap();
+        let fallback = macos.join(app);
+        fs::write(&fallback, "legacy").unwrap();
+
+        assert_eq!(
+            find_workbuddy_macos_executable_in_roots(&[root], |info| {
+                fs::read_to_string(info).ok()
+            }),
+            Some(fallback)
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn workbuddy_reads_xml_and_binary_bundle_executable() {
+    let home = Home::new();
+    let xml = home.0.join("Info.xml.plist");
+    fs::write(
+        &xml,
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Electron</string></dict></plist>"#,
+    )
+    .unwrap();
+    assert_eq!(
+        read_workbuddy_bundle_executable(&xml).as_deref(),
+        Some("Electron")
+    );
+
+    let binary = home.0.join("Info.binary.plist");
+    let status = Command::new("/usr/bin/plutil")
+        .args(["-convert", "binary1", "-o"])
+        .arg(&binary)
+        .arg(&xml)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(
+        read_workbuddy_bundle_executable(&binary).as_deref(),
+        Some("Electron")
+    );
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn workbuddy_detects_local_install_without_launching_it() {
