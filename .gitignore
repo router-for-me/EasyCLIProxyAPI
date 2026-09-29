@@ -12,3 +12,6 @@ agent_docs/
 *.log
 *.tmp
 misc/
+
+AGENTS.md
+
