@@ -1279,7 +1279,7 @@ fn nested_model_options_and_third_party_providers_survive_all_updates() {
                     Some("/provider/cpa-gui/models/gpt-one".into())
                 }
                 AgentClient::OpenClaw => Some("/models/providers/cpa-gui/models/0".into()),
-                AgentClient::Hermes => Some("/custom_providers/0/models/gpt-one".into()),
+                AgentClient::Hermes => Some("/providers/cpa-gui/models/gpt-one".into()),
                 AgentClient::DeepSeekHarness if path == &paths[0] => Some(format!(
                     "/llm-pi-ai/providers/{DEEPSEEK_HARNESS_PROVIDER_ID}/models/0"
                 )),

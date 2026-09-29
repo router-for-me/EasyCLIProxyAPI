@@ -1545,6 +1545,20 @@ pub(crate) fn prepare_hermes_managed_removal(paths: &[PathBuf]) -> Result<Images
         .ok_or_else(|| "Hermes configuration root must be a mapping".to_string())?;
     let mut changed = false;
     let providers_empty = if let Some(providers) = root
+        .get_mut(yaml_key("providers"))
+        .and_then(serde_norway::Value::as_mapping_mut)
+    {
+        changed |= providers
+            .remove(yaml_key(MANAGED_AGENT_PROVIDER_ID))
+            .is_some();
+        providers.is_empty()
+    } else {
+        false
+    };
+    if providers_empty {
+        root.remove(yaml_key("providers"));
+    }
+    let legacy_providers_empty = if let Some(providers) = root
         .get_mut(yaml_key("custom_providers"))
         .and_then(serde_norway::Value::as_sequence_mut)
     {
@@ -1558,7 +1572,7 @@ pub(crate) fn prepare_hermes_managed_removal(paths: &[PathBuf]) -> Result<Images
     } else {
         false
     };
-    if providers_empty {
+    if legacy_providers_empty {
         root.remove(yaml_key("custom_providers"));
     }
     let model_empty = if let Some(model) = root
@@ -2393,7 +2407,13 @@ pub(crate) fn build_restored_hermes_config(
     let original_root = original_value
         .as_ref()
         .and_then(serde_norway::Value::as_mapping);
-    let original_managed = original_root
+    let original_providers = original_root
+        .and_then(|root| root.get(yaml_key("providers")))
+        .and_then(serde_norway::Value::as_mapping);
+    let original_managed = original_providers.and_then(|providers| {
+        providers.get(yaml_key(MANAGED_AGENT_PROVIDER_ID))
+    });
+    let original_legacy_managed = original_root
         .and_then(|root| root.get(yaml_key("custom_providers")))
         .and_then(serde_norway::Value::as_sequence)
         .and_then(|providers| {
@@ -2402,6 +2422,32 @@ pub(crate) fn build_restored_hermes_config(
                     == Some(MANAGED_AGENT_PROVIDER_ID)
             })
         });
+    if let Some(providers) = root
+        .get_mut(yaml_key("providers"))
+        .and_then(serde_norway::Value::as_mapping_mut)
+    {
+        let current_managed = providers
+            .get(yaml_key(MANAGED_AGENT_PROVIDER_ID))
+            .and_then(serde_norway::Value::as_mapping)
+            .cloned();
+        providers.remove(yaml_key(MANAGED_AGENT_PROVIDER_ID));
+        let mut managed = current_managed.unwrap_or_default();
+        let original_managed = original_managed.and_then(serde_norway::Value::as_mapping);
+        for key in ["api", "api_key", "default_model", "transport", "models"] {
+            restore_yaml_key(&mut managed, original_managed, key);
+        }
+        if original_managed.is_some() || !managed.is_empty() {
+            providers.insert(
+                yaml_key(MANAGED_AGENT_PROVIDER_ID),
+                serde_norway::Value::Mapping(managed),
+            );
+        }
+        if providers.is_empty() && original_providers.is_none() {
+            root.remove(yaml_key("providers"));
+        }
+    } else {
+        restore_yaml_key(root, original_root, "providers");
+    }
     if let Some(providers) = root
         .get_mut(yaml_key("custom_providers"))
         .and_then(serde_norway::Value::as_sequence_mut)
@@ -2419,7 +2465,8 @@ pub(crate) fn build_restored_hermes_config(
                 != Some(MANAGED_AGENT_PROVIDER_ID)
         });
         let mut managed = current_managed.unwrap_or_default();
-        let original_managed = original_managed.and_then(serde_norway::Value::as_mapping);
+        let original_managed =
+            original_legacy_managed.and_then(serde_norway::Value::as_mapping);
         for key in ["name", "base_url", "api_key", "api_mode", "model", "models"] {
             restore_yaml_key(&mut managed, original_managed, key);
         }
@@ -3460,6 +3507,7 @@ pub(crate) fn ensure_yaml_mapping_entry<'a>(
         .expect("mapping entry was just normalized")
 }
 
+#[allow(dead_code)]
 pub(crate) fn ensure_yaml_sequence_entry<'a>(
     root: &'a mut serde_norway::Mapping,
     key: &str,
@@ -3492,30 +3540,45 @@ pub(crate) fn build_hermes_agent_config(
     let mapping = root
         .as_mapping_mut()
         .ok_or_else(|| "Hermes config.yaml root must be a mapping".to_string())?;
-    let providers = ensure_yaml_sequence_entry(mapping, "custom_providers");
-    let mut managed_provider = None;
-    let mut retained_providers = Vec::with_capacity(providers.len());
-    for provider in std::mem::take(providers) {
-        match provider.get("name").and_then(serde_norway::Value::as_str) {
-            Some(name) if name == MANAGED_AGENT_PROVIDER_ID => {
+    let mut managed_provider = mapping
+        .get(yaml_key("providers"))
+        .and_then(serde_norway::Value::as_mapping)
+        .and_then(|providers| providers.get(yaml_key(MANAGED_AGENT_PROVIDER_ID)))
+        .and_then(serde_norway::Value::as_mapping)
+        .cloned();
+    let legacy_providers_empty = if let Some(legacy) = mapping
+        .get_mut(yaml_key("custom_providers"))
+        .and_then(serde_norway::Value::as_sequence_mut)
+    {
+        let mut retained = Vec::with_capacity(legacy.len());
+        for provider in std::mem::take(legacy) {
+            if provider.get("name").and_then(serde_norway::Value::as_str)
+                == Some(MANAGED_AGENT_PROVIDER_ID)
+            {
                 if managed_provider.is_none() {
                     managed_provider = provider.as_mapping().cloned();
                 }
+            } else {
+                retained.push(provider);
             }
-            Some(_) => retained_providers.push(provider),
-            None => {}
         }
+        *legacy = retained;
+        legacy.is_empty()
+    } else {
+        false
+    };
+    if legacy_providers_empty {
+        mapping.remove(yaml_key("custom_providers"));
     }
     let provider_models = ordered_agent_models(available_models, model)
         .into_iter()
         .map(|model| (model.name, serde_json::json!({})))
         .collect::<serde_json::Map<_, _>>();
     let canonical_provider = serde_norway::to_value(serde_json::json!({
-        "name": MANAGED_AGENT_PROVIDER_ID,
-        "base_url": base_url,
+        "api": base_url,
         "api_key": api_key,
-        "api_mode": "chat_completions",
-        "model": model,
+        "default_model": model,
+        "transport": "chat_completions",
         "models": provider_models
     }))
     .map_err(|error| format!("Failed to generate Hermes provider: {error}"))?;
@@ -3526,8 +3589,11 @@ pub(crate) fn build_hermes_agent_config(
     for (key, value) in canonical_provider {
         managed_provider.insert(key.clone(), value.clone());
     }
-    retained_providers.push(serde_norway::Value::Mapping(managed_provider));
-    *providers = retained_providers;
+    let providers = ensure_yaml_mapping_entry(mapping, "providers");
+    providers.insert(
+        yaml_key(MANAGED_AGENT_PROVIDER_ID),
+        serde_norway::Value::Mapping(managed_provider),
+    );
     let model_config = ensure_yaml_mapping_entry(mapping, "model");
     model_config.insert(
         serde_norway::Value::String("default".to_string()),

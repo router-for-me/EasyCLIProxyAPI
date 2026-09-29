@@ -754,23 +754,46 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
     }
     if client == "hermes" {
         let old = before
-            .get("custom_providers")
-            .and_then(Value::as_array)
-            .and_then(|providers| {
-                providers.iter().find(|p| {
-                    p.get("name").and_then(Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)
+            .get("providers")
+            .and_then(Value::as_object)
+            .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID))
+            .and_then(|provider| provider.get("models"))
+            .or_else(|| {
+                before
+                    .get("custom_providers")
+                    .and_then(Value::as_array)
+                    .and_then(|providers| {
+                        providers.iter().find(|p| {
+                            p.get("name").and_then(Value::as_str)
+                                == Some(MANAGED_AGENT_PROVIDER_ID)
+                        })
+                    })
+                    .and_then(|p| p.get("models"))
+            });
+        let new = if after
+            .get("providers")
+            .and_then(Value::as_object)
+            .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID))
+            .and_then(|provider| provider.get("models"))
+            .is_some()
+        {
+            after
+                .get_mut("providers")
+                .and_then(Value::as_object_mut)
+                .and_then(|providers| providers.get_mut(MANAGED_AGENT_PROVIDER_ID))
+                .and_then(|provider| provider.get_mut("models"))
+        } else {
+            after
+                .get_mut("custom_providers")
+                .and_then(Value::as_array_mut)
+                .and_then(|providers| {
+                    providers.iter_mut().find(|p| {
+                        p.get("name").and_then(Value::as_str)
+                            == Some(MANAGED_AGENT_PROVIDER_ID)
+                    })
                 })
-            })
-            .and_then(|p| p.get("models"));
-        let new = after
-            .get_mut("custom_providers")
-            .and_then(Value::as_array_mut)
-            .and_then(|providers| {
-                providers.iter_mut().find(|p| {
-                    p.get("name").and_then(Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)
-                })
-            })
-            .and_then(|p| p.get_mut("models"));
+                .and_then(|p| p.get_mut("models"))
+        };
         if let (Some(old), Some(new)) = (old, new) {
             inventory(client, old, new);
         }

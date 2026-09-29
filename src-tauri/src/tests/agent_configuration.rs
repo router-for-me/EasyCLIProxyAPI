@@ -1359,7 +1359,7 @@ fn openclaw_agent_config_accepts_json5_and_preserves_unknown_fields() {
 fn hermes_agent_config_preserves_unknown_fields_and_uses_current_schema() {
     let models = test_agent_models(&["gpt-test", "deepseek-test"]);
     let rendered = build_hermes_agent_config(
-            Some("# keep this comment\ntheme: dark\ncustom_providers:\n  - name: other\n    base_url: https://example.com\n  - name: cpa-gui\n    custom: keep\n  - name: cpa-gui\n    duplicate: true\n  - broken: true\n"),
+            Some("# keep this comment\ntheme: dark\nproviders:\n  other-provider:\n    api: https://example.com\ncustom_providers:\n  - name: other\n    base_url: https://example.com\n  - name: cpa-gui\n    custom: keep\n  - name: cpa-gui\n    duplicate: true\n  - broken: true\n"),
             "http://127.0.0.1:8317/v1",
             DEFAULT_API_KEY,
             "gpt-test",
@@ -1367,25 +1367,53 @@ fn hermes_agent_config_preserves_unknown_fields_and_uses_current_schema() {
         )
         .unwrap();
     let value: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
-    let providers = value["custom_providers"].as_sequence().unwrap();
+    let providers = value["providers"].as_mapping().unwrap();
     let managed = providers
-        .iter()
-        .find(|provider| provider["name"].as_str() == Some(MANAGED_AGENT_PROVIDER_ID))
+        .get(serde_yaml::Value::String(
+            MANAGED_AGENT_PROVIDER_ID.to_string(),
+        ))
         .unwrap();
+    let legacy = value["custom_providers"].as_sequence().unwrap();
 
     assert_eq!(value["theme"].as_str(), Some("dark"));
     assert!(rendered.contains("# keep this comment"));
-    assert_eq!(providers.len(), 2);
+    assert!(providers
+        .get(serde_yaml::Value::String("other-provider".to_string()))
+        .is_some());
+    assert_eq!(legacy.len(), 2);
+    assert!(legacy.iter().all(|provider| provider["name"].as_str()
+        != Some(MANAGED_AGENT_PROVIDER_ID)));
     assert_eq!(managed["custom"].as_str(), Some("keep"));
     assert!(managed.get("duplicate").is_none());
-    assert_eq!(managed["api_mode"].as_str(), Some("chat_completions"));
-    assert_eq!(managed["model"].as_str(), Some("gpt-test"));
+    assert_eq!(managed["api"].as_str(), Some("http://127.0.0.1:8317/v1"));
+    assert_eq!(managed["api_key"].as_str(), Some(DEFAULT_API_KEY));
+    assert_eq!(managed["default_model"].as_str(), Some("gpt-test"));
+    assert_eq!(managed["transport"].as_str(), Some("chat_completions"));
     assert!(managed["models"]["gpt-test"].is_mapping());
     assert!(managed["models"]["deepseek-test"].is_mapping());
     assert_eq!(
         value["model"]["provider"].as_str(),
         Some(MANAGED_AGENT_PROVIDER_ID)
     );
+    assert_eq!(value["model"]["default"].as_str(), Some("gpt-test"));
+}
+
+#[test]
+fn hermes_agent_config_drops_empty_legacy_custom_providers() {
+    let rendered = build_hermes_agent_config(
+        Some("custom_providers:\n  - name: cpa-gui\n    custom: keep\nmodel:\n  provider: cpa-gui\n"),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-test",
+        &test_agent_models(&["gpt-test"]),
+    )
+    .unwrap();
+    let value: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
+    assert!(value.get("custom_providers").is_none());
+    let managed = &value["providers"][MANAGED_AGENT_PROVIDER_ID];
+    assert_eq!(managed["custom"].as_str(), Some("keep"));
+    assert_eq!(managed["api"].as_str(), Some("http://127.0.0.1:8317/v1"));
+    assert_eq!(managed["transport"].as_str(), Some("chat_completions"));
 }
 
 #[test]
