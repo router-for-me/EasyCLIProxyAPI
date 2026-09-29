@@ -60,6 +60,7 @@ fn workbuddy_resources(executable: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn find_workbuddy_desktop_executable(home: &Path) -> Option<PathBuf> {
+    #[cfg(not(target_os = "macos"))]
     let mut candidates = Vec::new();
     #[cfg(target_os = "windows")]
     {
@@ -85,11 +86,13 @@ pub(crate) fn find_workbuddy_desktop_executable(home: &Path) -> Option<PathBuf> 
         }
     }
     #[cfg(target_os = "macos")]
-    for root in [PathBuf::from("/Applications"), home.join("Applications")] {
-        for (app, executable) in [("WorkBuddy AI", "WorkBuddy AI"), ("WorkBuddy", "WorkBuddy")] {
-            candidates.push(root.join(format!("{app}.app/Contents/MacOS/{executable}")));
-        }
-    }
+    let found = [PathBuf::from("/Applications"), home.join("Applications")]
+        .into_iter()
+        .find_map(|root| {
+            ["WorkBuddy AI", "WorkBuddy"].into_iter().find_map(|app| {
+                workbuddy_macos_bundle_executable(&root.join(format!("{app}.app")), app)
+            })
+        });
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         candidates.extend([
@@ -98,10 +101,33 @@ pub(crate) fn find_workbuddy_desktop_executable(home: &Path) -> Option<PathBuf> 
             PathBuf::from("/opt/WorkBuddyAI/workbuddy"),
         ]);
     }
+    #[cfg(not(target_os = "macos"))]
     let found = candidates.into_iter().find(|path| path.is_file());
     #[cfg(all(target_os = "windows", not(test)))]
     let found = found.or_else(find_windows_registered_workbuddy_executable);
     found
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn workbuddy_macos_bundle_executable(application: &Path, fallback: &str) -> Option<PathBuf> {
+    let contents = application.join("Contents");
+    let macos = contents.join("MacOS");
+    let info = plist::Value::from_file(contents.join("Info.plist")).ok();
+    let declared = info
+        .as_ref()
+        .and_then(plist::Value::as_dictionary)
+        .and_then(|dictionary| dictionary.get("CFBundleExecutable"))
+        .and_then(plist::Value::as_string)
+        .filter(|name| {
+            let mut components = Path::new(name).components();
+            matches!(components.next(), Some(std::path::Component::Normal(_)))
+                && components.next().is_none()
+        });
+    if let Some(path) = declared.map(|name| macos.join(name)).filter(|path| path.is_file()) {
+        return Some(path);
+    }
+    let legacy = macos.join(fallback);
+    legacy.is_file().then_some(legacy)
 }
 
 pub(crate) fn read_workbuddy_app_version(executable: &Path) -> Option<String> {

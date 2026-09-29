@@ -478,6 +478,76 @@ fn workbuddy_paths_use_environment_then_installed_product_data_folder() {
     assert_eq!(resolve(Some(&home.0), Some(Path::new("unused"))), home.0);
 }
 
+#[test]
+fn workbuddy_macos_bundle_uses_declared_executable_and_legacy_names() {
+    let home = Home::new();
+    let write_plist = |application: &Path, executable: &str| {
+        fs::create_dir_all(application.join("Contents")).unwrap();
+        fs::write(
+            application.join("Contents/Info.plist"),
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>{executable}</string></dict></plist>"#
+            ),
+        )
+        .unwrap();
+    };
+
+    let application = home.0.join("Applications/WorkBuddy.app");
+    let electron = application.join("Contents/MacOS/Electron");
+    let legacy = application.join("Contents/MacOS/WorkBuddy");
+    fs::create_dir_all(electron.parent().unwrap()).unwrap();
+    fs::write(&electron, "").unwrap();
+    fs::write(&legacy, "").unwrap();
+    write_plist(&application, "Electron");
+    assert_eq!(
+        workbuddy_macos_bundle_executable(&application, "WorkBuddy"),
+        Some(electron)
+    );
+
+    let ai = home.0.join("Applications/WorkBuddy AI.app");
+    let ai_legacy = ai.join("Contents/MacOS/WorkBuddy AI");
+    fs::create_dir_all(ai_legacy.parent().unwrap()).unwrap();
+    fs::write(&ai_legacy, "").unwrap();
+    assert_eq!(
+        workbuddy_macos_bundle_executable(&ai, "WorkBuddy AI"),
+        Some(ai_legacy)
+    );
+
+    write_plist(&application, "Missing");
+    assert_eq!(
+        workbuddy_macos_bundle_executable(&application, "WorkBuddy"),
+        Some(legacy)
+    );
+
+    plist::to_file_binary(
+        application.join("Contents/Info.plist"),
+        &json!({"CFBundleExecutable": "Electron"}),
+    )
+    .unwrap();
+    assert_eq!(
+        workbuddy_macos_bundle_executable(&application, "WorkBuddy"),
+        Some(application.join("Contents/MacOS/Electron"))
+    );
+}
+
+#[test]
+fn workbuddy_macos_bundle_rejects_executable_outside_bundle() {
+    let home = Home::new();
+    let application = home.0.join("WorkBuddy.app");
+    let contents = application.join("Contents");
+    fs::create_dir_all(contents.join("MacOS")).unwrap();
+    fs::write(contents.join("outside"), "").unwrap();
+    fs::write(
+        contents.join("Info.plist"),
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>../outside</string></dict></plist>"#,
+    )
+    .unwrap();
+    assert_eq!(workbuddy_macos_bundle_executable(&application, "WorkBuddy"), None);
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn workbuddy_detects_local_install_without_launching_it() {
