@@ -1527,7 +1527,10 @@ pub(crate) fn agent_has_managed_marker(
                 .get("model")
                 .and_then(|value| value.get("provider"))
                 .and_then(serde_yaml::Value::as_str)
-                == Some(MANAGED_AGENT_PROVIDER_ID);
+                .is_some_and(|p| {
+                    p == MANAGED_AGENT_PROVIDER_ID
+                        || p.strip_prefix("custom:").unwrap_or(p) == MANAGED_AGENT_PROVIDER_ID
+                });
             Ok(provider_exists && model_selected)
         }
         AgentClient::DeepSeekHarness => deepseek_harness_has_managed_marker(paths),
@@ -3542,7 +3545,10 @@ pub(crate) fn inspect_hermes_agent_config(
             .get("model")
             .and_then(|model| model.get("provider"))
             .and_then(serde_yaml::Value::as_str)
-            == Some(MANAGED_AGENT_PROVIDER_ID);
+            .is_some_and(|p| {
+                p == MANAGED_AGENT_PROVIDER_ID
+                    || p.strip_prefix("custom:").unwrap_or(p) == MANAGED_AGENT_PROVIDER_ID
+            });
     let model = root
         .get("model")
         .and_then(|model| model.get("default"))

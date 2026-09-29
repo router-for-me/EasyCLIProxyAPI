@@ -1579,10 +1579,11 @@ pub(crate) fn prepare_hermes_managed_removal(paths: &[PathBuf]) -> Result<Images
         .get_mut(yaml_key("model"))
         .and_then(serde_norway::Value::as_mapping_mut)
     {
-        if model
+        let provider = model
             .get(yaml_key("provider"))
-            .and_then(serde_norway::Value::as_str)
-            == Some(MANAGED_AGENT_PROVIDER_ID)
+            .and_then(serde_norway::Value::as_str);
+        if provider == Some(MANAGED_AGENT_PROVIDER_ID)
+            || provider.and_then(|p| p.strip_prefix("custom:")) == Some(MANAGED_AGENT_PROVIDER_ID)
         {
             model.remove(yaml_key("provider"));
             model.remove(yaml_key("default"));
@@ -3505,23 +3506,6 @@ pub(crate) fn ensure_yaml_mapping_entry<'a>(
     root.get_mut(&key_value)
         .and_then(serde_norway::Value::as_mapping_mut)
         .expect("mapping entry was just normalized")
-}
-
-#[allow(dead_code)]
-pub(crate) fn ensure_yaml_sequence_entry<'a>(
-    root: &'a mut serde_norway::Mapping,
-    key: &str,
-) -> &'a mut Vec<serde_norway::Value> {
-    let key_value = serde_norway::Value::String(key.to_string());
-    if !root
-        .get(&key_value)
-        .is_some_and(|value| value.as_sequence().is_some())
-    {
-        root.insert(key_value.clone(), serde_norway::Value::Sequence(Vec::new()));
-    }
-    root.get_mut(&key_value)
-        .and_then(serde_norway::Value::as_sequence_mut)
-        .expect("sequence entry was just normalized")
 }
 
 pub(crate) fn build_hermes_agent_config(

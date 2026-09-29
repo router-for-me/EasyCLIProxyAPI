@@ -1421,6 +1421,31 @@ fn hermes_agent_config_drops_empty_legacy_custom_providers() {
 }
 
 #[test]
+fn hermes_agent_config_accepts_custom_prefix_provider_format() {
+    let home = agent_test_home("hermes-custom-prefix");
+    let config_path = home.join("config.yaml");
+    fs::write(
+        &config_path,
+        "theme: dark\nproviders:\n  cpa-gui:\n    api: http://127.0.0.1:8317/v1\n    api_key: test-key\nmodel:\n  default: gpt-test\n  provider: custom:cpa-gui\n",
+    )
+    .unwrap();
+    let (configured, model) =
+        inspect_hermes_agent_config(&config_path, 8317, "test-key").unwrap();
+    assert!(configured);
+    assert_eq!(model.as_deref(), Some("gpt-test"));
+
+    let removal = prepare_hermes_managed_removal(&[config_path.clone()]).unwrap();
+    assert_eq!(removal.len(), 1);
+    let after: serde_norway::Value =
+        serde_norway::from_str(&String::from_utf8(removal[0].1.clone().unwrap()).unwrap())
+            .unwrap();
+    assert_eq!(after["theme"].as_str(), Some("dark"));
+    assert!(after.get("providers").is_none());
+    assert!(after.get("model").is_none());
+    let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
 fn agent_model_list_parser_exposes_aliases_as_selectable_model_ids() {
     let models = parse_agent_model_options(&serde_json::json!({
             "object": "list",
