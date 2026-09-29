@@ -14,6 +14,12 @@ struct TestCore {
 impl Drop for TestCore {
     fn drop(&mut self) {
         self.stop();
+        if std::thread::panicking() {
+            eprintln!(
+                "{}",
+                fs::read_to_string(self.directory.join("core.log")).unwrap_or_default()
+            );
+        }
         if self.directory.parent() == Some(std::env::temp_dir().as_path())
             && self
                 .directory
@@ -43,7 +49,9 @@ impl TestCore {
             .arg("-local-model")
             .current_dir(&self.directory)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::from(
+                File::create(self.directory.join("core.log")).unwrap(),
+            ))
             .stderr(Stdio::null());
         configure_background_command(&mut command);
         self.child = Some(command.spawn().unwrap());
@@ -268,11 +276,112 @@ async fn v8_accepts_gui_settings_and_reloads_client_keys() {
     );
     let current = fs::read_to_string(&core.config).unwrap();
     let content = patch_core_api_keys_yaml(&current, &["client-two".into()]).unwrap();
-    write_yaml_if_changed(&core.config, &content).unwrap();
+    write_core_config_if_changed(&core.config, &content).unwrap();
     core.wait_for_client_key("client-two", 200).await;
     core.wait_for_client_key("client-one", 401).await;
     core.stop();
     core.start().await;
     core.wait_for_client_key("client-two", 200).await;
     core.wait_for_client_key("client-one", 401).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CPA_V8_TEST_CORE pointing to a v8 executable"]
+async fn v8_reloads_usage_after_repeated_gui_saves_in_both_config_layouts() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    for initial in [
+        "remote-management: {disable-control-panel: true, disable-auto-update-panel: true}\nusage-statistics-enabled: false\n",
+        "config-version: 8\nmanagement: {disable-control-panel: true, disable-auto-update-panel: true}\nobservability: {usage: {usage-statistics-enabled: false}}\nusage-statistics-enabled: true\n",
+    ] {
+        let executable = fs::canonicalize(std::env::var_os("CPA_V8_TEST_CORE").expect("set CPA_V8_TEST_CORE")).unwrap();
+        let directory = agent_test_home("v8-contract-usage");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let mut core = TestCore {
+            child: None,
+            config: directory.join("config.yaml"),
+            directory,
+            executable,
+            origin: format!("http://127.0.0.1:{port}"),
+            client: reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(2)).build().unwrap(),
+        };
+        let gui = GuiConfigFile {
+            host: "127.0.0.1".into(),
+            port,
+            auth_dir: path_to_string(&core.directory.join("existing-credentials")),
+            management_secret_key: "isolated-test-secret".into(),
+            usage_statistics_enabled: false,
+            ..GuiConfigFile::default()
+        };
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_port = upstream.local_addr().unwrap().port();
+        let upstream_task = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (mut stream, _) = upstream.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                loop {
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    assert!(read > 0);
+                    request.extend_from_slice(&buffer[..read]);
+                    if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let length = headers.lines().find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().unwrap())
+                        }).unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let body = r#"{"id":"usage-test","object":"chat.completion","model":"usage-probe","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}"#;
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        fs::create_dir_all(&gui.auth_dir).unwrap();
+        let initial = format!("{initial}openai-compatibility:\n  - name: isolated-usage-test\n    base-url: http://127.0.0.1:{upstream_port}/v1\n    api-key-entries: [{{api-key: isolated-upstream-key}}]\n    models: [{{name: usage-probe, alias: usage-probe}}]\n");
+        let content = apply_gui_managed_settings(&initial, &gui).unwrap();
+        fs::write(&core.config, &content).unwrap();
+        core.start().await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(core.config_view().await["observability"]["usage"]["usage-statistics-enabled"], false);
+
+        for enabled in [true, false, true] {
+            let content = fs::read_to_string(&core.config).unwrap();
+            let mut settings = core_config_settings_from_value(&serde_norway::from_str(&content).unwrap()).unwrap();
+            assert_eq!(settings.auth_dir, gui.auth_dir);
+            settings.usage_statistics_enabled = enabled;
+            let updated = patch_core_yaml_document(&content, |document| apply_core_logging_settings(document, &settings)).unwrap().unwrap();
+            write_core_config_if_changed(&core.config, &updated).unwrap();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let saved = fs::read_to_string(&core.config).unwrap();
+            let settings = core_config_settings_from_value(&serde_norway::from_str(&saved).unwrap()).unwrap();
+            assert_eq!(settings.auth_dir, gui.auth_dir);
+            assert_eq!(settings.usage_statistics_enabled, enabled);
+            core.client.post(format!("{}/v1/chat/completions", core.origin))
+                .bearer_auth(&gui.api_keys[0].key)
+                .json(&serde_json::json!({"model": "usage-probe", "messages": [{"role": "user", "content": "test"}]}))
+                .send().await.unwrap().error_for_status().unwrap()
+                .bytes().await.unwrap();
+            let mut records = Vec::new();
+            for _ in 0..10 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let batch: Vec<serde_json::Value> = core.client
+                    .get(format!("{}/v8/management/observability/usage/queue?count=100", core.origin))
+                    .bearer_auth("isolated-test-secret")
+                    .send().await.unwrap().error_for_status().unwrap()
+                    .json().await.unwrap();
+                records.extend(batch);
+                if !records.is_empty() {
+                    break;
+                }
+            }
+            assert_eq!(records.len(), usize::from(enabled), "usage output did not follow the saved setting");
+        }
+        upstream_task.await.unwrap();
+    }
 }

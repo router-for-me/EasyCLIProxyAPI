@@ -31,7 +31,7 @@ pub(crate) fn merge_core_config_for_start(
         None
     };
     let merged = merge_core_config_yaml(&template, current.as_deref(), gui_config)?;
-    write_yaml_if_changed(&config_path, &merged)?;
+    write_core_config_if_changed(&config_path, &merged)?;
 
     Ok(config_path)
 }
@@ -49,7 +49,7 @@ pub(crate) fn patch_core_network_settings(config: &GuiConfigFile) -> Result<(), 
     let Some(updated) = patch_core_network_yaml(&content, config)? else {
         return Ok(());
     };
-    write_yaml_if_changed(&config_path, &updated).map(|_| ())
+    write_core_config_if_changed(&config_path, &updated).map(|_| ())
 }
 
 pub(crate) fn patch_core_network_routing_settings(config: &GuiConfigFile) -> Result<(), String> {
@@ -64,7 +64,7 @@ pub(crate) fn patch_core_network_routing_settings(config: &GuiConfigFile) -> Res
     let Some(updated) = patch_core_network_routing_yaml(&content, config)? else {
         return Ok(());
     };
-    write_yaml_if_changed(&config_path, &updated).map(|_| ())
+    write_core_config_if_changed(&config_path, &updated).map(|_| ())
 }
 
 fn patch_installed_core_config_with(
@@ -84,7 +84,7 @@ fn patch_installed_core_config_with(
     let Some(updated) = patch(&content)? else {
         return Ok(());
     };
-    write_yaml_if_changed(&config_path, &updated).map(|_| ())
+    write_core_config_if_changed(&config_path, &updated).map(|_| ())
 }
 
 pub(crate) fn patch_core_network_endpoint_settings(config: &GuiConfigFile) -> Result<(), String> {
@@ -225,7 +225,7 @@ pub(crate) fn patch_core_tls_settings(settings: &CoreTlsSettings) -> Result<(), 
     let Some(updated) = patch_core_tls_settings_yaml(&content, settings)? else {
         return Ok(());
     };
-    write_yaml_if_changed(&config_path, &updated).map(|_| ())
+    write_core_config_if_changed(&config_path, &updated).map(|_| ())
 }
 
 pub(crate) fn normalize_core_sensitive_words_settings(
@@ -379,7 +379,7 @@ pub(crate) fn patch_core_sensitive_words_settings(
     let content = fs::read_to_string(&config_path)
         .map_err(|error| format!("Failed to read kernel configuration {}: {error}", path_to_string(&config_path)))?;
     if let Some(updated) = patch_core_sensitive_words_yaml(&content, settings)? {
-        write_yaml_if_changed(&config_path, &updated)?;
+        write_core_config_if_changed(&config_path, &updated)?;
     }
     Ok(())
 }
@@ -394,7 +394,7 @@ pub(crate) fn patch_core_api_keys(api_keys: &[String]) -> Result<(), String> {
     let content = fs::read_to_string(&config_path)
         .map_err(|err| format!("Failed to read kernel configuration {}: {err}", path_to_string(&config_path)))?;
     let updated = patch_core_api_keys_yaml(&content, api_keys)?;
-    write_yaml_if_changed(&config_path, &updated)?;
+    write_core_config_if_changed(&config_path, &updated)?;
     Ok(())
 }
 
@@ -575,7 +575,7 @@ where
         return Ok(());
     };
 
-    write_yaml_if_changed(config_path, &updated)?;
+    write_core_config_if_changed(config_path, &updated)?;
 
     Ok(())
 }

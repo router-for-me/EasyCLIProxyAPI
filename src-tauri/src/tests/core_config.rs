@@ -803,6 +803,30 @@ fn packaged_macos_auth_migration_recovers_the_replaced_app_backup() {
 }
 
 #[test]
+fn packaged_macos_auth_migration_recovers_backup_when_new_directory_is_empty() {
+    let root = agent_test_home("macos-auth-empty-update-directory");
+    let relative = Path::new("Contents/MacOS/oauth");
+    let source = root.join("Applications/EasyCLIProxyAPI.app").join(relative);
+    let backup = root.join("Applications/.EasyCLIProxyAPI.app.update-backup").join(relative);
+    let persistent = root.join("Library/Application Support/com.cpa.gui");
+    let install_dir = persistent.join("cpa-core");
+    let destination = persistent.join(OAUTH_DIR_NAME);
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&backup).unwrap();
+    fs::write(backup.join("account.json"), b"existing-credential").unwrap();
+    let mut config = GuiConfigFile {
+        auth_dir: path_to_string(&source),
+        ..GuiConfigFile::default()
+    };
+
+    assert!(migrate_auth_dir_from_macos_app_bundle(&mut config, &install_dir, &destination).unwrap());
+    assert_eq!(fs::read(destination.join("account.json")).unwrap(), b"existing-credential");
+    assert_eq!(fs::read(backup.join("account.json")).unwrap(), b"existing-credential");
+    assert_eq!(config.auth_dir, DEFAULT_AUTH_DIR);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn packaged_macos_auth_migration_does_not_overwrite_conflicting_credentials() {
     let root = agent_test_home("packaged-macos-auth-conflict");
     let source = root
@@ -1874,6 +1898,28 @@ fn unchanged_yaml_is_not_written_again() {
     assert_eq!(fs::read_to_string(&path).unwrap(), content);
 
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn core_config_saves_preserve_the_file_watched_by_the_running_core() {
+    let root = agent_test_home("core-config-watched-file");
+    let path = root.join(CORE_CONFIG_FILE);
+    fs::write(&path, "auth-dir: old-directory\nusage-statistics-enabled: false\n").unwrap();
+    let mut watched_file = File::open(&path).unwrap();
+
+    for directory in ["first-directory", "x"] {
+        patch_core_auth_dir_at(&path, directory).unwrap();
+        watched_file.seek(SeekFrom::Start(0)).unwrap();
+        let mut watched_content = String::new();
+        watched_file.read_to_string(&mut watched_content).unwrap();
+        assert_eq!(watched_content, fs::read_to_string(&path).unwrap());
+        let document = serde_norway::from_str(&watched_content).unwrap();
+        let settings = core_config_settings_from_value(&document).unwrap();
+        assert_eq!(settings.auth_dir, directory);
+        assert!(!settings.usage_statistics_enabled);
+    }
+    drop(watched_file);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

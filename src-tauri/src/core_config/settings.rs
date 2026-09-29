@@ -775,6 +775,14 @@ pub(crate) fn write_yaml_if_changed(path: &Path, content: &str) -> Result<bool, 
     Ok(true)
 }
 
+pub(crate) fn write_core_config_if_changed(path: &Path, content: &str) -> Result<bool, String> {
+    if fs::read_to_string(path).ok().as_deref() == Some(content) {
+        return Ok(false);
+    }
+    write_bytes_directly(path, content.as_bytes())?;
+    Ok(true)
+}
+
 #[cfg(not(windows))]
 pub(crate) fn replace_file_atomically(
     temporary_path: &Path,
@@ -1155,9 +1163,22 @@ pub(crate) fn migrate_auth_dir_from_macos_app_bundle(
         ));
     }
 
-    let migration_source = match fs::symlink_metadata(&source) {
-        Ok(_) => source.clone(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => source
+    let source_is_empty = match fs::symlink_metadata(&source) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => fs::read_dir(&source)
+            .and_then(|mut entries| entries.next().transpose())
+            .map_err(|error| format!("Failed to inspect OAuth directory {}: {error}", path_to_string(&source)))?
+            .is_none(),
+        Ok(_) => false,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+        Err(error) => {
+            return Err(format!(
+                "Failed to check old OAuth directory {}: {error}",
+                path_to_string(&source)
+            ));
+        }
+    };
+    let migration_source = if source_is_empty {
+        source
             .ancestors()
             .find_map(|directory| {
                 if directory.file_name()? != std::ffi::OsStr::new("Contents") {
@@ -1173,13 +1194,9 @@ pub(crate) fn migrate_auth_dir_from_macos_app_bundle(
                         .join(source.strip_prefix(app).ok()?),
                 )
             })
-            .unwrap_or_else(|| source.clone()),
-        Err(error) => {
-            return Err(format!(
-                "Failed to check old OAuth directory {}: {error}",
-                path_to_string(&source)
-            ));
-        }
+            .unwrap_or_else(|| source.clone())
+    } else {
+        source.clone()
     };
     copy_auth_directory(&migration_source, &destination)?;
     config.auth_dir = DEFAULT_AUTH_DIR.to_string();

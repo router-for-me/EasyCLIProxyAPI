@@ -3,7 +3,7 @@ use super::{
     core_config_settings_from_value, core_install_dir, gui_config_path, is_loopback_host,
     lock_core_config_file, normalized_config_path, path_to_string,
     refresh_agent_config_status_cache, request_codex_model_catalog_refresh, validate_gui_config,
-    write_yaml_if_changed, AgentClient, AgentConfigStatusCache, ConfigFilesChangedPayload,
+    write_core_config_if_changed, AgentClient, AgentConfigStatusCache, ConfigFilesChangedPayload,
     CoreConfigSettings, GuiConfigFile, GuiConfigState, CONFIG_FILES_CHANGED_EVENT,
     CORE_CONFIG_FILE,
 };
@@ -53,7 +53,7 @@ fn patch_core_from_gui_config_if_valid(config: &GuiConfigFile) -> Result<(), Str
     let content = fs::read_to_string(&path)
         .map_err(|error| format!("Failed to read kernel configuration {}: {error}", path_to_string(&path)))?;
     let updated = apply_gui_managed_settings(&content, config)?;
-    write_yaml_if_changed(&path, &updated).map(|_| ())
+    write_core_config_if_changed(&path, &updated).map(|_| ())
 }
 
 fn tracked_configuration_paths(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {

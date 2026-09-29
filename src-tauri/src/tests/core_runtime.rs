@@ -620,8 +620,8 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
     fs::create_dir_all(root.join("oauth")).unwrap();
     let credential_path = root.join("oauth/account.json");
     fs::write(&credential_path, b"existing-credential").unwrap();
-    let legacy = "# User configuration\nhost: 127.0.0.1\nport: 9527\nauth-dir: ../oauth\napi-keys: [client-key]\nremote-management: {secret-key: user-secret}\nproxy-url: direct\nrequest-retry: 9\ncodex-api-key: [{api-key: upstream-key, base-url: 'https://example.invalid/v1'}]\noauth-model-alias: {codex: [{name: model, alias: custom-model}]}\n";
-    let template = "server: {host: '', port: 8317}\noauth: {auth-dir: '~/.cli-proxy-api'}\naccess: {api-keys: [your-api-key-1]}\nmanagement: {secret-key: ''}\nrequests: {proxy-url: ''}\nrouting: {retry: {request-retry: 3}}\n";
+    let legacy = "# User configuration\nusage-statistics-enabled: true\nhost: 127.0.0.1\nport: 9527\nauth-dir: ../oauth\napi-keys: [client-key]\nremote-management: {secret-key: user-secret}\nproxy-url: direct\nrequest-retry: 9\ncodex-api-key: [{api-key: upstream-key, base-url: 'https://example.invalid/v1'}]\noauth-model-alias: {codex: [{name: model, alias: custom-model}]}\n";
+    let template = "observability: {usage: {usage-statistics-enabled: false}}\nserver: {host: '', port: 8317}\noauth: {auth-dir: '~/.cli-proxy-api'}\naccess: {api-keys: [your-api-key-1]}\nmanagement: {secret-key: ''}\nrequests: {proxy-url: ''}\nrouting: {retry: {request-retry: 3}}\n";
 
     for prefix in ["", "config-version: 8\n", "server: {host: 127.0.0.1}\n", "config-version: 8\nserver: {host: 127.0.0.1}\n"] {
         let original = format!("{prefix}{legacy}");
@@ -637,6 +637,7 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
             let settings = core_config_settings_from_value(&document).unwrap();
             assert_eq!(settings.auth_dir, "../oauth", "credential directory changed during update");
             assert_eq!(settings.port, 9527);
+            assert!(settings.usage_statistics_enabled);
             assert_eq!(settings.api_keys, vec!["client-key"]);
             assert_eq!(settings.management_secret_key.as_deref(), Some("user-secret"));
             assert_eq!(settings.proxy_url, "direct");
@@ -650,6 +651,7 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
             let startup = serde_norway::from_str::<serde_norway::Value>(&startup).unwrap();
             let effective = core_config_settings_from_value(&startup).unwrap();
             assert_eq!(auth_dir_path_for_core(&effective.auth_dir, &install_dir).unwrap(), root.join("oauth"));
+            assert!(effective.usage_statistics_enabled);
             assert_eq!(startup["codex-api-key"], document["codex-api-key"]);
             assert_eq!(startup["oauth-model-alias"], document["oauth-model-alias"]);
             assert_eq!(fs::read(&credential_path).unwrap(), b"existing-credential");
