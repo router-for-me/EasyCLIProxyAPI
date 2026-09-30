@@ -859,14 +859,10 @@ mod tests {
         validate_embedded_catalog().unwrap();
         let state = catalog_state().unwrap().read().unwrap();
         let sources = &state.sources;
-        assert_eq!(sources.templates.len(), 13);
-        assert_eq!(sources.revision, 4);
+        assert_eq!(sources.templates.len(), 14);
+        assert_eq!(sources.revision, 5);
         let embedded: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
         assert!(embedded.get("fallback_model").is_none());
-        assert_eq!(
-            embedded["upstream_codex_commit"],
-            "24462234b2aeeb27373e17bbe226baf9c0e97d3b"
-        );
         let fallback: Value = serde_json::from_str(FALLBACK_MODEL_JSON).unwrap();
         assert!(fallback.get("fallback_model").is_none());
         assert_eq!(fallback.as_object(), Some(&sources.fallback));
@@ -894,6 +890,7 @@ mod tests {
 
         let official_slugs = [
             "gpt-6-astra",
+            "gpt-6.1-sol",
             "gpt-6-sol",
             "gpt-6-luna",
             "gpt-5.6-sol",
@@ -1303,6 +1300,59 @@ mod tests {
 
         assert_eq!(model["default_reasoning_level"], "medium");
         assert_eq!(reasoning_efforts(model), ["low", "medium", "max"]);
+    }
+
+    #[test]
+    fn gpt_6_1_sol_uses_official_template_instead_of_fallback() {
+        let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
+        let runtime = runtime(serde_json::json!({"models":[{
+            "id":"gpt-6.1-sol",
+            "default_reasoning_level":"high"
+        }]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let model = &output_models(&catalog)[0];
+        let template = &sources.templates["gpt-6.1-sol"].value;
+
+        assert_eq!(model["slug"], "gpt-6.1-sol");
+        assert_eq!(model["display_name"], "gpt-6.1-sol");
+        assert_eq!(model["context_window"], 272_000);
+        assert_eq!(model["max_context_window"], 872_000);
+        assert_eq!(model["default_reasoning_level"], "low");
+        assert_eq!(
+            reasoning_efforts(model),
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        for field in [
+            "model_messages",
+            "base_instructions",
+            "shell_type",
+            "tool_mode",
+            "experimental_supported_tools",
+            "supports_reasoning_effort_updates",
+            "supports_parallel_tool_calls",
+            "supports_image_detail_original",
+        ] {
+            assert_eq!(model[field], template[field], "field: {field}");
+        }
+        assert_eq!(model["shell_type"], "shell_command");
+        assert_eq!(model["supports_reasoning_effort_updates"], true);
+        assert_eq!(model["default_service_tier"], Value::Null);
+        assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
+        assert_eq!(
+            model["service_tiers"],
+            serde_json::json!([{
+                "id": "priority",
+                "name": "Fast",
+                "description": "1.5x speed, increased usage"
+            }])
+        );
+        assert_eq!(
+            model["base_instructions"],
+            model["model_messages"]["instructions_template"]
+                .as_str()
+                .unwrap()
+                .replace("{{ personality }}", "")
+        );
     }
 
     #[test]
