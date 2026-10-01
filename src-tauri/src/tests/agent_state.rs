@@ -325,8 +325,8 @@ fn session_merge_preserves_runtime_fields_for_other_agent_formats() {
         .is_none());
 
     let hermes_original = r#"keep: hermes
-custom_providers:
-  - name: other
+providers:
+  other:
     keep: true
 model:
   default: original-model
@@ -345,14 +345,9 @@ model:
     let hermes_root = hermes_current.as_mapping_mut().unwrap();
     hermes_root.insert(yaml_key("runtimeAdded"), serde_norway::Value::Bool(true));
     let managed_provider = hermes_root
-        .get_mut(yaml_key("custom_providers"))
-        .and_then(serde_norway::Value::as_sequence_mut)
-        .unwrap()
-        .iter_mut()
-        .find(|provider| {
-            provider.get("name").and_then(serde_norway::Value::as_str)
-                == Some(MANAGED_AGENT_PROVIDER_ID)
-        })
+        .get_mut(yaml_key("providers"))
+        .and_then(serde_norway::Value::as_mapping_mut)
+        .and_then(|providers| providers.get_mut(yaml_key(MANAGED_AGENT_PROVIDER_ID)))
         .and_then(serde_norway::Value::as_mapping_mut)
         .unwrap();
     managed_provider.insert(
@@ -360,7 +355,7 @@ model:
         serde_norway::Value::String("keep".to_string()),
     );
     managed_provider.insert(
-        yaml_key("base_url"),
+        yaml_key("api"),
         serde_norway::Value::String("https://agent-overwrite.invalid".to_string()),
     );
     let hermes_restored = build_restored_hermes_config(
@@ -373,20 +368,16 @@ model:
     assert_eq!(hermes["runtimeAdded"], serde_norway::Value::Bool(true));
     assert_eq!(hermes["model"]["default"].as_str(), Some("original-model"));
     assert_eq!(hermes["model"]["provider"].as_str(), Some("other"));
-    let hermes_managed_provider = hermes["custom_providers"]
-        .as_sequence()
+    let hermes_managed_provider = hermes["providers"]
+        .as_mapping()
         .unwrap()
-        .iter()
-        .find(|provider| {
-            provider.get("name").and_then(serde_norway::Value::as_str)
-                == Some(MANAGED_AGENT_PROVIDER_ID)
-        })
+        .get(yaml_key(MANAGED_AGENT_PROVIDER_ID))
         .unwrap();
     assert_eq!(
         hermes_managed_provider["custom_after_apply"].as_str(),
         Some("keep")
     );
-    assert!(hermes_managed_provider.get("base_url").is_none());
+    assert!(hermes_managed_provider.get("api").is_none());
 }
 
 #[test]
@@ -868,9 +859,10 @@ name = "Other"
     fs::write(
         &hermes_path,
         r#"keep: hermes
-custom_providers:
-  - name: other
+providers:
+  other:
     keep: true
+custom_providers:
   - name: cpa-gui
     base_url: http://127.0.0.1:8317/v1
 model:
@@ -892,11 +884,12 @@ model:
     let hermes: serde_norway::Value =
         serde_norway::from_str(&fs::read_to_string(&hermes_path).unwrap()).unwrap();
     assert_eq!(hermes["keep"].as_str(), Some("hermes"));
-    assert_eq!(hermes["custom_providers"].as_sequence().unwrap().len(), 1);
-    assert_eq!(
-        hermes["custom_providers"][0]["name"].as_str(),
-        Some("other")
-    );
+    assert!(hermes["providers"].as_mapping().unwrap().contains_key(&yaml_key("other")));
+    assert!(!hermes["providers"]
+        .as_mapping()
+        .unwrap()
+        .contains_key(&yaml_key(MANAGED_AGENT_PROVIDER_ID)));
+    assert!(hermes.get("custom_providers").is_none());
     assert!(hermes["model"].get("provider").is_none());
     assert!(hermes["model"].get("default").is_none());
     assert_eq!(hermes["model"]["keep"].as_str(), Some("model"));
@@ -1500,7 +1493,7 @@ fn agent_builders_repair_wrong_managed_node_types() {
     let hermes = serde_norway::from_str::<serde_norway::Value>(&hermes).unwrap();
     assert_eq!(hermes["theme"], "dark");
     assert_eq!(hermes["model"]["default"], "model-a");
-    assert!(hermes["custom_providers"].is_sequence());
+    assert!(hermes["providers"][MANAGED_AGENT_PROVIDER_ID].is_mapping());
 }
 
 #[test]

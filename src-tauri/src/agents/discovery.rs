@@ -1381,15 +1381,23 @@ pub(crate) fn agent_has_connection_evidence(
                 .and_then(serde_json::Value::as_str)
                 == Some(CODEX_MODEL_CATALOG_FILE);
         let hermes_provider = client == AgentClient::Hermes
-            && value
-                .get("custom_providers")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|items| {
-                    items.iter().any(|item| {
-                        item.get("name").and_then(serde_json::Value::as_str)
-                            == Some(MANAGED_AGENT_PROVIDER_ID)
-                    })
-                });
+            && (value
+                .get("providers")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|providers| {
+                    providers
+                        .get(MANAGED_AGENT_PROVIDER_ID)
+                        .is_some_and(serde_json::Value::is_object)
+                })
+                || value
+                    .get("custom_providers")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|items| {
+                        items.iter().any(|item| {
+                            item.get("name").and_then(serde_json::Value::as_str)
+                                == Some(MANAGED_AGENT_PROVIDER_ID)
+                        })
+                    }));
         if provider_present || selected || catalog || hermes_provider {
             return Ok(true);
         }
@@ -1497,19 +1505,32 @@ pub(crate) fn agent_has_managed_marker(
             )
             .map_err(|error| format!("Failed to parse Hermes configuration: {error}"))?;
             let provider_exists = root
-                .get("custom_providers")
-                .and_then(serde_yaml::Value::as_sequence)
+                .get("providers")
+                .and_then(serde_yaml::Value::as_mapping)
                 .is_some_and(|providers| {
-                    providers.iter().any(|provider| {
-                        provider.get("name").and_then(serde_yaml::Value::as_str)
-                            == Some(MANAGED_AGENT_PROVIDER_ID)
-                    })
-                });
+                    providers
+                        .get(serde_yaml::Value::String(
+                            MANAGED_AGENT_PROVIDER_ID.to_string(),
+                        ))
+                        .is_some_and(serde_yaml::Value::is_mapping)
+                })
+                || root
+                    .get("custom_providers")
+                    .and_then(serde_yaml::Value::as_sequence)
+                    .is_some_and(|providers| {
+                        providers.iter().any(|provider| {
+                            provider.get("name").and_then(serde_yaml::Value::as_str)
+                                == Some(MANAGED_AGENT_PROVIDER_ID)
+                        })
+                    });
             let model_selected = root
                 .get("model")
                 .and_then(|value| value.get("provider"))
                 .and_then(serde_yaml::Value::as_str)
-                == Some(MANAGED_AGENT_PROVIDER_ID);
+                .is_some_and(|p| {
+                    p == MANAGED_AGENT_PROVIDER_ID
+                        || p.strip_prefix("custom:").unwrap_or(p) == MANAGED_AGENT_PROVIDER_ID
+                });
             Ok(provider_exists && model_selected)
         }
         AgentClient::DeepSeekHarness => deepseek_harness_has_managed_marker(paths),
@@ -3494,19 +3515,28 @@ pub(crate) fn inspect_hermes_agent_config(
     )
     .map_err(|error| format!("Failed to parse Hermes YAML configuration: {error}"))?;
     let provider = root
-        .get("custom_providers")
-        .and_then(serde_yaml::Value::as_sequence)
-        .and_then(|providers| {
-            providers.iter().find(|provider| {
-                provider.get("name").and_then(serde_yaml::Value::as_str)
-                    == Some(MANAGED_AGENT_PROVIDER_ID)
-            })
+        .get("providers")
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|providers| providers.get(serde_yaml::Value::String(MANAGED_AGENT_PROVIDER_ID.to_string())))
+        .filter(|provider| provider.is_mapping())
+        .or_else(|| {
+            root.get("custom_providers")
+                .and_then(serde_yaml::Value::as_sequence)
+                .and_then(|providers| {
+                    providers.iter().find(|provider| {
+                        provider.get("name").and_then(serde_yaml::Value::as_str)
+                            == Some(MANAGED_AGENT_PROVIDER_ID)
+                    })
+                })
         });
     let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
-    let configured = provider
-        .and_then(|provider| provider.get("base_url"))
-        .and_then(serde_yaml::Value::as_str)
-        == Some(expected_base.as_str())
+    let provider_base = provider.and_then(|provider| {
+        provider
+            .get("api")
+            .or_else(|| provider.get("base_url"))
+            .and_then(serde_yaml::Value::as_str)
+    });
+    let configured = provider_base == Some(expected_base.as_str())
         && provider
             .and_then(|provider| provider.get("api_key"))
             .and_then(serde_yaml::Value::as_str)
@@ -3515,12 +3545,22 @@ pub(crate) fn inspect_hermes_agent_config(
             .get("model")
             .and_then(|model| model.get("provider"))
             .and_then(serde_yaml::Value::as_str)
-            == Some(MANAGED_AGENT_PROVIDER_ID);
+            .is_some_and(|p| {
+                p == MANAGED_AGENT_PROVIDER_ID
+                    || p.strip_prefix("custom:").unwrap_or(p) == MANAGED_AGENT_PROVIDER_ID
+            });
     let model = root
         .get("model")
         .and_then(|model| model.get("default"))
         .and_then(serde_yaml::Value::as_str)
-        .or_else(|| provider.and_then(|provider| provider.get("model")?.as_str()))
+        .or_else(|| {
+            provider.and_then(|provider| {
+                provider
+                    .get("default_model")
+                    .or_else(|| provider.get("model"))
+                    .and_then(serde_yaml::Value::as_str)
+            })
+        })
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
