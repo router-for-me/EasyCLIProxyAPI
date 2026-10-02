@@ -1698,6 +1698,17 @@ export const zhCN = {
   'quota.service.error.unrecognized': '上游返回了配额数据，但无法识别',
   'quota.service.error.codexResetOnly': '只有 Codex 凭据支持使用重置额度',
   'quota.service.error.missingConsumeAuthIndex': '缺少 auth-index，无法使用重置额度',
+  'authFiles.export': '导出',
+  'authFiles.exported': '已导出 {name}',
+  'authFiles.exportFailed': '导出失败：{error}',
+  'quota.plugin.pool': '账号池合计',
+  'quota.plugin.poolDetail': '{count} 个账号 · 剩余 {remain} / 共 {size}',
+  'quota.plugin.packages': '套餐额度',
+  'quota.plugin.packagesDetail': '剩余 {remain} / 共 {size} · {count} 个套餐包',
+  'quota.plugin.regionDetail': '剩余 {remain} / 共 {size}',
+  'quota.plugin.packCount': '{count} 个套餐包',
+  'quota.plugin.checkin': '签到积分',
+  'quota.plugin.checkinDetail': '今日 +{today} · 累计 {total} · 连续 {streak} 天',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

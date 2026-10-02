@@ -14,6 +14,11 @@ import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
+import workbuddyIcon from '../assets/icons/workbuddy.png';
+import traeIcon from '../assets/icons/trae.svg';
+import qoderIcon from '../assets/icons/qoder.svg';
+import zcodeIcon from '../assets/icons/zcode.png';
+import mimoIcon from '../assets/icons/mimo.svg';
 import { useI18n } from '../i18n';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { oauthSubpages, type OAuthSubpage } from '../oauthNavigation';
@@ -32,7 +37,18 @@ import { QuotaPage } from './QuotaPage';
 import { validateDevinCallback } from '../services/devinOAuth';
 import { handleHorizontalTabKey } from '../components/tabKeyboardNavigation';
 
-type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'devin';
+type OAuthProviderId =
+  | 'codex'
+  | 'claude'
+  | 'antigravity'
+  | 'kimi'
+  | 'xai'
+  | 'devin'
+  | 'workbuddy'
+  | 'trae'
+  | 'qoder'
+  | 'zcode'
+  | 'mimo';
 type OAuthFlowStatus = 'idle' | 'waiting' | 'success' | 'error';
 
 type OAuthProviderState = {
@@ -72,6 +88,11 @@ const oauthProviders = [
   { id: 'kimi' as const, name: 'Kimi OAuth', icon: kimiIcon },
   { id: 'xai' as const, name: 'xAI OAuth', icon: grokIcon },
   { id: 'devin' as const, name: 'Devin OAuth', icon: devinIcon },
+  { id: 'workbuddy' as const, name: 'WorkBuddy OAuth', icon: workbuddyIcon },
+  { id: 'trae' as const, name: 'Trae OAuth', icon: traeIcon },
+  { id: 'qoder' as const, name: 'Qoder OAuth', icon: qoderIcon },
+  { id: 'zcode' as const, name: 'ZCode OAuth', icon: zcodeIcon },
+  { id: 'mimo' as const, name: 'MiMo OAuth', icon: mimoIcon },
 ];
 
 const OAUTH_CALLBACK_SUPPORTED = new Set<OAuthProviderId>([

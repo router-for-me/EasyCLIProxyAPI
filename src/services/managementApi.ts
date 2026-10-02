@@ -253,6 +253,12 @@ export const managementApi = {
       data,
     });
   },
+  uploadAuthFileContent: async (name: string, content: string) => {
+    const data = Array.from(new TextEncoder().encode(content));
+    return invoke<ManagementJson>('upload_auth_file', { name, data });
+  },
+  exportAuthFile: (source: string, target: string) =>
+    invoke<void>('export_auth_file', { source, target }),
   openAuthFilesDirectory: () => invoke<void>('open_auth_files_directory'),
 };
 
