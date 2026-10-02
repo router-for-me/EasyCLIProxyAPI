@@ -1,4 +1,5 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { save } from '@tauri-apps/plugin-dialog';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
 import { AuthFileQuotaPanel } from '../components/AuthFileQuotaPanel';
@@ -30,9 +31,15 @@ import geminiIcon from '../assets/icons/gemini.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
+import workbuddyIcon from '../assets/icons/workbuddy.png';
+import traeIcon from '../assets/icons/trae.svg';
+import qoderIcon from '../assets/icons/qoder.svg';
+import zcodeIcon from '../assets/icons/zcode.png';
+import mimoIcon from '../assets/icons/mimo.svg';
 import vertexIcon from '../assets/icons/vertex.svg';
 import {
   formatDate,
+  isRecord,
   managementApi,
   readBoolean,
   readNumber,
@@ -88,6 +95,86 @@ const providerIcons: Record<string, string> = {
   vertex: vertexIcon,
   xai: grokIcon,
   devin: devinIcon,
+  workbuddy: workbuddyIcon,
+  trae: traeIcon,
+  qoder: qoderIcon,
+  zcode: zcodeIcon,
+  mimo: mimoIcon,
+};
+
+// Third-party exports (for example cockpit-style `workbuddy_accounts_*.json`) ship a
+// JSON array of flat snake_case accounts, while CPA stores one nested camelCase file
+// per credential. Split the array and reshape every entry before uploading it.
+const REGION_BY_DOMAIN: Record<string, string> = {
+  'copilot.tencent.com': 'cn',
+  'codebuddy.cn': 'cn',
+  'www.codebuddy.cn': 'cn',
+  'workbuddy.ai': 'global',
+  'www.workbuddy.ai': 'global',
+  'codebuddy.ai': 'intl',
+  'www.codebuddy.ai': 'intl',
+};
+
+const normalizeImportedCredential = (
+  value: Record<string, unknown>,
+  fallbackProvider: string,
+): Record<string, unknown> => {
+  if (isRecord(value.auth) || isRecord(value.account)) return value;
+  const accessToken = readString(value, 'accessToken', 'access_token');
+  if (!accessToken) return value;
+  const domain = readString(value, 'domain') || 'www.codebuddy.cn';
+  const provider = readString(value, 'provider', 'type', 'account_type') || fallbackProvider;
+  const rawExpiry = value.expiresAt ?? value.expires_at;
+  let expiresAt = 0;
+  if (typeof rawExpiry === 'number' && Number.isFinite(rawExpiry)) {
+    expiresAt = rawExpiry > 10 ** 11 ? Math.floor(rawExpiry / 1000) : Math.floor(rawExpiry);
+  }
+  return {
+    account: {
+      enterpriseId: '',
+      nickname: readString(value, 'nickname', 'name'),
+      uid: readString(value, 'uid', 'user_id'),
+    },
+    auth: {
+      accessToken,
+      refreshToken: readString(value, 'refreshToken', 'refresh_token'),
+      expiresAt,
+      domain,
+      region: readString(value, 'region') || REGION_BY_DOMAIN[domain] || 'cn',
+    },
+    auth_kind: 'oauth',
+    disabled: false,
+    provider,
+    type: provider,
+  };
+};
+
+const importCredentialFile = async (file: File): Promise<number> => {
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    parsed = null;
+  }
+  const entries = (Array.isArray(parsed) ? parsed : [parsed]).filter(isRecord);
+  const alreadyCredential =
+    entries.length === 1 && (isRecord(entries[0].auth) || isRecord(entries[0].account));
+  if (parsed === null || entries.length === 0 || alreadyCredential) {
+    await managementApi.uploadAuthFile(file);
+    return 1;
+  }
+  const fallbackProvider = file.name.split(/[_.-]/)[0].toLowerCase();
+  let uploaded = 0;
+  for (const entry of entries) {
+    const normalized = normalizeImportedCredential(entry, fallbackProvider);
+    const provider =
+      readString(normalized, 'provider', 'type', 'account_type') || fallbackProvider || 'credential';
+    const uid = isRecord(normalized.account) ? readString(normalized.account, 'uid') : '';
+    const name = uid ? `${provider}-${uid}.json` : file.name;
+    await managementApi.uploadAuthFileContent(name, JSON.stringify(normalized));
+    uploaded += 1;
+  }
+  return uploaded;
 };
 
 const providerName = (file: AuthFile) => {
@@ -294,8 +381,7 @@ export function AuthFileManagementPage() {
     const failures: string[] = [];
     for (const file of selected) {
       try {
-        await managementApi.uploadAuthFile(file);
-        uploaded += 1;
+        uploaded += await importCredentialFile(file);
       } catch (requestError) {
         failures.push(`${file.name}：${String(requestError)}`);
       }
@@ -306,6 +392,31 @@ export function AuthFileManagementPage() {
       if (failures.length > 0) setError(t('authFiles.uploadFailed', { count: failures.length, errors: failures.join('; ') }));
     } catch (requestError) {
       setError(String(requestError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportFile = async (file: AuthFile) => {
+    feedback.clearNotice();
+    setError('');
+    const name = fileName(file);
+    const source = readString(file, 'path');
+    if (!source) {
+      setError(t('authFiles.exportFailed', { error: t('authFiles.fileOnly') }));
+      return;
+    }
+    setBusy(true);
+    try {
+      const target = await save({
+        defaultPath: name,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!target) return;
+      await managementApi.exportAuthFile(source, target);
+      showNotice({ key: 'authFiles.exported', variables: { name } });
+    } catch (requestError) {
+      setError(t('authFiles.exportFailed', { error: String(requestError) }));
     } finally {
       setBusy(false);
     }
@@ -453,6 +564,7 @@ export function AuthFileManagementPage() {
                     {providerKey(file) ? <button type="button" className="secondary-button compact-button" onClick={() => setModelViewName(name)} disabled={busy} title={t('authFiles.models.viewTitle')}>{t('authFiles.models.button')}</button> : null}
                     <button type="button" className="icon-button quiet" onClick={() => void copyName(name)} disabled={busy} title={t('authFiles.copyName')} aria-label={t('authFiles.copyName')}>{copied === name ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}</button>
                     <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`} onClick={() => void toggleStatus(file)} disabled={busy || !isOAuthCredentialFile(file)} title={isOAuthCredentialFile(file) ? undefined : t('authFiles.fileOnly')}>{disabled ? t('common.enable') : t('common.disable')}</button>
+                    <button type="button" className="icon-button quiet" onClick={() => void exportFile(file)} disabled={busy || !readString(file, 'path')} title={t('authFiles.export')} aria-label={t('authFiles.export')}><FileDown size={15} aria-hidden="true" /></button>
                     <button type="button" className="icon-button danger" onClick={() => void deleteFile(file)} disabled={busy || isRuntimeOnly(file)} title={t('common.delete')} aria-label={t('common.delete')}><Trash2 size={15} aria-hidden="true" /></button>
                   </footer>
                 </article>

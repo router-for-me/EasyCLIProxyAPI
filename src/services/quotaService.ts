@@ -18,7 +18,14 @@ const quotaText = (
 ) => translate(getCurrentLocale(), key, variables);
 
 export type AuthFile = Record<string, unknown>;
-export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin';
+export type QuotaProvider =
+  | 'claude'
+  | 'codex'
+  | 'kimi'
+  | 'xai'
+  | 'antigravity'
+  | 'devin'
+  | 'plugin';
 export type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
 export type QuotaRow = {
   label: string;
@@ -52,6 +59,8 @@ const endpointByProvider: Record<QuotaProvider, string> = {
   kimi: 'https://api.kimi.com/coding/v1/usages',
   xai: 'https://cli-chat-proxy.grok.com/v1/billing',
   antigravity: 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
+  // Plugin providers are answered by the plugin management API; there is no upstream endpoint.
+  plugin: '',
 };
 
 const CLAUDE_PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
@@ -88,10 +97,16 @@ const headersByProvider: Record<QuotaProvider, Record<string, string>> = {
     'Content-Type': 'application/json',
     'User-Agent': 'antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)',
   },
+  // The plugin API injects the credential server-side; the client only sends the auth index.
+  plugin: {},
 };
+
+// cpa-multi-plugins providers that expose a quota summary through their plugin API.
+const PLUGIN_QUOTA_PROVIDERS = ['workbuddy', 'trae', 'qoder', 'zcode', 'mimo'];
 
 export const providerForFile = (file: AuthFile): QuotaProvider | null => {
   const value = readString(file, 'provider', 'type', 'account_type').toLowerCase().replace(/_/g, '-');
+  if (PLUGIN_QUOTA_PROVIDERS.includes(value)) return 'plugin';
   if (value === 'x-ai' || value === 'grok') return 'xai';
   if (value === 'cognition') return 'devin';
   if (value === 'anthropic') return 'claude';
@@ -836,6 +851,86 @@ const callCodexResetCredits = async (
   return codexResetCreditDetailsFor(payload);
 };
 
+const pluginNumber = (value: unknown): number | null =>
+  (typeof value === 'number' && Number.isFinite(value) ? value : null);
+
+// Plugin quota is resolved by the plugin's own management API. The bundled
+// cpa-multi-plugins providers share one payload shape: `summary` carries the
+// per-region and total pack numbers, `accounts[].checkin` the sign-in credits.
+async function loadPluginQuota(file: AuthFile): Promise<QuotaState> {
+  const pluginId = readString(file, 'provider', 'type', 'account_type').toLowerCase().replace(/_/g, '-');
+  if (!/^[a-z0-9-]+$/.test(pluginId)) throw new Error(quotaText('quota.service.error.unrecognized'));
+  const payload = await managementApi.post<Record<string, unknown>>(
+    `/v0/management/plugins/${pluginId}/refresh`,
+    undefined,
+    { timeoutMs: 30_000 },
+  );
+  if (!isRecord(payload)) throw new Error(quotaText('quota.service.error.noResponse'));
+  const summary = isRecord(payload.summary) ? payload.summary : {};
+  const accounts = Array.isArray(payload.accounts) ? payload.accounts.filter(isRecord) : [];
+  const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
+  const credentialName = readString(file, 'name', 'auth_id');
+  const own = accounts.find((account) => {
+    const index = normalizeAuthIndex(account.auth_index ?? account.authIndex);
+    if (authIndex && index) return index === authIndex;
+    const id = readString(account, 'auth_id', 'name');
+    return Boolean(credentialName && id && id === credentialName);
+  }) ?? (accounts.length === 1 ? accounts[0] : null);
+  const credits = isRecord(own?.credits) ? (own?.credits as Record<string, unknown>) : null;
+  const totalSize = pluginNumber(credits?.total_size) ?? 0;
+  const totalRemain = pluginNumber(credits?.total_remain) ?? 0;
+  const packCount = pluginNumber(credits?.pack_count) ?? 0;
+  const rows: QuotaRow[] = [];
+  if (totalSize > 0) {
+    rows.push({
+      label: quotaText('quota.plugin.packages'),
+      remainingPercent: Math.max(0, Math.min(100, (totalRemain / totalSize) * 100)),
+      detail: quotaText('quota.plugin.packagesDetail', {
+        remain: totalRemain, size: totalSize, count: packCount,
+      }),
+    });
+  }
+  const checkin = isRecord(own?.checkin) ? (own?.checkin as Record<string, unknown>) : null;
+  if (checkin) {
+    const totalCredits = pluginNumber(checkin.total_credits) ?? 0;
+    if (totalCredits > 0) {
+      rows.push({
+        label: quotaText('quota.plugin.checkin'),
+        remainingPercent: null,
+        detail: quotaText('quota.plugin.checkinDetail', {
+          today: pluginNumber(checkin.today_credit) ?? 0,
+          total: totalCredits,
+          streak: pluginNumber(checkin.streak_days) ?? 0,
+        }),
+      });
+    }
+  }
+  // The plugin answers with every account it owns; keep the pooled totals as a
+  // trailing row so a multi-account pool stays visible from any credential.
+  const poolSize = pluginNumber(summary.total_size) ?? 0;
+  if (poolSize > 0 && accounts.length > 1) {
+    const poolRemain = pluginNumber(summary.total_remain) ?? 0;
+    rows.push({
+      label: quotaText('quota.plugin.pool'),
+      remainingPercent: Math.max(0, Math.min(100, (poolRemain / poolSize) * 100)),
+      detail: quotaText('quota.plugin.poolDetail', {
+        count: accounts.length, remain: poolRemain, size: poolSize,
+      }),
+    });
+  }
+  if (rows.length === 0) throw new Error(quotaText('quota.service.error.unrecognized'));
+  return {
+    status: 'success',
+    rows,
+    plan: own && readString(own, 'nickname')
+      ? readString(own, 'nickname')
+      : packCount > 0
+        ? quotaText('quota.plugin.packCount', { count: packCount })
+        : undefined,
+    fetchedAt: Date.now(),
+  };
+}
+
 async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
   const provider = providerForFile(file);
   if (!provider) {
@@ -847,6 +942,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
   }
   try {
     if (booleanValue(file.disabled) === true) throw new Error(quotaText('quota.fileDisabled'));
+    if (provider === 'plugin') return await loadPluginQuota(file);
     const codexMetadata = provider === 'codex' ? codexMetadataFor(file) : undefined;
     const codexAccountId = codexMetadata?.accountId || '';
     const responseClock: { serverTimeOffsetMs?: number } = {};

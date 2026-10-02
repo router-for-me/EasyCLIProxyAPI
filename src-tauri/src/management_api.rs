@@ -10,7 +10,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::LazyLock,
     time::Duration,
@@ -125,6 +125,36 @@ pub(crate) async fn upload_auth_file(
         .await
         .map_err(|err| format_management_request_error("Failed to upload credential file", &err))?;
     read_management_value(response).await
+}
+
+#[tauri::command]
+pub(crate) fn export_auth_file(source: String, target: String) -> Result<(), String> {
+    let install_dir = core_install_dir()?;
+    let candidate = PathBuf::from(source.trim());
+    // The credentials list reports paths relative to the core install directory.
+    let source_path = if candidate.is_absolute() {
+        candidate
+    } else {
+        install_dir.join(candidate)
+    };
+    if !source_path.is_file() {
+        return Err(format!(
+            "Credential file not found: {}",
+            path_to_string(&source_path)
+        ));
+    }
+    let target_path = PathBuf::from(target.trim());
+    if target_path.as_os_str().is_empty() {
+        return Err("Credential export target is empty".to_string());
+    }
+    fs::copy(&source_path, &target_path).map_err(|error| {
+        format!(
+            "Failed to copy {} to {}: {error}",
+            path_to_string(&source_path),
+            path_to_string(&target_path)
+        )
+    })?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -352,6 +382,10 @@ pub(crate) fn management_endpoint(config: &GuiConfigFile, path: &str) -> Result<
         config.port,
         current_core_tls_settings()?.enabled,
     );
+    // Plugin panel routes and the plugin quota API are only served on the v0 mux.
+    if let Some(rest) = path.strip_prefix("v0/") {
+        return Ok(format!("{origin}/v0/{rest}"));
+    }
     Ok(format!("{origin}/v8/management/{path}"))
 }
 
