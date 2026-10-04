@@ -9,7 +9,8 @@
 .auth-file-usage-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 10px;
+  gap: 8px 12px;
+  align-items: center;
 }
 
 .auth-file-usage-metric {
@@ -22,8 +23,8 @@
 .auth-file-usage-metric svg {
   box-sizing: content-box;
   flex-shrink: 0;
-  padding: 2px;
-  border-radius: 4px;
+  padding: 3px;
+  border-radius: 5px;
   color: var(--primary-color);
   background: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
@@ -32,6 +33,11 @@
 .auth-file-usage-metric.success svg {
   color: var(--success-color);
   background: color-mix(in srgb, var(--success-color) 10%, transparent);
+}
+
+.auth-file-usage-metric.rate svg {
+  color: #8b5cf6;
+  background: color-mix(in srgb, #8b5cf6 10%, transparent);
 }
 
 .auth-file-usage-metric.failure svg {
@@ -48,10 +54,7 @@
 }
 
 .auth-file-usage-scope {
-  display: block;
-  margin-top: 5px;
-  color: var(--text-tertiary);
-  font-size: var(--font-size-meta);
+  display: none;
 }
 
 @container auth-file-usage (max-width: 130px) {

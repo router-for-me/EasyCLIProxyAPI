@@ -1,4 +1,4 @@
-import { Activity, Check, Send, X } from 'lucide-react';
+import { Check, Percent, Send, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { authFileRequestStats } from '../services/authFileRequests';
 import { formatUsageNumber } from '../services/usageNumber';
@@ -16,7 +16,7 @@ export function AuthFileUsageSummary({ file }: { file: Record<string, unknown> }
   const rateText = rate === null ? '—' : formatNumber(rate, { style: 'percent', maximumFractionDigits: 1 });
   const metrics = [
     { key: 'total', Icon: Send, value: countText(total), label: `${t('usage.stat.requests')}: ${exactCount(total)}` },
-    { key: 'rate', Icon: Activity, value: rateText, label: t('authFiles.requests.rate', { rate: rateText }) },
+    { key: 'rate', Icon: Percent, value: rateText, label: t('authFiles.requests.rate', { rate: rateText }) },
     { key: 'success', Icon: Check, value: countText(success), label: t('authFiles.requests.success', { count: exactCount(success) }) },
     { key: 'failure', Icon: X, value: countText(failure), label: t('authFiles.requests.failure', { count: exactCount(failure) }) },
   ];
@@ -31,9 +31,6 @@ export function AuthFileUsageSummary({ file }: { file: Record<string, unknown> }
           </span>
         ))}
       </div>
-      <span className="auth-file-usage-scope" title={t('authFiles.requests.totalsHint')}>
-        {t('authFiles.usage.runtimeTotals')}
-      </span>
     </div>
   );
 }

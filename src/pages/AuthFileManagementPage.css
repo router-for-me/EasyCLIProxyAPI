@@ -72,8 +72,10 @@
 .auth-list-recent .auth-file-requests-timeline { justify-content: center; gap: 5px; font-size: 10px; }
 .auth-list-recent .auth-file-requests-unavailable { font-size: 10px; line-height: 1.4; text-align: center; color: var(--auth-muted); }
 .auth-list-usage .auth-file-usage { color: var(--auth-text); }
-.auth-list-usage .auth-file-usage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 8px; }
+.auth-list-usage .auth-file-usage-metrics { grid-template-columns: max-content max-content; grid-template-rows: repeat(2, 20px); gap: 0 18px; justify-content: center; align-content: center; }
 .auth-list-usage .auth-file-usage-metric { gap: 5px; }
+.auth-list-usage .auth-file-usage-metric { min-height: 0; height: 20px; line-height: 1; }
+.auth-list-usage .auth-file-usage-metric svg { width: 12px; height: 12px; padding: 2px; }
 .auth-list-usage .auth-file-usage-metric svg { width: 12px; height: 12px; padding: 2px; border-radius: 4px; }
 .auth-list-usage .auth-file-usage-metric.total svg { color: var(--auth-accent); background: color-mix(in srgb, var(--auth-accent) 9%, var(--bg-card)); }
 .auth-list-usage .auth-file-usage-metric strong { font-size: 12.75px; line-height: 1.2; font-weight: 750; }
@@ -195,3 +197,46 @@
   .auth-files-heading-actions { margin-left: auto; }
 }
 @media (prefers-reduced-motion: reduce) { .auth-list-switch > span { transition: none; } }
+
+/* Keep the quota column airy without the heavy framed inset used previously. */
+.auth-files-page .auth-list-quota {
+  min-width: 0;
+  padding: 0 10px;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.auth-files-page .auth-list-quota .credential-quota,
+.auth-files-page .auth-list-quota .credential-quota.credential-quota-compact,
+.auth-files-page .auth-list-quota .credential-quota.credential-quota-dense {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.auth-files-page .credential-quota-dense {
+  width: 100%;
+  min-width: 0;
+  gap: 7px;
+}
+.auth-files-page .credential-quota-dense .credential-quota-rows {
+  width: 100%;
+  gap: 10px 18px;
+}
+.auth-files-page .credential-quota-dense .credential-quota-row {
+  min-width: 0;
+}
+.auth-files-page .credential-quota-dense .credential-quota-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auth-files-page .auth-file-card {
+  border-color: #edf0f4;
+  box-shadow: 0 1px 2px rgb(35 48 65 / 3%);
+}
+.auth-files-page .auth-file-card:hover {
+  border-color: color-mix(in srgb, var(--auth-accent) 26%, #edf0f4);
+  box-shadow: 0 4px 14px rgb(35 83 160 / 7%);
+}

@@ -34,6 +34,12 @@ let embedded=params.has('embedded');
 (window as any).fixtureSessionIds=Array.from({length:61},(_,index)=>`session-${index+1}`);
 mockIPC(async (cmd,args:any) => {
  calls.push({cmd,args});
+ if((window as any).fixtureDeferredCommands?.includes(cmd)) {
+   await new Promise<void>(resolve=>{
+     ((window as any).fixturePendingCommands??=[]).push({cmd,resolve});
+   });
+ }
+ if((window as any).fixtureFailedCommands?.includes(cmd))throw new Error('模拟后台刷新失败');
  if(cmd==='plugin:event|listen') return 1;
  if(cmd==='plugin:event|unlisten'||cmd==='set_app_locale') return null;
  if(cmd==='get_agent_config_statuses'||cmd==='refresh_agent_config_statuses') {

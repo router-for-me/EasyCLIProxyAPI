@@ -138,6 +138,7 @@ export function AuthFileManagementPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled' | 'runtime'>('all');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [cooldownResetting, setCooldownResetting] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState('');
   const resetCodexQuota = useCodexQuotaReset(askConfirmation, setError);
@@ -244,6 +245,21 @@ export function AuthFileManagementPage() {
     commitQuotaCacheIfCurrent(cacheGeneration, () => {
       updateQuotaCache((current) => ({ ...current, [key]: result }));
     });
+  };
+
+  const refreshAllQuotas = async () => {
+    if (quotaRefreshing || busy || loading) return;
+    const queryable = files.filter((file) => !readBoolean(file, 'disabled') && quotaProviderForFile(file));
+    if (!queryable.length) return;
+    setQuotaRefreshing(true);
+    setError('');
+    try {
+      for (let index = 0; index < queryable.length; index += 4) {
+        await Promise.all(queryable.slice(index, index + 4).map((file) => refreshQuota(file)));
+      }
+    } finally {
+      if (mountedRef.current) setQuotaRefreshing(false);
+    }
   };
 
   const closeOauthModels = () => {
@@ -461,7 +477,10 @@ export function AuthFileManagementPage() {
         }}><Settings2 size={15} />{t('authFiles.models.toolbarButton')}</button>
         <button type="button" className="secondary-button compact-button auth-toolbar-quiet" disabled={busy} onClick={() => void openAuthFilesDirectory()}><FolderOpen size={15} />{t('authFiles.openDirectory')}</button>
         <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || busy}>
-          <RefreshCw size={16} className={loading ? 'spin' : ''} />{t('common.refresh')}
+          <RefreshCw size={16} className={loading ? 'spin' : ''} />{t('authFiles.toolbar.refreshList')}
+        </button>
+        <button type="button" className="secondary-button compact-button auth-toolbar-quiet" onClick={() => void refreshAllQuotas()} disabled={loading || busy || quotaRefreshing || !files.some((file) => !readBoolean(file, 'disabled') && quotaProviderForFile(file))}>
+          <RefreshCw size={16} className={quotaRefreshing ? 'spin' : ''} />{t('authFiles.toolbar.refreshQuota')}
         </button>
         <button type="button" className="primary-button compact-button" onClick={() => fileInputRef.current?.click()} disabled={busy}>
           <Import size={16} />{t('authFiles.import')}

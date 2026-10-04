@@ -66,26 +66,34 @@
 .quota-page .quota-status-badge.ready { background: #e8f8ee; color: #149447; }
 .quota-page .quota-status-badge.error { background: #fff0ee; color: #d94b42; }
 .quota-page .quota-row-list { grid-column: 4; gap: 9px; min-width: 0; }
+.quota-page .quota-row-list { grid-row: 1 / span 2; align-self: center; }
 .quota-page .real-quota-row { gap: 5px; }
 .quota-page .real-quota-row > div:first-child { font-size: var(--font-size-meta); }
 .quota-page .real-quota-track { height: 7px; background: #edf0f4; }
 .quota-page .real-quota-track span { background: #20bf62; }
 .quota-page .real-quota-row small { font-size: 11px; }
 .quota-page .quota-card-actions { grid-column: 5; grid-row: 1; justify-content: flex-end; align-self: center; flex-wrap: wrap; }
+.quota-page .quota-reset-footer { grid-column: 5; grid-row: 2; justify-self: end; align-self: end; margin: 0; min-height: 30px; padding: 5px 10px; border-radius: 7px; color: #347df4; border-color: #d8e5fb; background: #f3f7ff; }
+.quota-page .quota-reset-footer:hover:not(:disabled) { border-color: #9dbcf4; background: #eaf2ff; }
 .quota-page .quota-card-actions .icon-button { width: 30px; height: 30px; border-radius: 7px; background: #eef4ff; color: #347df4; }
-.quota-page .quota-card-message, .quota-page .quota-card-error, .quota-page .quota-action-feedback, .quota-page .quota-reset-credit-summary { grid-column: 1 / -1; }
+.quota-page .quota-card-message, .quota-page .quota-card-error, .quota-page .quota-action-feedback { grid-column: 1 / -1; }
+.quota-page .quota-reset-credit-summary { grid-column: 1 / 4; grid-row: 2; align-self: end; }
 .quota-page .quota-card-message { min-height: 36px; }
 .quota-page .quota-card-error { min-height: 36px; }
 
 @media (max-width: 980px) {
   .quota-page .quota-table-head { display: none; }
   .quota-page .real-quota-card { grid-template-columns: minmax(180px, 1fr) minmax(100px, .7fr) minmax(100px, .7fr) 38px; }
-  .quota-page .quota-row-list { grid-column: 1 / -1; }
+  .quota-page .quota-row-list { grid-column: 1 / -1; grid-row: auto; }
+  .quota-page .quota-reset-credit-summary { grid-column: 1 / -1; grid-row: auto; }
   .quota-page .quota-card-actions { grid-column: 4; }
+  .quota-page .quota-reset-footer { grid-column: 4; grid-row: 2; }
 }
 @media (max-width: 640px) {
   .quota-page .real-quota-card { grid-template-columns: 1fr auto; padding: 13px; }
   .quota-page .quota-plan, .quota-page .quota-status { grid-column: 1 / -1; }
   .quota-page .quota-card-actions { grid-column: 2; grid-row: 1; }
-  .quota-page .quota-row-list { grid-column: 1 / -1; }
+  .quota-page .quota-reset-footer { grid-column: 2; grid-row: 2; }
+  .quota-page .quota-row-list { grid-column: 1 / -1; grid-row: auto; }
+  .quota-page .quota-reset-credit-summary { grid-column: 1 / -1; grid-row: auto; }
 }

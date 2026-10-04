@@ -97,13 +97,44 @@
   min-width: 0;
   padding: 2px 5px;
   overflow: hidden;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--bg-secondary);
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   font-size: 10px;
   font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Dense quota cells follow the compact overview treatment: quiet labels and a
+   single visual weight for the remaining amount. */
+.credential-quota-dense .credential-quota-label span {
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text-tertiary) 8%, var(--bg-card));
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.credential-quota-dense .credential-quota-track {
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-tertiary) 10%, var(--bg-card));
+}
+.credential-quota-dense .credential-quota-track i {
+  border-radius: inherit;
+  background: var(--quota-color, var(--success-color));
+}
+.credential-quota-dense .credential-quota-row.high { --quota-color: #20bf62; }
+.credential-quota-dense .credential-quota-row.medium { --quota-color: #e6a523; }
+.credential-quota-dense .credential-quota-row.low { --quota-color: #e25555; }
+.credential-quota-dense .credential-quota-row small {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.credential-quota-dense .credential-quota-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 .credential-quota-dense .credential-quota-label strong {
