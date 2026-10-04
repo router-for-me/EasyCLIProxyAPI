@@ -65,6 +65,8 @@ const PATHS: &[(&str, &str)] = &[
     ("oauth/providers/xai", "xai"),
     ("server/host", "host"),
     ("server/port", "port"),
+    ("server/trusted-proxies", "trusted-proxies"),
+    ("server/discovery", "discovery"),
     ("server/tls", "tls"),
     ("server/commercial-mode", "commercial-mode"),
     ("management", "remote-management"),

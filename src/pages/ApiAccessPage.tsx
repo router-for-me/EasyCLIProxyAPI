@@ -1011,6 +1011,12 @@ export const buildProviderKeyRecord = (
   return next;
 };
 
+export const providerDraftConnection = (
+  draft: Pick<ProviderDraft, 'headersText' | 'proxyUrl'>, key?: ProviderKeyDraft,
+) => effectiveProviderKey({
+  headers: parseProviderHeaders(draft.headersText ?? ''), 'proxy-url': draft.proxyUrl,
+}, key ? serializeProviderKey(key) : {});
+
 export const buildProviderGroupRecord = (
   section: ProviderSection, draft: ProviderDraft, current?: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -1437,6 +1443,8 @@ export function ApiAccessPage() {
             preparedDraft.groupKeys?.[0]
               ? providerHeadersFromRecord(effectiveProviderKey({ headers: providerHeaders }, serializeProviderKey(preparedDraft.groupKeys[0])))
               : providerHeaders,
+            undefined,
+            readString(providerDraftConnection(draftToSave, preparedDraft.groupKeys?.[0]), 'proxy-url'),
           );
           if (fetchedModels.length === 0) {
             throw new Error(t('apiAccess.error.noModels'));
@@ -1765,6 +1773,7 @@ function ProviderHealthDialog({ row, onClose, keySelector }: ProviderHealthDialo
     apiKeys: row.apiKeys,
     authIndex: row.authIndex,
     customHeaders: providerHeadersFromRecord(row.record),
+    proxyUrl: readString(row.record, 'proxy-url'),
     timeoutMs: PROVIDER_HEALTH_TIMEOUT_MS,
   }), [row]);
 
@@ -1779,6 +1788,7 @@ function ProviderHealthDialog({ row, onClose, keySelector }: ProviderHealthDialo
       healthOptions.authIndex,
       healthOptions.customHeaders,
       healthOptions.timeoutMs,
+      healthOptions.proxyUrl,
     ).then((discovered) => {
       if (!disposed) setModels(mergeProviderHealthModels(discovered, row.models));
     }).catch((requestError) => {
@@ -2118,7 +2128,7 @@ export function ApiProviderDialog({
     try {
       const provider: ModelProvider = activeCategory === 'deepseek' ? 'deepseek' : providerModelType(definition.section);
       const selectedKey = draft.groupKeys?.find((key) => key.id === discoveryKeyId) ?? draft.groupKeys?.[0];
-      const connection = selectedKey ? effectiveProviderKey({ headers: parseProviderHeaders(draft.headersText ?? '') }, serializeProviderKey(selectedKey)) : null;
+      const connection = selectedKey ? providerDraftConnection(draft, selectedKey) : null;
       const modelApiKey = connection ? readString(connection, 'api-key') : draft.apiKey.split(/\r?\n/).map((value) => value.trim()).find(Boolean) ?? '';
       const fetchedModels = await fetchModels(
         provider,
@@ -2126,6 +2136,8 @@ export function ApiProviderDialog({
         modelApiKey,
         connection ? readString(selectedKey!.value, 'auth-index', 'authIndex') || undefined : editingRow?.authIndex,
         connection ? providerHeadersFromRecord(connection) : parseProviderHeaders(draft.headersText ?? ''),
+        undefined,
+        connection ? readString(connection, 'proxy-url') : draft.proxyUrl,
       );
       if (requestId !== discoveryRequestRef.current) return;
       const models = applyProviderPreset(

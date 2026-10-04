@@ -2,6 +2,34 @@ use super::*;
 use crate::GuiApiKeyEntry;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[test]
+fn provider_proxy_override_preserves_direct_and_global_inheritance() {
+    let upstream = reqwest::Url::parse("https://provider.invalid/v1/responses").unwrap();
+    let global = "http://127.0.0.1:18080";
+    assert_eq!(provider_health_proxy_url(&upstream, None, global), global);
+    assert_eq!(provider_health_proxy_url(&upstream, Some("  "), global), global);
+    assert_eq!(provider_health_proxy_url(&upstream, Some(" direct "), global), "");
+    assert_eq!(provider_health_proxy_url(&upstream, Some("socks5://127.0.0.1:19080"), global), "socks5://127.0.0.1:19080");
+    let local = reqwest::Url::parse("http://127.0.0.1:8317/v1/responses").unwrap();
+    assert_eq!(provider_health_proxy_url(&local, None, global), "");
+}
+
+#[tokio::test]
+async fn provider_health_uses_request_proxy_instead_of_global_proxy() {
+    let (port, server) = mock_core_response("200 OK", "text/event-stream", "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]}}]}\n\n", "").await;
+    let request: ProviderHealthProbeRequest = serde_json::from_value(serde_json::json!({
+        "url": "http://provider.invalid/v1beta/models/test:streamGenerateContent?alt=sse",
+        "header": {}, "data": "{}", "protocol": "gemini",
+        "proxyUrl": format!("http://127.0.0.1:{port}"),
+    })).unwrap();
+    let url = reqwest::Url::parse(&request.url).unwrap();
+    let selected = provider_health_proxy_url(&url, request.proxy_url.as_deref(), "http://127.0.0.1:1");
+    let client = build_http_client_with_proxy(reqwest::Client::builder().timeout(Duration::from_secs(3)), selected, "proxy test").unwrap();
+    assert!(execute_health_probe(None, client, request).await.unwrap().first_token_latency_ms.is_some());
+    let wire_request = server.await.unwrap();
+    assert!(wire_request.starts_with("POST http://provider.invalid/v1beta/models/test:streamGenerateContent?alt=sse HTTP/1.1"));
+}
+
 async fn mock_core_response(
     status: &str,
     content_type: &str,

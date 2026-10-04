@@ -370,7 +370,17 @@ fn save_for_state(
     state: &mut CatalogState,
 ) -> Result<CatalogEditorSnapshot, String> {
     let snapshot = snapshot_for_state(runtime_models, state)?;
-    let customizations = customizations_from_request(&snapshot, request)?;
+    let mut customizations = customizations_from_request(&snapshot, request)?;
+    // The public catalog can temporarily omit disabled or unavailable models.
+    // Editing visible models must not erase the saved settings for those IDs.
+    let visible: HashSet<String> = snapshot.models.iter()
+        .map(|model| normalize_id(&model.slug))
+        .collect();
+    for (slug, configuration) in &state.customizations {
+        if !visible.contains(slug) {
+            customizations.insert(slug.clone(), configuration.clone());
+        }
+    }
     let saved = SavedCustomizations {
         version: 1,
         models: customizations,
@@ -421,6 +431,52 @@ mod tests {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[test]
+    fn saving_visible_models_preserves_unavailable_models_and_allows_visible_reset() {
+        let mut state = CatalogState {
+            sources: parse_sources(MODEL_CATALOG_JSON).unwrap(),
+            json: MODEL_CATALOG_JSON.to_string(),
+            customizations: Default::default(),
+        };
+        let hidden = serde_json::json!({
+            "base_instructions": "Saved prompt for temporarily unavailable A",
+            "context_window": 131_072,
+            "max_context_window": 262_144,
+        }).as_object().unwrap().clone();
+        state.customizations.insert("model-a".to_string(), hidden.clone());
+        let runtime = vec![runtime_model("model-b")];
+        let snapshot = snapshot_for_state(&runtime, &state).unwrap();
+        let mut configuration = snapshot.models[0].configuration.clone();
+        configuration.insert("display_name".to_string(), Value::String("Edited B".to_string()));
+        let path = temporary_path();
+        let saved = save_for_state(&path, &runtime, CatalogEditorRequest {
+            revision: snapshot.revision,
+            models: vec![CatalogEditorModelRequest { slug: "model-b".to_string(), configuration }],
+        }, &mut state).unwrap();
+        let persisted = decode_customizations(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted.get("model-a"), Some(&hidden));
+        assert_eq!(persisted["model-b"]["display_name"], "Edited B");
+
+        save_for_state(&path, &runtime, CatalogEditorRequest {
+            revision: saved.revision,
+            models: vec![CatalogEditorModelRequest {
+                slug: "model-b".to_string(), configuration: saved.models[0].defaults.clone(),
+            }],
+        }, &mut state).unwrap();
+        assert!(!state.customizations.contains_key("model-b"));
+        assert_eq!(state.customizations.get("model-a"), Some(&hidden));
+
+        let empty = snapshot_for_state(&[], &state).unwrap();
+        save_for_state(&path, &[], CatalogEditorRequest {
+            revision: empty.revision, models: vec![],
+        }, &mut state).unwrap();
+        assert_eq!(decode_customizations(&std::fs::read(&path).unwrap()).unwrap().get("model-a"), Some(&hidden));
+        let restored = snapshot_for_state(&[runtime_model("model-a")], &state).unwrap();
+        assert_eq!(restored.models[0].configuration["base_instructions"], hidden["base_instructions"]);
+        assert_eq!(restored.models[0].configuration["context_window"], 131_072);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

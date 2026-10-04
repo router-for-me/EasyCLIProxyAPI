@@ -184,6 +184,7 @@ export async function fetchModels(
   authIndex?: string,
   customHeaders: Record<string, string> = {},
   timeoutMs?: number,
+  proxyUrl?: string,
 ): Promise<ModelOption[]> {
   const normalized = baseUrl.trim() ? normalizeBaseUrl(baseUrl) : '';
   const candidates = modelEndpointCandidates(provider, normalized);
@@ -222,6 +223,7 @@ export async function fetchModels(
         if (pageToken) pageUrl.searchParams.set('pageToken', pageToken);
         const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
           authIndex: authIndex?.trim() || undefined,
+          proxy_url: proxyUrl?.trim() || undefined,
           method: 'GET',
           url: pageUrl.toString(),
           header: Object.keys(headers).length ? headers : undefined,
@@ -258,6 +260,7 @@ export async function fetchModels(
 
       if (provider === 'openai' && Object.keys(headers).length > 0) {
         const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
+          proxy_url: proxyUrl?.trim() || undefined,
           method: 'GET',
           url,
         }, { timeoutMs });
@@ -272,6 +275,7 @@ export async function fetchModels(
       if (provider === 'openai' && Object.keys(headers).length > 0) {
         try {
           const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
+            proxy_url: proxyUrl?.trim() || undefined,
             method: 'GET',
             url,
           }, { timeoutMs });

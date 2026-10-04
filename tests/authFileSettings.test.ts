@@ -88,9 +88,9 @@ describe('credential settings', () => {
 
   it('edits template credential fields without resending tokens or unmodified metadata', () => {
     const original = authFileSettingsFromPayload({ access_token: 'never-copy', cloak_mode: 'auto', timezone: 'Asia/Tokyo',
-      cloak_strict_mode: true, model_aliases: [{ name: 'upstream', alias: 'public', future_metadata: true }] });
+      cloak_strict_mode: 'true', model_aliases: [{ name: 'upstream', alias: 'public', future_metadata: true }] });
     expect(buildAuthFileSettingsPatch(original, { ...original, advanced: { ...original.advanced, cloak_mode: 'always', cloak_strict_mode: false } }))
-      .toEqual({ cloak_mode: 'always', cloak_strict_mode: false });
+      .toEqual({ cloak_mode: 'always', cloak_strict_mode: 'false' });
     const next = { ...original.advanced }; delete next.timezone;
     expect(buildAuthFileSettingsPatch(original, { ...original, advanced: next })).toEqual({ timezone: null });
     expect(buildAuthFileSettingsPatch(original, { ...original, advanced: { ...original.advanced, model_aliases: [] } })).toEqual({ model_aliases: [] });
@@ -98,5 +98,60 @@ describe('credential settings', () => {
     for (const advanced of [{ timezone: 'Not/AZone' }, { cloak_mode: 'invalid' }, { model_aliases: [{ name: '', alias: 'x' }] }]) {
       expect(() => buildAuthFileSettingsPatch(original, { ...original, advanced: { ...original.advanced, ...advanced } })).toThrow();
     }
+  });
+
+  it('converts native string cloak metadata to typed controls and writes executor-compatible strings', () => {
+    const original = authFileSettingsFromPayload({ cloak_strict_mode: 'true', cloak_cache_user_id: 'false',
+      cloak_sensitive_words: ' first,second , ', custom_metadata: { keep: true } });
+    expect(original.advanced).toEqual({ cloak_strict_mode: true, cloak_cache_user_id: false, cloak_sensitive_words: ['first', 'second'] });
+    expect(buildAuthFileSettingsPatch(original, original)).toEqual({});
+    const patch = buildAuthFileSettingsPatch(original, { ...original, advanced: {
+      cloak_strict_mode: false, cloak_cache_user_id: true, cloak_sensitive_words: ['changed', ' second '],
+    } });
+    expect(patch).toEqual({ cloak_strict_mode: 'false', cloak_cache_user_id: 'true', cloak_sensitive_words: 'changed,second' });
+    expect(authFileSettingsFromPayload(patch).advanced).toEqual({ cloak_strict_mode: false, cloak_cache_user_id: true,
+      cloak_sensitive_words: ['changed', 'second'] });
+    expect(buildAuthFileSettingsPatch(original, { ...original, advanced: { cloak_sensitive_words: [] } }))
+      .toEqual({ cloak_strict_mode: null, cloak_cache_user_id: null, cloak_sensitive_words: '' });
+  });
+
+  it('can edit older incorrectly typed cloak metadata without resending unrelated fields', () => {
+    const original = authFileSettingsFromPayload({ cloak_strict_mode: false, cloak_cache_user_id: true,
+      cloak_sensitive_words: ['old'], fingerprint_profile: 'claude-code-cli', model_aliases: [{ name: 'upstream', alias: 'public', extension: true }] });
+    expect(original.advanced.cloak_strict_mode).toBe(false);
+    expect(original.advanced.cloak_sensitive_words).toEqual(['old']);
+    expect(buildAuthFileSettingsPatch(original, { ...original, advanced: { ...original.advanced,
+      cloak_strict_mode: true, cloak_cache_user_id: false, cloak_sensitive_words: ['new'],
+    } })).toEqual({ cloak_strict_mode: 'true', cloak_cache_user_id: 'false', cloak_sensitive_words: 'new' });
+    expect(buildAuthFileSettingsPatch(original, { ...original, note: 'only note' })).toEqual({ note: 'only note',
+      cloak_strict_mode: 'false', cloak_cache_user_id: 'true', cloak_sensitive_words: 'old' });
+    const canonicalNull = authFileSettingsFromPayload({ cloak_strict_mode: null, 'cloak-strict-mode': 'true', cloak_sensitive_words: null });
+    expect(canonicalNull.advanced).toEqual({ cloak_strict_mode: null, cloak_sensitive_words: null });
+    expect(canonicalNull.normalizeCloakMetadata).toBeUndefined();
+  });
+
+  it('repairs previously typed cloak fields on an unchanged explicit save and stops after reload', async () => {
+    const metadata = { cloak_strict_mode: true, cloak_cache_user_id: false, cloak_sensitive_words: [] as string[],
+      access_token: 'retain', extension: { untouched: true } } as Record<string, unknown>;
+    const writes: Record<string, unknown>[] = [];
+    const api = { get: async () => metadata, patch: async (_path: string, body: Record<string, unknown>) => {
+      const { name, ...patch } = body;
+      writes.push(patch);
+      Object.assign(metadata, patch);
+    } };
+    const original = await loadAuthFileSettings('old.json', api);
+    expect(original.normalizeCloakMetadata).toEqual(['cloak_strict_mode', 'cloak_cache_user_id', 'cloak_sensitive_words']);
+    expect(await saveAuthFileSettings('old.json', original, original, api)).toBe(true);
+    expect(writes).toEqual([{ cloak_strict_mode: 'true', cloak_cache_user_id: 'false', cloak_sensitive_words: '' }]);
+    expect(metadata.access_token).toBe('retain');
+    expect(metadata.extension).toEqual({ untouched: true });
+    const reloaded = await loadAuthFileSettings('old.json', api);
+    expect(reloaded.normalizeCloakMetadata).toBeUndefined();
+    expect(reloaded.advanced).toEqual(original.advanced);
+    expect(await saveAuthFileSettings('old.json', reloaded, reloaded, api)).toBe(false);
+    expect(writes).toHaveLength(1);
+    expect(buildAuthFileSettingsPatch(original, { ...original, advanced: {} })).toEqual({
+      cloak_strict_mode: null, cloak_cache_user_id: null, cloak_sensitive_words: null,
+    });
   });
 });

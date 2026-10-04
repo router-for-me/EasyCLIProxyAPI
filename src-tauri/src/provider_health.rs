@@ -26,6 +26,8 @@ pub(crate) struct ProviderHealthProbeRequest {
     protocol: String,
     #[serde(default)]
     source_provider: Option<String>,
+    #[serde(default)]
+    proxy_url: Option<String>,
     timeout_ms: Option<u64>,
     #[serde(default)]
     model: String,
@@ -424,6 +426,7 @@ async fn probe_core_model(
         }).to_string(),
         protocol: "openai-chat".to_string(),
         source_provider: None,
+        proxy_url: None,
         timeout_ms,
         model,
         source: String::new(),
@@ -447,11 +450,7 @@ pub(crate) async fn provider_health_probe(
     let url = reqwest::Url::parse(request.url.trim())
         .map_err(|error| format!("Invalid health check URL: {error}"))?;
     let config = gui_config_state.snapshot()?;
-    let proxy_url = url
-        .host_str()
-        .filter(|host| !is_loopback_host(host))
-        .map(|_| config.proxy_url.as_str())
-        .unwrap_or_default();
+    let proxy_url = provider_health_proxy_url(&url, request.proxy_url.as_deref(), &config.proxy_url);
     let client = build_http_client_with_proxy(
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
@@ -460,6 +459,14 @@ pub(crate) async fn provider_health_probe(
         "Failed to create health check client",
     )?;
     execute_health_probe(Some(&app), client, request).await
+}
+
+fn provider_health_proxy_url<'a>(url: &reqwest::Url, requested: Option<&'a str>, global: &'a str) -> &'a str {
+    if url.host_str().is_some_and(is_loopback_host) {
+        return "";
+    }
+    let proxy = requested.map(str::trim).filter(|value| !value.is_empty()).unwrap_or(global.trim());
+    if proxy.eq_ignore_ascii_case("direct") { "" } else { proxy }
 }
 
 async fn execute_health_probe(

@@ -35,6 +35,7 @@ export type ProviderHealthCheckOptions = {
   authIndex?: string;
   customHeaders?: Record<string, string>;
   timeoutMs?: number;
+  proxyUrl?: string;
 };
 
 const defaultBaseUrl = defaultProviderBaseUrl;
@@ -125,7 +126,7 @@ export function buildProviderHealthProbe(
     return {
       ...metadata,
       url: provider === 'vertex' ? `${root}/v1/publishers/google/models/${encodeURIComponent(normalizedModel)}:streamGenerateContent?alt=sse`
-        : `${root}/v1beta/models/${encodeURIComponent(normalizedModel)}:generateContent?alt=sse`,
+        : `${root}/v1beta/models/${encodeURIComponent(normalizedModel)}:streamGenerateContent?alt=sse`,
       header: headers,
       protocol: 'gemini',
       data: JSON.stringify({
@@ -203,6 +204,7 @@ export async function checkProviderHealthProbe(
   authIndex = '',
   customHeaders: Record<string, string> = {},
   timeoutMs = PROVIDER_HEALTH_TIMEOUT_MS,
+  proxyUrl?: string,
 ): Promise<ProviderHealthProbeResult> {
   try {
     const probe = buildProviderHealthProbe(
@@ -233,6 +235,7 @@ export async function checkProviderHealthProbe(
         model: probe.model,
         source: probe.source,
         authIndex: probe.authIndex,
+        proxyUrl: proxyUrl?.trim() || undefined,
       },
     });
     const firstTokenLatencyMs = Number.isFinite(response.firstTokenLatencyMs)
@@ -268,6 +271,7 @@ export async function checkProviderModelHealth(
     options.authIndex,
     options.customHeaders,
     options.timeoutMs,
+    options.proxyUrl,
   );
   return {
     ...result,

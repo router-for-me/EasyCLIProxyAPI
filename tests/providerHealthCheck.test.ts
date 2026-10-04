@@ -207,7 +207,7 @@ describe('API 接入健康检测', () => {
     );
 
     expect(probe.url).toBe(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?alt=sse',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
     );
     expect(probe.header['x-goog-api-key']).toBe('gemini-key');
     expect(probe.protocol).toBe('gemini');

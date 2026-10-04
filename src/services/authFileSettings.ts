@@ -20,6 +20,7 @@ export type AuthFileSettingsDraft = {
   headers: string;
   note: string;
   advanced: Record<string, unknown>;
+  normalizeCloakMetadata?: string[];
 };
 
 const fail = (key: 'metadata' | 'headers' | 'weight' | 'priority') => {
@@ -52,6 +53,27 @@ const headersFromText = (text: string): Record<string, string> => {
   return result;
 };
 
+// OAuth cloak metadata is consumed as strings by the core, unlike the typed
+// cloak block in API-key configuration. Keep typed values only in the form.
+const advancedDraftValue = (key: string, value: unknown): unknown => {
+  if (value == null) return value;
+  if (key === 'cloak_strict_mode' || key === 'cloak_cache_user_id') {
+    if (typeof value === 'string') return value.trim().toLowerCase() === 'true';
+  }
+  if (key === 'cloak_sensitive_words' && typeof value === 'string') {
+    return value.split(',').map(word => word.trim()).filter(Boolean);
+  }
+  // Accept typed values persisted by older versions of this editor as well.
+  return value;
+};
+
+const advancedMetadataValue = (key: string, value: unknown): unknown => {
+  if (value == null) return null;
+  if (key === 'cloak_strict_mode' || key === 'cloak_cache_user_id') return String(value);
+  if (key === 'cloak_sensitive_words') return (value as string[]).map(word => word.trim()).filter(Boolean).join(',');
+  return value;
+};
+
 export const authFileSettingsFromPayload = (payload: unknown): AuthFileSettingsDraft => {
   let metadata = payload;
   if (typeof metadata === 'string') {
@@ -63,7 +85,14 @@ export const authFileSettingsFromPayload = (payload: unknown): AuthFileSettingsD
   const text = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
   const headers = metadata.headers == null ? {} : metadata.headers;
   if (!isRecord(headers) || Object.values(headers).some((value) => typeof value !== 'string')) return fail('headers');
+  const normalizeCloakMetadata = ['cloak_strict_mode', 'cloak_cache_user_id', 'cloak_sensitive_words'].filter(key => {
+    const value = read(key, key.replace(/_/g, '-'));
+    return key === 'cloak_sensitive_words'
+      ? Array.isArray(value) && value.every(word => typeof word === 'string')
+      : typeof value === 'boolean';
+  });
   return {
+    ...(normalizeCloakMetadata.length ? { normalizeCloakMetadata } : {}),
     prefix: text(metadata.prefix),
     proxy_url: text(read('proxy_url', 'proxy-url')),
     priority: text(metadata.priority),
@@ -75,7 +104,7 @@ export const authFileSettingsFromPayload = (payload: unknown): AuthFileSettingsD
     note: text(metadata.note),
     advanced: Object.fromEntries(Object.keys(credentialAdvancedShape.fields ?? {}).flatMap(key => {
       const value = read(key, key.replace(/_/g, '-'));
-      return value === undefined ? [] : [[key, value]];
+      return value === undefined ? [] : [[key, advancedDraftValue(key, value)]];
     })),
   };
 };
@@ -120,10 +149,10 @@ export const buildAuthFileSettingsPatch = (
   }
   for (const [key, shape] of Object.entries(credentialAdvancedShape.fields ?? {})) {
     const next = draft.advanced[key];
-    if (sameTemplateValue(next, original.advanced[key])) continue;
+    if (sameTemplateValue(next, original.advanced[key]) && !original.normalizeCloakMetadata?.includes(key)) continue;
     const error = validateStructuredValueText(shape, next, key);
     if (error) throw new Error(templateText(error, getCurrentLocale()));
-    patch[key] = next ?? null;
+    patch[key] = advancedMetadataValue(key, next);
   }
   return patch;
 };

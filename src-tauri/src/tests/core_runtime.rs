@@ -698,6 +698,85 @@ fn v7_config_startup_with_v8_template_writes_v8_version() {
 }
 
 #[test]
+fn v8_migration_preserves_each_legacy_provider_family_independently() {
+    let template = "config-version: 8\napi-keys: {codex: [], claude: []}\n";
+    for marker in ["", "config-version: 7\n"] {
+        let old = format!("{marker}api-keys: {{codex: []}}\ncodex-api-key: [{{api-key: ignored}}]\nclaude-api-key: [{{api-key: fixture, models: [{{name: upstream, alias: claude-alias}}]}}]\n");
+        let migrated = migrate_legacy_core_config_to_v8(template, &old).unwrap();
+        let value: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+        assert_eq!(value["api-keys"]["codex"].as_sequence().unwrap().len(), 0);
+        assert_eq!(value["api-keys"]["claude"][0]["keys"][0]["api-key"], "fixture");
+        assert_eq!(value["api-keys"]["claude"][0]["models"][0]["alias"], "claude-alias");
+        assert!(value.get("claude-api-key").is_none());
+        assert!(value.get("codex-api-key").is_none());
+    }
+}
+
+#[test]
+fn v8_migration_preserves_narrow_fields_and_canonical_struct_leaves() {
+    let template = "config-version: 8\nmanagement: {allow-remote: false}\noauth: {providers: {claude: {model-level-cooling: false}, codex: {response-steering: false}}}\n";
+    let legacy = r#"
+remote-management: {allow-remote: true, secret-key: old-secret}
+management: {secret-key: canonical-secret}
+claude-header-defaults: {user-agent: custom-agent, timezone: custom-zone}
+claude-code: {disable-cloaking-model-list: true}
+disable-claude-cloak-mode: true
+claude: {model-level-cooling: true}
+codex-header-defaults: {user-agent: codex-agent}
+codex: {response-steering: true, optimize-multi-agent-v2: true}
+oauth:
+  providers:
+    claude:
+      model-level-cooling: false
+      header-defaults: {timezone: canonical-zone}
+    codex: {response-steering: false}
+"#;
+    let migrated = migrate_legacy_core_config_to_v8(template, legacy).unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+    let claude = &value["oauth"]["providers"]["claude"];
+    assert_eq!(claude["header-defaults"]["user-agent"], "custom-agent");
+    assert_eq!(claude["header-defaults"]["timezone"], "canonical-zone");
+    assert_eq!(claude["model-level-cooling"].as_bool(), Some(false));
+    assert_eq!(claude["claude-code"]["disable-cloaking-model-list"].as_bool(), Some(true));
+    assert_eq!(claude["disable-claude-cloak-mode"].as_bool(), Some(true));
+    assert_eq!(value["management"]["allow-remote"].as_bool(), Some(true));
+    assert_eq!(value["management"]["secret-key"], "canonical-secret");
+    assert_eq!(value["oauth"]["providers"]["codex"]["header-defaults"]["user-agent"], "codex-agent");
+    assert_eq!(value["oauth"]["providers"]["codex"]["response-steering"].as_bool(), Some(false));
+    assert!(value["oauth"]["providers"]["codex"].get("optimize-multi-agent-v2").is_none());
+    assert_eq!(value["client"]["codex"]["optimize-multi-agent-v2"].as_bool(), Some(true));
+}
+
+#[test]
+fn v8_migration_preserves_network_settings_over_template_defaults() {
+    let template = "config-version: 8\nserver: {trusted-proxies: [], discovery: {enabled: false}, tls: {enable: false, cert: '', key: ''}}\n";
+    let legacy = "trusted-proxies: [127.0.0.1]\ndiscovery: {enabled: true, service-name: office}\ntls: {enable: true, cert: old-cert, key: old-key}\nserver: {tls: {cert: canonical-cert}}\n";
+    let migrated = migrate_legacy_core_config_to_v8(template, legacy).unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+    assert_eq!(value["server"]["trusted-proxies"][0], "127.0.0.1");
+    assert_eq!(value["server"]["discovery"]["enabled"].as_bool(), Some(true));
+    assert_eq!(value["server"]["discovery"]["service-name"], "office");
+    assert_eq!(value["server"]["tls"]["enable"].as_bool(), Some(true));
+    assert_eq!(value["server"]["tls"]["cert"], "canonical-cert");
+    assert_eq!(value["server"]["tls"]["key"], "old-key");
+    assert!(value.get("trusted-proxies").is_none());
+    assert!(value.get("discovery").is_none());
+}
+
+#[test]
+fn v8_migration_preserves_explicit_canonical_clears_and_existing_v8_files() {
+    let template = "config-version: 8\nserver: {trusted-proxies: [192.0.2.1]}\n";
+    let old = "trusted-proxies: [127.0.0.1]\nserver: {trusted-proxies: []}\nclaude-header-defaults: {user-agent: legacy}\nclaude: {model-level-cooling: true}\noauth: {providers: {claude: null}, model-alias: {}}\noauth-model-alias: {claude: [{name: original, alias: old-alias}]}\n";
+    let migrated = migrate_legacy_core_config_to_v8(template, old).unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+    assert!(value["server"]["trusted-proxies"].as_sequence().unwrap().is_empty());
+    assert!(value["oauth"]["providers"]["claude"].is_null());
+    assert!(value["oauth"]["model-alias"].as_mapping().unwrap().is_empty());
+    let already_v8 = format!("config-version: 8\n{old}");
+    assert_eq!(migrate_legacy_core_config_to_v8(template, &already_v8).unwrap(), already_v8);
+}
+
+#[test]
 fn replacing_a_core_rejects_invalid_config_without_overwriting_files() {
     let root = agent_test_home("core-config-migrate-invalid");
     let source = root.join("source");

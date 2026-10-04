@@ -149,9 +149,18 @@ oauth: {auth-dir: ${JSON.stringify(join(work, 'auth'))}}
   it('round-trips template credential aliases and Claude settings without replacing token metadata', async () => {
     const fileName = 'template-claude.json';
     await managementApi.uploadAuthFile(new File([JSON.stringify({ type: 'claude', access_token: 'isolated-template-token',
-      expired: '2099-01-01T00:00:00Z', custom_metadata: { keep: true } })], fileName, { type: 'application/json' }));
+      expired: '2099-01-01T00:00:00Z', custom_metadata: { keep: true },
+      cloak_strict_mode: true, cloak_cache_user_id: false, cloak_sensitive_words: ['Legacy'] })], fileName, { type: 'application/json' }));
     try {
+      const legacy = await loadAuthFileSettings(fileName);
+      expect(await saveAuthFileSettings(fileName, legacy, legacy)).toBe(true);
+      const repaired = await managementApi.get<Record<string, unknown>>('/credentials/download', { name: fileName });
+      expect(repaired.cloak_strict_mode).toBe('true');
+      expect(repaired.cloak_cache_user_id).toBe('false');
+      expect(repaired.cloak_sensitive_words).toBe('Legacy');
       const original = await loadAuthFileSettings(fileName);
+      expect(original.normalizeCloakMetadata).toBeUndefined();
+      expect(await saveAuthFileSettings(fileName, original, original)).toBe(false);
       const advanced = { cloak_mode: 'always', cloak_strict_mode: false, cloak_cache_user_id: true, cloak_sensitive_words: ['Word'],
         fingerprint_profile: 'claude-code-cli', timezone: 'Asia/Shanghai',
         model_aliases: [{ name: 'claude-template', alias: 'public-template', fork: false, 'display-name': 'Template model', 'force-mapping': true }] };
@@ -159,6 +168,9 @@ oauth: {auth-dir: ${JSON.stringify(join(work, 'auth'))}}
       const loaded = await loadAuthFileSettings(fileName);
       expect(loaded.advanced).toEqual(advanced);
       const metadata = await managementApi.get<Record<string, unknown>>('/credentials/download', { name: fileName });
+      expect(metadata.cloak_strict_mode).toBe('false');
+      expect(metadata.cloak_cache_user_id).toBe('true');
+      expect(metadata.cloak_sensitive_words).toBe('Word');
       expect(metadata.access_token).toBe('isolated-template-token');
       expect(metadata.custom_metadata).toEqual({ keep: true });
       await saveAuthFileSettings(fileName, loaded, { ...loaded, advanced: {} });

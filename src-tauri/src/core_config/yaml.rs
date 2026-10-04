@@ -1276,14 +1276,12 @@ fn lift_legacy_core_config_fields(
     template: &serde_norway::Mapping,
 ) -> Result<(), String> {
     let copy = |document: &mut serde_norway::Value, legacy_path: &[&str], v8_path: &[&str]| -> Result<(), String> {
-        let Some(value) = nested_yaml_value(legacy, legacy_path).cloned() else {
+        // Read the remaining source: narrower moves may already have consumed
+        // children which now belong elsewhere in the v8 layout.
+        let Some(value) = document.as_mapping().and_then(|root| nested_yaml_value(root, legacy_path)).cloned() else {
             return Ok(());
         };
-        // A partially migrated file can contain both spellings. Prefer the
-        // canonical v8 value in that case; otherwise move the legacy value.
-        if nested_yaml_value(legacy, v8_path).is_none() {
-            set_core_yaml_path_value(document, v8_path, value)?;
-        }
+        lift_legacy_config_value(document, legacy, v8_path, value)?;
         if nested_yaml_value(template, legacy_path).is_none() {
             remove_core_yaml_path_value(document, legacy_path);
         }
@@ -1292,6 +1290,7 @@ fn lift_legacy_core_config_fields(
     for (legacy_path, v8_path) in [
         (&["host"][..], &["server", "host"][..]),
         (&["port"], &["server", "port"]),
+        (&["tls"], &["server", "tls"]),
         (&["commercial-mode"], &["server", "commercial-mode"]),
         (&["auth-dir"], &["oauth", "auth-dir"]),
         (&["debug"], &["observability", "logs", "debug"]),
@@ -1313,14 +1312,6 @@ fn lift_legacy_core_config_fields(
     ] {
         copy(document, legacy_path, v8_path)?;
     }
-    if let Some(tls) = yaml_mapping_value(legacy, "tls").filter(|value| value.is_mapping()).cloned() {
-        if nested_yaml_value(legacy, &["server", "tls"]).is_none() {
-            set_core_yaml_path_value(document, &["server", "tls"], tls)?;
-        }
-        if yaml_mapping_value(template, "tls").is_none() {
-            remove_core_yaml_path_value(document, &["tls"]);
-        }
-    }
     if let Some(keys) = yaml_mapping_value(legacy, "api-keys").filter(|value| value.is_sequence()).cloned() {
         if nested_yaml_value(legacy, &["access", "api-keys"]).is_none() {
             set_core_yaml_path_value(document, &["access", "api-keys"], keys)?;
@@ -1336,15 +1327,11 @@ fn lift_legacy_core_config_fields(
             remove_core_yaml_path_value(document, &["api-keys"]);
         }
     }
-    let has_canonical_upstream_mapping = yaml_mapping_value(legacy, "api-keys")
-        .is_some_and(serde_norway::Value::is_mapping);
     for (legacy_name, provider) in V8_PROVIDER_FAMILIES {
         let Some(records) = yaml_mapping_value(legacy, legacy_name) else {
             continue;
         };
-        if !has_canonical_upstream_mapping
-            && nested_yaml_value(legacy, &["api-keys", provider]).is_none()
-        {
+        if nested_yaml_value(legacy, &["api-keys", provider]).is_none() {
             let grouped = group_legacy_provider_records(provider, records)?;
             set_core_yaml_path_value(document, &["api-keys", provider], grouped)?;
         }
@@ -1354,6 +1341,49 @@ fn lift_legacy_core_config_fields(
     }
     for (legacy_path, v8_path) in legacy_extended_config_paths() {
         copy(document, &legacy_path, &v8_path)?;
+    }
+    Ok(())
+}
+
+// Structs have independent leaf settings. User-owned maps (aliases, payload
+// params, headers, etc.) instead retain the canonical value as a whole.
+fn lift_legacy_config_value(
+    document: &mut serde_norway::Value,
+    original: &serde_norway::Mapping,
+    path: &[&str],
+    value: serde_norway::Value,
+) -> Result<(), String> {
+    // Explicit canonical null/scalar parents must not be recreated by a
+    // narrower legacy spelling such as claude-header-defaults.
+    if (1..path.len()).any(|length| {
+        nested_yaml_value(original, &path[..length]).is_some_and(|value| !value.is_mapping())
+    }) {
+        return Ok(());
+    }
+    let is_struct = matches!(path,
+        ["server", "tls"] | ["server", "discovery"]
+        | ["server", "discovery", "interfaces"] | ["management"]
+        | ["credentials", "concurrency"] | ["credentials", "in-flight"]
+        | ["requests", "streaming"] | ["observability", "pprof"]
+        | ["oauth", "providers", "codex"] | ["oauth", "providers", "claude"]
+        | ["oauth", "providers", "antigravity"] | ["oauth", "providers", "devin"]
+        | ["oauth", "providers", "xai"]
+        | ["oauth", "providers", "codex", "live-media-relay"]
+        | ["oauth", "providers", "codex", "header-defaults"]
+        | ["oauth", "providers", "claude", "header-defaults"]
+        | ["oauth", "providers", "claude", "claude-code"]
+        | ["oauth", "providers", "antigravity", "connection-pool"]
+    );
+    let canonical = nested_yaml_value(original, path);
+    if is_struct && value.is_mapping() && canonical.is_none_or(serde_norway::Value::is_mapping) {
+        for (key, child) in value.as_mapping().unwrap() {
+            let key = key.as_str().ok_or("Configuration field must be a string")?;
+            let mut child_path = path.to_vec();
+            child_path.push(key);
+            lift_legacy_config_value(document, original, &child_path, child.clone())?;
+        }
+    } else if canonical.is_none() {
+        set_core_yaml_path_value(document, path, value)?;
     }
     Ok(())
 }

@@ -30,7 +30,7 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
   const [error, setError] = useState('');
   const [discard, setDiscard] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(original);
+  const dirty = draft !== null && (Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
 
   useEffect(() => {
     const previousFocus = document.activeElement;
