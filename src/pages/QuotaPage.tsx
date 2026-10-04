@@ -143,11 +143,8 @@ export function QuotaPage() {
   }, [files, quotas]);
 
   return (
-    <section className="page management-page quota-page">
+    <section className="page management-page quota-page" aria-label={t('quota.title')}>
       {confirmationDialog}
-      <header className="management-header">
-        <div><h1>{t('quota.title')}</h1></div>
-      </header>
       {error ? <MessageNotice message={error} /> : null}
       <OAuthPageToolbar
         icon={<Gauge size={18} />}
@@ -166,7 +163,6 @@ export function QuotaPage() {
         <div className="management-empty"><AlertCircle size={24} /><strong>{t('quota.empty.title')}</strong><span>{t('quota.empty.description')}</span></div>
       ) : (
         <div className="quota-group-list">
-          <div className="quota-table-head" aria-hidden="true"><span>{t('authFiles.list.credential')}</span><span>{t('authFiles.list.plan')}</span><span>{t('authFiles.list.status')}</span><span>{t('authFiles.list.quota')}</span><span>{t('authFiles.list.actions')}</span></div>
           {grouped.map(([provider, items]) => (
             <section className="quota-provider-group" key={provider}>
               <div className="quota-group-heading">
