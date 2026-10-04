@@ -639,7 +639,7 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
     let legacy = "# User configuration\nusage-statistics-enabled: true\nhost: 127.0.0.1\nport: 9527\nauth-dir: ../oauth\napi-keys: [client-key]\nremote-management: {secret-key: user-secret}\nproxy-url: direct\nrequest-retry: 9\ncodex-api-key: [{api-key: upstream-key, base-url: 'https://example.invalid/v1'}]\noauth-model-alias: {codex: [{name: model, alias: custom-model}]}\n";
     let template = "observability: {usage: {usage-statistics-enabled: false}}\nserver: {host: '', port: 8317}\noauth: {auth-dir: '~/.cli-proxy-api'}\naccess: {api-keys: [your-api-key-1]}\nmanagement: {secret-key: ''}\nrequests: {proxy-url: ''}\nrouting: {retry: {request-retry: 3}}\n";
 
-    for prefix in ["", "server: {host: 127.0.0.1}\n"] {
+    for prefix in ["", "config-version: 7\n", "server: {host: 127.0.0.1}\n"] {
         let original = format!("{prefix}{legacy}");
         fs::write(install_dir.join(CORE_CONFIG_FILE), &original).unwrap();
         for template_prefix in ["config-version: 8\n", ""] {
@@ -651,6 +651,7 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
             fs::write(install_dir.join(CORE_CONFIG_FILE), &original).unwrap();
 
             let document = serde_norway::from_str::<serde_norway::Value>(&migrated).unwrap();
+            assert_eq!(document["config-version"].as_u64(), Some(8));
             let settings = core_config_settings_from_value(&document).unwrap();
             assert_eq!(settings.auth_dir, "../oauth", "credential directory changed during update");
             assert_eq!(settings.port, 9527);
@@ -671,6 +672,7 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
             gui.proxy_url = settings.proxy_url.clone();
             let startup = merge_core_config_yaml(template, Some(&migrated), &gui).unwrap();
             let startup = serde_norway::from_str::<serde_norway::Value>(&startup).unwrap();
+            assert_eq!(startup["config-version"].as_u64(), Some(8));
             let effective = core_config_settings_from_value(&startup).unwrap();
             assert_eq!(auth_dir_path_for_core(&effective.auth_dir, &install_dir).unwrap(), root.join("oauth"));
             assert!(effective.usage_statistics_enabled);
@@ -680,6 +682,19 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
         }
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn v7_config_startup_with_v8_template_writes_v8_version() {
+    for marker in ["", "config-version: 8\n"] {
+        let template = format!("{marker}server: {{port: 8317}}\naccess: {{api-keys: []}}\n");
+        let current = "config-version: 7\ncodex-api-key: [{api-key: upstream-test, models: [{name: example}]}]\n";
+        let rendered = merge_core_config_yaml(&template, Some(current), &GuiConfigFile::default()).unwrap();
+        let document: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
+        assert_eq!(document["config-version"].as_u64(), Some(8));
+        assert_eq!(document["api-keys"]["codex"][0]["keys"][0]["api-key"], "upstream-test");
+        assert!(document.get("codex-api-key").is_none());
+    }
 }
 
 #[test]

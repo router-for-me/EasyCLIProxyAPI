@@ -38,6 +38,19 @@ fn non_v8_management_yaml_is_returned_without_reformatting() {
 }
 
 #[test]
+fn v8_version_marker_preserves_legacy_values_until_canonical_fields_exist() {
+    let input = "config-version: 8\napi-keys: [client-key]\ncodex-api-key: [{api-key: upstream-key, models: [{name: model-a}]}]\n";
+    let view = yaml_json(&management_v8_yaml_to_legacy_view(input).unwrap());
+    assert_eq!(view["api-keys"], serde_json::json!(["client-key"]));
+    assert_eq!(view["codex-api-key"][0]["models"][0]["name"], "model-a");
+    let mixed = "config-version: 8\napi-keys: {codex: []}\naccess: {api-keys: []}\ncodex-api-key: [{api-key: old-key}]\nclaude-api-key: [{api-key: retained-key}]\n";
+    let view = yaml_json(&management_v8_yaml_to_legacy_view(mixed).unwrap());
+    assert_eq!(view["api-keys"], serde_json::json!([]));
+    assert_eq!(view["codex-api-key"], serde_json::json!([]));
+    assert_eq!(view["claude-api-key"][0]["api-key"], "retained-key");
+}
+
+#[test]
 fn v8_provider_names_belong_to_groups_and_preserve_legacy_view_identity() {
     let groups = serde_norway::from_str(
         "- name: codex-1\n  base-url: https://gateway.example/v1\n  models: [{name: deepseek-chat, alias: my-deepseek}]\n  keys:\n    - {name: DeepSeek, api-key: first, weight: 2}\n    - {api-key: second, priority: 0}\n",

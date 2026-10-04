@@ -207,6 +207,7 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
   const [editorOpen, setEditorOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
   const [activeSourceIndex, setActiveSourceIndex] = useState(0);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const generatedAliasRef = useRef('');
@@ -486,7 +487,11 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
 
   const editorRef = useDialogFocusTrap<HTMLElement>({
     active: editorOpen,
-    onEscape: busyAlias ? undefined : closeEditor,
+    initialFocusRef: modelSearchRef,
+    onEscape: busyAlias ? undefined : () => {
+      if (modelPickerOpen) setModelPickerOpen(false);
+      else closeEditor();
+    },
     preventEscape: Boolean(busyAlias),
   });
 
@@ -607,6 +612,7 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
                 {loading ? <LoaderCircle size={15} className="spin" /> : <Search size={15} />}
                 <input
                   id="thinking-model-search"
+                  ref={modelSearchRef}
                   role="combobox"
                   autoFocus
                   aria-autocomplete="list"

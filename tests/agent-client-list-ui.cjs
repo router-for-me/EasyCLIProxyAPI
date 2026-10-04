@@ -16,6 +16,7 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
   try {
     const page = await browser.newPage({ viewport: { width: 1460, height: 1060 } });
     page.setDefaultTimeout(10000);
+    page.setDefaultNavigationTimeout(30000);
     const errors = [];
     page.on('pageerror', error => errors.push(String(error)));
     await page.route('**/*', route => route.request().url().startsWith(base + '/') ? route.continue() : route.abort());
@@ -38,7 +39,7 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
         const list = document.querySelector('.agent-list-items');
         const actual = Array.from(list.querySelectorAll('button strong'), node => node.textContent);
         const selected = list.querySelector('button.active strong')?.textContent;
-        return actual.length > 0 && actual.length <= 6 && actual.every(name => expected.includes(name))
+        return actual.length > 0 && actual.length <= expected.length && actual.every(name => expected.includes(name))
           && expected.includes(selected) && list.scrollHeight <= list.clientHeight + 1;
       }, names);
       await manage().click();
@@ -175,14 +176,18 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
     await page.screenshot({ path: path.join(screenshots, 'manager-desktop.png'), fullPage: true });
     await closeAndFocus(() => cancel().click());
 
-    // Reproduce the reported desktop size with twelve previously saved clients.
+    // Every saved client is reachable exactly once, in the same order, without a second switcher.
     await page.setViewportSize({ width: 1368, height: 912 });
     const twelve = ['claude-code', 'claude-desktop', 'codex', 'deepseek-harness', 'opencode', 'pi',
       'grok-build', 'antigravity-cli', 'workbuddy', 'zcode', 'kimi-code', 'openclaw'];
+    const twelveNames = ['Claude Code', 'Claude Desktop', 'Codex', 'DeepSeek Harness', 'OpenCode', 'Pi',
+      'Grok Build', 'Antigravity CLI', 'WorkBuddy', 'ZCode', 'Kimi Code', 'OpenClaw'];
     await page.evaluate(({ key, ids }) => localStorage.setItem(key, JSON.stringify(ids)), { key: storageKey, ids: twelve });
     await page.goto(`${base}/tests/fixtures/agent-backups.html?shell&client=claude-code`, { waitUntil: 'domcontentloaded' });
     await ready();
-    await page.waitForFunction(() => document.querySelectorAll('.agent-list-items button').length === 6);
+    const previous = () => page.getByRole('button', { name: '上一页客户端', exact: true });
+    const next = () => page.getByRole('button', { name: '下一页客户端', exact: true });
+    const namesOnPage = () => page.locator('.agent-list-items strong').allTextContents();
     const assertFits = async () => {
       const metrics = await page.locator('.agent-list-items').evaluate(list => {
         const rect = list.getBoundingClientRect();
@@ -193,29 +198,63 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
           }) };
       });
       assert.ok(metrics.scrollHeight <= metrics.height + 1 && metrics.scrollWidth <= metrics.width + 1);
-      assert.equal(metrics.clipped, false, 'all shortcuts are fully visible without hiding overflowing rows');
+      assert.equal(metrics.clipped, false, 'all rows are fully visible on each page');
     };
-    await assertFits();
-    assert.deepEqual(JSON.parse(await stored()), twelve, 'limiting shortcuts preserves saved preferences');
-    const right = await page.locator('.agent-config-scroll-region').evaluate(node => [node.clientHeight, node.scrollHeight]);
-    assert.ok(right[1] <= right[0] + 1, 'Claude Code settings fit at the reported desktop size');
-    const switchClient = () => page.getByRole('button', { name: '切换客户端', exact: true });
-    await switchClient().click();
-    const picker = page.getByRole('dialog', { name: '切换客户端', exact: true });
-    await picker.getByRole('searchbox').fill('herMES');
-    await picker.getByRole('button', { name: 'Hermes Agent', exact: true }).click();
-    assert.equal(await activeClient(), 'Hermes Agent', 'a client outside the first six remains in the shortcuts after selection');
-    assert.ok(JSON.parse(await stored()).includes('hermes'), 'switching to a hidden client brings it back');
-    assert.equal(await switchClient().evaluate(node => node === document.activeElement), true);
-    await assertFits();
+    const collectPages = async () => {
+      while (await previous().isEnabled()) await previous().click();
+      const names = [];
+      for (let index = 0; index < 13; index++) {
+        await assertFits();
+        names.push(...await namesOnPage());
+        if (await next().isDisabled()) break;
+        await next().click();
+      }
+      return names;
+    };
+    assert.equal(await page.getByRole('button', { name: '切换客户端', exact: true }).count(), 0);
+    assert.deepEqual(await collectPages(), twelveNames, 'no saved client is omitted, duplicated or reordered');
+    assert.deepEqual(JSON.parse(await stored()), twelve, 'browsing leaves the management list unchanged');
+    assert.equal(await page.evaluate(() => localStorage.getItem('cpa-gui.agent-selected-client.v1')), 'claude-code',
+      'browsing pages does not select a different client');
+    const lastPage = await namesOnPage();
+    await page.locator('.agent-list-items button').filter({ has: page.getByText('OpenClaw', { exact: true }) }).click();
+    assert.deepEqual(await namesOnPage(), lastPage, 'selecting a client does not replace or shuffle any row');
+    assert.equal(await activeClient(), 'OpenClaw');
+    assert.deepEqual(JSON.parse(await stored()), twelve, 'selecting leaves the management list unchanged');
     await page.setViewportSize({ width: 360, height: 600 });
-    await page.waitForFunction(() => document.querySelectorAll('.agent-list-items button').length < 6);
+    await page.waitForFunction(() => document.querySelector('.agent-list-items button.active strong')?.textContent === 'OpenClaw'
+      && document.querySelectorAll('.agent-list-items button').length <= 2);
     await assertFits();
-    assert.equal(await activeClient(), 'Hermes Agent', 'resizing always retains the active client');
+    assert.deepEqual(await collectPages(), twelveNames, 'all managed clients remain reachable after resizing');
+    assert.deepEqual(JSON.parse(await stored()), twelve);
+    // Add/remove only in management. Cancel is inert; Save controls the entire list.
+    await manage().click();
+    await checkbox('Hermes Agent').check();
+    await checkbox('OpenClaw').uncheck();
+    await closeAndFocus(() => cancel().click());
+    assert.deepEqual(JSON.parse(await stored()), twelve);
+    assert.equal(await activeClient(), 'OpenClaw');
+    await manage().click();
+    await checkbox('Hermes Agent').check();
+    await checkbox('OpenClaw').uncheck();
+    await closeAndFocus(() => save().click());
+    const updatedNames = [...twelveNames.filter(name => name !== 'OpenClaw'), 'Hermes Agent'];
+    assert.equal(await activeClient(), 'Claude Code', 'explicitly removing the current client selects a remaining client');
+    assert.deepEqual(await collectPages(), updatedNames);
+    await page.locator('.agent-list-items button').filter({ has: page.getByText('Hermes Agent', { exact: true }) }).click();
+    assert.equal(await page.evaluate(() => window.fixtureCalls.some(call =>
+      /^(update_agent_config|set_agent_config_enabled|launch_agent)$/.test(call.cmd))), false,
+      'list management and navigation must not write config or launch a client');
+    const savedAfterManagement = await stored();
+    await page.reload();
+    await ready();
+    assert.equal(await stored(), savedAfterManagement);
+    assert.deepEqual(await collectPages(), updatedNames, 'saved management choices survive reload');
     await page.setViewportSize({ width: 1368, height: 912 });
-    await switchClient().click();
-    await picker.getByRole('button', { name: 'Claude Code', exact: true }).click();
-    await page.locator('.agent-workbench').screenshot({ path: path.join(screenshots, 'shortcuts-desktop.png') });
+    await page.locator('.agent-workbench').screenshot({ path: path.join(screenshots, 'client-pagination.png') });
+    assert.equal(await page.evaluate(() => window.fixtureCalls.some(call =>
+      /^(update_agent_config|set_agent_config_enabled|launch_agent)$/.test(call.cmd))), false,
+      'list management and navigation must not write config or launch a client');
 
     // Both entry points remain usable with narrow windows and English text in dark mode.
     for (const embedded of [false, true]) {

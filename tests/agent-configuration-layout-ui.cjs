@@ -130,7 +130,7 @@ const desktopViewports = [
       return metrics;
     };
 
-    const assertClientShortcuts = async label => {
+    const assertClientPage = async label => {
       const metrics = await page.locator('.agent-list-items').evaluate(list => {
         const rect = list.getBoundingClientRect();
         const buttons = Array.from(list.querySelectorAll('button'));
@@ -141,9 +141,9 @@ const desktopViewports = [
             return r.top < rect.top - 1 || r.bottom > rect.bottom + 1 || r.left < rect.left - 1 || r.right > rect.right + 1;
           }).map(button => button.textContent) };
       });
-      assert.ok(metrics.count >= 1 && metrics.count <= 6, `${label}: show at most six shortcuts`);
-      assert.equal(metrics.overflow, false, `${label}: shortcuts must fit without scrolling`);
-      assert.deepEqual(metrics.clipped, [], `${label}: no shortcut may be clipped`);
+      assert.ok(metrics.count >= 1 && metrics.count <= 13, `${label}: render a nonempty client page`);
+      assert.equal(metrics.overflow, false, `${label}: each client page must fit without scrolling`);
+      assert.deepEqual(metrics.clipped, [], `${label}: no client row may be clipped`);
     };
 
     const assertDesktopLayout = async label => {
@@ -159,7 +159,7 @@ const desktopViewports = [
       assert.ok(Math.abs(clientList.y - configuration.y) <= 1,
         `${label}: the desktop panels must share a top edge`);
       await assertNaturalPanel(label);
-      await assertClientShortcuts(label);
+      await assertClientPage(label);
       return { clientList, configuration };
     };
 
@@ -175,7 +175,7 @@ const desktopViewports = [
       assert.ok(clientList.y + clientList.height <= configuration.y + 1,
         `${label}: the client list must stay above the configuration panel`);
       await assertNaturalPanel(label, { checkControls: false });
-      await assertClientShortcuts(label);
+      await assertClientPage(label);
       const pageWidth = await page.evaluate(() => ({
         clientWidth: document.documentElement.clientWidth,
         scrollWidth: document.documentElement.scrollWidth,
@@ -324,7 +324,7 @@ const desktopViewports = [
         `${label}: fixed-height desktop layout must not create a far-right page scrollbar`);
       assert.ok(metrics.documentScrollWidth <= metrics.documentClientWidth + 1,
         `${label}: fixed-height desktop layout must not create horizontal page scrolling`);
-      await assertClientShortcuts(label);
+      await assertClientPage(label);
       await assertShellScrollRegion(label, { requireOverflow: requireRightOverflow });
       return metrics;
     };
@@ -344,10 +344,10 @@ const desktopViewports = [
           const label = `${viewport.width}x${viewport.height}/${embedded ? 'embedded' : 'full'}/${client}/core`;
           await assertDesktopLayout(label);
           if (client === 'zcode' && viewport.height === 941) {
-            const status = page.locator('.agent-list-items button').filter({ hasText: 'Claude Code' }).locator('small');
+            const status = page.locator('.agent-list-items button').filter({ hasText: 'ZCode' }).locator('small');
             const longModel = 'gemini-3.8-flash-high-with-a-long-client-status-for-layout-verification';
             await page.evaluate(model => {
-              window.fixtureClientStatusesOverride = { 'claude-code': { appliedModel: model } };
+              window.fixtureClientStatusesOverride = { 'zcode': { appliedModel: model } };
             }, longModel);
             await page.locator('.agent-client-list-heading button').click();
             await page.waitForFunction(model => Array.from(document.querySelectorAll('.agent-list-items small'))
@@ -440,7 +440,7 @@ const desktopViewports = [
       `${shellNarrowLabel}: the stacked workbench must preserve the fixed window-edge gap`);
     assert.ok(shellNarrow.documentScrollHeight <= shellNarrow.documentClientHeight + 1,
       `${shellNarrowLabel}: the bounded one-column shell must not leak scrolling to the page`);
-    await assertClientShortcuts(shellNarrowLabel);
+    await assertClientPage(shellNarrowLabel);
     await assertShellScrollRegion(shellNarrowLabel);
 
     // At phone width the shell follows Usage records and returns to natural document scrolling.
@@ -456,7 +456,7 @@ const desktopViewports = [
       `${shellPhoneLabel}: phone-width client list must remain above configuration content`);
     assert.ok(shellPhone.documentScrollWidth <= shellPhone.documentClientWidth + 1,
       `${shellPhoneLabel}: natural document flow must not create horizontal scrolling`);
-    await assertClientShortcuts(shellPhoneLabel);
+    await assertClientPage(shellPhoneLabel);
     await assertShellScrollRegion(shellPhoneLabel, { natural: true });
 
     for (const viewport of [{ width: 640, height: 700 }, { width: 360, height: 941 }]) {

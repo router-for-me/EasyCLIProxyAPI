@@ -2,8 +2,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const categories = ['general', 'routing', 'requests', 'oauth', 'diagnostics', 'extensions', 'software'];
-const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { width: 1280, height: 800 }];
+const categories = ['general', 'aliases', 'routing', 'requests', 'oauth', 'diagnostics', 'extensions', 'software'];
+const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { width: 1280, height: 800 }, { width: 1600, height: 1000 }];
 
 (async () => {
   let server;
@@ -36,6 +36,7 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
         const label = `${locale} ${viewport.width}x${viewport.height}`;
         const page = await browser.newPage({ viewport });
         page.setDefaultTimeout(10000);
+        page.setDefaultNavigationTimeout(60000);
         page.on('pageerror', error => runtimeErrors.push(`${label}: ${error}`));
         await page.route('**/*', route => route.request().url().startsWith(base) ? route.continue() : route.abort());
         await page.addInitScript(language => localStorage.setItem('easy-cli-proxy-api.locale', language), locale);
@@ -57,12 +58,6 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           assert.equal(await page.locator(`#config-subpage-tab-${id}`).getAttribute('aria-selected'), 'true');
           await settle();
         };
-        const view = async id => {
-          await page.locator(`#config-view-${id}`).click();
-          assert.equal(await page.locator(`#config-view-${id}`).getAttribute('aria-pressed'), 'true');
-          assert.equal(await page.locator(`#config-view-${id}`).getAttribute('role'), null);
-          await settle();
-        };
         const templateVisible = async (id, visible = true) => {
           assert.equal(await page.locator(`#template-group-${id}`).isVisible(), visible, `${label}: ${id} visibility`);
         };
@@ -75,6 +70,29 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           ].filter(Boolean).filter(element => element.scrollWidth > element.clientWidth + 1)
             .map(element => ({ element: element.className || element.tagName, width: element.clientWidth, scroll: element.scrollWidth })));
           assert.deepEqual(overflowing, [], `${label} ${context}: settings must fit without horizontal overflow`);
+          const narrowLists = await page.evaluate(() => {
+            const width = document.querySelector('.config-settings-content').getBoundingClientRect().width;
+            return [...document.querySelectorAll('#config-native-keys, #config-native-aliases, #config-native-sensitive-words, .template-config-card:has([data-field-type="custom"], [data-field-type="json"], [data-field-type="string-list"])')]
+              .filter(card => card.id !== 'config-group-extensions-plugins' && card.getBoundingClientRect().width > 0 && Math.abs(card.getBoundingClientRect().width - width) > 1)
+              .map(card => card.id);
+          });
+          assert.deepEqual(narrowLists, [], `${label} ${context}: expandable lists and rules occupy independent full rows`);
+          if (viewport.width >= 1240) {
+            const incompleteRows = await page.evaluate(() => {
+              const content = document.querySelector('.config-settings-content').getBoundingClientRect();
+              const cards = [...document.querySelectorAll('.config-settings-cards > section, .template-config-card, #config-native-aliases, #config-native-sensitive-words')]
+                .map(card => ({ id: card.id, box: card.getBoundingClientRect() })).filter(card => card.box.width > 0);
+              return cards.filter(card => {
+                if (['config-native-software', 'config-group-extensions-plugins'].includes(card.id)) {
+                  return Math.abs(card.box.left + card.box.width / 2 - content.left - content.width / 2) > 1;
+                }
+                const peers = cards.filter(peer => Math.abs(peer.box.top - card.box.top) < 2);
+                return Math.abs(Math.min(...peers.map(peer => peer.box.left)) - content.left) > 1
+                  || Math.abs(Math.max(...peers.map(peer => peer.box.right)) - content.right) > 1;
+              }).map(card => card.id);
+            });
+            assert.deepEqual(incompleteRows, [], `${label} ${context}: card rows must not leave an orphan half-width card`);
+          }
         };
         const reachable = async (locator, context) => {
           await locator.scrollIntoViewIfNeeded();
@@ -163,7 +181,7 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           };
         });
         assert.equal(navigationLayout.aboveContent, true, `${label}: category navigation belongs above settings content`);
-        assert.equal(navigationLayout.singleRow, true, `${label}: all seven categories must stay in a single horizontal row`);
+        assert.equal(navigationLayout.singleRow, true, `${label}: all eight categories must stay in a single horizontal row`);
         assert.equal(navigationLayout.labelsFit, true, `${label}: complete category labels must fit their own buttons`);
         if (viewport.width === 640) {
           assert.equal(navigationLayout.overflowing, true, `${label}: narrow navigation keeps readable labels through scrolling`);
@@ -181,19 +199,48 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
         await reachable(page.locator('#config-subpage-tab-general'), 'first horizontal category');
 
         await tab('general');
-        await view('access');
         assert.equal(await page.locator('.config-keys-panel').isVisible(), true);
+        assert.equal(await page.locator('#config-native-network').isVisible(), true, 'connection settings share the service page');
+        assert.equal(await page.locator('#config-native-tls').isVisible(), true, 'TLS settings share the service page');
+        assert.equal(await page.locator('.config-settings-views').count(), 0, 'secondary pagination is removed');
+        const sectionStyle = await page.locator('.config-keys-panel').evaluate(node => {
+          const style = getComputedStyle(node);
+          return { radius: style.borderRadius, shadow: style.boxShadow, background: style.backgroundColor };
+        });
+        assert.equal(sectionStyle.radius, '12px');
+        assert.notEqual(sectionStyle.background, 'rgba(0, 0, 0, 0)', 'settings groups have their own surface');
+        if (viewport.width >= 1240) {
+          const keys = await page.locator('#config-native-keys').boundingBox();
+          const management = await page.locator('#config-native-management').boundingBox();
+          const content = await page.locator('.config-settings-content').boundingBox();
+          assert.ok(Math.abs(keys.width - content.width) <= 1, 'the expandable key list occupies its own full row');
+          assert.ok(management.y >= keys.y + keys.height, 'fixed settings follow the independent key list');
+          const network = await page.locator('#config-native-network').boundingBox();
+          const tls = await page.locator('#config-native-tls').boundingBox();
+          assert.ok(Math.abs(network.y - tls.y) <= 1 && Math.abs(network.height - tls.height) <= 1, 'paired native cards align at both edges');
+        }
         await templateVisible('management');
+        {
+          const row = await page.locator('#template-field-management-0').boundingBox();
+          const toggle = await page.locator('#template-field-management-0 .switch-control').boundingBox();
+          const caption = await page.locator('#template-field-management-0 .template-config-label').boundingBox();
+          assert.ok(Math.abs(row.x + row.width - toggle.x - toggle.width) <= 1, `${label}: switches align with the end of their setting row`);
+          assert.ok(Math.abs(caption.y + caption.height / 2 - toggle.y - toggle.height / 2) <= 1, `${label}: switch and label stay on the same line`);
+        }
         assert.equal(await page.locator('#config-retry-section-title').isVisible(), false);
         await templateVisible('diagnostics', false);
         await noOverflow('service access');
         await exerciseHelp(page.locator('#template-field-management-0 .settings-help-trigger').first(), 'management template');
-        await view('connection');
         assert.equal(await page.locator('#config-network-section-title').isVisible(), true);
         assert.equal(await page.locator('#config-tls-section-title').isVisible(), true);
         assert.equal(await page.locator('#config-retry-section-title').isVisible(), false);
         await noOverflow('service connection');
         const nativePort = page.locator('#config-native-network .config-network-port-field input');
+        assert.ok((await nativePort.boundingBox()).width <= 160, `${label}: port input stays compact`);
+        if (viewport.width >= 964) {
+          const secret = await page.locator('.config-secret-input').boundingBox();
+          assert.ok(secret.width <= 420, `${label}: secret input must not stretch across the page`);
+        }
         assert.equal(await page.getByLabel(locale === 'en' ? 'Port' : '端口', { exact: true }).count(), 1,
           `${label}: field help must not alter the input's accessible label`);
         const initialPort = await nativePort.inputValue();
@@ -205,11 +252,36 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
         assert.equal(await page.locator('#config-retry-section-title').isVisible(), true);
         await templateVisible('routing-advanced');
         await templateVisible('extensions-concurrency');
+        if (viewport.width >= 964) {
+          const toggle = await page.locator('#config-native-routing .switch-control').boundingBox();
+          const ttl = await page.locator('#config-input-config-network-sessionTtl').boundingBox();
+          assert.ok(toggle.width > 0 && ttl.width > 0, `${label}: controls remain visible inside their card`);
+          assert.ok(ttl.width <= 200, `${label}: duration input stays compact`);
+          const retryInput = await page.locator('#config-input-config-network-requestRetry').boundingBox();
+          assert.ok(retryInput.width <= 160, `${label}: retry count stays compact`);
+        }
         await templateVisible('extensions-plugins', false);
         await noOverflow('routing and stability');
+        if (viewport.width >= 964) {
+          const value = await page.locator('#config-input-config-network-requestRetry').boundingBox();
+          const caption = await page.locator('label[for="config-input-config-network-requestRetry"]').boundingBox();
+          assert.ok(Math.abs(value.y + value.height / 2 - caption.y - caption.height / 2) <= 2,
+            `${label}: compact numeric settings keep labels next to their values`);
+          if (viewport.width === 1280) {
+            assert.ok((await retrySection.boundingBox()).height < 460,
+              `${label}: paired routing cards should not create excessive vertical whitespace`);
+          }
+        }
+        await page.locator('.template-config-card:visible').last().scrollIntoViewIfNeeded();
+        await settle();
+        const pinnedCategory = await page.locator('#config-subpage-tab-routing').evaluate(element => {
+          const bounds = element.getBoundingClientRect();
+          const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+          return bounds.top >= 0 && bounds.bottom <= innerHeight && Boolean(hit && element.contains(hit));
+        });
+        assert.equal(pinnedCategory, true, `${label}: categories remain visible and clickable while scrolling long forms`);
         await tab('general');
-        assert.equal(await page.locator('#config-view-connection').getAttribute('aria-pressed'), 'true',
-          `${label}: returning to a category restores its last secondary view`);
+        assert.equal(await page.locator('.config-settings-views').count(), 0, `${label}: secondary pagination is removed`);
         await tab('routing');
         const routingOptions = await page.locator('.routing-segmented').evaluate(group => {
           const container = group.getBoundingClientRect();
@@ -233,14 +305,58 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           `${label}: all routing strategy labels need complete text and usable button bounds: ${JSON.stringify(routingOptions)}`);
 
         await tab('requests');
-        await view('behavior');
         for (const id of ['request-behavior', 'codex-client', 'multimedia', 'request-payload']) await templateVisible(id);
+        if (viewport.width >= 1240) {
+          const left = await page.locator('#config-group-codex-client').boundingBox();
+          const right = await page.locator('#config-group-multimedia').boundingBox();
+          assert.ok(Math.abs(left.y - right.y) <= 1 && Math.abs(left.height - right.height) <= 1, 'paired template cards align at both edges');
+          const leftSave = await page.locator('#config-group-codex-client .template-config-actions button').last().boundingBox();
+          const rightSave = await page.locator('#config-group-multimedia .template-config-actions button').last().boundingBox();
+          assert.ok(Math.abs(leftSave.y + leftSave.height - rightSave.y - rightSave.height) <= 1, 'paired save buttons share a bottom baseline');
+        }
         await noOverflow('model and request behavior');
-        await view('aliases');
+        assert.equal(await page.locator('#config-native-aliases').isVisible(), false, 'aliases are separate from model and request settings');
+        await tab('aliases');
+        await templateVisible('request-behavior', false);
+        assert.equal(await page.locator('#config-native-sensitive-words').isVisible(), false);
         assert.equal(await page.locator('.thinking-alias-page').isVisible(), true);
         await reachable(page.locator('.thinking-alias-page').getByRole('button', { name: locale === 'en' ? 'Create Alias' : '创建别名', exact: true }), 'model alias creation');
         await noOverflow('model aliases');
-        await view('sensitive-words');
+        // Exercise the editor inside the settings page, where ancestor CSS applies.
+        for (const theme of ['light', 'dark']) {
+          await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+          await page.locator('.thinking-alias-page > .management-header button').click();
+          const dialog = page.getByRole('dialog');
+          await dialog.waitFor();
+          await page.waitForFunction(() => document.activeElement?.id === 'thinking-model-search');
+          await page.keyboard.press('Escape');
+          assert.equal(await dialog.isVisible(), true, 'Escape closes the model picker before the editor');
+          assert.equal(await dialog.getByRole('listbox').count(), 0);
+          const surface = await dialog.evaluate(node => {
+            const style = getComputedStyle(node);
+            const bounds = node.getBoundingClientRect();
+            return {
+              background: style.backgroundColor, radius: parseFloat(style.borderRadius),
+              padding: style.padding, withinViewport: bounds.left >= 0 && bounds.top >= 0
+                && bounds.right <= innerWidth && bounds.bottom <= innerHeight,
+            };
+          });
+          assert.ok(!/rgba\([^)]*,\s*0\)$/.test(surface.background) && surface.background !== 'transparent', `${label} ${theme}: editor needs an opaque surface`);
+          assert.ok(surface.radius > 0, `${label} ${theme}: editor retains its own rounded container`);
+          assert.equal(surface.padding, '0px', `${label} ${theme}: page spacing must not override editor layout`);
+          assert.equal(surface.withinViewport, true, `${label} ${theme}: editor fits the window`);
+          await reachable(dialog.getByRole('button', { name: locale === 'en' ? 'Cancel' : '取消', exact: true }), 'alias dialog cancel');
+          if (process.env.SETTINGS_SCREENSHOT_DIR) {
+            const fs = require('node:fs');
+            const directory = path.resolve(process.env.SETTINGS_SCREENSHOT_DIR);
+            fs.mkdirSync(directory, { recursive: true });
+            await page.screenshot({ path: path.join(directory, `alias-dialog-${locale}-${viewport.width}-${theme}.png`) });
+          }
+          await dialog.getByRole('button', { name: locale === 'en' ? 'Cancel' : '取消', exact: true }).click();
+          await dialog.waitFor({ state: 'detached' });
+        }
+        await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+        await tab('requests');
         await page.locator('.config-sensitive-words-row input').first().waitFor();
         await noOverflow('sensitive words');
 
@@ -248,8 +364,7 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
         for (const id of ['oauth-common', 'oauth-models', 'oauth-codex', 'oauth-media', 'oauth-claude', 'oauth-others']) await templateVisible(id);
         await noOverflow('upstream credentials');
         await tab('requests');
-        assert.equal(await page.locator('#config-view-sensitive-words').getAttribute('aria-pressed'), 'true',
-          `${label}: content-filter navigation is remembered across category changes`);
+        assert.equal(await page.locator('.config-settings-views').count(), 0, `${label}: secondary pagination is removed`);
         await tab('diagnostics');
         assert.equal(await page.locator('.config-diagnostics-panel').isVisible(), true);
         await templateVisible('diagnostics');
@@ -265,7 +380,7 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
         await noOverflow('application preferences');
 
         // Search remains available across categories, and result activation must
-        // select both the category and its secondary view before locating a card.
+        // select the category before locating the integrated section.
         await search.fill(locale === 'en' ? 'Retries & cooldowns' : '重试与冷却');
         const results = page.locator('.config-search-results');
         await results.getByRole('button').first().waitFor();
@@ -278,19 +393,17 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
         await results.getByRole('button').first().waitFor();
         await results.getByRole('button').first().click();
         assert.equal(await page.locator('#config-subpage-tab-requests').getAttribute('aria-selected'), 'true');
-        assert.equal(await page.locator('#config-view-sensitive-words').getAttribute('aria-pressed'), 'true');
         assert.equal(await page.locator('.config-sensitive-words-row input').first().isVisible(), true);
         await page.waitForFunction(() => document.querySelector('#config-native-sensitive-words')?.contains(document.activeElement));
         await search.fill(locale === 'en' ? 'thinking aliases' : '思考');
         await results.getByRole('button').first().waitFor();
         await results.getByRole('button').first().click();
-        assert.equal(await page.locator('#config-view-aliases').getAttribute('aria-pressed'), 'true');
         await page.waitForFunction(() => document.querySelector('#config-native-aliases')?.contains(document.activeElement));
+        assert.equal(await page.locator('#config-subpage-tab-aliases').getAttribute('aria-selected'), 'true');
         await search.fill(locale === 'en' ? 'Default values' : '补充缺失参数');
         await results.getByRole('button').first().waitFor();
         await results.getByRole('button').first().click();
         assert.equal(await page.locator('#config-subpage-tab-requests').getAttribute('aria-selected'), 'true');
-        assert.equal(await page.locator('#config-view-behavior').getAttribute('aria-pressed'), 'true');
         const payloadField = page.locator('#template-field-request-payload-0');
         assert.equal(await payloadField.locator('details.template-config-custom').evaluate(element => element.open), true,
           `${label}: search expands structured controls before locating a field`);
@@ -318,7 +431,6 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           fs.mkdirSync(directory, { recursive: true });
           await page.setViewportSize({ width: 640, height: 900 });
           await tab('general');
-          await view('access');
           await page.locator('.config-settings-header').scrollIntoViewIfNeeded();
           await settle();
           await page.screenshot({ path: path.join(directory, locale === 'en' ? 'settings-access-640-en.png' : 'settings-access-640.png') });
@@ -335,7 +447,6 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           fs.mkdirSync(directory, { recursive: true });
           await page.setViewportSize({ width: 1280, height: 900 });
           await tab('general');
-          await view('access');
           await page.locator('.config-settings-header').scrollIntoViewIfNeeded();
           await settle();
           await page.screenshot({ path: path.join(directory, 'settings-access.png') });
@@ -347,7 +458,6 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           await settle();
           await page.screenshot({ path: path.join(directory, 'settings-routing-dark.png') });
           await tab('general');
-          await view('access');
           await page.locator('.config-settings-header').scrollIntoViewIfNeeded();
           await settle();
           await page.screenshot({ path: path.join(directory, 'settings-access-dark.png') });
@@ -359,7 +469,6 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
         // above use fresh browser contexts so preferences never leak between them.
         if (viewport.width === 1280) {
           await tab('general');
-          await view('access');
           const remoteManagement = page.locator('#template-management-0');
           await remoteManagement.check();
           assert.equal(await hasDirtyMarker('general'), true, `${label}: template drafts mark their category`);
@@ -378,7 +487,6 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           }, await retrySave.elementHandle());
           assert.equal(await hasDirtyMarker('routing'), false, `${label}: saving clears the category marker`);
           await tab('general');
-          await view('access');
           assert.equal(await remoteManagement.isChecked(), true, `${label}: saving another category preserves template drafts`);
           assert.equal(await hasDirtyMarker('general'), true);
           const management = page.locator('#template-group-management').locator('xpath=ancestor::section[1]');
@@ -387,20 +495,18 @@ const viewports = [{ width: 640, height: 600 }, { width: 964, height: 700 }, { w
           assert.equal(await hasDirtyMarker('general'), false, `${label}: discarding clears the category marker`);
 
           await tab('requests');
-          await view('sensitive-words');
           const sensitiveWord = page.locator('.config-sensitive-words-row input').first();
           await sensitiveWord.fill('settings-navigation-draft');
           await tab('extensions');
           assert.equal(await hasDirtyMarker('requests'), true, `${label}: sensitive-word drafts mark their category`);
           await tab('requests');
-          await view('sensitive-words');
           assert.equal(await sensitiveWord.inputValue(), 'settings-navigation-draft', `${label}: sensitive-word drafts survive category changes`);
         }
         await page.close();
       }
     }
     assert.deepEqual(runtimeErrors, [], 'Settings navigation must not produce runtime errors');
-    console.log('PASS: seven settings categories, contextual views, search, retained drafts, save feedback, and Chinese/English responsive layouts.');
+    console.log('PASS: eight settings categories including independent model aliases, adaptive cards, search, retained drafts, save feedback, and Chinese/English responsive layouts.');
   } finally {
     if (browser) await browser.close();
     if (server) await server.close();

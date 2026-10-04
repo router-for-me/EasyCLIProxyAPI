@@ -130,6 +130,131 @@ impl TestCore {
 
 #[tokio::test]
 #[ignore = "requires CPA_V8_TEST_CORE pointing to a v8 executable"]
+async fn v8_claude_desktop_and_code_share_persisted_model_routes() {
+    check_claude_model_routes(None).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CPA_V8_TEST_CORE pointing to a v8 executable"]
+async fn v7_claude_routes_survive_v8_migration_and_reapply() {
+    for marker in ["", "config-version: 7\n"] {
+        check_claude_model_routes(Some(marker)).await;
+    }
+}
+
+async fn check_claude_model_routes(legacy_marker: Option<&str>) {
+    let executable = fs::canonicalize(std::env::var_os("CPA_V8_TEST_CORE").expect("set CPA_V8_TEST_CORE")).unwrap();
+    let directory = agent_test_home("v8-contract-claude-routes");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let mut core = TestCore {
+        child: None, config: directory.join("config.yaml"), directory, executable,
+        origin: format!("http://127.0.0.1:{port}"),
+        client: reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(3)).build().unwrap(),
+    };
+    let gui = GuiConfigFile {
+        port, management_secret_key: "isolated-test-secret".into(),
+        auth_dir: path_to_string(&core.directory.join("auth")),
+        api_keys: vec![GuiApiKeyEntry { key: "isolated-client-key".into(), remark: String::new() }],
+        ..GuiConfigFile::default()
+    };
+    let initial = "config-version: 8\nmanagement: {disable-control-panel: true, disable-auto-update-panel: true}\napi-keys:\n  codex:\n    - name: test-upstream\n      base-url: http://127.0.0.1:1/v1\n      models: [{name: model-one}]\n      keys: [{api-key: upstream-test, weight: 2}]\n";
+    let migrated;
+    let initial = if let Some(marker) = legacy_marker {
+        let legacy = format!("{marker}codex-api-key:\n  - api-key: upstream-test\n    base-url: http://127.0.0.1:1/v1\n    models: [{{name: model-one, alias: claude-sonnet-custom}}]\noauth-model-alias:\n  codex: [{{name: oauth-original, alias: claude-opus-legacy, fork: true}}]\npayload:\n  override:\n    - models: [{{name: claude-sonnet-custom, protocol: codex}}]\n      params: {{reasoning.effort: high, service_tier: priority}}\n");
+        migrated = migrate_legacy_core_config_to_v8("config-version: 8\nserver: {port: 8317}\nmanagement: {disable-control-panel: true, disable-auto-update-panel: true}\n", &legacy).unwrap();
+        let document: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+        assert_eq!(document["config-version"].as_u64(), Some(8));
+        assert_eq!(document["oauth"]["model-alias"]["codex"][0]["alias"], "claude-opus-legacy");
+        assert_eq!(document["requests"]["payload"]["override"][0]["params"]["service_tier"], "priority");
+        for key in ["codex-api-key", "oauth-model-alias", "payload"] {
+            assert!(document.get(key).is_none(), "legacy field {key} must be migrated");
+        }
+        migrated.as_str()
+    } else { initial };
+    fs::write(&core.config, apply_gui_managed_settings(initial, &gui).unwrap()).unwrap();
+    core.start().await;
+    let before = core.config_view().await;
+    let desktop = fetch_prepared_agent_models(AgentClient::ClaudeDesktop, &gui).await.unwrap();
+    let mappings = ClaudeDesktopModelMappings {
+        desktop_models: Some(vec![ClaudeDesktopModelMapping {
+            model: if legacy_marker.is_some() { "claude-sonnet-custom" } else { "model-one" }.into(),
+            alias: if legacy_marker.is_some() { "" } else { "claude-sonnet-custom" }.into(), context_1m: false,
+        }]),
+        ..ClaudeDesktopModelMappings::all("model-one")
+    };
+    let profile = commit_agent_with_core(&gui, Some(&mappings), &desktop.models, || {
+        build_claude_desktop_profile(None, &core.origin, "isolated-client-key", "model-one", &desktop.models, Some(&mappings))
+    }).await.unwrap();
+    let profile: serde_json::Value = serde_json::from_str(&profile).unwrap();
+    assert_eq!(profile["inferenceModels"][0]["name"], "claude-sonnet-custom");
+    assert_eq!(profile["inferenceGatewayBaseUrl"], core.origin);
+    let saved = core.config_view().await;
+    if legacy_marker.is_some() {
+        // Reapplying an existing public route must preserve its upstream,
+        // credentials, OAuth mappings, and reasoning/Fast overrides.
+        assert_eq!(saved["api-keys"], before["api-keys"]);
+        assert_eq!(saved["oauth"]["model-alias"], before["oauth"]["model-alias"]);
+        assert_eq!(saved["requests"]["payload"], before["requests"]["payload"]);
+    }
+    assert_eq!(saved["api-keys"]["codex"][0]["keys"], before["api-keys"]["codex"][0]["keys"]);
+    assert!(saved["api-keys"]["codex"][0]["models"].as_array().unwrap().iter()
+        .any(|entry| entry["name"] == "model-one" && entry["alias"] == "claude-sonnet-custom"));
+
+    for client in [AgentClient::ClaudeDesktop, AgentClient::ClaudeCode] {
+        let mut available = None;
+        for _ in 0..50 {
+            let prepared = fetch_prepared_agent_models(client, &gui).await.unwrap();
+            if prepared.models.iter().any(|model| model.name == "claude-sonnet-custom") {
+                available = Some(prepared.models);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let models = available.expect("Claude client must see the route published by the core");
+        if client == AgentClient::ClaudeCode {
+            let settings = build_claude_agent_config(None, &core.origin, "isolated-client-key", "claude-sonnet-custom", &models, None).unwrap();
+            let settings: serde_json::Value = serde_json::from_str(&settings).unwrap();
+            assert_eq!(settings["env"]["ANTHROPIC_MODEL"], "claude-sonnet-custom");
+            assert_eq!(settings["env"]["ANTHROPIC_BASE_URL"], core.origin);
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CPA_V8_TEST_CORE pointing to a v8 executable"]
+async fn v8_model_write_migrates_legacy_provider_with_version_marker() {
+    let executable = fs::canonicalize(std::env::var_os("CPA_V8_TEST_CORE").expect("set CPA_V8_TEST_CORE")).unwrap();
+    let directory = agent_test_home("v8-contract-mixed-models");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let mut core = TestCore {
+        child: None, config: directory.join("config.yaml"), directory, executable,
+        origin: format!("http://127.0.0.1:{port}"),
+        client: reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(3)).build().unwrap(),
+    };
+    let gui = GuiConfigFile {
+        port, management_secret_key: "isolated-test-secret".into(),
+        ..GuiConfigFile::default()
+    };
+    let initial = format!("config-version: 8\nserver: {{host: 127.0.0.1, port: {port}}}\nmanagement: {{secret-key: isolated-test-secret, disable-control-panel: true, disable-auto-update-panel: true}}\noauth: {{auth-dir: '{}' }}\napi-keys: [isolated-client-key]\ncodex-api-key:\n  - api-key: upstream-test\n    base-url: http://127.0.0.1:1/v1\n    models: [{{name: model-one}}]\n", path_to_string(&core.directory.join("auth")));
+    fs::write(&core.config, initial).unwrap();
+    core.start().await;
+    let current = fetch_management_config_yaml(&gui).await.unwrap();
+    let mut updated: serde_norway::Value = serde_norway::from_str(&current).unwrap();
+    updated["codex-api-key"][0]["models"].as_sequence_mut().unwrap()
+        .push(serde_norway::from_str("{name: model-two}").unwrap());
+    put_management_alias_config_changes(&gui, &current, &serde_norway::to_string(&updated).unwrap()).await.unwrap();
+    let saved = core.config_view().await;
+    assert_eq!(saved["access"]["api-keys"], serde_json::json!(["isolated-client-key"]));
+    assert_eq!(saved["api-keys"]["codex"][0]["models"], serde_json::json!([{"name":"model-one"},{"name":"model-two"}]));
+    assert_eq!(saved["api-keys"]["codex"][0]["keys"][0]["api-key"], "upstream-test");
+}
+
+#[tokio::test]
+#[ignore = "requires CPA_V8_TEST_CORE pointing to a v8 executable"]
 async fn v8_alias_save_preserves_multi_key_groups_and_restores_inheritance_after_failure() {
     let executable = fs::canonicalize(std::env::var_os("CPA_V8_TEST_CORE").expect("set CPA_V8_TEST_CORE")).unwrap();
     let directory = agent_test_home("v8-contract-groups");

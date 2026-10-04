@@ -46,7 +46,7 @@ const path = require('node:path');
     assert.equal(await page.locator('.config-settings-sidebar').count(), 0);
     assert.equal(await page.locator('.config-settings-header p, .config-nav-save-hint, .config-category-heading, .config-section-index').count(), 0);
     assert.deepEqual(await configTabs.evaluateAll(elements => elements.map(element => element.id)), [
-      'config-subpage-tab-general', 'config-subpage-tab-routing', 'config-subpage-tab-requests',
+      'config-subpage-tab-general', 'config-subpage-tab-aliases', 'config-subpage-tab-routing', 'config-subpage-tab-requests',
       'config-subpage-tab-oauth', 'config-subpage-tab-diagnostics', 'config-subpage-tab-extensions',
       'config-subpage-tab-software',
     ]);
@@ -58,7 +58,7 @@ const path = require('node:path');
       element.getAttribute('aria-controls') === 'config-subpage-panel')), true);
     await configTabs.first().focus();
     await page.keyboard.press('ArrowRight');
-    assert.equal(await page.locator('#config-subpage-tab-routing').getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('#config-subpage-tab-aliases').getAttribute('aria-selected'), 'true');
     await page.keyboard.press('ArrowLeft');
     assert.equal(await configTabs.first().getAttribute('aria-selected'), 'true');
     await page.keyboard.press('End');
@@ -75,9 +75,8 @@ const path = require('node:path');
       }, key), false, `${key} must remain available for normal page scrolling`);
       assert.equal(await configTabs.first().getAttribute('aria-selected'), 'true');
     }
-    assert.equal(await page.locator('#config-view-access').getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#config-view-connection').getAttribute('role'), null);
     assert.equal(await page.getByLabel('搜索设置', { exact: true }).count(), 1);
+    assert.equal(await page.locator('.config-settings-views').count(), 0);
     const fieldHelp = page.locator('#template-field-management-0 .settings-help-trigger').first();
     assert.equal(await fieldHelp.getAttribute('aria-expanded'), 'false');
     assert.ok(await fieldHelp.getAttribute('aria-controls'));

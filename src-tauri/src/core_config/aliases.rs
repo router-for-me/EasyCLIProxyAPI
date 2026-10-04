@@ -483,6 +483,7 @@ pub(crate) fn management_v8_yaml_to_legacy_view(content: &str) -> Result<String,
     let client_keys = yaml_mapping_value(root, "access")
         .and_then(serde_norway::Value::as_mapping)
         .and_then(|access| yaml_mapping_value(access, "api-keys"))
+        .or_else(|| yaml_mapping_value(root, "api-keys").filter(|value| value.is_sequence()))
         .cloned();
     let oauth_aliases = yaml_mapping_value(root, "oauth")
         .and_then(serde_norway::Value::as_mapping)
@@ -529,13 +530,14 @@ pub(crate) fn management_v8_yaml_to_legacy_view(content: &str) -> Result<String,
         root.insert(yaml_key("payload"), payload);
     }
     for (legacy, provider) in V8_PROVIDER_FAMILIES {
-        let groups = yaml_mapping_value(&upstreams, provider)
-            .cloned()
-            .unwrap_or_else(|| serde_norway::Value::Sequence(Vec::new()));
-        root.insert(
-            yaml_key(legacy),
-            flatten_v8_provider_groups(provider, &groups)?,
-        );
+        // The version marker alone does not migrate a legacy file. Only an
+        // explicitly present v8 family replaces its legacy spelling (including []).
+        if let Some(groups) = yaml_mapping_value(&upstreams, provider) {
+            root.insert(yaml_key(legacy), flatten_v8_provider_groups(provider, groups)?);
+        } else {
+            root.entry(yaml_key(legacy))
+                .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()));
+        }
     }
     serde_norway::to_string(&document)
         .map_err(|error| format!("Failed to serialize kernel YAML configuration: {error}"))
@@ -622,9 +624,12 @@ async fn put_management_legacy_alias_view_changes(
     let provider_changes = provider_changes.into_iter().map(|(provider, before, after)| {
         let groups = match after {
             Some(after) => Some(if let Some(native) = &native {
-                let groups = nested_yaml_value(native, &["api-keys", provider])
-                    .cloned().unwrap_or_else(|| serde_norway::Value::Sequence(Vec::new()));
-                update_v8_provider_group_models(provider, &groups, &before.unwrap_or_else(|| serde_norway::Value::Sequence(Vec::new())), &after)?
+                let before = before.unwrap_or_else(|| serde_norway::Value::Sequence(Vec::new()));
+                let groups = match nested_yaml_value(native, &["api-keys", provider]) {
+                    Some(groups) => groups.clone(),
+                    None => group_legacy_provider_records(provider, &before)?,
+                };
+                update_v8_provider_group_models(provider, &groups, &before, &after)?
             } else { group_legacy_provider_records(provider, &after)? }),
             None => None,
         };

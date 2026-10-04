@@ -8,17 +8,21 @@ const assert = require('node:assert/strict');
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.route('**/*', route => route.request().url().startsWith('http://127.0.0.1:1421/') ? route.continue() : route.abort());
     page.setDefaultTimeout(10000);
+    page.setDefaultNavigationTimeout(30000);
     const errors = [];
     page.on('pageerror', error => errors.push(String(error)));
     const tab = name => page.getByRole('tab', { name, exact: true });
     const button = name => page.getByRole('button', { name, exact: true });
     const client = name => ({ click: async () => {
-      const shortcut = page.locator('.agent-list-items button').filter({ has: page.getByText(name, { exact: true }) });
-      if (await shortcut.count()) await shortcut.click();
-      else {
-        await button('切换客户端').click();
-        await page.getByRole('dialog', { name: '切换客户端', exact: true }).getByRole('button', { name, exact: true }).click();
+      const row = page.locator('.agent-list-items button').filter({ has: page.getByText(name, { exact: true }) });
+      const previous = button('上一页客户端');
+      while (await previous.isEnabled()) await previous.click();
+      for (let index = 0; index < 13 && !(await row.count()); index++) {
+        const next = button('下一页客户端');
+        assert.ok(await next.isEnabled(), `${name} must be reachable in the saved client list`);
+        await next.click();
       }
+      await row.click();
     } });
     const active = async name => {
       await page.waitForFunction(name => Array.from(document.querySelectorAll('[role=tab]'))

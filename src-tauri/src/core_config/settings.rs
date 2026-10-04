@@ -291,7 +291,15 @@ pub(crate) fn merge_core_config_yaml(
     config: &GuiConfigFile,
 ) -> Result<String, String> {
     let base = match current {
-        Some(current) => current.to_string(),
+        Some(current) => {
+            let template_document: serde_norway::Value = serde_norway::from_str(template)
+                .map_err(|error| format!("Failed to parse kernel configuration template: {error}"))?;
+            if core_config_uses_v8(&template_document) {
+                migrate_legacy_core_config_to_v8(template, current)?
+            } else {
+                current.to_string()
+            }
+        }
         None => merge_core_config_fields(template, None)?,
     };
     apply_gui_managed_settings(&base, config)

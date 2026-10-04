@@ -1258,7 +1258,7 @@ pub(crate) fn migrate_legacy_core_config_to_v8(
     ).cloned() {
         set_core_yaml_path_value(&mut migrated, &["config-version"], version)?;
     } else {
-        remove_core_yaml_path_value(&mut migrated, &["config-version"]);
+        set_core_yaml_path_value(&mut migrated, &["config-version"], serde_norway::Value::Number(8.into()))?;
     }
     lift_legacy_core_config_fields(
         &mut migrated,

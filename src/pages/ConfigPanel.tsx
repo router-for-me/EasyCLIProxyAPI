@@ -47,8 +47,8 @@ import { TemplateConfigSection } from '../components/TemplateConfigSection';
 import { SettingsHelp } from '../components/SettingsHelp';
 import { templateMessages, templateText } from '../i18n/templateConfig';
 import {
-  settingsCategories, settingsViews, settingsTemplateGroups,
-  allSettingsTemplateGroups, settingsMessages, type SettingsCategory, type SettingsView,
+  settingsCategories, settingsTemplateGroups,
+  allSettingsTemplateGroups, settingsMessages, type SettingsCategory,
 } from '../services/settingsNavigation';
 
 type CoreConfigSettings = {
@@ -96,8 +96,8 @@ type ConfigAction =
   | null;
 type ConfigSubpage = SettingsCategory;
 const CONFIG_SUBPAGES = settingsCategories.map(category => category.id);
-const CATEGORY_ICONS = { general: ShieldCheck, routing: Route, requests: SlidersHorizontal, oauth: KeyRound, diagnostics: FileText, extensions: Puzzle, software: Settings2 };
-type SettingDestination = { category: ConfigSubpage; view?: SettingsView; target: string; field?: string };
+const CATEGORY_ICONS = { general: ShieldCheck, aliases: Link2, routing: Route, requests: SlidersHorizontal, oauth: KeyRound, diagnostics: FileText, extensions: Puzzle, software: Settings2 };
+type SettingDestination = { category: ConfigSubpage; target: string; field?: string };
 type SettingSearchEntry = SettingDestination & { title: string; context: string; keywords: string };
 
 type CloseBehavior = 'ask' | 'exit' | 'minimize-to-tray';
@@ -213,8 +213,6 @@ export function ConfigPanelPage() {
     <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
   );
   const [activeSubpage, setActiveSubpage] = useState<ConfigSubpage>('general');
-  const [categoryViews, setCategoryViews] = useState<Partial<Record<ConfigSubpage, SettingsView>>>({ general: 'access', requests: 'behavior' });
-  const activeView = categoryViews[activeSubpage] ?? 'behavior';
   const [settingsSearch, setSettingsSearch] = useState('');
   const [dirtyTemplateGroups, setDirtyTemplateGroups] = useState<readonly string[]>([]);
   const [sensitiveWordsDirty, setSensitiveWordsDirty] = useState(false);
@@ -1036,22 +1034,20 @@ export function ConfigPanelPage() {
     onEscape: busyAction === 'delete-key' ? undefined : () => setDeleteIndex(null),
     preventEscape: busyAction === 'delete-key',
   });
-  const activateConfigSubpage = (subpage: ConfigSubpage, view?: SettingsView) => {
+  const activateConfigSubpage = (subpage: ConfigSubpage) => {
     setSettingsSearch('');
     setActiveSubpage(subpage);
-    const nextView = view ?? categoryViews[subpage] ?? 'behavior';
-    if (subpage === 'general' || subpage === 'requests') {
-      setCategoryViews(previous => ({ ...previous, [subpage]: nextView }));
+    if (subpage === 'requests') {
+      setSensitiveWordsVisited(true);
     }
-    if (nextView === 'sensitive-words') setSensitiveWordsVisited(true);
-    if (nextView === 'aliases') setAliasesVisited(true);
+    if (subpage === 'aliases') setAliasesVisited(true);
   };
   const handleConfigTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, subpage: ConfigSubpage) => {
     handleHorizontalTabKey(event, CONFIG_SUBPAGES, subpage, activateConfigSubpage,
       next => document.getElementById(`config-subpage-tab-${next}`));
   };
   const navigateToSetting = (destination: SettingDestination) => {
-    activateConfigSubpage(destination.category, destination.view);
+    activateConfigSubpage(destination.category);
     setPendingDestination(destination);
   };
   const nativeDirty = {
@@ -1060,20 +1056,20 @@ export function ConfigPanelPage() {
     retry: retrySettingsDirty, logging: loggingSettingsDirty, software: softwareSettingsDirty,
   };
   const nativeEntries: SettingSearchEntry[] = [
-    { category: 'general', view: 'access', target: 'config-native-keys', title: t('config.keys.title'), context: '', keywords: 'API key token 鉴权密钥 api-keys access' },
-    { category: 'general', view: 'access', target: 'config-native-management', title: t('config.webuiKey.title'), context: '', keywords: 'WebUI secret-key 密钥 管理接口 面板 密码 management security' },
-    { category: 'general', view: 'connection', target: 'config-native-network', title: st('nativeNetwork'), context: '', keywords: [t('config.network.port'), t('config.network.listenHost'), t('config.network.proxyUrl'), t('config.network.systemProxy'), 'server host port proxy URL 8317 127.0.0.1 0.0.0.0 监听 地址 系统代理'].join(' ') },
-    { category: 'general', view: 'connection', target: 'config-native-tls', title: t('config.tls.enable'), context: '', keywords: [t('config.tls.cert'), t('config.tls.key'), 'TLS HTTPS cert key certificate 证书 私钥 加密'].join(' ') },
+    { category: 'general', target: 'config-native-keys', title: t('config.keys.title'), context: '', keywords: 'API key token 鉴权密钥 api-keys access' },
+    { category: 'general', target: 'config-native-management', title: t('config.webuiKey.title'), context: '', keywords: 'WebUI secret-key 密钥 管理接口 面板 密码 management security' },
+    { category: 'general', target: 'config-native-network', title: st('nativeNetwork'), context: '', keywords: [t('config.network.port'), t('config.network.listenHost'), t('config.network.proxyUrl'), t('config.network.systemProxy'), 'server host port proxy URL 8317 127.0.0.1 0.0.0.0 监听 地址 系统代理'].join(' ') },
+    { category: 'general', target: 'config-native-tls', title: t('config.tls.enable'), context: '', keywords: [t('config.tls.cert'), t('config.tls.key'), 'TLS HTTPS cert key certificate 证书 私钥 加密'].join(' ') },
     { category: 'routing', target: 'config-native-routing', title: st('nativeRouting'), context: '', keywords: [t('config.network.sessionAffinity'), t('config.network.sessionTtl'), t('config.routing.title'), 'session affinity ttl routing strategy round-robin 会话 粘性 加权 轮询'].join(' ') },
     { category: 'routing', target: 'config-native-retry', title: st('nativeRetry'), context: '', keywords: [t('config.network.disableCooling'), t('config.network.requestRetry'), t('config.network.maxRetryCredentials'), t('config.network.maxRetryInterval'), t('config.network.streamingBootstrapRetries'), 'retry retries cooldown 重试 冷却 流式 失败 fallback'].join(' ') },
     { category: 'diagnostics', target: 'config-native-logging', title: t('config.diagnostics.title'), context: '', keywords: [t('config.diagnostics.debug.title'), t('config.diagnostics.commercial.title'), t('config.diagnostics.fileLogging.title'), t('config.diagnostics.usage.title'), t('config.diagnostics.maxSize.title'), t('config.diagnostics.errorFiles.title'), t('config.diagnostics.redisRetention.title'), 'debug commercial-mode logging logs usage statistics redis retention 日志 调试 商业模式 用量 统计 留存 文件 容量'].join(' ') },
     { category: 'software', target: 'config-native-software', title: t('config.software.title'), context: '', keywords: [t('config.software.autostart'), t('config.software.startCoreOnLaunch'), t('config.software.silentStart'), t('config.software.closeBehavior'), t('config.software.defaultTerminal'), 'startup autostart silent tray close terminal 软件 自启动 启动 静默 托盘 关闭 终端'].join(' ') },
-    { category: 'requests', view: 'aliases', target: 'config-native-aliases', title: t('app.nav.thinkingAliases'), context: '', keywords: 'thinking reasoning speed aliases effort 思考 推理 速度 别名 模型' },
-    { category: 'requests', view: 'sensitive-words', target: 'config-native-sensitive-words', title: t('config.sensitiveWords.title'), context: '', keywords: 'sensitive words filters antigravity devin 敏感词 内容 过滤' },
+    { category: 'aliases', target: 'config-native-aliases', title: t('app.nav.thinkingAliases'), context: '', keywords: 'thinking reasoning speed aliases effort 思考 推理 速度 别名 模型' },
+    { category: 'requests', target: 'config-native-sensitive-words', title: t('config.sensitiveWords.title'), context: '', keywords: 'sensitive words filters antigravity devin 敏感词 内容 过滤' },
   ];
-  const category = settingsCategories.find(item => item.id === activeSubpage)!;
   const nativeCategoryDirty: Record<ConfigSubpage, boolean> = {
     general: nativeDirty.management || networkSettingsDirty || tlsSettingsDirty,
+    aliases: false,
     routing: sessionRoutingDirty || retrySettingsDirty,
     requests: sensitiveWordsDirty,
     diagnostics: loggingSettingsDirty,
@@ -1083,12 +1079,11 @@ export function ConfigPanelPage() {
   };
   const categoryDirty = (id: ConfigSubpage) => nativeCategoryDirty[id]
     || settingsTemplateGroups[id].some(group => dirtyTemplateGroups.includes(group.id));
-  const templateGroups = (activeSubpage === 'general' && activeView !== 'access')
-    || (activeSubpage === 'requests' && activeView !== 'behavior') ? [] : settingsTemplateGroups[activeSubpage];
+  const templateGroups = settingsTemplateGroups[activeSubpage];
   const searchEntries: SettingSearchEntry[] = [
     ...nativeEntries,
     ...settingsCategories.flatMap(item => settingsTemplateGroups[item.id].flatMap(group => group.fields.map((field, index) => ({
-      category: item.id, view: item.id === 'general' ? 'access' as const : item.id === 'requests' ? 'behavior' as const : undefined,
+      category: item.id,
       target: `config-group-${group.id}`, field: `template-field-${group.id}-${index}`,
       title: templateText(field.label, locale), context: templateText(group.title, locale),
       keywords: `${JSON.stringify(field)} ${templateText(group.description, locale)} ${field.path.join('.')}`,
@@ -1100,7 +1095,6 @@ export function ConfigPanelPage() {
     const text = `${entry.title} ${entry.context} ${entry.keywords} ${categoryTitle}`.toLocaleLowerCase();
     return searchTerms.every(term => text.includes(term));
   });
-  const views = activeSubpage === 'general' ? settingsViews.general : activeSubpage === 'requests' ? settingsViews.requests : [];
 
   return (
     <section className="page config-page">
@@ -1120,11 +1114,9 @@ export function ConfigPanelPage() {
           </div>
         </div>
         <div className="config-settings-content" id="config-subpage-panel" role="tabpanel" aria-labelledby={`config-subpage-tab-${activeSubpage}`}>
-          {searching ? <section className="config-search-results" aria-label={st('results')}><div className="config-search-heading"><h2>{st('results')}</h2><span role="status">{searchResults.length}</span></div>{searchResults.length ? <div className="config-search-result-list">{searchResults.map(entry => <button type="button" key={`${entry.target}-${entry.field ?? ''}`} onClick={() => navigateToSetting(entry)}><span className="config-search-result-copy"><strong>{entry.title}</strong><small>{templateText(settingsCategories.find(item => item.id === entry.category)!.title, locale)}{entry.context ? ` / ${entry.context}` : ''}</small></span><ChevronRight size={17} aria-hidden="true" /></button>)}</div> : <p className="config-search-empty">{st('noResults')}</p>}</section> : <>
-            {views.length ? <div className="config-settings-views" role="group" aria-label={templateText(category.title, locale)}>{views.map(view => <button key={view.id} id={`config-view-${view.id}`} type="button" className={activeView === view.id ? 'active' : ''} aria-pressed={activeView === view.id} onClick={() => activateConfigSubpage(activeSubpage, view.id)}>{templateText(view.title, locale)}</button>)}</div> : null}
-          </>}
+          {searching ? <section className="config-search-results" aria-label={st('results')}><div className="config-search-heading"><h2>{st('results')}</h2><span role="status">{searchResults.length}</span></div>{searchResults.length ? <div className="config-search-result-list">{searchResults.map(entry => <button type="button" key={`${entry.target}-${entry.field ?? ''}`} onClick={() => navigateToSetting(entry)}><span className="config-search-result-copy"><strong>{entry.title}</strong><small>{templateText(settingsCategories.find(item => item.id === entry.category)!.title, locale)}{entry.context ? ` / ${entry.context}` : ''}</small></span><ChevronRight size={17} aria-hidden="true" /></button>)}</div> : <p className="config-search-empty">{st('noResults')}</p>}</section> : null}
           <div className="config-settings-cards">
-<section id="config-native-keys" tabIndex={-1} hidden={searching || activeSubpage !== 'general' || activeView !== 'access'} className="panel config-keys-panel">
+<section id="config-native-keys" tabIndex={-1} hidden={searching || activeSubpage !== 'general'} className="panel config-keys-panel">
           <div className="config-panel-heading">
             <div className="config-heading-title">
               <KeyRound size={18} aria-hidden="true" />
@@ -1226,7 +1218,7 @@ export function ConfigPanelPage() {
           </div>
           {!addDialogOpen && deleteIndex === null ? renderFeedback(keyFeedback) : null}
         </section>
-<section id="config-native-management" tabIndex={-1} hidden={searching || activeSubpage !== 'general' || activeView !== 'access'} className="panel config-management-panel">
+<section id="config-native-management" tabIndex={-1} hidden={searching || activeSubpage !== 'general'} className="panel config-management-panel">
           <div className="config-panel-heading">
             <div className="config-heading-title">
               <ShieldCheck size={18} aria-hidden="true" />
@@ -1336,7 +1328,7 @@ export function ConfigPanelPage() {
             {renderFeedback(managementFeedback)}
           </div>
         </section>
-<section id="config-native-network" tabIndex={-1} hidden={searching || activeSubpage !== 'general' || activeView !== 'connection'}
+<section id="config-native-network" tabIndex={-1} hidden={searching || activeSubpage !== 'general'}
             className="config-network-section"
             aria-labelledby="config-network-section-title"
           >
@@ -1346,15 +1338,7 @@ export function ConfigPanelPage() {
                 <h3 id="config-network-section-title">{st('nativeNetwork')}</h3>
               </div>
               <span className="config-card-status" role="status">{nativeDirty.network ? st('dirty') : ''}</span>
-              <button
-                type="button"
-                className="primary-button compact-button"
-                disabled={controlsDisabled || !networkSettingsDirty}
-                onClick={() => void saveNetworkEndpointSettings()}
-              >
-                <Check size={16} aria-hidden="true" />
-                {busyAction === 'network' ? t('common.saving') : t('common.save')}
-              </button>
+
             </div>
             {renderFeedback(networkFeedback)}
             <div className="config-network-grid">
@@ -1461,8 +1445,18 @@ export function ConfigPanelPage() {
 
               </div>
             </div>
-          </section>
-<section id="config-native-tls" tabIndex={-1} hidden={searching || activeSubpage !== 'general' || activeView !== 'connection'}
+
+          <div className="config-settings-save-row"><button
+                type="button"
+                className="primary-button compact-button"
+                disabled={controlsDisabled || !networkSettingsDirty}
+                onClick={() => void saveNetworkEndpointSettings()}
+              >
+                <Check size={16} aria-hidden="true" />
+                {busyAction === 'network' ? t('common.saving') : t('common.save')}
+              </button></div>
+        </section>
+<section id="config-native-tls" tabIndex={-1} hidden={searching || activeSubpage !== 'general'}
             className="config-network-section"
             aria-labelledby="config-tls-section-title"
           >
@@ -1477,15 +1471,7 @@ export function ConfigPanelPage() {
                   {tlsStatusLabel}
                 </span>
               ) : null}
-              <button
-                type="button"
-                className="primary-button compact-button"
-                disabled={tlsSettingsLoading || tlsSettings === null || busyAction !== null || tlsFileSelecting !== null || !tlsSettingsDirty}
-                onClick={() => void saveTlsSettings()}
-              >
-                <Check size={16} aria-hidden="true" />
-                {busyAction === 'tls' ? t('common.saving') : t('common.save')}
-              </button>
+
             </div>
           </div>
 
@@ -1584,6 +1570,16 @@ export function ConfigPanelPage() {
 
             {renderFeedback(tlsFeedback)}
           </div>
+
+          <div className="config-settings-save-row"><button
+                type="button"
+                className="primary-button compact-button"
+                disabled={tlsSettingsLoading || tlsSettings === null || busyAction !== null || tlsFileSelecting !== null || !tlsSettingsDirty}
+                onClick={() => void saveTlsSettings()}
+              >
+                <Check size={16} aria-hidden="true" />
+                {busyAction === 'tls' ? t('common.saving') : t('common.save')}
+              </button></div>
         </section>
 <section id="config-native-routing" tabIndex={-1} hidden={searching || activeSubpage !== 'routing'}
             className="config-network-section"
@@ -1595,15 +1591,7 @@ export function ConfigPanelPage() {
                 <h3 id="config-routing-section-title">{st('nativeRouting')}</h3>
               </div>
               <span className="config-card-status" role="status">{nativeDirty.routing ? st('dirty') : ''}</span>
-              <button
-                type="button"
-                className="primary-button compact-button"
-                disabled={controlsDisabled || !sessionRoutingDirty}
-                onClick={() => void saveSessionRoutingSettings()}
-              >
-                <Check size={16} aria-hidden="true" />
-                {busyAction === 'routing' ? t('common.saving') : t('common.save')}
-              </button>
+
             </div>
             {renderFeedback(routingFeedback)}
             <div className="config-network-grid">
@@ -1684,7 +1672,17 @@ export function ConfigPanelPage() {
                 </small>
               </div>
             </div>
-          </section>
+
+          <div className="config-settings-save-row"><button
+                type="button"
+                className="primary-button compact-button"
+                disabled={controlsDisabled || !sessionRoutingDirty}
+                onClick={() => void saveSessionRoutingSettings()}
+              >
+                <Check size={16} aria-hidden="true" />
+                {busyAction === 'routing' ? t('common.saving') : t('common.save')}
+              </button></div>
+        </section>
 <section id="config-native-retry" tabIndex={-1} hidden={searching || activeSubpage !== 'routing'}
             className="config-network-section"
             aria-labelledby="config-retry-section-title"
@@ -1695,15 +1693,7 @@ export function ConfigPanelPage() {
                 <h3 id="config-retry-section-title">{st('nativeRetry')}</h3>
               </div>
               <span className="config-card-status" role="status">{nativeDirty.retry ? st('dirty') : ''}</span>
-              <button
-                type="button"
-                className="primary-button compact-button"
-                disabled={controlsDisabled || !retrySettingsDirty}
-                onClick={() => void saveRetrySettings()}
-              >
-                <Check size={16} aria-hidden="true" />
-                {busyAction === 'retry' ? t('common.saving') : t('common.save')}
-              </button>
+
             </div>
             {renderFeedback(retryFeedback)}
             <div className="config-network-grid">
@@ -1845,7 +1835,17 @@ export function ConfigPanelPage() {
 
               </div>
             </div>
-          </section>
+
+          <div className="config-settings-save-row"><button
+                type="button"
+                className="primary-button compact-button"
+                disabled={controlsDisabled || !retrySettingsDirty}
+                onClick={() => void saveRetrySettings()}
+              >
+                <Check size={16} aria-hidden="true" />
+                {busyAction === 'retry' ? t('common.saving') : t('common.save')}
+              </button></div>
+        </section>
 <section id="config-native-logging" tabIndex={-1} hidden={searching || activeSubpage !== 'diagnostics'} className="panel config-diagnostics-panel">
           <div className="config-panel-heading">
             <div className="config-heading-title">
@@ -2045,15 +2045,7 @@ export function ConfigPanelPage() {
                     {softwareStatusLabel}
                   </span>
                 ) : null}
-                <button
-                  type="button"
-                  className="primary-button compact-button"
-                  disabled={softwareSettingsLoading || softwareSettings === null || busyAction !== null || !softwareSettingsDirty}
-                  onClick={() => void saveSoftwareSettings()}
-                >
-                  <Check size={16} aria-hidden="true" />
-                  {busyAction === 'software' ? t('common.saving') : t('common.save')}
-                </button>
+
               </div>
             </div>
             <div className="config-software-content">
@@ -2188,11 +2180,21 @@ export function ConfigPanelPage() {
                 </div>
               </div>
             </div>
-          </section>
-            <div id="config-native-aliases" tabIndex={-1} role="region" aria-label={t('app.nav.thinkingAliases')} hidden={searching || activeSubpage !== 'requests' || activeView !== 'aliases'}>{aliasesVisited ? <ThinkingAliasesPage embedded /> : null}</div>
-            <div id="config-native-sensitive-words" tabIndex={-1} role="region" aria-label={t('config.sensitiveWords.title')} hidden={searching || activeSubpage !== 'requests' || activeView !== 'sensitive-words'}>{sensitiveWordsVisited ? <SensitiveWordsPage onDirtyChange={setSensitiveWordsDirty} /> : null}</div>
+
+          <div className="config-settings-save-row"><button
+                  type="button"
+                  className="primary-button compact-button"
+                  disabled={softwareSettingsLoading || softwareSettings === null || busyAction !== null || !softwareSettingsDirty}
+                  onClick={() => void saveSoftwareSettings()}
+                >
+                  <Check size={16} aria-hidden="true" />
+                  {busyAction === 'software' ? t('common.saving') : t('common.save')}
+                </button></div>
+        </section>
           </div>
           <div id="config-template-panel" hidden={searching || templateGroups.length === 0}><TemplateConfigSection groups={allSettingsTemplateGroups} visibleGroups={templateGroups.map(group => group.id)} onDirtyGroupsChange={setDirtyTemplateGroups} /></div>
+          <div id="config-native-aliases" tabIndex={-1} role="region" aria-label={t('app.nav.thinkingAliases')} hidden={searching || activeSubpage !== 'aliases'}>{aliasesVisited ? <ThinkingAliasesPage embedded /> : null}</div>
+          <div id="config-native-sensitive-words" tabIndex={-1} role="region" aria-label={t('config.sensitiveWords.title')} hidden={searching || activeSubpage !== 'requests'}>{sensitiveWordsVisited ? <SensitiveWordsPage onDirtyChange={setSensitiveWordsDirty} /> : null}</div>
         </div>
       </div>
 

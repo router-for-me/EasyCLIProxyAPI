@@ -229,16 +229,7 @@ const viewports = [
         await tab(`config-subpage-tab-${id}`, `#config-subpage-panel[aria-labelledby="config-subpage-tab-${id}"]`);
         await assertNoPageOverflow(`${label} settings ${id}`);
       }
-      for (const [category, views] of [['general', ['access', 'connection']], ['requests', ['behavior', 'aliases', 'sensitive-words']]]) {
-        await tab(`config-subpage-tab-${category}`, '#config-subpage-panel');
-        for (const view of views) {
-          await page.locator(`#config-view-${view}`).click();
-          await settle();
-          assert.equal(await page.locator(`#config-view-${view}`).getAttribute('aria-pressed'), 'true');
-          await assertNoPageOverflow(`${label} settings ${category}/${view}`);
-          await assertReachable(page.locator(`#config-view-${view}`), `${label} settings ${view} navigation`);
-        }
-      }
+      assert.equal(await page.locator('.config-settings-views').count(), 0, 'settings are integrated without secondary pagination');
       await page.getByLabel('搜索设置', { exact: true }).fill('重试');
       await page.locator('.config-search-results button').first().waitFor();
       await settle();

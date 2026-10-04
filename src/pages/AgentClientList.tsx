@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Check, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import { MessageNotice } from '../appNotice';
 import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 import { useI18n } from '../i18n';
@@ -41,25 +41,26 @@ export function AgentClientList<Id extends string>({
   const { t } = useI18n();
   const [visibleIds, setVisibleIds] = useState(() => readVisibleClients(clients));
   const [managing, setManaging] = useState(false);
-  const [picking, setPicking] = useState(false);
   const [capacity, setCapacity] = useState(1);
+  const [page, setPage] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const close = () => { setManaging(false); setPicking(false); };
+  const close = () => setManaging(false);
   const [draftIds, setDraftIds] = useState<Id[] | null>(null);
   const [query, setQuery] = useState('');
   // Keep the current client reachable even when detection fails or it was uninstalled.
   const automaticIds = clients.filter((client) => client.detected || client.id === selected)
     .map((client) => client.id);
   const visibleClients = clients.filter((client) => (visibleIds ?? automaticIds).includes(client.id));
-  const shortcuts = visibleClients.slice(0, capacity);
-  const current = visibleClients.find((client) => client.id === selected);
-  if (current && !shortcuts.includes(current)) shortcuts[shortcuts.length - 1] = current;
+  const pageCount = Math.max(1, Math.ceil(visibleClients.length / capacity));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageClients = visibleClients.slice(currentPage * capacity, (currentPage + 1) * capacity);
+  const selectedIndex = visibleClients.findIndex((client) => client.id === selected);
   const draftSelection = draftIds ?? automaticIds;
   const searchRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useDialogFocusTrap<HTMLDialogElement>({
-    active: managing || picking,
+    active: managing,
     onEscape: close,
     initialFocusRef: searchRef,
   });
@@ -67,12 +68,18 @@ export function AgentClientList<Id extends string>({
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) return;
-    const resize = () => setCapacity(Math.max(1, Math.min(6, Math.floor((list.clientHeight + 4) / 60))));
+    const resize = () => setCapacity(Math.max(1, Math.floor((list.clientHeight + 4) / 60)));
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(list);
     return () => observer.disconnect();
   }, []);
+
+  // Navigation is a contiguous page of the saved list, never a replacement of its last row.
+  // Opening a client or resizing reveals its page; browsing pages does not select a client.
+  useLayoutEffect(() => {
+    setPage(Math.floor(Math.max(0, selectedIndex) / capacity));
+  }, [capacity, selected, selectedIndex]);
 
   useEffect(() => {
     if (!busy && visibleIds && !visibleIds.includes(selected) && visibleIds.length) {
@@ -81,19 +88,8 @@ export function AgentClientList<Id extends string>({
   }, [busy, onSelect, selected, visibleIds]);
 
   useEffect(() => {
-    if (managing || picking) dialogRef.current?.showModal();
-  }, [dialogRef, managing, picking]);
-
-  const pick = (id: Id) => {
-    // A manually hidden client can be brought back directly from the switcher.
-    if (visibleIds && !visibleIds.includes(id)) {
-      const next = [...visibleIds, id];
-      setVisibleIds(next);
-      try { window.localStorage.setItem(VISIBLE_CLIENTS_KEY, JSON.stringify(next)); } catch { /* Session only. */ }
-    }
-    onSelect(id);
-    close();
-  };
+    if (managing) dialogRef.current?.showModal();
+  }, [dialogRef, managing]);
 
   const save = () => {
     if (!draftSelection.length) return;
@@ -124,7 +120,7 @@ export function AgentClientList<Id extends string>({
       </div>
       {error ? <MessageNotice message={error} onDismiss={onDismissError} /> : null}
       <div className="agent-list-items" ref={listRef}>
-        {shortcuts.map((client) => <button type="button" key={client.id}
+        {pageClients.map((client) => <button type="button" key={client.id}
           className={selected === client.id ? 'active' : ''} aria-pressed={selected === client.id}
           onClick={() => onSelect(client.id)} disabled={busy}>
           <span className="agent-client-icon">{client.icon}</span>
@@ -133,38 +129,38 @@ export function AgentClientList<Id extends string>({
         </button>)}
       </div>
       <div className="agent-client-list-footer">
-        <button type="button" className="secondary-button agent-client-switch" disabled={busy || loading}
-          onClick={() => { setQuery(''); setPicking(true); }}>
-          <Search size={15} aria-hidden="true" />{t('agents.clients.switch')}
-        </button>
-        <small>{t('agents.clients.shown', { count: shortcuts.length, total: clients.length })}</small>
+        <nav className="agent-client-pagination" aria-label={t('agents.clients.pages')}>
+          <button type="button" className="icon-button quiet" disabled={busy || currentPage === 0}
+            aria-label={t('agents.clients.previous')} title={t('agents.clients.previous')}
+            onClick={() => setPage(currentPage - 1)}><ChevronLeft size={16} aria-hidden="true" /></button>
+          <span aria-live="polite">{t('agents.clients.page', { page: currentPage + 1, total: pageCount })}</span>
+          <button type="button" className="icon-button quiet" disabled={busy || currentPage + 1 === pageCount}
+            aria-label={t('agents.clients.next')} title={t('agents.clients.next')}
+            onClick={() => setPage(currentPage + 1)}><ChevronRight size={16} aria-hidden="true" /></button>
+        </nav>
+        <small>{t('agents.clients.listed', { count: visibleClients.length })}</small>
         <button type="button" className="secondary-button compact-button" disabled={busy || loading}
           onClick={() => { setDraftIds(visibleIds); setQuery(''); setManaging(true); }}>
           <SlidersHorizontal size={15} aria-hidden="true" />{t('agents.clients.manage')}
         </button>
       </div>
     </aside>
-    {managing || picking ? <dialog className="agent-client-manager" ref={dialogRef} aria-labelledby={titleId}
+    {managing ? <dialog className="agent-client-manager" ref={dialogRef} aria-labelledby={titleId}
       aria-describedby={descriptionId} onCancel={(event) => { event.preventDefault(); close(); }}>
       <header>
-        <h2 id={titleId}>{t(picking ? 'agents.clients.switch' : 'agents.clients.manage')}</h2>
+        <h2 id={titleId}>{t('agents.clients.manage')}</h2>
         <button type="button" className="icon-button quiet" aria-label={t('common.close')} onClick={close}>
           <X size={18} aria-hidden="true" />
         </button>
       </header>
-      <p id={descriptionId}>{t(picking ? 'agents.clients.switchHint' : 'agents.clients.description')}</p>
+      <p id={descriptionId}>{t('agents.clients.description')}</p>
       <div className="agent-client-search">
         <Search size={16} aria-hidden="true" />
         <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)}
           placeholder={t('agents.clients.search')} aria-label={t('agents.clients.search')} />
       </div>
       <div className="agent-client-catalog">
-        {matches.map((client) => picking ? <button type="button" key={client.id} className="agent-client-option"
-          aria-label={client.name} aria-pressed={selected === client.id} onClick={() => pick(client.id)}>
-          <span className="agent-client-icon">{client.icon}</span>
-          <span className="agent-client-option-copy"><strong>{client.name}</strong><small title={client.summary}>{client.summary}</small></span>
-          {selected === client.id ? <Check size={16} aria-hidden="true" /> : null}
-        </button> : <label key={client.id} className="agent-client-option">
+        {matches.map((client) => <label key={client.id} className="agent-client-option">
           <input type="checkbox" aria-label={client.name} checked={draftSelection.includes(client.id)}
             onChange={(event) => setDraftIds(event.currentTarget.checked
               ? [...draftSelection, client.id] : draftSelection.filter((id) => id !== client.id))} />
@@ -173,7 +169,7 @@ export function AgentClientList<Id extends string>({
         </label>)}
         {!matches.length ? <p role="status">{t('agents.clients.noResults')}</p> : null}
       </div>
-      {managing ? <><div className="agent-client-manager-defaults">
+      <div className="agent-client-manager-defaults">
         <button type="button" className="secondary-button compact-button" onClick={() => setDraftIds(null)}>
           {t('agents.clients.automatic')}
         </button>
@@ -185,7 +181,7 @@ export function AgentClientList<Id extends string>({
           <button type="button" className="secondary-button" onClick={() => setManaging(false)}>{t('common.cancel')}</button>
           <button type="button" className="primary-button" onClick={save} disabled={!draftSelection.length}>{t('common.save')}</button>
         </div>
-      </footer></> : null}
+      </footer>
     </dialog> : null}
   </>;
 }

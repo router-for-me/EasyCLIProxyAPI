@@ -259,7 +259,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
           <div className="button-row panel-action-row control-action-row">
             <button
               type="button"
-              className={coreRunning ? 'secondary-button home-runtime-stop' : 'primary-button'}
+              className={coreRunning ? 'danger-button home-runtime-stop' : 'primary-button'}
               disabled={!coreInstalled || coreProcessBusy}
               onClick={() =>
                 void runCoreProcessCommand(

@@ -125,8 +125,6 @@
 .home-runtime-state.pending { color: var(--amber-text); }
 .home-runtime-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: currentColor; }
 .home-runtime-error { margin: 0; color: var(--error-color); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
-.home-dashboard .control-action-row .home-runtime-stop { color: var(--text-secondary); }
-.home-dashboard .control-action-row .home-runtime-stop:hover:not(:disabled) { color: var(--error-color); border-color: color-mix(in srgb, var(--error-color) 35%, var(--border-color)); background: var(--bg-error-light); }
 .home-dashboard .home-runtime-refresh { width: 32px; height: 32px; min-width: 32px; border-color: transparent; background: transparent; }
 .home-dashboard .home-runtime-refresh svg { width: 18px; height: 18px; }
 

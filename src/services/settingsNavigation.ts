@@ -7,6 +7,7 @@ import { payloadTemplateGroups } from './payloadTemplateFields';
 const text = (zh: string, en: string, ja: string): TemplateText => ({ zh, en, ja });
 export const settingsCategories = [
   { id: 'general', title: text('服务与访问', 'Service & access', 'サービスとアクセス') },
+  { id: 'aliases', title: text('模型别名', 'Model aliases', 'モデル別名') },
   { id: 'routing', title: text('路由与稳定性', 'Routing & reliability', 'ルーティングと安定性') },
   { id: 'requests', title: text('模型与请求', 'Models & requests', 'モデルとリクエスト') },
   { id: 'oauth', title: text('上游与凭据', 'Upstreams & credentials', '上流と認証情報') },
@@ -15,23 +16,13 @@ export const settingsCategories = [
   { id: 'software', title: text('应用偏好', 'App preferences', 'アプリの設定') },
 ] as const;
 export type SettingsCategory = typeof settingsCategories[number]['id'];
-export type SettingsView = 'access' | 'connection' | 'behavior' | 'aliases' | 'sensitive-words';
-export const settingsViews = {
-  general: [
-    { id: 'access', title: text('访问与管理', 'Access & management', 'アクセスと管理') },
-    { id: 'connection', title: text('连接与 TLS', 'Connections & TLS', '接続と TLS') },
-  ],
-  requests: [
-    { id: 'behavior', title: text('请求行为', 'Request behavior', 'リクエストの動作') },
-    { id: 'aliases', title: text('思考别名', 'Thinking aliases', '思考の別名') },
-    { id: 'sensitive-words', title: text('内容过滤', 'Content filters', 'コンテンツフィルター') },
-  ],
-} as const;
 export const settingsTemplateGroups = {
   general: generalTemplateGroups.filter(group => group.id === 'management'),
+  aliases: [],
   routing: [...routingTemplateGroups, ...extensionTemplateGroups.filter(group => group.id === 'extensions-concurrency')],
   requests: [...requestTemplateGroups, ...payloadTemplateGroups],
-  oauth: oauthTemplateGroups,
+  oauth: ['oauth-common', 'oauth-codex', 'oauth-others', 'oauth-claude', 'oauth-models', 'oauth-media']
+    .map(id => oauthTemplateGroups.find(group => group.id === id)!),
   diagnostics: [...generalTemplateGroups.filter(group => group.id === 'diagnostics'), ...extensionTemplateGroups.filter(group => group.id === 'extensions-inflight')],
   extensions: extensionTemplateGroups.filter(group => group.id === 'extensions-plugins'),
   software: [],

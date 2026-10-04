@@ -839,10 +839,12 @@ pub(crate) async fn fetch_codex_catalog_runtime_models(
     config: &GuiConfigFile,
 ) -> Result<Vec<codex_catalog::CodexRuntimeModel>, String> {
     let (runtime, content) = tokio::join!(
-        fetch_codex_runtime_models(config.port, effective_agent_api_key(config)),
+        fetch_agent_model_payload(config.port, effective_agent_api_key(config)),
         fetch_management_config_yaml(config),
     );
-    let mut runtime = runtime?;
+    // Codex selection and its written catalog must use the public /v1/models
+    // IDs, not the alternate catalog selected by client_version.
+    let mut runtime = codex_catalog::parse_public_models(&runtime?)?;
     codex_catalog::apply_configured_context_limits(&mut runtime, &content?)?;
     Ok(runtime)
 }
