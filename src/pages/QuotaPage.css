@@ -64,3 +64,5 @@
 .quota-page .quota-reset-footer { order: 3; align-self: flex-end; margin: auto 0 0; min-height: 30px; padding: 5px 10px; border-radius: 7px; color: #347df4; border-color: #d8e5fb; background: #f3f7ff; }
 .quota-page .quota-reset-footer:hover:not(:disabled) { border-color: #9dbcf4; background: #eaf2ff; }
 .quota-page .quota-card-message, .quota-page .quota-card-error { min-height: 36px; flex-wrap: wrap; }
+.quota-page .quota-card-error > span { display: grid; gap: 4px; min-width: 0; }
+.quota-page .quota-card-error small { overflow-wrap: anywhere; font-size: 11px; }

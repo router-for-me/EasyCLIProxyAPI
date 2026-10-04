@@ -60,4 +60,10 @@ describe('quota card rendering', () => {
     expect(html).toContain('Reset time reached; refresh to verify');
     expect(html).toContain('0% remaining');
   });
+
+  it('Kimi 免费账号取不到额度时只显示卡片内失败状态', () => {
+    const html = render({ status: 'error', rows: [], error: 'free account cannot access quota' }, 'kimi');
+    expect(html).toContain('quota-card-error');
+    expect(html).not.toContain('app-notice-entry');
+  });
 });
