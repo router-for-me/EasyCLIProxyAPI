@@ -24,12 +24,10 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   const compactLayout = compact || dense;
   const fileDisabled = readBoolean(file, 'disabled');
   const showReset = Boolean(onReset && ((quota.resetCredits ?? 0) > 0 || hasPendingClaudeReset(file)));
-  const resetCreditsLabel = quota.resetCredits !== undefined ? t('authFiles.quota.resets', { count: quota.resetCredits }) : '';
   const accountCreditsLabel = quota.creditsUnlimited
     ? t('quota.creditUnlimited')
     : quota.creditBalance !== undefined ? quota.creditBalance : '';
   const denseMetadata = dense ? [
-    quota.resetCreditsApplicable !== undefined ? t('quota.resetApplicable', { count: quota.resetCreditsApplicable }) : '',
     quota.subscriptionActiveUntil ? t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) }) : '',
     accountCreditsLabel ? t('quota.creditBalance') + ': ' + accountCreditsLabel : '',
   ].filter(Boolean).join(' · ') : '';
@@ -52,10 +50,9 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   };
   return (
     <section className={`credential-quota${compactLayout ? ' credential-quota-compact' : ''}${dense ? ' credential-quota-dense' : ''}`} aria-label={t('authFiles.quota.aria')} aria-busy={loading} title={denseMetadata || undefined}>
-      {!compactLayout || showReset || (dense && resetCreditsLabel) ? <div className="credential-quota-heading">
+      {!compactLayout || showReset ? <div className="credential-quota-heading">
         {!compactLayout ? <strong>{t('authFiles.settings.quotaRemaining')}</strong> : null}
         {!compactLayout && quota.plan ? <span className="credential-quota-plan">{quota.plan}</span> : null}
-        {dense && resetCreditsLabel ? <small className="credential-quota-reset-credits">{resetCreditsLabel}</small> : null}
         {showReset ? <button type="button" className="secondary-button compact-button credential-quota-reset" onClick={onReset} disabled={disabled || !canResetQuota(file, quota)}
           title={t('quota.reset')}>{t(hasPendingClaudeReset(file) ? 'quota.claude.retry' : 'quota.reset')}</button> : null}
         {!compactLayout ? <button type="button" className="credential-quota-refresh" disabled={disabled || loading} onClick={onRefresh}
@@ -79,8 +76,6 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
           </details> : null}
         </> : <p className="credential-quota-empty">{t('authFiles.quota.empty')}</p>}
         {!dense ? <div className="credential-quota-footnotes">
-          {!dense && quota.resetCredits !== undefined ? <small>{resetCreditsLabel}</small> : null}
-          {quota.resetCreditsApplicable !== undefined ? <small>{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</small> : null}
           {quota.subscriptionActiveUntil ? <small>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</small> : null}
           {accountCreditsLabel ? <small>{t('quota.creditBalance')}: {accountCreditsLabel}</small> : null}
 

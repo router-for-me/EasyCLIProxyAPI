@@ -2,12 +2,12 @@
   width: 100%;
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-meta);
 }
-.reset-credit-expiries > strong { font-size: inherit; font-weight: 500; }
-.reset-credit-expiries ol { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-.reset-credit-expiries li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; }
+.reset-credit-expiries ol { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.reset-credit-expiries li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 8px; padding: 2px 0; }
+.reset-credit-expiries li + li { border-top: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent); }
 .reset-credit-expiries li span { overflow-wrap: anywhere; }
 .credential-quota-dense .reset-credit-expiries { font-size: 10px; line-height: 1.4; }

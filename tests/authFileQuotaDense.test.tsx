@@ -30,9 +30,9 @@ it('shows reset credits beside the button while preserving applicability and exp
   });
   const resetButton = html.match(/<button[^>]*credential-quota-reset[^>]*>[\s\S]*?<\/button>/)?.[0];
   expect(resetButton).toContain('Reset');
-  expect(html).toMatch(/credential-quota-reset-credits[^>]*>[^<]*2/);
+  expect(html).not.toContain('Manual resets');
   expect(resetButton).not.toContain('disabled=""');
-  expect(html).toContain('Currently applicable: 0');
+  expect(html).not.toContain('Currently applicable: 0');
   expect(html).toContain('Subscription expires');
 });
 

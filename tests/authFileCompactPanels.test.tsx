@@ -31,8 +31,8 @@ describe('compact credential panels', () => {
     expect(beforeDetails).not.toContain('Extra model');
     expect(compact).toMatch(/<details[^>]*><summary>Details \(\+1\)<\/summary>.*Extra model.*Additional quota detail.*<\/details>/);
     expect(compact).toContain('title="Reset Quota"');
-    expect(compact).toContain('2 manual resets');
-    expect(compact).toContain('Currently applicable: 0');
+    expect(compact).not.toContain('2 manual resets');
+    expect(compact).not.toContain('Currently applicable: 0');
     expect(compact).not.toContain('credential-quota-refresh');
     expect(compact).not.toContain(quota.plan!);
 

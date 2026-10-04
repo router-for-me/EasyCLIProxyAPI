@@ -57,7 +57,6 @@ test('loads grant counts and renders a working reset action on both surfaces', a
   ]) {
     expect(html).toContain('Reset Quota');
     expect(html).not.toContain('disabled=""');
-    expect(html).toContain('2');
   }
   updateQuotaCache({ [quotaKey(file)]: quota });
   expect(await resetQuotaWithConfirmation(file, async () => false)).toBe('cancelled');

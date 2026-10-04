@@ -18,7 +18,7 @@ describe('quota card rendering', () => {
     expect(html).toMatch(/<button[^>]*title="Reset Quota"[^>]*>Reset Quota<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Reset Quota<\/button>/);
     expect(html).not.toContain('No applicable reset credits');
-    expect(html).toContain('Currently applicable: 0');
+    expect(html).not.toContain('Currently applicable: 0');
     expect(html).not.toContain('temporary failure');
     expect(html).toContain('Expires 01/01/2030, 00:00');
     expect(html).not.toContain('Subscription expires:');
