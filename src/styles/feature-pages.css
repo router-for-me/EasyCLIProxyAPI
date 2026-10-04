@@ -3243,11 +3243,13 @@
   background: var(--theme-e8e5dc);
   color: var(--theme-2d2a26);
 }
-.agent-auth-segmented-button.active {
-  background: var(--theme-fffdf8);
-  color: var(--theme-2d2a26);
+.agent-auth-segmented-button.active,
+.agent-auth-segmented-button.active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card));
+  color: var(--ui-accent);
+  border-color: transparent;
   font-weight: var(--font-weight-semibold);
-  box-shadow: 0 1px 3px rgba(45, 42, 38, 0.12);
+  box-shadow: none;
 }
 .agent-auth-segmented-button:disabled {
   cursor: not-allowed;
