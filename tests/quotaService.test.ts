@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  codexAccountCreditsFor,
   codexResetCreditDetailsFor,
   codexResetCreditsFor,
   quotaRowsFor,
 } from '../src/services/quotaService';
+
+describe('Codex account credits', () => {
+  it('reads a numeric balance and unlimited flag from usage payloads', () => {
+    expect(codexAccountCreditsFor({ credits: { balance: 12.5, unlimited: false } }))
+      .toEqual({ balance: '12.5', unlimited: false });
+    expect(codexAccountCreditsFor({ credits: { unlimited: true } }))
+      .toEqual({ unlimited: true });
+  });
+
+  it('ignores malformed balances', () => {
+    expect(codexAccountCreditsFor({ credits: { balance: 'N/A', unlimited: false } }))
+      .toEqual({ unlimited: false });
+  });
+});
 
 describe('quotaRowsFor', () => {
   it('把 Codex 的已用百分比转换为剩余额度', () => {

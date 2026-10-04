@@ -208,6 +208,7 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
         <div className="quota-card-error"><AlertCircle size={18} />{t('authFiles.quota.failed')}</div>
       </> : null}
       {quota.status === 'success' && provider === 'codex' ? <div className="quota-reset-credit-summary">
+        {(quota.creditsUnlimited || quota.creditBalance !== undefined) ? <span>{t('quota.creditBalance')} <strong>{quota.creditsUnlimited ? t('quota.creditUnlimited') : quota.creditBalance}</strong></span> : null}
         <span>{t('quota.resetCredits')} <strong>{quota.resetCredits ?? '—'}</strong></span>
         {quota.resetCreditsApplicable !== undefined ? <span>{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</span> : null}
         <span>{t('quota.earliestExpiry')} <strong>{formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale)}</strong></span>

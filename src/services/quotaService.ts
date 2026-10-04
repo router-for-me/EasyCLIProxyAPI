@@ -32,6 +32,8 @@ export type QuotaState = {
   rows: QuotaRow[];
   error?: string;
   plan?: string;
+  creditBalance?: string;
+  creditsUnlimited?: boolean;
   resetCredits?: number;
   resetCreditsApplicable?: number;
   resetCreditsError?: string;
@@ -302,6 +304,24 @@ export const codexResetCreditsFor = (payload: unknown): number | undefined => {
       : null;
   const count = numberValue(credits?.available_count ?? credits?.availableCount);
   return count === null ? undefined : Math.max(0, Math.floor(count));
+};
+
+/** Read the account-level credits returned by the Codex usage endpoint. */
+export const codexAccountCreditsFor = (
+  payload: unknown,
+): { balance?: string; unlimited: boolean } => {
+  const value = parseBody(payload);
+  if (!isRecord(value) || !isRecord(value.credits)) return { unlimited: false };
+  const rawBalance = value.credits.balance;
+  const balance = typeof rawBalance === 'number'
+    ? String(rawBalance)
+    : typeof rawBalance === 'string' && rawBalance.trim() !== ''
+      ? rawBalance.trim()
+      : undefined;
+  return {
+    ...(balance && /^\d+(?:\.\d+)?$/.test(balance) && Number.isFinite(Number(balance)) ? { balance } : {}),
+    unlimited: value.credits.unlimited === true,
+  };
 };
 
 export const codexResetCreditDetailsFor = (
@@ -884,11 +904,14 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
     const usageCreditDetails = provider === 'codex' && isRecord(payload)
       ? codexResetCreditDetailsFor(payload.rate_limit_reset_credits ?? payload.rateLimitResetCredits)
       : {};
+    const accountCredits = provider === 'codex' ? codexAccountCreditsFor(payload) : { unlimited: false };
     return {
       status: 'success',
       rows,
       plan: (provider === 'devin' ? readDevinQuota(payload).plan : detectedPlan)
         ?? (readString(isRecord(payload) ? payload : {}, 'plan_type', 'planType') || codexMetadata?.plan),
+      creditBalance: accountCredits.balance,
+      creditsUnlimited: accountCredits.unlimited,
       subscriptionActiveUntil: provider === 'devin'
         ? readDevinQuota(payload).subscriptionActiveUntil : codexMetadata?.subscriptionActiveUntil,
       resetCreditsError,

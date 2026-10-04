@@ -24,10 +24,14 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   const fileDisabled = readBoolean(file, 'disabled');
   const showReset = Boolean(onReset && (quota.resetCredits ?? 0) > 0);
   const resetCreditsLabel = quota.resetCredits !== undefined ? t('authFiles.quota.resets', { count: quota.resetCredits }) : '';
+  const accountCreditsLabel = quota.creditsUnlimited
+    ? t('quota.creditUnlimited')
+    : quota.creditBalance !== undefined ? quota.creditBalance : '';
   const denseMetadata = dense ? [
     quota.resetCreditsApplicable !== undefined ? t('quota.resetApplicable', { count: quota.resetCreditsApplicable }) : '',
     quota.subscriptionActiveUntil ? t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) }) : '',
     quota.resetCreditsEarliestExpiry ? t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) }) : '',
+    accountCreditsLabel ? t('quota.creditBalance') + ': ' + accountCreditsLabel : '',
   ].filter(Boolean).join(' · ') : '';
   const renderRow = (row: QuotaState['rows'][number], index: number) => {
     const percent = row.remainingPercent !== null && Number.isFinite(row.remainingPercent) ? Math.max(0, Math.min(100, row.remainingPercent)) : null;
@@ -51,9 +55,9 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
       {!compactLayout || showReset || (dense && resetCreditsLabel) ? <div className="credential-quota-heading">
         {!compactLayout ? <strong>{t('authFiles.settings.quotaRemaining')}</strong> : null}
         {!compactLayout && quota.plan ? <span className="credential-quota-plan">{quota.plan}</span> : null}
+        {dense && resetCreditsLabel ? <small className="credential-quota-reset-credits">{resetCreditsLabel}</small> : null}
         {showReset ? <button type="button" className="secondary-button compact-button credential-quota-reset" onClick={onReset} disabled={disabled || !canResetCodexQuota(file, quota)}
-          title={dense ? [t('quota.reset'), resetCreditsLabel, denseMetadata].filter(Boolean).join(' · ') : t('quota.reset')}>{dense ? resetCreditsLabel : t('quota.reset')}</button> : null}
-        {dense && !showReset && resetCreditsLabel ? <small className="credential-quota-reset-credits">{resetCreditsLabel}</small> : null}
+          title={t('quota.reset')}>{t('quota.reset')}</button> : null}
         {!compactLayout ? <button type="button" className="credential-quota-refresh" disabled={disabled || loading} onClick={onRefresh}
           title={disabled ? t('quota.fileDisabled') : t('authFiles.quota.refresh')}>
           {loading ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />}
@@ -78,6 +82,7 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
           {!dense && quota.resetCredits !== undefined ? <small>{resetCreditsLabel}</small> : null}
           {quota.resetCreditsApplicable !== undefined ? <small>{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</small> : null}
           {quota.subscriptionActiveUntil ? <small>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</small> : null}
+          {accountCreditsLabel ? <small>{t('quota.creditBalance')}: {accountCreditsLabel}</small> : null}
           {quota.resetCreditsEarliestExpiry ? <small>{t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) })}</small> : null}
         </div> : null}
         <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />

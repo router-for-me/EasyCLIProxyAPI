@@ -5,6 +5,7 @@ import { consumeCodexResetCredit, loadQuota } from '../src/services/quotaService
 const success = (body: unknown) => ({ status_code: 200, body });
 const codexUsage = {
   rate_limit: { primary_window: { used_percent: 25, limit_window_seconds: 18000 } },
+  credits: { balance: 12.5, unlimited: false },
   rate_limit_reset_credits: { available_count: 2, applicable_available_count: 0 },
 };
 const codexFile = { name: 'codex-test.json', provider: 'codex', auth_index: 1 };
@@ -39,7 +40,7 @@ describe('quota API compatibility', () => {
       ...codexFile,
       metadata: { id_token: { chatgpt_account_id: 'account-test', plan_type: 'pro', chatgpt_subscription_active_until: '2030-01-01T00:00:00Z' } },
     });
-    expect(result).toMatchObject({ status: 'success', plan: 'pro', resetCredits: 2, resetCreditsApplicable: 0, resetCreditsError: 'credits forbidden' });
+    expect(result).toMatchObject({ status: 'success', plan: 'pro', creditBalance: '12.5', creditsUnlimited: false, resetCredits: 2, resetCreditsApplicable: 0, resetCreditsError: 'credits forbidden' });
     expect(result.subscriptionActiveUntil).toBe('2030-01-01T00:00:00Z');
     expect(calls).toHaveLength(2);
     for (const call of calls) {
