@@ -34,7 +34,7 @@
 
 :root:not([data-theme='dark']) .workspace :is(
   .agent-model-section, .agent-auth-segmented, .routing-segmented,
-  .plugin-tabs, .home-protocol-tabs, .usage-analysis-metric,
+  .plugin-tabs, .usage-analysis-metric,
   .credential-quota, .usage-collector-state
 ) {
   background: #fff;
@@ -53,7 +53,7 @@
 
 :root:not([data-theme='dark']) .workspace :is(
   .secondary-button:not(.danger), .icon-button:not(.danger), .agent-auth-segmented-button,
-  .routing-segmented button, .plugin-tabs button, .home-protocol-tabs button,
+  .routing-segmented button, .plugin-tabs button,
   .usage-refresh-btn, .usage-price-row-actions button
 ) {
   background: #fff;
@@ -65,7 +65,7 @@
 :root:not([data-theme='dark']) .workspace :is(
   .agent-list-items button.active, .agent-auth-segmented-button.active,
   .routing-segmented button.active, .plugin-tabs button.active,
-  .home-protocol-tabs button.active, .usage-analysis-metric button[aria-pressed='true']
+  .usage-analysis-metric button[aria-pressed='true']
 ) {
   background: #fff;
   border: 1px solid var(--ui-accent);
@@ -75,7 +75,7 @@
 
 :root:not([data-theme='dark']) .workspace :is(
   .secondary-button:not(.danger), .icon-button:not(.danger), .agent-auth-segmented-button,
-  .routing-segmented button, .plugin-tabs button, .home-protocol-tabs button,
+  .routing-segmented button, .plugin-tabs button,
   .agent-list-items button, .usage-refresh-btn, .usage-price-row-actions button
 ):hover:not(:disabled) {
   background: #fff;

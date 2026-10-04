@@ -164,10 +164,10 @@
 
 .home-protocol-tabs {
   display: flex;
-  gap: 4px;
-  padding: 4px;
+  gap: 8px;
+  padding: 0;
   border-radius: 9px;
-  background: var(--bg-secondary);
+  background: transparent;
 }
 .home-protocol-tabs button {
   display: inline-flex;
@@ -177,17 +177,18 @@
   flex: 1;
   min-width: 0;
   margin: 0;
-  padding: 6px 4px;
+  padding: 9px 6px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-tertiary);
   font-size: 14px;
   font-weight: 500;
   line-height: 1.5;
 }
-.home-protocol-tabs button:hover { color: var(--text-primary); background: transparent; }
-.home-protocol-tabs button.active { color: var(--ui-accent); border-color: var(--border-color); background: var(--bg-card); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 4%); }
+.home-protocol-tabs button:hover { color: var(--ui-accent); background: color-mix(in srgb, var(--ui-accent) 5%, var(--bg-card)); }
+.home-protocol-tabs button.active { color: var(--ui-accent); border-color: transparent; background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card)); font-weight: 600; box-shadow: none; }
+.home-protocol-tabs button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 .home-protocol-tabs img { width: 18px; height: 18px; flex: none; object-fit: contain; }
 :root[data-theme='dark'] #home-protocol-openai img { filter: invert(1); }
 
