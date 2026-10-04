@@ -171,7 +171,7 @@ function parseCsv(text) {
 
     assert.equal(await page.getByRole('heading', { name: 'Request Event Log' }).count(), 0, 'The redundant request log heading is removed');
     const firstRow = page.locator('.usage-events-table tbody tr').first();
-    assert.equal(await page.locator('.usage-events-table th').count(), 12, 'Saved settings cannot restore removed duplicate columns');
+    assert.equal(await page.locator('.usage-events-table th').count(), 13, 'Saved settings cannot restore removed duplicate columns');
     assert.equal(await firstRow.locator('.usage-td-source svg, .usage-td-source img').count(), 0, 'Source is plain text without a logo');
     assert.equal(await firstRow.locator('.usage-td-total').getAttribute('title'), '1,200 tokens', 'The displayed total uses the recorded total instead of adding cache and reasoning again');
     assert.equal(await firstRow.locator('.tone-input').getAttribute('aria-label'), 'Input: 1000');
@@ -291,7 +291,7 @@ function parseCsv(text) {
 
     await page.locator('.usage-col-settings-btn').click();
     const checkboxes = page.locator('.usage-column-option input');
-    assert.equal(await checkboxes.count(), 12, 'Column settings contain only the remaining columns');
+    assert.equal(await checkboxes.count(), 13, 'Column settings contain only the remaining columns');
     for (let index = 2; index < await checkboxes.count(); index += 1) await checkboxes.nth(index).uncheck();
     await page.locator('.usage-column-dialog-actions .primary-button').click();
     await page.waitForFunction(() => document.querySelector('.usage-table-top-scrollbar').classList.contains('is-hidden'));
@@ -345,7 +345,7 @@ function parseCsv(text) {
     assert.equal(await page.getByRole('button', { name: 'Reset Filters', exact: true }).count(), 0, 'The request log has no reset filters control');
     await page.getByRole('combobox', { name: 'Model', exact: true }).selectOption('test-model');
     await page.waitForFunction(() => document.querySelector('.usage-pagination-summary').textContent === 'Showing 1 - 20 of 266');
-    assert.equal(await page.locator('.usage-events-table tbody strong[title="test-model"]').count(), 20, 'Changing a filter resets pagination and shows matching models');
+    assert.deepEqual(await page.locator('.usage-td-model > strong').allTextContents(), Array(20).fill('test-model'), 'Changing a filter resets pagination and shows matching models');
     await page.getByRole('combobox', { name: 'Source', exact: true }).selectOption('test-source');
     await page.waitForFunction(() => document.querySelector('.usage-pagination-summary').textContent === 'Showing 1 - 20 of 133');
     assert.ok((await page.locator('.usage-td-source').allTextContents()).every(text => text === 'Test source'));

@@ -12,6 +12,7 @@ localStorage.setItem('cpa-gui.usage-events-visible-cols.v3', JSON.stringify([
   'time', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'provider',
 ]));
 localStorage.removeItem('cpa-gui.usage-events-visible-cols.v2');
+localStorage.removeItem('cpa-gui.usage-events-visible-cols.v4');
 localStorage.removeItem('cpa-gui.usage-events-col-widths.v2');
 document.documentElement.dataset.theme = params.get('theme') || 'light';
 
@@ -36,7 +37,9 @@ const record = (id: string, model: string, alias: string, response_model?: strin
   canceled: false,
   failure_status: 0,
   failure_body: '',
-  provider: 'test-provider',
+  provider: 'codex',
+  auth_type: id === 'differing' ? 'apikey' : id === 'matching' ? 'oauth' : undefined,
+  cost: id === 'differing' ? { total: 0.0042, pricing_model: 'gpt-6-astra' } : id === 'matching' ? { total: 0, pricing_model: 'gpt-6-sol' } : null,
   model,
   alias,
   ...(response_model === undefined ? {} : { response_model }),

@@ -5,6 +5,8 @@ import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatDuration, formatUsageNumber } from '../services/usageNumber';
 import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
+import { usageProviderDetails } from '../services/usageProvider';
+import { usageModelDetails } from '../services/usageModel';
 
 const compactNumber = (value: number) => formatUsageNumber(value, getCurrentLocale());
 const compactDuration = (value: number) => formatDuration(value, getCurrentLocale());
@@ -29,9 +31,11 @@ export type UsageRecord = {
   failure_status: number;
   failure_body: string;
   provider: string;
+  auth_type?: string;
   model: string;
   /** Model name reported by the upstream response, when available. */
   response_model?: string;
+  cost?: { total: number; pricing_model: string } | null;
   alias: string;
   reasoning_effort: string;
   endpoint: string;
@@ -63,6 +67,7 @@ type EventColumnKey =
   | 'source'
   | 'key'
   | 'cache'
+  | 'cost'
   | 'total'
   | 'result'
   | 'latency'
@@ -80,6 +85,7 @@ type EventColumnDef = {
 
 const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'time', labelKey: 'usage.column.time', defaultWidth: 84, minWidth: 76, align: 'left' },
+  { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 108, minWidth: 88, align: 'left' },
   { key: 'key', labelKey: 'usage.column.key', defaultWidth: 120, minWidth: 96, align: 'left' },
   { key: 'source', labelKey: 'usage.column.source', defaultWidth: 180, minWidth: 120, align: 'left' },
   { key: 'model', labelKey: 'usage.column.model', defaultWidth: 132, minWidth: 104, align: 'left' },
@@ -90,11 +96,11 @@ const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 88, minWidth: 72, align: 'left' },
   { key: 'total', labelKey: 'usage.column.tokens', defaultWidth: 120, minWidth: 112, align: 'left' },
   { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 104, minWidth: 88, align: 'left' },
-  { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 108, minWidth: 88, align: 'left' },
+  { key: 'cost', labelKey: 'usage.column.cost', defaultWidth: 112, minWidth: 96, align: 'left' },
 ] as const;
 
 const DEFAULT_EVENT_VISIBLE_COLUMNS: readonly EventColumnKey[] = [
-  'time', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'provider',
+  'time', 'provider', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'cost',
 ];
 const LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
   'time', 'model', 'input', 'output', 'cache', 'cacheRate', 'total', 'speed', 'ttft', 'latency', 'result', 'provider', 'source',
@@ -105,16 +111,18 @@ const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v1'
 const PREVIOUS_EVENT_COLUMN_WIDTHS: Record<EventColumnKey, number> = {
   time: 105, key: 150, source: 205, model: 150, effort: 100, result: 95,
   request: 145, latency: 125, speed: 110, total: 145, cache: 135, provider: 135,
+  cost: 112,
 };
-const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v3';
-const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v2';
+const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v4';
+const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v3';
 
 const getAllEventColumnKeys = () => EVENT_COLUMNS.map((column) => column.key);
 
 const getInitialVisibleColumns = (): EventColumnKey[] => {
   try {
     const currentRaw = localStorage.getItem(EVENT_VISIBLE_COLS_STORAGE_KEY);
-    const raw = currentRaw ?? localStorage.getItem(LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY);
+    const raw = currentRaw ?? localStorage.getItem(LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY)
+      ?? localStorage.getItem('cpa-gui.usage-events-visible-cols.v2');
     if (raw) {
       const parsed: unknown = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -131,7 +139,8 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
           const wasLegacyDefault = currentRaw === null
             && parsed.length === LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.length
             && LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key));
-          return wasLegacyDefault ? [...DEFAULT_EVENT_VISIBLE_COLUMNS] : savedKeys;
+          if (wasLegacyDefault) return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
+          return currentRaw === null && !savedKeys.includes('cost') ? [...savedKeys, 'cost'] : savedKeys;
         }
       }
     }
@@ -288,34 +297,50 @@ function UsageEventCell({
         </td>
       );
     case 'model': {
-      const responseModel = (record.response_model ?? '').trim();
-      const modelTitle = responseModel ? [
-        `${t('usage.model.request')}: ${record.alias || record.model}`,
-        `${t('usage.model.upstream')}: ${record.model}`,
-        `${t('usage.model.response')}: ${responseModel}`,
-      ].join('\n') : undefined;
+      const model = usageModelDetails(record.model, record.alias, record.response_model);
+      const modelTitle = [
+        `${t('usage.model.request')}: ${model.requested}`,
+        model.showResolved ? `${t('usage.model.upstream')}: ${model.resolved}` : '',
+        model.showResponseInTooltip ? `${t('usage.model.response')}: ${model.response}` : '',
+        model.mismatch ? t('usage.model.mismatch') : '',
+        model.showResponseInTooltip ? t('usage.model.responseHint') : '',
+      ].filter(Boolean).join('\n');
       return (
         <td className="usage-stacked-cell usage-td-model align-left" title={modelTitle}>
-          <strong title={modelTitle || record.alias || record.model}>{record.alias || record.model}</strong>
-          {record.alias && record.alias !== record.model ? <small title={modelTitle || record.model}>{record.model}</small> : null}
-          {responseModel ? (
+          <strong title={modelTitle}>{model.requested}</strong>
+          {model.showResolved ? <small title={modelTitle}>{model.resolved}</small> : null}
+          {model.mismatch ? (
             <small className="usage-response-model" title={modelTitle}>
-              <span aria-hidden="true">↳ </span>{t('usage.model.response')}: {responseModel}
+              {t('usage.model.response')}: {model.response}
             </small>
           ) : null}
+          {model.mismatch ? <span className="usage-model-mismatch">{t('usage.model.mismatch')}</span> : null}
         </td>
       );
+    }
+    case 'cost': {
+      const cost = record.cost;
+      const amount = cost ? new Intl.NumberFormat(getCurrentLocale(), {
+        style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 6,
+      }).format(cost.total) : '—';
+      return <td className="usage-td-cost usage-stacked-cell align-left" title={cost ? t('usage.cost.hint', { model: cost.pricing_model }) : t('usage.cost.unpriced')}>
+        <strong>{amount}</strong>
+        {!cost ? <small>{t('usage.cost.unpriced')}</small> : null}
+      </td>;
     }
     case 'effort':
       return <td className="usage-stacked-cell align-left" title={record.reasoning_effort || 'auto'}><strong>{record.reasoning_effort || 'auto'}</strong></td>;
     case 'request':
       return <td className="usage-stacked-cell align-left" title={record.endpoint || undefined}><strong>{record.endpoint || '—'}</strong></td>;
-    case 'provider':
+    case 'provider': {
+      const provider = usageProviderDetails(record.provider, record.auth_type);
       return (
-        <td className="usage-td-provider align-left" title={record.provider || undefined}>
-          <span className="usage-tag-pill">{record.provider || '—'}</span>
+        <td className="usage-td-provider usage-stacked-cell align-left" title={`${t('usage.provider.hint')}\nprovider: ${provider.rawProvider || '—'}\nauth_type: ${provider.rawAuthType || '—'}`}>
+          <strong>{provider.name}</strong>
+          <small className="usage-access-type">{provider.access || t('usage.provider.unknownAccess')}</small>
         </td>
       );
+    }
     case 'source':
       return (
         <td className="usage-td-source align-left" title={record.source_display || record.source || undefined}>
@@ -548,13 +573,13 @@ export function EventsView({
   const endRecordNum = Math.min(events.page * pageSize, events.total);
 
   const exportCurrentPage = () => {
-    const headers = ['id', 'row_id', 'timestamp', 'api_key_display', 'api_key_remark', 'api_key_hash', 'source', 'source_display', 'provider', 'model', 'alias', 'response_model', 'reasoning_effort', 'endpoint', 'failed', 'canceled', 'failure_status', 'failure_body', 'latency_ms', 'ttft_ms', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens'];
+    const headers = ['id', 'row_id', 'timestamp', 'api_key_display', 'api_key_remark', 'api_key_hash', 'source', 'source_display', 'provider', 'model', 'alias', 'response_model', 'reasoning_effort', 'endpoint', 'failed', 'canceled', 'failure_status', 'failure_body', 'latency_ms', 'ttft_ms', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens', 'estimated_cost_usd', 'pricing_model'];
     const csvCell = (value: string | number | boolean | null) => {
       const text = value == null ? '' : String(value);
       const safe = typeof value === 'string' && /^[\s\u0000-\u001f]*[=+@-]/.test(text) ? `'${text}` : text;
       return `"${safe.replace(/"/g, '""')}"`;
     };
-    const rows = events.items.map((record) => [record.id, record.row_id, record.timestamp, record.api_key_display, record.api_key_remark, record.api_key_hash, record.source, record.source_display, record.provider, record.model, record.alias, record.response_model ?? '', record.reasoning_effort, record.endpoint, record.failed, record.canceled, record.failure_status, record.failure_body, record.latency_ms, record.ttft_ms, record.tokens.input_tokens, record.tokens.output_tokens, record.tokens.reasoning_tokens, record.tokens.cache_read_tokens, record.tokens.cache_creation_tokens, record.tokens.total_tokens]);
+    const rows = events.items.map((record) => [record.id, record.row_id, record.timestamp, record.api_key_display, record.api_key_remark, record.api_key_hash, record.source, record.source_display, record.provider, record.model, record.alias, record.response_model ?? '', record.reasoning_effort, record.endpoint, record.failed, record.canceled, record.failure_status, record.failure_body, record.latency_ms, record.ttft_ms, record.tokens.input_tokens, record.tokens.output_tokens, record.tokens.reasoning_tokens, record.tokens.cache_read_tokens, record.tokens.cache_creation_tokens, record.tokens.total_tokens, record.cost?.total ?? null, record.cost?.pricing_model ?? '']);
     const csv = '\uFEFF' + [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const link = document.createElement('a');

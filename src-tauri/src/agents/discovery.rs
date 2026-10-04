@@ -1121,12 +1121,9 @@ pub(crate) fn agent_installation_detected(
     executable_found: bool,
     app_installed: bool,
 ) -> bool {
-    version.is_some()
-        || (matches!(
-            client,
-            AgentClient::ClaudeDesktop | AgentClient::OpenCode | AgentClient::ZCode | AgentClient::WorkBuddy
-        ) && executable_found)
+    executable_found
         || app_installed
+        || (client == AgentClient::ClaudeDesktop && version.is_some())
 }
 
 pub(crate) fn should_probe_primary_agent_executable_version(client: AgentClient) -> bool {
@@ -2476,12 +2473,11 @@ pub(crate) fn find_opencode_managed_executable(home: &Path) -> Option<PathBuf> {
             home.join("Applications/OpenCode.app/Contents/MacOS/opencode-cli"),
         ]
         .into_iter()
-        .find(|path| path.is_file())
+        .find(|path| agent_cli_executable(path))
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let path = home.join(".opencode/bin/opencode");
-        path.is_file().then_some(path)
+        find_named_agent_executable_in_directories(&[home.join(".opencode/bin")], &["opencode"])
     }
 }
 
@@ -2493,7 +2489,7 @@ pub(crate) fn find_kimi_code_executable(home: &Path) -> Option<PathBuf> {
     let managed = [directory.join("kimi")];
     managed
         .into_iter()
-        .find(|path| path.is_file())
+        .find(|path| agent_cli_executable(path))
         .or_else(|| find_named_agent_executable(home, &["kimi"]))
 }
 
@@ -2505,7 +2501,7 @@ pub(crate) fn find_grok_build_executable(home: &Path) -> Option<PathBuf> {
     let managed = [directory.join("grok")];
     managed
         .into_iter()
-        .find(|path| path.is_file())
+        .find(|path| agent_cli_executable(path))
         .or_else(|| find_named_agent_executable(home, &["grok"]))
 }
 
@@ -2514,18 +2510,54 @@ pub(crate) fn find_pi_executable(home: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn find_named_agent_executable(home: &Path, names: &[&str]) -> Option<PathBuf> {
-    for directory in agent_executable_directories(home) {
+    find_named_agent_executable_in_directories(&agent_executable_directories(home), names)
+}
+
+pub(crate) fn agent_cli_executable(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(target_os = "windows")]
+    {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                ["exe", "cmd", "bat", "com"]
+                    .iter()
+                    .any(|expected| extension.eq_ignore_ascii_case(expected))
+            })
+    }
+    #[cfg(not(any(unix, target_os = "windows")))]
+    true
+}
+
+pub(crate) fn find_named_agent_executable_in_directories(
+    directories: &[PathBuf],
+    names: &[&str],
+) -> Option<PathBuf> {
+    for directory in directories {
         for name in names {
             #[cfg(target_os = "windows")]
             let candidates = [
                 directory.join(format!("{name}.exe")),
                 directory.join(format!("{name}.cmd")),
                 directory.join(format!("{name}.bat")),
-                directory.join(name),
+                directory.join(format!("{name}.com")),
             ];
             #[cfg(not(target_os = "windows"))]
             let candidates = [directory.join(name)];
-            if let Some(candidate) = candidates.into_iter().find(|path| path.is_file()) {
+            if let Some(candidate) = candidates
+                .into_iter()
+                .find(|path| agent_cli_executable(path))
+            {
                 return Some(candidate);
             }
         }
@@ -2534,6 +2566,18 @@ pub(crate) fn find_named_agent_executable(home: &Path, names: &[&str]) -> Option
 }
 
 pub(crate) fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let registered = windows_registered_path_directories();
+    #[cfg(not(target_os = "windows"))]
+    let registered = Vec::new();
+    agent_executable_directories_from_environment(home, |name| env::var_os(name), &registered)
+}
+
+pub(crate) fn agent_executable_directories_from_environment(
+    home: &Path,
+    environment: impl Fn(&str) -> Option<std::ffi::OsString>,
+    registered: &[PathBuf],
+) -> Vec<PathBuf> {
     let mut directories = Vec::new();
     let mut push = |path: PathBuf| {
         if !path.as_os_str().is_empty() && !directories.iter().any(|item| item == &path) {
@@ -2541,28 +2585,46 @@ pub(crate) fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {
         }
     };
 
-    if let Some(path) = env::var_os("PATH") {
+    if let Some(path) = environment("PATH") {
         env::split_paths(&path).for_each(&mut push);
     }
+    registered.iter().cloned().for_each(&mut push);
     [
         home.join(".local/bin"),
         home.join(".npm-global/bin"),
         home.join(".bun/bin"),
         home.join(".cargo/bin"),
+        home.join(".volta/bin"),
+        home.join(".local/share/pnpm"),
+        home.join(".pyenv/shims"),
         home.join("bin"),
     ]
     .into_iter()
     .for_each(&mut push);
-    for variable in ["PNPM_HOME", "BUN_INSTALL", "NPM_CONFIG_PREFIX"] {
-        if let Some(path) = env::var_os(variable) {
+    for variable in [
+        "PNPM_HOME",
+        "BUN_INSTALL",
+        "NPM_CONFIG_PREFIX",
+        "npm_config_prefix",
+        "VOLTA_HOME",
+        "UV_TOOL_BIN_DIR",
+        "NVM_SYMLINK",
+    ] {
+        if let Some(path) = environment(variable).filter(|path| !path.is_empty()) {
             let path = PathBuf::from(path);
-            push(
-                if variable == "BUN_INSTALL" || variable == "NPM_CONFIG_PREFIX" {
+            if matches!(variable, "NPM_CONFIG_PREFIX" | "npm_config_prefix") {
+                push(if cfg!(target_os = "windows") {
+                    path
+                } else {
+                    path.join("bin")
+                });
+            } else {
+                push(if matches!(variable, "BUN_INSTALL" | "VOLTA_HOME") {
                     path.join("bin")
                 } else {
                     path
-                },
-            );
+                });
+            }
         }
     }
     for root in [
@@ -2570,8 +2632,14 @@ pub(crate) fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {
         home.join(".local/state/fnm_multishells"),
     ] {
         if let Ok(entries) = fs::read_dir(root) {
-            for entry in entries.flatten() {
-                push(entry.path().join("bin"));
+            let mut entries = entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.is_dir())
+                .collect::<Vec<_>>();
+            entries.sort();
+            for entry in entries.into_iter().rev() {
+                push(entry.join("bin"));
             }
         }
     }
@@ -2586,11 +2654,31 @@ pub(crate) fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(app_data) = env::var_os("APPDATA") {
-            push(PathBuf::from(app_data).join("npm"));
-        }
-        if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-            push(PathBuf::from(local_app_data).join("Microsoft/WindowsApps"));
+        let app_data = environment("APPDATA")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Roaming"));
+        let local = environment("LOCALAPPDATA")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Local"));
+        push(app_data.join("npm"));
+        push(home.join(".npm-global"));
+        push(local.join("Microsoft/WindowsApps"));
+        push(local.join("pnpm"));
+        push(local.join("Volta/bin"));
+        for root in [local.join("Programs/Python"), local.join("Python")] {
+            if let Ok(entries) = fs::read_dir(root) {
+                let mut entries = entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_dir())
+                    .collect::<Vec<_>>();
+                entries.sort();
+                for entry in entries.into_iter().rev() {
+                    push(entry.join("Scripts"));
+                }
+            }
         }
     }
 

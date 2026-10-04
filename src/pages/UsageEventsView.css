@@ -1,27 +1,27 @@
 /* The request log is deliberately scoped away from the other usage tabs. */
 .usage-records-page .usage-request-log {
-  --usage-log-surface: var(--bg-card);
-  --usage-log-text: #292724;
-  --usage-log-muted: #77736d;
-  --usage-log-line: #e5e4e2;
-  --usage-log-hover: #fafaf9;
-  --usage-log-soft: #f7f7f6;
-  --usage-log-input: #0076b5;
-  --usage-log-output: #15803d;
-  --usage-log-reasoning: #7c3aed;
-  --usage-log-cache-read: #b45309;
-  --usage-log-cache-write: #be185d;
-  --usage-log-response-model: #c2410c;
+  --usage-log-surface: #fff;
+  --usage-log-text: #24343b;
+  --usage-log-muted: #63767d;
+  --usage-log-line: #e8e8e8;
+  --usage-log-hover: #f7f7f7;
+  --usage-log-soft: #f5f5f5;
+  --usage-log-input: #526b76;
+  --usage-log-output: #16756a;
+  --usage-log-reasoning: #526b76;
+  --usage-log-cache-read: #16756a;
+  --usage-log-cache-write: #63767d;
+  --usage-log-response-model: #9a5808;
   display: flex;
   min-width: 0;
   min-height: 0;
   padding: 0;
   gap: 0;
   border: 1px solid var(--usage-log-line);
-  border-radius: 16px;
+  border-radius: 8px;
   background: var(--usage-log-surface);
   color: var(--usage-log-text);
-  box-shadow: 0 2px 10px rgb(0 0 0 / 2%);
+  box-shadow: none;
   overflow: hidden;
 }
 
@@ -43,7 +43,7 @@
   gap: 6px;
   padding: 0 10px;
   border: 1px solid var(--usage-log-line);
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--usage-log-surface);
   color: var(--usage-log-muted);
   box-shadow: none;
@@ -103,17 +103,17 @@
 }
 
 .usage-request-log .usage-events-table th {
-  height: 36px;
+  height: 40px;
   padding: 0;
   background: var(--usage-log-surface);
   color: var(--usage-log-muted);
   box-shadow: none;
-  font-size: 10px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .usage-request-log .usage-events-table th .usage-th-content {
-  height: 36px;
+  height: 40px;
   justify-content: flex-start;
   padding: 0 8px;
   text-align: left;
@@ -122,12 +122,28 @@
 .usage-request-log .usage-events-table td {
   height: 68px;
   padding: 9px 8px;
+  background: var(--usage-log-surface);
   color: var(--usage-log-text);
   line-height: 1.45;
 }
 
 .usage-request-log .usage-events-table tbody tr:hover td {
   background: var(--usage-log-hover) !important;
+}
+
+.usage-request-log .usage-th-total,
+.usage-request-log .usage-td-total {
+  border-left: 1px solid var(--usage-log-line);
+}
+
+.usage-request-log .usage-access-type {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 1px 5px;
+  border: 1px solid var(--usage-log-line);
+  border-radius: 3px;
+  letter-spacing: .02em;
 }
 
 .usage-request-log .usage-events-table td strong {
@@ -147,6 +163,21 @@
 
 .usage-request-log .usage-events-table .usage-td-model > .usage-response-model {
   color: var(--usage-log-response-model);
+}
+
+.usage-request-log .usage-model-mismatch {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--usage-log-response-model) 30%, transparent);
+  border-radius: 3px;
+  color: var(--usage-log-response-model);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.usage-request-log .usage-td-cost strong {
+  font-variant-numeric: tabular-nums;
 }
 
 .usage-request-log .usage-events-table .usage-td-key > strong {
@@ -175,7 +206,8 @@
   gap: 9px;
   margin-top: 3px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 500;
+  font-family: var(--font-family-mono);
   line-height: 1.45;
   white-space: nowrap;
 }
@@ -199,43 +231,41 @@
 .usage-request-log .tone-cache-read { color: var(--usage-log-cache-read); }
 .usage-request-log .tone-cache-write { color: var(--usage-log-cache-write); }
 
-.usage-request-log .usage-tag-pill {
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--usage-log-text);
-  font-size: 12px;
-  font-weight: 500;
-}
-
 .usage-request-log .usage-result {
-  min-width: 48px;
-  justify-content: center;
-  padding: 3px 11px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  font-size: 10px;
+  min-width: 0;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.35;
 }
 
-.usage-request-log .usage-result-dot { display: none; }
+.usage-request-log .usage-result-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  background: currentColor;
+  box-shadow: none;
+}
 
 .usage-request-log .usage-result.success {
-  border-color: #6ee7b7;
-  background: #d1fae5;
-  color: #047857;
+  background: transparent;
+  color: #16756a;
 }
 
 .usage-request-log .usage-result.failed {
   border-color: var(--failure-badge-border);
-  background: var(--failure-badge-bg);
+  background: transparent;
   color: var(--failure-badge-text);
 }
 
 .usage-request-log .usage-result.canceled {
   border-color: var(--usage-log-line);
-  background: var(--usage-log-soft);
+  background: transparent;
   color: var(--usage-log-muted);
 }
 
@@ -282,13 +312,13 @@
 
 .usage-request-log .usage-events-footer {
   display: flex;
-  min-height: 62px;
+  min-height: 56px;
   flex: none;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 12px 18px;
+  padding: 10px 14px;
   border-top: 1px solid var(--usage-log-line);
   background: var(--usage-log-surface);
 }
@@ -306,7 +336,7 @@
   height: 32px;
   padding: 0 11px;
   border: 1px solid var(--usage-log-line);
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--usage-log-surface);
   color: var(--usage-log-text);
   font-size: 11px;
@@ -324,17 +354,18 @@
 }
 
 :root[data-theme='dark'] .usage-records-page .usage-request-log {
+  --usage-log-surface: var(--bg-card);
   --usage-log-text: #edece9;
   --usage-log-muted: #aaa8a4;
   --usage-log-line: #34363b;
   --usage-log-hover: #26282c;
   --usage-log-soft: #292b30;
-  --usage-log-input: #38bdf8;
-  --usage-log-output: #4ade80;
-  --usage-log-reasoning: #b69cff;
-  --usage-log-cache-read: #fbbf24;
-  --usage-log-cache-write: #f472b6;
-  --usage-log-response-model: #fb923c;
+  --usage-log-input: #adc0ca;
+  --usage-log-output: #77cbbb;
+  --usage-log-reasoning: #adc0ca;
+  --usage-log-cache-read: #77cbbb;
+  --usage-log-cache-write: #aaa8a4;
+  --usage-log-response-model: #f0bc73;
   border-color: var(--usage-log-line);
   background: var(--usage-log-surface);
   box-shadow: none;
@@ -342,7 +373,7 @@
 
 :root[data-theme='dark'] .usage-request-log .usage-result.success {
   border-color: #17664e;
-  background: #123c30;
+  background: transparent;
   color: #6ee7b7;
 }
 

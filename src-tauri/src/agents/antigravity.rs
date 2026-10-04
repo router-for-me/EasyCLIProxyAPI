@@ -22,7 +22,7 @@ pub(crate) fn find_antigravity_cli(home: &Path) -> Option<PathBuf> {
         .join("agy/bin/agy.exe");
     #[cfg(not(target_os = "windows"))]
     let native = home.join(".local/bin/agy");
-    if native.is_file() {
+    if agent_cli_executable(&native) {
         Some(native)
     } else {
         find_named_agent_executable(home, &["agy"])

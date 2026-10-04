@@ -55,6 +55,7 @@ const records = Array.from({ length: 400 }, (_, index) => ({
   failure_status: index % 4 === 0 ? 429 : 0,
   failure_body: index % 4 === 0 ? 'Rate limit exceeded' : '',
   provider: 'test-provider',
+  auth_type: index % 2 ? 'oauth' : 'apikey',
   model: index % 3 ? 'test-model' : 'secondary-model',
   alias: '',
   reasoning_effort: 'high',

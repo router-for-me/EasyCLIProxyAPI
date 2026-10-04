@@ -8,7 +8,7 @@ const path = require('node:path');
 
 const base = process.env.AGENT_CLIENT_TEST_URL || 'http://127.0.0.1:1421';
 const storageKey = 'cpa-gui.agent-visible-clients.v1';
-const automaticClients = ['Claude Code', 'Claude Desktop', 'Codex', 'OpenCode', 'Pi'];
+const automaticClients = ['Claude Code', 'Codex', 'OpenCode', 'Claude Desktop', 'Pi'];
 const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
 
 (async () => {
@@ -89,6 +89,19 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
     assert.equal(await page.locator('.agent-list-items button.active').getAttribute('aria-pressed'), 'true');
     assert.equal(await stored(), null, 'automatic defaults do not become a custom preference');
 
+    // Sorting applies to custom lists and detection refresh, without changing membership or selection.
+    const customIds = ['claude-desktop', 'codex', 'hermes'];
+    await open('mixed-clients', JSON.stringify(customIds));
+    await waitClients(['Codex', 'Claude Desktop', 'Hermes Agent']);
+    assert.deepEqual(await page.locator('.agent-list-items strong').allTextContents(), ['Codex', 'Claude Desktop', 'Hermes Agent']);
+    await refresh({ hermes: { installed: true } });
+    await waitClients(['Codex', 'Hermes Agent', 'Claude Desktop']);
+    assert.deepEqual(await page.locator('.agent-list-items strong').allTextContents(), ['Codex', 'Hermes Agent', 'Claude Desktop']);
+    assert.equal(await activeClient(), 'Codex');
+    assert.deepEqual(JSON.parse(await stored()), customIds, 'sorting must not rewrite saved membership');
+    await open();
+    await waitClients(automaticClients);
+
     // Search reaches uninstalled clients; a cancelled draft never affects navigation or storage.
     await manage().click();
     assert.equal(await dialog().getByRole('checkbox').count(), 13);
@@ -149,12 +162,12 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
     await automatic().click();
     await closeAndFocus(() => save().click());
     assert.equal(await stored(), null, 'saving automatic mode clears the custom preference');
-    await waitClients([...automaticClients, 'Kimi Code', 'Hermes Agent']);
+    await waitClients(['Claude Code', 'Codex', 'OpenCode', 'Kimi Code', 'Claude Desktop', 'Pi', 'Hermes Agent']);
     await refresh({ ...override,
       'claude-code': { installed: false, configured: false, configExists: false },
       openclaw: { installed: true },
     });
-    await waitClients(['Claude Desktop', 'Codex', 'OpenCode', 'Pi', 'Kimi Code', 'OpenClaw', 'Hermes Agent']);
+    await waitClients(['Codex', 'OpenCode', 'Kimi Code', 'OpenClaw', 'Claude Desktop', 'Pi', 'Hermes Agent']);
 
     // Detection failure and a clean machine still offer a usable selected client and the full catalog.
     await open('not-installed&no-plugin&fresh');

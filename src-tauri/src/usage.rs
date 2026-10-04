@@ -224,8 +224,11 @@ pub(crate) struct UsageRecord {
     api_group_key: String,
     #[serde(default)]
     model: String,
-    #[serde(default)]
+    #[serde(default, alias = "responseModel")]
     response_model: String,
+    // Derived from the active price catalog when reading a page; never trust imported estimates.
+    #[serde(default, skip_deserializing)]
+    cost: Option<UsageRecordCost>,
     #[serde(default)]
     alias: String,
     #[serde(default, skip_serializing)]
@@ -262,6 +265,12 @@ pub(crate) struct UsageRecord {
     collector_source: String,
     #[serde(default)]
     tokens: UsageTokenStats,
+}
+
+#[derive(Clone, Serialize)]
+struct UsageRecordCost {
+    total: f64,
+    pricing_model: String,
 }
 
 #[derive(Deserialize)]
@@ -2765,9 +2774,16 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
         failure_body,
         provider,
         api_group_key,
-        model: string_field(object, "model").unwrap_or_else(|| "unknown".to_string()),
-        response_model: string_field(object, "response_model").unwrap_or_default(),
-        alias: string_field(object, "alias").unwrap_or_default(),
+        model: string_field(object, "resolved_model")
+            .or_else(|| string_field(object, "resolvedModel"))
+            .or_else(|| string_field(object, "model"))
+            .unwrap_or_else(|| "unknown".to_string()),
+        response_model: string_field(object, "response_model")
+            .or_else(|| string_field(object, "responseModel")).unwrap_or_default(),
+        cost: None,
+        alias: string_field(object, "alias")
+            .or_else(|| string_field(object, "requested_model"))
+            .or_else(|| string_field(object, "requestedModel")).unwrap_or_default(),
         client_ip: string_field(object, "client_ip"),
         x_forwarded_for: string_field(object, "x_forwarded_for"),
         user_agent: string_field(object, "user_agent"),
@@ -3234,19 +3250,49 @@ fn cost_for_price(model: &str, service_tier: &str, tokens: &CostTokens, price: &
         long_output_multiplier,
     );
     let tier = service_tier.trim().to_ascii_lowercase();
-    let multiplier = if tokens.long_input > 0
-        && matches!(tier.as_str(), "priority" | "fast")
+    let multiplier = match tier.as_str() {
+        "flex" | "batch" => 0.5,
+        "priority" | "fast" => service_tier_multiplier(model),
+        _ => 1.0,
+    };
+    // A grouped total can contain both context lengths. Long-context overrides
+    // must not suppress the service-tier multiplier on its short requests.
+    let long_multiplier = if matches!(tier.as_str(), "priority" | "fast")
         && !is_model_family(model, "gpt-6")
     {
         1.0
     } else {
-        match tier.as_str() {
-            "flex" | "batch" => 0.5,
-            "priority" | "fast" => service_tier_multiplier(model),
-            _ => 1.0,
-        }
+        multiplier
     };
-    (short_cost + long_cost) * multiplier
+    short_cost * multiplier + long_cost * long_multiplier
+}
+
+fn usage_record_cost(record: &UsageRecord, prices: &HashMap<String, ModelPrice>) -> Option<UsageRecordCost> {
+    let (model, price) = resolve_model_price(&record.model, &record.alias, prices)?;
+    let input = record.tokens.input_tokens;
+    // Keep the same context buckets and tier selection as the aggregate pricing query.
+    let long = input > LONG_CONTEXT_INPUT_TOKEN_THRESHOLD
+        || (input > GROK_47_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD && is_model_family(model, "grok-4.7"));
+    let tokens = CostTokens {
+        input,
+        output: record.tokens.output_tokens,
+        cache_read: record.tokens.cache_read_tokens,
+        cache_creation: record.tokens.cache_creation_tokens,
+        long_input: if long { input } else { 0 },
+        long_output: if long { record.tokens.output_tokens } else { 0 },
+        long_cache_read: if long { record.tokens.cache_read_tokens } else { 0 },
+        long_cache_creation: if long { record.tokens.cache_creation_tokens } else { 0 },
+    };
+    let identity = format!("{} {} {}", record.executor_type, record.provider, record.auth_type).to_ascii_lowercase();
+    let tier = if identity.contains("codex") || record.response_service_tier.trim().is_empty() {
+        &record.service_tier
+    } else {
+        &record.response_service_tier
+    };
+    Some(UsageRecordCost {
+        total: cost_for_price(model, tier, &tokens, &price),
+        pricing_model: price.model,
+    })
 }
 
 fn cost_for_token_segment(
@@ -4243,8 +4289,10 @@ fn load_usage_events(
         .map_err(|error| format!("Failed to query SQLite usage events: {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Failed to read SQLite usage events: {error}"))?;
+    let prices = load_model_prices(connection)?;
     for item in &mut items {
         item.source_display = usage_source_display(config, &item.provider, &item.source);
+        item.cost = usage_record_cost(item, &prices);
     }
     Ok(UsageEventPage {
         items,
@@ -4273,6 +4321,7 @@ fn usage_record_from_row(row: &Row<'_>) -> rusqlite::Result<UsageRecord> {
         api_group_key: row.get(20)?,
         model: row.get(8)?,
         response_model: row.get(37)?,
+        cost: None,
         alias: row.get(9)?,
         client_ip: row.get(21)?,
         x_forwarded_for: row.get(22)?,
@@ -5044,6 +5093,7 @@ mod tests {
             api_group_key: "hash".to_string(),
             model: model.to_string(),
             response_model: String::new(),
+            cost: None,
             alias: String::new(),
             client_ip: None,
             x_forwarded_for: None,
@@ -6584,6 +6634,60 @@ mod tests {
         assert_eq!(overview.tps_sample_count, 4);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn response_model_accepts_manager_plus_field_names() {
+        let record = normalize_usage_record(serde_json::json!({
+            "request_id": "compatible-models", "requestedModel": "client-alias",
+            "resolvedModel": "gpt-6-sol", "model": "display-model",
+            "responseModel": " reported-model "
+        }), &GuiConfigFile::default()).unwrap();
+        assert_eq!(record.alias, "client-alias");
+        assert_eq!(record.model, "gpt-6-sol");
+        assert_eq!(record.response_model, "reported-model");
+    }
+
+    #[test]
+    fn request_cost_matches_aggregate_and_recalculates_current_prices() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_usage_schema(&connection).unwrap();
+        let mut records = Vec::new();
+        for (index, model) in ["gpt-6-sol", "gpt-5.6-terra", "xai/grok-4.7"].iter().enumerate() {
+            for input in [200_000, 250_000, 300_000] {
+                let mut record = sample_record(&format!("{index}-{input}"), "2026-10-04T00:00:00Z", model);
+                record.provider = if index < 2 { "codex" } else { "openai" }.into();
+                record.service_tier = "fast".into();
+                record.response_service_tier = "flex".into();
+                record.tokens.input_tokens = input;
+                record.tokens.output_tokens = 500;
+                record.tokens.reasoning_tokens = 100;
+                record.tokens.cache_read_tokens = 100_000;
+                record.tokens.cache_creation_tokens = 1_000;
+                record.tokens.total_tokens = input + 500;
+                record.response_model = "unpriced-response-must-not-change-billing".into();
+                records.push(record);
+            }
+        }
+        records.push(sample_record("unknown-price", "2026-10-04T00:00:00Z", "unpriced-model"));
+        insert_usage_records(&mut connection, &records).unwrap();
+        let query = UsageQuery::default();
+        let page = load_usage_events(&connection, &query, &GuiConfigFile::default()).unwrap();
+        let (aggregate, priced) = load_estimated_cost(&connection, &build_usage_filter(&query)).unwrap();
+        let total: f64 = page.items.iter().filter_map(|r| r.cost.as_ref().map(|c| c.total)).sum();
+        assert!((aggregate - total).abs() < 1e-9);
+        assert_eq!(priced, 9);
+        assert!(page.items.iter().find(|r| r.id == "unknown-price").unwrap().cost.is_none());
+
+        let free_price = ModelPrice { model: "unpriced-model".into(), prompt_configured: true,
+            completion_configured: true, cache_read_configured: true, cache_creation_configured: true,
+            source: "manual".into(), ..ModelPrice::default() };
+        upsert_model_price(&connection, &free_price).unwrap();
+        let updated = load_usage_events(&connection, &query, &GuiConfigFile::default()).unwrap();
+        let free = updated.items.iter().find(|r| r.id == "unknown-price").unwrap();
+        assert_eq!(free.cost.as_ref().unwrap().total, 0.0);
+        let imported: UsageRecord = serde_json::from_value(serde_json::to_value(free).unwrap()).unwrap();
+        assert!(imported.cost.is_none(), "Imported estimates must be recomputed");
     }
 
     #[test]

@@ -6,10 +6,10 @@ const path = require('node:path');
 
 const base = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:1421';
 const locales = {
-  'zh-CN': { request: '请求模型', upstream: '上游模型', response: '上游响应' },
-  en: { request: 'Requested model', upstream: 'Upstream model', response: 'Upstream response' },
-  ja: { request: 'リクエストモデル', upstream: '上流モデル', response: '上流レスポンス' },
-  'zh-TW': { request: '請求模型', upstream: '上游模型', response: '上游響應' },
+  'zh-CN': { request: '请求模型', upstream: '路由模型', response: '响应模型' },
+  en: { request: 'Requested model', upstream: 'Routed model', response: 'Response model' },
+  ja: { request: 'リクエストモデル', upstream: 'ルーティングモデル', response: '応答モデル' },
+  'zh-TW': { request: '請求模型', upstream: '路由模型', response: '響應模型' },
 };
 
 function parseCsv(text) {
@@ -70,7 +70,7 @@ function parseCsv(text) {
       main: cell.querySelector(':scope > strong')?.textContent || '',
       sublines: Array.from(cell.querySelectorAll(':scope > small')).map(item => item.textContent || ''),
       response: cell.querySelector(':scope > .usage-response-model')?.textContent || '',
-      title: cell.getAttribute('title'),
+      title: cell.getAttribute('title')?.split('\n').slice(0, 3).join('\n') ?? null,
     })));
     const assertNoHorizontalPageOverflow = async (label) => {
       const dimensions = await page.evaluate(() => ({
@@ -89,26 +89,35 @@ function parseCsv(text) {
     await open('zh-CN');
     assert.equal(await modelCells().count(), 9, 'Every fixture record renders a model cell');
     const zhDetails = await modelDetails();
+    assert.match(await modelCells().first().getAttribute('title'), /response_model.*上游声明/);
+    assert.deepEqual(await page.locator('.usage-events-table th').evaluateAll(cells => cells.slice(0, 2).map(cell => cell.className.split(' ')[0])), ['usage-th-time', 'usage-th-provider']);
+    assert.equal(await page.locator('.usage-td-provider strong').first().textContent(), 'Codex');
+    assert.equal(await page.locator('.usage-access-type').first().textContent(), 'API');
+    assert.equal(await page.locator('.usage-access-type').nth(1).textContent(), 'OAuth');
+    assert.equal(await page.locator('.usage-access-type').nth(2).textContent(), '未记录接入方式');
     assert.deepEqual(zhDetails[0], {
       main: 'astra',
-      sublines: ['gpt-6-astra', '↳ 上游响应: gpt-5.6-luna'],
-      response: '↳ 上游响应: gpt-5.6-luna',
-      title: '请求模型: astra\n上游模型: gpt-6-astra\n上游响应: gpt-5.6-luna',
+      sublines: ['gpt-6-astra', '响应模型: gpt-5.6-luna'],
+      response: '响应模型: gpt-5.6-luna',
+      title: '请求模型: astra\n路由模型: gpt-6-astra\n响应模型: gpt-5.6-luna',
     }, 'Differing alias, upstream model, and upstream response remain distinguishable');
     assert.deepEqual(zhDetails[1], {
       main: 'same-alias',
-      sublines: ['gpt-6-sol', '↳ 上游响应: gpt-6-sol'],
-      response: '↳ 上游响应: gpt-6-sol',
-      title: '请求模型: same-alias\n上游模型: gpt-6-sol\n上游响应: gpt-6-sol',
-    }, 'A response equal to the upstream model still renders');
-    assert.deepEqual(zhDetails[2].sublines, ['openai/gpt-4o-latest', '↳ 上游响应: gpt-4o-2024-08-06'], 'Snapshot and prefix model names preserve the existing upstream subline');
-    assert.equal(zhDetails[2].title, '请求模型: gpt4o\n上游模型: openai/gpt-4o-latest\n上游响应: gpt-4o-2024-08-06');
+      sublines: ['gpt-6-sol'],
+      response: '',
+      title: '请求模型: same-alias\n路由模型: gpt-6-sol',
+    }, 'A response equal to the routed model is not repeated');
+    assert.deepEqual(zhDetails[2].sublines, ['openai/gpt-4o-latest', '响应模型: gpt-4o-2024-08-06'], 'Snapshot and prefix model names preserve the existing upstream subline');
+    assert.equal(zhDetails[2].title, '请求模型: gpt4o\n路由模型: openai/gpt-4o-latest\n响应模型: gpt-4o-2024-08-06');
     assert.deepEqual(zhDetails.slice(3, 6).map(item => item.sublines), [[], [], []], 'Missing, empty, and whitespace response_model values stay omitted');
-    assert.deepEqual(zhDetails.slice(3, 6).map(item => item.title), [null, null, null], 'Legacy rows keep the existing native-title behavior');
-    assert.equal(await page.locator('[class*="mismatch"], [class*="warning"]').count(), 0, 'Model strings do not produce an inequality warning');
+    assert.ok(zhDetails.slice(3, 6).every(item => !item.title.includes('响应模型')), 'Legacy rows never invent a response model');
+    assert.equal(await page.locator('.usage-model-mismatch').count(), 5, 'Only responses different from the routed model are flagged');
+    assert.equal(await page.locator('.usage-td-cost strong').first().textContent(), '$0.0042');
+    assert.equal(await page.locator('.usage-td-cost strong').nth(1).textContent(), '$0.00');
+    assert.equal(await page.locator('.usage-td-cost').nth(2).locator('small').textContent(), '未定价');
     await assertNoHorizontalPageOverflow('desktop');
     for (const child of await modelCells().first().locator(':scope > strong, :scope > small').all()) {
-      assert.equal(await child.getAttribute('title'), zhDetails[0].title, 'Hovering each line exposes the full three-model title');
+      assert.equal((await child.getAttribute('title')).split('\n').slice(0, 3).join('\n'), zhDetails[0].title, 'Hovering each line exposes the full three-model title');
     }
     const longLine = await modelCells().nth(6).locator('.usage-response-model').evaluate(element => ({
       truncated: element.scrollWidth > element.clientWidth,
@@ -131,6 +140,9 @@ function parseCsv(text) {
     const responseIndex = header.indexOf('response_model');
     assert.equal(responseIndex, aliasIndex + 1, 'response_model is immediately after alias in CSV');
     const csvById = new Map(csvRows.slice(1).map(row => [row[0], row]));
+    assert.equal(csvById.get('differing')[header.indexOf('estimated_cost_usd')], '0.0042');
+    assert.equal(csvById.get('matching')[header.indexOf('estimated_cost_usd')], '0');
+    assert.equal(csvById.get('missing')[header.indexOf('estimated_cost_usd')], '');
     assert.equal(csvById.get('differing')[responseIndex], 'gpt-5.6-luna', 'CSV preserves a regular response model');
     assert.equal(csvById.get('matching')[responseIndex], 'gpt-6-sol', 'CSV preserves a response equal to model');
     assert.equal(csvById.get('missing')[responseIndex], '', 'CSV preserves an empty legacy response field');
@@ -142,13 +154,13 @@ function parseCsv(text) {
     for (const [locale, labels] of Object.entries(locales)) {
       await open(locale);
       const details = await modelDetails();
-      assert.equal(details[0].response, `↳ ${labels.response}: gpt-5.6-luna`, `${locale}: response line is localized`);
+      assert.equal(details[0].response, `${labels.response}: gpt-5.6-luna`, `${locale}: response line is localized`);
       assert.equal(details[0].title, `${labels.request}: astra\n${labels.upstream}: gpt-6-astra\n${labels.response}: gpt-5.6-luna`, `${locale}: model title localizes all three labels`);
     }
 
-    for (const [theme, color] of [['light', 'rgb(194, 65, 12)'], ['dark', 'rgb(251, 146, 60)']]) {
+    for (const [theme, color] of [['light', 'rgb(154, 88, 8)'], ['dark', 'rgb(240, 188, 115)']]) {
       await open('zh-CN', theme);
-      assert.equal(await modelCells().first().locator('.usage-response-model').evaluate(element => getComputedStyle(element).color), color, `${theme}: response line uses the theme's readable orange`);
+      assert.equal(await modelCells().first().locator('.usage-response-model').evaluate(element => getComputedStyle(element).color), color, `${theme}: response line uses the theme's mismatch text color`);
       if (process.env.USAGE_RESPONSE_MODEL_SCREENSHOT_DIR) {
         fs.mkdirSync(process.env.USAGE_RESPONSE_MODEL_SCREENSHOT_DIR, { recursive: true });
         await page.screenshot({ path: path.join(process.env.USAGE_RESPONSE_MODEL_SCREENSHOT_DIR, `response-model-${theme}.png`) });

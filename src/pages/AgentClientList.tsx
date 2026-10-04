@@ -47,10 +47,12 @@ export function AgentClientList<Id extends string>({
   const close = () => setManaging(false);
   const [draftIds, setDraftIds] = useState<Id[] | null>(null);
   const [query, setQuery] = useState('');
+  // Stable sorting keeps the existing order within each installation group.
+  const orderedClients = [...clients].sort((left, right) => Number(right.installed) - Number(left.installed));
   // Keep the current client reachable even when detection fails or it was uninstalled.
-  const automaticIds = clients.filter((client) => client.detected || client.id === selected)
+  const automaticIds = orderedClients.filter((client) => client.detected || client.id === selected)
     .map((client) => client.id);
-  const visibleClients = clients.filter((client) => (visibleIds ?? automaticIds).includes(client.id));
+  const visibleClients = orderedClients.filter((client) => (visibleIds ?? automaticIds).includes(client.id));
   const pageCount = Math.max(1, Math.ceil(visibleClients.length / capacity));
   const currentPage = Math.min(page, pageCount - 1);
   const pageClients = visibleClients.slice(currentPage * capacity, (currentPage + 1) * capacity);
@@ -101,13 +103,13 @@ export function AgentClientList<Id extends string>({
     }
     setVisibleIds(draftIds);
     if (!draftSelection.includes(selected)) {
-      const first = clients.find((client) => draftSelection.includes(client.id));
+      const first = orderedClients.find((client) => draftSelection.includes(client.id));
       if (first) onSelect(first.id);
     }
     setManaging(false);
   };
 
-  const matches = clients.filter((client) => client.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const matches = orderedClients.filter((client) => client.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   return <>
     <aside className="panel agent-client-list" aria-label={t('agents.localClients')}>

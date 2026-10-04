@@ -212,6 +212,23 @@ fn current_version_roots() -> [RegistryRoot; 4] {
     ]
 }
 
+pub(crate) fn windows_registered_path_directories() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for (hive, key) in [
+        (HKEY_CURRENT_USER, r"Environment"),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
+    ] {
+        if let Some(value) = RegistryKey::open(hive, key).and_then(|key| key.string("Path")) {
+            let expanded = expand_environment_strings(&value).unwrap_or(value);
+            paths.extend(env::split_paths(&expanded).filter(|path| path.is_absolute()));
+        }
+    }
+    paths
+}
+
 fn join_registry_path(prefix: &str, suffix: &str) -> String {
     format!("{prefix}\\{suffix}")
 }
