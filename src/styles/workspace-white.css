@@ -70,7 +70,7 @@
   background: #fff;
   border: 1px solid var(--ui-accent);
   color: var(--ui-accent-strong);
-  box-shadow: inset 0 -2px var(--ui-accent);
+  box-shadow: none;
 }
 
 :root:not([data-theme='dark']) .workspace :is(
