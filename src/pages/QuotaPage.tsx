@@ -166,6 +166,7 @@ export function QuotaPage() {
         <div className="management-empty"><AlertCircle size={24} /><strong>{t('quota.empty.title')}</strong><span>{t('quota.empty.description')}</span></div>
       ) : (
         <div className="quota-group-list">
+          <div className="quota-table-head" aria-hidden="true"><span>{t('authFiles.list.credential')}</span><span>{t('authFiles.list.plan')}</span><span>{t('authFiles.list.status')}</span><span>{t('authFiles.list.quota')}</span><span>{t('authFiles.list.actions')}</span></div>
           {grouped.map(([provider, items]) => (
             <section className="quota-provider-group" key={provider}>
               <div className="quota-group-heading">
@@ -193,7 +194,12 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
   return (
     <article className="panel real-quota-card">
       <div className="real-quota-card-header">
-        <div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}{quota.plan ? ' · ' + quota.plan : ''}</span></div>
+        <div className="quota-identity">
+          <img src={provider ? providerMeta[provider].icon : ''} alt="" className="quota-account-icon" />
+          <div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}</span></div>
+        </div>
+        <div className="quota-plan"><strong>{quota.plan || '—'}</strong><span>{quota.subscriptionActiveUntil ? formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) : ''}</span></div>
+        <div className="quota-status"><span className={quota.status === 'success' ? 'quota-status-badge ready' : quota.status === 'error' ? 'quota-status-badge error' : 'quota-status-badge'}>{quota.status === 'success' ? t('common.enabled') : quota.status === 'loading' ? t('quota.querying') : quota.status === 'error' ? t('common.unavailable') : t('quota.notFetched')}</span><small>{t('authFiles.settings.priority')} 0</small></div>
         <div className="quota-card-actions">
           {onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={!canResetCodexQuota(file, quota)} title={t('quota.reset')}>{t('quota.reset')}</button> : null}
           <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')} aria-label={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} aria-hidden="true" /></button>
