@@ -73,6 +73,16 @@
   box-shadow: none;
 }
 
+/* Client selection is a list state, so keep it visually lighter than a form control. */
+:root:not([data-theme='dark']) .workspace .agent-list-items button.active {
+  border: 1px solid transparent;
+  border-left: 3px solid var(--ui-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ui-accent) 8%, #fff);
+  color: var(--ui-accent-strong);
+  box-shadow: none;
+}
+
 :root:not([data-theme='dark']) .workspace :is(
   .secondary-button:not(.danger), .icon-button:not(.danger), .agent-auth-segmented-button,
   .routing-segmented button, .plugin-tabs button,
