@@ -1,0 +1,101 @@
+/* Light-mode workspace surfaces. Keep the sidebar and semantic status colors separate. */
+:root:not([data-theme='dark']) :is(.workspace, .config-dialog, dialog) {
+  --bg-primary: #fff;
+  --bg-secondary: #fff;
+  --bg-card: #fff;
+  --bg-tertiary: #fff;
+  --bg-quinary: #fff;
+  --bg-hover: #fff;
+  --theme-f0ede6: #fff;
+  --theme-f0eee8: #fff;
+  --theme-f2efe8: #fff;
+  --theme-f2f0ea: #fff;
+  --theme-f4f1ea: #fff;
+  --theme-f4f2ec: #fff;
+  --theme-f6f2ec: #fff;
+  --theme-f8f5ee: #fff;
+  --theme-f8f5ef: #fff;
+  --theme-f8f6f1: #fff;
+  --theme-faf8f2: #fff;
+  --theme-faf8f4: #fff;
+  --theme-faf9f5: #fff;
+  --theme-fffdf8: #fff;
+  --border-color: #dce3eb;
+  --border-secondary: #e5eaf0;
+  --text-secondary: #253449;
+  --text-tertiary: #475569;
+  --text-quaternary: #526174;
+}
+
+:root:not([data-theme='dark']) .workspace,
+:root:not([data-theme='dark']) .workspace .content {
+  background: #fff;
+}
+
+:root:not([data-theme='dark']) .workspace :is(
+  .agent-model-section, .agent-auth-segmented, .routing-segmented,
+  .plugin-tabs, .home-protocol-tabs, .usage-analysis-metric,
+  .credential-quota, .usage-collector-state
+) {
+  background: #fff;
+  border: 1px solid var(--border-color);
+}
+
+:root:not([data-theme='dark']) .workspace .usage-stat-grid {
+  background: #fff;
+  border: 1px solid var(--border-color);
+  box-shadow: none;
+}
+
+:root:not([data-theme='dark']) .workspace .usage-stat-card + .usage-stat-card {
+  border-left: 1px solid var(--border-color);
+}
+
+:root:not([data-theme='dark']) .workspace :is(
+  .secondary-button:not(.danger), .icon-button:not(.danger), .agent-auth-segmented-button,
+  .routing-segmented button, .plugin-tabs button, .home-protocol-tabs button,
+  .usage-refresh-btn, .usage-price-row-actions button
+) {
+  background: #fff;
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+  box-shadow: none;
+}
+
+:root:not([data-theme='dark']) .workspace :is(
+  .agent-list-items button.active, .agent-auth-segmented-button.active,
+  .routing-segmented button.active, .plugin-tabs button.active,
+  .home-protocol-tabs button.active, .usage-analysis-metric button[aria-pressed='true']
+) {
+  background: #fff;
+  border: 1px solid var(--ui-accent);
+  color: var(--ui-accent-strong);
+  box-shadow: inset 0 -2px var(--ui-accent);
+}
+
+:root:not([data-theme='dark']) .workspace :is(
+  .secondary-button:not(.danger), .icon-button:not(.danger), .agent-auth-segmented-button,
+  .routing-segmented button, .plugin-tabs button, .home-protocol-tabs button,
+  .agent-list-items button, .usage-refresh-btn, .usage-price-row-actions button
+):hover:not(:disabled) {
+  background: #fff;
+  border-color: var(--ui-accent);
+  color: var(--ui-accent-strong);
+}
+
+/* Do not let local subpage palettes bring the neutral fills back. */
+:root:not([data-theme='dark']) .workspace .usage-tab-panel {
+  --usage-page-soft: #fff;
+  --usage-page-hover: #fff;
+  --bg-secondary: #fff;
+}
+
+:root:not([data-theme='dark']) .workspace .usage-request-log {
+  --usage-log-soft: #fff;
+  --usage-log-hover: #fff;
+}
+
+/* Empty tracks still need a visible outline after neutral surfaces become white. */
+:root:not([data-theme='dark']) .workspace .usage-model-bar-track {
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
