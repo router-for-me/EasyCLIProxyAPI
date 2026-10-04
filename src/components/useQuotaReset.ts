@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useI18n } from '../i18n';
 import { hasPendingClaudeReset, resetQuotaWithConfirmation } from '../services/quotaActions';
-import { fileName, formatQuotaTimestamp, providerForFile, type AuthFile, type QuotaState } from '../services/quotaService';
+import { fileName, formatQuotaTimestamp, quotaResetExpiries, providerForFile, type AuthFile, type QuotaState } from '../services/quotaService';
 import type { ConfirmationOptions } from './ConfirmationDialog';
 
 export function useQuotaReset(
@@ -18,7 +18,10 @@ export function useQuotaReset(
         confirmText: t(hasPendingClaudeReset(file) ? 'quota.claude.retry' : 'quota.confirm.button'),
         details: [
           { label: t('quota.resetCredits'), value: String(quota.resetCredits ?? '—') },
-          { label: t('quota.earliestExpiry'), value: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) },
+          ...quotaResetExpiries(quota).map((expiry, index) => ({
+            label: t('quota.resetCreditExpiry', { index: index + 1 }),
+            value: formatQuotaTimestamp(expiry, locale),
+          })),
         ],
         warning: t(providerForFile(file) === 'claude' ? hasPendingClaudeReset(file) ? 'quota.claude.unknown' : 'quota.claude.warning' : 'quota.confirm.warning'),
       }));

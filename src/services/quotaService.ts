@@ -43,6 +43,7 @@ export type QuotaState = {
   resetCreditsApplicable?: number;
   resetCreditsError?: string;
   resetCreditsEarliestExpiry?: string;
+  resetCreditExpiries?: string[];
   subscriptionActiveUntil?: string;
   serverTimeOffsetMs?: number;
   fetchedAt?: number;
@@ -332,7 +333,7 @@ export const codexAccountCreditsFor = (
 export const codexResetCreditDetailsFor = (
   payload: unknown,
   nowMs = Date.now(),
-): { availableCount?: number; applicableAvailableCount?: number; earliestExpiry?: string } => {
+): { availableCount?: number; applicableAvailableCount?: number; earliestExpiry?: string; expiries?: string[] } => {
   const value = parseBody(payload);
   if (!isRecord(value)) return {};
   const credits = Array.isArray(value.credits)
@@ -349,7 +350,7 @@ export const codexResetCreditDetailsFor = (
     const expiry = quotaResetInstant(credit.expires_at ?? credit.expiresAt);
     return expiry !== undefined && expiry > nowMs;
   });
-  const earliestExpiry = validCredits
+  const expiries = validCredits
     .map((credit) => readString(credit, 'expires_at', 'expiresAt'))
     .map((expiresAt) => ({ expiresAt, expiresAtMs: quotaResetInstant(expiresAt) ?? NaN }))
     .filter((credit) =>
@@ -357,14 +358,16 @@ export const codexResetCreditDetailsFor = (
       && Number.isFinite(credit.expiresAtMs)
       && credit.expiresAtMs > nowMs,
     )
-    .sort((left, right) => left.expiresAtMs - right.expiresAtMs)[0]?.expiresAt;
+    .sort((left, right) => left.expiresAtMs - right.expiresAtMs)
+    .map(credit => credit.expiresAt);
 
   return {
     availableCount: availableCount === null
       ? validCredits.length || undefined
       : Math.max(0, Math.floor(availableCount)),
     ...(applicableCount === null ? {} : { applicableAvailableCount: Math.max(0, Math.floor(applicableCount)) }),
-    earliestExpiry,
+    earliestExpiry: expiries[0],
+    expiries,
   };
 };
 
@@ -930,6 +933,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
       resetCreditsApplicable: provider === 'claude' ? undefined : usageCreditDetails.applicableAvailableCount
         ?? resetCreditDetails?.applicableAvailableCount ?? resetCredits,
       resetCredits,
+      resetCreditExpiries: resetCreditDetails?.expiries ?? usageCreditDetails.expiries,
       resetCreditsEarliestExpiry: resetCreditDetails?.earliestExpiry ?? claudeResetGrants?.grants.filter(grant => grant.resetsLeft > 0 && grant.endsAt).map(grant => grant.endsAt!).sort((a, b) => Date.parse(a) - Date.parse(b))[0],
       serverTimeOffsetMs: responseClock.serverTimeOffsetMs,
       fetchedAt: Date.now(),
@@ -1035,4 +1039,9 @@ export function consumeClaudeResetCredit(file: AuthFile): Promise<QuotaState> {
     }
     return loadQuotaSnapshot(file);
   });
+}
+
+export function quotaResetExpiries(quota: QuotaState): string[] {
+  return (quota.resetCreditExpiries ?? (quota.resetCreditsEarliestExpiry ? [quota.resetCreditsEarliestExpiry] : []))
+    .slice().sort((left, right) => (quotaResetInstant(left) ?? Infinity) - (quotaResetInstant(right) ?? Infinity));
 }

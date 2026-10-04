@@ -474,6 +474,8 @@ export const en: Record<MessageKey, string> = {
   'quota.resetCredits': 'Manual resets',
   'quota.creditBalance': 'Credit balance',
   'quota.creditUnlimited': 'Unlimited',
+  'quota.resetCreditExpiries': 'Reset credit expiry times',
+  'quota.resetCreditExpiry': 'Reset {index} expires',
   'quota.earliestExpiry': 'Earliest expiry',
   'quota.remaining': '{percent}% remaining',
   'quota.resetPassed': 'Reset time reached; refresh to verify',

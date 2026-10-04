@@ -487,6 +487,8 @@ export const jaOverrides = {
   'quota.resetCredits': '手動リセット回数',
   'quota.creditBalance': 'クレジット残高',
   'quota.creditUnlimited': '無制限',
+  'quota.resetCreditExpiries': 'リセット権利の有効期限',
+  'quota.resetCreditExpiry': '{index} 回目の有効期限',
   'quota.earliestExpiry': '最も早い有効期限',
   'quota.remaining': '残り {percent}%',
   'quota.resetPassed': 'リセット時刻到達。更新して確認してください',

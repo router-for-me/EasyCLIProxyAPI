@@ -1,3 +1,4 @@
+import { ResetCreditExpiries } from './ResetCreditExpiries';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { MessageNotice } from '../appNotice';
@@ -30,7 +31,6 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   const denseMetadata = dense ? [
     quota.resetCreditsApplicable !== undefined ? t('quota.resetApplicable', { count: quota.resetCreditsApplicable }) : '',
     quota.subscriptionActiveUntil ? t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) }) : '',
-    quota.resetCreditsEarliestExpiry ? t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) }) : '',
     accountCreditsLabel ? t('quota.creditBalance') + ': ' + accountCreditsLabel : '',
   ].filter(Boolean).join(' · ') : '';
   const renderRow = (row: QuotaState['rows'][number], index: number) => {
@@ -83,8 +83,9 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
           {quota.resetCreditsApplicable !== undefined ? <small>{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</small> : null}
           {quota.subscriptionActiveUntil ? <small>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</small> : null}
           {accountCreditsLabel ? <small>{t('quota.creditBalance')}: {accountCreditsLabel}</small> : null}
-          {quota.resetCreditsEarliestExpiry ? <small>{t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) })}</small> : null}
+
         </div> : null}
+        <ResetCreditExpiries quota={quota} />
         <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
       </> : null}
     </section>

@@ -473,6 +473,8 @@ export const zhCN = {
   'quota.resetCredits': '主动重置次数',
   'quota.creditBalance': 'Credit 余额',
   'quota.creditUnlimited': '无限额',
+  'quota.resetCreditExpiries': '重置次数过期时间',
+  'quota.resetCreditExpiry': '第 {index} 次过期时间',
   'quota.earliestExpiry': '最早过期',
   'quota.remaining': '剩余 {percent}%',
   'quota.resetPassed': '重置时间已到，请刷新确认',

@@ -136,11 +136,12 @@ describe('quotaRowsFor', () => {
     expect(result).toEqual({
       availableCount: 2,
       earliestExpiry: '2026-08-12T18:06:25Z',
+      expiries: ['2026-08-12T18:06:25Z', '2026-08-20T00:00:00Z'],
     });
   });
 
   it('重置次数支持 applicable 字段、空列表，不把过期积分算入推断次数', () => {
-    expect(codexResetCreditDetailsFor({ credits: [] })).toEqual({ availableCount: undefined, earliestExpiry: undefined });
+    expect(codexResetCreditDetailsFor({ credits: [] })).toEqual({ availableCount: undefined, earliestExpiry: undefined, expiries: [] });
     expect(codexResetCreditDetailsFor({
       applicableAvailableCount: '0',
       credits: [
@@ -150,7 +151,7 @@ describe('quotaRowsFor', () => {
         { resetType: 'other', status: 'available', expiresAt: '2030-01-01T00:00:00Z' },
       ],
     }, Date.parse('2026-01-01T00:00:00Z'))).toEqual({
-      availableCount: 1, applicableAvailableCount: 0, earliestExpiry: '2030-01-01T00:00:00Z',
+      availableCount: 1, applicableAvailableCount: 0, earliestExpiry: '2030-01-01T00:00:00Z', expiries: ['2030-01-01T00:00:00Z'],
     });
   });
 

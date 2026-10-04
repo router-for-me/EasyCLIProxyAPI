@@ -24,7 +24,7 @@ createRoot(document.getElementById('root')!).render(
           {[1, 2, 3, 4, 5, 6].map((id) => <QuotaCard key={id} file={{ name: `kimi-${id}-long-credential-name@example.com.json`, provider: 'kimi' }} quota={{ status: 'success', rows }} onRefresh={() => {}} />)}
         </div>
         <div className="real-quota-grid">
-          <QuotaCard file={{ name: 'codex.json', provider: 'codex' }} quota={{ status: 'success', rows, resetCredits: 2, resetCreditsApplicable: 2, plan: 'team', subscriptionActiveUntil: '2030-10-17T13:58:00Z', resetCreditsEarliestExpiry: '2030-10-23T05:10:00Z' }} onRefresh={() => {}} onReset={() => {}} />
+          <QuotaCard file={{ name: 'codex.json', provider: 'codex' }} quota={{ status: 'success', rows, resetCredits: 2, resetCreditsApplicable: 2, plan: 'team', subscriptionActiveUntil: '2030-10-17T13:58:00Z', resetCreditExpiries: ['2030-10-23T05:10:00Z', '2030-11-23T05:10:00Z'] }} onRefresh={() => {}} onReset={() => {}} />
           <QuotaCard file={claudeFile} quota={claudeQuota} onRefresh={() => {}} onReset={() => {}} />
           <QuotaCard file={{ name: 'failed.json', provider: 'kimi' }} quota={{ status: 'error', rows: [], error: 'Quota request failed' }} onRefresh={() => {}} />
           <QuotaCard file={{ name: 'loading.json', provider: 'kimi' }} quota={{ status: 'loading', rows: [] }} onRefresh={() => {}} />

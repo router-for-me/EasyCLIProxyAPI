@@ -1,0 +1,13 @@
+.reset-credit-expiries {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-meta);
+}
+.reset-credit-expiries > strong { font-size: inherit; font-weight: 500; }
+.reset-credit-expiries ol { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.reset-credit-expiries li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; }
+.reset-credit-expiries li span { overflow-wrap: anywhere; }
+.credential-quota-dense .reset-credit-expiries { font-size: 10px; line-height: 1.4; }
