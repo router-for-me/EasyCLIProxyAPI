@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider } from '../src/i18n';
 import { QuotaCard } from '../src/pages/QuotaPage';
-import { quotaRowsFor } from '../src/services/quotaService';
+import { quotaRowsFor, formatQuotaTimestamp } from '../src/services/quotaService';
 import type { QuotaState } from '../src/services/quotaService';
 
 const render = (quota: QuotaState, provider = 'codex') => renderToStaticMarkup(
@@ -20,7 +20,8 @@ describe('quota card rendering', () => {
     expect(html).not.toContain('No applicable reset credits');
     expect(html).toContain('Currently applicable: 0');
     expect(html).not.toContain('temporary failure');
-    expect(html).toContain('Subscription expires');
+    expect(html).toContain('Expires 01/01/2030, 00:00');
+    expect(html).not.toContain('Subscription expires:');
   });
 
   it.each(['error', 'refresh-error'] as const)('重置结果为 %s 时仍可再次点击重置', (status) => {

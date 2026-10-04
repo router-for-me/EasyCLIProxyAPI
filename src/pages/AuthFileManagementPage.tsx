@@ -3,7 +3,7 @@ import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
 import { AuthFileQuotaPanel } from '../components/AuthFileQuotaPanel';
 import { AuthFileSettingsDialog } from '../components/AuthFileSettingsDialog';
-import { useCodexQuotaReset } from '../components/useCodexQuotaReset';
+import { useQuotaReset } from '../components/useQuotaReset';
 import './AuthFileManagementPage.css';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { AuthFileModelsDialog } from '../components/AuthFileModelsDialog';
@@ -141,7 +141,7 @@ export function AuthFileManagementPage() {
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [cooldownResetting, setCooldownResetting] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState('');
-  const resetCodexQuota = useCodexQuotaReset(askConfirmation, setError);
+  const resetQuota = useQuotaReset(askConfirmation, setError);
   const feedback = useAppNotice();
   const { showNotice } = feedback;
   const [copied, setCopied] = useState('');
@@ -570,7 +570,7 @@ export function AuthFileManagementPage() {
                   <div className="auth-list-cell auth-list-recent" data-label={t('authFiles.list.recent')}><AuthFileRequestStatus file={file} compact /></div>
                   <div className="auth-list-cell auth-list-usage" data-label={t('authFiles.usage.title')}><AuthFileUsageSummary file={file} /></div>
                   <div className="auth-list-cell auth-list-quota" data-label={t('authFiles.list.quota')}>
-                    {quotaProvider ? <AuthFileQuotaPanel compact dense quota={quota} file={file} disabled={busy || disabled} onRefresh={() => void refreshQuota(file)} onReset={quotaProvider === 'codex' ? () => void resetCodexQuota(file, quota) : undefined} /> : <span className="auth-list-muted">{t('authFiles.list.noQuota')}</span>}
+                    {quotaProvider ? <AuthFileQuotaPanel compact dense quota={quota} file={file} disabled={busy || disabled} onRefresh={() => void refreshQuota(file)} onReset={quotaProvider === 'codex' || quotaProvider === 'claude' ? () => void resetQuota(file, quota) : undefined} /> : <span className="auth-list-muted">{t('authFiles.list.noQuota')}</span>}
                     <QuotaActionFeedback quota={quota} name={name} />
                   </div>
                   <footer className="auth-card-actions auth-list-cell" data-label={t('authFiles.list.actions')}>

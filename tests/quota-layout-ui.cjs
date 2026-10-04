@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const base = process.env.QUOTA_TEST_BASE || 'http://127.0.0.1:1421';
 
 (async () => {
-  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--no-proxy-server'] });
   try {
     const page = await browser.newPage();
     await page.route('**/*', route => route.request().url().startsWith(`${base}/`) ? route.continue() : route.abort());
@@ -42,6 +42,10 @@ const base = process.env.QUOTA_TEST_BASE || 'http://127.0.0.1:1421';
         assert.ok(text.includes('80%') && text.includes('60%'), `${context}: both Kimi windows remain rendered`);
       }
     }
+    const claudeCard = page.locator('.real-quota-card').filter({ has: page.locator('strong[title="claude.json"]') });
+    assert.equal(await claudeCard.getByRole('button', { name: 'Reset Quota', exact: true }).isEnabled(), true);
+    assert.equal(await page.locator('.credential-quota-reset').isEnabled(), true);
+    assert.match(await page.locator('.credential-quota-reset-credits').innerText(), /2/);
     console.log('Quota layout: 11 viewport/content combinations passed');
   } finally {
     await browser.close();

@@ -1,10 +1,10 @@
 import { useCallback } from 'react';
 import { useI18n } from '../i18n';
-import { resetCodexQuotaWithConfirmation } from '../services/quotaActions';
-import { fileName, formatQuotaTimestamp, type AuthFile, type QuotaState } from '../services/quotaService';
+import { hasPendingClaudeReset, resetQuotaWithConfirmation } from '../services/quotaActions';
+import { fileName, formatQuotaTimestamp, providerForFile, type AuthFile, type QuotaState } from '../services/quotaService';
 import type { ConfirmationOptions } from './ConfirmationDialog';
 
-export function useCodexQuotaReset(
+export function useQuotaReset(
   askConfirmation: (options: ConfirmationOptions) => Promise<boolean>,
   setError: (message: string) => void,
 ) {
@@ -12,15 +12,15 @@ export function useCodexQuotaReset(
   return useCallback(async (file: AuthFile, quota: QuotaState) => {
     setError('');
     try {
-      await resetCodexQuotaWithConfirmation(file, () => askConfirmation({
+      await resetQuotaWithConfirmation(file, () => askConfirmation({
         title: t('quota.reset'),
-        message: t('quota.confirm.title', { name: fileName(file) }),
-        confirmText: t('quota.confirm.button'),
+        message: t(providerForFile(file) === 'claude' ? 'quota.claude.confirm' : 'quota.confirm.title', { name: fileName(file) }),
+        confirmText: t(hasPendingClaudeReset(file) ? 'quota.claude.retry' : 'quota.confirm.button'),
         details: [
           { label: t('quota.resetCredits'), value: String(quota.resetCredits ?? '—') },
           { label: t('quota.earliestExpiry'), value: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) },
         ],
-        warning: t('quota.confirm.warning'),
+        warning: t(providerForFile(file) === 'claude' ? hasPendingClaudeReset(file) ? 'quota.claude.unknown' : 'quota.claude.warning' : 'quota.confirm.warning'),
       }));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : String(requestError));

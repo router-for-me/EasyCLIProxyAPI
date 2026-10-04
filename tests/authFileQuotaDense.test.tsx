@@ -24,12 +24,13 @@ it('keeps window percentages, reset times and additional windows available in de
   expect(html).toContain('extra');
 });
 
-it('shows reset credits in the button while preserving applicability and expiry', () => {
+it('shows reset credits beside the button while preserving applicability and expiry', () => {
   const html = renderDense({ status: 'success', rows: [{ label: '5h', remainingPercent: 0 }],
     resetCredits: 2, resetCreditsApplicable: 0, subscriptionActiveUntil: '2030-01-01T00:00:00Z',
   });
   const resetButton = html.match(/<button[^>]*credential-quota-reset[^>]*>[\s\S]*?<\/button>/)?.[0];
-  expect(resetButton).toContain('2');
+  expect(resetButton).toContain('Reset');
+  expect(html).toMatch(/credential-quota-reset-credits[^>]*>[^<]*2/);
   expect(resetButton).not.toContain('disabled=""');
   expect(html).toContain('Currently applicable: 0');
   expect(html).toContain('Subscription expires');

@@ -3,7 +3,7 @@ import { useI18n } from '../i18n';
 import { MessageNotice } from '../appNotice';
 import { readBoolean } from '../services/managementApi';
 import { fileName, formatQuotaTimestamp, type AuthFile, type QuotaState } from '../services/quotaService';
-import { canResetCodexQuota } from '../services/quotaActions';
+import { canResetQuota, hasPendingClaudeReset } from '../services/quotaActions';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import './AuthFileQuotaPanel.css';
 
@@ -22,7 +22,7 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   const name = fileName(file);
   const compactLayout = compact || dense;
   const fileDisabled = readBoolean(file, 'disabled');
-  const showReset = Boolean(onReset && (quota.resetCredits ?? 0) > 0);
+  const showReset = Boolean(onReset && ((quota.resetCredits ?? 0) > 0 || hasPendingClaudeReset(file)));
   const resetCreditsLabel = quota.resetCredits !== undefined ? t('authFiles.quota.resets', { count: quota.resetCredits }) : '';
   const accountCreditsLabel = quota.creditsUnlimited
     ? t('quota.creditUnlimited')
@@ -56,8 +56,8 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
         {!compactLayout ? <strong>{t('authFiles.settings.quotaRemaining')}</strong> : null}
         {!compactLayout && quota.plan ? <span className="credential-quota-plan">{quota.plan}</span> : null}
         {dense && resetCreditsLabel ? <small className="credential-quota-reset-credits">{resetCreditsLabel}</small> : null}
-        {showReset ? <button type="button" className="secondary-button compact-button credential-quota-reset" onClick={onReset} disabled={disabled || !canResetCodexQuota(file, quota)}
-          title={t('quota.reset')}>{t('quota.reset')}</button> : null}
+        {showReset ? <button type="button" className="secondary-button compact-button credential-quota-reset" onClick={onReset} disabled={disabled || !canResetQuota(file, quota)}
+          title={t('quota.reset')}>{t(hasPendingClaudeReset(file) ? 'quota.claude.retry' : 'quota.reset')}</button> : null}
         {!compactLayout ? <button type="button" className="credential-quota-refresh" disabled={disabled || loading} onClick={onRefresh}
           title={disabled ? t('quota.fileDisabled') : t('authFiles.quota.refresh')}>
           {loading ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />}

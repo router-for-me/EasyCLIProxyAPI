@@ -1,3 +1,7 @@
+import { captureQuotaCacheGeneration } from './quotaCache';
+import { readClaudeResetGrants, type AnthropicResetGrantStatus } from './claudeResetGrants';
+import { selectResetGrant } from './selectClaudeResetGrant';
+import { resetGrantOperations, RETRY_WINDOW_MS } from './claudeResetOperations';
 import { buildXaiBillingSummary, mergeXaiBillingSummaries, type XaiBillingConfig } from './xaiBilling';
 import {
   apiCallErrorMessage,
@@ -34,6 +38,7 @@ export type QuotaState = {
   plan?: string;
   creditBalance?: string;
   creditsUnlimited?: boolean;
+  claudeResetGrants?: AnthropicResetGrantStatus;
   resetCredits?: number;
   resetCreditsApplicable?: number;
   resetCreditsError?: string;
@@ -885,10 +890,16 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
         return null;
       })
       : Promise.resolve(null);
-    const [payload, detectedPlan, resetCreditDetails] = await Promise.all([
+    const claudeGrantsPromise = provider === 'claude'
+      ? readClaudeResetGrants(normalizeAuthIndex(file.auth_index ?? file.authIndex)).catch(() => {
+        resetCreditsError = quotaText('quota.claude.readError');
+        return undefined;
+      }) : Promise.resolve(undefined);
+    const [payload, detectedPlan, resetCreditDetails, claudeResetGrants] = await Promise.all([
       payloadPromise,
       planPromise,
       resetCreditsPromise,
+      claudeGrantsPromise,
     ]);
     const rows = quotaRowsFor(provider, payload);
     if (rows.length === 0) {
@@ -900,7 +911,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
     }
     const resetCredits = provider === 'codex'
       ? resetCreditDetails?.availableCount ?? codexResetCreditsFor(payload)
-      : undefined;
+      : claudeResetGrants?.grants.reduce((sum, grant) => sum + grant.resetsLeft, 0);
     const usageCreditDetails = provider === 'codex' && isRecord(payload)
       ? codexResetCreditDetailsFor(payload.rate_limit_reset_credits ?? payload.rateLimitResetCredits)
       : {};
@@ -914,11 +925,12 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
       creditsUnlimited: accountCredits.unlimited,
       subscriptionActiveUntil: provider === 'devin'
         ? readDevinQuota(payload).subscriptionActiveUntil : codexMetadata?.subscriptionActiveUntil,
+      claudeResetGrants,
       resetCreditsError,
-      resetCreditsApplicable: usageCreditDetails.applicableAvailableCount
+      resetCreditsApplicable: provider === 'claude' ? undefined : usageCreditDetails.applicableAvailableCount
         ?? resetCreditDetails?.applicableAvailableCount ?? resetCredits,
       resetCredits,
-      resetCreditsEarliestExpiry: resetCreditDetails?.earliestExpiry,
+      resetCreditsEarliestExpiry: resetCreditDetails?.earliestExpiry ?? claudeResetGrants?.grants.filter(grant => grant.resetsLeft > 0 && grant.endsAt).map(grant => grant.endsAt!).sort((a, b) => Date.parse(a) - Date.parse(b))[0],
       serverTimeOffsetMs: responseClock.serverTimeOffsetMs,
       fetchedAt: Date.now(),
     };
@@ -996,4 +1008,31 @@ function runQuotaMutation(file: AuthFile, mutate: () => Promise<QuotaState>): Pr
 
 export function consumeCodexResetCredit(file: AuthFile): Promise<QuotaState> {
   return runQuotaMutation(file, () => consumeCodexResetCreditSnapshot(file));
+}
+
+export function consumeClaudeResetCredit(file: AuthFile): Promise<QuotaState> {
+  const generation = captureQuotaCacheGeneration();
+  return runQuotaMutation(file, async () => {
+    if (captureQuotaCacheGeneration() !== generation) throw new Error(quotaText('quota.claude.blocked'));
+    if (providerForFile(file) !== 'claude' || booleanValue(file.disabled) === true)
+      throw new Error(quotaText('quota.claude.blocked'));
+    const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
+    if (!authIndex) throw new Error(quotaText('quota.claude.blocked'));
+    const key = quotaKey(file);
+    const pending = resetGrantOperations.inspect(key);
+    const grantId = pending && !pending.code ? pending.grantId
+      : selectResetGrant(await readClaudeResetGrants(authIndex), Date.now())?.id;
+    if (!grantId || captureQuotaCacheGeneration() !== generation) throw new Error(quotaText('quota.claude.blocked'));
+    try {
+      const answer = await resetGrantOperations.run(key, authIndex, grantId);
+      if (answer.unresolved) throw new Error(quotaText('quota.claude.unknown'));
+      if (answer.code !== 'reset' && answer.code !== 'already_used')
+        throw new Error(quotaText(`quota.claude.${answer.code}`));
+    } catch (error) {
+      const operation = resetGrantOperations.inspect(key);
+      if (operation && !operation.code) throw new Error(quotaText(Date.now() - operation.createdAt >= RETRY_WINDOW_MS ? 'quota.claude.expired' : 'quota.claude.unknown'));
+      throw error;
+    }
+    return loadQuotaSnapshot(file);
+  });
 }
