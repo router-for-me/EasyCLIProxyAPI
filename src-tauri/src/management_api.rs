@@ -61,9 +61,18 @@ pub(crate) struct ManagementRequest {
     method: String,
     path: String,
     query: Option<HashMap<String, String>>,
+    #[serde(default, deserialize_with = "deserialize_management_body")]
     body: Option<serde_json::Value>,
     #[serde(rename = "timeoutMs")]
     timeout_ms: Option<u64>,
+}
+
+fn deserialize_management_body<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // An explicit v8 null is a JSON value, not an omitted request body.
+    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 #[tauri::command]
@@ -96,7 +105,7 @@ pub(crate) async fn management_request(
         builder = builder.query(&query);
     }
     if let Some(body) = request.body {
-        builder = builder.json(&body);
+        builder = management_request_body(builder, path, body)?;
     }
 
     let response = builder
@@ -104,6 +113,21 @@ pub(crate) async fn management_request(
         .await
         .map_err(|err| format_management_request_error("Management API request failed", &err))?;
     read_management_value(response).await
+}
+
+fn management_request_body(
+    builder: reqwest::RequestBuilder,
+    path: &str,
+    body: serde_json::Value,
+) -> Result<reqwest::RequestBuilder, String> {
+    if path.trim_start_matches('/') == "config.yaml" {
+        let yaml = body.as_str().ok_or("YAML configuration must be text")?;
+        Ok(builder
+            .header("Content-Type", "application/yaml")
+            .body(yaml.to_owned()))
+    } else {
+        Ok(builder.json(&body))
+    }
 }
 
 #[tauri::command]
@@ -506,6 +530,65 @@ fn format_management_error(status: u16, body: &str) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn v8_yaml_body_is_raw_text_and_config_values_remain_json() {
+        let client = reqwest::Client::new();
+        let yaml = "config-version: 8\naccess: {api-keys: [test-client]}\n";
+        let request = management_request_body(
+            client.put("http://127.0.0.1/v8/management/config.yaml"),
+            "/config.yaml",
+            serde_json::json!(yaml),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert_eq!(request.headers()["Content-Type"], "application/yaml");
+        assert_eq!(request.body().unwrap().as_bytes().unwrap(), yaml.as_bytes());
+
+        for value in [
+            serde_json::Value::Null,
+            serde_json::json!(false),
+            serde_json::json!(0),
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!("direct"),
+        ] {
+            let request = management_request_body(
+                client.put("http://127.0.0.1/v8/management/config/requests/proxy-url"),
+                "/config/requests/proxy-url",
+                value.clone(),
+            )
+            .unwrap()
+            .build()
+            .unwrap();
+            assert_eq!(request.headers()["Content-Type"], "application/json");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(request.body().unwrap().as_bytes().unwrap()).unwrap(),
+                value,
+            );
+        }
+        assert!(management_request_body(
+            client.put("http://127.0.0.1/v8/management/config.yaml"),
+            "/config.yaml",
+            serde_json::json!({}),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn v8_requests_distinguish_explicit_null_from_an_absent_body() {
+        let absent: ManagementRequest = serde_json::from_value(serde_json::json!({
+            "method": "GET", "path": "/config",
+        }))
+        .unwrap();
+        let explicit: ManagementRequest = serde_json::from_value(serde_json::json!({
+            "method": "PUT", "path": "/config/requests/payload", "body": null,
+        }))
+        .unwrap();
+        assert!(absent.body.is_none());
+        assert_eq!(explicit.body, Some(serde_json::Value::Null));
+    }
 
     #[test]
     fn plugin_oauth_preserves_literal_provider_ids_without_builtin_aliases() {

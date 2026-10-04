@@ -23,8 +23,43 @@ export type OAuthModelSettings = {
 type OAuthModelSettingsApi = {
   get: (path: string, query?: Record<string, string>) => Promise<unknown>;
   patch: (path: string, body: Record<string, unknown>) => Promise<unknown>;
-  delete: (path: string, options?: { query?: Record<string, string> }) => Promise<unknown>;
+  put: (path: string, body: Record<string, unknown>) => Promise<unknown>;
 };
+
+const exclusionsPath = '/config/oauth/excluded-models';
+const exclusionWrites = new WeakMap<OAuthModelSettingsApi, Promise<void>>();
+
+async function readExclusions(api: OAuthModelSettingsApi): Promise<Record<string, unknown>> {
+  try {
+    const value = await api.get(exclusionsPath);
+    if (!isRecord(value)) throw new Error('Invalid OAuth exclusion configuration');
+    return value;
+  } catch (error) {
+    if ((error instanceof Error ? error.message : error) === 'Management API error (404): not_found') return {};
+    throw error;
+  }
+}
+
+// v8 accepts the provider map directly. Serialize read/modify/write operations
+// so simultaneous edits to different providers preserve each other's changes.
+export function saveOAuthProviderExclusions(
+  provider: string, models: string[] | undefined, api: OAuthModelSettingsApi = managementApi,
+): Promise<void> {
+  const key = provider.trim().toLowerCase();
+  if (!key) return Promise.reject(new Error('Invalid OAuth provider'));
+  const pending = (exclusionWrites.get(api) ?? Promise.resolve()).then(async () => {
+    const current = await readExclusions(api);
+    const next = Object.fromEntries(Object.entries(current).filter(([name]) => name.trim().toLowerCase() !== key));
+    if (models !== undefined) Object.defineProperty(next, key, { value: models, enumerable: true });
+    await api.put(exclusionsPath, next);
+  });
+  const settled = pending.catch(() => {});
+  exclusionWrites.set(api, settled);
+  void settled.then(() => {
+    if (exclusionWrites.get(api) === settled) exclusionWrites.delete(api);
+  });
+  return pending;
+}
 
 export const authFileExcludedRulesFromPayload = (payload: unknown): string[] => {
   let metadata = payload;
@@ -54,13 +89,13 @@ export const loadOAuthModelSettings = async (
 ): Promise<OAuthModelSettings> => {
   const [catalog, payload] = await Promise.all([
     (target.scope === 'credential'
-      ? api.get('/auth-files/models', { name: target.name })
-      : api.get(`/model-definitions/${encodeURIComponent(target.provider)}`))
+      ? api.get('/credentials/models', { name: target.name })
+      : api.get(`/routing/model-definitions/${encodeURIComponent(target.provider)}`))
       .then((definitions) => ({ models: oauthModelsFromPayload(definitions), error: '' }))
       .catch((error: unknown) => ({ models: [] as OAuthModelDefinition[], error: String(error) })),
     target.scope === 'credential'
-      ? api.get('/auth-files/download', { name: target.name })
-      : api.get('/oauth-excluded-models'),
+      ? api.get('/credentials/download', { name: target.name })
+      : readExclusions(api),
   ]);
   const excludedRules = target.scope === 'credential'
     ? authFileExcludedRulesFromPayload(payload)
@@ -82,16 +117,13 @@ export const saveOAuthModelSettings = async (
   if (excludedModels.length === settings.excludedRules.length
     && excludedModels.every((rule) => settings.excludedRules.includes(rule))) return;
   if (settings.target.scope === 'credential') {
-    await api.patch('/auth-files/fields', {
+    await api.patch('/credentials/fields', {
       name: settings.target.name,
       excluded_models: excludedModels,
     });
   } else if (excludedModels.length > 0) {
-    await api.patch('/oauth-excluded-models', {
-      provider: settings.target.provider,
-      models: excludedModels,
-    });
+    await saveOAuthProviderExclusions(settings.target.provider, excludedModels, api);
   } else if (settings.excludedRules.length > 0) {
-    await api.delete('/oauth-excluded-models', { query: { provider: settings.target.provider } });
+    await saveOAuthProviderExclusions(settings.target.provider, undefined, api);
   }
 };

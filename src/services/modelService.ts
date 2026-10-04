@@ -220,7 +220,7 @@ export async function fetchModels(
       for (let page = 0; page < (['gemini', 'interactions', 'vertex'].includes(provider) ? 20 : 1); page += 1) {
         const pageUrl = new URL(url);
         if (pageToken) pageUrl.searchParams.set('pageToken', pageToken);
-        const response = await managementApi.post<Record<string, unknown>>('/api-call', {
+        const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
           authIndex: authIndex?.trim() || undefined,
           method: 'GET',
           url: pageUrl.toString(),
@@ -257,7 +257,7 @@ export async function fetchModels(
       if (collected.length) return collected;
 
       if (provider === 'openai' && Object.keys(headers).length > 0) {
-        const response = await managementApi.post<Record<string, unknown>>('/api-call', {
+        const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
           method: 'GET',
           url,
         }, { timeoutMs });
@@ -271,7 +271,7 @@ export async function fetchModels(
       lastError = String(error);
       if (provider === 'openai' && Object.keys(headers).length > 0) {
         try {
-          const response = await managementApi.post<Record<string, unknown>>('/api-call', {
+          const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
             method: 'GET',
             url,
           }, { timeoutMs });

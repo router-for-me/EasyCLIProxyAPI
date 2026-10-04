@@ -159,6 +159,11 @@ function parseCsv(text) {
     }
 
     await page.setViewportSize({ width: 1100, height: 700 });
+    // Existing installations may have explicitly enabled every old metric column.
+    await page.evaluate(() => localStorage.setItem('cpa-gui.usage-events-visible-cols.v3', JSON.stringify([
+      'time', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'provider',
+      'input', 'output', 'reasoning', 'cacheRate', 'ttft',
+    ])));
     await page.goto(`${base}/tests/fixtures/usage-layout.html?tab=events&locale=en`, { waitUntil: 'domcontentloaded' });
     await page.locator('.usage-table-top-scrollbar:not(.is-hidden)').waitFor();
     await page.locator('.usage-page-size-select').selectOption('200');
@@ -166,6 +171,8 @@ function parseCsv(text) {
 
     assert.equal(await page.getByRole('heading', { name: 'Request Event Log' }).count(), 0, 'The redundant request log heading is removed');
     const firstRow = page.locator('.usage-events-table tbody tr').first();
+    assert.equal(await page.locator('.usage-events-table th').count(), 12, 'Saved settings cannot restore removed duplicate columns');
+    assert.equal(await firstRow.locator('.usage-td-source svg, .usage-td-source img').count(), 0, 'Source is plain text without a logo');
     assert.equal(await firstRow.locator('.usage-td-total').getAttribute('title'), '1,200 tokens', 'The displayed total uses the recorded total instead of adding cache and reasoning again');
     assert.equal(await firstRow.locator('.tone-input').getAttribute('aria-label'), 'Input: 1000');
     assert.equal(await firstRow.locator('.tone-output').getAttribute('aria-label'), 'Output: 200');
@@ -284,6 +291,7 @@ function parseCsv(text) {
 
     await page.locator('.usage-col-settings-btn').click();
     const checkboxes = page.locator('.usage-column-option input');
+    assert.equal(await checkboxes.count(), 12, 'Column settings contain only the remaining columns');
     for (let index = 2; index < await checkboxes.count(); index += 1) await checkboxes.nth(index).uncheck();
     await page.locator('.usage-column-dialog-actions .primary-button').click();
     await page.waitForFunction(() => document.querySelector('.usage-table-top-scrollbar').classList.contains('is-hidden'));

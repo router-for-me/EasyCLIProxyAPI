@@ -57,7 +57,7 @@ export const setOAuthCredentialFileDisabled = async (
   if (!isOAuthCredentialFile(file)) {
     throw new Error(translate(getCurrentLocale(), 'authFiles.fileOnly'));
   }
-  await api.patch('/auth-files/status', { name: readString(file, 'name'), disabled });
+  await api.patch('/credentials/status', { name: readString(file, 'name'), disabled });
 };
 
 export const parseAuthFilePriority = (value: unknown): number | undefined => {

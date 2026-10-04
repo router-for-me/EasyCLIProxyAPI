@@ -130,7 +130,7 @@ export async function loadHomeOverview(coreReady: boolean, nowMs = Date.now()): 
   const [usage, credentials, providerKeys, models] = await Promise.allSettled([
     // Usage is stored locally and remains meaningful while the core is stopped.
     invoke<unknown>('get_usage_overview', { query }).then(summarizeHomeUsage),
-    coreReady ? managementApi.get('/auth-files').then(summarizeHomeCredentials) : Promise.resolve(null),
+    coreReady ? managementApi.get('/credentials').then(summarizeHomeCredentials) : Promise.resolve(null),
     coreReady ? loadProviderKeys() : Promise.resolve(null),
     coreReady ? invoke<unknown>('get_core_models').then(normalizeHomeModels) : Promise.resolve(null),
   ]);

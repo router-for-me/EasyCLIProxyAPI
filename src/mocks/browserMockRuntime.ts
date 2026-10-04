@@ -81,20 +81,6 @@ function groupProviderRecords(section: ProviderSection, records: JsonObject[]): 
   });
 }
 
-function flattenProviderGroups(section: ProviderSection, groups: JsonObject[]): JsonObject[] {
-  return groups.flatMap((group) => {
-    const keys = asArray(group.keys).map(asObject);
-    if (section === 'openai-compatibility') {
-      const record: JsonObject = clone(group);
-      delete record.keys;
-      if (keys.length > 0) record['api-key-entries'] = clone(keys);
-      return [record];
-    }
-    const shared = Object.fromEntries(Object.entries(group).filter(([field]) => field === 'base-url' || SHARED_PROVIDER_FIELDS.has(field)));
-    return keys.map((key) => clone({ ...shared, ...Object.fromEntries(Object.entries(key).filter(([, value]) => value !== null)) }));
-  });
-}
-
 const isoHoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 const localHourKey = (date: Date) => [
   date.getFullYear(),
@@ -738,21 +724,6 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
       return { status: 'ok', 'config-version': 8 };
     }
   }
-  if (PROVIDER_SECTIONS.some((section) => path === `/${section}`)) {
-    const section = path.slice(1) as ProviderSection;
-    if (method === 'GET') return { [section]: flattenProviderGroups(section, state.providerConfig[section]) };
-    if (method === 'PUT') {
-      state.providerConfig[section] = groupProviderRecords(section, asArray(body).map(asObject));
-      return { [section]: flattenProviderGroups(section, state.providerConfig[section]) };
-    }
-    if (method === 'PATCH' && section === 'openai-compatibility') {
-      const patch = asObject(body);
-      const index = readNumber(patch.index, -1);
-      const current = flattenProviderGroups(section, state.providerConfig[section])[index];
-      if (current) state.providerConfig[section][index] = groupProviderRecords(section, [{ ...current, ...asObject(patch.value) }])[0];
-      return { [section]: flattenProviderGroups(section, state.providerConfig[section]) };
-    }
-  }
   if (method === 'GET' && path === '/credentials') {
     return { files: clone(state.authFiles), observed_at: new Date().toISOString() };
   }
@@ -765,23 +736,9 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   if (method === 'GET' && path === '/config/oauth/excluded-models') {
     return clone(state.oauthExcludedModels);
   }
-  if (path.startsWith('/config/oauth/excluded-models/')) {
-    const provider = decodeURIComponent(path.slice('/config/oauth/excluded-models/'.length));
-    if (method === 'PUT') state.oauthExcludedModels[provider] = asArray(body).map(String);
-    if (method === 'DELETE') delete state.oauthExcludedModels[provider];
+  if (method === 'PUT' && path === '/config/oauth/excluded-models') {
+    state.oauthExcludedModels = clone(asObject(body)) as Record<string, string[]>;
     return { status: 'ok', 'config-version': 8 };
-  }
-  if (method === 'GET' && path === '/oauth-excluded-models') {
-    return { 'oauth-excluded-models': clone(state.oauthExcludedModels) };
-  }
-  if (method === 'PATCH' && path === '/oauth-excluded-models') {
-    const patch = asObject(body);
-    state.oauthExcludedModels[readString(patch.provider)] = asArray(patch.models).map(String);
-    return { 'oauth-excluded-models': clone(state.oauthExcludedModels) };
-  }
-  if (method === 'DELETE' && path === '/oauth-excluded-models') {
-    delete state.oauthExcludedModels[readString(query.provider)];
-    return null;
   }
   if (method === 'PATCH' && (path === '/credentials/fields' || path === '/credentials/status')) {
     const patch = asObject(body);

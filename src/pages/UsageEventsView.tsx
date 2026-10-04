@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowDown, ArrowUp, Brain, ChevronLeft, ChevronRight, Columns3Cog, Database, DatabaseZap, Download, RotateCcw, Terminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Brain, ChevronLeft, ChevronRight, Columns3Cog, Database, DatabaseZap, Download, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
@@ -62,16 +62,11 @@ type EventColumnKey =
   | 'provider'
   | 'source'
   | 'key'
-  | 'input'
-  | 'output'
-  | 'reasoning'
   | 'cache'
   | 'total'
   | 'result'
   | 'latency'
-  | 'ttft'
   | 'speed'
-  | 'cacheRate'
   | 'effort'
   | 'request';
 
@@ -96,17 +91,12 @@ const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'total', labelKey: 'usage.column.tokens', defaultWidth: 120, minWidth: 112, align: 'left' },
   { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 104, minWidth: 88, align: 'left' },
   { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 108, minWidth: 88, align: 'left' },
-  { key: 'input', labelKey: 'usage.column.input', defaultWidth: 76, minWidth: 60, align: 'left' },
-  { key: 'output', labelKey: 'usage.column.output', defaultWidth: 76, minWidth: 60, align: 'left' },
-  { key: 'reasoning', labelKey: 'usage.column.reasoning', defaultWidth: 76, minWidth: 60, align: 'left' },
-  { key: 'cacheRate', labelKey: 'usage.column.cacheRate', defaultWidth: 80, minWidth: 68, align: 'left' },
-  { key: 'ttft', labelKey: 'usage.column.ttft', defaultWidth: 92, minWidth: 76, align: 'left' },
 ] as const;
 
 const DEFAULT_EVENT_VISIBLE_COLUMNS: readonly EventColumnKey[] = [
   'time', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'provider',
 ];
-const LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly EventColumnKey[] = [
+const LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
   'time', 'model', 'input', 'output', 'cache', 'cacheRate', 'total', 'speed', 'ttft', 'latency', 'result', 'provider', 'source',
 ];
 
@@ -115,7 +105,6 @@ const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v1'
 const PREVIOUS_EVENT_COLUMN_WIDTHS: Record<EventColumnKey, number> = {
   time: 105, key: 150, source: 205, model: 150, effort: 100, result: 95,
   request: 145, latency: 125, speed: 110, total: 145, cache: 135, provider: 135,
-  input: 90, output: 90, reasoning: 90, cacheRate: 95, ttft: 110,
 };
 const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v3';
 const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v2';
@@ -140,8 +129,8 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
         });
         if (savedKeys.length > 0) {
           const wasLegacyDefault = currentRaw === null
-            && savedKeys.length === LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.length
-            && LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => savedKeys.includes(key));
+            && parsed.length === LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.length
+            && LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key));
           return wasLegacyDefault ? [...DEFAULT_EVENT_VISIBLE_COLUMNS] : savedKeys;
         }
       }
@@ -330,10 +319,7 @@ function UsageEventCell({
     case 'source':
       return (
         <td className="usage-td-source align-left" title={record.source_display || record.source || undefined}>
-          <div className="usage-event-source">
-            <span className="usage-event-source-icon" aria-hidden="true"><Terminal size={13} /></span>
-            <span>{record.source_display || record.source || '—'}</span>
-          </div>
+          <span className="usage-event-source">{record.source_display || record.source || '—'}</span>
         </td>
       );
     case 'key':
@@ -341,24 +327,6 @@ function UsageEventCell({
         <td className="usage-stacked-cell usage-td-key align-left">
           <strong title={record.api_key_display || undefined}>{record.api_key_display || '—'}</strong>
           <small title={record.api_key_remark}>{record.api_key_remark || noRemarkLabel}</small>
-        </td>
-      );
-    case 'input':
-      return (
-        <td className="usage-td-token align-left" title={`${record.tokens.input_tokens.toLocaleString()} tokens`}>
-          {compactNumber(record.tokens.input_tokens)}
-        </td>
-      );
-    case 'output':
-      return (
-        <td className="usage-td-token align-left" title={`${record.tokens.output_tokens.toLocaleString()} tokens`}>
-          {compactNumber(record.tokens.output_tokens)}
-        </td>
-      );
-    case 'reasoning':
-      return (
-        <td className="usage-td-token align-left" title={`${record.tokens.reasoning_tokens.toLocaleString()} tokens`}>
-          {compactNumber(record.tokens.reasoning_tokens)}
         </td>
       );
     case 'cache':
@@ -376,13 +344,6 @@ function UsageEventCell({
           <div className="usage-event-metrics"><span className="tone-cache-write" title={`${t('usage.token.cacheCreation')}: ${record.tokens.cache_creation_tokens.toLocaleString()}`} aria-label={`${t('usage.token.cacheCreation')}: ${record.tokens.cache_creation_tokens}`}><DatabaseZap size={11} aria-hidden="true" />{compactNumber(record.tokens.cache_creation_tokens)}</span></div>
         </td>
       );
-    case 'cacheRate': {
-      const value = formatCacheReadRate({
-        inputTokens: record.tokens.input_tokens,
-        cacheReadTokens: record.tokens.cache_read_tokens,
-      });
-      return <td className="usage-td-cache-rate align-left" title={value === '—' ? undefined : value}>{value}</td>;
-    }
     case 'total':
       return (
         <td className="usage-td-token usage-td-total align-left" title={`${record.tokens.total_tokens.toLocaleString()} tokens`}>
@@ -401,12 +362,6 @@ function UsageEventCell({
         <td className="usage-td-latency usage-stacked-cell align-left" title={`${record.latency_ms} ms`}>
           <strong>{compactDuration(record.latency_ms)}</strong>
           <small title={record.ttft_ms == null ? undefined : `${record.ttft_ms} ms`}>{t('usage.column.ttft')} {record.ttft_ms == null ? '—' : compactDuration(record.ttft_ms)}</small>
-        </td>
-      );
-    case 'ttft':
-      return (
-        <td className="usage-td-ttft align-left" title={record.ttft_ms == null ? undefined : `${record.ttft_ms} ms`}>
-          {record.ttft_ms == null ? '—' : compactDuration(record.ttft_ms)}
         </td>
       );
     case 'speed': {

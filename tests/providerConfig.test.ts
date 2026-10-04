@@ -23,7 +23,7 @@ import {
   stripResponseFields,
 } from '../src/pages/ApiAccessPage';
 import { modelsFromRecord } from '../src/services/modelService';
-import { flattenV8ProviderGroups } from '../src/services/managementApi';
+import { flattenV8ProviderGroups } from './fixtures/legacyProviderRecords';
 
 describe('shared-credential provider entries (#276)', () => {
   const first = {

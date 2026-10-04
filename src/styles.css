@@ -9891,9 +9891,7 @@ body.table-col-resizing * {
 
 .usage-events-table td.usage-td-token,
 .usage-events-table td.usage-td-latency,
-.usage-events-table td.usage-td-ttft,
-.usage-events-table td.usage-td-speed,
-.usage-events-table td.usage-td-cache-rate {
+.usage-events-table td.usage-td-speed {
   font-variant-numeric: tabular-nums;
 }
 

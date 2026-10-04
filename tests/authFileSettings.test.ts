@@ -15,7 +15,7 @@ describe('credential settings', () => {
     const writes: unknown[] = [];
     const api = {
       async get(path: string, query: Record<string, string>) {
-        expect([path, query]).toEqual(['/auth-files/download', { name: 'test.json' }]);
+        expect([path, query]).toEqual(['/credentials/download', { name: 'test.json' }]);
         return { ...file };
       },
       async patch(path: string, body: Record<string, unknown>) {
@@ -28,7 +28,7 @@ describe('credential settings', () => {
     file.access_token = 'refreshed';
     file.priority = 9;
     expect(await saveAuthFileSettings('test.json', original, { ...original, note: 'new' }, api)).toBe(true);
-    expect(writes).toEqual([{ path: '/auth-files/fields', body: { name: 'test.json', note: 'new' } }]);
+    expect(writes).toEqual([{ path: '/credentials/fields', body: { name: 'test.json', note: 'new' } }]);
     expect(file).toEqual({ access_token: 'refreshed', priority: 9, note: 'new', auth_index: 'private-index' });
     expect(await saveAuthFileSettings('test.json', original, original, api)).toBe(false);
     expect(writes).toHaveLength(1);

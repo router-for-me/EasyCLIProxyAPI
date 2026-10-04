@@ -206,7 +206,7 @@ export function EasyModePage({
 
   const refreshSourceStatus = useCallback(async () => {
     try {
-      const authFilesPayload = await managementApi.get("/auth-files");
+      const authFilesPayload = await managementApi.get("/credentials");
       const files = responseList(authFilesPayload, "files");
       setAuthFiles(files);
 

@@ -579,7 +579,7 @@ const resolveProjectId = async (file: AuthFile): Promise<string> => {
   const direct = antigravityProjectFor(file);
   if (direct) return direct;
   try {
-    const payload = parseBody(await managementApi.get('/auth-files/download', { name: fileName(file) }));
+    const payload = parseBody(await managementApi.get('/credentials/download', { name: fileName(file) }));
     return isRecord(payload) ? antigravityProjectFor(payload) : '';
   } catch {
     return '';
@@ -615,7 +615,7 @@ const requestQuotaPayload = async (
   timeoutMs?: number,
   responseClock?: { serverTimeOffsetMs?: number },
 ) => {
-  const response = await managementApi.post<Record<string, unknown>>('/api-call', {
+  const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
     authIndex,
     method,
     url,

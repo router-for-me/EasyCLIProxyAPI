@@ -172,7 +172,7 @@ export function AuthFileManagementPage() {
     if (showLoading) setLoading(true);
     setError('');
     try {
-      const payload = await managementApi.get('/auth-files');
+      const payload = await managementApi.get('/credentials');
       if (!mountedRef.current || requestId !== fileRequestRef.current) return;
       const nextFiles = dedupeAuthFiles(responseList(payload, 'files'));
       setFileSnapshot({ files: nextFiles, receivedAtMs: Date.now(), observedAt: readString(payload, 'observed_at') });
@@ -414,7 +414,7 @@ export function AuthFileManagementPage() {
     setBusy(true);
     setError('');
     try {
-      await managementApi.delete('/auth-files', { query: { name } });
+      await managementApi.delete('/credentials', { query: { name } });
       showNotice({ key: 'authFiles.deleted' });
       await loadFiles();
     } catch (requestError) {

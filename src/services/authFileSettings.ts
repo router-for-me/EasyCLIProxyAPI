@@ -134,7 +134,7 @@ type SettingsApi = {
 };
 
 export const loadAuthFileSettings = async (name: string, api: SettingsApi = managementApi) =>
-  authFileSettingsFromPayload(await api.get('/auth-files/download', { name }));
+  authFileSettingsFromPayload(await api.get('/credentials/download', { name }));
 
 export const saveAuthFileSettings = async (
   name: string, original: AuthFileSettingsDraft, draft: AuthFileSettingsDraft,
@@ -142,6 +142,6 @@ export const saveAuthFileSettings = async (
 ) => {
   const patch = buildAuthFileSettingsPatch(original, draft);
   if (!Object.keys(patch).length) return false;
-  await api.patch('/auth-files/fields', { name, ...patch });
+  await api.patch('/credentials/fields', { name, ...patch });
   return true;
 };

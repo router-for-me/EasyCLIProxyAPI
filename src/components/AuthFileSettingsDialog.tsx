@@ -56,7 +56,7 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : String(reason));
     }).finally(() => { if (active) setLoading(false); });
-    void managementApi.get('/auth-files/models', { name }).then((payload) => {
+    void managementApi.get('/credentials/models', { name }).then((payload) => {
       if (active) setModels(oauthModelsFromPayload(payload));
     }).catch((reason: unknown) => {
       if (active) setCatalogError(reason instanceof Error ? reason.message : String(reason));

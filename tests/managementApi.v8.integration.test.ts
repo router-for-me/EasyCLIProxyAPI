@@ -8,7 +8,7 @@ import {
   applyProviderPreset, buildProviderRecord, buildProviderGroupRecord, createProviderDraft, providerDraftFromRecord,
   type ProviderSection,
 } from '../src/pages/ApiAccessPage';
-import { flattenV8ProviderGroups, groupLegacyProviderRecords } from '../src/services/managementApi';
+import { flattenV8ProviderGroups, groupLegacyProviderRecords } from './fixtures/legacyProviderRecords';
 
 const executable = process.env.CPA_V8_TEST_CORE;
 describe.skipIf(!executable)('real v8 provider configuration', () => {

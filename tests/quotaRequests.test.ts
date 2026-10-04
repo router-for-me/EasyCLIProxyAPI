@@ -19,7 +19,7 @@ beforeEach(() => {
   calls = [];
   handler = () => { throw new Error('Unexpected API request'); };
   post = spyOn(managementApi, 'post').mockImplementation(async (path, body) => {
-    expect(path).toBe('/api-call');
+    expect(path).toBe('/requests/api-call');
     const request = body as unknown as Request;
     calls.push(request);
     return await handler(request) as never;
@@ -110,7 +110,7 @@ describe('quota API compatibility', () => {
       groups: [{ buckets: [{ remainingFraction: 1 }] }],
     });
     expect((await loadQuota({ name: 'anti-download.json', provider: 'antigravity', auth_index: 'a' })).status).toBe('success');
-    expect(get).toHaveBeenCalledWith('/auth-files/download', { name: 'anti-download.json' });
+    expect(get).toHaveBeenCalledWith('/credentials/download', { name: 'anti-download.json' });
     expect(calls.find((request) => request.url.endsWith(':retrieveUserQuotaSummary'))?.data).toBe('{"project":"downloaded-project"}');
   });
 

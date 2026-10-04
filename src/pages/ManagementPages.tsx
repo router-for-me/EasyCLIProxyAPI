@@ -262,7 +262,7 @@ export function OAuthLoginPage() {
   );
 
   const captureCredentialSnapshot = useCallback(async (provider: OAuthProviderId) => {
-    const payload = await managementApi.get('/auth-files');
+    const payload = await managementApi.get('/credentials');
     credentialSnapshots.current[provider] = snapshotAuthFiles(responseList(payload, 'files'));
   }, []);
 
@@ -271,9 +271,9 @@ export function OAuthLoginPage() {
     delete credentialSnapshots.current[provider];
     if (!before) return;
 
-    const payload = await managementApi.get('/auth-files');
+    const payload = await managementApi.get('/credentials');
     const names = changedOAuthAuthFileNames(before, responseList(payload, 'files'), provider);
-    await Promise.all(names.map((name) => managementApi.patch('/auth-files/fields', {
+    await Promise.all(names.map((name) => managementApi.patch('/credentials/fields', {
       name,
       priority: 0,
     })));
@@ -417,7 +417,7 @@ export function OAuthLoginPage() {
     updateProviderState(provider, { refreshing: true });
     try {
       if (currentState) {
-        await managementApi.delete('/oauth-session', { query: { state: currentState } });
+        await managementApi.delete('/oauth/session', { query: { state: currentState } });
       }
     } catch (error) {
       if (provider === 'devin') {

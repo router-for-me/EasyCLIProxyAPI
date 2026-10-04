@@ -91,6 +91,7 @@
 }
 
 .usage-request-log .usage-events-table {
+  min-width: 100%;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -119,8 +120,8 @@
 }
 
 .usage-request-log .usage-events-table td {
-  height: 76px;
-  padding: 12px 8px;
+  height: 68px;
+  padding: 9px 8px;
   color: var(--usage-log-text);
   line-height: 1.45;
 }
@@ -161,36 +162,11 @@
 }
 
 .usage-request-log .usage-event-source {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-}
-
-.usage-request-log .usage-event-source > span:last-child {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.usage-request-log .usage-event-source-icon {
-  display: inline-flex;
-  width: 25px;
-  height: 25px;
-  flex: 0 0 25px;
-  align-items: center;
-  justify-content: center;
-  border: 3px solid var(--usage-log-surface);
-  border-radius: 50%;
-  background: linear-gradient(145deg, #a5a1ff, #6557f4);
-  color: #fff;
-  box-shadow: 0 0 0 1px var(--usage-log-line);
-}
-
-.usage-request-log .usage-event-source-icon svg {
-  width: 13px;
-  height: 13px;
 }
 
 .usage-request-log .usage-event-metrics {

@@ -22,7 +22,7 @@ describe('OAuth model exclusion rules', () => {
       { id: 'GPT-5.4' },
     ] })).toEqual([{ id: 'gpt-5.4', displayName: 'GPT 5.4' }]);
     expect(oauthExcludedRulesFromPayload({
-      'oauth-excluded-models': { codex: [' GPT-IMAGE-* ', 'gpt-image-*'] },
+      codex: [' GPT-IMAGE-* ', 'gpt-image-*'],
     }, 'codex')).toEqual(['gpt-image-*']);
     expect(normalizeOAuthExcludedRules([' GPT-* ', '', 'gpt-*', 'future-model']))
       .toEqual(['gpt-*', 'future-model']);

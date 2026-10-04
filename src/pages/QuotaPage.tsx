@@ -63,7 +63,7 @@ export function QuotaPage() {
     setLoading(true);
     setError('');
     try {
-      const payload = await managementApi.get('/auth-files');
+      const payload = await managementApi.get('/credentials');
       const allFiles = dedupeAuthFiles(responseList(payload, 'files'));
       const nextFiles = allFiles.filter((file) => !readBoolean(file, 'disabled') && providerForFile(file));
       setFiles(nextFiles);

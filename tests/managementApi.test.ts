@@ -1,10 +1,9 @@
+import { flattenV8ProviderGroups, groupLegacyProviderRecords } from './fixtures/legacyProviderRecords';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import {
   apiCallErrorMessage,
-  flattenV8ProviderGroups,
-  groupLegacyProviderRecords,
-  legacyManagementConfigView,
+  providerGroupsApi,
   managementApi,
 } from '../src/services/managementApi';
 import {
@@ -27,21 +26,50 @@ describe('v8 Management API requests', () => {
     else Reflect.deleteProperty(globalThis, 'window');
   });
 
+  it('returns the native config tree without flattening groups or replacing access keys', async () => {
+    const config = {
+      'config-version': 8,
+      access: { 'api-keys': ['client-test'] },
+      'api-keys': { claude: [{ name: 'team', models: [{ name: 'upstream', alias: 'public' }],
+        keys: [{ 'api-key': 'one', models: null }, { 'api-key': 'two', models: [] }] }] },
+      oauth: { 'model-alias': { claude: [{ name: 'original', alias: 'desktop' }] } },
+      requests: { payload: { override: [] } },
+    };
+    mockIPC((_command, args) => {
+      expect(args?.request).toMatchObject({ method: 'GET', path: '/config' });
+      return config;
+    });
+    expect(await managementApi.get('/config')).toEqual(config);
+  });
+
+  it('preserves native request bodies, query defaults and timeouts', async () => {
+    const calls: unknown[] = [];
+    mockIPC((_command, args) => { calls.push(args?.request); return { status: 'ok' }; });
+    await managementApi.get('/credentials', { all: false, offset: 0, omitted: undefined });
+    await managementApi.put('/config/access/api-keys', []);
+    await managementApi.put('/config/routing/session-affinity', false);
+    await managementApi.post('/requests/api-call', { method: 'GET', url: 'https://example.invalid', auth_index: '0' }, { timeoutMs: 12345 });
+    await managementApi.delete('/credentials', { body: { names: ['test.json'] } });
+    expect(calls).toMatchObject([
+      { method: 'GET', path: '/credentials', query: { all: 'false', offset: '0' } },
+      { method: 'PUT', path: '/config/access/api-keys', body: [] },
+      { method: 'PUT', path: '/config/routing/session-affinity', body: false },
+      { method: 'POST', path: '/requests/api-call', body: { method: 'GET', url: 'https://example.invalid', auth_index: '0' }, timeoutMs: 12345 },
+      { method: 'DELETE', path: '/credentials', body: { names: ['test.json'] } },
+    ]);
+  });
+
   it('defaults absent exclusions and provider groups without swallowing other errors', async () => {
-    for (const [path, key, empty] of [
-      ['/oauth-excluded-models', 'oauth-excluded-models', {}],
-      ['/codex-api-key', 'codex-api-key', []],
-      ['/openai-compatibility', 'openai-compatibility', []],
-    ] as const) {
+    for (const section of ['codex', 'openai-compatibility']) {
       mockIPC(() => { throw 'Management API error (404): not_found'; });
-      expect(await managementApi.get(path)).toEqual({ [key]: empty });
+      expect(await providerGroupsApi.get(section)).toEqual([]);
       for (const message of [
         'Management API error (401): unauthorized',
         'Management API error (404): 404 page not found',
         'Management API request failed: connection refused',
       ]) {
         mockIPC(() => { throw new Error(message); });
-        await expect(managementApi.get(path)).rejects.toThrow(message);
+        await expect(providerGroupsApi.get(section)).rejects.toThrow(message);
       }
     }
   });
@@ -74,17 +102,17 @@ describe('v8 Management API requests', () => {
         baseUrl: 'https://codex.example.test/v1', models: [{ name: 'gpt-test' }],
       });
       for (const record of [original, providerRecordWithDisabledState('codex-api-key', original, true)]) {
-        await managementApi.put('/codex-api-key', [regular, record]);
-        const loaded = await managementApi.get<{ 'codex-api-key': Record<string, unknown>[] }>('/codex-api-key');
+        await providerGroupsApi.put('codex', groupLegacyProviderRecords('codex', [regular, record]));
+        const loaded = { 'codex-api-key': flattenV8ProviderGroups('codex', await providerGroupsApi.get('codex')) };
         expect(loaded['codex-api-key']).toEqual([regular, record]);
         expect(providerCategoryMatchesRecord('deepseek', loaded['codex-api-key'][1])).toBe(true);
         expect(apiAccessRemarkLocatorFromRecord('codex-api-key', loaded['codex-api-key'][1]))
           .toEqual(apiAccessRemarkLocatorFromRecord('codex-api-key', original));
-        await managementApi.put('/codex-api-key', [record, regular]);
-        expect((await managementApi.get('/codex-api-key'))).toEqual({ 'codex-api-key': [record, regular] });
+        await providerGroupsApi.put('codex', groupLegacyProviderRecords('codex', [record, regular]));
+        expect(flattenV8ProviderGroups('codex', await providerGroupsApi.get('codex'))).toEqual([record, regular]);
       }
-      await managementApi.put('/codex-api-key', [regular]);
-      expect(await managementApi.get('/codex-api-key')).toEqual({ 'codex-api-key': [regular] });
+      await providerGroupsApi.put('codex', groupLegacyProviderRecords('codex', [regular]));
+      expect(flattenV8ProviderGroups('codex', await providerGroupsApi.get('codex'))).toEqual([regular]);
     }
   });
 });
@@ -163,22 +191,4 @@ describe('v8 Management API compatibility view', () => {
     expect(records[1]).not.toHaveProperty('name');
   });
 
-  it('projects the v8 config tree into the legacy semantic view used by the UI', () => {
-    const view = legacyManagementConfigView({
-      access: { 'api-keys': ['client-key'] },
-      'api-keys': {
-        codex: [{ name: 'codex-1', keys: [{ 'api-key': 'upstream-key' }] }],
-        'openai-compatibility': [{ name: 'openrouter', keys: [{ 'api-key': 'openrouter-key' }] }],
-      },
-      oauth: { 'model-alias': { codex: [{ name: 'gpt', alias: 'custom' }] } },
-      requests: { payload: { override: [] } },
-    }) as Record<string, unknown>;
-    expect(view['api-keys']).toEqual(['client-key']);
-    expect(view['codex-api-key']).toEqual([{ 'api-key': 'upstream-key' }]);
-    expect(view['openai-compatibility']).toEqual([{
-      name: 'openrouter', 'api-key-entries': [{ 'api-key': 'openrouter-key' }],
-    }]);
-    expect(view['oauth-model-alias']).toEqual({ codex: [{ name: 'gpt', alias: 'custom' }] });
-    expect(view.payload).toEqual({ override: [] });
-  });
 });

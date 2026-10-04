@@ -8,7 +8,7 @@ import { join, resolve, sep } from 'node:path';
 import { managementApi, responseList } from '../src/services/managementApi';
 import { loadAuthFileSettings, saveAuthFileSettings } from '../src/services/authFileSettings';
 import { setOAuthCredentialFileDisabled } from '../src/services/authFiles';
-import { loadOAuthModelSettings, saveOAuthModelSettings } from '../src/services/oauthModelSettings';
+import { loadOAuthModelSettings, saveOAuthModelSettings, saveOAuthProviderExclusions } from '../src/services/oauthModelSettings';
 import { fetchModels } from '../src/services/modelService';
 
 const executable = process.env.CPA_V8_TEST_CORE;
@@ -90,7 +90,7 @@ oauth: {auth-dir: ${JSON.stringify(join(work, 'auth'))}}
     })], name, { type: 'application/json' }));
     let file: Record<string, unknown> | undefined;
     for (let attempt = 0; attempt < 50; attempt++) {
-      file = responseList(await managementApi.get('/auth-files'), 'files').find((item) => item.name === name);
+      file = responseList(await managementApi.get('/credentials'), 'files').find((item) => item.name === name);
       if (file) break;
       await Bun.sleep(100);
     }
@@ -118,15 +118,15 @@ oauth: {auth-dir: ${JSON.stringify(join(work, 'auth'))}}
     expect(cleared).toMatchObject({ prefix: '', proxy_url: '', priority: '0', weight: '',
       disable_cooling: '', websockets: '', excluded_models: '', note: '' });
     expect(JSON.parse(cleared.headers)).toEqual({ 'X-Test': 'updated' });
-    const metadata = await managementApi.get<Record<string, unknown>>('/auth-files/download', { name });
+    const metadata = await managementApi.get<Record<string, unknown>>('/credentials/download', { name });
     expect(metadata.custom_metadata).toEqual({ preserve: true });
     expect(metadata.access_token).toBe('isolated-access-token');
     await setOAuthCredentialFileDisabled(file!, true);
-    expect(responseList(await managementApi.get('/auth-files'), 'files').find((item) => item.name === name)?.disabled).toBe(true);
+    expect(responseList(await managementApi.get('/credentials'), 'files').find((item) => item.name === name)?.disabled).toBe(true);
     await setOAuthCredentialFileDisabled(file!, false);
-    expect(responseList(await managementApi.get('/auth-files'), 'files').find((item) => item.name === name)?.disabled).toBe(false);
-    await managementApi.delete('/auth-files', { query: { name } });
-    expect(responseList(await managementApi.get('/auth-files'), 'files').some((item) => item.name === name)).toBe(false);
+    expect(responseList(await managementApi.get('/credentials'), 'files').find((item) => item.name === name)?.disabled).toBe(false);
+    await managementApi.delete('/credentials', { query: { name } });
+    expect(responseList(await managementApi.get('/credentials'), 'files').some((item) => item.name === name)).toBe(false);
   });
 
   it('edits provider model exclusions without changing siblings and clears the last rule', async () => {
@@ -136,14 +136,14 @@ oauth: {auth-dir: ${JSON.stringify(join(work, 'auth'))}}
     expect(original.catalogError).toBe('');
     expect(original.models.length).toBeGreaterThan(0);
     expect(original.excludedRules).toEqual([]);
-    await managementApi.patch('/oauth-excluded-models', { provider: 'claude', models: ['keep-*'] });
+    await saveOAuthProviderExclusions('claude', ['keep-*']);
     await saveOAuthModelSettings(original, ['hide-*']);
     const edited = await loadOAuthModelSettings(target);
     expect(edited.excludedRules).toEqual(['hide-*']);
     await saveOAuthModelSettings(edited, []);
     expect((await loadOAuthModelSettings(target)).excludedRules).toEqual([]);
-    expect(await managementApi.get('/oauth-excluded-models')).toEqual({ 'oauth-excluded-models': { claude: ['keep-*'] } });
-    await managementApi.delete('/oauth-excluded-models', { query: { provider: 'claude' } });
+    expect(await managementApi.get('/config/oauth/excluded-models')).toEqual({ claude: ['keep-*'] });
+    await saveOAuthProviderExclusions('claude', undefined);
   });
 
   it('round-trips template credential aliases and Claude settings without replacing token metadata', async () => {
@@ -158,13 +158,13 @@ oauth: {auth-dir: ${JSON.stringify(join(work, 'auth'))}}
       await saveAuthFileSettings(fileName, original, { ...original, advanced });
       const loaded = await loadAuthFileSettings(fileName);
       expect(loaded.advanced).toEqual(advanced);
-      const metadata = await managementApi.get<Record<string, unknown>>('/auth-files/download', { name: fileName });
+      const metadata = await managementApi.get<Record<string, unknown>>('/credentials/download', { name: fileName });
       expect(metadata.access_token).toBe('isolated-template-token');
       expect(metadata.custom_metadata).toEqual({ keep: true });
       await saveAuthFileSettings(fileName, loaded, { ...loaded, advanced: {} });
       const cleared = await loadAuthFileSettings(fileName);
       expect(Object.values(cleared.advanced).every(value => value === null)).toBe(true);
-    } finally { await managementApi.delete('/auth-files', { query: { name: fileName } }); }
+    } finally { await managementApi.delete('/credentials', { query: { name: fileName } }); }
   });
 
   it('discovers models and forwards API-call requests to an isolated local upstream', async () => {
@@ -175,7 +175,7 @@ oauth: {auth-dir: ${JSON.stringify(join(work, 'auth'))}}
     try {
       const models = await fetchModels('openai', `http://127.0.0.1:${upstream.port}/v1`, 'local-key');
       expect(models.map((model) => model.name)).toEqual(['local-model']);
-      const response = await managementApi.post<Record<string, unknown>>('/api-call', {
+      const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
         method: 'GET', url: `http://127.0.0.1:${upstream.port}/usage`, header: { Authorization: 'Bearer local-key' },
       });
       expect(response.status_code).toBe(200);
@@ -189,7 +189,7 @@ oauth: {auth-dir: ${JSON.stringify(join(work, 'auth'))}}
     expect(typeof status.status).toBe('string');
     await expect(call('GET', '/oauth/auth-url', { provider: 'unsupported-test-provider' })).rejects.toThrow('(404): provider_not_found');
     await expect(call('POST', '/oauth/callback', undefined, { provider: 'codex', redirect_url: 'http://localhost/callback' })).rejects.toThrow('(400)');
-    await managementApi.delete('/oauth-session', { query: { state: 'isolated-unknown-state' } });
+    await managementApi.delete('/oauth/session', { query: { state: 'isolated-unknown-state' } });
   });
 
   it('accepts new template controls and retains explicit false, zero and empty collections', async () => {

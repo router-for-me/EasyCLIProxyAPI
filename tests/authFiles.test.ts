@@ -143,8 +143,8 @@ describe('OAuth credential file boundaries', () => {
     await setOAuthCredentialFileDisabled(oauthFile, true, api);
     await setOAuthCredentialFileDisabled({ ...oauthFile, disabled: true }, false, api);
     expect(writes).toEqual([
-      { path: '/auth-files/status', body: { name: 'codex-user.json', disabled: true } },
-      { path: '/auth-files/status', body: { name: 'codex-user.json', disabled: false } },
+      { path: '/credentials/status', body: { name: 'codex-user.json', disabled: true } },
+      { path: '/credentials/status', body: { name: 'codex-user.json', disabled: false } },
     ]);
   });
 
