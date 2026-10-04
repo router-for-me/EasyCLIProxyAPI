@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowLeft, Download, ExternalLink, Folder, LogIn, Puzzle, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, Folder, LogIn, Puzzle, RefreshCw, Search, Settings2, Trash2, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { pluginText } from '../i18n/plugins';
 import { FloatingNotice, useAppNotice } from '../appNotice';
@@ -28,6 +28,7 @@ export function PluginsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
   const [filter, setFilter] = useState('all');
   const [configPlugin, setConfigPlugin] = useState<PluginListEntry | null>(null);
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
@@ -138,7 +139,15 @@ export function PluginsPage() {
         <div className="plugin-navigation">
         <nav className="plugin-tabs" aria-label={pt('title')}>{(['installed', 'store', 'settings'] as const).map(value => <button key={value} className={tab === value ? 'active' : ''} aria-current={tab === value ? 'page' : undefined} disabled={busy} onClick={() => { setTab(value); setSearch(''); setFilter('all'); }}>{pt(value === 'installed' ? 'local' : value)}</button>)}</nav>
           {tab !== 'settings' &&
-          <div className="plugin-toolbar"><label className="plugin-search"><Search size={17} aria-hidden="true" /><input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={pt('search')} aria-label={pt('search')} /></label>{tab === 'store' && <select aria-label={pt('store')} value={filter} onChange={e => setFilter(e.target.value)}>{['all', 'installed', 'updates'].map(value => <option key={value} value={value}>{pt(value as 'all' | 'installed' | 'updates')}</option>)}</select>}</div>}
+          <div className="plugin-toolbar">
+            <div className="plugin-search">
+              <Search size={17} aria-hidden="true" />
+              <input ref={searchRef} type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={pt('search')} aria-label={pt('search')} />
+              <button type="button" className="plugin-search-clear" disabled={!search} aria-label={t('common.clear')} title={t('common.clear')}
+                onClick={() => { setSearch(''); searchRef.current?.focus(); }}><X size={15} aria-hidden="true" /></button>
+            </div>
+            {tab === 'store' && <select aria-label={pt('store')} value={filter} onChange={e => setFilter(e.target.value)}>{['all', 'installed', 'updates'].map(value => <option key={value} value={value}>{pt(value as 'all' | 'installed' | 'updates')}</option>)}</select>}
+          </div>}
         </div>
         {tab === 'settings' ? <PluginSettingsPanel onSaved={() => { notice.showNotice(pt('saved')); void load(); }} /> : <>
           {loading && <p className="plugin-loading" role="status">{t('common.loading')}…</p>}

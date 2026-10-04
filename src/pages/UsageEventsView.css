@@ -91,7 +91,7 @@
 }
 
 .usage-request-log .usage-events-table {
-  min-width: 100%;
+  min-width: 0;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }

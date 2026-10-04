@@ -9,11 +9,13 @@ const params = new URLSearchParams(location.search);
 localStorage.setItem('easy-cli-proxy-api.locale', params.get('locale') || 'zh-CN');
 // Keep the model column visible even if a previous fixture changed the user's layout.
 localStorage.setItem('cpa-gui.usage-events-visible-cols.v3', JSON.stringify([
-  'time', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'provider',
+  'time', 'key', 'source', 'model', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'provider',
 ]));
 localStorage.removeItem('cpa-gui.usage-events-visible-cols.v2');
 localStorage.removeItem('cpa-gui.usage-events-visible-cols.v4');
+localStorage.removeItem('cpa-gui.usage-events-visible-cols.v5');
 localStorage.removeItem('cpa-gui.usage-events-col-widths.v2');
+localStorage.removeItem('cpa-gui.usage-events-col-widths.v3');
 document.documentElement.dataset.theme = params.get('theme') || 'light';
 
 const tokens = {
@@ -44,7 +46,7 @@ const record = (id: string, model: string, alias: string, response_model?: strin
   alias,
   ...(response_model === undefined ? {} : { response_model }),
   reasoning_effort: 'high',
-  endpoint: '/v1/responses',
+  endpoint: 'POST /v1/responses',
   api_key_hash: 'ui-key',
   api_key_display: 'sk-ui',
   api_key_remark: 'UI fixture',

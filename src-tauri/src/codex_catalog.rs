@@ -494,6 +494,7 @@ fn prepare_catalog_with_customizations(
     }
 
     for entry in &mut entries {
+        entry.value.insert("supports_parallel_tool_calls".to_string(), Value::Bool(true));
         customizations::apply_customizations(&mut entry.value, customizations)?;
     }
 

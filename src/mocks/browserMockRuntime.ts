@@ -585,6 +585,7 @@ function createState(scenario: BrowserMockScenario) {
           input_modalities: ['text', 'image'],
           visibility: 'list',
           supports_parallel_tool_calls: true,
+          base_instructions: 'You are Codex, a coding assistant.',
         };
         return {
           slug,

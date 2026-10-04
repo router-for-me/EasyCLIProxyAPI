@@ -7974,6 +7974,11 @@ textarea:focus-visible {
   resize: vertical;
 }
 
+.codex-catalog-form textarea.codex-catalog-system-prompt {
+  min-height: 240px;
+  line-height: 1.5;
+}
+
 .codex-catalog-form input:focus,
 .codex-catalog-form select:focus,
 .codex-catalog-form textarea:focus {

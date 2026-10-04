@@ -89,6 +89,9 @@ function parseCsv(text) {
     await open('zh-CN');
     assert.equal(await modelCells().count(), 9, 'Every fixture record renders a model cell');
     const zhDetails = await modelDetails();
+    assert.equal(await page.locator('.usage-th-effort').count(), 1, 'Migration enables reasoning effort for existing layouts');
+    assert.equal(await page.locator('.usage-td-request').first().textContent(), '/v1/responses');
+    assert.equal(await page.locator('.usage-td-request').first().getAttribute('title'), '/v1/responses');
     assert.match(await modelCells().first().getAttribute('title'), /response_model.*上游声明/);
     assert.deepEqual(await page.locator('.usage-events-table th').evaluateAll(cells => cells.slice(0, 2).map(cell => cell.className.split(' ')[0])), ['usage-th-time', 'usage-th-provider']);
     assert.equal(await page.locator('.usage-td-provider strong').first().textContent(), 'Codex');

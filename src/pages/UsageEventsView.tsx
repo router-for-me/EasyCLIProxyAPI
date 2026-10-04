@@ -86,12 +86,12 @@ type EventColumnDef = {
 const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'time', labelKey: 'usage.column.time', defaultWidth: 84, minWidth: 76, align: 'left' },
   { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 108, minWidth: 88, align: 'left' },
-  { key: 'key', labelKey: 'usage.column.key', defaultWidth: 120, minWidth: 96, align: 'left' },
-  { key: 'source', labelKey: 'usage.column.source', defaultWidth: 180, minWidth: 120, align: 'left' },
-  { key: 'model', labelKey: 'usage.column.model', defaultWidth: 132, minWidth: 104, align: 'left' },
+  { key: 'key', labelKey: 'usage.column.key', defaultWidth: 112, minWidth: 96, align: 'left' },
+  { key: 'source', labelKey: 'usage.column.source', defaultWidth: 128, minWidth: 104, align: 'left' },
+  { key: 'model', labelKey: 'usage.column.model', defaultWidth: 160, minWidth: 104, align: 'left' },
   { key: 'effort', labelKey: 'usage.column.effort', defaultWidth: 76, minWidth: 64, align: 'left' },
   { key: 'result', labelKey: 'usage.column.result', defaultWidth: 80, minWidth: 68, align: 'left' },
-  { key: 'request', labelKey: 'usage.column.request', defaultWidth: 112, minWidth: 88, align: 'left' },
+  { key: 'request', labelKey: 'usage.column.request', defaultWidth: 128, minWidth: 88, align: 'left' },
   { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 112, minWidth: 96, align: 'left' },
   { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 88, minWidth: 72, align: 'left' },
   { key: 'total', labelKey: 'usage.column.tokens', defaultWidth: 120, minWidth: 112, align: 'left' },
@@ -106,22 +106,27 @@ const LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
   'time', 'model', 'input', 'output', 'cache', 'cacheRate', 'total', 'speed', 'ttft', 'latency', 'result', 'provider', 'source',
 ];
 
-const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v2';
-const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v1';
+const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v3';
+const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v2';
+const PREVIOUS_COMPACT_WIDTHS: Partial<Record<EventColumnKey, number>> = {
+  key: 120, source: 180, model: 132, request: 112,
+};
 const PREVIOUS_EVENT_COLUMN_WIDTHS: Record<EventColumnKey, number> = {
   time: 105, key: 150, source: 205, model: 150, effort: 100, result: 95,
   request: 145, latency: 125, speed: 110, total: 145, cache: 135, provider: 135,
   cost: 112,
 };
-const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v4';
-const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v3';
+const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v5';
+const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v4';
 
 const getAllEventColumnKeys = () => EVENT_COLUMNS.map((column) => column.key);
 
 const getInitialVisibleColumns = (): EventColumnKey[] => {
   try {
     const currentRaw = localStorage.getItem(EVENT_VISIBLE_COLS_STORAGE_KEY);
-    const raw = currentRaw ?? localStorage.getItem(LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY)
+    const previousRaw = localStorage.getItem(LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY);
+    const raw = currentRaw ?? previousRaw
+      ?? localStorage.getItem('cpa-gui.usage-events-visible-cols.v3')
       ?? localStorage.getItem('cpa-gui.usage-events-visible-cols.v2');
     if (raw) {
       const parsed: unknown = JSON.parse(raw);
@@ -140,7 +145,11 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
             && parsed.length === LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.length
             && LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key));
           if (wasLegacyDefault) return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
-          return currentRaw === null && !savedKeys.includes('cost') ? [...savedKeys, 'cost'] : savedKeys;
+          if (currentRaw === null) {
+            if (!savedKeys.includes('effort')) savedKeys.push('effort');
+            if (previousRaw === null && !savedKeys.includes('cost')) savedKeys.push('cost');
+          }
+          return savedKeys;
         }
       }
     }
@@ -156,7 +165,8 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
   }
   try {
     const currentRaw = localStorage.getItem(EVENT_COL_WIDTHS_STORAGE_KEY);
-    const raw = currentRaw ?? localStorage.getItem(LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY);
+    const previousRaw = localStorage.getItem(LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY);
+    const raw = currentRaw ?? previousRaw ?? localStorage.getItem('cpa-gui.usage-events-col-widths.v1');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
@@ -167,7 +177,9 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
             parsed[col.key] >= col.minWidth
           ) {
             // Adopt tighter defaults while retaining columns the user resized.
-            const wasDefault = currentRaw === null && parsed[col.key] === PREVIOUS_EVENT_COLUMN_WIDTHS[col.key];
+            const oldDefault = previousRaw === null ? PREVIOUS_EVENT_COLUMN_WIDTHS[col.key]
+              : (PREVIOUS_COMPACT_WIDTHS[col.key] ?? col.defaultWidth);
+            const wasDefault = currentRaw === null && parsed[col.key] === oldDefault;
             if (!wasDefault) initial[col.key] = Math.min(800, Math.round(parsed[col.key]));
           }
         }
@@ -330,8 +342,10 @@ function UsageEventCell({
     }
     case 'effort':
       return <td className="usage-stacked-cell align-left" title={record.reasoning_effort || 'auto'}><strong>{record.reasoning_effort || 'auto'}</strong></td>;
-    case 'request':
-      return <td className="usage-stacked-cell align-left" title={record.endpoint || undefined}><strong>{record.endpoint || '—'}</strong></td>;
+    case 'request': {
+      const path = record.endpoint.trim().replace(/^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE)\s+/i, '');
+      return <td className="usage-stacked-cell usage-td-request align-left" title={path || undefined}><strong>{path || '—'}</strong></td>;
+    }
     case 'provider': {
       const provider = usageProviderDetails(record.provider, record.auth_type);
       return (

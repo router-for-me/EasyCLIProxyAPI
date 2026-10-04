@@ -6,9 +6,10 @@ use std::path::Path;
 
 pub(super) type ModelCustomizations = BTreeMap<String, Map<String, Value>>;
 
-pub(super) const EDITABLE_FIELDS: [&str; 11] = [
+pub(super) const EDITABLE_FIELDS: [&str; 12] = [
     "display_name",
     "description",
+    "base_instructions",
     "context_window",
     "max_context_window",
     "effective_context_window_percent",
@@ -78,6 +79,11 @@ fn editable_configuration(model: &Map<String, Value>) -> Map<String, Value> {
 }
 
 fn validate_configuration(model: &Map<String, Value>) -> Result<(), String> {
+    if let Some(value) = model.get("base_instructions") {
+        if !value.as_str().is_some_and(|text| !text.trim().is_empty()) {
+            return Err("System prompt must be non-empty text".to_string());
+        }
+    }
     for field in model.keys() {
         if !EDITABLE_FIELDS.contains(&field.as_str()) {
             return Err(format!("Model field {field} cannot be modified"));
@@ -198,6 +204,17 @@ pub(super) fn apply_customizations(
     let slug = string_value(model, "slug");
     if let Some(customization) = customizations.get(&normalize_id(&slug)) {
         model.extend(customization.clone());
+        // Codex clients can prefer the message template over base_instructions.
+        // Keep both paths consistent when the user replaces the system prompt.
+        if let Some(prompt) = customization.get("base_instructions") {
+            let messages = model.entry("model_messages".to_string())
+                .or_insert_with(|| Value::Object(Map::new()));
+            if !messages.is_object() {
+                *messages = Value::Object(Map::new());
+            }
+            messages.as_object_mut().unwrap()
+                .insert("instructions_template".to_string(), prompt.clone());
+        }
         validate_configuration(&editable_configuration(model))
             .map_err(|error| format!("Invalid custom configuration for model {slug}: {error}"))?;
         enable_fast_mode(model);
@@ -417,6 +434,10 @@ mod tests {
         let runtime_models = vec![runtime_model("third-party-model")];
         let snapshot = snapshot_for_state(&runtime_models, &state).unwrap();
         let mut configuration = snapshot.models[0].configuration.clone();
+        assert_eq!(configuration["supports_parallel_tool_calls"], true);
+        let prompt = "请用中文回答。\nPreserve whitespace and newlines.\n";
+        configuration.insert("base_instructions".to_string(), serde_json::json!(prompt));
+        configuration.insert("supports_parallel_tool_calls".to_string(), Value::Bool(false));
         configuration.insert("context_window".to_string(), serde_json::json!(131_072));
         configuration.insert("max_context_window".to_string(), serde_json::json!(262_144));
         let path = temporary_path();
@@ -446,6 +467,9 @@ mod tests {
         .unwrap();
         let generated: Value = serde_json::from_str(&generated.json).unwrap();
         assert_eq!(generated["models"][0]["context_window"], 131_072);
+        assert_eq!(generated["models"][0]["base_instructions"], prompt);
+        assert_eq!(generated["models"][0]["model_messages"]["instructions_template"], prompt);
+        assert_eq!(generated["models"][0]["supports_parallel_tool_calls"], false);
         assert_eq!(generated["models"][0]["max_context_window"], 262_144);
 
         let loaded = decode_customizations(&std::fs::read(&path).unwrap()).unwrap();
@@ -465,6 +489,8 @@ mod tests {
         )
         .unwrap();
         assert!(!restored.models[0].customized);
+        assert_eq!(restored.models[0].configuration["supports_parallel_tool_calls"], true);
+        assert_eq!(restored.models[0].configuration["base_instructions"], restored.models[0].defaults["base_instructions"]);
         assert!(state.customizations.is_empty());
         let persisted: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(persisted["models"], serde_json::json!({}));

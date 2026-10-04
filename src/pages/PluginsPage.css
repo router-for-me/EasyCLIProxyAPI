@@ -15,9 +15,16 @@
 .plugin-tabs button { border: 1px solid transparent; padding: 7px 14px; border-radius: 7px; background: transparent; color: var(--text-tertiary); font-size: 13px; }
 .plugin-tabs button.active { border-color: var(--border-color); background: var(--bg-card); color: var(--primary-color); font-weight: 650; box-shadow: 0 1px 2px rgb(0 0 0 / 4%); }
 .plugin-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.plugin-search { display: flex; align-items: center; gap: 9px; max-width: 440px; min-width: 180px; flex: 1; padding: 0 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-card); color: var(--text-tertiary); }
-.plugin-search input { border: 0; background: transparent; color: var(--text-primary); width: 100%; min-width: 0; padding: 11px 0; font: inherit; font-size: 13px; outline: none; }
-.plugin-search:focus-within { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.plugin-search { display: flex; align-items: center; gap: 10px; max-width: 440px; min-width: 180px; min-height: 44px; box-sizing: border-box; flex: 1; padding: 0 8px 0 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-card); color: var(--text-tertiary); }
+.plugin-search > svg { flex: none; }
+.plugin-search input { appearance: none; border: 0; border-radius: 0; background: transparent; color: var(--text-primary); flex: 1; width: 100%; min-width: 0; margin: 0; padding: 11px 0; font: inherit; font-size: 13px; line-height: 20px; }
+.plugin-search input:focus, .plugin-search input:focus-visible { outline: none; box-shadow: none; }
+.plugin-search input::-webkit-search-cancel-button, .plugin-search input::-webkit-search-decoration { -webkit-appearance: none; }
+.plugin-search:focus-within { border-color: var(--primary-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent); }
+.plugin-search-clear { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-tertiary); cursor: pointer; }
+.plugin-search-clear:hover { background: var(--bg-hover); color: var(--text-primary); }
+.plugin-search-clear:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 0; }
+.plugin-search-clear:disabled { visibility: hidden; }
 .plugin-toolbar select { border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); background: var(--bg-card); padding: 10px 12px; }
 .plugin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 16px; }
 .plugin-card { min-width: 0; display: flex; flex-direction: column; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; gap: 12px; }

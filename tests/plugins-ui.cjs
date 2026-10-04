@@ -49,6 +49,23 @@ const fs = require('node:fs');
     assert.equal(await page.evaluate(() => window.pluginsFixture.commands.some(call => call.command === 'open_core_logs_directory')), true);
     await noOverflow();
 
+    const searchInput = page.getByRole('searchbox');
+    await searchInput.fill('qoder');
+    const focusedSearch = await searchInput.evaluate(input => ({
+      outline: getComputedStyle(input).outlineStyle,
+      shadow: getComputedStyle(input).boxShadow,
+      containerShadow: getComputedStyle(input.parentElement).boxShadow,
+    }));
+    assert.equal(focusedSearch.outline, 'none', 'the input must not draw a second focus ring inside the search field');
+    assert.equal(focusedSearch.shadow, 'none');
+    assert.notEqual(focusedSearch.containerShadow, 'none', 'the outer search field retains a visible focus indicator');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.locator('.plugin-search-clear').evaluate(button => button === document.activeElement), true);
+    await page.keyboard.press('Enter');
+    assert.equal(await searchInput.inputValue(), '');
+    assert.equal(await searchInput.evaluate(input => input === document.activeElement), true, 'clearing returns focus to search');
+    assert.equal(await page.locator('.plugin-card').count(), 4, 'clearing restores the unfiltered list');
+
     await card('kiro').getByRole('button', { name: 'Find in store', exact: true }).click();
     await card('Kiro').getByRole('button', { name: 'Install', exact: true }).waitFor();
     assert.equal(await tab('Plugin store').getAttribute('aria-current'), 'page');
@@ -177,6 +194,9 @@ const fs = require('node:fs');
         if (process.env.PLUGIN_SCREENSHOT_DIR) {
           fs.mkdirSync(process.env.PLUGIN_SCREENSHOT_DIR, { recursive: true });
           await page.screenshot({ path: path.join(process.env.PLUGIN_SCREENSHOT_DIR, `plugins-${locale}-${width}.png`), fullPage: true });
+          await page.getByRole('searchbox').fill('qoder');
+          await page.screenshot({ path: path.join(process.env.PLUGIN_SCREENSHOT_DIR, `plugins-search-${locale}-${width}.png`), fullPage: true });
+          await page.locator('.plugin-search-clear').click();
         }
         await card('Community analytics').getByRole('button', { name: locale === 'en' ? 'Install' : '安装', exact: true }).click();
         await dialog().waitFor();

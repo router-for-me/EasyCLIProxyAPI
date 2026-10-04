@@ -1,0 +1,99 @@
+/* Shared surfaces for usage subpages; the overview keeps its own chart palette. */
+.usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']) {
+  --usage-page-surface: #ffffff;
+  --usage-page-soft: #fafafa;
+  --usage-page-hover: #f4f4f5;
+  --usage-page-text: #17212f;
+  --usage-page-muted: #526071;
+  --usage-page-border: #e4e7ec;
+  --bg-primary: var(--usage-page-surface);
+  --bg-card: var(--usage-page-surface);
+  --bg-secondary: var(--usage-page-soft);
+  --bg-tertiary: var(--usage-page-border);
+  --bg-hover: var(--usage-page-hover);
+  --text-primary: var(--usage-page-text);
+  --text-secondary: var(--usage-page-text);
+  --text-tertiary: var(--usage-page-muted);
+  --text-quaternary: var(--usage-page-muted);
+  --border-secondary: var(--usage-page-border);
+  --border-color: var(--usage-page-border);
+  --theme-fff: var(--usage-page-surface);
+  --theme-fffdf8: var(--usage-page-surface);
+  --theme-f8f5ee: var(--usage-page-surface);
+  --theme-f4f1ea: var(--usage-page-surface);
+  --theme-e3e1db: var(--usage-page-border);
+  --theme-d8d4cc: var(--usage-page-border);
+  --theme-eeeae2: var(--usage-page-border);
+  --theme-2d2a26: var(--usage-page-text);
+  --theme-5f5a53: var(--usage-page-text);
+  --theme-716b61: var(--usage-page-muted);
+  --theme-7a746c: var(--usage-page-muted);
+  --theme-8a847c: var(--usage-page-muted);
+  color: var(--usage-page-text);
+}
+
+:root[data-theme='dark'] .usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']) {
+  --usage-page-surface: #222936;
+  --usage-page-soft: #2b3443;
+  --usage-page-hover: #333e4f;
+  --usage-page-text: #f4f7fb;
+  --usage-page-muted: #c0cbda;
+  --usage-page-border: #414d60;
+}
+
+.usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']) :is(
+  .usage-analysis-card, .usage-analysis-context, .usage-pricing-panel,
+  .usage-data-management-panel, .usage-data-management-action,
+  .usage-data-management-result > div, .usage-price-editor, .usage-price-sync-dialog
+) {
+  background: var(--usage-page-surface);
+  border-color: var(--usage-page-border);
+  color: var(--usage-page-text);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 3%);
+}
+
+.usage-records-page .usage-tab-panel .usage-pricing-table :is(th, td) {
+  background: var(--usage-page-surface);
+  color: var(--usage-page-text);
+  border-bottom-color: var(--usage-page-border);
+}
+
+.usage-records-page .usage-tab-panel .usage-pricing-table tbody tr:hover td {
+  background: var(--usage-page-hover);
+}
+
+.usage-records-page .usage-tab-panel .usage-pricing-table th {
+  font-weight: 650;
+}
+
+:root .usage-records-page .usage-tab-panel .usage-request-log {
+  --usage-log-surface: var(--usage-page-surface);
+  --usage-log-text: var(--usage-page-text);
+  --usage-log-muted: var(--usage-page-muted);
+  --usage-log-line: var(--usage-page-border);
+  --usage-log-soft: var(--usage-page-soft);
+  --usage-log-hover: var(--usage-page-hover);
+}
+
+.usage-records-page .usage-tab-panel .usage-data-management-heading h2,
+.usage-records-page .usage-tab-panel .usage-data-management-action strong {
+  color: var(--usage-page-text);
+}
+
+.usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']) :is(
+  input:not([type='checkbox']):not([type='radio']), select,
+  .usage-price-row-actions button, .secondary-button
+) {
+  background: var(--usage-page-surface);
+  color: var(--usage-page-text);
+  border-color: var(--usage-page-border);
+}
+
+.usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']) input::placeholder {
+  color: var(--usage-page-muted);
+  opacity: 1;
+}
+
+.usage-records-page .usage-tab-panel .usage-price-row-actions button:hover {
+  background: var(--usage-page-hover);
+}
