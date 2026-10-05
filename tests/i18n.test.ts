@@ -98,6 +98,16 @@ describe('i18n', () => {
     expect(Object.entries(en).filter(([, message]) => /\p{Script=Han}/u.test(message))).toEqual([]);
   });
 
+  it('names the actual add action in the empty API access prompt', () => {
+    expect(translate('zh-CN', 'apiAccess.empty.addFirst', { action: '添加 API Key' }))
+      .toBe('点击右上角“添加 API Key”添加第一个接入');
+    expect(translate('en', 'apiAccess.empty.addFirst', { action: 'Add Service' }))
+      .toBe('Click “Add Service” in the upper-right to create your first connection');
+    expect(translate('ja', 'apiAccess.empty.addFirst', { action: 'API キーを追加' }))
+      .toBe('右上の「API キーを追加」から最初の接続を追加してください');
+    expect(translate('zh-CN', 'easyMode.api.supportedPlatforms')).toContain('Vertex');
+  });
+
   it('localizes API controls and usage labels in Chinese, English, and Japanese', () => {
     for (const [key, chinese, english, japanese] of [
       ['apiAccess.cloak.auto', '自动', 'Automatic', '自動'],

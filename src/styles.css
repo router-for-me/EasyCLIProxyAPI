@@ -4979,6 +4979,10 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--theme-f4f1ea) 65%, transparent);
 }
 
+.real-provider-row.disabled > :not(.provider-row-actions) {
+  opacity: 0.68;
+}
+
 .provider-drag-handle {
   margin-top: -2px;
   cursor: grab;

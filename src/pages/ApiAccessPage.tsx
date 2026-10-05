@@ -84,7 +84,7 @@ import { ProviderGroupTemplateFields, ProviderKeyTemplateFields, ProviderModelFi
 import { providerText } from '../i18n/providerTemplate';
 import {
   cleanProviderGroup, effectiveProviderKey, providerGroupIdentity, providerGroupKeys, providerGroupStatus,
-  providerKeyDraft, serializeProviderKey, validateProviderGroupKeys, validateProviderTemplateRecord, type ProviderKeyDraft,
+  providerKeyDraft, providerKeyIsDisabled, serializeProviderKey, validateProviderGroupKeys, validateProviderTemplateRecord, type ProviderKeyDraft,
 } from '../services/providerGroups';
 import { providerGroupsApi } from '../services/managementApi';
 import {
@@ -202,7 +202,7 @@ function SortableProviderRow({
     <article
       ref={setNodeRef}
       style={style}
-      className={`real-provider-row${isDragging ? ' dragging' : ''}${isDragOver && !isDragging ? ' drag-over' : ''}`}
+      className={`real-provider-row${isDragging ? ' dragging' : ''}${isDragOver && !isDragging ? ' drag-over' : ''}${row.disabled ? ' disabled' : ''}`}
     >
       <button
         type="button"
@@ -346,9 +346,6 @@ const rowFromRecord = (
     .map((item) => readString(item, 'api-key', 'apiKey'))
     .filter(Boolean);
   const singleApiKey = readString(record, 'api-key', 'apiKey');
-  const excludedModels = Array.isArray(record['excluded-models'])
-    ? record['excluded-models'].map(String)
-    : [];
   return {
     section,
     index,
@@ -361,9 +358,7 @@ const rowFromRecord = (
     baseUrl: readString(record, 'base-url', 'baseUrl'),
     models: Array.isArray(record.models)
       ? record.models.flatMap((model) => modelsFromRecord([model], true)) : modelsFromRecord(record.models, true),
-    disabled: grouped ? providerGroupStatus(record) === 'disabled' : definitionFor(section).openAi
-      ? readBoolean(record, 'disabled')
-      : excludedModels.some((model) => model.trim() === '*'),
+    disabled: grouped ? providerGroupStatus(record) === 'disabled' : providerKeyIsDisabled(record, record),
     priority: record.priority == null ? null : readNumber(record, 'priority'),
     authIndex: entry
       ? readString(entry, 'auth-index', 'authIndex')
@@ -372,11 +367,20 @@ const rowFromRecord = (
   };
 };
 
-const rowsFromGroups = (section: ProviderSection, groups: Record<string, unknown>[]): ProviderRow[] =>
+export const providerRowsFromGroups = (section: ProviderSection, groups: Record<string, unknown>[]): ProviderRow[] =>
   providerEntries(section, groups).map(({ record, source }, index) => {
     const deepSeek = section === 'codex-api-key' && (isDeepSeekRecord(record) || isDeepSeekRecord(source.group));
     const row = rowFromRecord(section, record, index);
-    return { ...row, source, category: deepSeek ? 'deepseek' : section, name: deepSeek ? 'DeepSeek' : row.name };
+    const key = source.keyIndex !== undefined && Array.isArray(source.group.keys)
+      ? source.group.keys[source.keyIndex]
+      : undefined;
+    return {
+      ...row,
+      source,
+      category: deepSeek ? 'deepseek' : section,
+      name: deepSeek ? 'DeepSeek' : row.name,
+      disabled: isRecord(key) ? providerKeyIsDisabled(source.group, key) : row.disabled,
+    };
   });
 
 export const providerRemarkIdentity = (
@@ -1184,6 +1188,8 @@ export const providerRecordWithDisabledState = (
     nextRecord.disabled = disabled;
     return nextRecord;
   }
+  if (disabled) nextRecord.disabled = true;
+  else delete nextRecord.disabled;
 
   const excludedModels = Array.isArray(nextRecord['excluded-models'])
     ? nextRecord['excluded-models'].map(String).filter((model) => model.trim() !== '*')
@@ -1257,7 +1263,7 @@ export function ApiAccessPage() {
 
   useEffect(() => {
     const providerRows = (Object.entries(records) as [ProviderSection, Record<string, unknown>[]][])
-      .flatMap(([section, items]) => rowsFromGroups(section, items));
+      .flatMap(([section, items]) => providerRowsFromGroups(section, items));
     if (providerRows.length === 0) {
       setApiAccessRemarks({});
       return;
@@ -1287,7 +1293,7 @@ export function ApiAccessPage() {
 
   const rows = useMemo(
     () =>
-      rowsFromGroups(activeSection, records[activeSection])
+      providerRowsFromGroups(activeSection, records[activeSection])
         .map((row) => ({
           ...row,
           remark: apiAccessRemarks[
@@ -1327,7 +1333,7 @@ export function ApiAccessPage() {
     section: ProviderSection, previous: Record<string, unknown>[], next: Record<string, unknown>[],
     edited?: { row: ProviderRow; remark: string },
   ) => {
-    const previousRows = rowsFromGroups(section, previous);
+    const previousRows = providerRowsFromGroups(section, previous);
     const previousLocators = previousRows.flatMap((row) => [
       apiAccessRemarkLocatorFromRow(row), apiAccessRemarkLocatorFromRecord(section, row.source!.group),
     ]);
@@ -1337,7 +1343,7 @@ export function ApiAccessPage() {
     const previousRemarks = new Map(previousRows.map((row, index) => [
       providerRemarkIdentity(section, apiAccessRemarkLocatorFromRow(row)), resolved[index * 2] || resolved[index * 2 + 1] || '',
     ]));
-    const nextRows = rowsFromGroups(section, next);
+    const nextRows = providerRowsFromGroups(section, next);
     const allRecords = nextRows.map(apiAccessRemarkLocatorFromRow);
     const byRemark = new Map<string, ApiAccessRemarkLocator[]>();
     for (const row of nextRows) {
@@ -1468,7 +1474,7 @@ export function ApiAccessPage() {
       const savedRecord = definition.openAi
         ? buildProviderGroupRecord(activeSection, draftToSave, currentRecord)
         : buildProviderKeyRecord(activeSection, draftToSave, currentRecord);
-      const currentEntries = rowsFromGroups(activeSection, current);
+      const currentEntries = providerRowsFromGroups(activeSection, current);
       const targetIndex = location ? currentEntries.findIndex((row) => {
         return row.source?.groupIndex === location.groupIndex && row.source?.keyIndex === location.keyIndex;
       }) : -1;
@@ -1483,7 +1489,7 @@ export function ApiAccessPage() {
       const detached = location && nextList.length > current.length;
       const savedGroupIndex = location ? location.groupIndex + (detached ? 1 : 0) : nextList.length - 1;
       const savedKeyIndex = definition.openAi ? undefined : location && !detached ? location.keyIndex : 0;
-      const savedRow = rowsFromGroups(activeSection, nextList).find((row) => row.source?.groupIndex === savedGroupIndex && row.source?.keyIndex === savedKeyIndex)!;
+      const savedRow = providerRowsFromGroups(activeSection, nextList).find((row) => row.source?.groupIndex === savedGroupIndex && row.source?.keyIndex === savedKeyIndex)!;
       await persistEntryRemarks(activeSection, current, nextList, { row: savedRow, remark: draftToSave.remark });
       setNotice(editingRow ? t('apiAccess.notice.updated') : t('apiAccess.notice.added'));
       await loadProviders();
@@ -1565,7 +1571,7 @@ export function ApiAccessPage() {
   };
 
   const countForDefinition = (definition: ProviderDefinition) =>
-    rowsFromGroups(definition.section, records[definition.section]).filter((row) => row.category === definition.id).length;
+    providerRowsFromGroups(definition.section, records[definition.section]).filter((row) => row.category === definition.id).length;
 
   return (
     <section className="page management-page api-access-page">
@@ -1620,7 +1626,9 @@ export function ApiAccessPage() {
             <div className="management-empty">
               <Filter size={24} aria-hidden="true" />
               <strong>{filter ? t('apiAccess.empty.filtered') : t('apiAccess.empty.none')}</strong>
-              <span>{filter ? t('apiAccess.empty.tryKeyword') : t('apiAccess.empty.addFirst')}</span>
+              <span>{filter ? t('apiAccess.empty.tryKeyword') : t('apiAccess.empty.addFirst', {
+                action: t(activeDefinition.openAi ? 'apiAccess.entries.addProvider' : 'apiAccess.entries.addKey'),
+              })}</span>
             </div>
           ) : (
             <DndContext
@@ -1647,6 +1655,9 @@ export function ApiAccessPage() {
                   <div className="provider-row-main">
                     <div className="provider-row-title">
                       <strong title={row.name}>{row.name}</strong>
+                      {Array.isArray(row.record.keys) && providerGroupStatus(row.record) === 'partial'
+                        ? <span className="state-pill">{t('apiAccess.groups.partial')}</span>
+                        : null}
                       {row.remark ? <span title={row.remark}>{row.remark}</span> : null}
                     </div>
                     <span className="provider-row-url" title={row.baseUrl || undefined}>{row.baseUrl || t('apiAccess.defaultUrl')}</span>

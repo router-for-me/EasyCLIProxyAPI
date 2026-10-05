@@ -120,7 +120,7 @@
 
 :root:not([data-theme='dark']) .workspace .usage-request-log {
   --usage-log-soft: #fff;
-  --usage-log-hover: #fff;
+  --usage-log-hover: #f2fbf9;
 }
 
 /* The usage views and outer panels should read as clean white documents in light mode.
@@ -155,10 +155,13 @@
 :root:not([data-theme='dark']) .workspace .usage-records-page
   .usage-request-log .usage-events-table tbody tr td,
 :root:not([data-theme='dark']) .workspace .usage-records-page
-  .usage-request-log .usage-events-table tbody tr:nth-child(even) td,
+  .usage-request-log .usage-events-table tbody tr:nth-child(even) td {
+  background: #fff;
+}
+
 :root:not([data-theme='dark']) .workspace .usage-records-page
   .usage-request-log .usage-events-table tbody tr:hover td {
-  background: #fff;
+  background: #f2fbf9;
 }
 
 :root:not([data-theme='dark']) .workspace .usage-records-page

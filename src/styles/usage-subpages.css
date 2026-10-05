@@ -171,15 +171,22 @@
   top: 0;
   border: 0;
   background: var(--usage-log-surface);
-  color: var(--usage-log-muted);
-  font-size: 12px;
+  color: #3e4c5a;
+  font-size: 13px;
   font-weight: 650;
   letter-spacing: .01em;
   box-shadow: none;
 }
 
 .usage-records-page .usage-request-log .usage-events-table th .usage-th-content {
+  justify-content: center;
   padding: 0 16px;
+  text-align: center;
+}
+
+.usage-records-page .usage-request-log .usage-events-table :is(th, td),
+.usage-records-page .usage-request-log .usage-events-table :is(th, td).align-left {
+  text-align: center;
 }
 
 .usage-records-page .usage-request-log .usage-events-table thead th:first-child {
@@ -227,11 +234,72 @@
 }
 
 .usage-records-page .usage-request-log .usage-events-table td strong {
-  font-size: 12px;
+  color: var(--usage-page-text);
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .usage-records-page .usage-request-log .usage-events-table td small {
   line-height: 1.4;
+}
+
+.usage-records-page .usage-request-log .usage-model-effort,
+.usage-records-page .usage-request-log .usage-access-type {
+  width: fit-content;
+  max-width: 100%;
+  margin: 5px auto 0;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 24%, transparent);
+  border-radius: 999px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.usage-records-page .usage-request-log .usage-access-type {
+  margin-top: 4px;
+}
+
+.usage-records-page .usage-request-log .usage-result {
+  display: flex;
+  width: fit-content;
+  margin-inline: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.usage-records-page .usage-request-log .usage-result-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.usage-records-page .usage-request-log .usage-result.success {
+  background: var(--success-badge-bg);
+  color: var(--success-badge-text);
+}
+
+.usage-records-page .usage-request-log .usage-result.failed {
+  background: var(--failure-badge-bg);
+  color: var(--failure-badge-text);
+}
+
+.usage-records-page .usage-request-log .usage-result.canceled {
+  background: var(--usage-page-soft);
+  color: var(--usage-page-muted);
+}
+
+.usage-records-page .usage-request-log .usage-event-metrics {
+  justify-content: center;
+  font-weight: 650;
+}
+
+:root[data-theme='dark'] .usage-records-page .usage-request-log .usage-events-table th {
+  color: #d5deea;
 }
 
 .usage-records-page .usage-request-log .usage-event-metrics {

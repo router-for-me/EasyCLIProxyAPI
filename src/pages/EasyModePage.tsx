@@ -33,6 +33,7 @@ import {
   responseList,
 } from "../services/managementApi";
 import { appendNativeProviderGroup } from '../services/providerGroups';
+import { providerRowsFromGroups, type ProviderSection } from './ApiAccessPage';
 import {
   DEEPSEEK_BASE_URL,
   fetchModels,
@@ -103,14 +104,8 @@ const apiSectionOptions: ApiSectionOption[] = [
   { id: 'interactions', managementSection: 'interactions-api-key', nameKey: 'easyMode.api.platformName.gemini', name: 'Gemini Interactions', provider: 'interactions', defaultBaseUrl: 'https://generativelanguage.googleapis.com', icon: geminiIcon },
   { id: 'vertex', managementSection: 'vertex-api-key', nameKey: 'easyMode.api.platformName.gemini', name: 'Vertex AI', provider: 'vertex', defaultBaseUrl: 'https://aiplatform.googleapis.com', icon: vertexIcon },
   { id: 'xai', managementSection: 'xai-api-key', nameKey: 'easyMode.api.platformName.openai', name: 'xAI', provider: 'xai', defaultBaseUrl: 'https://api.x.ai/v1', icon: grokIcon },
-  { id: 'meta', managementSection: 'meta-api-key', nameKey: 'easyMode.api.platformName.openai', name: 'Meta', provider: 'meta', defaultBaseUrl: 'https://api.meta.ai/v1', icon: openaiIcon },
+  { id: 'meta', managementSection: 'meta-api-key', nameKey: 'easyMode.api.platformName.openai', name: 'Meta', provider: 'meta', defaultBaseUrl: 'https://api.meta.ai/v1', icon: metaIcon },
 ];
-
-const isDeepSeekRecord = (record: Record<string, unknown>) => {
-  const name = readString(record, "name").trim().toLowerCase();
-  const baseUrl = readString(record, "base-url", "baseUrl").trim().toLowerCase();
-  return name.includes("deepseek") || /^https?:\/\/api\.deepseek\.com(?:\/|$)/i.test(baseUrl);
-};
 
 export function EasyModePage({
   onExit,
@@ -222,14 +217,16 @@ export function EasyModePage({
       const sections = [...new Set(apiSectionOptions.map((option) => option.managementSection))];
       const recordsBySection = Object.fromEntries(await Promise.all(sections.map(async (section) => [section, await providerGroupsApi.get(section)]))) as Record<ApiManagementSection, Record<string, unknown>[]>;
 
-      for (const section of apiSectionOptions) {
-        const sourceList = recordsBySection[section.managementSection];
-        const list = section.id === "deepseek"
-          ? sourceList.filter(isDeepSeekRecord)
-          : section.id === "codex"
-            ? sourceList.filter((record) => !isDeepSeekRecord(record))
-            : sourceList;
-        counts[section.id] = list.length;
+      for (const option of apiSectionOptions) {
+        const rows = providerRowsFromGroups(
+          option.managementSection as ProviderSection,
+          recordsBySection[option.managementSection],
+        );
+        counts[option.id] = new Set(rows.filter((row) => (
+          option.id === 'deepseek' ? row.category === 'deepseek'
+            : option.id === 'codex' ? row.category !== 'deepseek'
+              : true
+        )).map((row) => row.source?.groupIndex)).size;
       }
       setApiCounts(counts);
     } catch (e) {
