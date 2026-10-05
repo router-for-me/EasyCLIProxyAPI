@@ -487,6 +487,7 @@ export function EventsView({
 }) {
   const { t } = useI18n();
   const [widths, setWidths] = useState<Record<EventColumnKey, number>>(getInitialColumnWidths);
+  const widthsRef = useRef(widths);
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<EventColumnKey[]>(getInitialVisibleColumns);
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
@@ -508,12 +509,17 @@ export function EventsView({
   const isCustomized = EVENT_COLUMNS.some((col) => widths[col.key] !== col.defaultWidth);
   const noRemarkLabel = t('usage.key.noRemark');
 
+  const commitWidths = (next: Record<EventColumnKey, number>) => {
+    widthsRef.current = next;
+    setWidths(next);
+  };
+
   const resetAllWidths = () => {
     const defaults: Record<EventColumnKey, number> = {} as any;
     for (const col of EVENT_COLUMNS) {
       defaults[col.key] = col.defaultWidth;
     }
-    setWidths(defaults);
+    commitWidths(defaults);
     try {
       localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(defaults));
     } catch {}
@@ -554,23 +560,19 @@ export function EventsView({
     e.stopPropagation();
     const colDef = EVENT_COLUMNS.find((c) => c.key === key);
     if (!colDef) return;
-    setWidths((prev) => {
-      const next = { ...prev, [key]: colDef.defaultWidth };
-      try {
-        localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
+    const next = { ...widthsRef.current, [key]: colDef.defaultWidth };
+    commitWidths(next);
+    try {
+      localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
+    } catch {}
   };
 
   const persistColumnWidth = (key: EventColumnKey, width: number) => {
-    setWidths((current) => {
-      const next = { ...current, [key]: width };
-      try {
-        localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
+    const next = { ...widthsRef.current, [key]: width };
+    commitWidths(next);
+    try {
+      localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
+    } catch {}
   };
 
   const handleResizeKeyDown = (key: EventColumnKey, event: KeyboardEvent<HTMLDivElement>) => {
@@ -597,41 +599,60 @@ export function EventsView({
     resizeCleanupRef.current?.();
     const startX = e.clientX;
     const startWidth =
-      widths[key] ?? EVENT_COLUMNS.find((c) => c.key === key)?.defaultWidth ?? 100;
+      widthsRef.current[key] ?? EVENT_COLUMNS.find((c) => c.key === key)?.defaultWidth ?? 100;
     const colDef = EVENT_COLUMNS.find((c) => c.key === key);
     const minWidth = colDef?.minWidth ?? 50;
+    const table = e.currentTarget.closest('table');
+    const column = table?.querySelector<HTMLElement>(`col[data-column="${key}"]`) ?? null;
+    const header = e.currentTarget.closest('th');
 
     setResizingCol(key);
     document.body.classList.add('table-col-resizing');
 
     let currentWidth = startWidth;
+    let frame = 0;
+
+    const paintWidth = (nextWidth: number) => {
+      widthsRef.current = { ...widthsRef.current, [key]: nextWidth };
+      if (column) column.style.width = `${nextWidth}px`;
+      if (header) header.style.width = `${nextWidth}px`;
+      if (table) {
+        const total = visibleColumns.reduce(
+          (sum, item) => sum + (widthsRef.current[item.key] ?? item.defaultWidth),
+          0,
+        );
+        table.style.width = `${total}px`;
+      }
+    };
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const delta = moveEvent.clientX - startX;
-      const nextWidth = Math.min(800, Math.max(minWidth, Math.round(startWidth + delta)));
-      currentWidth = nextWidth;
-      setWidths((prev) => ({ ...prev, [key]: nextWidth }));
+      currentWidth = Math.min(800, Math.max(minWidth, Math.round(startWidth + delta)));
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        paintWidth(currentWidth);
+      });
     };
 
     const cleanup = () => {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
+      if (frame) window.cancelAnimationFrame(frame);
       document.body.classList.remove('table-col-resizing');
       resizeCleanupRef.current = null;
     };
 
     const onPointerUp = () => {
+      paintWidth(currentWidth);
       cleanup();
       setResizingCol(null);
-
-      setWidths((prev) => {
-        const next = { ...prev, [key]: currentWidth };
-        try {
-          localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
-        } catch {}
-        return next;
-      });
+      const next = widthsRef.current;
+      setWidths(next);
+      try {
+        localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
+      } catch {}
     };
 
     window.addEventListener('pointermove', onPointerMove);
@@ -641,7 +662,7 @@ export function EventsView({
   };
 
   const totalTableWidth = visibleColumns.reduce(
-    (sum, col) => sum + (widths[col.key] ?? col.defaultWidth),
+    (sum, col) => sum + (widthsRef.current[col.key] ?? widths[col.key] ?? col.defaultWidth),
     0
   );
 
@@ -678,7 +699,7 @@ export function EventsView({
 
   return (
     <section className={`panel usage-events-panel usage-request-log${isCompactDefault ? ' usage-events-compact' : ''}`} aria-label={t('usage.events.title')} aria-busy={loading}>
-      {loading ? <div className="usage-empty" role="status"><Database size={20} aria-hidden="true" /><span>{t('usage.loading')}</span></div> : events.items.length ? (
+      {loading && events.items.length === 0 ? <div className="usage-empty" role="status"><Database size={20} aria-hidden="true" /><span>{t('usage.loading')}</span></div> : events.items.length ? (
         <div ref={tableWrapRef} className="usage-table-wrap" tabIndex={0} role="region" aria-label={t('usage.events.title')}>
           <table
             className="usage-events-table"
@@ -686,7 +707,7 @@ export function EventsView({
           >
             <colgroup>
               {visibleColumns.map((col) => (
-                <col key={col.key} style={{ width: `${widths[col.key]}px` }} />
+                <col key={col.key} data-column={col.key} style={{ width: `${widthsRef.current[col.key] ?? widths[col.key]}px` }} />
               ))}
             </colgroup>
             <thead>
@@ -697,7 +718,7 @@ export function EventsView({
                     <th
                       key={col.key}
                       className={`usage-th-${col.key} align-${col.align}`}
-                      style={{ width: `${widths[col.key]}px` }}
+                      style={{ width: `${widthsRef.current[col.key] ?? widths[col.key]}px` }}
                     >
                       <div className="usage-th-content" title={label}>
                         <span>{label}</span>
@@ -710,7 +731,7 @@ export function EventsView({
                         aria-orientation="vertical"
                         aria-valuemin={col.minWidth}
                         aria-valuemax={800}
-                        aria-valuenow={widths[col.key]}
+                        aria-valuenow={widthsRef.current[col.key] ?? widths[col.key]}
                         onPointerDown={(e) => handleResizeStart(col.key, e)}
                         onDoubleClick={(e) => resetSingleColumn(col.key, e)}
                         onKeyDown={(event) => handleResizeKeyDown(col.key, event)}
@@ -749,7 +770,7 @@ export function EventsView({
         <UsageEmpty />
       )}
 
-      {!loading && events.items.length > 0 ? <TableTopScrollbar tableWrapRef={tableWrapRef} /> : null}
+      {events.items.length > 0 ? <TableTopScrollbar tableWrapRef={tableWrapRef} /> : null}
 
       <div className="usage-events-footer">
         <span className="usage-pagination-summary">{t('usage.events.rangeSummary', { start: startRecordNum, end: endRecordNum, total: compactNumber(events.total) })}</span>

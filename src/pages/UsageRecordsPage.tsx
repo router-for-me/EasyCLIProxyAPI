@@ -270,6 +270,7 @@ export function UsageRecordsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [loadedScopeKey, setLoadedScopeKey] = useState('');
+  const loadedFilterScopeKeyRef = useRef('');
   const requestIdRef = useRef(0);
   const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
   if (!schedulerRef.current) schedulerRef.current = createRefreshScheduler(250);
@@ -311,6 +312,20 @@ export function UsageRecordsPage() {
     };
   }, [apiKeyHash, customEnd, customStart, model, provider, range, result, source]);
 
+  const filterScopeKey = useMemo(() => usageViewScopeKey({
+    tab: 'overview',
+    range,
+    customStart,
+    customEnd,
+    model: '',
+    provider: '',
+    source: '',
+    apiKeyHash: '',
+    result: 'all',
+    page: 1,
+    pageSize: 1,
+  }), [customEnd, customStart, range]);
+
   const scopeKey = useMemo(() => usageViewScopeKey({
     tab: activeTab,
     range,
@@ -344,7 +359,10 @@ export function UsageRecordsPage() {
       if (!quiet) setLoading(true);
       try {
         const statusRequest = invoke<CollectorStatus>('get_usage_collector_status');
-        const optionsRequest = invoke<UsageAnalysis>('get_usage_analysis', { query: timeQuery });
+        const filtersChanged = loadedFilterScopeKeyRef.current !== filterScopeKey;
+        const optionsRequest = filtersChanged
+          ? invoke<UsageAnalysis>('get_usage_analysis', { query: timeQuery })
+          : Promise.resolve(null);
         if (activeTab === 'overview') {
           const [nextStatus, nextOptions, nextOverview] = await Promise.all([
             statusRequest,
@@ -353,7 +371,7 @@ export function UsageRecordsPage() {
           ]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
-          setOptionsAnalysis(nextOptions);
+          if (nextOptions) setOptionsAnalysis(nextOptions);
           setOverview(nextOverview);
           setOverviewRange(timeQuery);
         } else if (activeTab === 'analysis') {
@@ -361,13 +379,13 @@ export function UsageRecordsPage() {
             statusRequest,
             optionsRequest,
             invoke<UsageOverview>('get_usage_overview', { query }),
-            model || provider || source || apiKeyHash || result !== 'all'
+            model || provider || source || apiKeyHash || result !== 'all' || !filtersChanged
               ? invoke<UsageAnalysis>('get_usage_analysis', { query })
-              : optionsRequest,
+              : optionsRequest.then((analysis) => analysis ?? emptyAnalysis),
           ]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
-          setOptionsAnalysis(nextOptions);
+          if (nextOptions) setOptionsAnalysis(nextOptions);
           setOverview(nextOverview);
           setOverviewRange(timeQuery);
           setAnalysis(nextAnalysis);
@@ -381,7 +399,7 @@ export function UsageRecordsPage() {
           ]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
-          setOptionsAnalysis(nextOptions);
+          if (nextOptions) setOptionsAnalysis(nextOptions);
           setEvents(nextEvents);
         } else if (activeTab === 'pricing') {
           const [nextStatus, nextOptions, nextPricing] = await Promise.all([
@@ -391,15 +409,16 @@ export function UsageRecordsPage() {
           ]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
-          setOptionsAnalysis(nextOptions);
+          if (nextOptions) setOptionsAnalysis(nextOptions);
           setPricing(nextPricing);
         } else {
           const [nextStatus, nextOptions] = await Promise.all([statusRequest, optionsRequest]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
-          setOptionsAnalysis(nextOptions);
+          if (nextOptions) setOptionsAnalysis(nextOptions);
         }
         setLoadedScopeKey(scopeKey);
+        if (filtersChanged) loadedFilterScopeKeyRef.current = filterScopeKey;
         setError('');
       } catch (requestError) {
         if (requestId === requestIdRef.current) setError(String(requestError));
@@ -407,7 +426,7 @@ export function UsageRecordsPage() {
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [activeTab, buildQueries, page, pageSize, model, provider, source, apiKeyHash, result, scopeKey]
+    [activeTab, buildQueries, filterScopeKey, page, pageSize, model, provider, source, apiKeyHash, result, scopeKey]
   );
 
   const loadData = useCallback(
@@ -720,8 +739,8 @@ export function UsageRecordsPage() {
       {hasCurrentSnapshot && activeTab === 'analysis' ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
       {activeTab === 'events' ? (
         <EventsView
-          events={hasCurrentSnapshot && events ? events : { items: [], total: 0, page, pageSize, totalPages: 1 }}
-          loading={showInitialLoading}
+          events={events ?? { items: [], total: 0, page, pageSize, totalPages: 1 }}
+          loading={!events || (loading && !hasCurrentSnapshot)}
           pageSize={pageSize}
           query={buildQueries().query}
           onPage={setPage}
