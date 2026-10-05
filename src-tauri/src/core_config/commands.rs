@@ -284,7 +284,7 @@ pub(crate) fn save_core_logging_settings(
     next.redis_usage_queue_retention_seconds = settings.redis_usage_queue_retention_seconds;
 
     patch_core_logging_settings(&next)?;
-    let config = match gui_config_state.sync_core_settings(&next) {
+    let config = match gui_config_state.sync_core_logging_settings(&next) {
         Ok(config) => config,
         Err(error) => {
             let rollback_error = patch_core_logging_settings(&previous).err();

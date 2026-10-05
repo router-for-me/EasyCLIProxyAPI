@@ -1967,6 +1967,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         error_logs_max_files: 25,
         usage_statistics_enabled: false,
         redis_usage_queue_retention_seconds: 180,
+        usage_statistics_disabled: Some(true),
         request_log: true,
         plugins_enabled: true,
         routing_strategy: "fill-first".to_string(),

@@ -615,6 +615,8 @@ struct GuiConfigFile {
     logs_max_total_size_mb: u32,
     error_logs_max_files: u32,
     usage_statistics_enabled: bool,
+    #[serde(rename = "usage_statistics_disabled", skip_serializing_if = "Option::is_none")]
+    usage_statistics_disabled: Option<bool>,
     redis_usage_queue_retention_seconds: u32,
     request_log: bool,
     plugins_enabled: bool,
@@ -921,6 +923,7 @@ impl Default for GuiConfigFile {
             logs_max_total_size_mb: DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
             error_logs_max_files: DEFAULT_ERROR_LOGS_MAX_FILES,
             usage_statistics_enabled: true,
+            usage_statistics_disabled: None,
             redis_usage_queue_retention_seconds: DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS,
             request_log: false,
             plugins_enabled: false,
@@ -2165,14 +2168,18 @@ impl GuiConfigState {
     }
 
     fn sync_core_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, false)
+        self.sync_core_settings_internal(settings, None, false, false)
+    }
+
+    fn sync_core_logging_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
+        self.sync_core_settings_internal(settings, None, false, true)
     }
 
     fn sync_core_settings_external(
         &self,
         settings: &CoreConfigSettings,
     ) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, true)
+        self.sync_core_settings_internal(settings, None, true, false)
     }
 
     fn sync_core_settings_with_api_key(
@@ -2180,7 +2187,7 @@ impl GuiConfigState {
         settings: &CoreConfigSettings,
         added_api_key: Option<GuiApiKeyEntry>,
     ) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, added_api_key, false)
+        self.sync_core_settings_internal(settings, added_api_key, false, false)
     }
 
     fn sync_core_settings_internal(
@@ -2188,6 +2195,7 @@ impl GuiConfigState {
         settings: &CoreConfigSettings,
         added_api_key: Option<GuiApiKeyEntry>,
         apply_external_proxy: bool,
+        save_usage_preference: bool,
     ) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.api_keys = merge_core_api_keys_with_gui_metadata(
@@ -2205,6 +2213,9 @@ impl GuiConfigState {
             config.logs_max_total_size_mb = settings.logs_max_total_size_mb;
             config.error_logs_max_files = settings.error_logs_max_files;
             config.usage_statistics_enabled = settings.usage_statistics_enabled;
+            if save_usage_preference {
+                config.usage_statistics_disabled = (!settings.usage_statistics_enabled).then_some(true);
+            }
             config.redis_usage_queue_retention_seconds =
                 settings.redis_usage_queue_retention_seconds;
             config.request_log = settings.request_log;

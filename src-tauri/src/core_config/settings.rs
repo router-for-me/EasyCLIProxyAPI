@@ -302,7 +302,11 @@ pub(crate) fn merge_core_config_yaml(
         }
         None => merge_core_config_fields(template, None)?,
     };
-    apply_gui_managed_settings(&base, config)
+    // Old mirrored values may be stale after a kernel upgrade. Only an explicit
+    // software-side opt-out should disable statistics when starting the kernel.
+    let mut startup_config = config.clone();
+    startup_config.usage_statistics_enabled = config.usage_statistics_disabled != Some(true);
+    apply_gui_managed_settings(&base, &startup_config)
 }
 
 pub(crate) fn merge_core_config_fields(
@@ -1928,6 +1932,11 @@ pub(crate) fn write_gui_config_to_path(
         .and_then(|content| content.parse::<Document>().ok())
         .unwrap_or_default();
     let root = document.as_table_mut();
+    if config.usage_statistics_disabled == Some(true) {
+        set_codex_table_item(root, "usage_statistics_disabled", value(true));
+    } else {
+        root.remove("usage_statistics_disabled");
+    }
     for (key, item) in [
         ("locale", value(config.locale.as_str())),
         ("port", value(i64::from(config.port))),

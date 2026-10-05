@@ -5322,6 +5322,7 @@ mod tests {
             logs_max_total_size_mb: crate::DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
             error_logs_max_files: crate::DEFAULT_ERROR_LOGS_MAX_FILES,
             usage_statistics_enabled: true,
+            usage_statistics_disabled: None,
             redis_usage_queue_retention_seconds: crate::DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS,
             request_log: false,
             plugins_enabled: false,

@@ -2,6 +2,39 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn usage_statistics_opt_out_is_removed_when_reenabled() {
+    let home = agent_test_home("usage-opt-out");
+    let path = home.join("config.toml");
+    let mut config = GuiConfigFile::default();
+    config.usage_statistics_disabled = Some(true);
+    write_gui_config_to_path(&config, &path).unwrap();
+    let content = fs::read_to_string(&path).unwrap();
+    assert!(content.contains("usage_statistics_disabled = true"));
+    let restored: GuiConfigFile = toml::from_str(&content).unwrap();
+    assert_eq!(restored.usage_statistics_disabled, Some(true));
+    config.usage_statistics_disabled = None;
+    write_gui_config_to_path(&config, &path).unwrap();
+    assert!(!fs::read_to_string(&path).unwrap().contains("usage_statistics_disabled"));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn usage_statistics_startup_repairs_stale_values_unless_explicitly_disabled() {
+    for preference in ["", "usage_statistics_disabled = false\n", "usage_statistics_disabled = true\n"] {
+        let config: GuiConfigFile = toml::from_str(&format!("usage-statistics-enabled = false\n{preference}")).unwrap();
+        for template in ["usage-statistics-enabled: false\n", "config-version: 8\nobservability: {usage: {usage-statistics-enabled: false}}\n"] {
+            for current in [None, Some("usage-statistics-enabled: false\n"), Some(template)] {
+                let merged = merge_core_config_yaml(template, current, &config).unwrap();
+                let document = serde_norway::from_str(&merged).unwrap();
+                let settings = core_config_settings_from_value(&document).unwrap();
+                assert_eq!(settings.usage_statistics_enabled, config.usage_statistics_disabled != Some(true));
+                assert!(!merged.contains("usage_statistics_disabled"));
+            }
+        }
+    }
+}
+
+#[test]
 fn gui_field_edit_preserves_comments_and_unknown_configuration() {
     let home = agent_test_home("gui-field-edit");
     let path = home.join("config.toml");
