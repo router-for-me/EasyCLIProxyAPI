@@ -80,8 +80,7 @@ export const jaOverrides = {
   'authFiles.settings.inherit': "既定（上書きなし）",
 
   'authFiles.settings.aliases': "モデル別名",
-  'authFiles.settings.aliasesHint': "この認証情報だけに適用され、全体の別名より優先されます。追加しなければ全体の別名を使います。",
-  'authFiles.settings.aliasInherited': "全体の別名を使用しています。",
+  'authFiles.settings.aliasesHint': "単一の認証情報だけに適用され、全体の別名より優先されます。追加しなければ既定で全体の別名を使います。",
   'authFiles.settings.aliasCleared': "この認証情報ではモデル別名を使わない設定です。追加するか、全体の別名に戻せます。",
   'authFiles.settings.aliasAdd': "別名を追加",
   'authFiles.settings.aliasInherit': "全体の別名に戻す",

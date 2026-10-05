@@ -80,8 +80,7 @@ export const en: Record<MessageKey, string> = {
   'authFiles.settings.inherit': "Default (no override)",
 
   'authFiles.settings.aliases': "Model aliases",
-  'authFiles.settings.aliasesHint': "Applies only to this credential and takes precedence over global aliases. Leave this empty to keep using global aliases.",
-  'authFiles.settings.aliasInherited': "Using global aliases.",
+  'authFiles.settings.aliasesHint': "Applies only to a single credential and takes precedence over global aliases. Leave this empty to use global aliases by default.",
   'authFiles.settings.aliasCleared': "This credential explicitly has no model aliases. Add one, or return to global aliases.",
   'authFiles.settings.aliasAdd': "Add alias",
   'authFiles.settings.aliasInherit': "Use global aliases",

@@ -79,8 +79,7 @@ export const zhCN = {
   'authFiles.settings.inherit': "默认（不覆盖）",
 
   'authFiles.settings.aliases': "模型别名",
-  'authFiles.settings.aliasesHint': "只作用于这一个凭证，并优先于全局别名。不添加时继续使用全局别名。",
-  'authFiles.settings.aliasInherited': "当前使用全局别名。",
+  'authFiles.settings.aliasesHint': "只作用于单个凭证，并优先于全局别名。不添加时默认使用全局别名。",
   'authFiles.settings.aliasCleared': "已明确不使用模型别名。可添加别名，或改回全局别名。",
   'authFiles.settings.aliasAdd': "添加别名",
   'authFiles.settings.aliasInherit': "改回全局别名",
