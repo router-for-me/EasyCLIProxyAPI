@@ -129,7 +129,7 @@ export function CredentialAdvancedFields({
               <label><input type="checkbox" checked={row['force-mapping'] === true} disabled={disabled} onChange={(event) => updateAlias(index, { 'force-mapping': event.currentTarget.checked })} />{t('authFiles.settings.aliasForce')}</label>
             </div>
           </div>)}
-        </div> : <p className="credential-settings-lead">{t(aliasesSet ? 'authFiles.settings.aliasCleared' : 'authFiles.settings.aliasInherited')}</p>}
+        </div> : aliasesSet ? <p className="credential-settings-lead">{t('authFiles.settings.aliasCleared')}</p> : null}
         <div className="credential-settings-inline-actions">
           <button type="button" className="secondary-button compact-button" disabled={disabled} onClick={(event) => { const scroller = event.currentTarget.closest('.credential-settings-body'); const top = scroller?.scrollTop ?? 0; setField('model_aliases', [...aliases, { name: '', alias: '' }]); requestAnimationFrame(() => { if (scroller) scroller.scrollTop = top; }); }}><Plus size={14} />{t('authFiles.settings.aliasAdd')}</button>
           {aliasesSet ? <button type="button" className="secondary-button compact-button" disabled={disabled} onClick={() => setField('model_aliases', undefined)}><Undo2 size={14} />{t('authFiles.settings.aliasInherit')}</button> : null}
