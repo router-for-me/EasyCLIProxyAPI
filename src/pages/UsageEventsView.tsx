@@ -84,30 +84,33 @@ type EventColumnDef = {
 };
 
 const EVENT_COLUMNS: readonly EventColumnDef[] = [
-  { key: 'time', labelKey: 'usage.column.time', defaultWidth: 84, minWidth: 76, align: 'left' },
-  { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 108, minWidth: 88, align: 'left' },
+  { key: 'time', labelKey: 'usage.column.time', defaultWidth: 82, minWidth: 76, align: 'left' },
+  { key: 'model', labelKey: 'usage.column.model', defaultWidth: 150, minWidth: 112, align: 'left' },
+  { key: 'provider', labelKey: 'usage.column.provider', defaultWidth: 92, minWidth: 84, align: 'left' },
+  { key: 'result', labelKey: 'usage.column.result', defaultWidth: 78, minWidth: 68, align: 'left' },
+  { key: 'total', labelKey: 'usage.column.tokens', defaultWidth: 112, minWidth: 100, align: 'left' },
+  { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 94, minWidth: 84, align: 'left' },
+  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 104, minWidth: 92, align: 'left' },
+  { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 82, minWidth: 72, align: 'left' },
+  { key: 'cost', labelKey: 'usage.column.cost', defaultWidth: 96, minWidth: 86, align: 'left' },
   { key: 'key', labelKey: 'usage.column.key', defaultWidth: 112, minWidth: 96, align: 'left' },
   { key: 'source', labelKey: 'usage.column.source', defaultWidth: 128, minWidth: 104, align: 'left' },
-  { key: 'model', labelKey: 'usage.column.model', defaultWidth: 160, minWidth: 104, align: 'left' },
   { key: 'effort', labelKey: 'usage.column.effort', defaultWidth: 76, minWidth: 64, align: 'left' },
-  { key: 'result', labelKey: 'usage.column.result', defaultWidth: 80, minWidth: 68, align: 'left' },
   { key: 'request', labelKey: 'usage.column.request', defaultWidth: 128, minWidth: 88, align: 'left' },
-  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 112, minWidth: 96, align: 'left' },
-  { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 88, minWidth: 72, align: 'left' },
-  { key: 'total', labelKey: 'usage.column.tokens', defaultWidth: 120, minWidth: 112, align: 'left' },
-  { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 104, minWidth: 88, align: 'left' },
-  { key: 'cost', labelKey: 'usage.column.cost', defaultWidth: 112, minWidth: 96, align: 'left' },
 ] as const;
 
 const DEFAULT_EVENT_VISIBLE_COLUMNS: readonly EventColumnKey[] = [
+  'time', 'model', 'provider', 'result', 'total', 'cache', 'latency', 'speed', 'cost',
+];
+const PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
   'time', 'provider', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'cost',
 ];
 const LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
   'time', 'model', 'input', 'output', 'cache', 'cacheRate', 'total', 'speed', 'ttft', 'latency', 'result', 'provider', 'source',
 ];
 
-const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v3';
-const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v2';
+const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v4';
+const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v3';
 const PREVIOUS_COMPACT_WIDTHS: Partial<Record<EventColumnKey, number>> = {
   key: 120, source: 180, model: 132, request: 112,
 };
@@ -116,8 +119,12 @@ const PREVIOUS_EVENT_COLUMN_WIDTHS: Record<EventColumnKey, number> = {
   request: 145, latency: 125, speed: 110, total: 145, cache: 135, provider: 135,
   cost: 112,
 };
-const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v5';
-const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v4';
+const PREVIOUS_GENEROUS_DEFAULT_WIDTHS: Record<EventColumnKey, number> = {
+  time: 84, model: 160, provider: 108, result: 80, total: 120, cache: 104,
+  latency: 112, speed: 88, cost: 112, key: 112, source: 128, effort: 76, request: 128,
+};
+const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v6';
+const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v5';
 
 const getAllEventColumnKeys = () => EVENT_COLUMNS.map((column) => column.key);
 
@@ -141,10 +148,12 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
           return true;
         });
         if (savedKeys.length > 0) {
-          const wasLegacyDefault = currentRaw === null
-            && parsed.length === LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.length
-            && LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key));
-          if (wasLegacyDefault) return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
+          const wasPreviousDefault = currentRaw === null
+            && (parsed.length === PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS.length
+              && PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key))
+              || parsed.length === LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.length
+              && LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key)));
+          if (wasPreviousDefault) return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
           if (currentRaw === null) {
             if (!savedKeys.includes('effort')) savedKeys.push('effort');
             if (previousRaw === null && !savedKeys.includes('cost')) savedKeys.push('cost');
@@ -177,9 +186,14 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
             parsed[col.key] >= col.minWidth
           ) {
             // Adopt tighter defaults while retaining columns the user resized.
-            const oldDefault = previousRaw === null ? PREVIOUS_EVENT_COLUMN_WIDTHS[col.key]
-              : (PREVIOUS_COMPACT_WIDTHS[col.key] ?? col.defaultWidth);
-            const wasDefault = currentRaw === null && parsed[col.key] === oldDefault;
+            const previousDefault = PREVIOUS_EVENT_COLUMN_WIDTHS[col.key];
+            const compactDefault = PREVIOUS_COMPACT_WIDTHS[col.key];
+            const generousDefault = PREVIOUS_GENEROUS_DEFAULT_WIDTHS[col.key];
+            const wasDefault = currentRaw === null && (
+              parsed[col.key] === previousDefault
+              || parsed[col.key] === generousDefault
+              || (compactDefault !== undefined && parsed[col.key] === compactDefault)
+            );
             if (!wasDefault) initial[col.key] = Math.min(800, Math.round(parsed[col.key]));
           }
         }
@@ -273,7 +287,7 @@ function UsageResultCell({ record }: { record: UsageRecord }) {
   const { t } = useI18n();
   const state = record.canceled ? 'canceled' : record.failed ? 'failed' : 'success';
   const detail = [
-    record.failure_status > 0 ? `HTTP ${record.failure_status}` : '',
+    record.failure_status > 0 && (state !== 'success' || record.failure_status >= 400) ? `HTTP ${record.failure_status}` : '',
     record.failure_body.trim(),
   ]
     .filter(Boolean)
@@ -293,10 +307,14 @@ function UsageEventCell({
   record,
   columnKey,
   noRemarkLabel,
+  showDate,
+  compact,
 }: {
   record: UsageRecord;
   columnKey: EventColumnKey;
   noRemarkLabel: string;
+  showDate?: boolean;
+  compact?: boolean;
 }) {
   const { t, formatDate } = useI18n();
 
@@ -305,7 +323,7 @@ function UsageEventCell({
       return (
         <td className="usage-td-time usage-stacked-cell align-left" title={formatDate(record.timestamp)}>
           <strong>{formatTime(record.timestamp)}</strong>
-          <small>{formatEventDate(record.timestamp)}</small>
+          {showDate !== false ? <small>{formatEventDate(record.timestamp)}</small> : null}
         </td>
       );
     case 'model': {
@@ -380,12 +398,17 @@ function UsageEventCell({
         >
           <strong>{formatCacheReadRate({ inputTokens: record.tokens.input_tokens, cacheReadTokens: record.tokens.cache_read_tokens })}</strong>
           <div className="usage-event-metrics"><span className="tone-cache-read" title={`${t('usage.token.cacheRead')}: ${record.tokens.cache_read_tokens.toLocaleString()}`} aria-label={`${t('usage.token.cacheRead')}: ${record.tokens.cache_read_tokens}`}><Database size={11} aria-hidden="true" />{compactNumber(record.tokens.cache_read_tokens)}</span></div>
-          <div className="usage-event-metrics"><span className="tone-cache-write" title={`${t('usage.token.cacheCreation')}: ${record.tokens.cache_creation_tokens.toLocaleString()}`} aria-label={`${t('usage.token.cacheCreation')}: ${record.tokens.cache_creation_tokens}`}><DatabaseZap size={11} aria-hidden="true" />{compactNumber(record.tokens.cache_creation_tokens)}</span></div>
+          <div className="usage-event-metrics usage-cache-write"><span className="tone-cache-write" title={`${t('usage.token.cacheCreation')}: ${record.tokens.cache_creation_tokens.toLocaleString()}`} aria-label={`${t('usage.token.cacheCreation')}: ${record.tokens.cache_creation_tokens}`}><DatabaseZap size={11} aria-hidden="true" />{compactNumber(record.tokens.cache_creation_tokens)}</span></div>
         </td>
       );
     case 'total':
       return (
-        <td className="usage-td-token usage-td-total align-left" title={`${record.tokens.total_tokens.toLocaleString()} tokens`}>
+        <td
+          className="usage-td-token usage-td-total align-left"
+          title={compact
+            ? `${record.tokens.total_tokens.toLocaleString()} tokens · ${t('usage.column.input')}: ${record.tokens.input_tokens.toLocaleString()} · ${t('usage.column.output')}: ${record.tokens.output_tokens.toLocaleString()} · ${t('usage.column.reasoning')}: ${record.tokens.reasoning_tokens.toLocaleString()}`
+            : `${record.tokens.total_tokens.toLocaleString()} tokens`}
+        >
           <strong>{compactNumber(record.tokens.total_tokens)}</strong>
           <div className="usage-event-metrics"><span className="tone-input" title={`${t('usage.column.input')}: ${record.tokens.input_tokens.toLocaleString()}`} aria-label={`${t('usage.column.input')}: ${record.tokens.input_tokens}`}><ArrowUp size={11} aria-hidden="true" />{compactNumber(record.tokens.input_tokens)}</span></div>
           <div className="usage-event-metrics">
@@ -443,6 +466,8 @@ export function EventsView({
 
   const visibleColumnKeySet = new Set(visibleColumnKeys);
   const visibleColumns = EVENT_COLUMNS.filter((column) => visibleColumnKeySet.has(column.key));
+  const isCompactDefault = visibleColumns.length === DEFAULT_EVENT_VISIBLE_COLUMNS.length
+    && DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => visibleColumnKeySet.has(key));
   const isCustomized = EVENT_COLUMNS.some((col) => widths[col.key] !== col.defaultWidth);
   const noRemarkLabel = t('usage.key.noRemark');
 
@@ -606,7 +631,7 @@ export function EventsView({
   };
 
   return (
-    <section className="panel usage-events-panel usage-request-log" aria-label={t('usage.events.title')} aria-busy={loading}>
+    <section className={`panel usage-events-panel usage-request-log${isCompactDefault ? ' usage-events-compact' : ''}`} aria-label={t('usage.events.title')} aria-busy={loading}>
       {loading ? <div className="usage-empty" role="status"><Database size={20} aria-hidden="true" /><span>{t('usage.loading')}</span></div> : events.items.length ? (
         <div ref={tableWrapRef} className="usage-table-wrap" tabIndex={0} role="region" aria-label={t('usage.events.title')}>
           <table
@@ -651,18 +676,26 @@ export function EventsView({
               </tr>
             </thead>
             <tbody>
-              {events.items.map((record) => (
-                <tr key={record.row_id}>
-                  {visibleColumns.map((column) => (
-                    <UsageEventCell
-                      key={column.key}
-                      record={record}
-                      columnKey={column.key}
-                      noRemarkLabel={noRemarkLabel}
-                    />
-                  ))}
-                </tr>
-              ))}
+              {events.items.map((record, index) => {
+                const previousRecord = events.items[index - 1];
+                const showDate = index === 0
+                  || !previousRecord
+                  || formatEventDate(previousRecord.timestamp) !== formatEventDate(record.timestamp);
+                return (
+                  <tr key={record.row_id}>
+                    {visibleColumns.map((column) => (
+                      <UsageEventCell
+                        key={column.key}
+                        record={record}
+                        columnKey={column.key}
+                        noRemarkLabel={noRemarkLabel}
+                        showDate={showDate}
+                        compact={isCompactDefault}
+                      />
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

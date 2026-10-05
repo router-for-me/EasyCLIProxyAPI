@@ -6,6 +6,7 @@ import {
   Activity,
   Database,
   Gauge,
+  ListFilter,
   Pencil,
   RefreshCw,
   Trash2,
@@ -247,6 +248,7 @@ export function UsageRecordsPage() {
   const [source, setSource] = useState('');
   const [apiKeyHash, setApiKeyHash] = useState('');
   const [result, setResult] = useState('all');
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [status, setStatus] = useState<CollectorStatus | null>(null);
@@ -445,6 +447,7 @@ export function UsageRecordsPage() {
   };
 
   const collectorTone = status?.state === 'error' ? 'error' : status?.state === 'collecting' ? 'success' : '';
+  const activeAdvancedFilterCount = [model, provider, source, apiKeyHash].filter(Boolean).length;
   const hasCurrentSnapshot = loadedScopeKey === scopeKey;
   const showInitialLoading =
     activeTab !== 'data-management' &&
@@ -467,12 +470,18 @@ export function UsageRecordsPage() {
   };
 
   const filterPanel = (
-      <section className="panel usage-filter-panel">
-        <div className="usage-filter-row">
-          <div className="usage-filter-group">
-            <label className="usage-filter-item">
-              <span className="sr-only">{t('usage.filter.timeRange')}</span>
-              <select
+    <section className="panel usage-filter-panel">
+      <div className="usage-filter-header">
+        <span className="usage-filter-title">{t('usage.filter.title')}</span>
+        {activeAdvancedFilterCount > 0 ? (
+          <span className="usage-filter-active">{t('usage.filter.active', { count: activeAdvancedFilterCount })}</span>
+        ) : null}
+      </div>
+      <div className="usage-filter-row">
+        <div className="usage-filter-group usage-filter-primary">
+          <label className="usage-filter-item">
+            <span className="usage-filter-label">{t('usage.filter.timeRange')}</span>
+            <select
                 value={range}
                 onChange={(event) => {
                   setRange(event.currentTarget.value as UsageRange);
@@ -491,71 +500,7 @@ export function UsageRecordsPage() {
             </label>
 
             <label className="usage-filter-item">
-              <span className="sr-only">{t('usage.filter.model')}</span>
-              <select
-                value={model}
-                onChange={(event) => changeFilter(setModel, event.currentTarget.value)}
-                aria-label={t('usage.filter.model')}
-              >
-                <option value="">{t('usage.filter.allModels')}</option>
-                {filterOptions(optionsAnalysis.models).map((item) => (
-                  <option value={item.key} key={item.key}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="usage-filter-item">
-              <span className="sr-only">{t('usage.column.provider')}</span>
-              <select
-                value={provider}
-                onChange={(event) => changeFilter(setProvider, event.currentTarget.value)}
-                aria-label={t('usage.column.provider')}
-              >
-                <option value="">{t('usage.filter.allProviders')}</option>
-                {filterOptions(optionsAnalysis.providers).map((item) => (
-                  <option value={item.key} key={item.key}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="usage-filter-item">
-              <span className="sr-only">{t('usage.filter.source')}</span>
-              <select
-                value={source}
-                onChange={(event) => changeFilter(setSource, event.currentTarget.value)}
-                aria-label={t('usage.filter.source')}
-              >
-                <option value="">{t('usage.filter.allSources')}</option>
-                {filterOptions(optionsAnalysis.sources).map((item) => (
-                  <option value={item.key} key={item.key}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="usage-filter-item">
-              <span className="sr-only">{t('apiAccess.field.key')}</span>
-              <select
-                value={apiKeyHash}
-                onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)}
-                aria-label={t('apiAccess.field.key')}
-              >
-                <option value="">{t('usage.filter.allKeys')}</option>
-                {filterOptions(optionsAnalysis.apiKeys).map((item) => (
-                  <option value={item.key} key={item.key}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="usage-filter-item">
-              <span className="sr-only">{t('usage.filter.result')}</span>
+              <span className="usage-filter-label">{t('usage.filter.result')}</span>
               <select
                 value={result}
                 onChange={(event) => changeFilter(setResult, event.currentTarget.value)}
@@ -568,7 +513,74 @@ export function UsageRecordsPage() {
               </select>
             </label>
           </div>
+          <button
+            type="button"
+            className={`usage-filter-toggle${advancedFiltersOpen ? ' is-open' : ''}`}
+            aria-expanded={advancedFiltersOpen}
+            onClick={() => setAdvancedFiltersOpen((open) => !open)}
+          >
+            <ListFilter size={15} aria-hidden="true" />
+            <span>{advancedFiltersOpen ? t('usage.filter.hideMore') : t('usage.filter.more')}</span>
+            {activeAdvancedFilterCount > 0 ? <b>{activeAdvancedFilterCount}</b> : null}
+          </button>
         </div>
+
+        {advancedFiltersOpen ? (
+          <div className="usage-filter-advanced">
+            <label className="usage-filter-item">
+              <span className="usage-filter-label">{t('usage.filter.model')}</span>
+              <select
+                value={model}
+                onChange={(event) => changeFilter(setModel, event.currentTarget.value)}
+                aria-label={t('usage.filter.model')}
+              >
+                <option value="">{t('usage.filter.allModels')}</option>
+                {filterOptions(optionsAnalysis.models).map((item) => (
+                  <option value={item.key} key={item.key}>{item.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="usage-filter-item">
+              <span className="usage-filter-label">{t('usage.column.provider')}</span>
+              <select
+                value={provider}
+                onChange={(event) => changeFilter(setProvider, event.currentTarget.value)}
+                aria-label={t('usage.column.provider')}
+              >
+                <option value="">{t('usage.filter.allProviders')}</option>
+                {filterOptions(optionsAnalysis.providers).map((item) => (
+                  <option value={item.key} key={item.key}>{item.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="usage-filter-item">
+              <span className="usage-filter-label">{t('usage.filter.source')}</span>
+              <select
+                value={source}
+                onChange={(event) => changeFilter(setSource, event.currentTarget.value)}
+                aria-label={t('usage.filter.source')}
+              >
+                <option value="">{t('usage.filter.allSources')}</option>
+                {filterOptions(optionsAnalysis.sources).map((item) => (
+                  <option value={item.key} key={item.key}>{item.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="usage-filter-item">
+              <span className="usage-filter-label">{t('apiAccess.field.key')}</span>
+              <select
+                value={apiKeyHash}
+                onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)}
+                aria-label={t('apiAccess.field.key')}
+              >
+                <option value="">{t('usage.filter.allKeys')}</option>
+                {filterOptions(optionsAnalysis.apiKeys).map((item) => (
+                  <option value={item.key} key={item.key}>{item.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
 
         {range === 'custom' ? (
           <div className="usage-custom-range">

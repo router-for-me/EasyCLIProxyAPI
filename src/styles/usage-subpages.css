@@ -97,3 +97,173 @@
 .usage-records-page .usage-tab-panel .usage-price-row-actions button:hover {
   background: var(--usage-page-hover);
 }
+
+/* Usage records: keep the common path quiet, and move diagnostic filters out of the way. */
+.usage-records-page .usage-filter-panel {
+  gap: 8px;
+}
+
+.usage-records-page .usage-filter-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.usage-records-page .usage-filter-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-caption);
+  font-weight: 650;
+}
+
+.usage-records-page .usage-filter-active {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ui-accent) 10%, transparent);
+  color: var(--ui-accent-strong);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.usage-records-page .usage-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.usage-records-page .usage-filter-group.usage-filter-primary {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  grid-template-columns: none;
+}
+
+.usage-records-page .usage-filter-primary .usage-filter-item {
+  flex: 0 1 230px;
+  min-width: 170px;
+}
+
+.usage-records-page .usage-filter-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+}
+
+.usage-records-page .usage-filter-toggle:hover,
+.usage-records-page .usage-filter-toggle.is-open {
+  border-color: var(--ui-accent);
+  background: color-mix(in srgb, var(--ui-accent) 7%, var(--bg-primary));
+  color: var(--ui-accent-strong);
+}
+
+.usage-records-page .usage-filter-toggle b {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ui-accent) 14%, transparent);
+  font-size: 10px;
+}
+
+.usage-records-page .usage-filter-advanced {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.usage-records-page .usage-filter-advanced .usage-filter-item {
+  min-width: 0;
+}
+
+.usage-records-page .usage-custom-range {
+  padding-top: 8px;
+}
+
+/* The default event view is intentionally compact; secondary diagnostics remain available via tooltips and Columns. */
+.usage-records-page .usage-request-log .usage-events-table th,
+.usage-records-page .usage-request-log .usage-events-table th .usage-th-content {
+  height: 38px;
+}
+
+.usage-records-page .usage-request-log .usage-events-table td {
+  height: 60px;
+  padding: 7px 9px;
+}
+
+.usage-records-page .usage-request-log .usage-events-table td strong {
+  font-size: 12px;
+}
+
+.usage-records-page .usage-request-log .usage-events-table td small {
+  line-height: 1.4;
+}
+
+.usage-records-page .usage-request-log .usage-event-metrics {
+  gap: 2px 7px;
+  margin-top: 2px;
+}
+
+.usage-records-page .usage-request-log.usage-events-compact .usage-cache-write,
+.usage-records-page .usage-request-log.usage-events-compact .tone-reasoning {
+  display: none;
+}
+
+.usage-records-page .usage-request-log .usage-events-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--usage-log-surface) 97%, var(--ui-accent));
+}
+
+@media (max-width: 760px) {
+  .usage-records-page .usage-filter-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usage-records-page .usage-filter-group.usage-filter-primary {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .usage-records-page .usage-filter-primary .usage-filter-item {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .usage-records-page .usage-filter-toggle {
+    width: 100%;
+  }
+
+  .usage-records-page .usage-filter-advanced {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .usage-records-page .usage-filter-group.usage-filter-primary,
+  .usage-records-page .usage-filter-advanced {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .usage-records-page .usage-filter-advanced {
+    display: grid;
+  }
+}
