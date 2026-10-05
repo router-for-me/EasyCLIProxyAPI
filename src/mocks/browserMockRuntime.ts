@@ -838,6 +838,7 @@ export function createBrowserMockRuntime(
           : 'C:\\Users\\Mock\\Certificates\\mock.pem';
       }
       case 'plugin:dialog|save': return 'C:\\Users\\Mock\\Downloads\\mock-output.json';
+      case 'save_usage_events_export': return null;
       case 'detect_core_platform': return { os: 'windows', arch: 'x86_64', assetOs: 'windows', assetArch: 'amd64', archiveKind: 'zip' };
       case 'get_linux_system_theme': return 'light';
       case 'set_app_locale':

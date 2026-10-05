@@ -162,6 +162,19 @@
   margin-top: 2px;
 }
 
+.usage-request-log .usage-events-table .usage-td-model > .usage-model-effort {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--usage-log-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .usage-request-log .usage-events-table .usage-td-model > .usage-response-model {
   color: var(--usage-log-response-model);
 }

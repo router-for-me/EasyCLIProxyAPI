@@ -620,7 +620,7 @@ export function AuthFileManagementPage() {
       </section>
       {runtimeCount > 0 ? <p className="page-footnote">{t('authFiles.runtimeFootnote', { count: runtimeCount })}</p> : null}
 
-      {settingsName ? <AuthFileSettingsDialog key={settingsName} name={settingsName} onClose={() => setSettingsName(null)} onSaved={() => {
+      {settingsName ? <AuthFileSettingsDialog key={settingsName} name={settingsName} provider={providerKey(files.find((file) => fileName(file) === settingsName) ?? {})} onClose={() => setSettingsName(null)} onSaved={() => {
         showNotice({ key: 'authFiles.settings.updated', variables: { name: settingsName } });
         setSettingsName(null);
         void loadFiles(false);

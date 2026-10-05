@@ -1,16 +1,63 @@
-.quota-page .quota-group-list { gap: 18px; }
-.quota-page .quota-provider-group { gap: 8px; }
-.quota-page .quota-group-heading { justify-content: flex-start; min-height: 24px; padding: 0 2px; }
-.quota-page .quota-provider-title { min-width: 0; flex-wrap: wrap; gap: 8px; }
-.quota-page .quota-group-heading h2 { font-size: var(--font-size-label); }
-.quota-page .quota-group-heading .provider-logo { width: 18px; height: 18px; }
-.quota-page .quota-provider-count {
-  padding: 2px 7px;
+.quota-page .quota-category-filter {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 2px 2px 4px;
+  scrollbar-width: thin;
+}
+.quota-page .quota-category-filter button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  margin: 0;
+  padding: 0 10px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+.quota-page .quota-category-filter button:hover {
+  border-color: color-mix(in srgb, var(--ui-accent) 35%, var(--border-color));
+  color: var(--text-primary);
+}
+.quota-page .quota-category-filter button[aria-checked='true'] {
+  border-color: color-mix(in srgb, var(--ui-accent) 28%, transparent);
+  background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card));
+  color: var(--ui-accent-strong);
+  font-weight: var(--font-weight-semibold);
+  box-shadow: none;
+}
+.quota-page .quota-category-filter img {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  object-fit: contain;
+}
+.quota-page .quota-filter-count {
+  min-width: 1.25rem;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--count-badge-bg);
   color: var(--text-tertiary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.3;
+  text-align: center;
+}
+.quota-page .quota-category-filter button[aria-checked='true'] .quota-filter-count {
+  background: color-mix(in srgb, var(--ui-accent) 16%, transparent);
+  color: var(--ui-accent-strong);
 }
 
 /* Keep each card compact; available content width determines the column count. */

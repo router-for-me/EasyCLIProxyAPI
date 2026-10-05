@@ -6,22 +6,23 @@ import { managementApi } from '../services/managementApi';
 import { loadAuthFileSettings, saveAuthFileSettings, type AuthFileSettingsDraft, type BooleanOverride } from '../services/authFileSettings';
 import { modelMatchesRule, normalizeOAuthExcludedRules, oauthModelCandidates, oauthModelsFromPayload, setOAuthModelsExcluded, type OAuthModelDefinition } from '../services/oauthModels';
 import './AuthFileSettingsDialog.css';
-import { StructuredConfigEditor, useConfigText } from './StructuredConfigEditor';
-import { credentialAdvancedShape } from '../services/credentialAdvancedSettings';
+import { CredentialAdvancedFields, CredentialHeadersEditor, credentialProviderKey } from './CredentialAdvancedFields';
+import { modelSearchText, type ModelOption } from '../services/modelService';
 
-export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
+export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }: {
   name: string;
+  provider?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { t } = useI18n();
-  const tx = useConfigText();
   const id = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const savingRef = useRef(false);
   const [original, setOriginal] = useState<AuthFileSettingsDraft | null>(null);
   const [draft, setDraft] = useState<AuthFileSettingsDraft | null>(null);
   const [models, setModels] = useState<OAuthModelDefinition[]>([]);
+  const [pickerModels, setPickerModels] = useState<ModelOption[]>([]);
   const [catalogError, setCatalogError] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -57,7 +58,10 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
       if (active) setError(reason instanceof Error ? reason.message : String(reason));
     }).finally(() => { if (active) setLoading(false); });
     void managementApi.get('/credentials/models', { name }).then((payload) => {
-      if (active) setModels(oauthModelsFromPayload(payload));
+      const catalog = oauthModelsFromPayload(payload);
+      if (!active) return;
+      setModels(catalog);
+      setPickerModels(catalog.map((model) => ({ name: model.id, displayName: model.displayName })));
     }).catch((reason: unknown) => {
       if (active) setCatalogError(reason instanceof Error ? reason.message : String(reason));
     }).finally(() => { if (active) setCatalogLoading(false); });
@@ -92,8 +96,10 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
     }
   };
   const rules = normalizeOAuthExcludedRules((draft?.excluded_models ?? '').split(/\r?\n/));
-  const candidates = oauthModelCandidates(models, rules).filter((model) =>
-    `${model.id} ${model.displayName ?? ''}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const query = search.trim().toLowerCase();
+  const candidates = oauthModelCandidates(models, rules).filter((model) => modelSearchText({ name: model.id, displayName: model.displayName }).includes(query));
+  const resolvedProvider = credentialProviderKey(name, provider);
+  const showWebsockets = resolvedProvider === 'codex' || resolvedProvider === 'xai' || draft?.websockets === 'true' || draft?.websockets === 'false';
   const textField = (key: 'prefix' | 'proxy_url' | 'priority' | 'weight') => (
     <label className="credential-settings-field">
       <span>{t(`authFiles.settings.${key}`)} <code>{key}</code></span>
@@ -142,7 +148,7 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
             <fieldset disabled={saving}>
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.routing')}</h3>
-                <div className="credential-settings-grid">{textField('prefix')}{textField('proxy_url')}{textField('priority')}{textField('weight')}{booleanField('disable_cooling')}{booleanField('websockets')}</div>
+                <div className="credential-settings-grid">{textField('prefix')}{textField('proxy_url')}{textField('priority')}{textField('weight')}{booleanField('disable_cooling')}{showWebsockets ? booleanField('websockets') : null}</div>
               </section>
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.excluded_models')} <code>excluded_models</code></h3>
@@ -169,20 +175,10 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
                   </div>
                 </details>
               </section>
-              <section className="credential-settings-section">
-                <details>
-                  <summary>{tx({ zh: '模型别名与 Claude 兼容设置', en: 'Model aliases and Claude compatibility', ja: 'モデル別名と Claude 互換性' })}</summary>
-                  <p><small>{tx({ zh: '这里的别名仅作用于此凭据，优先于全局别名。伪装与请求指纹适用于 Claude 及兼容委派凭据；未设置的字段继续使用默认行为。', en: 'Aliases apply only to this credential and take precedence over global aliases. Cloaking and fingerprints apply to Claude and compatible delegated credentials. Unset fields retain default behavior.', ja: '別名はこの認証情報にのみ適用され、全体の別名より優先されます。偽装とフィンガープリントは Claude と互換の委譲認証情報に適用します。' })}</small></p>
-                  <StructuredConfigEditor shape={credentialAdvancedShape} value={draft.advanced} onChange={value => update('advanced', value as Record<string, unknown>)} disabled={saving} id={`${id}-advanced`} />
-                </details>
-              </section>
+              <CredentialAdvancedFields name={name} provider={provider} advanced={draft.advanced} models={pickerModels} modelsLoading={catalogLoading} modelsError={catalogError} disabled={saving} onChange={(advanced) => update('advanced', advanced)} />
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.additional')}</h3>
-                <label className="credential-settings-field">
-                  <span>{t('authFiles.settings.headers')} <code>headers</code></span>
-                  <textarea className="credential-settings-json" rows={5} value={draft.headers} onChange={(event) => update('headers', event.currentTarget.value)} spellCheck={false} autoComplete="off" />
-                  <small>{t('authFiles.settings.headersHint')}</small>
-                </label>
+                <CredentialHeadersEditor value={draft.headers} disabled={saving} onChange={(headers) => update('headers', headers)} />
                 <label className="credential-settings-field">
                   <span>{t('authFiles.settings.note')} <code>note</code></span>
                   <textarea rows={2} value={draft.note} onChange={(event) => update('note', event.currentTarget.value)} />

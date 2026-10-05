@@ -35,13 +35,13 @@ function componentFiles(directory: string): string[] {
 }
 
 describe('UI localization boundaries', () => {
-  it('preserves the raw reasoning effort in usage text and tooltips', () => {
+  it('preserves the raw reasoning effort under the usage model name', () => {
     const file = join(sourceRoot, 'pages', 'UsageEventsView.tsx');
     const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-    let effortCase: ts.CaseClause | undefined;
+    let modelCase: ts.CaseClause | undefined;
     const visit = (node: ts.Node) => {
-      if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression) && node.expression.text === 'effort') {
-        effortCase = node;
+      if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression) && node.expression.text === 'model') {
+        modelCase = node;
       } else {
         ts.forEachChild(node, visit);
       }
@@ -60,10 +60,12 @@ describe('UI localization boundaries', () => {
       }
       ts.forEachChild(node, inspectEffort);
     };
-    expect(effortCase).toBeDefined();
-    if (effortCase) inspectEffort(effortCase);
-    expect(displayedExpressions).toContain("record.reasoning_effort || 'auto'");
-    expect(titleExpressions).toContain("{record.reasoning_effort || 'auto'}");
+    expect(modelCase).toBeDefined();
+    if (modelCase) inspectEffort(modelCase);
+    expect(displayedExpressions).toContain('effort');
+    expect(titleExpressions).toContain('{effort}');
+    expect(source.getText()).toContain("const effort = record.reasoning_effort || 'auto'");
+    expect(source.getText()).not.toContain("case 'effort'");
   });
 
   it('routes visible prose and accessibility labels through translations', () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
 import { ArrowDown, ArrowUp, Brain, ChevronLeft, ChevronRight, Columns3Cog, Database, DatabaseZap, Download, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
@@ -73,7 +74,6 @@ type EventColumnKey =
   | 'result'
   | 'latency'
   | 'speed'
-  | 'effort'
   | 'request';
 
 type EventColumnDef = {
@@ -96,7 +96,6 @@ const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'cost', labelKey: 'usage.column.cost', defaultWidth: 96, minWidth: 86, align: 'left' },
   { key: 'key', labelKey: 'usage.column.key', defaultWidth: 112, minWidth: 96, align: 'left' },
   { key: 'source', labelKey: 'usage.column.source', defaultWidth: 128, minWidth: 104, align: 'left' },
-  { key: 'effort', labelKey: 'usage.column.effort', defaultWidth: 76, minWidth: 64, align: 'left' },
   { key: 'request', labelKey: 'usage.column.request', defaultWidth: 128, minWidth: 88, align: 'left' },
 ] as const;
 
@@ -105,6 +104,9 @@ const DEFAULT_EVENT_VISIBLE_COLUMNS: readonly EventColumnKey[] = [
 ];
 const PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
   'time', 'provider', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'cost',
+];
+const PREVIOUS_EFFORT_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
+  'time', 'model', 'provider', 'result', 'total', 'cache', 'latency', 'speed', 'cost', 'effort',
 ];
 const LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
   'time', 'model', 'input', 'output', 'cache', 'cacheRate', 'total', 'speed', 'ttft', 'latency', 'result', 'provider', 'source',
@@ -115,12 +117,12 @@ const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v3'
 const PREVIOUS_COMPACT_WIDTHS: Partial<Record<EventColumnKey, number>> = {
   key: 120, source: 180, model: 132, request: 112,
 };
-const PREVIOUS_EVENT_COLUMN_WIDTHS: Record<EventColumnKey, number> = {
+const PREVIOUS_EVENT_COLUMN_WIDTHS: Record<string, number> = {
   time: 105, key: 150, source: 205, model: 150, effort: 100, result: 95,
   request: 145, latency: 125, speed: 110, total: 145, cache: 135, provider: 135,
   cost: 112,
 };
-const PREVIOUS_GENEROUS_DEFAULT_WIDTHS: Record<EventColumnKey, number> = {
+const PREVIOUS_GENEROUS_DEFAULT_WIDTHS: Record<string, number> = {
   time: 84, model: 160, provider: 108, result: 80, total: 120, cache: 104,
   latency: 112, speed: 88, cost: 112, key: 112, source: 128, effort: 76, request: 128,
 };
@@ -152,13 +154,12 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
           const wasPreviousDefault = currentRaw === null
             && (parsed.length === PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS.length
               && PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key))
+              || parsed.length === PREVIOUS_EFFORT_DEFAULT_EVENT_VISIBLE_COLUMNS.length
+              && PREVIOUS_EFFORT_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key))
               || parsed.length === LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.length
               && LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key)));
           if (wasPreviousDefault) return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
-          if (currentRaw === null) {
-            if (!savedKeys.includes('effort')) savedKeys.push('effort');
-            if (previousRaw === null && !savedKeys.includes('cost')) savedKeys.push('cost');
-          }
+          if (currentRaw === null && previousRaw === null && !savedKeys.includes('cost')) savedKeys.push('cost');
           return savedKeys;
         }
       }
@@ -219,7 +220,13 @@ type UsageEventQuery = {
   page_size?: number;
 };
 
-function downloadUsageEvents(records: UsageRecord[]) {
+function usageEventsExportName(date = new Date()) {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `usage-events-${date.getFullYear()}-${month}-${day}.csv`;
+}
+
+function usageEventsCsv(records: UsageRecord[]) {
   const headers = ['id', 'row_id', 'timestamp', 'api_key_display', 'api_key_remark', 'api_key_hash', 'source', 'source_display', 'provider', 'model', 'alias', 'response_model', 'reasoning_effort', 'endpoint', 'failed', 'canceled', 'failure_status', 'failure_body', 'latency_ms', 'ttft_ms', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens', 'estimated_cost_usd', 'pricing_model'];
   const csvCell = (value: string | number | boolean | null) => {
     const text = value == null ? '' : String(value);
@@ -227,15 +234,7 @@ function downloadUsageEvents(records: UsageRecord[]) {
     return `"${safe.replace(/"/g, '""')}"`;
   };
   const rows = records.map((record) => [record.id, record.row_id, record.timestamp, record.api_key_display, record.api_key_remark, record.api_key_hash, record.source, record.source_display, record.provider, record.model, record.alias, record.response_model ?? '', record.reasoning_effort, record.endpoint, record.failed, record.canceled, record.failure_status, record.failure_body, record.latency_ms, record.ttft_ms, record.tokens.input_tokens, record.tokens.output_tokens, record.tokens.reasoning_tokens, record.tokens.cache_read_tokens, record.tokens.cache_creation_tokens, record.tokens.total_tokens, record.cost?.total ?? null, record.cost?.pricing_model ?? '']);
-  const csv = '\uFEFF' + [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `usage-events-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return '\uFEFF' + [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
 }
 
 function TableTopScrollbar({
@@ -362,16 +361,19 @@ function UsageEventCell({
       );
     case 'model': {
       const model = usageModelDetails(record.model, record.alias, record.response_model);
+      const effort = record.reasoning_effort || 'auto';
       const modelTitle = [
         `${t('usage.model.request')}: ${model.requested}`,
         model.showResolved ? `${t('usage.model.upstream')}: ${model.resolved}` : '',
         model.showResponseInTooltip ? `${t('usage.model.response')}: ${model.response}` : '',
         model.mismatch ? t('usage.model.mismatch') : '',
         model.showResponseInTooltip ? t('usage.model.responseHint') : '',
+        `${t('usage.column.effort')}: ${effort}`,
       ].filter(Boolean).join('\n');
       return (
         <td className="usage-stacked-cell usage-td-model align-left" title={modelTitle}>
           <strong title={modelTitle}>{model.requested}</strong>
+          <small className="usage-model-effort" title={effort}>{effort}</small>
           {model.showResolved ? <small title={modelTitle}>{model.resolved}</small> : null}
           {model.mismatch ? (
             <small className="usage-response-model" title={modelTitle}>
@@ -392,8 +394,6 @@ function UsageEventCell({
         {!cost ? <small>{t('usage.cost.unpriced')}</small> : null}
       </td>;
     }
-    case 'effort':
-      return <td className="usage-stacked-cell align-left" title={record.reasoning_effort || 'auto'}><strong>{record.reasoning_effort || 'auto'}</strong></td>;
     case 'request': {
       const path = record.endpoint.trim().replace(/^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE)\s+/i, '');
       return <td className="usage-stacked-cell usage-td-request align-left" title={path || undefined}><strong>{path || '—'}</strong></td>;
@@ -652,10 +652,23 @@ export function EventsView({
     if (exporting || events.total === 0) return;
     setExporting(true);
     try {
-      const exported = await invoke<UsageEventPage>('get_usage_events', {
-        query: { ...query, page: 1, page_size: Math.max(events.total, 1) },
+      const path = await save({
+        title: t('usage.events.exportDialogTitle'),
+        defaultPath: usageEventsExportName(),
+        filters: [{ name: t('usage.events.exportFileType'), extensions: ['csv'] }],
       });
-      downloadUsageEvents(exported.items);
+      if (!path) return;
+      const items: UsageRecord[] = [];
+      const pageSize = 5000;
+      for (let page = 1; ; page += 1) {
+        const exported = await invoke<UsageEventPage>('get_usage_events', {
+          query: { ...query, page, page_size: pageSize },
+        });
+        if (exported.page !== page || exported.items.length === 0) break;
+        items.push(...exported.items);
+        if (items.length >= exported.total || page >= exported.totalPages) break;
+      }
+      await invoke('save_usage_events_export', { path, contents: usageEventsCsv(items) });
     } catch (error) {
       window.alert(String(error));
     } finally {
