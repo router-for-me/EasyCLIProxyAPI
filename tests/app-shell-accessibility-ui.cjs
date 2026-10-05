@@ -36,6 +36,26 @@ const path = require('node:path');
     await tabs.first().focus();
     await page.keyboard.press('ArrowRight');
     assert.equal(await tabs.nth(1).getAttribute('aria-selected'), 'true');
+    await page.getByRole('tab', { name: /请求明细/ }).click();
+    await page.locator('.usage-events-table tbody tr').first().waitFor();
+    const usageSurfaces = await page.locator('.usage-records-page .usage-events-table tbody tr').first().evaluate(row => {
+      const cell = row.querySelector('td');
+      const page = row.closest('.usage-records-page');
+      const status = page?.querySelector('.usage-collector-state');
+      return { row: cell ? getComputedStyle(cell).backgroundColor : '', status: status ? getComputedStyle(status).backgroundColor : '' };
+    });
+    assert.equal(usageSurfaces.row, 'rgb(255, 255, 255)', 'light usage rows stay pure white');
+    assert.equal(usageSurfaces.status, 'rgb(255, 255, 255)', 'light usage status stays pure white');
+    const shellSurfaces = await page.evaluate(() => {
+      const shell = document.querySelector('.app-shell');
+      const content = document.querySelector('.content');
+      return {
+        shell: shell ? getComputedStyle(shell).backgroundColor : '',
+        content: content ? getComputedStyle(content).backgroundColor : '',
+      };
+    });
+    assert.equal(shellSurfaces.shell, 'rgb(255, 255, 255)', 'light app shell stays pure white');
+    assert.equal(shellSurfaces.content, 'rgb(255, 255, 255)', 'light content stays pure white');
     await page.getByRole('tab', { name: /数据管理/ }).click();
     assert.equal(await page.locator('.usage-filter-panel').count(), 0);
 
