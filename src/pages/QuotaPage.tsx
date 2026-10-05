@@ -34,7 +34,7 @@ import {
   updateQuotaCache,
   useQuotaCache,
 } from '../services/quotaCache';
-import { dedupeAuthFiles } from '../services/authFiles';
+import { dedupeAuthFiles, parseAuthFilePriority, sortAuthFilesByPriority } from '../services/authFiles';
 import { useI18n } from '../i18n';
 import './QuotaPage.css';
 
@@ -65,7 +65,7 @@ export function QuotaPage() {
     setError('');
     try {
       const payload = await managementApi.get('/credentials');
-      const allFiles = dedupeAuthFiles(responseList(payload, 'files'));
+      const allFiles = sortAuthFilesByPriority(dedupeAuthFiles(responseList(payload, 'files')));
       const nextFiles = allFiles.filter((file) => !readBoolean(file, 'disabled') && providerForFile(file));
       setFiles(nextFiles);
       const validQuotaKeys = new Set(allFiles.map(quotaKey));
@@ -188,6 +188,7 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
   const provider = providerForFile(file);
   const name = fileName(file);
   const disabled = readBoolean(file, 'disabled');
+  const priority = parseAuthFilePriority(file.priority) ?? 0;
   return (
     <article className="panel real-quota-card">
       <div className="real-quota-card-header">
@@ -196,7 +197,7 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
           <div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}</span></div>
         </div>
         <div className="quota-plan"><strong>{quota.plan || '—'}</strong><span>{quota.subscriptionActiveUntil ? t('quota.expiresAt', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) }) : ''}</span></div>
-        <div className="quota-status"><span className={quota.status === 'success' ? 'quota-status-badge ready' : quota.status === 'error' ? 'quota-status-badge error' : 'quota-status-badge'}>{quota.status === 'success' ? t('common.enabled') : quota.status === 'loading' ? t('quota.querying') : quota.status === 'error' ? t('common.unavailable') : t('quota.notFetched')}</span><small>{t('authFiles.settings.priority')} 0</small></div>
+        <div className="quota-status"><span className={quota.status === 'success' ? 'quota-status-badge ready' : quota.status === 'error' ? 'quota-status-badge error' : 'quota-status-badge'}>{quota.status === 'success' ? t('common.enabled') : quota.status === 'loading' ? t('quota.querying') : quota.status === 'error' ? t('common.unavailable') : t('quota.notFetched')}</span><small>{t('authFiles.settings.priority')} {priority}</small></div>
         <div className="quota-card-actions">
           <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')} aria-label={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} aria-hidden="true" /></button>
         </div>

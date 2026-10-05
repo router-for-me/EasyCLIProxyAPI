@@ -69,6 +69,7 @@ import {
   parseAuthFilePriority,
   resetAuthFileCooldown,
   setOAuthCredentialFileDisabled,
+  sortAuthFilesByPriority,
 } from '../services/authFiles';
 import { authFileHealth, normalizeAuthFileCooldowns } from '../services/authFileHealth';
 import { codexMetadataFor } from '../services/quotaMetadata';
@@ -175,7 +176,7 @@ export function AuthFileManagementPage() {
     try {
       const payload = await managementApi.get('/credentials');
       if (!mountedRef.current || requestId !== fileRequestRef.current) return;
-      const nextFiles = dedupeAuthFiles(responseList(payload, 'files'));
+      const nextFiles = sortAuthFilesByPriority(dedupeAuthFiles(responseList(payload, 'files')));
       setFileSnapshot({ files: nextFiles, receivedAtMs: Date.now(), observedAt: readString(payload, 'observed_at') });
       const validQuotaKeys = new Set(nextFiles.map(quotaKey));
       pruneQuotaCache(validQuotaKeys);

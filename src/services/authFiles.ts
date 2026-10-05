@@ -37,6 +37,19 @@ export const resetAuthFileCooldown = async (
 export const authFileName = (file: AuthFileRecord) =>
   readString(file, 'name') || translate(getCurrentLocale(), 'authFiles.unnamed');
 
+/**
+ * Present credentials in the same order used by routing: higher explicit
+ * priority first, then a deterministic case-insensitive filename order.
+ * Return a new array so callers do not mutate the API response or snapshots.
+ */
+export const sortAuthFilesByPriority = <File extends AuthFileRecord>(files: File[]): File[] =>
+  [...files].sort((left, right) => {
+    const priorityDelta = (parseAuthFilePriority(right.priority) ?? 0)
+      - (parseAuthFilePriority(left.priority) ?? 0);
+    if (priorityDelta !== 0) return priorityDelta;
+    return authFileName(left).localeCompare(authFileName(right), undefined, { sensitivity: 'base' });
+  });
+
 export const isRuntimeOnlyAuthFile = (file: AuthFileRecord) =>
   readBoolean(file, 'runtime_only', 'runtimeOnly');
 

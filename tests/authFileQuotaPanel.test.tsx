@@ -25,6 +25,28 @@ it('shows every reset expiry in chronological order, including duplicates, on bo
   }
 });
 
+it('shows the OAuth credential priority on the quota card', () => {
+  const html = renderToStaticMarkup(<I18nProvider><QuotaCard
+    file={{ name: 'priority.json', provider: 'codex', priority: 7 }}
+    quota={{ status: 'success', rows: [] }} onRefresh={() => {}}
+  /></I18nProvider>);
+  expect(html).toContain('Priority 7');
+  expect(html).not.toContain('Priority 0');
+});
+
+it('normalizes a string priority and keeps zero as the default', () => {
+  const stringPriority = renderToStaticMarkup(<I18nProvider><QuotaCard
+    file={{ name: 'priority.json', provider: 'codex', priority: '3' }}
+    quota={{ status: 'idle', rows: [] }} onRefresh={() => {}}
+  /></I18nProvider>);
+  const missingPriority = renderToStaticMarkup(<I18nProvider><QuotaCard
+    file={{ name: 'default.json', provider: 'codex' }}
+    quota={{ status: 'idle', rows: [] }} onRefresh={() => {}}
+  /></I18nProvider>);
+  expect(stringPriority).toContain('Priority 3');
+  expect(missingPriority).toContain('Priority 0');
+});
+
 it('renders real quota values with bounded bars and keeps unknown distinct from zero', () => {
   const html = render({ status: 'success', rows: [
     { label: 'empty', remainingPercent: 0 }, { label: 'full', remainingPercent: 100 },

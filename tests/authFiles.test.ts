@@ -9,6 +9,7 @@ import {
   oauthModelProvidersFromAuthFiles,
   parseAuthFilePriority,
   setOAuthCredentialFileDisabled,
+  sortAuthFilesByPriority,
   snapshotAuthFiles,
 } from '../src/services/authFiles';
 
@@ -179,6 +180,18 @@ describe('authentication file priority', () => {
     expect(normalizeAuthFilePriorityInput('0')).toBe(0);
     expect(normalizeAuthFilePriorityInput('12')).toBe(12);
     expect(normalizeAuthFilePriorityInput('1.5')).toBeNull();
+  });
+
+  it('sorts credentials by descending priority, then filename', () => {
+    expect(sortAuthFilesByPriority([
+      { name: 'zeta.json', priority: 2 },
+      { name: 'Beta.json', priority: 5 },
+      { name: 'alpha.json', priority: 5 },
+      { name: 'default.json' },
+      { name: 'negative.json', priority: -1 },
+    ]).map((file) => file.name)).toEqual([
+      'alpha.json', 'Beta.json', 'zeta.json', 'default.json', 'negative.json',
+    ]);
   });
 
   it('finds only credentials created or updated by the completed OAuth provider', () => {
