@@ -182,6 +182,31 @@ const fs = require('node:fs/promises');
     assert.deepEqual(await page.evaluate(() => window.authFileListFixture.requests.find(request => request.method === 'DELETE')?.query), { name: '12-account.json' });
     assert.deepEqual(await page.evaluate(() => window.authFileListFixture.unhandled), []);
 
+    // Issue #345: long Antigravity labels/details must not size implicit grid
+    // tracks beyond the quota cell or cover the adjacent action buttons.
+    for (const theme of ['light', 'dark']) {
+      for (const width of [1800, 1505, 1280, 1172, 1024, 390]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await open(`theme=${theme}&locale=en&longQuota=1`);
+        for (const expanded of [false, true]) {
+          if (expanded) await card(1).locator('.credential-quota-more > summary').click();
+          const overflow = await card(1).locator('.auth-list-quota').evaluate(cell => {
+            const bounds = cell.getBoundingClientRect();
+            return [...cell.querySelectorAll('.credential-quota-rows, .credential-quota-row, .credential-quota-label, .credential-quota-label strong, .credential-quota-track, small')]
+              .filter(node => node.getClientRects().length)
+              .filter(node => {
+                const rect = node.getBoundingClientRect();
+                const row = node.closest('.credential-quota-row')?.getBoundingClientRect() || bounds;
+                return rect.left < row.left - 1 || rect.right > row.right + 1 || rect.right > bounds.right + 1;
+              }).map(node => node.className || node.tagName);
+          });
+          assert.deepEqual(overflow, [], `${theme} ${width} expanded=${expanded}: quota content stays inside its row and column`);
+          await assertFits(`long quota ${theme} ${width}`);
+        }
+        await page.screenshot({ path: path.join(screenshotDir, `long-quota-${theme}-${width}.png`), fullPage: true });
+      }
+    }
+
     const cases = ['light', 'dark'].flatMap(theme => [1800, 1280, 1024, 390].flatMap(width => ['zh-CN', 'en'].map(locale => ({ theme, width, locale }))));
     for (const { theme, width, locale } of cases) {
       await page.setViewportSize({ width, height: 1000 });

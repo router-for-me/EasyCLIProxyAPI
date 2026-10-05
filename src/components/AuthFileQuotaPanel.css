@@ -14,6 +14,9 @@
 }
 
 .credential-quota-compact .credential-quota-row {
+  /* Long labels must shrink within their quota window, not widen the
+     implicit grid track into the next window or the action column. */
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 5px;
 }

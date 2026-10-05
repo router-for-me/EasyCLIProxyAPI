@@ -18,6 +18,7 @@ const files: Record<string, unknown>[] = Array.from({ length: smallList ? 3 : 12
   name: `${String(index + 1).padStart(2, '0')}-account.json`,
   email: index === 0 ? 'long-fictional-account-for-layout@example.test' : `account-${index + 1}@example.test`,
   auth_index: `fixture-account-${index + 1}`, provider: smallList ? ['codex', 'devin', 'xai'][index] : index === 3 ? 'claude' : index === 4 ? 'xai' : 'codex',
+  ...(params.has('longQuota') ? { provider: 'antigravity' } : {}),
   source: 'file', size: 1800 + index * 350, updated_at: '2026-10-01T00:00:00Z',
   disabled: smallList ? index !== 1 : index === 2 || index === 6,
   status: (smallList ? index !== 1 : index === 2 || index === 6) ? 'disabled' : 'active',
@@ -50,6 +51,14 @@ updateQuotaCache(Object.fromEntries(files.map((file, index) => {
         ] : []),
       ],
   };
+  if (params.has('longQuota')) {
+    quota.rows = Array.from({ length: 4 }, (_, row) => ({
+      label: `${row < 2 ? 'Gemini' : 'Claude'} Models · ${row % 2 ? 'Weekly' : 'Five Hour'} Limit Remaining`,
+      remainingPercent: row % 2 ? 100 : 75,
+      resetAtMs: startedAt + 3 * 3600000,
+      detail: 'You have used some of your five-hour limit, it will fully reset at the time shown above.',
+    }));
+  }
   return [quotaKey(file), quota];
 })));
 
