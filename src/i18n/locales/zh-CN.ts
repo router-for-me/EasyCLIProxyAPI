@@ -801,7 +801,7 @@ export const zhCN = {
   'usage.column.source': '来源',
   'usage.column.key': '鉴权密钥',
   'usage.column.result': '结果',
-  'usage.column.latency': '总耗时',
+  'usage.column.latency': '耗时',
   'usage.column.ttft': '首字延迟',
   'usage.latency.ttft': '首字',
   'usage.latency.elapsed': '耗时',

@@ -99,7 +99,7 @@ const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'result', labelKey: 'usage.column.result', defaultWidth: 78, minWidth: 68, align: 'left' },
   { key: 'total', labelKey: 'usage.column.tokens', defaultWidth: 112, minWidth: 100, align: 'left' },
   { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 94, minWidth: 84, align: 'left' },
-  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 112, minWidth: 100, align: 'left' },
+  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 112, minWidth: 100, align: 'center' },
   { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 82, minWidth: 72, align: 'left' },
   { key: 'cost', labelKey: 'usage.column.cost', defaultWidth: 96, minWidth: 86, align: 'left' },
   { key: 'key', labelKey: 'usage.column.key', defaultWidth: 112, minWidth: 96, align: 'left' },
@@ -469,7 +469,8 @@ function UsageEventCell({
         `${t('usage.latency.elapsed')}: ${record.latency_ms} ms`,
       ].join('\n');
       return (
-        <td className="usage-td-latency align-left" title={latencyTitle}>
+        <td className="usage-td-latency align-center" title={latencyTitle}>
+          <span className="usage-latency-cell">
           <span className="usage-latency-line">
             <span className="usage-latency-label">{t('usage.latency.ttft')}</span>
             <span className={ttftTone ? `usage-latency-value ${ttftTone}` : 'usage-latency-value'}>{record.ttft_ms == null ? '—' : compactDuration(record.ttft_ms)}</span>
@@ -477,6 +478,7 @@ function UsageEventCell({
           <span className="usage-latency-line">
             <span className="usage-latency-label">{t('usage.latency.elapsed')}</span>
             <span className={`usage-latency-value ${latencyTone}`}>{compactDuration(record.latency_ms)}</span>
+          </span>
           </span>
         </td>
       );

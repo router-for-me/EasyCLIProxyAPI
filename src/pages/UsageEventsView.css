@@ -198,21 +198,25 @@
 }
 
 
-.usage-request-log .usage-td-latency {
-  font-weight: 600;
+.usage-request-log .usage-events-table th.usage-th-latency .usage-th-content,
+.usage-request-log .usage-events-table td.usage-td-latency {
+  text-align: center;
+  justify-content: center;
 }
 
-.usage-request-log .usage-latency-line {
-  display: grid;
+.usage-request-log .usage-latency-cell {
+  display: inline-grid;
   grid-template-columns: max-content max-content;
   column-gap: 6px;
-  align-items: baseline;
+  row-gap: 2px;
+  justify-items: start;
+  vertical-align: middle;
   line-height: 1.35;
   white-space: nowrap;
 }
 
-.usage-request-log .usage-latency-line + .usage-latency-line {
-  margin-top: 2px;
+.usage-request-log .usage-latency-line {
+  display: contents;
 }
 
 .usage-request-log .usage-latency-label {
@@ -237,7 +241,6 @@
 .usage-request-log .usage-latency-value.tone-bad {
   color: var(--usage-log-duration-bad);
 }
-
 
 .usage-request-log .usage-events-table .usage-td-key > strong {
   font-family: var(--font-family-mono);
