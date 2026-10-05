@@ -4255,7 +4255,7 @@ fn load_usage_events(
         .map(from_sql_i64)
         .map_err(|error| format!("Failed to count SQLite usage events: {error}"))?
         .min(usize::MAX as u64) as usize;
-    let page_size = query.page_size.unwrap_or(50).clamp(20, 200);
+    let page_size = query.page_size.unwrap_or(50).clamp(1, 5_000);
     let total_pages = total.div_ceil(page_size).max(1);
     let page = query.page.unwrap_or(1).clamp(1, total_pages);
     let offset = (page - 1).saturating_mul(page_size);
@@ -6544,6 +6544,13 @@ mod tests {
         assert_eq!(analysis.models[0].key, "gpt-5.6-terra");
         assert_eq!(events.total, 1);
         assert_eq!(events.items[0].id, "request-2");
+        let exported = load_usage_events(
+            &connection,
+            &UsageQuery { page_size: Some(5_000), ..query },
+            &config,
+        ).unwrap();
+        assert_eq!(exported.page_size, 5_000);
+        assert_eq!(exported.items.len(), 1);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

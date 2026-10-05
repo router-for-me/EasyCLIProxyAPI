@@ -120,6 +120,23 @@
   min-width: 0;
   field-sizing: content;
   padding: 0 20px 0 0;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  color-scheme: inherit;
+}
+
+.usage-records-page .usage-filter-item select option,
+.usage-records-page .usage-filter-item select optgroup {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+:root[data-theme='dark'] .usage-records-page .usage-filter-item select,
+:root[data-theme='dark'] .usage-records-page .usage-filter-item select option,
+:root[data-theme='dark'] .usage-records-page .usage-filter-item select optgroup {
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  color-scheme: dark;
 }
 
 /* Request log reads as separate rounded cards, matching the reference layout. */
@@ -153,8 +170,8 @@
   position: sticky;
   top: 0;
   border: 0;
-  background: #fff;
-  color: #8b97a8;
+  background: var(--usage-log-surface);
+  color: var(--usage-log-muted);
   font-size: 12px;
   font-weight: 650;
   letter-spacing: .01em;
@@ -177,7 +194,8 @@
   height: 78px;
   padding: 14px 16px;
   border: 0;
-  background: #fff;
+  background: var(--usage-log-surface);
+  color: var(--usage-log-text);
   box-shadow: 0 1px 2px rgb(16 24 40 / 4%);
 }
 
@@ -190,7 +208,7 @@
 }
 
 .usage-records-page .usage-request-log .usage-events-table tbody tr:hover td {
-  background: #fff !important;
+  background: var(--usage-log-hover) !important;
   box-shadow: 0 8px 22px rgb(16 24 40 / 7%);
 }
 

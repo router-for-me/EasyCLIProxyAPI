@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { ArrowDown, ArrowUp, Brain, ChevronLeft, ChevronRight, Columns3Cog, Database, DatabaseZap, Download, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
@@ -203,6 +204,39 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
   }
   return initial;
 };
+
+
+type UsageEventQuery = {
+  start?: string;
+  end?: string;
+  model?: string;
+  provider?: string;
+  source?: string;
+  api_key_hash?: string;
+  failed?: boolean;
+  canceled?: boolean;
+  page?: number;
+  page_size?: number;
+};
+
+function downloadUsageEvents(records: UsageRecord[]) {
+  const headers = ['id', 'row_id', 'timestamp', 'api_key_display', 'api_key_remark', 'api_key_hash', 'source', 'source_display', 'provider', 'model', 'alias', 'response_model', 'reasoning_effort', 'endpoint', 'failed', 'canceled', 'failure_status', 'failure_body', 'latency_ms', 'ttft_ms', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens', 'estimated_cost_usd', 'pricing_model'];
+  const csvCell = (value: string | number | boolean | null) => {
+    const text = value == null ? '' : String(value);
+    const safe = typeof value === 'string' && /^[\s\u0000-\u001f]*[=+@-]/.test(text) ? `'${text}` : text;
+    return `"${safe.replace(/"/g, '""')}"`;
+  };
+  const rows = records.map((record) => [record.id, record.row_id, record.timestamp, record.api_key_display, record.api_key_remark, record.api_key_hash, record.source, record.source_display, record.provider, record.model, record.alias, record.response_model ?? '', record.reasoning_effort, record.endpoint, record.failed, record.canceled, record.failure_status, record.failure_body, record.latency_ms, record.ttft_ms, record.tokens.input_tokens, record.tokens.output_tokens, record.tokens.reasoning_tokens, record.tokens.cache_read_tokens, record.tokens.cache_creation_tokens, record.tokens.total_tokens, record.cost?.total ?? null, record.cost?.pricing_model ?? '']);
+  const csv = '\uFEFF' + [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `usage-events-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 function TableTopScrollbar({
   tableWrapRef,
@@ -439,12 +473,14 @@ function UsageEventCell({
 export function EventsView({
   events,
   pageSize,
+  query,
   onPage,
   onPageSizeChange,
   loading = false,
 }: {
   events: UsageEventPage;
   pageSize: number;
+  query: UsageEventQuery;
   onPage: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   loading?: boolean;
@@ -455,6 +491,7 @@ export function EventsView({
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const columnDialogRef = useDialogFocusTrap<HTMLElement>({
     active: columnSettingsOpen,
@@ -611,23 +648,19 @@ export function EventsView({
   const startRecordNum = events.total > 0 ? (events.page - 1) * pageSize + 1 : 0;
   const endRecordNum = Math.min(events.page * pageSize, events.total);
 
-  const exportCurrentPage = () => {
-    const headers = ['id', 'row_id', 'timestamp', 'api_key_display', 'api_key_remark', 'api_key_hash', 'source', 'source_display', 'provider', 'model', 'alias', 'response_model', 'reasoning_effort', 'endpoint', 'failed', 'canceled', 'failure_status', 'failure_body', 'latency_ms', 'ttft_ms', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens', 'estimated_cost_usd', 'pricing_model'];
-    const csvCell = (value: string | number | boolean | null) => {
-      const text = value == null ? '' : String(value);
-      const safe = typeof value === 'string' && /^[\s\u0000-\u001f]*[=+@-]/.test(text) ? `'${text}` : text;
-      return `"${safe.replace(/"/g, '""')}"`;
-    };
-    const rows = events.items.map((record) => [record.id, record.row_id, record.timestamp, record.api_key_display, record.api_key_remark, record.api_key_hash, record.source, record.source_display, record.provider, record.model, record.alias, record.response_model ?? '', record.reasoning_effort, record.endpoint, record.failed, record.canceled, record.failure_status, record.failure_body, record.latency_ms, record.ttft_ms, record.tokens.input_tokens, record.tokens.output_tokens, record.tokens.reasoning_tokens, record.tokens.cache_read_tokens, record.tokens.cache_creation_tokens, record.tokens.total_tokens, record.cost?.total ?? null, record.cost?.pricing_model ?? '']);
-    const csv = '\uFEFF' + [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `usage-events-page-${events.page}-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const exportFilteredEvents = async () => {
+    if (exporting || events.total === 0) return;
+    setExporting(true);
+    try {
+      const exported = await invoke<UsageEventPage>('get_usage_events', {
+        query: { ...query, page: 1, page_size: Math.max(events.total, 1) },
+      });
+      downloadUsageEvents(exported.items);
+    } catch (error) {
+      window.alert(String(error));
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -729,8 +762,8 @@ export function EventsView({
               <RotateCcw size={13} aria-hidden="true" />
             </button>
           ) : null}
-          <button type="button" className="usage-events-export-btn" disabled={loading || events.items.length === 0} onClick={exportCurrentPage} title={t('usage.events.exportDescription')}>
-            <Download size={14} aria-hidden="true" /><span>{t('usage.events.exportPage')}</span>
+          <button type="button" className="usage-events-export-btn" disabled={loading || exporting || events.total === 0} onClick={() => void exportFilteredEvents()} title={t('usage.events.exportDescription')}>
+            <Download size={14} aria-hidden="true" /><span>{exporting ? t('usage.events.exporting') : t('usage.events.exportPage')}</span>
           </button>
         </div>
         <div className="usage-pagination-controls">

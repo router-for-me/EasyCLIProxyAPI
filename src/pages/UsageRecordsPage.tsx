@@ -160,6 +160,17 @@ type UsageQuery = {
 
 const TAB_KEY = 'cpa-gui.usage-records-tab.v1';
 const RANGE_KEY = 'cpa-gui.usage-records-range.v1';
+const PAGE_SIZE_KEY = 'cpa-gui.usage-events-page-size.v1';
+const EVENT_PAGE_SIZES = [20, 50, 100, 200] as const;
+
+const loadPageSize = (): number => {
+  try {
+    const saved = Number(localStorage.getItem(PAGE_SIZE_KEY));
+    return EVENT_PAGE_SIZES.includes(saved as (typeof EVENT_PAGE_SIZES)[number]) ? saved : 50;
+  } catch {
+    return 50;
+  }
+};
 const emptyAnalysis: UsageAnalysis = { models: [], providers: [], sources: [], apiKeys: [] };
 
 const loadTab = (): UsageTab => {
@@ -248,7 +259,7 @@ export function UsageRecordsPage() {
   const [apiKeyHash, setApiKeyHash] = useState('');
   const [result, setResult] = useState('all');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(loadPageSize);
   const [status, setStatus] = useState<CollectorStatus | null>(null);
   const [overview, setOverview] = useState<UsageOverview | null>(null);
   const [overviewRange, setOverviewRange] = useState<Pick<UsageQuery, 'start' | 'end'>>({});
@@ -276,6 +287,13 @@ export function UsageRecordsPage() {
     } catch {
     }
   }, [range]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PAGE_SIZE_KEY, String(pageSize));
+    } catch {
+    }
+  }, [pageSize]);
 
   const buildQueries = useCallback(() => {
     const nextTimeQuery = rangeQuery(range, customStart, customEnd);
@@ -705,6 +723,7 @@ export function UsageRecordsPage() {
           events={hasCurrentSnapshot && events ? events : { items: [], total: 0, page, pageSize, totalPages: 1 }}
           loading={showInitialLoading}
           pageSize={pageSize}
+          query={buildQueries().query}
           onPage={setPage}
           onPageSizeChange={(size) => {
             setPageSize(size);
