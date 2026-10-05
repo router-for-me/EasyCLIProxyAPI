@@ -40,7 +40,7 @@ describe('quota API compatibility', () => {
       ...codexFile,
       metadata: { id_token: { chatgpt_account_id: 'account-test', plan_type: 'pro', chatgpt_subscription_active_until: '2030-01-01T00:00:00Z' } },
     });
-    expect(result).toMatchObject({ status: 'success', plan: 'pro', creditBalance: '12.5', creditsUnlimited: false, resetCredits: 2, resetCreditsApplicable: 0, resetCreditsError: 'credits forbidden' });
+    expect(result).toMatchObject({ status: 'success', plan: 'pro', creditBalance: '12.5', creditsUnlimited: false, resetCredits: 2, resetCreditsApplicable: 0, resetCreditsError: 'HTTP 403: credits forbidden' });
     expect(result.subscriptionActiveUntil).toBe('2030-01-01T00:00:00Z');
     expect(calls).toHaveLength(2);
     for (const call of calls) {
@@ -168,7 +168,7 @@ describe('xAI quota queries aligned with Management Center', () => {
   it('账单和回退都失败时保留原始账单错误', async () => {
     handler = (request) => request.url.includes('cli-chat-proxy')
       ? { status_code: 403, body: 'billing denied' } : { status_code: 429, body: 'paid denied' };
-    expect(await loadQuota(file)).toMatchObject({ status: 'error', error: 'billing denied' });
+    expect(await loadQuota(file)).toMatchObject({ status: 'error', error: 'HTTP 403: billing denied' });
     expect(calls).toHaveLength(4);
   });
 
@@ -176,7 +176,7 @@ describe('xAI quota queries aligned with Management Center', () => {
     handler = (request) => request.url.endsWith('/me')
       ? success({}) : { status_code: 429, body: 'chat denied' };
     expect(await loadQuota({ ...file, using_api: true, prefix: 'paid' }))
-      .toMatchObject({ status: 'error', error: 'chat denied' });
+      .toMatchObject({ status: 'error', error: 'HTTP 429: chat denied' });
     expect(calls).toHaveLength(2);
   });
 
@@ -269,7 +269,7 @@ describe('quota request synchronization', () => {
     const reset = consumeCodexResetCredit(codexFile);
     const refresh = loadQuota(codexFile);
     await expect(reset).rejects.toThrow('reset denied');
-    expect(await refresh).toMatchObject({ status: 'error', error: 'reset denied' });
+    expect(await refresh).toMatchObject({ status: 'error', error: 'HTTP 409: reset denied' });
     expect((await loadQuota(codexFile)).status).toBe('success');
   });
 });

@@ -84,7 +84,7 @@ describe('Devin live quota', () => {
   it('reports upstream errors and empty successful responses', async () => {
     const post = spyOn(managementApi, 'post').mockResolvedValue({ status_code: 401, body: { error: 'expired' } } as never);
     mocks.push(post);
-    expect(await loadQuota(file)).toMatchObject({ status: 'error', rows: [], error: 'expired' });
+    expect(await loadQuota(file)).toMatchObject({ status: 'error', rows: [], error: 'HTTP 401: expired' });
     post.mockResolvedValue({ status_code: 200, body: liveStatus({ planInfo: { planName: 'Pro' } }) } as never);
     expect(await loadQuota(file)).toMatchObject({ status: 'error', rows: [] });
   });

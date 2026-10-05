@@ -118,19 +118,28 @@ describe('v8 Management API requests', () => {
 });
 
 describe('apiCallErrorMessage', () => {
-  it('从对象和 JSON 字符串错误体中提取可读消息', () => {
+  it('保留 HTTP 状态，并从对象和 JSON 字符串错误体中提取可读消息', () => {
     expect(apiCallErrorMessage({
       status_code: 401,
-      body: { error: { message: 'token expired' } },
-    })).toBe('token expired');
+      body: { error: { message: 'token expired', code: 'invalid_api_key' } },
+    })).toBe('HTTP 401: token expired (invalid_api_key)');
+
+    expect(apiCallErrorMessage({
+      status_code: 401,
+      body: { error: { message: 'Encountered invalidated oauth token for user, failing request', code: 401 } },
+    })).toBe('HTTP 401: Encountered invalidated oauth token for user, failing request');
 
     expect(apiCallErrorMessage({
       statusCode: 403,
       bodyText: JSON.stringify({ detail: 'permission denied' }),
-    })).toBe('permission denied');
+    })).toBe('HTTP 403: permission denied');
   });
 
-  it('没有错误体时回退到 HTTP 状态', () => {
+  it('消息已经包含状态码时不重复，没有错误体时回退到 HTTP 状态', () => {
+    expect(apiCallErrorMessage({
+      status_code: 401,
+      body: { error: { message: 'HTTP 401: token expired' } },
+    })).toBe('HTTP 401: token expired');
     expect(apiCallErrorMessage({ status_code: 429 })).toBe('Upstream returned HTTP 429');
   });
 });

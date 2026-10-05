@@ -180,44 +180,93 @@ export function normalizeAuthIndex(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
 }
 
-const messageFromPayload = (value: unknown, depth = 0): string => {
-  if (value === null || value === undefined || depth > 3) return '';
-  if (typeof value === 'string') {
-    const text = value.trim();
-    if (!text) return '';
-    try {
-      const parsed = JSON.parse(text) as unknown;
-      const nested = messageFromPayload(parsed, depth + 1);
-      if (nested) return nested;
-    } catch {
-    }
-    return text;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nested = messageFromPayload(item, depth + 1);
-      if (nested) return nested;
-    }
-    return '';
-  }
-  if (isRecord(value)) {
-    for (const key of ['message', 'error', 'detail', 'error_description', 'title']) {
-      const nested = messageFromPayload(value[key], depth + 1);
-      if (nested) return nested;
+type ApiErrorDetail = { message: string; code: string };
+
+const emptyApiErrorDetail = (): ApiErrorDetail => ({ message: '', code: '' });
+
+const mergeApiErrorDetail = (current: ApiErrorDetail, next: ApiErrorDetail): ApiErrorDetail => ({
+  message: current.message || next.message,
+  code: current.code || next.code,
+});
+
+const errorCodeFromRecord = (value: Record<string, unknown>): string => {
+  for (const key of ['code', 'error_code', 'errorCode']) {
+    const candidate = value[key];
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) return String(Math.trunc(candidate));
+    if (typeof candidate === 'string') {
+      const text = candidate.trim();
+      if (text && text.length <= 64) return text;
     }
   }
   return '';
+};
+
+const detailFromPayload = (value: unknown, depth = 0): ApiErrorDetail => {
+  if (value === null || value === undefined || depth > 3) return emptyApiErrorDetail();
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return emptyApiErrorDetail();
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      const nested = detailFromPayload(parsed, depth + 1);
+      if (nested.message || nested.code) return nested;
+    } catch {
+    }
+    return { message: text, code: '' };
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return { message: String(value), code: '' };
+  if (Array.isArray(value)) {
+    let detail = emptyApiErrorDetail();
+    for (const item of value) {
+      detail = mergeApiErrorDetail(detail, detailFromPayload(item, depth + 1));
+      if (detail.message && detail.code) break;
+    }
+    return detail;
+  }
+  if (isRecord(value)) {
+    let detail: ApiErrorDetail = { message: '', code: errorCodeFromRecord(value) };
+    for (const key of ['message', 'error', 'detail', 'error_description', 'title']) {
+      detail = mergeApiErrorDetail(detail, detailFromPayload(value[key], depth + 1));
+      if (detail.message && detail.code) break;
+    }
+    return detail;
+  }
+  return emptyApiErrorDetail();
+};
+
+const httpStatusFromResponse = (response: Record<string, unknown>): number => {
+  const status = Number(response.status_code ?? response.statusCode ?? response.status ?? 0);
+  return Number.isFinite(status) && status > 0 ? Math.trunc(status) : 0;
+};
+
+const mentionsHttpStatus = (text: string, status: number): boolean => {
+  if (!status) return false;
+  if (text.trim() === String(status)) return true;
+  return new RegExp(`(?:\\bhttp\\s*|\\(|\\[|^|\\s)${status}(?:\\b|\\)|\\]|\\s|$)`, 'i').test(text);
 };
 
 export function apiCallErrorMessage(
   response: Record<string, unknown>,
   fallback = translate(getCurrentLocale(), 'management.error.upstream'),
 ): string {
-  const status = Number(response.status_code ?? response.statusCode ?? 0);
-  const message = messageFromPayload(response.body ?? response.bodyText);
-  if (message) return message;
+  const locale = getCurrentLocale();
+  const status = httpStatusFromResponse(response);
+  const detail = detailFromPayload(response.body ?? response.bodyText);
+  const message = status > 0 && detail.message.trim() === String(status) ? '' : detail.message;
+  const code = detail.code.trim();
+  const showCode = Boolean(
+    code
+    && code !== String(status)
+    && code.toLowerCase() !== message.toLowerCase()
+    && !message.toLowerCase().includes(code.toLowerCase()),
+  );
+  const text = message ? (showCode ? `${message} (${code})` : message) : code;
+  const httpError = status > 0 && (status < 200 || status >= 300);
+  if (httpError && text && !mentionsHttpStatus(text, status)) {
+    return translate(locale, 'management.error.upstreamHttpDetail', { status, message: text });
+  }
+  if (text) return text;
   return status > 0
-    ? translate(getCurrentLocale(), 'management.error.upstreamHttp', { status })
+    ? translate(locale, 'management.error.upstreamHttp', { status })
     : fallback;
 }

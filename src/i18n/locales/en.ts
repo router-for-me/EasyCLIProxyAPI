@@ -1824,6 +1824,7 @@ export const en: Record<MessageKey, string> = {
   'management.notConfigured': 'Not configured',
   'management.error.upstream': 'Upstream request failed',
   'management.error.upstreamHttp': 'Upstream returned HTTP {status}',
+  'management.error.upstreamHttpDetail': 'HTTP {status}: {message}',
   'model.error.invalidBaseUrl': 'Base URL is invalid. Enter a URL such as https://api.example.com',
   'model.error.unsupportedBaseUrl': 'Base URL must use http:// or https://',
   'model.error.baseUrlRequired': 'Enter a Base URL first',

@@ -1824,6 +1824,7 @@ export const jaOverrides = {
   'management.notConfigured': '未設定',
   'management.error.upstream': '上流リクエストに失敗しました',
   'management.error.upstreamHttp': '上流が HTTP {status} を返しました',
+  'management.error.upstreamHttpDetail': 'HTTP {status}: {message}',
   'model.error.invalidBaseUrl': 'Base URL が無効です。https://api.example.com のような URL を入力してください',
   'model.error.unsupportedBaseUrl': 'Base URL は http:// または https:// のみ使用できます',
   'model.error.baseUrlRequired': '先に Base URL を入力してください',

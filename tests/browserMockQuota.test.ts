@@ -39,7 +39,7 @@ test('edge accounts expose exhausted, unknown, disabled and upstream-error state
   expect((await quota('antigravity-empty-quota.json')).status).toBe('error');
   expect((await quota('xai-paid-api.json')).rows[0].remainingPercent).toBeNull();
   expect((await quota('codex-disabled.json')).status).toBe('error');
-  expect(await quota('claude-expired.json')).toMatchObject({ status: 'error', error: 'Mock OAuth token expired' });
+  expect(await quota('claude-expired.json')).toMatchObject({ status: 'error', error: 'HTTP 401: Mock OAuth token expired' });
 });
 
 test('Codex and Claude resets consume credits and refresh only that account', async () => {

@@ -122,15 +122,90 @@
   padding: 0 20px 0 0;
 }
 
-/* The default event view is intentionally compact; secondary diagnostics remain available via tooltips and Columns. */
+/* Request log reads as separate rounded cards, matching the reference layout. */
+.usage-records-page .usage-request-log {
+  --usage-log-canvas: transparent;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.usage-records-page .usage-request-log .usage-table-wrap,
+.usage-records-page .usage-request-log .usage-table-top-scrollbar {
+  background: transparent;
+}
+
+.usage-records-page .usage-request-log .usage-events-table {
+  border-collapse: separate;
+  border-spacing: 0 10px;
+  margin-top: -10px;
+}
+
 .usage-records-page .usage-request-log .usage-events-table th,
 .usage-records-page .usage-request-log .usage-events-table th .usage-th-content {
-  height: 38px;
+  height: 44px;
+}
+
+.usage-records-page .usage-request-log .usage-events-table th {
+  position: sticky;
+  top: 0;
+  border: 0;
+  background: #fff;
+  color: #8b97a8;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .01em;
+  box-shadow: none;
+}
+
+.usage-records-page .usage-request-log .usage-events-table th .usage-th-content {
+  padding: 0 16px;
+}
+
+.usage-records-page .usage-request-log .usage-events-table thead th:first-child {
+  border-radius: 14px 0 0 14px;
+}
+
+.usage-records-page .usage-request-log .usage-events-table thead th:last-child {
+  border-radius: 0 14px 14px 0;
 }
 
 .usage-records-page .usage-request-log .usage-events-table td {
-  height: 60px;
-  padding: 7px 9px;
+  height: 78px;
+  padding: 14px 16px;
+  border: 0;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%);
+}
+
+.usage-records-page .usage-request-log .usage-events-table tbody td:first-child {
+  border-radius: 16px 0 0 16px;
+}
+
+.usage-records-page .usage-request-log .usage-events-table tbody td:last-child {
+  border-radius: 0 16px 16px 0;
+}
+
+.usage-records-page .usage-request-log .usage-events-table tbody tr:hover td {
+  background: #fff !important;
+  box-shadow: 0 8px 22px rgb(16 24 40 / 7%);
+}
+
+.usage-records-page .usage-request-log .usage-th-total,
+.usage-records-page .usage-request-log .usage-td-total {
+  border-left: 0;
+}
+
+.usage-records-page .usage-request-log .usage-events-footer {
+  min-height: 48px;
+  margin-top: 2px;
+  padding: 8px 4px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .usage-records-page .usage-request-log .usage-events-table td strong {
@@ -151,7 +226,4 @@
   display: none;
 }
 
-.usage-records-page .usage-request-log .usage-events-table tbody tr:nth-child(even) td {
-  background: color-mix(in srgb, var(--usage-log-surface) 97%, var(--ui-accent));
-}
 

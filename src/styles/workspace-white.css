@@ -129,9 +129,7 @@
 :root:not([data-theme='dark']) .workspace :is(
   .usage-records-page,
   .usage-tab-panel,
-  .usage-filter-panel,
-  .usage-request-log,
-  .usage-events-footer
+  .usage-filter-panel
 ) {
   background: #fff;
 }
@@ -160,7 +158,7 @@
   .usage-request-log .usage-events-table tbody tr:nth-child(even) td,
 :root:not([data-theme='dark']) .workspace .usage-records-page
   .usage-request-log .usage-events-table tbody tr:hover td {
-  background: #fff !important;
+  background: #fff;
 }
 
 :root:not([data-theme='dark']) .workspace .usage-records-page

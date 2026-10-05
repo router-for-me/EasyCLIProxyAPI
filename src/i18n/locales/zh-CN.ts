@@ -1823,6 +1823,7 @@ export const zhCN = {
   'management.notConfigured': '未配置',
   'management.error.upstream': '上游请求失败',
   'management.error.upstreamHttp': '上游返回 HTTP {status}',
+  'management.error.upstreamHttpDetail': 'HTTP {status}：{message}',
   'model.error.invalidBaseUrl': 'Base URL 不是有效地址，请输入类似 https://api.example.com 的 URL',
   'model.error.unsupportedBaseUrl': 'Base URL 只支持 http:// 或 https:// 地址',
   'model.error.baseUrlRequired': '请先输入 Base URL',

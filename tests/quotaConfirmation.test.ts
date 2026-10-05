@@ -140,7 +140,7 @@ describe('quota action confirmation with fully mocked IPC', () => {
     consumeError = true;
     expect(await resetCodexQuotaWithConfirmation(file, async () => true)).toBe('error');
     expect(getQuotaCacheSnapshot()[key]).toMatchObject({
-      rows: previous.rows, actionResult: { action: 'reset', status: 'error', error: 'reset denied' },
+      rows: previous.rows, actionResult: { action: 'reset', status: 'error', error: 'HTTP 409: reset denied' },
     });
     expect(canResetCodexQuota(file, getQuotaCacheSnapshot()[key])).toBe(true);
     expect(await resetCodexQuotaWithConfirmation(file, async () => false)).toBe('cancelled');
@@ -154,7 +154,7 @@ describe('quota action confirmation with fully mocked IPC', () => {
     refreshError = true;
     expect(await resetCodexQuotaWithConfirmation(file, async () => true)).toBe('refresh-error');
     expect(getQuotaCacheSnapshot()[key]).toMatchObject({
-      rows: previous.rows, actionResult: { action: 'reset', status: 'refresh-error', error: 'usage unavailable' },
+      rows: previous.rows, actionResult: { action: 'reset', status: 'refresh-error', error: 'HTTP 503: usage unavailable' },
     });
     expect(canResetCodexQuota(file, getQuotaCacheSnapshot()[key])).toBe(true);
     expect(await resetCodexQuotaWithConfirmation(file, async () => false)).toBe('cancelled');
