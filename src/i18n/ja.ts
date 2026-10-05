@@ -816,6 +816,8 @@ export const jaOverrides = {
   'usage.column.result': '結果',
   'usage.column.latency': '合計所要時間',
   'usage.column.ttft': '初回トークン遅延',
+  'usage.latency.ttft': '初字',
+  'usage.latency.elapsed': '所要',
   'usage.column.input': '入力',
   'usage.column.output': '出力',
   'usage.column.reasoning': '推論',

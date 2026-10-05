@@ -12,6 +12,14 @@ import { usageModelDetails } from '../services/usageModel';
 
 const compactNumber = (value: number) => formatUsageNumber(value, getCurrentLocale());
 const compactDuration = (value: number) => formatDuration(value, getCurrentLocale());
+
+const durationTone = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(value) || value < 0) return undefined;
+  if (value >= 30_000) return 'tone-bad';
+  if (value >= 15_000) return 'tone-warn';
+  return 'tone-good';
+};
+
 const formatTime = (value: string) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(getCurrentLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date);
@@ -91,7 +99,7 @@ const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'result', labelKey: 'usage.column.result', defaultWidth: 78, minWidth: 68, align: 'left' },
   { key: 'total', labelKey: 'usage.column.tokens', defaultWidth: 112, minWidth: 100, align: 'left' },
   { key: 'cache', labelKey: 'usage.column.cache', defaultWidth: 94, minWidth: 84, align: 'left' },
-  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 104, minWidth: 92, align: 'left' },
+  { key: 'latency', labelKey: 'usage.column.latency', defaultWidth: 112, minWidth: 100, align: 'left' },
   { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 82, minWidth: 72, align: 'left' },
   { key: 'cost', labelKey: 'usage.column.cost', defaultWidth: 96, minWidth: 86, align: 'left' },
   { key: 'key', labelKey: 'usage.column.key', defaultWidth: 112, minWidth: 96, align: 'left' },
@@ -453,13 +461,26 @@ function UsageEventCell({
       );
     case 'result':
       return <UsageResultCell record={record} />;
-    case 'latency':
+    case 'latency': {
+      const latencyTone = durationTone(record.latency_ms);
+      const ttftTone = durationTone(record.ttft_ms);
+      const latencyTitle = [
+        `${t('usage.latency.ttft')}: ${record.ttft_ms == null ? '—' : `${record.ttft_ms} ms`}`,
+        `${t('usage.latency.elapsed')}: ${record.latency_ms} ms`,
+      ].join('\n');
       return (
-        <td className="usage-td-latency usage-stacked-cell align-left" title={`${record.latency_ms} ms`}>
-          <strong>{compactDuration(record.latency_ms)}</strong>
-          <small title={record.ttft_ms == null ? undefined : `${record.ttft_ms} ms`}>{t('usage.column.ttft')} {record.ttft_ms == null ? '—' : compactDuration(record.ttft_ms)}</small>
+        <td className="usage-td-latency align-left" title={latencyTitle}>
+          <span className="usage-latency-line">
+            <span className="usage-latency-label">{t('usage.latency.ttft')}</span>
+            <span className={ttftTone ? `usage-latency-value ${ttftTone}` : 'usage-latency-value'}>{record.ttft_ms == null ? '—' : compactDuration(record.ttft_ms)}</span>
+          </span>
+          <span className="usage-latency-line">
+            <span className="usage-latency-label">{t('usage.latency.elapsed')}</span>
+            <span className={`usage-latency-value ${latencyTone}`}>{compactDuration(record.latency_ms)}</span>
+          </span>
         </td>
       );
+    }
     case 'speed': {
       const value = formatGenerationSpeed({
         outputTokens: record.tokens.output_tokens,

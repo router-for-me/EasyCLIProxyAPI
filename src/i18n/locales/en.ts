@@ -804,6 +804,8 @@ export const en: Record<MessageKey, string> = {
   'usage.column.result': 'Result',
   'usage.column.latency': 'Total Duration',
   'usage.column.ttft': 'First Token Latency',
+  'usage.latency.ttft': 'TTFT',
+  'usage.latency.elapsed': 'Elapsed',
   'usage.column.input': 'Input',
   'usage.column.output': 'Output',
   'usage.column.reasoning': 'Reasoning',

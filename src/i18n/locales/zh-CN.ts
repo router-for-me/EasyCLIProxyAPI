@@ -803,6 +803,8 @@ export const zhCN = {
   'usage.column.result': '结果',
   'usage.column.latency': '总耗时',
   'usage.column.ttft': '首字延迟',
+  'usage.latency.ttft': '首字',
+  'usage.latency.elapsed': '耗时',
   'usage.column.input': '输入',
   'usage.column.output': '输出',
   'usage.column.reasoning': '思考',

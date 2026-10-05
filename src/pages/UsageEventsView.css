@@ -12,6 +12,9 @@
   --usage-log-cache-read: #0f766e;
   --usage-log-cache-write: #b45309;
   --usage-log-response-model: #9a5808;
+  --usage-log-duration-good: #16a34a;
+  --usage-log-duration-warn: #d97706;
+  --usage-log-duration-bad: #dc2626;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -193,6 +196,48 @@
 .usage-request-log .usage-td-cost strong {
   font-variant-numeric: tabular-nums;
 }
+
+
+.usage-request-log .usage-td-latency {
+  font-weight: 600;
+}
+
+.usage-request-log .usage-latency-line {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  column-gap: 6px;
+  align-items: baseline;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.usage-request-log .usage-latency-line + .usage-latency-line {
+  margin-top: 2px;
+}
+
+.usage-request-log .usage-latency-label {
+  color: var(--usage-log-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+}
+
+.usage-request-log .usage-latency-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.usage-request-log .usage-latency-value.tone-good {
+  color: var(--usage-log-duration-good);
+}
+
+.usage-request-log .usage-latency-value.tone-warn {
+  color: var(--usage-log-duration-warn);
+}
+
+.usage-request-log .usage-latency-value.tone-bad {
+  color: var(--usage-log-duration-bad);
+}
+
 
 .usage-request-log .usage-events-table .usage-td-key > strong {
   font-family: var(--font-family-mono);
@@ -381,6 +426,9 @@
   --usage-log-cache-read: #5eead4;
   --usage-log-cache-write: #fbbf24;
   --usage-log-response-model: #f0bc73;
+  --usage-log-duration-good: #4ade80;
+  --usage-log-duration-warn: #fbbf24;
+  --usage-log-duration-bad: #f87171;
   border-color: var(--usage-log-line);
   background: var(--usage-log-surface);
   box-shadow: none;
