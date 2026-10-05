@@ -1,5 +1,6 @@
 import { applyTemplateChanges, readTemplatePath, sameTemplateValue, type TemplateConfigChange } from '../services/templateConfig';
 import { createPluginMock } from './pluginMock';
+import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 
 export type BrowserMockScenario = 'running' | 'stopped' | 'empty' | 'error';
 export type BrowserMockMode = BrowserMockScenario | 'off';
@@ -47,7 +48,7 @@ const SHARED_PROVIDER_FIELDS = new Set([
 
 const clone = <Value,>(value: Value): Value => structuredClone(value);
 const sleep = (delayMs: number) => delayMs > 0
-  ? new Promise<void>((resolve) => window.setTimeout(resolve, delayMs))
+  ? new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs))
   : Promise.resolve();
 
 const asObject = (value: unknown): JsonObject => (
@@ -169,10 +170,10 @@ function createUsageEvents() {
       source: index % 2 === 0 ? 'codex' : 'claude-code',
       source_display: index % 2 === 0 ? 'Codex' : 'Claude Code',
       failed,
-      canceled: false,
+      canceled: index === 9,
       failure_status: failed ? 429 : 0,
       failure_body: failed ? 'Mock rate limit exceeded' : '',
-      provider: index % 2 === 0 ? 'OpenAI OAuth' : 'Claude OAuth',
+      provider: index % 2 === 0 ? 'openai-oauth' : 'claude-oauth',
       model: models[index % models.length],
       alias: '',
       reasoning_effort: index % 2 === 0 ? 'high' : 'medium',
@@ -303,6 +304,7 @@ function createState(scenario: BrowserMockScenario) {
       modtime: Date.now() - 45 * 60_000,
       excluded_models: ['claude-legacy-*'],
     },
+    ...createQuotaMockFiles(),
     {
       name: 'gemini-runtime',
       provider: 'gemini',
@@ -498,9 +500,10 @@ function createState(scenario: BrowserMockScenario) {
     versionSource: { source: 'github', gitcodeAvailable: true, customMirrors: ['https://gh-proxy.example.com/'] },
     // Native groups are authoritative; legacy routes only adapt their own view.
     providerConfig: Object.fromEntries(PROVIDER_SECTIONS.map((section) => [
-      section, groupProviderRecords(section, legacyProviderConfig[section]),
+      section, scenario === 'empty' ? [] : groupProviderRecords(section, legacyProviderConfig[section]),
     ])) as Record<ProviderSection, JsonObject[]>,
-    authFiles,
+    authFiles: scenario === 'empty' ? [] : authFiles,
+    quotaApiCall: createQuotaMock(),
     oauthExcludedModels: { codex: [], claude: ['claude-legacy-*'], gemini: [] } as Record<string, string[]>,
     oauthSessions: new Map<string, string>(),
     analysis,
@@ -631,7 +634,9 @@ function mockModelDefinitions() {
   };
 }
 
-function mockApiCall(body: JsonObject) {
+function mockApiCall(state: BrowserMockState, body: JsonObject) {
+  const quota = state.quotaApiCall(body);
+  if (quota) return quota;
   const url = readString(body.url).toLowerCase();
   if (url.includes('/models')) {
     return {
@@ -645,47 +650,8 @@ function mockApiCall(body: JsonObject) {
       },
     };
   }
-  if (url.includes('/api/oauth/profile')) {
-    return { status_code: 200, body: { account: { has_claude_pro: true, has_claude_max: false } } };
-  }
-  if (url.includes('wham/usage')) {
-    return {
-      status_code: 200,
-      body: {
-        rate_limit: {
-          primary_window: { used_percent: 28, reset_after_seconds: 7_200, limit_window_seconds: 18_000 },
-          secondary_window: { used_percent: 42, reset_after_seconds: 345_600, limit_window_seconds: 604_800 },
-        },
-      },
-    };
-  }
-  if (url.includes('anthropic.com/api/oauth/usage')) {
-    return {
-      status_code: 200,
-      body: {
-        five_hour: { utilization: 24, resets_at: isoHoursAgo(-3) },
-        seven_day: { utilization: 41, resets_at: isoHoursAgo(-72) },
-      },
-    };
-  }
-  if (url.includes('retrieveuserquotasummary')) {
-    return {
-      status_code: 200,
-      body: {
-        groups: [{ display_name: 'Gemini Pro', buckets: [{ window: '5h', remaining_fraction: 0.74, reset_time: isoHoursAgo(-3) }] }],
-      },
-    };
-  }
-  if (url.includes('billing')) {
-    return {
-      status_code: 200,
-      body: {
-        periodType: 'weekly',
-        usagePercent: 36,
-        periodEnd: isoHoursAgo(-48),
-        productUsage: [{ product: 'Grok Code', usagePercent: 31 }],
-      },
-    };
+  if (!/\/(chat\/completions|responses|messages)(\?|$)/.test(url)) {
+    throw new Error(`Browser Mock upstream request not implemented: ${readString(body.method)} ${readString(body.url)}`);
   }
   return {
     status_code: 200,
@@ -717,6 +683,18 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
       ])),
     };
   }
+  if (method === 'GET' && path === '/config/api-keys') {
+    return Object.fromEntries(PROVIDER_SECTIONS.map(section => [V8_PROVIDER_BY_SECTION[section], clone(state.providerConfig[section])]));
+  }
+  const legacySection = PROVIDER_SECTIONS.find(section => path === `/${section}`);
+  if (method === 'GET' && legacySection) {
+    return state.providerConfig[legacySection].flatMap(group => {
+      const { keys, ...shared } = group;
+      return legacySection === 'openai-compatibility'
+        ? [{ ...clone(shared), 'api-key-entries': clone(keys) }]
+        : asArray(keys).map(key => ({ ...clone(shared), ...clone(asObject(key)) }));
+    });
+  }
   if (v8Provider) {
     const section = v8Provider[0] as ProviderSection;
     if (method === 'GET') return clone(state.providerConfig[section]);
@@ -730,7 +708,8 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   }
   if (method === 'GET' && path === '/credentials/download') {
     const file = findAuthFile(state, readString(query.name));
-    return clone(file ?? { name: query.name, excluded_models: [] });
+    if (!file) throw new Error(`Browser Mock credential not found: ${readString(query.name)}`);
+    return clone(file);
   }
   if (method === 'GET' && path === '/credentials/models') return mockModelDefinitions();
   if (method === 'GET' && path.startsWith('/routing/model-definitions/')) return mockModelDefinitions();
@@ -744,17 +723,30 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   if (method === 'PATCH' && (path === '/credentials/fields' || path === '/credentials/status')) {
     const patch = asObject(body);
     const file = findAuthFile(state, readString(patch.name));
-    if (file) Object.assign(file, patch);
-    return clone(file ?? null);
+    if (!file) throw new Error(`Browser Mock credential not found: ${readString(patch.name)}`);
+    Object.assign(file, clone(patch));
+    return { status: 'ok' };
+  }
+  if (method === 'POST' && path === '/routing/cooldown/reset') {
+    const authIndex = readString(asObject(body).auth_index);
+    const file = state.authFiles.find(file => file.auth_index === authIndex);
+    if (!file) throw new Error(`Browser Mock credential not found: ${authIndex}`);
+    const models = asArray(file.cooldowns).map(item => readString(asObject(item).model_key)).filter(Boolean);
+    file.cooldowns = [];
+    return { status: 'ok', auth_index: authIndex, models };
   }
   if (method === 'DELETE' && path === '/credentials') {
     const index = state.authFiles.findIndex((file) => file.name === query.name);
-    if (index >= 0) state.authFiles.splice(index, 1);
+    if (index < 0) throw new Error(`Browser Mock credential not found: ${readString(query.name)}`);
+    state.authFiles.splice(index, 1);
     return null;
   }
-  if (method === 'POST' && path === '/requests/api-call') return mockApiCall(asObject(body));
-  if (method === 'DELETE' && path === '/oauth/session') return null;
-  return {};
+  if (method === 'POST' && path === '/requests/api-call') return mockApiCall(state, asObject(body));
+  if (method === 'DELETE' && path === '/oauth/session') {
+    state.oauthSessions.delete(readString(query.state));
+    return null;
+  }
+  throw new Error(`Browser Mock management request not implemented: ${method} ${path}`);
 }
 
 const CORE_CONFIG_PATHS: Record<string, string> = {
@@ -810,6 +802,17 @@ export function createBrowserMockRuntime(
   delayMs = 0,
 ): BrowserMockRuntime {
   const state = createState(scenario);
+  if (scenario === 'empty') {
+    state.usageEvents = [];
+    state.usagePrices = [];
+    Object.assign(state.usageOverview, Object.fromEntries(Object.entries(state.usageOverview)
+      .filter(([, value]) => typeof value === 'number').map(([key]) => [key, 0])));
+    state.usageOverview.timeline = [];
+    state.analysis = { models: [], providers: [], sources: [], apiKeys: [] };
+    state.usageStorage.databaseSizeBytes = 0;
+    state.usageStorage.totalRecords = 0;
+    state.coreConfig.apiKeys = [];
+  }
   const pluginMock = createPluginMock(state);
   const emit = (event: string, payload: unknown) => emitEvent(event, clone(payload));
 
@@ -1018,7 +1021,13 @@ export function createBrowserMockRuntime(
       case 'management_request': return clone(managementResponse(state, payload));
       case 'upload_auth_file': {
         const name = readString(payload.name) || 'uploaded-mock.json';
-        state.authFiles.push({ name, provider: 'codex', type: 'codex', source: 'file', auth_index: `mock-upload-${state.authFiles.length + 1}`, disabled: false, priority: 0 });
+        const parsed: unknown = JSON.parse(new TextDecoder().decode(Uint8Array.from(asArray(payload.data) as number[])));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Browser Mock: credential must be a JSON object');
+        const content = asObject(parsed);
+        const existing = findAuthFile(state, name);
+        const file = { ...clone(content), name, provider: readString(content.provider || content.type) || 'codex', source: 'file',
+          auth_index: existing?.auth_index ?? `mock-upload-${crypto.randomUUID()}`, modtime: Date.now() };
+        if (existing) state.authFiles[state.authFiles.indexOf(existing)] = file; else state.authFiles.push(file);
         return { ok: true, name };
       }
       case 'resolve_api_access_remarks': {
@@ -1049,6 +1058,7 @@ export function createBrowserMockRuntime(
       case 'get_oauth_status': {
         const session = readString(payload.state);
         const provider = state.oauthSessions.get(session);
+        if (!provider) return { status: 'error', error: 'Unknown or canceled mock OAuth session' };
         if (provider && !state.authFiles.some((file) => file.name === `${provider}-mock-login.json`)) {
           state.authFiles.push({
             name: `${provider}-mock-login.json`, provider, type: provider, source: 'file',
@@ -1071,13 +1081,24 @@ export function createBrowserMockRuntime(
         const query = asObject(payload.query);
         const page = Math.max(1, readNumber(query.page, 1));
         const pageSize = Math.max(1, readNumber(query.page_size, 50));
+        const events = state.usageEvents.filter(event => {
+          for (const key of ['model', 'provider', 'source', 'api_key_hash'] as const) {
+            if (query[key] && event[key] !== query[key]) return false;
+          }
+          for (const key of ['failed', 'canceled'] as const) {
+            if (typeof query[key] === 'boolean' && event[key] !== query[key]) return false;
+          }
+          const timestamp = Date.parse(event.timestamp);
+          return (!query.start || timestamp >= Date.parse(String(query.start)))
+            && (!query.end || timestamp <= Date.parse(String(query.end)));
+        });
         const start = (page - 1) * pageSize;
         return {
-          items: clone(state.usageEvents.slice(start, start + pageSize)),
-          total: state.usageEvents.length,
+          items: clone(events.slice(start, start + pageSize)),
+          total: events.length,
           page,
           pageSize,
-          totalPages: Math.max(1, Math.ceil(state.usageEvents.length / pageSize)),
+          totalPages: Math.max(1, Math.ceil(events.length / pageSize)),
         };
       }
       case 'get_usage_pricing': {
@@ -1092,7 +1113,7 @@ export function createBrowserMockRuntime(
           estimatedCost: index === 0 ? 1.92 : 1.71,
           price: clone(price),
         }));
-        return { rows, totalCost: 3.63, totalRequests: 278, pricedRequests: 278, savedPrices: state.usagePrices.length };
+        return { rows, totalCost: rows.length ? 3.63 : 0, totalRequests: rows.length ? 278 : 0, pricedRequests: rows.length ? 278 : 0, savedPrices: state.usagePrices.length };
       }
       case 'get_usage_storage_settings': return clone(state.usageStorage);
       case 'save_usage_storage_settings': {

@@ -13,6 +13,7 @@
     "test:ui:api-access-layout": "node tests/api-access-layout-ui.cjs",
     "test:ui:responsive": "node tests/responsive-layout-ui.cjs",
     "test:ui:settings": "node tests/config-settings-ui.cjs",
+    "test:ui:browser-mock": "node tests/browser-mock-ui.cjs",
     "screenshots": "node scripts/capture-readme-screenshots.cjs",
     "tauri": "tauri"
   },

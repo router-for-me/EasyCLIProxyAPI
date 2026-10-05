@@ -19,6 +19,52 @@ describe('browser mock options', () => {
 });
 
 describe('browser mock runtime', () => {
+  test('empty scenario exposes empty credentials, providers and usage after installing the core', async () => {
+    const runtime = createBrowserMockRuntime('empty');
+    await runtime.invoke('install_bundled_core');
+    await runtime.invoke('start_core_process');
+    expect(await runtime.invoke('management_request', { request: { method: 'GET', path: '/credentials' } })).toMatchObject({ files: [] });
+    const providers = await runtime.invoke('management_request', { request: { method: 'GET', path: '/config/api-keys' } }) as Record<string, unknown[]>;
+    expect(Object.values(providers).every(groups => groups.length === 0)).toBe(true);
+    expect(await runtime.invoke('get_usage_overview')).toMatchObject({ totalRequests: 0, totalTokens: 0, timeline: [] });
+    expect(await runtime.invoke('get_usage_events')).toMatchObject({ items: [], total: 0 });
+    expect(await runtime.invoke('get_usage_analysis')).toEqual({ models: [], providers: [], sources: [], apiKeys: [] });
+    expect(await runtime.invoke('get_usage_pricing')).toMatchObject({ rows: [], totalCost: 0 });
+  });
+
+  test('filters usage before pagination, including boolean and date filters', async () => {
+    const runtime = createBrowserMockRuntime('running');
+    const first = await runtime.invoke('get_usage_events', { query: { failed: true, page_size: 1 } }) as { items: Array<Record<string, unknown>>; total: number; totalPages: number };
+    expect(first).toMatchObject({ total: 2, totalPages: 2 });
+    expect(first.items).toHaveLength(1);
+    expect(first.items[0].failed).toBe(true);
+    const next = await runtime.invoke('get_usage_events', { query: { failed: true, page_size: 1, page: 2 } }) as typeof first;
+    expect(next.items[0].id).not.toBe(first.items[0].id);
+    const exact = await runtime.invoke('get_usage_events', { query: {
+      start: first.items[0].timestamp, end: first.items[0].timestamp,
+      provider: first.items[0].provider, model: first.items[0].model, source: first.items[0].source,
+      api_key_hash: first.items[0].api_key_hash, failed: true, canceled: false,
+    } }) as typeof first;
+    expect(exact.items).toEqual(first.items);
+    expect(await runtime.invoke('get_usage_events', { query: { model: 'absent-model' } })).toMatchObject({ items: [], total: 0 });
+    expect(await runtime.invoke('get_usage_events', { query: { canceled: true } })).toMatchObject({ total: 1 });
+  });
+
+  test('unknown routes fail explicitly and canceled OAuth sessions cannot create credentials', async () => {
+    const runtime = createBrowserMockRuntime('running');
+    await expect(runtime.invoke('management_request', { request: { method: 'GET', path: '/missing-route' } })).rejects.toThrow('not implemented');
+    await expect(runtime.invoke('management_request', { request: { method: 'POST', path: '/requests/api-call', body: { url: 'https://example.test/missing', method: 'GET' } } })).rejects.toThrow('not implemented');
+    const session = await runtime.invoke('start_oauth_login', { provider: 'kimi' }) as { state: string };
+    await runtime.invoke('management_request', { request: { method: 'DELETE', path: '/oauth/session', query: { state: session.state } } });
+    expect(await runtime.invoke('get_oauth_status', { state: session.state })).toMatchObject({ status: 'error' });
+    const credentials = await runtime.invoke('management_request', { request: { method: 'GET', path: '/credentials' } }) as { files: Array<{ name: string }> };
+    expect(credentials.files.some(file => file.name === 'kimi-mock-login.json')).toBe(false);
+  });
+
+  test('latency simulation also works outside a browser', async () => {
+    expect(await createBrowserMockRuntime('running', undefined, 1).invoke('get_core_status')).toMatchObject({ ready: true });
+  });
+
   for (const scenario of ['running', 'empty'] as const) {
     test(`installs the bundled version independently of the latest release (${scenario})`, async () => {
       const runtime = createBrowserMockRuntime(scenario);
