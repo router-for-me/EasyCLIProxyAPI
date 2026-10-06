@@ -791,8 +791,9 @@ export function EventsView({
       {events.items.length > 0 ? <TableTopScrollbar tableWrapRef={tableWrapRef} /> : null}
 
       <div className="usage-events-footer">
-        <span className="usage-pagination-summary">{t('usage.events.rangeSummary', { start: startRecordNum, end: endRecordNum, total: compactNumber(events.total) })}</span>
-        <div className="usage-events-actions">
+        <div className="usage-events-footer-left">
+          <span className="usage-pagination-summary">{t('usage.events.rangeSummary', { start: startRecordNum, end: endRecordNum, total: compactNumber(events.total) })}</span>
+          <div className="usage-events-actions">
           <button
             type="button"
             className="usage-col-settings-btn"
@@ -820,6 +821,7 @@ export function EventsView({
           <button type="button" className="usage-events-export-btn" disabled={loading || exporting || events.total === 0} onClick={() => void exportFilteredEvents()} title={t('usage.events.exportDescription')}>
             <Download size={14} aria-hidden="true" /><span>{exporting ? t('usage.events.exporting') : t('usage.events.exportPage')}</span>
           </button>
+          </div>
         </div>
         <div className="usage-pagination-controls">
           <select className="usage-page-size-select" value={pageSize} disabled={loading} onChange={(event) => onPageSizeChange(Number(event.currentTarget.value))} aria-label={t('usage.events.pageSize', { size: pageSize })}>
