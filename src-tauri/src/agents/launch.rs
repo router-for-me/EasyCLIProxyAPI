@@ -161,6 +161,7 @@ pub(crate) fn launch_agent(
             &launch_directory,
             &[],
             &[],
+            &[],
             &terminal,
         );
     }
@@ -188,7 +189,7 @@ pub(crate) fn launch_agent(
             }
             let executable = env::current_exe().map_err(|_| "Unable to locate CPA launch adapter")?;
             let directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
-            launch_cli_agent(&executable, client.name(), &directory, &antigravity_cli_helper_arguments(&home), &[], &terminal)
+            launch_cli_agent(&executable, client.name(), &directory, &antigravity_cli_helper_arguments(&home), &[], &[], &terminal)
         }
         (AgentClient::WorkBuddy, "app") => {
             let executable = find_workbuddy_desktop_executable(&home)
@@ -233,17 +234,28 @@ pub(crate) fn launch_agent(
                 &[]
             };
             let arguments = agent_cli_launch_arguments(client, deepseek_harness_options.as_ref())?;
+            let environment_to_set = omp_launch_environment(client, effective_agent_api_key(&config));
             launch_cli_agent(
                 &executable,
                 client.name(),
                 &launch_directory,
                 &arguments,
                 environment_to_remove,
+                &environment_to_set,
                 &terminal,
             )
         }
         (_, "app") => Err(format!("{} does not support desktop App launch mode", client.name())),
         _ => Err("Unsupported agent launch mode".to_string()),
+    }
+}
+
+
+fn omp_launch_environment(client: AgentClient, api_key: &str) -> Vec<(&str, &str)> {
+    if client == AgentClient::Omp {
+        vec![(OMP_AGENT_API_KEY_ENV, api_key)]
+    } else {
+        Vec::new()
     }
 }
 
@@ -1186,11 +1198,17 @@ fn launch_cli_agent(
     working_directory: &Path,
     arguments: &[String],
     environment_to_remove: &[&str],
+    environment_to_set: &[(&str, &str)],
     terminal: &str,
 ) -> Result<(), String> {
     let removals = environment_to_remove
         .iter()
         .map(|key| format!("-u {}", shell_single_quote(key)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let assignments = environment_to_set
+        .iter()
+        .map(|(key, value)| format!("{}={}", shell_single_quote(key), shell_single_quote(value)))
         .collect::<Vec<_>>()
         .join(" ");
     let invocation = std::iter::once(shell_single_quote(&path_to_string(executable)))
@@ -1202,9 +1220,10 @@ fn launch_cli_agent(
         .collect::<Vec<_>>()
         .join(" ");
     let command_line = format!(
-        "cd {} && exec env {} {}",
+        "cd {} && exec env {} {} {}",
         shell_single_quote(&path_to_string(working_directory)),
         removals,
+        assignments,
         invocation,
     );
     let script = if terminal == "iterm2" {
@@ -1245,6 +1264,7 @@ fn launch_cli_agent(
     working_directory: &Path,
     command_arguments: &[String],
     environment_to_remove: &[&str],
+    environment_to_set: &[(&str, &str)],
     terminal: &str,
 ) -> Result<(), String> {
     let definitions = linux_terminal_definitions();
@@ -1268,6 +1288,9 @@ fn launch_cli_agent(
             .stderr(Stdio::null());
         for key in environment_to_remove {
             command.env_remove(key);
+        }
+        for (key, value) in environment_to_set {
+            command.env(key, value);
         }
         match command.spawn() {
             Ok(_) => return Ok(()),
@@ -1347,6 +1370,7 @@ fn launch_cli_agent(
     working_directory: &Path,
     arguments: &[String],
     environment_to_remove: &[&str],
+    environment_to_set: &[(&str, &str)],
     terminal: &str,
 ) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
@@ -1413,6 +1437,9 @@ fn launch_cli_agent(
     for key in environment_to_remove {
         command.env_remove(key);
     }
+    for (key, value) in environment_to_set {
+        command.env(key, value);
+    }
     command
         .spawn()
         .map(|_| ())
@@ -1426,6 +1453,7 @@ fn launch_cli_agent(
     _working_directory: &Path,
     _arguments: &[String],
     _environment_to_remove: &[&str],
+    _environment_to_set: &[(&str, &str)],
     _terminal: &str,
 ) -> Result<(), String> {
     Err(format!("The current platform does not support launching {label}"))

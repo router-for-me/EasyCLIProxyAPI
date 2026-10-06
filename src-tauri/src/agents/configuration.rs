@@ -232,6 +232,23 @@ pub(crate) fn build_agent_updates_with_oauth(
                 after,
             }])
         }
+        AgentClient::Omp => {
+            if paths.len() != 2 {
+                return Err("Invalid number of Oh My Pi configuration paths".to_string());
+            }
+            let models_before = read_optional_text(&paths[0])?;
+            let settings_before = read_optional_text(&paths[1])?;
+            Ok(vec![
+                AgentFileUpdate {
+                    path: paths[0].clone(),
+                    after: build_omp_models_config(models_before.as_deref(), &openai_base, api_key)?,
+                },
+                AgentFileUpdate {
+                    path: paths[1].clone(),
+                    after: build_omp_settings_config(settings_before.as_deref(), model)?,
+                },
+            ])
+        }
     }
 }
 
@@ -1649,6 +1666,7 @@ pub(crate) fn prepare_agent_managed_removal(
         AgentClient::AntigravityCli => prepare_antigravity_removal(client, paths),
         AgentClient::KimiCode => prepare_kimi_code_managed_removal(paths),
         AgentClient::GrokBuild => prepare_grok_build_managed_removal(paths),
+        AgentClient::Omp => prepare_omp_managed_removal(paths),
     }
 }
 
@@ -2624,7 +2642,7 @@ pub(crate) fn agent_config_semantically_equal(
             json5::from_str::<serde_json::Value>(actual).ok()
                 == json5::from_str::<serde_json::Value>(expected).ok()
         }
-        AgentClient::Hermes => {
+        AgentClient::Hermes | AgentClient::Omp => {
             serde_norway::from_str::<serde_norway::Value>(actual).ok()
                 == serde_norway::from_str::<serde_norway::Value>(expected).ok()
         }
@@ -2703,6 +2721,17 @@ pub(crate) fn build_agent_session_restored_bytes_with_preference(
         AgentClient::AntigravityCli => restore_antigravity_config(client, path, current, original)?,
         AgentClient::KimiCode => build_restored_kimi_code_config(current, original)?,
         AgentClient::GrokBuild => build_restored_grok_build_config(current, original)?,
+        AgentClient::Omp => {
+            let index = paths
+                .iter()
+                .position(|candidate| candidate == path)
+                .ok_or_else(|| "Oh My Pi restoration path mismatch".to_string())?;
+            match index {
+                0 => build_restored_omp_models(current, original)?,
+                1 => build_restored_omp_settings(current, original)?,
+                _ => return Err("Invalid Oh My Pi restoration path index".to_string()),
+            }
+        }
     };
     if prefer_exact_original {
         if let (Some(restored), Some(original), Some(original_bytes)) =
@@ -3261,6 +3290,170 @@ pub(crate) fn ensure_toml_child_table<'a>(
 
 pub(crate) fn managed_model_alias(model: &str) -> String {
     format!("{MANAGED_AGENT_PROVIDER_ID}/{model}")
+}
+
+
+pub(crate) fn build_omp_models_config(
+    existing: Option<&str>,
+    base_url: &str,
+    api_key: &str,
+) -> Result<String, String> {
+    let _ = api_key;
+    render_agent_yaml_mapping_update(existing, "Oh My Pi models.yml", |root| {
+        let providers = root
+            .entry(yaml_key("providers"))
+            .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()));
+        let providers = providers
+            .as_mapping_mut()
+            .ok_or_else(|| "Oh My Pi providers must be a YAML mapping".to_string())?;
+        let mut provider = serde_norway::Mapping::new();
+        provider.insert(yaml_key("baseUrl"), serde_norway::Value::String(base_url.to_string()));
+        provider.insert(
+            yaml_key("apiKey"),
+            serde_norway::Value::String(OMP_AGENT_API_KEY_ENV.to_string()),
+        );
+        provider.insert(
+            yaml_key("api"),
+            serde_norway::Value::String(OMP_AGENT_API.to_string()),
+        );
+        let mut discovery = serde_norway::Mapping::new();
+        discovery.insert(
+            yaml_key("type"),
+            serde_norway::Value::String("openai-models-list".to_string()),
+        );
+        provider.insert(yaml_key("discovery"), serde_norway::Value::Mapping(discovery));
+        providers.insert(
+            yaml_key(OMP_AGENT_PROVIDER_ID),
+            serde_norway::Value::Mapping(provider),
+        );
+        Ok(())
+    })
+}
+
+pub(crate) fn build_omp_settings_config(
+    existing: Option<&str>,
+    model: &str,
+) -> Result<String, String> {
+    render_agent_yaml_mapping_update(existing, "Oh My Pi config.yml", |root| {
+        let roles = root
+            .entry(yaml_key("modelRoles"))
+            .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()));
+        let roles = roles
+            .as_mapping_mut()
+            .ok_or_else(|| "Oh My Pi modelRoles must be a YAML mapping".to_string())?;
+        roles.insert(
+            yaml_key("default"),
+            serde_norway::Value::String(format!("{OMP_AGENT_PROVIDER_ID}/{model}")),
+        );
+        Ok(())
+    })
+}
+
+pub(crate) fn prepare_omp_managed_removal(paths: &[PathBuf]) -> Result<Images, String> {
+    if paths.len() != 2 {
+        return Err("Invalid number of Oh My Pi configuration paths".to_string());
+    }
+    let mut updates = Vec::new();
+    if paths[0].is_file() {
+        let content = fs::read_to_string(&paths[0]).map_err(|error| {
+            format!("Failed to read Oh My Pi models.yml {}: {error}", path_to_string(&paths[0]))
+        })?;
+        let rendered = render_agent_yaml_mapping_update(Some(&content), "Oh My Pi models.yml", |root| {
+            let mut remove_providers = false;
+            if let Some(providers) = root
+                .get_mut(yaml_key("providers"))
+                .and_then(serde_norway::Value::as_mapping_mut)
+            {
+                providers.remove(yaml_key(OMP_AGENT_PROVIDER_ID));
+                remove_providers = providers.is_empty();
+            }
+            if remove_providers {
+                root.remove(yaml_key("providers"));
+            }
+            Ok(())
+        })?;
+        let root = parse_agent_yaml_mapping(Some(&rendered), "Oh My Pi models.yml")?;
+        updates.push((
+            paths[0].clone(),
+            (!root.is_empty()).then(|| rendered.into_bytes()),
+        ));
+    }
+    if paths[1].is_file() {
+        let content = fs::read_to_string(&paths[1]).map_err(|error| {
+            format!("Failed to read Oh My Pi config.yml {}: {error}", path_to_string(&paths[1]))
+        })?;
+        let rendered = render_agent_yaml_mapping_update(Some(&content), "Oh My Pi config.yml", |root| {
+            let mut remove_roles = false;
+            if let Some(roles) = root
+                .get_mut(yaml_key("modelRoles"))
+                .and_then(serde_norway::Value::as_mapping_mut)
+            {
+                if roles
+                    .get(yaml_key("default"))
+                    .and_then(serde_norway::Value::as_str)
+                    .is_some_and(|value| value.starts_with(&format!("{OMP_AGENT_PROVIDER_ID}/")))
+                {
+                    roles.remove(yaml_key("default"));
+                }
+                remove_roles = roles.is_empty();
+            }
+            if remove_roles {
+                root.remove(yaml_key("modelRoles"));
+            }
+            Ok(())
+        })?;
+        let root = parse_agent_yaml_mapping(Some(&rendered), "Oh My Pi config.yml")?;
+        updates.push((
+            paths[1].clone(),
+            (!root.is_empty()).then(|| rendered.into_bytes()),
+        ));
+    }
+    Ok(updates.into_iter().collect())
+}
+
+pub(crate) fn build_restored_omp_models(
+    current: &str,
+    original: Option<&str>,
+) -> Result<Option<String>, String> {
+    let original_root = parse_agent_yaml_mapping(original, "Original Oh My Pi models.yml")?;
+    let rendered = render_agent_yaml_mapping_update(Some(current), "Current Oh My Pi models.yml", |root| {
+        let original_provider = yaml_mapping_value(&original_root, "providers")
+            .and_then(serde_norway::Value::as_mapping)
+            .and_then(|providers| yaml_mapping_value(providers, OMP_AGENT_PROVIDER_ID))
+            .cloned();
+        let providers = root
+            .entry(yaml_key("providers"))
+            .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()));
+        let providers = providers
+            .as_mapping_mut()
+            .ok_or_else(|| "Oh My Pi providers must be a YAML mapping".to_string())?;
+        if let Some(provider) = original_provider {
+            providers.insert(yaml_key(OMP_AGENT_PROVIDER_ID), provider);
+        } else {
+            providers.remove(yaml_key(OMP_AGENT_PROVIDER_ID));
+        }
+        if providers.is_empty()
+            && yaml_mapping_value(&original_root, "providers").is_none()
+        {
+            root.remove(yaml_key("providers"));
+        }
+        Ok(())
+    })?;
+    let root = parse_agent_yaml_mapping(Some(&rendered), "Restored Oh My Pi models.yml")?;
+    Ok((!root.is_empty() || original.is_some()).then_some(rendered))
+}
+
+pub(crate) fn build_restored_omp_settings(
+    current: &str,
+    original: Option<&str>,
+) -> Result<Option<String>, String> {
+    let original_root = parse_agent_yaml_mapping(original, "Original Oh My Pi config.yml")?;
+    let rendered = render_agent_yaml_mapping_update(Some(current), "Current Oh My Pi config.yml", |root| {
+        restore_yaml_key(root, Some(&original_root), "modelRoles");
+        Ok(())
+    })?;
+    let root = parse_agent_yaml_mapping(Some(&rendered), "Restored Oh My Pi config.yml")?;
+    Ok((!root.is_empty() || original.is_some()).then_some(rendered))
 }
 
 pub(crate) fn build_kimi_code_agent_config(

@@ -154,6 +154,7 @@ describe('agent configuration update action', () => {
     'zcode',
     'kimi-code',
     'grok-build',
+    'omp',
   ])('%s updates only while its model draft differs', (client) => {
     expect(appliedConfiguration(client, 'model-b')).toBe('update');
     expect(appliedConfiguration(client, ' MODEL-A ')).toBe('close');

@@ -119,6 +119,7 @@ API 接入页面按照协议或 Provider 管理上游 API 凭证和服务地址�
 - Antigravity CLI
 - Kimi Code
 - Grok Build
+- Oh My Pi
 
 对于受支持的客户端，软件可以同步可用模型目录、选择默认模型、在应用托管配置前备份原始配置，
 以及恢复之前的配置。

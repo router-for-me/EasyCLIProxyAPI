@@ -87,6 +87,7 @@ fn clients() -> Vec<AgentClient> {
         "workbuddy",
         "kimi-code",
         "grok-build",
+        "omp",
     ]
     .into_iter()
     .map(|id| AgentClient::parse(id).unwrap())
@@ -417,6 +418,7 @@ fn clear_integration_needs_no_backup_and_removes_state_for_each_client() {
         AgentClient::WorkBuddy,
         AgentClient::KimiCode,
         AgentClient::GrokBuild,
+        AgentClient::Omp,
     ]
     .into_iter()
     .filter(|client| client.supported_platform())

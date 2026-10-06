@@ -174,6 +174,11 @@ const DEEPSEEK_HARNESS_SETTINGS_FILE: &str = "settings.yaml";
 const DEEPSEEK_HARNESS_CREDENTIALS_FILE: &str = ".credentials.yaml";
 const PI_AGENT_ID: &str = "pi";
 const PI_AGENT_NAME: &str = "Pi";
+const OMP_AGENT_PROVIDER_ID: &str = "easy-cliproxyapi";
+const OMP_AGENT_API_KEY_ENV: &str = "EASYCLIPROXYAPI_API_KEY";
+const OMP_AGENT_API: &str = "openai-responses";
+const OMP_MODELS_FILE: &str = "models.yml";
+const OMP_SETTINGS_FILE: &str = "config.yml";
 const PI_CLIPROXYAPI_PACKAGE: &str = "npm:@router-for-me/pi-cliproxyapi-provider";
 const PI_CLIPROXYAPI_NPM_LATEST_URL: &str =
     "https://registry.npmjs.org/@router-for-me%2Fpi-cliproxyapi-provider/latest";
@@ -1358,6 +1363,7 @@ enum AgentClient {
     AntigravityCli,
     KimiCode,
     GrokBuild,
+    Omp,
 }
 
 #[derive(Clone, Debug)]
@@ -1382,6 +1388,7 @@ impl AgentClient {
             "antigravity-cli" => Ok(Self::AntigravityCli),
             "kimi-code" => Ok(Self::KimiCode),
             "grok-build" => Ok(Self::GrokBuild),
+            "omp" => Ok(Self::Omp),
             _ => Err(format!("Unsupported agent client: {value}")),
         }
     }
@@ -1400,6 +1407,7 @@ impl AgentClient {
             Self::AntigravityCli => "antigravity-cli",
             Self::KimiCode => "kimi-code",
             Self::GrokBuild => "grok-build",
+            Self::Omp => "omp",
         }
     }
 
@@ -1417,6 +1425,7 @@ impl AgentClient {
             Self::AntigravityCli => "Antigravity CLI",
             Self::KimiCode => "Kimi Code",
             Self::GrokBuild => "Grok Build",
+            Self::Omp => "Oh My Pi",
         }
     }
 
@@ -1443,6 +1452,7 @@ impl AgentClient {
             Self::AntigravityCli => &["agy"],
             Self::KimiCode => &["kimi"],
             Self::GrokBuild => &["grok"],
+            Self::Omp => &["omp"],
         }
     }
 }

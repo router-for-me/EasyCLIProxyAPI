@@ -153,7 +153,7 @@ const path = require('node:path');
       await open(mode + 'client=kimi-code');
       assert.equal(await button('重启 App').count(), 0);
 
-      for (const client of ['claude-code', 'claude-desktop', 'opencode', 'openclaw', 'hermes', 'deepseek-harness', 'zcode', 'workbuddy', 'antigravity-cli', 'kimi-code', 'grok-build']) {
+      for (const client of ['claude-code', 'claude-desktop', 'opencode', 'openclaw', 'hermes', 'deepseek-harness', 'zcode', 'workbuddy', 'antigravity-cli', 'kimi-code', 'grok-build', 'omp']) {
         await open(mode + 'client=' + client);
         assert.ok(await button('关闭配置修改').isEnabled());
         await tab('配置管理').click();

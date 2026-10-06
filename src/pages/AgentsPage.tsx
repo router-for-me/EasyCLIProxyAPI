@@ -82,6 +82,7 @@ type AgentClientId =
   | 'antigravity-cli'
   | 'kimi-code'
   | 'grok-build'
+  | 'omp'
   | 'pi';
 
 type ClaudeModelMappingClientId = 'claude-code' | 'claude-desktop';
@@ -234,7 +235,7 @@ type AgentDefinition = {
   name: string;
   icon?: string;
   Icon?: ComponentType<{ size?: number; 'aria-hidden'?: boolean }>;
-  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes' | 'agents.description.deepseekHarness' | 'agents.description.zcode' | 'agents.description.workbuddy' | 'agents.description.antigravityCli' | 'agents.description.kimiCode' | 'agents.description.grokBuild' | 'agents.description.pi';
+  descriptionKey: 'agents.description.claudeCode' | 'agents.description.claudeDesktop' | 'agents.description.codex' | 'agents.description.opencode' | 'agents.description.openclaw' | 'agents.description.hermes' | 'agents.description.deepseekHarness' | 'agents.description.zcode' | 'agents.description.workbuddy' | 'agents.description.antigravityCli' | 'agents.description.kimiCode' | 'agents.description.grokBuild' | 'agents.description.omp' | 'agents.description.pi';
 };
 
 type AgentSubpageId = 'core' | 'management' | 'sessions';
@@ -275,6 +276,12 @@ const agentDefinitions: AgentDefinition[] = [
     name: 'OpenCode',
     icon: opencodeIcon,
     descriptionKey: 'agents.description.opencode',
+  },
+  {
+    id: 'omp',
+    name: 'Oh My Pi',
+    icon: piIcon,
+    descriptionKey: 'agents.description.omp',
   },
   {
     id: 'pi',
@@ -341,6 +348,7 @@ const agentSubpages: AgentSubpageDefinition[] = [
       'workbuddy',
       'antigravity-cli',
       'kimi-code',
+      'omp',
       'grok-build',
       'pi',
     ],

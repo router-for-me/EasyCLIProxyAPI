@@ -1159,6 +1159,7 @@ export const en: Record<MessageKey, string> = {
   'agents.description.zcode': 'Uses the CPA Anthropic Messages API and dynamic model catalog',
   'agents.description.kimiCode': 'Uses the CPA OpenAI Chat Completions API and dynamic model catalog',
   'agents.description.grokBuild': 'Uses the CPA OpenAI Chat Completions API and custom model catalog',
+  'agents.description.omp': 'Discovers CPA models through the OpenAI Responses endpoint',
   'agents.description.pi': 'Loads models dynamically in Pi through the CLIProxyAPI provider',
   'agents.clients.pages': 'Client pages',
   'agents.clients.previous': 'Previous client page',

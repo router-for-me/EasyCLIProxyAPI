@@ -207,6 +207,7 @@ function createAgentStatuses() {
     ['antigravity-cli', 'Antigravity CLI'],
     ['kimi-code', 'Kimi Code'],
     ['grok-build', 'Grok Build'],
+    ['omp', 'Oh My Pi'],
     ['pi', 'Pi'],
   ] as const;
   const claudeMappings = {

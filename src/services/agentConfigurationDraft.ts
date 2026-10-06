@@ -9,6 +9,7 @@ export type AgentConfigurationClientId =
   | 'zcode'
   | 'kimi-code'
   | 'grok-build'
+  | 'omp'
   | 'pi';
 
 export type AgentConfigurationModificationState = 'unconfigured' | 'applied' | 'invalid';

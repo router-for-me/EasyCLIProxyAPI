@@ -12,6 +12,7 @@ fn installation_detection_separates_executables_from_version_metadata() {
         AgentClient::DeepSeekHarness,
         AgentClient::KimiCode,
         AgentClient::GrokBuild,
+        AgentClient::Omp,
     ] {
         assert!(agent_installation_detected(client, None, true, false));
         assert!(!agent_installation_detected(client, None, false, false));

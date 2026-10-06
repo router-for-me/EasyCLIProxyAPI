@@ -1550,6 +1550,53 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
 }
 
 #[test]
+fn omp_configuration_discovers_models_without_storing_the_api_key() {
+    let home = agent_test_home("omp-provider");
+    let existing_models = "providers:\n  other:\n    baseUrl: https://example.test/v1\n    apiKey: KEEP_OTHER\n";
+    let existing_settings = "shellPath: E:/software/toolchain/w64devkit/bin/bash.exe\nmodelRoles:\n  tiny: local/lfm2.5-230m\n";
+    let models = build_omp_models_config(Some(existing_models), "http://127.0.0.1:8317/v1", "secret-value").unwrap();
+    let settings = build_omp_settings_config(Some(existing_settings), "gpt-test").unwrap();
+    let models_value: serde_norway::Value = serde_norway::from_str(&models).unwrap();
+    let settings_value: serde_norway::Value = serde_norway::from_str(&settings).unwrap();
+    let provider = &models_value["providers"]["easy-cliproxyapi"];
+    assert_eq!(provider["baseUrl"].as_str(), Some("http://127.0.0.1:8317/v1"));
+    assert_eq!(provider["apiKey"].as_str(), Some("EASYCLIPROXYAPI_API_KEY"));
+    assert_eq!(provider["api"].as_str(), Some("openai-responses"));
+    assert_eq!(provider["discovery"]["type"].as_str(), Some("openai-models-list"));
+    assert!(provider.get("models").is_none());
+    assert!(!models.contains("secret-value"));
+    assert_eq!(models_value["providers"]["other"]["apiKey"].as_str(), Some("KEEP_OTHER"));
+    assert_eq!(settings_value["shellPath"].as_str(), Some("E:/software/toolchain/w64devkit/bin/bash.exe"));
+    assert_eq!(settings_value["modelRoles"]["tiny"].as_str(), Some("local/lfm2.5-230m"));
+    assert_eq!(settings_value["modelRoles"]["default"].as_str(), Some("easy-cliproxyapi/gpt-test"));
+
+    let paths = agent_config_paths(AgentClient::Omp, &home);
+    fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+    fs::write(&paths[0], models).unwrap();
+    fs::write(&paths[1], settings).unwrap();
+    let (configured, model) = inspect_omp_agent_config(&paths, 8317, "secret-value").unwrap();
+    assert!(configured);
+    assert_eq!(model.as_deref(), Some("gpt-test"));
+    assert!(omp_has_managed_marker(&paths).unwrap());
+
+    let removed = prepare_omp_managed_removal(&paths).unwrap();
+    for (path, bytes) in removed {
+        match bytes {
+            Some(bytes) => fs::write(&path, bytes).unwrap(),
+            None => fs::write(&path, "").unwrap(),
+        }
+    }
+    let restored_models = fs::read_to_string(&paths[0]).unwrap();
+    let restored_settings = fs::read_to_string(&paths[1]).unwrap();
+    assert!(!restored_models.contains("easy-cliproxyapi"));
+    assert!(restored_models.contains("KEEP_OTHER"));
+    assert!(!restored_settings.contains("easy-cliproxyapi"));
+    assert!(restored_settings.contains("shellPath"));
+    assert!(restored_settings.contains("local/lfm2.5-230m"));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn kimi_grok_and_zcode_use_cpa_runtime_context_windows() {
     for client in [
         AgentClient::KimiCode,
@@ -1566,6 +1613,7 @@ fn kimi_grok_and_zcode_use_cpa_runtime_context_windows() {
         AgentClient::OpenClaw,
         AgentClient::Hermes,
         AgentClient::DeepSeekHarness,
+        AgentClient::Omp,
     ] {
         assert!(!agent_uses_cpa_runtime_context_windows(client));
     }

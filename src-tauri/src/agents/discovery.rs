@@ -52,6 +52,10 @@ pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBu
         AgentClient::ZCode => vec![home.join(".zcode/v2").join(ZCODE_PROVIDER_CONFIG_FILE)],
         AgentClient::KimiCode => vec![kimi_code_home(home).join(KIMI_CODE_CONFIG_FILE)],
         AgentClient::GrokBuild => vec![grok_build_home(home).join(GROK_BUILD_CONFIG_FILE)],
+        AgentClient::Omp => {
+            let directory = omp_agent_directory(home);
+            vec![directory.join(OMP_MODELS_FILE), directory.join(OMP_SETTINGS_FILE)]
+        }
     }
 }
 
@@ -105,6 +109,10 @@ pub(crate) fn kimi_code_home(home: &Path) -> PathBuf {
 
 pub(crate) fn grok_build_home(home: &Path) -> PathBuf {
     agent_configuration_environment("GROK_HOME").unwrap_or_else(|| home.join(".grok"))
+}
+
+pub(crate) fn omp_agent_directory(home: &Path) -> PathBuf {
+    agent_configuration_environment("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".omp/agent"))
 }
 
 pub(crate) fn deepseek_harness_home(home: &Path) -> PathBuf {
@@ -1326,6 +1334,8 @@ pub(crate) fn inspect_agent_managed_config(
             .map(|(configured, model)| (configured, model, false)),
         AgentClient::GrokBuild => inspect_grok_build_agent_config(&paths[0], port, api_key)
             .map(|(configured, model)| (configured, model, false)),
+        AgentClient::Omp => inspect_omp_agent_config(paths, port, api_key)
+            .map(|(configured, model)| (configured, model, false)),
     }
 }
 
@@ -1561,6 +1571,7 @@ pub(crate) fn agent_has_managed_marker(
             Some("models"),
             "default",
         ),
+        AgentClient::Omp => omp_has_managed_marker(paths),
     }
 }
 
@@ -2451,6 +2462,9 @@ pub(crate) fn find_agent_executable(client: AgentClient, home: &Path) -> Option<
     }
     if client == AgentClient::GrokBuild {
         return find_grok_build_executable(home);
+    }
+    if client == AgentClient::Omp {
+        return find_omp_executable(home);
     }
     if client == AgentClient::OpenCode {
         return find_opencode_executable(home);
@@ -3451,6 +3465,81 @@ pub(crate) fn inspect_zcode_agent_config(
             .and_then(serde_json::Value::as_str)
             == Some(managed_core_loopback_origin(port).as_str());
     Ok((configured, model))
+}
+
+
+pub(crate) fn omp_provider_mapping(root: &serde_norway::Mapping) -> Option<&serde_norway::Mapping> {
+    yaml_mapping_value(root, "providers")
+        .and_then(serde_norway::Value::as_mapping)
+        .and_then(|providers| yaml_mapping_value(providers, OMP_AGENT_PROVIDER_ID))
+        .and_then(serde_norway::Value::as_mapping)
+}
+
+pub(crate) fn omp_selected_model(root: &serde_norway::Mapping) -> Option<String> {
+    let selector = yaml_mapping_value(root, "modelRoles")
+        .and_then(serde_norway::Value::as_mapping)
+        .and_then(|roles| yaml_mapping_value(roles, "default"))
+        .and_then(serde_norway::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let prefix = format!("{OMP_AGENT_PROVIDER_ID}/");
+    selector.strip_prefix(&prefix).map(str::to_string)
+}
+
+pub(crate) fn inspect_omp_agent_config(
+    paths: &[PathBuf],
+    port: u16,
+    api_key: &str,
+) -> Result<(bool, Option<String>), String> {
+    if paths.len() != 2 || !paths[0].is_file() || !paths[1].is_file() {
+        return Ok((false, None));
+    }
+    let models = read_agent_yaml_mapping_or_empty(&paths[0], "Oh My Pi models.yml")?;
+    let settings = read_agent_yaml_mapping_or_empty(&paths[1], "Oh My Pi config.yml")?;
+    let provider = omp_provider_mapping(&models);
+    let model = omp_selected_model(&settings);
+    let expected = format!("{}/v1", managed_core_loopback_origin(port));
+    let configured = provider
+        .and_then(|provider| yaml_mapping_value(provider, "baseUrl"))
+        .and_then(serde_norway::Value::as_str)
+        == Some(expected.as_str())
+        && provider
+            .and_then(|provider| yaml_mapping_value(provider, "apiKey"))
+            .and_then(serde_norway::Value::as_str)
+            == Some(OMP_AGENT_API_KEY_ENV)
+        && provider
+            .and_then(|provider| yaml_mapping_value(provider, "api"))
+            .and_then(serde_norway::Value::as_str)
+            .is_some_and(|api| api == OMP_AGENT_API || api == "openai-completions")
+        && provider
+            .and_then(|provider| yaml_mapping_value(provider, "discovery"))
+            .and_then(serde_norway::Value::as_mapping)
+            .and_then(|discovery| yaml_mapping_value(discovery, "type"))
+            .and_then(serde_norway::Value::as_str)
+            == Some("openai-models-list")
+        && model.is_some();
+    let _ = api_key;
+    Ok((configured, model))
+}
+
+pub(crate) fn omp_has_managed_marker(paths: &[PathBuf]) -> Result<bool, String> {
+    if paths.first().is_none_or(|path| !path.is_file()) {
+        return Ok(false);
+    }
+    let models = read_agent_yaml_mapping_or_empty(&paths[0], "Oh My Pi models.yml")?;
+    Ok(omp_provider_mapping(&models).is_some())
+}
+
+pub(crate) fn find_omp_executable(home: &Path) -> Option<PathBuf> {
+    let bun = home.join(".bun/bin");
+    #[cfg(target_os = "windows")]
+    let managed = [bun.join("omp.exe"), bun.join("omp.cmd")];
+    #[cfg(not(target_os = "windows"))]
+    let managed = [bun.join("omp")];
+    managed
+        .into_iter()
+        .find(|path| agent_cli_executable(path))
+        .or_else(|| find_named_agent_executable(home, &["omp"]))
 }
 
 pub(crate) fn inspect_kimi_code_agent_config(

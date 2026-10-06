@@ -104,7 +104,7 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
 
     // Search reaches uninstalled clients; a cancelled draft never affects navigation or storage.
     await manage().click();
-    assert.equal(await dialog().getByRole('checkbox').count(), 13);
+    assert.equal(await dialog().getByRole('checkbox').count(), 14);
     await search().fill('herMES');
     assert.equal(await dialog().getByRole('checkbox').count(), 1);
     await checkbox('Hermes Agent').check();
@@ -173,7 +173,7 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
     await open('not-installed&no-plugin&fresh');
     await waitClients(['Codex']);
     await manage().click();
-    assert.equal(await dialog().getByRole('checkbox').count(), 13);
+    assert.equal(await dialog().getByRole('checkbox').count(), 14);
     await closeAndFocus(() => cancel().click());
     await open('mixed-clients&fail-detection');
     await page.getByText(/模拟客户端检测失败/).waitFor();
@@ -191,11 +191,11 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
 
     // Every saved client is reachable exactly once, in the same order, without a second switcher.
     await page.setViewportSize({ width: 1368, height: 912 });
-    const twelve = ['claude-code', 'claude-desktop', 'codex', 'deepseek-harness', 'opencode', 'pi',
+    const savedClients = ['claude-code', 'claude-desktop', 'codex', 'deepseek-harness', 'opencode', 'omp', 'pi',
       'grok-build', 'antigravity-cli', 'workbuddy', 'zcode', 'kimi-code', 'openclaw'];
-    const twelveNames = ['Claude Code', 'Claude Desktop', 'Codex', 'DeepSeek Harness', 'OpenCode', 'Pi',
+    const savedNames = ['Claude Code', 'Claude Desktop', 'Codex', 'DeepSeek Harness', 'OpenCode', 'Oh My Pi', 'Pi',
       'Grok Build', 'Antigravity CLI', 'WorkBuddy', 'ZCode', 'Kimi Code', 'OpenClaw'];
-    await page.evaluate(({ key, ids }) => localStorage.setItem(key, JSON.stringify(ids)), { key: storageKey, ids: twelve });
+    await page.evaluate(({ key, ids }) => localStorage.setItem(key, JSON.stringify(ids)), { key: storageKey, ids: savedClients });
     await page.goto(`${base}/tests/fixtures/agent-backups.html?shell&client=claude-code`, { waitUntil: 'domcontentloaded' });
     await ready();
     const previous = () => page.getByRole('button', { name: '上一页客户端', exact: true });
@@ -216,7 +216,7 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
     const collectPages = async () => {
       while (await previous().isEnabled()) await previous().click();
       const names = [];
-      for (let index = 0; index < 13; index++) {
+      for (let index = 0; index < savedClients.length; index++) {
         await assertFits();
         names.push(...await namesOnPage());
         if (await next().isDisabled()) break;
@@ -225,33 +225,33 @@ const screenshots = path.join(os.tmpdir(), 'easycliproxy-agent-clients');
       return names;
     };
     assert.equal(await page.getByRole('button', { name: '切换客户端', exact: true }).count(), 0);
-    assert.deepEqual(await collectPages(), twelveNames, 'no saved client is omitted, duplicated or reordered');
-    assert.deepEqual(JSON.parse(await stored()), twelve, 'browsing leaves the management list unchanged');
+    assert.deepEqual(await collectPages(), savedNames, 'no saved client is omitted, duplicated or reordered');
+    assert.deepEqual(JSON.parse(await stored()), savedClients, 'browsing leaves the management list unchanged');
     assert.equal(await page.evaluate(() => localStorage.getItem('cpa-gui.agent-selected-client.v1')), 'claude-code',
       'browsing pages does not select a different client');
     const lastPage = await namesOnPage();
     await page.locator('.agent-list-items button').filter({ has: page.getByText('OpenClaw', { exact: true }) }).click();
     assert.deepEqual(await namesOnPage(), lastPage, 'selecting a client does not replace or shuffle any row');
     assert.equal(await activeClient(), 'OpenClaw');
-    assert.deepEqual(JSON.parse(await stored()), twelve, 'selecting leaves the management list unchanged');
+    assert.deepEqual(JSON.parse(await stored()), savedClients, 'selecting leaves the management list unchanged');
     await page.setViewportSize({ width: 360, height: 600 });
     await page.waitForFunction(() => document.querySelector('.agent-list-items button.active strong')?.textContent === 'OpenClaw'
       && document.querySelectorAll('.agent-list-items button').length <= 2);
     await assertFits();
-    assert.deepEqual(await collectPages(), twelveNames, 'all managed clients remain reachable after resizing');
-    assert.deepEqual(JSON.parse(await stored()), twelve);
+    assert.deepEqual(await collectPages(), savedNames, 'all managed clients remain reachable after resizing');
+    assert.deepEqual(JSON.parse(await stored()), savedClients);
     // Add/remove only in management. Cancel is inert; Save controls the entire list.
     await manage().click();
     await checkbox('Hermes Agent').check();
     await checkbox('OpenClaw').uncheck();
     await closeAndFocus(() => cancel().click());
-    assert.deepEqual(JSON.parse(await stored()), twelve);
+    assert.deepEqual(JSON.parse(await stored()), savedClients);
     assert.equal(await activeClient(), 'OpenClaw');
     await manage().click();
     await checkbox('Hermes Agent').check();
     await checkbox('OpenClaw').uncheck();
     await closeAndFocus(() => save().click());
-    const updatedNames = [...twelveNames.filter(name => name !== 'OpenClaw'), 'Hermes Agent'];
+    const updatedNames = [...savedNames.filter(name => name !== 'OpenClaw'), 'Hermes Agent'];
     assert.equal(await activeClient(), 'Claude Code', 'explicitly removing the current client selects a remaining client');
     assert.deepEqual(await collectPages(), updatedNames);
     await page.locator('.agent-list-items button').filter({ has: page.getByText('Hermes Agent', { exact: true }) }).click();

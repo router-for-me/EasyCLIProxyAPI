@@ -1159,6 +1159,7 @@ export const jaOverrides = {
   'agents.description.zcode': 'CPA の Anthropic Messages API と動的モデルカタログを使用',
   'agents.description.kimiCode': 'CPA の OpenAI Chat Completions API と動的モデルカタログを使用',
   'agents.description.grokBuild': 'CPA の OpenAI Chat Completions API とカスタムモデルカタログを使用',
+  'agents.description.omp': 'OpenAI Responses エンドポイントから CPA モデルを動的に検出',
   'agents.description.pi': 'CLIProxyAPI プロバイダーを使用して Pi CLI のモデルを動的に読み込みます',
   'agents.clients.pages': 'クライアントのページ',
   'agents.clients.previous': '前のクライアントページ',

@@ -33,6 +33,7 @@ pub(crate) fn inspect_agent_config_statuses(
         AgentStatusDetectionTarget::Client(AgentClient::AntigravityCli),
         AgentStatusDetectionTarget::Client(AgentClient::KimiCode),
         AgentStatusDetectionTarget::Client(AgentClient::GrokBuild),
+        AgentStatusDetectionTarget::Client(AgentClient::Omp),
         AgentStatusDetectionTarget::PiProvider,
     ];
     let queue = Mutex::new(targets.into_iter().enumerate());

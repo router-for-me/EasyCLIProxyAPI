@@ -78,6 +78,7 @@ fn tracked_configuration_paths(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, S
         AgentClient::AntigravityCli,
         AgentClient::KimiCode,
         AgentClient::GrokBuild,
+        AgentClient::Omp,
     ] {
         paths.extend(agent_managed_paths(client, &home));
     }

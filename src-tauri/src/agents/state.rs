@@ -748,6 +748,10 @@ pub(crate) fn fresh_agent_contents_with_oauth(
             model,
             models,
         )?]),
+        AgentClient::Omp => Ok(vec![
+            build_omp_models_config(None, &openai_base, api_key)?,
+            build_omp_settings_config(None, model)?,
+        ]),
     }
 }
 
@@ -770,7 +774,7 @@ pub(crate) fn agent_contents_equal(client: AgentClient, actual: &str, expected: 
             serde_yaml::from_str::<serde_yaml::Value>(actual).ok()
                 == serde_yaml::from_str::<serde_yaml::Value>(expected).ok()
         }
-        AgentClient::DeepSeekHarness => {
+        AgentClient::Omp | AgentClient::DeepSeekHarness => {
             serde_norway::from_str::<serde_norway::Value>(actual).ok()
                 == serde_norway::from_str::<serde_norway::Value>(expected).ok()
         }

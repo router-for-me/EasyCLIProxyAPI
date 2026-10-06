@@ -128,6 +128,7 @@ proxy. Supported clients include:
 - Antigravity CLI
 - Kimi Code
 - Grok Build
+- Oh My Pi
 
 For supported clients, the application can synchronize the available model catalog, select a
 default model, back up the original configuration before applying managed settings, and restore the

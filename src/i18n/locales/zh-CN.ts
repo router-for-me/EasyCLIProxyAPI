@@ -1158,6 +1158,7 @@ export const zhCN = {
   'agents.description.zcode': '使用 CPA 的 Anthropic Messages 接口和动态模型目录',
   'agents.description.kimiCode': '使用 CPA 的 OpenAI Chat Completions 接口和动态模型目录',
   'agents.description.grokBuild': '使用 CPA 的 OpenAI Chat Completions 接口和自定义模型目录',
+  'agents.description.omp': '通过 OpenAI Responses 接口动态发现 CPA 模型',
   'agents.description.pi': '使用 Pi CLI 和 CLIProxyAPI 提供方动态加载模型',
   'agents.clients.pages': '客户端分页',
   'agents.clients.previous': '上一页客户端',
