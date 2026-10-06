@@ -621,12 +621,30 @@ pub(crate) fn apply_gui_managed_settings(
             &["observability", "logs", "request-log"],
             serde_norway::Value::Bool(config.request_log),
         )?;
-        changed |= set_core_yaml_schema_value(
-            document,
-            &["remote-management", "secret-key"],
-            &["management", "secret-key"],
-            serde_norway::Value::String(config.management_secret_key.clone()),
-        )?;
+        // v8 kernels persist this credential as a bcrypt/argon2 hash after a
+        // successful start. It is already the canonical value the kernel
+        // expects; replacing it with the GUI plaintext needlessly enters the
+        // format-preserving YAML editor and can produce a duplicate top-level
+        // `management` mapping for some valid config layouts.
+        let stored_management_key = document
+            .as_mapping()
+            .and_then(|root| nested_yaml_value(root, &["management", "secret-key"]))
+            .or_else(|| {
+                document.as_mapping().and_then(|root| {
+                    nested_yaml_value(root, &["remote-management", "secret-key"])
+                })
+            });
+        if !stored_management_key
+            .and_then(serde_norway::Value::as_str)
+            .is_some_and(is_hashed_management_secret_key)
+        {
+            changed |= set_core_yaml_schema_value(
+                document,
+                &["remote-management", "secret-key"],
+                &["management", "secret-key"],
+                serde_norway::Value::String(config.management_secret_key.clone()),
+            )?;
+        }
         changed |= set_core_yaml_nested_value(
             document,
             "plugins",
