@@ -28,6 +28,8 @@ export type AgentModelMappings = {
   maxContextTokens?: number;
   autoCompactPct?: number;
   disableAutoCompact?: boolean;
+  manageDefaultModel?: boolean;
+  manageSubagentModel?: boolean;
 };
 
 type ResolveAgentConfigurationActionOptions = {
@@ -67,7 +69,9 @@ export const sameAgentModelMappings = (
   && Boolean(left.haiku1m) === Boolean(right.haiku1m)
   && (left.maxContextTokens ?? 200_000) === (right.maxContextTokens ?? 200_000)
   && (left.autoCompactPct ?? 90) === (right.autoCompactPct ?? 90)
-  && Boolean(left.disableAutoCompact) === Boolean(right.disableAutoCompact);
+  && Boolean(left.disableAutoCompact) === Boolean(right.disableAutoCompact)
+  && (left.manageDefaultModel ?? true) === (right.manageDefaultModel ?? true)
+  && (left.manageSubagentModel ?? true) === (right.manageSubagentModel ?? true);
 
 export const resolveAgentModelMappingsDraftSource = <T>(
   current: T,

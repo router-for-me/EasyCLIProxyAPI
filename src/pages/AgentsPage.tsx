@@ -156,6 +156,8 @@ type ClaudeModelMappings = {
   maxContextTokens: number;
   autoCompactPct: number;
   disableAutoCompact: boolean;
+  manageDefaultModel: boolean;
+  manageSubagentModel: boolean;
 };
 
 type AgentFormValues = {
@@ -186,6 +188,8 @@ const createClaudeModelMappings = (model: string): ClaudeModelMappings => ({
   maxContextTokens: DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS,
   autoCompactPct: DEFAULT_CLAUDE_AUTO_COMPACT_PCT,
   disableAutoCompact: false,
+  manageDefaultModel: true,
+  manageSubagentModel: true,
 });
 
 const createClaudeModelMappingsByClient = (): Record<
@@ -888,6 +892,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         maxContextTokens: source.maxContextTokens ?? DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS,
         autoCompactPct: source.autoCompactPct ?? DEFAULT_CLAUDE_AUTO_COMPACT_PCT,
         disableAutoCompact: Boolean(source.disableAutoCompact),
+        manageDefaultModel: source.manageDefaultModel !== false,
+        manageSubagentModel: source.manageSubagentModel !== false,
       };
       return sameAgentModelMappings(currentClientDraft, next)
         ? current
@@ -1156,6 +1162,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     resolved.maxContextTokens = claudeModelMappingsDraft.maxContextTokens;
     resolved.autoCompactPct = claudeModelMappingsDraft.autoCompactPct;
     resolved.disableAutoCompact = claudeModelMappingsDraft.disableAutoCompact;
+    resolved.manageDefaultModel = claudeModelMappingsDraft.manageDefaultModel;
+    resolved.manageSubagentModel = claudeModelMappingsDraft.manageSubagentModel;
     return resolved;
   };
 
@@ -2090,6 +2098,48 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                             onChange={(event) => changeClaudeCodeAutoCompactDisabled(
                               event.currentTarget.checked,
                             )}
+                            disabled={busy || loading || modelLoading}
+                          />
+                          <span className="switch-track" />
+                        </span>
+                      </label>
+                      <label
+                        className="agent-claude-code-disable-compact"
+                        title={t('agents.claudeCodeRuntime.manageDefaultModelHint')}
+                      >
+                        <span>
+                          <strong>{t('agents.claudeCodeRuntime.manageDefaultModel')}</strong>
+                          <small>{t('agents.claudeCodeRuntime.manageDefaultModelHint')}</small>
+                        </span>
+                        <span className="switch-control">
+                          <input
+                            type="checkbox"
+                            checked={claudeModelMappingsDraft.manageDefaultModel}
+                            onChange={(event) => editClaudeModelMappings((current) => ({
+                              ...current,
+                              manageDefaultModel: event.currentTarget.checked,
+                            }))}
+                            disabled={busy || loading || modelLoading}
+                          />
+                          <span className="switch-track" />
+                        </span>
+                      </label>
+                      <label
+                        className="agent-claude-code-disable-compact"
+                        title={t('agents.claudeCodeRuntime.manageSubagentModelHint')}
+                      >
+                        <span>
+                          <strong>{t('agents.claudeCodeRuntime.manageSubagentModel')}</strong>
+                          <small>{t('agents.claudeCodeRuntime.manageSubagentModelHint')}</small>
+                        </span>
+                        <span className="switch-control">
+                          <input
+                            type="checkbox"
+                            checked={claudeModelMappingsDraft.manageSubagentModel}
+                            onChange={(event) => editClaudeModelMappings((current) => ({
+                              ...current,
+                              manageSubagentModel: event.currentTarget.checked,
+                            }))}
                             disabled={busy || loading || modelLoading}
                           />
                           <span className="switch-track" />

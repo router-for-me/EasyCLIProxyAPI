@@ -2963,6 +2963,16 @@ pub(crate) fn inspect_claude_code_model_mappings(
         max_context_tokens,
         auto_compact_pct,
         disable_auto_compact,
+        manage_default_model: env
+            .get("EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL")
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+            .unwrap_or(true),
+        manage_subagent_model: env
+            .get("EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL")
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+            .unwrap_or(true),
     }))
 }
 
@@ -3089,6 +3099,8 @@ pub(crate) fn claude_code_model_settings(
         max_context_tokens: mappings.max_context_tokens,
         auto_compact_pct: mappings.auto_compact_pct,
         disable_auto_compact: mappings.disable_auto_compact,
+        manage_default_model: mappings.manage_default_model,
+        manage_subagent_model: mappings.manage_subagent_model,
     }
 }
 

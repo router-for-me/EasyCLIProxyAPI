@@ -154,6 +154,8 @@ fn claude_code_role_mappings_drive_settings() {
         max_context_tokens: 272_000,
         auto_compact_pct: 80,
         disable_auto_compact: false,
+        manage_default_model: true,
+        manage_subagent_model: true,
     };
     let models = vec![
         AgentModelOption {
@@ -211,6 +213,53 @@ fn claude_code_role_mappings_drive_settings() {
 }
 
 #[test]
+fn claude_code_can_leave_session_model_and_subagents_to_claude_code() {
+    let mappings = ClaudeDesktopModelMappings {
+        manage_default_model: false,
+        manage_subagent_model: false,
+        ..ClaudeDesktopModelMappings::all("gpt-sonnet")
+    };
+    let rendered = build_claude_agent_config(
+        Some(r#"{"model":"user-selected","env":{"ANTHROPIC_MODEL":"user-selected","CLAUDE_CODE_SUBAGENT_MODEL":"user-subagent"}}"#),
+        "http://127.0.0.1:8317",
+        "test-key",
+        "gpt-sonnet",
+        &test_agent_models(&["gpt-sonnet"]),
+        Some(&mappings),
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert_eq!(value["model"], "user-selected");
+    assert_eq!(value["env"]["ANTHROPIC_MODEL"], "user-selected");
+    assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "user-subagent");
+    assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "gpt-sonnet");
+    assert_eq!(value["env"]["EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL"], "0");
+    assert_eq!(value["env"]["EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL"], "0");
+}
+
+#[test]
+fn claude_code_unmanaged_mode_removes_previous_cpa_overrides() {
+    let mappings = ClaudeDesktopModelMappings {
+        manage_default_model: false,
+        manage_subagent_model: false,
+        ..ClaudeDesktopModelMappings::all("gpt-sonnet")
+    };
+    let rendered = build_claude_agent_config(
+        Some(r#"{"model":"gpt-sonnet","env":{"ANTHROPIC_MODEL":"gpt-sonnet","CLAUDE_CODE_SUBAGENT_MODEL":"gpt-sonnet"}}"#),
+        "http://127.0.0.1:8317",
+        "test-key",
+        "gpt-sonnet",
+        &test_agent_models(&["gpt-sonnet"]),
+        Some(&mappings),
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert!(value.get("model").is_none());
+    assert!(value["env"].get("ANTHROPIC_MODEL").is_none());
+    assert!(value["env"].get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
+}
+
+#[test]
 fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
     let mappings = ClaudeDesktopModelMappings {
         desktop_models: None,
@@ -223,6 +272,8 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
         max_context_tokens: 1_000_000,
         auto_compact_pct: 75,
         disable_auto_compact: true,
+        manage_default_model: true,
+        manage_subagent_model: true,
     };
     let models = vec![
         AgentModelOption {

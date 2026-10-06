@@ -1040,6 +1040,8 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
         max_context_tokens: requested.max_context_tokens,
         auto_compact_pct: requested.auto_compact_pct,
         disable_auto_compact: requested.disable_auto_compact,
+        manage_default_model: requested.manage_default_model,
+        manage_subagent_model: requested.manage_subagent_model,
     }))
 }
 
@@ -1077,6 +1079,8 @@ pub(crate) fn resolve_claude_code_model_mappings(
         max_context_tokens,
         auto_compact_pct: requested.auto_compact_pct,
         disable_auto_compact: requested.disable_auto_compact,
+        manage_default_model: requested.manage_default_model,
+        manage_subagent_model: requested.manage_subagent_model,
     }))
 }
 

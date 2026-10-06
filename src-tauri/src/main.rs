@@ -1150,6 +1150,14 @@ struct ClaudeDesktopModelMappings {
     auto_compact_pct: u8,
     #[serde(default)]
     disable_auto_compact: bool,
+    /// Keep Claude Code's session/default model selection under CPA control.
+    /// Defaults to true for backwards compatibility with existing profiles.
+    #[serde(default = "default_true")]
+    manage_default_model: bool,
+    /// Set CLAUDE_CODE_SUBAGENT_MODEL when enabled; otherwise allow inheritance.
+    /// Defaults to true for backwards compatibility with existing profiles.
+    #[serde(default = "default_true")]
+    manage_subagent_model: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -1195,6 +1203,10 @@ fn default_claude_auto_compact_pct() -> u8 {
     DEFAULT_CLAUDE_AUTO_COMPACT_PCT
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl ClaudeDesktopModelMappings {
     fn all(model: &str) -> Self {
         Self {
@@ -1208,6 +1220,8 @@ impl ClaudeDesktopModelMappings {
             max_context_tokens: default_claude_code_max_context_tokens(),
             auto_compact_pct: default_claude_auto_compact_pct(),
             disable_auto_compact: false,
+            manage_default_model: true,
+            manage_subagent_model: true,
         }
     }
 }
