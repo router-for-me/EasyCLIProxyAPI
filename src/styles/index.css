@@ -8,5 +8,6 @@
 @import './config-settings.css';
 @import '../pages/UsageEventsView.css';
 @import './usage-subpages.css';
+@import '../components/SelectMenu.css';
 @import '../pages/AgentClientList.css';
 @import './workspace-white.css';

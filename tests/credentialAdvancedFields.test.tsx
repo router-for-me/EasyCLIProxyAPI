@@ -12,7 +12,7 @@ const renderAdvanced = (name: string, advanced: Record<string, unknown>, provide
 describe('credential settings interaction', () => {
   it('lets a Codex credential edit aliases directly and hides Claude cloaking', () => {
     const html = renderAdvanced('codex-cbb7bd85-user-team.json', {});
-    expect(html).toContain('Add alias');
+    expect(html).toContain('Add model');
     expect(html).toContain('Credential timezone');
     expect(html).toContain('Asia/Shanghai');
     expect(html).not.toContain('Request cloaking');

@@ -7,7 +7,7 @@ import { loadAuthFileSettings, saveAuthFileSettings, type AuthFileSettingsDraft,
 import { modelMatchesRule, normalizeOAuthExcludedRules, oauthModelCandidates, oauthModelsFromPayload, setOAuthModelsExcluded, type OAuthModelDefinition } from '../services/oauthModels';
 import './AuthFileSettingsDialog.css';
 import { CredentialAdvancedFields, CredentialHeadersEditor, credentialProviderKey } from './CredentialAdvancedFields';
-import { modelSearchText, type ModelOption } from '../services/modelService';
+import { modelSearchText } from '../services/modelService';
 
 export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }: {
   name: string;
@@ -22,14 +22,12 @@ export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }
   const [original, setOriginal] = useState<AuthFileSettingsDraft | null>(null);
   const [draft, setDraft] = useState<AuthFileSettingsDraft | null>(null);
   const [models, setModels] = useState<OAuthModelDefinition[]>([]);
-  const [pickerModels, setPickerModels] = useState<ModelOption[]>([]);
   const [catalogError, setCatalogError] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [discard, setDiscard] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const dirty = draft !== null && (Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
 
@@ -61,7 +59,6 @@ export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }
       const catalog = oauthModelsFromPayload(payload);
       if (!active) return;
       setModels(catalog);
-      setPickerModels(catalog.map((model) => ({ name: model.id, displayName: model.displayName })));
     }).catch((reason: unknown) => {
       if (active) setCatalogError(reason instanceof Error ? reason.message : String(reason));
     }).finally(() => { if (active) setCatalogLoading(false); });
@@ -70,20 +67,17 @@ export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }
 
   const close = () => {
     if (savingRef.current) return;
-    if (dirty) setDiscard(true);
-    else onClose();
+    onClose();
   };
   const update = <K extends keyof AuthFileSettingsDraft>(key: K, value: AuthFileSettingsDraft[K]) => {
     setDraft((current) => current ? { ...current, [key]: value } : current);
     setError('');
-    setDiscard(false);
   };
   const save = async () => {
     if (!draft || !original || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setError('');
-    setDiscard(false);
     try {
       const changed = await saveAuthFileSettings(name, original, draft);
       if (changed) onSaved();
@@ -175,7 +169,7 @@ export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }
                   </div>
                 </details>
               </section>
-              <CredentialAdvancedFields name={name} provider={provider} advanced={draft.advanced} models={pickerModels} modelsLoading={catalogLoading} modelsError={catalogError} disabled={saving} onChange={(advanced) => update('advanced', advanced)} />
+              <CredentialAdvancedFields name={name} provider={provider} advanced={draft.advanced} disabled={saving} onChange={(advanced) => update('advanced', advanced)} />
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.additional')}</h3>
                 <CredentialHeadersEditor value={draft.headers} disabled={saving} onChange={(headers) => update('headers', headers)} />
@@ -189,7 +183,6 @@ export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }
         </div>
         <footer className="credential-settings-footer">
           {error ? <p className="credential-settings-error" role="alert">{error}</p> : null}
-          {discard ? <div className="credential-settings-discard" role="alert"><span>{t('authFiles.settings.unsaved')}</span><button type="button" className="secondary-button compact-button" onClick={() => setDiscard(false)}>{t('authFiles.settings.keepEditing')}</button><button type="button" className="danger-button compact-button" onClick={onClose}>{t('authFiles.settings.discard')}</button></div> : null}
           <div className="credential-settings-actions">
             <button type="button" className="secondary-button" disabled={saving} onClick={close}>{t('common.cancel')}</button>
             {!loading && !draft ? <button type="button" className="primary-button" onClick={() => setAttempt((value) => value + 1)}>{t('common.refresh')}</button> : <button type="submit" className="primary-button" disabled={!draft || loading || saving || !dirty}>{saving ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{t(saving ? 'common.saving' : 'common.save')}</button>}

@@ -46,8 +46,6 @@
 .credential-settings-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .credential-settings-error { color: var(--failure-badge-text); margin: 0 0 12px; font-size: var(--font-size-caption); overflow-wrap: anywhere; max-height: 90px; overflow-y: auto; }
 .credential-settings-warning { color: var(--amber-text); }
-.credential-settings-discard { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: var(--font-size-caption); }
-.credential-settings-discard span { flex: 1 1 100%; }
 .credential-settings-loading { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 150px; }
 @media (max-width: 560px) {
   .credential-settings-grid { grid-template-columns: minmax(0, 1fr); }
@@ -58,41 +56,13 @@
 .credential-settings-span { grid-column: 1 / -1; }
 .credential-settings-inline-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .credential-alias-list, .credential-header-list { display: grid; gap: 12px; }
-.credential-alias-card { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-primary); }
-.credential-alias-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
-.credential-alias-fields .credential-settings-field { margin: 0; }
-.credential-alias-fields .credential-settings-field:last-child { grid-column: 1 / -1; }
-.credential-settings-dialog .agent-model-trigger { box-sizing: border-box; min-height: 41px; padding: 0 4px 0 11px; border-color: var(--border-color); border-radius: 7px; background: var(--bg-primary); color: var(--text-primary); }
-.credential-settings-dialog .agent-model-trigger strong { color: var(--text-primary); }
-.credential-settings-dialog .agent-model-editable-trigger input { box-sizing: border-box; width: 100%; height: 39px; margin: 0; padding: 0; border: 0; border-radius: 0; outline: 0; background: transparent; box-shadow: none; color: inherit; font: inherit; font-size: inherit; line-height: 1.5; }
-.credential-settings-dialog .credential-model-menu {
-  position: fixed;
-  z-index: 2;
-  margin: 0;
-  max-height: none;
-  overflow: hidden;
-  border: 1px solid var(--border-color);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  box-shadow: 0 16px 40px #0003;
-}
-.credential-settings-dialog .credential-model-menu .agent-model-option {
-  background: var(--bg-card);
-  color: var(--text-primary);
-}
-.credential-settings-dialog .credential-model-menu .agent-model-option:hover,
-.credential-settings-dialog .credential-model-menu .agent-model-option.active {
-  background: var(--bg-secondary);
-}
-.credential-settings-dialog .credential-model-menu .agent-model-option.selected {
-  background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-card));
-}
-.credential-settings-dialog .credential-model-menu .agent-model-option small,
-.credential-settings-dialog .credential-model-menu .agent-model-dropdown-footer {
-  color: var(--text-tertiary);
-}
-.credential-alias-card-heading, .credential-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.credential-alias-card-heading strong { font-size: var(--font-size-meta); }
+.credential-alias-card { display: grid; gap: 8px; }
+.credential-alias-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.credential-alias-row input { min-width: 0; }
+.credential-alias-row-actions { display: flex; align-items: center; gap: 4px; }
+.credential-alias-row-actions .is-expanded { transform: rotate(180deg); }
+.credential-alias-details { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
+.credential-alias-details .credential-settings-field { margin: 0; }
 .credential-alias-checks { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .credential-alias-checks label { display: flex; align-items: center; gap: 8px; font-size: var(--font-size-meta); }
 .credential-header-row { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto; }
@@ -102,6 +72,7 @@
 }
 
 @media (max-width: 560px) {
-  .credential-alias-fields { grid-template-columns: minmax(0, 1fr); }
+  .credential-alias-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .credential-alias-row input:first-child { grid-column: 1 / -1; }
 }
 

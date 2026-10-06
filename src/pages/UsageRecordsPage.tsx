@@ -38,6 +38,7 @@ import {
 import { createRefreshScheduler } from '../services/refreshScheduler';
 import { usageViewScopeKey } from '../services/usageViewScope';
 import { EventsView, type UsageEventPage } from './UsageEventsView';
+import { SelectMenu } from '../components/SelectMenu';
 import { UsageAnalysisView, type UsageAnalysis, type UsageCategory } from './UsageAnalysisView';
 
 type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
@@ -504,99 +505,78 @@ export function UsageRecordsPage() {
     );
   };
 
+  const modelOptions = filterOptions(optionsAnalysis.models);
+  const providerOptions = filterOptions(optionsAnalysis.providers);
+  const sourceOptions = filterOptions(optionsAnalysis.sources);
+  const keyOptions = filterOptions(optionsAnalysis.apiKeys);
   const filterPanel = (
     <section className="panel usage-filter-panel">
       <div className="usage-filter-row">
         <div className="usage-filter-group">
-          <label className="usage-filter-item">
-            <span className="sr-only">{t('usage.filter.timeRange')}</span>
-            <select
+          <div className="usage-filter-item">
+            <SelectMenu
               value={range}
-              onChange={(event) => {
-                setRange(event.currentTarget.value as UsageRange);
+              ariaLabel={t('usage.filter.timeRange')}
+              onChange={(value) => {
+                setRange(value as UsageRange);
                 setPage(1);
               }}
-              aria-label={t('usage.filter.timeRange')}
-            >
-              <option value="4h">{t('usage.range.4h')}</option>
-              <option value="24h">{t('usage.range.24h')}</option>
-              <option value="today">{t('usage.range.today')}</option>
-              <option value="7d">{t('usage.range.7d')}</option>
-              <option value="30d">{t('usage.range.30d')}</option>
-              <option value="all">{t('usage.range.all')}</option>
-              <option value="custom">{t('usage.range.custom')}</option>
-            </select>
-          </label>
-
-          <label className="usage-filter-item">
-            <span className="sr-only">{t('usage.filter.model')}</span>
-            <select
+              options={[
+                { value: '4h', label: t('usage.range.4h') },
+                { value: '24h', label: t('usage.range.24h') },
+                { value: 'today', label: t('usage.range.today') },
+                { value: '7d', label: t('usage.range.7d') },
+                { value: '30d', label: t('usage.range.30d') },
+                { value: 'all', label: t('usage.range.all') },
+                { value: 'custom', label: t('usage.range.custom') },
+              ]}
+            />
+          </div>
+          <div className="usage-filter-item">
+            <SelectMenu
               value={model}
-              onChange={(event) => changeFilter(setModel, event.currentTarget.value)}
-              aria-label={t('usage.filter.model')}
-            >
-              <option value="">{t('usage.filter.allModels')}</option>
-              {filterOptions(optionsAnalysis.models).map((item) => (
-                <option value={item.key} key={item.key}>{item.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="usage-filter-item">
-            <span className="sr-only">{t('usage.column.provider')}</span>
-            <select
+              ariaLabel={t('usage.filter.model')}
+              onChange={(value) => changeFilter(setModel, value)}
+              options={[{ value: '', label: t('usage.filter.allModels') }, ...modelOptions.map((item) => ({ value: item.key, label: item.label }))]}
+            />
+          </div>
+          <div className="usage-filter-item">
+            <SelectMenu
               value={provider}
-              onChange={(event) => changeFilter(setProvider, event.currentTarget.value)}
-              aria-label={t('usage.column.provider')}
-            >
-              <option value="">{t('usage.filter.allProviders')}</option>
-              {filterOptions(optionsAnalysis.providers).map((item) => (
-                <option value={item.key} key={item.key}>{item.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="usage-filter-item">
-            <span className="sr-only">{t('usage.filter.source')}</span>
-            <select
+              ariaLabel={t('usage.column.provider')}
+              onChange={(value) => changeFilter(setProvider, value)}
+              options={[{ value: '', label: t('usage.filter.allProviders') }, ...providerOptions.map((item) => ({ value: item.key, label: item.label }))]}
+            />
+          </div>
+          <div className="usage-filter-item">
+            <SelectMenu
               value={source}
-              onChange={(event) => changeFilter(setSource, event.currentTarget.value)}
-              aria-label={t('usage.filter.source')}
-            >
-              <option value="">{t('usage.filter.allSources')}</option>
-              {filterOptions(optionsAnalysis.sources).map((item) => (
-                <option value={item.key} key={item.key}>{item.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="usage-filter-item">
-            <span className="sr-only">{t('apiAccess.field.key')}</span>
-            <select
+              ariaLabel={t('usage.filter.source')}
+              onChange={(value) => changeFilter(setSource, value)}
+              options={[{ value: '', label: t('usage.filter.allSources') }, ...sourceOptions.map((item) => ({ value: item.key, label: item.label }))]}
+            />
+          </div>
+          <div className="usage-filter-item">
+            <SelectMenu
               value={apiKeyHash}
-              onChange={(event) => changeFilter(setApiKeyHash, event.currentTarget.value)}
-              aria-label={t('apiAccess.field.key')}
-            >
-              <option value="">{t('usage.filter.allKeys')}</option>
-              {filterOptions(optionsAnalysis.apiKeys).map((item) => (
-                <option value={item.key} key={item.key}>{item.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="usage-filter-item">
-            <span className="sr-only">{t('usage.filter.result')}</span>
-            <select
+              ariaLabel={t('apiAccess.field.key')}
+              onChange={(value) => changeFilter(setApiKeyHash, value)}
+              options={[{ value: '', label: t('usage.filter.allKeys') }, ...keyOptions.map((item) => ({ value: item.key, label: item.label }))]}
+            />
+          </div>
+          <div className="usage-filter-item">
+            <SelectMenu
               value={result}
-              onChange={(event) => changeFilter(setResult, event.currentTarget.value)}
-              aria-label={t('usage.filter.result')}
-            >
-              <option value="all">{t('usage.filter.allResults')}</option>
-              <option value="success">{t('usage.result.success')}</option>
-              <option value="failed">{t('usage.result.failed')}</option>
-              <option value="canceled">{t('usage.result.canceled')}</option>
-            </select>
-          </label>
+              ariaLabel={t('usage.filter.result')}
+              onChange={(value) => changeFilter(setResult, value)}
+              options={[
+                { value: 'all', label: t('usage.filter.allResults') },
+                { value: 'success', label: t('usage.result.success') },
+                { value: 'failed', label: t('usage.result.failed') },
+                { value: 'canceled', label: t('usage.result.canceled') },
+              ]}
+            />
+          </div>
         </div>
       </div>
 

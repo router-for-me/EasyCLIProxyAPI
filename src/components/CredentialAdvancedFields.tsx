@@ -1,7 +1,5 @@
 import { useState } from 'react';
-import { Plus, Undo2, X } from 'lucide-react';
-import { AgentModelPicker } from './AgentModelPicker';
-import type { ModelOption } from '../services/modelService';
+import { ChevronDown, Plus, Undo2, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import { isRecord } from '../services/managementApi';
@@ -44,14 +42,11 @@ function aliasRows(value: unknown): AliasRow[] {
 }
 
 export function CredentialAdvancedFields({
-  name, provider = '', advanced, models = [], modelsLoading = false, modelsError = '', onChange, disabled = false,
+  name, provider = '', advanced, onChange, disabled = false,
 }: {
   name: string;
   provider?: string;
   advanced: Advanced;
-  models?: ModelOption[];
-  modelsLoading?: boolean;
-  modelsError?: string;
   onChange: (advanced: Advanced) => void;
   disabled?: boolean;
 }) {
@@ -61,6 +56,7 @@ export function CredentialAdvancedFields({
   const aliases = aliasRows(advanced.model_aliases);
   const aliasesSet = Array.isArray(advanced.model_aliases);
   const [wordsDraft, setWordsDraft] = useState<string | null>(null);
+  const [expandedAlias, setExpandedAlias] = useState<number | null>(null);
   const setField = (key: string, value: unknown) => onChange(withoutKey(advanced, key, value));
   const tri = (value: unknown) => value === true ? 'true' : value === false ? 'false' : '';
   const choice = (label: MessageKey, key: string, options: ReadonlyArray<{ value: string; label: MessageKey }>) => {
@@ -101,34 +97,33 @@ export function CredentialAdvancedFields({
         <h3>{t('authFiles.settings.aliases')}</h3>
         <p className="credential-settings-lead">{t('authFiles.settings.aliasesHint')}</p>
         {aliases.length ? <div className="credential-alias-list">
-          {aliases.map((row, index) => <div className="credential-alias-card" key={index}>
-            <div className="credential-alias-card-heading">
-              <strong>{t('authFiles.settings.aliasItem', { index: index + 1 })}</strong>
-              <button type="button" className="icon-button quiet" disabled={disabled} aria-label={t('authFiles.settings.aliasRemove', { index: index + 1 })} onClick={() => setField('model_aliases', aliases.filter((_, rowIndex) => rowIndex !== index))}><X size={15} /></button>
+          {aliases.map((row, index) => {
+            const expanded = expandedAlias === index;
+            return <div className="credential-alias-card" key={index}>
+            <div className="credential-alias-row">
+              <input aria-label={t('authFiles.settings.aliasUpstream')} placeholder={t('authFiles.settings.aliasUpstream')} value={textValue(row.name)} disabled={disabled} autoComplete="off" spellCheck={false} maxLength={240}
+                onChange={(event) => updateAlias(index, { name: event.currentTarget.value })} />
+              <input aria-label={t('authFiles.settings.aliasClient')} placeholder={t('authFiles.settings.aliasClient')} value={textValue(row.alias)} disabled={disabled} autoComplete="off" spellCheck={false} maxLength={240}
+                onChange={(event) => updateAlias(index, { alias: event.currentTarget.value })} />
+              <div className="credential-alias-row-actions">
+                <button type="button" className="icon-button quiet" disabled={disabled} aria-expanded={expanded} aria-label={expanded ? t('appUpdate.notes.collapse') : t('appUpdate.notes.expand')}
+                  onClick={() => setExpandedAlias(expanded ? null : index)}><ChevronDown size={15} className={expanded ? 'is-expanded' : ''} /></button>
+                <button type="button" className="icon-button quiet" disabled={disabled} aria-label={t('authFiles.settings.aliasRemove', { index: index + 1 })}
+                  onClick={() => { setExpandedAlias((current) => current === index ? null : current !== null && current > index ? current - 1 : current); setField('model_aliases', aliases.filter((_, rowIndex) => rowIndex !== index)); }}><X size={15} /></button>
+              </div>
             </div>
-            <div className="credential-alias-fields">
-              <label className="credential-settings-field">
-                <span>{t('authFiles.settings.aliasUpstream')}</span>
-                <AgentModelPicker models={models} value={textValue(row.name)} loading={modelsLoading} error={modelsError} disabled={disabled}
-                  editable={{ label: t('authFiles.settings.aliasUpstream'), placeholder: t('authFiles.settings.aliasModelPlaceholder'), maxLength: 240 }}
-                  menuClassName="credential-model-menu" onChange={(value) => updateAlias(index, { name: value })} />
-              </label>
-              <label className="credential-settings-field">
-                <span>{t('authFiles.settings.aliasClient')}</span>
-                <AgentModelPicker models={models} value={textValue(row.alias)} loading={modelsLoading} error={modelsError} disabled={disabled}
-                  editable={{ label: t('authFiles.settings.aliasClient'), placeholder: t('authFiles.settings.aliasModelPlaceholder'), maxLength: 240 }}
-                  menuClassName="credential-model-menu" onChange={(value) => updateAlias(index, { alias: value })} />
-              </label>
+            {expanded ? <div className="credential-alias-details">
               <label className="credential-settings-field">
                 <span>{t('authFiles.settings.aliasDisplay')}</span>
                 <input value={textValue(row['display-name'])} disabled={disabled} autoComplete="off" spellCheck={false} onChange={(event) => updateAlias(index, { 'display-name': event.currentTarget.value.trim() ? event.currentTarget.value : undefined })} />
               </label>
-            </div>
-            <div className="credential-alias-checks">
-              <label><input type="checkbox" checked={row.fork === true} disabled={disabled} onChange={(event) => updateAlias(index, { fork: event.currentTarget.checked })} />{t('authFiles.settings.aliasFork')}</label>
-              <label><input type="checkbox" checked={row['force-mapping'] === true} disabled={disabled} onChange={(event) => updateAlias(index, { 'force-mapping': event.currentTarget.checked })} />{t('authFiles.settings.aliasForce')}</label>
-            </div>
-          </div>)}
+              <div className="credential-alias-checks">
+                <label><input type="checkbox" checked={row.fork === true} disabled={disabled} onChange={(event) => updateAlias(index, { fork: event.currentTarget.checked })} />{t('authFiles.settings.aliasFork')}</label>
+                <label><input type="checkbox" checked={row['force-mapping'] === true} disabled={disabled} onChange={(event) => updateAlias(index, { 'force-mapping': event.currentTarget.checked })} />{t('authFiles.settings.aliasForce')}</label>
+              </div>
+            </div> : null}
+          </div>;
+          })}
         </div> : aliasesSet ? <p className="credential-settings-lead">{t('authFiles.settings.aliasCleared')}</p> : null}
         <div className="credential-settings-inline-actions">
           <button type="button" className="secondary-button compact-button" disabled={disabled} onClick={(event) => { const scroller = event.currentTarget.closest('.credential-settings-body'); const top = scroller?.scrollTop ?? 0; setField('model_aliases', [...aliases, { name: '', alias: '' }]); requestAnimationFrame(() => { if (scroller) scroller.scrollTop = top; }); }}><Plus size={14} />{t('authFiles.settings.aliasAdd')}</button>
