@@ -590,9 +590,23 @@ describe('API 接入配置合并', () => {
     const enabled = providerRecordWithDisabledState('codex-api-key', disabled, false);
 
     expect(disabled['excluded-models']).toEqual(['preview-*', '*']);
-    expect(disabled.disabled).toBe(true);
+    expect(disabled.disabled).toBeUndefined();
     expect(enabled['excluded-models']).toEqual(['preview-*']);
     expect(enabled.disabled).toBeUndefined();
+  });
+
+  it('does not persist disabled on Codex keys because the core rejects that field', () => {
+    const disabled = providerRecordWithDisabledState('codex-api-key', {
+      'api-key': 'codex-key',
+      disabled: true,
+      'excluded-models': ['preview-*'],
+    }, true);
+    const enabled = providerRecordWithDisabledState('codex-api-key', disabled, false);
+
+    expect(disabled).not.toHaveProperty('disabled');
+    expect(disabled['excluded-models']).toEqual(['preview-*', '*']);
+    expect(enabled).not.toHaveProperty('disabled');
+    expect(enabled['excluded-models']).toEqual(['preview-*']);
   });
 
   it('列表按原生 disabled 标记显示每把密钥的启用状态', () => {

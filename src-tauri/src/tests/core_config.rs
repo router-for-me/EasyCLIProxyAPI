@@ -2193,6 +2193,26 @@ fn startup_merge_can_shrink_template_api_key_sequence() {
 }
 
 
+
+#[test]
+fn startup_merge_repairs_disabled_fields_rejected_by_native_provider_keys() {
+    let template = "config-version: 8\nhost: \"\"\nport: 8317\napi-keys:\n  codex: []\n  claude: []\n  openai-compatibility: []\n";
+    let current = "config-version: 8\nhost: 127.0.0.1\nport: 8317\napi-keys:\n  codex:\n    - name: codex-1\n      excluded-models:\n        - preview-*\n      keys:\n        - api-key: live\n        - api-key: paused\n          disabled: true\n          excluded-models:\n            - preview-*\n  claude:\n    - name: claude-1\n      disabled: true\n      keys:\n        - api-key: claude-key\n  openai-compatibility:\n    - name: relay\n      base-url: https://relay.example/v1\n      disabled: true\n      keys:\n        - api-key: relay-key\n";
+    let config = GuiConfigFile::default();
+    let merged = merge_core_config_yaml(template, Some(current), &config).unwrap();
+    let document = serde_norway::from_str::<serde_norway::Value>(&merged)
+        .unwrap_or_else(|error| panic!("invalid YAML: {error}\n{merged}"));
+
+    assert!(serde_norway::to_string(&document["api-keys"]["codex"]).unwrap().contains("disabled") == false);
+    assert_eq!(document["api-keys"]["codex"][0]["keys"][1]["excluded-models"][0], "preview-*");
+    assert_eq!(document["api-keys"]["codex"][0]["keys"][1]["excluded-models"][1], "*");
+    assert!(document["api-keys"]["claude"][0].get("disabled").is_none());
+    assert_eq!(document["api-keys"]["claude"][0]["excluded-models"][0], "*");
+    assert_eq!(document["api-keys"]["claude"][0]["keys"][0]["api-key"], "claude-key");
+    assert_eq!(document["api-keys"]["openai-compatibility"][0]["disabled"], true);
+    assert!(!merged.contains("disabled: true\n          excluded-models"));
+}
+
 #[test]
 fn v8_signed_retry_weighted_routing_and_empty_host_roundtrip() {
     let content = "config-version: 8\nserver: {host: '', port: 8317}\nrouting: {strategy: weighted-round-robin, retry: {max-retry-interval: -1}}\nmanagement: {secret-key: ''}\n";

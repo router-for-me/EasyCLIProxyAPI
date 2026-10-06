@@ -1184,12 +1184,13 @@ export const providerRecordWithDisabledState = (
   disabled: boolean,
 ) => {
   const nextRecord = stripResponseFields(record);
+  // Only OpenAI-compatible providers have a native disabled field. Codex, Claude,
+  // Gemini, and the other key types reject it during YAML unmarshal.
   if (definitionFor(section).openAi) {
     nextRecord.disabled = disabled;
     return nextRecord;
   }
-  if (disabled) nextRecord.disabled = true;
-  else delete nextRecord.disabled;
+  delete nextRecord.disabled;
 
   const excludedModels = Array.isArray(nextRecord['excluded-models'])
     ? nextRecord['excluded-models'].map(String).filter((model) => model.trim() !== '*')

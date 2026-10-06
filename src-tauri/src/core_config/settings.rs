@@ -313,7 +313,8 @@ pub(crate) fn merge_core_config_yaml(
     // software-side opt-out should disable statistics when starting the kernel.
     let mut startup_config = config.clone();
     startup_config.usage_statistics_enabled = config.usage_statistics_disabled != Some(true);
-    apply_gui_managed_settings(&base, &startup_config)
+    let managed = apply_gui_managed_settings(&base, &startup_config)?;
+    sanitize_unsupported_provider_disabled_yaml(&managed)
 }
 
 pub(crate) fn merge_core_config_fields(
