@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { requestRateColor } from '../services/authFileRequests';
 import type { HomeOverviewSnapshot } from '../services/homeOverview';
 
 export function HomeOverviewCards({ snapshot, loading, coreReady, onRefresh, actions }: {
@@ -20,10 +21,11 @@ export function HomeOverviewCards({ snapshot, loading, coreReady, onRefresh, act
       id: 'usage', label: t('home.overview.successRate'),
       value: rate == null ? '—' : `${formatNumber(rate, { maximumFractionDigits: 1 })}%`,
       description: usage ? t(usage.totalRequests ? 'home.overview.requests' : 'home.overview.noRequests', { count: formatNumber(usage.totalRequests) }) : unavailable(false),
-      tone: rate == null ? 'neutral' : rate >= 95 ? 'success' : rate >= 80 ? 'warning' : 'error',
+      tone: 'neutral',
       error: snapshot?.errors.usage,
       percent: rate ?? null,
       meterLabel: t('home.overview.successRate'),
+      meterColor: rate == null ? undefined : requestRateColor(rate / 100),
     },
     {
       id: 'credentials', label: t('home.overview.credentials'),
@@ -56,7 +58,7 @@ export function HomeOverviewCards({ snapshot, loading, coreReady, onRefresh, act
         <div className="home-overview-actions">{actions}<button type="button" className="icon-button quiet" aria-label={t('home.overview.refresh')} title={t('home.overview.refresh')} disabled={loading} onClick={onRefresh}><RefreshCw size={14} className={loading ? 'spin' : undefined} /></button></div>
       </div>
       <div className="home-stat-grid">
-        {cards.map((card) => <article className={`home-stat-card ${card.tone}`} key={card.id} data-stat={card.id}>
+        {cards.map((card) => <article className={`home-stat-card ${card.tone}`} key={card.id} data-stat={card.id} style={'meterColor' in card && card.meterColor ? { '--stat-color': card.meterColor } as CSSProperties : undefined}>
           <h3>{card.label}</h3>
           <strong className="home-stat-value">{card.value}</strong>
           {'percent' in card && <div

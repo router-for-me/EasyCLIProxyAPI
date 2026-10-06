@@ -283,7 +283,7 @@
 .home-stat-card h3 { margin: 0; color: var(--text-secondary); font-size: 12px; font-weight: 500; line-height: 1.5; }
 .home-stat-value { display: block; color: var(--text-primary); font-family: var(--font-mono); font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.15; letter-spacing: -.03em; }
 .home-stat-track { height: 5px; margin: 2px 0; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, var(--stat-color) 13%, transparent); }
-.home-stat-track > span { display: block; height: 100%; border-radius: inherit; background: var(--stat-color); }
+.home-stat-track > span { display: block; height: 100%; border-radius: inherit; background: var(--stat-color); transition: width .25s ease, background-color .25s ease; }
 .home-stat-card p { margin: 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 
 /* Use the desktop workspace height; smaller windows retain natural scrolling. */
