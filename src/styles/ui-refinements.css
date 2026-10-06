@@ -634,8 +634,13 @@ body, html, #root {
 }
 
 .usage-records-page .usage-filter-item:focus-within {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 0 3px var(--ui-focus-ring);
+  border-color: var(--border-hover);
+  box-shadow: none;
+}
+
+.usage-records-page .usage-filter-item .select-menu-trigger:focus,
+.usage-records-page .usage-filter-item .select-menu-trigger:focus-visible {
+  outline: none;
 }
 
 .usage-records-page .usage-filter-item select:hover,

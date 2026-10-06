@@ -271,7 +271,6 @@ export function UsageRecordsPage() {
   const [pricing, setPricing] = useState<UsagePricing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [loadedScopeKey, setLoadedScopeKey] = useState('');
   const loadedFilterScopeKeyRef = useRef('');
   const requestIdRef = useRef(0);
   const schedulerRef = useRef<ReturnType<typeof createRefreshScheduler> | null>(null);
@@ -327,32 +326,6 @@ export function UsageRecordsPage() {
     page: 1,
     pageSize: 1,
   }), [customEnd, customStart, range]);
-
-  const scopeKey = useMemo(() => usageViewScopeKey({
-    tab: activeTab,
-    range,
-    customStart,
-    customEnd,
-    model,
-    provider,
-    source,
-    apiKeyHash,
-    result,
-    page,
-    pageSize,
-  }), [
-    activeTab,
-    apiKeyHash,
-    customEnd,
-    customStart,
-    model,
-    page,
-    pageSize,
-    provider,
-    range,
-    result,
-    source,
-  ]);
 
   const executeLoadData = useCallback(
     async (quiet = false) => {
@@ -419,7 +392,6 @@ export function UsageRecordsPage() {
           setStatus(nextStatus);
           if (nextOptions) setOptionsAnalysis(nextOptions);
         }
-        setLoadedScopeKey(scopeKey);
         if (filtersChanged) loadedFilterScopeKeyRef.current = filterScopeKey;
         setError('');
       } catch (requestError) {
@@ -428,7 +400,7 @@ export function UsageRecordsPage() {
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [activeTab, buildQueries, filterScopeKey, page, pageSize, model, provider, source, apiKeyHash, result, scopeKey]
+    [activeTab, buildQueries, filterScopeKey, page, pageSize, model, provider, source, apiKeyHash, result]
   );
 
   const loadData = useCallback(
@@ -484,16 +456,14 @@ export function UsageRecordsPage() {
   };
 
   const collectorTone = status?.state === 'error' ? 'error' : status?.state === 'collecting' ? 'success' : '';
-  const hasCurrentSnapshot = loadedScopeKey === scopeKey;
   const showInitialLoading =
     activeTab !== 'data-management' &&
     !error &&
-    (!hasCurrentSnapshot ||
-      (loading &&
-        ((activeTab === 'overview' && !overview) ||
-          (activeTab === 'analysis' && !overview) ||
-          (activeTab === 'events' && !events) ||
-          (activeTab === 'pricing' && !pricing))));
+    loading &&
+    ((activeTab === 'overview' && !overview) ||
+      (activeTab === 'analysis' && !overview && !analysis) ||
+      (activeTab === 'events' && !events) ||
+      (activeTab === 'pricing' && !pricing));
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: UsageTab) => {
     handleHorizontalTabKey(
@@ -716,12 +686,12 @@ export function UsageRecordsPage() {
         </div>
       ) : null}
 
-      {hasCurrentSnapshot && activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
-      {hasCurrentSnapshot && activeTab === 'analysis' ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
+      {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
+      {activeTab === 'analysis' && (analysis || overview) ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
       {activeTab === 'events' ? (
         <EventsView
           events={events ?? { items: [], total: 0, page, pageSize, totalPages: 1 }}
-          loading={!events || (loading && !hasCurrentSnapshot)}
+          loading={!events}
           pageSize={pageSize}
           query={buildQueries().query}
           onPage={setPage}
@@ -731,7 +701,7 @@ export function UsageRecordsPage() {
           }}
         />
       ) : null}
-      {hasCurrentSnapshot && activeTab === 'pricing' && pricing ? (
+      {activeTab === 'pricing' && pricing ? (
         <PricingView pricing={pricing} query={buildQueries().query} onChanged={() => loadData(true)} />
       ) : null}
       {activeTab === 'data-management' ? <UsageDataManagementView /> : null}
