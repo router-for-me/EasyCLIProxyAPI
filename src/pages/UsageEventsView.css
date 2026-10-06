@@ -50,16 +50,20 @@
   background: var(--usage-log-surface);
   color: var(--usage-log-muted);
   box-shadow: none;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   transition: background .15s ease, border-color .15s ease;
 }
 
-.usage-request-log .usage-col-reset-btn.icon-only {
-  width: 32px;
-  padding: 0;
+.usage-request-log .usage-col-settings-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.usage-request-log .usage-col-settings-btn {
+  color: var(--usage-log-text);
 }
 
 .usage-request-log .usage-col-settings-btn:hover,
@@ -129,6 +133,14 @@
   background: var(--usage-log-surface);
   color: var(--usage-log-text);
   line-height: 1.45;
+}
+
+.usage-request-log.usage-row-height-auto .usage-events-table td {
+  height: auto;
+}
+
+.usage-request-log.usage-row-height-fixed .usage-events-table td {
+  height: var(--usage-row-height, 68px);
 }
 
 .usage-request-log .usage-events-table tbody tr:hover td {
