@@ -58,7 +58,8 @@
 .credential-alias-list, .credential-header-list { display: grid; gap: 12px; }
 .credential-alias-card { display: grid; gap: 8px; }
 .credential-alias-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
-.credential-alias-row input { min-width: 0; }
+.credential-alias-row input,
+.credential-alias-row .agent-model-picker { min-width: 0; }
 .credential-alias-row-actions { display: flex; align-items: center; gap: 4px; }
 .credential-alias-row-actions .is-expanded { transform: rotate(180deg); }
 .credential-alias-details { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
@@ -73,6 +74,6 @@
 
 @media (max-width: 560px) {
   .credential-alias-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .credential-alias-row input:first-child { grid-column: 1 / -1; }
+  .credential-alias-row > :first-child { grid-column: 1 / -1; }
 }
 

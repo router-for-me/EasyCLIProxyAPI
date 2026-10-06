@@ -87,6 +87,7 @@ export const zhCN = {
   'authFiles.settings.aliasRemove': "删除别名 {index}",
   'authFiles.settings.aliasUpstream': "模型名称",
   'authFiles.settings.aliasClient': "模型别名",
+  'authFiles.settings.aliasModelPlaceholder': "搜索或输入模型",
   'authFiles.settings.aliasDisplay': "显示名称",
   'authFiles.settings.aliasFork': "在模型列表中保留原始模型",
   'authFiles.settings.aliasForce': "将响应模型名称改写为别名",

@@ -7,7 +7,7 @@ import { loadAuthFileSettings, saveAuthFileSettings, type AuthFileSettingsDraft,
 import { modelMatchesRule, normalizeOAuthExcludedRules, oauthModelCandidates, oauthModelsFromPayload, setOAuthModelsExcluded, type OAuthModelDefinition } from '../services/oauthModels';
 import './AuthFileSettingsDialog.css';
 import { CredentialAdvancedFields, CredentialHeadersEditor, credentialProviderKey } from './CredentialAdvancedFields';
-import { modelSearchText } from '../services/modelService';
+import { modelSearchText, type ModelOption } from '../services/modelService';
 
 export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }: {
   name: string;
@@ -22,6 +22,7 @@ export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }
   const [original, setOriginal] = useState<AuthFileSettingsDraft | null>(null);
   const [draft, setDraft] = useState<AuthFileSettingsDraft | null>(null);
   const [models, setModels] = useState<OAuthModelDefinition[]>([]);
+  const [pickerModels, setPickerModels] = useState<ModelOption[]>([]);
   const [catalogError, setCatalogError] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -59,6 +60,7 @@ export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }
       const catalog = oauthModelsFromPayload(payload);
       if (!active) return;
       setModels(catalog);
+      setPickerModels(catalog.map((model) => ({ name: model.id, alias: model.displayName })));
     }).catch((reason: unknown) => {
       if (active) setCatalogError(reason instanceof Error ? reason.message : String(reason));
     }).finally(() => { if (active) setCatalogLoading(false); });
@@ -169,7 +171,7 @@ export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }
                   </div>
                 </details>
               </section>
-              <CredentialAdvancedFields name={name} provider={provider} advanced={draft.advanced} disabled={saving} onChange={(advanced) => update('advanced', advanced)} />
+              <CredentialAdvancedFields name={name} provider={provider} advanced={draft.advanced} models={pickerModels} modelsLoading={catalogLoading} modelsError={catalogError} disabled={saving} onChange={(advanced) => update('advanced', advanced)} />
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.additional')}</h3>
                 <CredentialHeadersEditor value={draft.headers} disabled={saving} onChange={(headers) => update('headers', headers)} />

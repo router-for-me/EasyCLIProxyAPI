@@ -88,6 +88,7 @@ export const en: Record<MessageKey, string> = {
   'authFiles.settings.aliasRemove': "Remove alias {index}",
   'authFiles.settings.aliasUpstream': "Model name",
   'authFiles.settings.aliasClient': "Model alias",
+  'authFiles.settings.aliasModelPlaceholder': "Search or enter a model",
   'authFiles.settings.aliasDisplay': "Display name",
   'authFiles.settings.aliasFork': "Keep the original model in the model list",
   'authFiles.settings.aliasForce': "Rewrite response model names to the alias",

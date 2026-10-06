@@ -88,6 +88,7 @@ export const jaOverrides = {
   'authFiles.settings.aliasRemove': "別名 {index} を削除",
   'authFiles.settings.aliasUpstream': "モデル名",
   'authFiles.settings.aliasClient': "モデル別名",
+  'authFiles.settings.aliasModelPlaceholder': "モデルを検索または入力",
   'authFiles.settings.aliasDisplay': "表示名",
   'authFiles.settings.aliasFork': "モデル一覧に元のモデルを残す",
   'authFiles.settings.aliasForce': "応答のモデル名を別名に書き換える",

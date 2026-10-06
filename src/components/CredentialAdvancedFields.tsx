@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, Plus, Undo2, X } from 'lucide-react';
+import { AgentModelPicker } from './AgentModelPicker';
+import type { ModelOption } from '../services/modelService';
 import { useI18n } from '../i18n';
 import type { MessageKey } from '../i18n/resources';
 import { isRecord } from '../services/managementApi';
@@ -42,11 +44,14 @@ function aliasRows(value: unknown): AliasRow[] {
 }
 
 export function CredentialAdvancedFields({
-  name, provider = '', advanced, onChange, disabled = false,
+  name, provider = '', advanced, models = [], modelsLoading = false, modelsError = '', onChange, disabled = false,
 }: {
   name: string;
   provider?: string;
   advanced: Advanced;
+  models?: ModelOption[];
+  modelsLoading?: boolean;
+  modelsError?: string;
   onChange: (advanced: Advanced) => void;
   disabled?: boolean;
 }) {
@@ -101,8 +106,9 @@ export function CredentialAdvancedFields({
             const expanded = expandedAlias === index;
             return <div className="credential-alias-card" key={index}>
             <div className="credential-alias-row">
-              <input aria-label={t('authFiles.settings.aliasUpstream')} placeholder={t('authFiles.settings.aliasUpstream')} value={textValue(row.name)} disabled={disabled} autoComplete="off" spellCheck={false} maxLength={240}
-                onChange={(event) => updateAlias(index, { name: event.currentTarget.value })} />
+              <AgentModelPicker models={models} value={textValue(row.name)} loading={modelsLoading} error={modelsError} disabled={disabled}
+                editable={{ label: t('authFiles.settings.aliasUpstream'), placeholder: t('authFiles.settings.aliasModelPlaceholder'), maxLength: 240 }}
+                menuClassName="credential-model-menu" onChange={(value) => updateAlias(index, { name: value })} />
               <input aria-label={t('authFiles.settings.aliasClient')} placeholder={t('authFiles.settings.aliasClient')} value={textValue(row.alias)} disabled={disabled} autoComplete="off" spellCheck={false} maxLength={240}
                 onChange={(event) => updateAlias(index, { alias: event.currentTarget.value })} />
               <div className="credential-alias-row-actions">
