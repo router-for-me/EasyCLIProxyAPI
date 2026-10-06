@@ -2397,10 +2397,10 @@ fn main() {
                 return;
             }
             let mut config = GuiConfigFile::default();
-            if let Err(secret_error) = ensure_strong_management_secret(&mut config) {
-                eprintln!("Failed to initialize WebUI security key: {secret_error}");
-                return;
-            }
+            // If the GUI configuration cannot be read before the kernel starts,
+            // use the shared recovery key so requests and the generated kernel
+            // configuration stay synchronized.
+            config.management_secret_key = LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
             if let Err(sanitize_error) = sanitize_gui_config(&mut config) {
                 eprintln!("Failed to initialize fixed credentials directory: {sanitize_error}");
             }

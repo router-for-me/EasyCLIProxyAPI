@@ -150,7 +150,7 @@ fn management_secret_rotation_preserves_disabled_and_custom_values() {
         ..GuiConfigFile::default()
     };
     assert!(ensure_strong_management_secret(&mut hashed).unwrap());
-    assert!(hashed.management_secret_key.starts_with("wui-Aa9_"));
+    assert_eq!(hashed.management_secret_key, "123456");
 
     let mut custom = GuiConfigFile {
         management_secret_key: "user-selected-secret".to_string(),
@@ -158,6 +158,38 @@ fn management_secret_rotation_preserves_disabled_and_custom_values() {
     };
     assert!(!ensure_strong_management_secret(&mut custom).unwrap());
     assert_eq!(custom.management_secret_key, "user-selected-secret");
+}
+
+#[test]
+fn management_secret_recovery_synchronizes_kernel_and_request_credentials() {
+    let hash = "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu";
+    for (imported, saved, expected) in [
+        ("", None, "123456"),
+        (hash, None, "123456"),
+        (hash, Some(hash), "123456"),
+        ("bad\nkey", None, "123456"),
+        (hash, Some("known-secret"), "known-secret"),
+        ("", Some("known-secret"), "known-secret"),
+        ("", Some(""), ""),
+        ("new-secret", Some("old-secret"), "new-secret"),
+    ] {
+        let config = GuiConfigFile {
+            management_secret_key: recover_management_secret(imported, saved),
+            ..GuiConfigFile::default()
+        };
+        assert_eq!(config.management_secret_key, expected);
+        for (template, section) in [
+            ("remote-management: {secret-key: stale}\n", "remote-management"),
+            ("config-version: 8\nmanagement: {secret-key: stale}\n", "management"),
+        ] {
+            let updated = apply_gui_managed_settings(template, &config).unwrap();
+            let document: serde_norway::Value = serde_norway::from_str(&updated).unwrap();
+            assert_eq!(document[section]["secret-key"], expected);
+        }
+        if !expected.is_empty() {
+            assert_eq!(management_api::management_authorization(&config).unwrap(), format!("Bearer {expected}"));
+        }
+    }
 }
 
 #[test]

@@ -108,26 +108,33 @@ pub(crate) fn validate_strong_management_secret_key(secret_key: &str) -> Result<
     Ok(())
 }
 
-pub(crate) fn generate_management_secret_key() -> Result<String, String> {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-
-    let mut random = [0_u8; 32];
-    getrandom::fill(&mut random).map_err(|error| format!("Failed to generate WebUI security key: {error}"))?;
-    Ok(format!("wui-Aa9_{}", URL_SAFE_NO_PAD.encode(random)))
-}
-
 pub(crate) fn management_secret_requires_rotation(secret_key: &str) -> bool {
     let secret_key = secret_key.trim();
     // Empty is an intentional disabled Management API, including after restart.
-    is_hashed_management_secret_key(secret_key)
+    !secret_key.is_empty() && validate_strong_management_secret_key(secret_key).is_err()
 }
 
 pub(crate) fn ensure_strong_management_secret(config: &mut GuiConfigFile) -> Result<bool, String> {
     if !management_secret_requires_rotation(&config.management_secret_key) {
         return Ok(false);
     }
-    config.management_secret_key = generate_management_secret_key()?;
+    config.management_secret_key = LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
     Ok(true)
+}
+
+// An empty template or a hashed kernel value cannot supply a request credential.
+// Preserve a saved plaintext key (including an explicitly disabled API) before
+// falling back, so the shared GUI state and the next kernel config use one key.
+pub(crate) fn recover_management_secret(imported: &str, saved: Option<&str>) -> String {
+    if validate_strong_management_secret_key(imported).is_ok() {
+        return imported.trim().to_string();
+    }
+    if let Some(saved) = saved {
+        if saved.is_empty() || validate_strong_management_secret_key(saved).is_ok() {
+            return saved.trim().to_string();
+        }
+    }
+    LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string()
 }
 
 pub(crate) fn normalize_management_secret_key(secret_key: String) -> Result<String, String> {
@@ -1337,6 +1344,8 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         )
     };
 
+    let saved_management_secret = presence.management_secret_key.as_deref();
+
     if gui_config_exists {
         if let Ok(content) = fs::read_to_string(&config_path) {
             changed |= [
@@ -1523,7 +1532,12 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         presence.proxy_override.is_some(),
     );
     config.prefer_gitcode_downloads = config.download_source == VersionDownloadSource::Gitcode;
-    let management_secret_rotated = ensure_strong_management_secret(&mut config)?;
+    let recovered_secret = recover_management_secret(
+        &config.management_secret_key,
+        saved_management_secret,
+    );
+    let management_secret_rotated = recovered_secret != config.management_secret_key;
+    config.management_secret_key = recovered_secret;
     changed |= management_secret_rotated;
     changed |= sanitize_gui_config(&mut config)?;
     validate_gui_config(&config)?;
