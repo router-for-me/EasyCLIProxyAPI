@@ -98,29 +98,42 @@
   background: var(--usage-page-hover);
 }
 
-/* Keep every usage filter visible. Each select sizes to its option text. */
-.usage-records-page .usage-filter-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  grid-template-columns: none;
+/* One fixed-width control per filter. The menu fills the outer field. */
+.usage-records-page .usage-filter-item {
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
-.usage-records-page .usage-filter-item {
-  flex: 0 0 auto;
-  width: max-content;
-  max-width: 100%;
-  min-width: 0;
+.usage-records-page .usage-filter-item .select-menu,
+.usage-records-page .usage-filter-item .select-menu-trigger {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.usage-records-page .usage-filter-item .select-menu-trigger {
+  grid-template-columns: minmax(0, 1fr) 16px;
   padding: 0 10px 0 12px;
 }
 
+.usage-records-page .usage-filter-item .select-menu-trigger:hover:not(:disabled),
+.usage-records-page .usage-filter-item .select-menu.open .select-menu-trigger {
+  border-color: transparent;
+  background: transparent;
+}
+
 .usage-records-page .usage-filter-item select {
-  width: max-content;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
-  field-sizing: content;
   padding: 0 20px 0 0;
-  background-color: var(--bg-primary);
+  background-color: transparent;
   color: var(--text-primary);
   color-scheme: inherit;
 }

@@ -55,7 +55,7 @@ export function SelectMenu({
     const placeAbove = spaceBelow < minimumHeight && spaceAbove > spaceBelow;
     const available = placeAbove ? spaceAbove : spaceBelow;
     const height = Math.min(preferredHeight, Math.max(Math.min(minimumHeight, available), available));
-    const width = Math.max(rect.width, 180);
+    const width = Math.min(320, Math.max(rect.width, 180));
     const maxLeft = Math.max(edgeGap, window.innerWidth - edgeGap - width);
     const left = Math.min(Math.max(edgeGap, rect.left), maxLeft);
     const desiredTop = placeAbove ? rect.top - triggerGap - height : rect.bottom + triggerGap;
