@@ -1,3 +1,4 @@
+import { usagePreferences } from '../services/usagePreferences';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -165,7 +166,7 @@ const EVENT_PAGE_SIZES = [20, 50, 100, 200] as const;
 
 const loadPageSize = (): number => {
   try {
-    const saved = Number(localStorage.getItem(PAGE_SIZE_KEY));
+    const saved = Number(usagePreferences.getItem(PAGE_SIZE_KEY));
     return EVENT_PAGE_SIZES.includes(saved as (typeof EVENT_PAGE_SIZES)[number]) ? saved : 50;
   } catch {
     return 50;
@@ -175,7 +176,7 @@ const emptyAnalysis: UsageAnalysis = { models: [], providers: [], sources: [], a
 
 const loadTab = (): UsageTab => {
   try {
-    const saved = localStorage.getItem(TAB_KEY);
+    const saved = usagePreferences.getItem(TAB_KEY);
     return saved === 'analysis' || saved === 'events' || saved === 'pricing' || saved === 'data-management'
       ? saved
       : 'overview';
@@ -186,7 +187,7 @@ const loadTab = (): UsageTab => {
 
 const loadRange = (): UsageRange => {
   try {
-    const saved = localStorage.getItem(RANGE_KEY) as UsageRange | null;
+    const saved = usagePreferences.getItem(RANGE_KEY) as UsageRange | null;
     return ['4h', '24h', 'today', '7d', '30d', 'all', 'custom'].includes(saved ?? '')
       ? (saved as UsageRange)
       : '24h';
@@ -277,21 +278,21 @@ export function UsageRecordsPage() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(TAB_KEY, activeTab);
+      usagePreferences.setItem(TAB_KEY, activeTab);
     } catch {
     }
   }, [activeTab]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(RANGE_KEY, range);
+      usagePreferences.setItem(RANGE_KEY, range);
     } catch {
     }
   }, [range]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(PAGE_SIZE_KEY, String(pageSize));
+      usagePreferences.setItem(PAGE_SIZE_KEY, String(pageSize));
     } catch {
     }
   }, [pageSize]);
@@ -1604,7 +1605,7 @@ function PricingView({
   const [syncing, setSyncing] = useState(false);
   const [applyingSync, setApplyingSync] = useState(false);
   const [syncSource, setSyncSource] = useState<'models-dev' | 'litellm'>(() => {
-    try { return localStorage.getItem('cpa-gui.pricing-sync-source.v1') === 'litellm' ? 'litellm' : 'models-dev'; }
+    try { return usagePreferences.getItem('cpa-gui.pricing-sync-source.v1') === 'litellm' ? 'litellm' : 'models-dev'; }
     catch { return 'models-dev'; }
   });
   const [syncPreview, setSyncPreview] = useState<ModelPriceSyncPreview | null>(null);
@@ -1729,7 +1730,7 @@ function PricingView({
 
   const changeSyncSource = (source: 'models-dev' | 'litellm') => {
     setSyncSource(source);
-    try { localStorage.setItem('cpa-gui.pricing-sync-source.v1', source); } catch {}
+    try { usagePreferences.setItem('cpa-gui.pricing-sync-source.v1', source); } catch {}
   };
 
   return (

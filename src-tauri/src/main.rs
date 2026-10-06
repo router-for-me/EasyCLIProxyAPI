@@ -2627,6 +2627,8 @@ fn main() {
             detect_core_platform,
             get_core_status,
             get_gui_settings,
+            get_usage_view_preferences,
+            save_usage_view_preferences,
             resolve_api_access_remarks,
             save_api_access_remark,
             set_app_locale,

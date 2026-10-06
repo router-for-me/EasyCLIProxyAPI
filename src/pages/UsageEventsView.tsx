@@ -1,3 +1,4 @@
+import { usagePreferences } from '../services/usagePreferences';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
@@ -110,42 +111,22 @@ const EVENT_COLUMNS: readonly EventColumnDef[] = [
 const DEFAULT_EVENT_VISIBLE_COLUMNS: readonly EventColumnKey[] = [
   'time', 'model', 'provider', 'result', 'total', 'cache', 'latency', 'speed', 'cost',
 ];
-const PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
-  'time', 'provider', 'key', 'source', 'model', 'effort', 'result', 'request', 'latency', 'speed', 'total', 'cache', 'cost',
-];
-const PREVIOUS_EFFORT_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
-  'time', 'model', 'provider', 'result', 'total', 'cache', 'latency', 'speed', 'cost', 'effort',
-];
-const LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS: readonly string[] = [
-  'time', 'model', 'input', 'output', 'cache', 'cacheRate', 'total', 'speed', 'ttft', 'latency', 'result', 'provider', 'source',
-];
 
 const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v4';
 const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v3';
-const PREVIOUS_COMPACT_WIDTHS: Partial<Record<EventColumnKey, number>> = {
-  key: 120, source: 180, model: 132, request: 112,
-};
-const PREVIOUS_EVENT_COLUMN_WIDTHS: Record<string, number> = {
-  time: 105, key: 150, source: 205, model: 150, effort: 100, result: 95,
-  request: 145, latency: 125, speed: 110, total: 145, cache: 135, provider: 135,
-  cost: 112,
-};
-const PREVIOUS_GENEROUS_DEFAULT_WIDTHS: Record<string, number> = {
-  time: 84, model: 160, provider: 108, result: 80, total: 120, cache: 104,
-  latency: 112, speed: 88, cost: 112, key: 112, source: 128, effort: 76, request: 128,
-};
 const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v6';
 const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v5';
 
 const getAllEventColumnKeys = () => EVENT_COLUMNS.map((column) => column.key);
 
-const getInitialVisibleColumns = (): EventColumnKey[] => {
+export const getInitialVisibleColumns = (): EventColumnKey[] => {
   try {
-    const currentRaw = localStorage.getItem(EVENT_VISIBLE_COLS_STORAGE_KEY);
-    const previousRaw = localStorage.getItem(LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY);
+    const currentRaw = usagePreferences.getItem(EVENT_VISIBLE_COLS_STORAGE_KEY);
+    const previousRaw = usagePreferences.getItem(LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY);
     const raw = currentRaw ?? previousRaw
-      ?? localStorage.getItem('cpa-gui.usage-events-visible-cols.v3')
-      ?? localStorage.getItem('cpa-gui.usage-events-visible-cols.v2');
+      ?? usagePreferences.getItem('cpa-gui.usage-events-visible-cols.v4')
+      ?? usagePreferences.getItem('cpa-gui.usage-events-visible-cols.v3')
+      ?? usagePreferences.getItem('cpa-gui.usage-events-visible-cols.v2');
     if (raw) {
       const parsed: unknown = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -159,15 +140,6 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
           return true;
         });
         if (savedKeys.length > 0) {
-          const wasPreviousDefault = currentRaw === null
-            && (parsed.length === PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS.length
-              && PREVIOUS_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key))
-              || parsed.length === PREVIOUS_EFFORT_DEFAULT_EVENT_VISIBLE_COLUMNS.length
-              && PREVIOUS_EFFORT_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key))
-              || parsed.length === LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.length
-              && LEGACY_DEFAULT_EVENT_VISIBLE_COLUMNS.every((key) => parsed.includes(key)));
-          if (wasPreviousDefault) return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
-          if (currentRaw === null && previousRaw === null && !savedKeys.includes('cost')) savedKeys.push('cost');
           return savedKeys;
         }
       }
@@ -177,15 +149,17 @@ const getInitialVisibleColumns = (): EventColumnKey[] => {
   return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
 };
 
-const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
+export const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
   const initial: Record<EventColumnKey, number> = {} as any;
   for (const col of EVENT_COLUMNS) {
     initial[col.key] = col.defaultWidth;
   }
   try {
-    const currentRaw = localStorage.getItem(EVENT_COL_WIDTHS_STORAGE_KEY);
-    const previousRaw = localStorage.getItem(LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY);
-    const raw = currentRaw ?? previousRaw ?? localStorage.getItem('cpa-gui.usage-events-col-widths.v1');
+    const currentRaw = usagePreferences.getItem(EVENT_COL_WIDTHS_STORAGE_KEY);
+    const previousRaw = usagePreferences.getItem(LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY);
+    const raw = currentRaw ?? previousRaw
+      ?? usagePreferences.getItem('cpa-gui.usage-events-col-widths.v2')
+      ?? usagePreferences.getItem('cpa-gui.usage-events-col-widths.v1');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
@@ -195,16 +169,7 @@ const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
             Number.isFinite(parsed[col.key]) &&
             parsed[col.key] >= col.minWidth
           ) {
-            // Adopt tighter defaults while retaining columns the user resized.
-            const previousDefault = PREVIOUS_EVENT_COLUMN_WIDTHS[col.key];
-            const compactDefault = PREVIOUS_COMPACT_WIDTHS[col.key];
-            const generousDefault = PREVIOUS_GENEROUS_DEFAULT_WIDTHS[col.key];
-            const wasDefault = currentRaw === null && (
-              parsed[col.key] === previousDefault
-              || parsed[col.key] === generousDefault
-              || (compactDefault !== undefined && parsed[col.key] === compactDefault)
-            );
-            if (!wasDefault) initial[col.key] = Math.min(800, Math.round(parsed[col.key]));
+            initial[col.key] = Math.min(800, Math.round(parsed[col.key]));
           }
         }
       }
@@ -544,7 +509,7 @@ export function EventsView({
     }
     commitWidths(defaults);
     try {
-      localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(defaults));
+      usagePreferences.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(defaults));
     } catch {}
   };
 
@@ -569,7 +534,7 @@ export function EventsView({
       draftVisibleColumnKeys.length > 0 ? draftVisibleColumnKeys : getAllEventColumnKeys();
     setVisibleColumnKeys(next);
     try {
-      localStorage.setItem(EVENT_VISIBLE_COLS_STORAGE_KEY, JSON.stringify(next));
+      usagePreferences.setItem(EVENT_VISIBLE_COLS_STORAGE_KEY, JSON.stringify(next));
     } catch {}
     setColumnSettingsOpen(false);
   };
@@ -586,7 +551,7 @@ export function EventsView({
     const next = { ...widthsRef.current, [key]: colDef.defaultWidth };
     commitWidths(next);
     try {
-      localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
+      usagePreferences.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
     } catch {}
   };
 
@@ -594,7 +559,7 @@ export function EventsView({
     const next = { ...widthsRef.current, [key]: width };
     commitWidths(next);
     try {
-      localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
+      usagePreferences.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
     } catch {}
   };
 
@@ -674,7 +639,7 @@ export function EventsView({
       const next = widthsRef.current;
       setWidths(next);
       try {
-        localStorage.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
+        usagePreferences.setItem(EVENT_COL_WIDTHS_STORAGE_KEY, JSON.stringify(next));
       } catch {}
     };
 
