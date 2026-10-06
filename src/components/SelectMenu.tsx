@@ -21,6 +21,31 @@ type MenuLayout = {
   height: number;
 };
 
+const measureMenu = (menu: HTMLDivElement) => {
+  const menuStyle = menu.getAttribute('style');
+  const optionButtons = [...menu.querySelectorAll<HTMLButtonElement>('.select-menu-option')];
+  const optionStyles = optionButtons.map((option) => option.getAttribute('style'));
+  menu.style.width = 'max-content';
+  menu.style.maxWidth = 'none';
+  menu.style.height = 'auto';
+  menu.style.maxHeight = 'none';
+  menu.style.visibility = 'hidden';
+  optionButtons.forEach((option) => {
+    option.style.width = 'max-content';
+    option.style.maxWidth = 'none';
+    option.style.gridTemplateColumns = 'max-content 16px';
+  });
+  const rect = menu.getBoundingClientRect();
+  if (menuStyle === null) menu.removeAttribute('style');
+  else menu.setAttribute('style', menuStyle);
+  optionButtons.forEach((option, index) => {
+    const style = optionStyles[index];
+    if (style === null) option.removeAttribute('style');
+    else option.setAttribute('style', style);
+  });
+  return { width: Math.ceil(rect.width), height: Math.ceil(rect.height) };
+};
+
 export function SelectMenu({
   value,
   options,
@@ -44,18 +69,23 @@ export function SelectMenu({
 
   const updateLayout = useCallback(() => {
     const root = rootRef.current;
+    const menu = menuRef.current;
     if (!root) return;
     const rect = root.getBoundingClientRect();
     const edgeGap = 12;
     const triggerGap = 6;
-    const preferredHeight = Math.min(282, Math.max(options.length, 1) * 42 + 18);
-    const minimumHeight = 88;
+    const measured = menu ? measureMenu(menu) : null;
+    const contentWidth = measured && measured.width > 0 ? measured.width : rect.width;
+    const contentHeight = measured && measured.height > 0
+      ? measured.height
+      : Math.max(options.length, 1) * 36 + 12;
     const spaceBelow = Math.max(0, window.innerHeight - edgeGap - rect.bottom - triggerGap);
     const spaceAbove = Math.max(0, rect.top - triggerGap - edgeGap);
-    const placeAbove = spaceBelow < minimumHeight && spaceAbove > spaceBelow;
+    const placeAbove = spaceBelow < contentHeight && spaceAbove > spaceBelow;
     const available = placeAbove ? spaceAbove : spaceBelow;
-    const height = Math.min(preferredHeight, Math.max(Math.min(minimumHeight, available), available));
-    const width = Math.min(320, Math.max(rect.width, 180));
+    const maxWidth = Math.max(edgeGap, window.innerWidth - edgeGap * 2);
+    const width = Math.min(320, maxWidth, contentWidth);
+    const height = Math.min(contentHeight, Math.max(available, Math.min(contentHeight, 36)));
     const maxLeft = Math.max(edgeGap, window.innerWidth - edgeGap - width);
     const left = Math.min(Math.max(edgeGap, rect.left), maxLeft);
     const desiredTop = placeAbove ? rect.top - triggerGap - height : rect.bottom + triggerGap;

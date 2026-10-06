@@ -57,26 +57,36 @@
 .usage-analysis-metric {
   display: flex;
   flex: none;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 8px;
-  background: var(--bg-secondary);
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .usage-analysis-metric button {
   padding: 5px 9px;
-  border: 0;
-  border-radius: 5px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
-.usage-analysis-metric button[aria-pressed='true'] {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 9%);
+.usage-analysis-metric button:hover {
+  color: var(--ui-accent);
+  background: color-mix(in srgb, var(--ui-accent) 5%, var(--bg-card));
+}
+
+.usage-analysis-metric button[aria-pressed='true'],
+.usage-analysis-metric button[aria-pressed='true']:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card));
+  color: var(--ui-accent);
+  font-weight: 600;
+  box-shadow: none;
 }
 
 .usage-model-comparison {

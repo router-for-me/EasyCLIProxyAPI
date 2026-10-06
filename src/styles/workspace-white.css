@@ -43,7 +43,7 @@
 
 :root:not([data-theme='dark']) .workspace :is(
   .agent-model-section, .agent-auth-segmented, .routing-segmented,
-  .plugin-tabs, .usage-analysis-metric,
+  .plugin-tabs,
   .credential-quota, .usage-collector-state
 ) {
   background: #fff;
@@ -73,8 +73,7 @@
 
 :root:not([data-theme='dark']) .workspace :is(
   .agent-list-items button.active,
-  .routing-segmented button.active, .plugin-tabs button.active,
-  .usage-analysis-metric button[aria-pressed='true']
+  .routing-segmented button.active, .plugin-tabs button.active
 ) {
   background: #fff;
   border: 1px solid var(--ui-accent);
@@ -105,6 +104,14 @@
 /* Match the home protocol selection, including while hovered. */
 :root:not([data-theme='dark']) .workspace .agent-auth-segmented-button.active,
 :root:not([data-theme='dark']) .workspace .agent-auth-segmented-button.active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card));
+  border-color: transparent;
+  color: var(--ui-accent);
+  box-shadow: none;
+}
+
+:root:not([data-theme='dark']) .workspace .usage-analysis-metric button[aria-pressed='true'],
+:root:not([data-theme='dark']) .workspace .usage-analysis-metric button[aria-pressed='true']:hover {
   background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card));
   border-color: transparent;
   color: var(--ui-accent);

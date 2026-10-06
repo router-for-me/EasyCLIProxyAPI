@@ -53,8 +53,11 @@
   position: fixed;
   z-index: 45;
   display: grid;
-  min-width: 180px;
-  padding: 6px;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 0;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 4px;
   border: 1px solid var(--border-color);
   border-radius: 10px;
   background: var(--bg-card);
@@ -69,12 +72,12 @@
 
 .select-menu-option {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 16px;
+  grid-template-columns: minmax(0, max-content) 16px;
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 36px;
-  padding: 6px 10px;
+  min-height: 32px;
+  padding: 4px 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
