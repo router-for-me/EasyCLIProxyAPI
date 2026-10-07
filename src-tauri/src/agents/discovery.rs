@@ -2982,6 +2982,8 @@ pub(crate) fn inspect_claude_code_model_mappings(
         opus_1m: opus_had_1m,
         sonnet_1m: sonnet_had_1m,
         haiku_1m: haiku_had_1m,
+        fable: read_model("ANTHROPIC_DEFAULT_FABLE_MODEL").map(|entry| entry.0).unwrap_or_default(),
+        fable_1m: read_model("ANTHROPIC_DEFAULT_FABLE_MODEL").is_some_and(|entry| entry.1),
         max_context_tokens,
         auto_compact_pct,
         disable_auto_compact,
@@ -3129,6 +3131,8 @@ pub(crate) fn claude_code_model_settings(
         opus_1m: mappings.opus_1m,
         sonnet_1m: mappings.sonnet_1m,
         haiku_1m: mappings.haiku_1m,
+        fable: claude_code_model_setting(if mappings.fable.is_empty() { &mappings.sonnet } else { &mappings.fable }, if mappings.fable.is_empty() { mappings.sonnet_1m } else { mappings.fable_1m }),
+        fable_1m: mappings.fable_1m,
         max_context_tokens: mappings.max_context_tokens,
         auto_compact_pct: mappings.auto_compact_pct,
         disable_auto_compact: mappings.disable_auto_compact,
@@ -3196,8 +3200,8 @@ pub(crate) fn claude_code_model_presentation_environment(
     );
     let fable = claude_code_model_presentation(
         models,
-        &mappings.sonnet,
-        mappings.sonnet_1m,
+        if mappings.fable.is_empty() { &mappings.sonnet } else { &mappings.fable },
+        mappings.fable_1m,
         Some(mappings.max_context_tokens),
         Some("Fable mapping"),
     );

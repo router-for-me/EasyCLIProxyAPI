@@ -1,9 +1,9 @@
 import type { ModelOption } from './modelService';
 
-export const claudeCodeRoles = ['opus', 'sonnet', 'haiku'] as const;
+export const claudeCodeRoles = ['opus', 'sonnet', 'haiku', 'fable'] as const;
 export type ClaudeCodeRole = typeof claudeCodeRoles[number];
 export type ClaudeCodeRoutes = Record<ClaudeCodeRole, string> & {
-  opus1m: boolean; sonnet1m: boolean; haiku1m: boolean;
+  opus1m: boolean; sonnet1m: boolean; haiku1m: boolean; fable1m: boolean;
 };
 
 export function claudeCodeModelBase(value: string): string {

@@ -26,7 +26,7 @@ export function ClaudeCodeModelInputs({ startupModel, subagentModel, models, rou
   return (
     <div className="claude-code-model-inputs">
       {(['startupModel', 'subagentModel'] as const).map((field) => {
-        const value = field === 'startupModel' ? startupModel : subagentModel;
+        const value = field === 'startupModel' ? startupModel || 'opus' : subagentModel;
         const preview = claudeCodeModelPreview(value, routes);
         return (
         <div className="claude-code-model-field" key={field}>
@@ -35,27 +35,22 @@ export function ClaudeCodeModelInputs({ startupModel, subagentModel, models, rou
           <AgentModelPicker
             models={options}
             value={value}
-            onChange={(value) => onChange(field, value)}
+            onChange={(value) => onChange(field, field === 'startupModel' ? value.trim() || 'opus' : value)}
             disabled={disabled}
             loading={loading}
             allowCustomValue
-            emptyOption={t(`agents.claudeCodeRuntime.${field}Placeholder`)}
+            emptyOption={field === 'subagentModel' ? t('agents.claudeCodeRuntime.subagentModelPlaceholder') : undefined}
             editable={{ label: t(`agents.claudeCodeRuntime.${field}`),
               placeholder: t(`agents.claudeCodeRuntime.${field}Placeholder`), maxLength: 240 }}
           />
           <label className="claude-inline-context">
-            <input type="checkbox" aria-label={`${t(`agents.claudeCodeRuntime.${field}`)} 1M`}
+            <span className="switch-control"><input type="checkbox" role="switch" aria-label={`${t(`agents.claudeCodeRuntime.${field}`)} 1M`}
               checked={preview.context1m} disabled={disabled || !value.trim() || Boolean(preview.role)}
               onChange={event => onChange(field, claudeCodeModelBase(value) + (event.currentTarget.checked ? '[1m]' : ''))} />
-            1M
+            <span className="switch-track" aria-hidden="true" /></span><span>1M</span>
           </label>
           </div>
-          <small className="claude-code-model-summary" aria-live="polite">
-            {value.trim() ? preview.role
-              ? t('agents.claudeCodeRuntime.followRole', { role: preview.role, model: preview.model || '—' })
-              : t('agents.claudeCodeRuntime.directModel', { model: preview.model })
-              : t(`agents.claudeCodeRuntime.${field}Hint`)}
-          </small>
+          {preview.role && <small className="claude-code-model-summary" aria-live="polite">{preview.role} → {preview.model}</small>}
           {!loading && !isKnownClaudeCodeModel(value, models) ? (
             <small role="status">{t('agents.claudeCodeRuntime.unverifiedModel')}</small>
           ) : null}

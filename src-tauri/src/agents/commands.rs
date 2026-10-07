@@ -1038,6 +1038,8 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
         opus_1m: requested.opus_1m,
         sonnet_1m: requested.sonnet_1m,
         haiku_1m: requested.haiku_1m,
+        fable: resolve(if requested.fable.trim().is_empty() { &requested.sonnet } else { &requested.fable })?,
+        fable_1m: requested.fable_1m,
         max_context_tokens: requested.max_context_tokens,
         auto_compact_pct: requested.auto_compact_pct,
         disable_auto_compact: requested.disable_auto_compact,
@@ -1067,7 +1069,7 @@ pub(crate) fn resolve_claude_code_model_mappings(
     let explicit_1m = [&requested.startup_model, &requested.subagent_model]
         .iter().any(|value| value.as_deref().is_some_and(|model|
             model.trim().to_ascii_lowercase().ends_with("[1m]")));
-    let max_context_tokens = if requested.opus_1m || requested.sonnet_1m || requested.haiku_1m || explicit_1m {
+    let max_context_tokens = if requested.opus_1m || requested.sonnet_1m || requested.haiku_1m || requested.fable_1m || explicit_1m {
         CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW
     } else {
         requested.max_context_tokens
@@ -1087,6 +1089,8 @@ pub(crate) fn resolve_claude_code_model_mappings(
         opus_1m: requested.opus_1m,
         sonnet_1m: requested.sonnet_1m,
         haiku_1m: requested.haiku_1m,
+        fable: resolve(if requested.fable.trim().is_empty() { &requested.sonnet } else { &requested.fable })?,
+        fable_1m: requested.fable_1m,
         max_context_tokens,
         auto_compact_pct: requested.auto_compact_pct,
         disable_auto_compact: requested.disable_auto_compact,

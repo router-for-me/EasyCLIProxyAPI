@@ -1144,6 +1144,10 @@ struct ClaudeDesktopModelMappings {
     #[serde(default)]
     haiku: String,
     #[serde(default)]
+    fable: String,
+    #[serde(default)]
+    fable_1m: bool,
+    #[serde(default)]
     opus_1m: bool,
     #[serde(default)]
     sonnet_1m: bool,
@@ -1225,6 +1229,8 @@ impl ClaudeDesktopModelMappings {
             opus: model.to_string(),
             sonnet: model.to_string(),
             haiku: model.to_string(),
+            fable: model.to_string(),
+            fable_1m: false,
             opus_1m: false,
             sonnet_1m: false,
             haiku_1m: false,

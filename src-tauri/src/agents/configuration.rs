@@ -609,7 +609,7 @@ pub(crate) fn build_claude_agent_config(
         ("ANTHROPIC_DEFAULT_OPUS_MODEL", model_settings.opus.as_str()),
         (
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
-            model_settings.sonnet.as_str(),
+            model_settings.fable.as_str(),
         ),
     ] {
         env.insert(
@@ -684,6 +684,7 @@ pub(crate) fn build_claude_agent_config(
     root.insert("autoCompactEnabled".into(), serde_json::Value::Bool(!mappings.disable_auto_compact));
     let model_settings_json = ensure_json_object_entry(root, "modelSettings");
     for (model_id, window) in [
+        (&mappings.fable, if mappings.fable_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
         (&mappings.opus, if mappings.opus_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
         (&mappings.sonnet, if mappings.sonnet_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
         (&mappings.haiku, if mappings.haiku_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),

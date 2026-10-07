@@ -23,6 +23,8 @@ export type AgentModelMappings = {
   opus: string;
   sonnet: string;
   haiku: string;
+  fable?: string;
+  fable1m?: boolean;
   opus1m?: boolean;
   sonnet1m?: boolean;
   haiku1m?: boolean;
@@ -69,6 +71,8 @@ export const sameAgentModelMappings = (
   && sameAgentModel(left.haiku, right.haiku)
   && Boolean(left.opus1m) === Boolean(right.opus1m)
   && Boolean(left.sonnet1m) === Boolean(right.sonnet1m)
+  && (left.fable ?? left.sonnet) === (right.fable ?? right.sonnet)
+  && Boolean(left.fable1m) === Boolean(right.fable1m)
   && Boolean(left.haiku1m) === Boolean(right.haiku1m)
   && (left.maxContextTokens ?? 200_000) === (right.maxContextTokens ?? 200_000)
   && (left.autoCompactPct ?? 90) === (right.autoCompactPct ?? 90)

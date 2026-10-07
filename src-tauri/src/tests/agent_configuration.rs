@@ -222,6 +222,8 @@ fn claude_code_role_mappings_drive_settings() {
         disable_auto_compact: false,
         manage_default_model: true,
         manage_subagent_model: true,
+        fable: String::new(),
+        fable_1m: false,
         startup_model: None,
         subagent_model: None,
     };
@@ -342,6 +344,8 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
         disable_auto_compact: true,
         manage_default_model: true,
         manage_subagent_model: true,
+        fable: String::new(),
+        fable_1m: false,
         startup_model: None,
         subagent_model: None,
     };
@@ -2691,4 +2695,25 @@ fn windows_batch_agent_commands_use_call_without_embedded_quotes() {
         r"C:\tools\agent.exe"
     );
     assert_eq!(native.get_args().count(), 0);
+}
+
+#[test]
+fn claude_code_fable_mapping_is_independent_and_round_trips() {
+    let directory = agent_test_home("fable-mapping");
+    let path = directory.join("settings.json");
+    let models = test_agent_models(&["route-sonnet", "route-fable"]);
+    let mut mappings = ClaudeDesktopModelMappings::all("route-sonnet");
+    mappings.fable = "route-fable".into();
+    mappings.fable_1m = true;
+    mappings.startup_model = Some("fable".into());
+    let resolved = resolve_claude_code_model_mappings(AgentClient::ClaudeCode, &models, "route-sonnet", Some(mappings)).unwrap().unwrap();
+    let rendered = build_claude_agent_config(None, "http://127.0.0.1:8317", "test-key", "route-sonnet", &models, Some(&resolved)).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert_eq!(value["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL"], "route-fable[1m]");
+    assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "route-sonnet");
+    assert_eq!(value["model"], "fable");
+    fs::write(&path, rendered).unwrap();
+    let inspected = inspect_claude_code_model_mappings(&path).unwrap().unwrap();
+    assert_eq!(inspected.fable, "route-fable");
+    assert!(inspected.fable_1m);
 }

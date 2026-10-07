@@ -6,7 +6,7 @@ type Props = {
   startupModel: string;
   subagentModel: string;
   disabled: boolean;
-  onRoleChange: (field: 'opus1m' | 'sonnet1m' | 'haiku1m', enabled: boolean) => void;
+  onRoleChange: (field: 'opus1m' | 'sonnet1m' | 'haiku1m' | 'fable1m', enabled: boolean) => void;
   onModelChange: (field: 'startupModel' | 'subagentModel', value: string) => void;
 };
 

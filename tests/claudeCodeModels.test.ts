@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { claudeCodeModelPreview, isKnownClaudeCodeModel } from '../src/services/claudeCodeModels';
 
-const routes = { opus: 'model-a', sonnet: 'model-b', haiku: 'model-c', opus1m: true, sonnet1m: false, haiku1m: false };
+const routes = { fable: 'model-f', fable1m: false, opus: 'model-a', sonnet: 'model-b', haiku: 'model-c', opus1m: true, sonnet1m: false, haiku1m: false };
 test('role selections follow changed mappings and role context flags', () => {
   expect(claudeCodeModelPreview('opus', routes).model).toBe('model-a[1m]');
   expect(claudeCodeModelPreview('sonnet', { ...routes, sonnet: 'model-d', sonnet1m: true }).model).toBe('model-d[1m]');
