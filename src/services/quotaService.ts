@@ -911,7 +911,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
       // softer "no quota reported yet" treatment instead of "unrecognized format".
       const parsed = parseBody(payload);
       if (isRecord(parsed) && Object.keys(parsed).length === 0) {
-        return { status: 'success', rows: [], plan: detectedPlan };
+        return { status: 'success', rows: [], plan: detectedPlan, fetchedAt: Date.now() };
       }
       return {
         status: 'error',

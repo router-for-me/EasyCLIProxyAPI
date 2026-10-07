@@ -126,6 +126,7 @@ describe('quota API compatibility', () => {
     const kimiFile = { name: 'kimi.json', provider: 'kimi', auth_index: 'k' };
     handler = () => success({});
     expect(await loadQuota(kimiFile)).toMatchObject({ status: 'success', rows: [] });
+    expect((await loadQuota(kimiFile)).fetchedAt).toEqual(expect.any(Number));
     handler = () => success({ unexpected: 'shape' });
     expect(await loadQuota(kimiFile)).toMatchObject({ status: 'error', rows: [] });
   });
