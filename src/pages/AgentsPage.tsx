@@ -1,3 +1,5 @@
+import { ClaudeCodeRoleRows } from '../components/claude-code/ClaudeCodeRoleRows';
+import { ClaudeCodeModelInputs } from '../components/claude-code/ClaudeCodeModelInputs';
 import { MessageNotice } from '../appNotice';
 import {
   useCallback,
@@ -159,6 +161,8 @@ type ClaudeModelMappings = {
   disableAutoCompact: boolean;
   manageDefaultModel: boolean;
   manageSubagentModel: boolean;
+  startupModel: string;
+  subagentModel: string;
 };
 
 type AgentFormValues = {
@@ -191,6 +195,8 @@ const createClaudeModelMappings = (model: string): ClaudeModelMappings => ({
   disableAutoCompact: false,
   manageDefaultModel: true,
   manageSubagentModel: true,
+  startupModel: model,
+  subagentModel: model,
 });
 
 const createClaudeModelMappingsByClient = (): Record<
@@ -862,12 +868,12 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     : activeStatus?.pluginVersion ?? undefined;
 
   useEffect(() => {
-    if (!isClaudeModelMappingClient || (selected !== 'claude-desktop' && !selectedModel)) return;
+    if (!isClaudeModelMappingClient) return;
     const appliedMappings = selected === 'claude-code'
       ? activeStatus?.claudeCodeModelMappings
       : activeStatus?.claudeDesktopModelMappings;
     const dirty = claudeModelMappingsDirtyRef.current[selected];
-    if (!dirty && selected === 'claude-code') {
+    if (!dirty && selected === 'claude-code' && models.length > 0) {
       const appliedModels = appliedMappings
         ? claudeMappingRoles
             .map((role) => findAgentModel(models, appliedMappings[role.key]))
@@ -891,9 +897,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       const next: ClaudeModelMappings = {
         ...(selected === 'claude-desktop' ? { desktopModels: dirty && source.desktopModels
           ? source.desktopModels : appliedMappings ? desktopModelEntries(source) : createDefaultDesktopModels() } : {}),
-        opus: findAgentModel(models, source.opus)?.name ?? (selected === 'claude-desktop' ? '' : selectedModel),
-        sonnet: findAgentModel(models, source.sonnet)?.name ?? (selected === 'claude-desktop' ? '' : selectedModel),
-        haiku: findAgentModel(models, source.haiku)?.name ?? (selected === 'claude-desktop' ? '' : selectedModel),
+        opus: findAgentModel(models, source.opus)?.name ?? (selected === 'claude-code' ? source.opus || selectedModel : ''),
+        sonnet: findAgentModel(models, source.sonnet)?.name ?? (selected === 'claude-code' ? source.sonnet || selectedModel : ''),
+        haiku: findAgentModel(models, source.haiku)?.name ?? (selected === 'claude-code' ? source.haiku || selectedModel : ''),
         opus1m: Boolean(source.opus1m),
         sonnet1m: Boolean(source.sonnet1m),
         haiku1m: Boolean(source.haiku1m),
@@ -902,6 +908,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         disableAutoCompact: Boolean(source.disableAutoCompact),
         manageDefaultModel: source.manageDefaultModel !== false,
         manageSubagentModel: source.manageSubagentModel !== false,
+        startupModel: source.startupModel ?? (source.manageDefaultModel === false ? '' : source.sonnet || ''),
+        subagentModel: source.subagentModel ?? (source.manageSubagentModel === false ? '' : source.haiku || ''),
       };
       return sameAgentModelMappings(currentClientDraft, next)
         ? current
@@ -1088,7 +1096,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     editClaudeModelMappings((current) => {
       const next = { ...current, [preference]: enabled };
       if (selected === 'claude-code') {
-        const any1mEnabled = next.opus1m || next.sonnet1m || next.haiku1m;
+        const any1mEnabled = next.opus1m || next.sonnet1m || next.haiku1m
+          || [next.startupModel, next.subagentModel].some(value => /\[1m\]$/i.test(value.trim()));
         next.maxContextTokens = any1mEnabled
           ? 1_000_000
           : DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS;
@@ -1170,8 +1179,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     resolved.maxContextTokens = claudeModelMappingsDraft.maxContextTokens;
     resolved.autoCompactPct = claudeModelMappingsDraft.autoCompactPct;
     resolved.disableAutoCompact = claudeModelMappingsDraft.disableAutoCompact;
-    resolved.manageDefaultModel = claudeModelMappingsDraft.manageDefaultModel;
-    resolved.manageSubagentModel = claudeModelMappingsDraft.manageSubagentModel;
+    resolved.startupModel = claudeModelMappingsDraft.startupModel.trim();
+    resolved.subagentModel = claudeModelMappingsDraft.subagentModel.trim();
+    resolved.manageDefaultModel = resolved.startupModel.length > 0;
+    resolved.manageSubagentModel = resolved.subagentModel.length > 0;
     return resolved;
   };
 
@@ -1673,7 +1684,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     status={modelLoading || !activeStatus ? t('agents.modify.checking')
       : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState') : ''}
     description={modificationDescription} />;
-  const configurationErrorMessage = configurationError || (!nativeOauth ? modelSelectionError || modelError : '');
+  const configurationErrorMessage = configurationError || (!nativeOauth ? modelSelectionError || (selected === 'claude-code' ? '' : modelError) : '');
 
   const editDesktopEntries = (entries: ClaudeDesktopModelMapping[]) => {
     setModelSelectionError('');
@@ -2047,7 +2058,44 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       </label>
                     </div>
                   </div>
-                  {selected === 'claude-code' ? (
+                  <ClaudeCodeModelInputs
+                        routes={claudeModelMappingsDraft}
+                        models={models}
+                        loading={modelLoading}
+                        startupModel={claudeModelMappingsDraft.startupModel}
+                        subagentModel={claudeModelMappingsDraft.subagentModel}
+                        disabled={busy || loading}
+                        onChange={(field, value) => editClaudeModelMappings((current) => ({
+                          ...current,
+                          [field]: value,
+                          maxContextTokens: /\[1m\]$/i.test(value.trim()) ? 1_000_000
+                            : /\[1m\]$/i.test(current[field].trim()) && current.maxContextTokens === 1_000_000
+                              && !current.opus1m && !current.sonnet1m && !current.haiku1m
+                              && !/\[1m\]$/i.test(current[field === 'startupModel' ? 'subagentModel' : 'startupModel'].trim())
+                              ? DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS : current.maxContextTokens,
+                          [field === 'startupModel' ? 'manageDefaultModel' : 'manageSubagentModel']: value.trim().length > 0,
+                        }))}
+                      />
+                  {modelError ? (
+                    <div className="claude-code-model-error" role="status">
+                      <div><strong>{t('agents.model.loadFailed')}</strong><p>{t('agents.claudeCodeRuntime.connectionHint')}</p></div>
+                      <button type="button" className="secondary-button" onClick={refreshModels} disabled={modelLoading}>
+                        {t('agents.model.refresh')}
+                      </button>
+                    </div>
+                  ) : null}
+                  <ClaudeCodeRoleRows routes={claudeModelMappingsDraft} models={claudeMappingModels}
+                    loading={modelLoading} error={modelError}
+                    disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform}
+                    onModelChange={selectClaudeModelMapping} onContextChange={changeClaude1mPreference}
+                    onRefresh={refreshModels}
+                    onApplyAll={() => editClaudeModelMappings(current => ({ ...current,
+                      opus: current.sonnet, haiku: current.sonnet,
+                      opus1m: current.sonnet1m, haiku1m: current.sonnet1m,
+                    }))} />
+                  <details className="claude-code-context-settings">
+                    <summary>{t('agents.claudeCodeRuntime.advancedContext')}</summary>
+                    <p>{t('agents.claudeCodeRuntime.sharedContextHint')}</p>
                     <div className="agent-claude-code-runtime-settings">
                       <div className="agent-claude-code-number-field">
                         <span>{t('agents.claudeCodeRuntime.maxContextTokens')}</span>
@@ -2111,88 +2159,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                           <span className="switch-track" />
                         </span>
                       </label>
-                      <label
-                        className="agent-claude-code-disable-compact"
-                        title={t('agents.claudeCodeRuntime.manageDefaultModelHint')}
-                      >
-                        <span>
-                          <strong>{t('agents.claudeCodeRuntime.manageDefaultModel')}</strong>
-                          <small>{t('agents.claudeCodeRuntime.manageDefaultModelHint')}</small>
-                        </span>
-                        <span className="switch-control">
-                          <input
-                            type="checkbox"
-                            checked={claudeModelMappingsDraft.manageDefaultModel}
-                            onChange={(event) => editClaudeModelMappings((current) => ({
-                              ...current,
-                              manageDefaultModel: event.currentTarget.checked,
-                            }))}
-                            disabled={busy || loading || modelLoading}
-                          />
-                          <span className="switch-track" />
-                        </span>
-                      </label>
-                      <label
-                        className="agent-claude-code-disable-compact"
-                        title={t('agents.claudeCodeRuntime.manageSubagentModelHint')}
-                      >
-                        <span>
-                          <strong>{t('agents.claudeCodeRuntime.manageSubagentModel')}</strong>
-                          <small>{t('agents.claudeCodeRuntime.manageSubagentModelHint')}</small>
-                        </span>
-                        <span className="switch-control">
-                          <input
-                            type="checkbox"
-                            checked={claudeModelMappingsDraft.manageSubagentModel}
-                            onChange={(event) => editClaudeModelMappings((current) => ({
-                              ...current,
-                              manageSubagentModel: event.currentTarget.checked,
-                            }))}
-                            disabled={busy || loading || modelLoading}
-                          />
-                          <span className="switch-track" />
-                        </span>
-                      </label>
                     </div>
-                  ) : null}
-                  <div className="agent-claude-desktop-mapping-grid">
-                    {claudeMappingRoles.map((role) => (
-                      <div className="agent-claude-desktop-mapping-row" key={role.key}>
-                        <div className="agent-claude-mapping-card-heading">
-                          <strong>{t(role.labelKey)}</strong>
-                          <label
-                            className="agent-claude-context-toggle"
-                            title={t(selected === 'claude-code'
-                              ? 'agents.claudeCodeRuntime.context1mHint'
-                              : 'agents.claudeMapping.context1mHint')}
-                          >
-                            <span>{t('agents.claudeMapping.context1m')}</span>
-                            <span className="switch-control">
-                              <input
-                                type="checkbox"
-                                checked={claudeModelMappingsDraft[role.contextKey]}
-                                onChange={(event) => changeClaude1mPreference(
-                                  role.contextKey,
-                                  event.currentTarget.checked,
-                                )}
-                                disabled={busy || loading || modelLoading}
-                              />
-                              <span className="switch-track" />
-                            </span>
-                          </label>
-                        </div>
-                        <AgentModelPicker
-                          models={claudeMappingModels}
-                          value={claudeModelMappingsDraft[role.key]}
-                          loading={modelLoading}
-                          error={modelError}
-                          disabled={busy || !activeStatus?.installed || !activeStatus.supportedPlatform}
-                          onChange={(value) => selectClaudeModelMapping(role.key, value)}
-                          onRefresh={refreshModels}
-                        />
-                      </div>
-                    ))}
-                  </div>
+                  </details>
                 </section>
               ) : null}
 

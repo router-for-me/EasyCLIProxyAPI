@@ -1163,6 +1163,12 @@ struct ClaudeDesktopModelMappings {
     /// Defaults to true for backwards compatibility with existing profiles.
     #[serde(default = "default_true")]
     manage_subagent_model: bool,
+    /// Optional explicit model written to ANTHROPIC_MODEL.
+    #[serde(default)]
+    startup_model: Option<String>,
+    /// Optional explicit model written to CLAUDE_CODE_SUBAGENT_MODEL.
+    #[serde(default)]
+    subagent_model: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -1227,6 +1233,8 @@ impl ClaudeDesktopModelMappings {
             disable_auto_compact: false,
             manage_default_model: true,
             manage_subagent_model: true,
+            startup_model: None,
+            subagent_model: None,
         }
     }
 }

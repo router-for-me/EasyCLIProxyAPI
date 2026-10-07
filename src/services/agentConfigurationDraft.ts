@@ -31,6 +31,8 @@ export type AgentModelMappings = {
   disableAutoCompact?: boolean;
   manageDefaultModel?: boolean;
   manageSubagentModel?: boolean;
+  startupModel?: string;
+  subagentModel?: string;
 };
 
 type ResolveAgentConfigurationActionOptions = {
@@ -72,7 +74,9 @@ export const sameAgentModelMappings = (
   && (left.autoCompactPct ?? 90) === (right.autoCompactPct ?? 90)
   && Boolean(left.disableAutoCompact) === Boolean(right.disableAutoCompact)
   && (left.manageDefaultModel ?? true) === (right.manageDefaultModel ?? true)
-  && (left.manageSubagentModel ?? true) === (right.manageSubagentModel ?? true);
+  && (left.manageSubagentModel ?? true) === (right.manageSubagentModel ?? true)
+  && (left.startupModel ?? '') === (right.startupModel ?? '')
+  && (left.subagentModel ?? '') === (right.subagentModel ?? '');
 
 export const resolveAgentModelMappingsDraftSource = <T>(
   current: T,

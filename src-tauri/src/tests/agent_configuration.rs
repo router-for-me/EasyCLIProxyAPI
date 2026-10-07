@@ -2,6 +2,73 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn claude_code_explicit_model_inputs_replace_clear_and_round_trip() {
+    let directory = agent_test_home("claude-code-explicit-models");
+    let path = directory.join("settings.json");
+    let models = test_agent_models(&["route-model"]);
+    let mut mappings = ClaudeDesktopModelMappings::all("route-model");
+    mappings.startup_model = Some(" custom-startup[1m] ".into());
+    mappings.subagent_model = Some("custom-worker".into());
+    let resolved = resolve_claude_code_model_mappings(
+        AgentClient::ClaudeCode, &models, "route-model", Some(mappings),
+    ).unwrap().unwrap();
+    let rendered = build_claude_agent_config(
+        Some(r#"{"model":"user-choice","env":{"KEEP":"yes","ANTHROPIC_MODEL":"old-startup","CLAUDE_CODE_SUBAGENT_MODEL":"old-worker"}}"#),
+        "http://127.0.0.1:8317", "test-key", "route-model", &models, Some(&resolved),
+    ).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert_eq!(value["model"], "custom-startup[1m]");
+    assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "custom-worker");
+    assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "route-model");
+    assert_eq!(value["modelSettings"]["route-model"]["autoCompactWindow"], 1_000_000);
+    assert_eq!(value["model"], "custom-startup[1m]");
+    fs::write(&path, &rendered).unwrap();
+    let mut inspected = inspect_claude_code_model_mappings(&path).unwrap().unwrap();
+    assert_eq!(inspected.startup_model.as_deref(), Some("custom-startup[1m]"));
+    assert_eq!(inspected.subagent_model.as_deref(), Some("custom-worker"));
+    inspected.startup_model = Some(String::new());
+    inspected.subagent_model = Some(String::new());
+    let cleared = build_claude_agent_config(
+        Some(&rendered), "http://127.0.0.1:8317", "test-key", "route-model", &models, Some(&inspected),
+    ).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&cleared).unwrap();
+    assert!(value["env"].get("ANTHROPIC_MODEL").is_none());
+    assert!(value["env"].get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
+    assert!(value.get("model").is_none());
+    assert_eq!(value["env"]["KEEP"], "yes");
+}
+
+#[test]
+fn claude_code_role_selection_survives_mapping_changes_without_global_effort_override() {
+    let models = test_agent_models(&["route-a", "route-b"]);
+    let mut mappings = ClaudeDesktopModelMappings::all("route-a");
+    mappings.startup_model = Some("sonnet".into());
+    mappings.subagent_model = Some("haiku".into());
+    for route in ["route-a", "route-b"] {
+        mappings.sonnet = route.into();
+        mappings.sonnet_1m = true;
+        let rendered = build_claude_agent_config(
+            Some(r#"{"model":"user-choice","env":{"CLAUDE_CODE_EFFORT_LEVEL":"max"}}"#),
+            "http://127.0.0.1:8317", "test-key", route, &models, Some(&mappings),
+        ).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(value["model"], "sonnet");
+        assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "haiku");
+        assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], format!("{route}[1m]"));
+        assert_eq!(value["modelSettings"][route]["autoCompactWindow"], 1_000_000);
+        assert!(value["env"].get("CLAUDE_CODE_EFFORT_LEVEL").is_none());
+        assert_eq!(value["model"], "sonnet");
+    }
+    mappings.sonnet_1m = false;
+    mappings.startup_model = Some("route-a[1m]".into());
+    let resolved = resolve_claude_code_model_mappings(
+        AgentClient::ClaudeCode, &models, "route-a", Some(mappings),
+    ).unwrap().unwrap();
+    assert_eq!(resolved.max_context_tokens, 1_000_000);
+    assert_eq!(resolved.startup_model.as_deref(), Some("route-a[1m]"));
+}
+
+#[test]
 fn claude_agent_config_preserves_existing_fields() {
     let rendered = build_claude_agent_config(
             Some(
@@ -27,9 +94,8 @@ fn claude_agent_config_preserves_existing_fields() {
         "1"
     );
     assert_eq!(value["env"][CLAUDE_CODE_AUTO_MODE_SERVER_ENV], "0");
-    assert_eq!(value["env"][CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV], "200000");
-    assert_eq!(value["env"][CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV], "90");
-    assert!(value["env"].get(DISABLE_AUTO_COMPACT_ENV).is_none());
+    assert_eq!(value["autoCompactWindow"], 200_000);
+    assert_eq!(value["autoCompactEnabled"], true);
     assert!(value["env"].get("CLAUDE_CODE_EFFORT_LEVEL").is_none());
     assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "claude-test");
     assert_eq!(
@@ -156,6 +222,8 @@ fn claude_code_role_mappings_drive_settings() {
         disable_auto_compact: false,
         manage_default_model: true,
         manage_subagent_model: true,
+        startup_model: None,
+        subagent_model: None,
     };
     let models = vec![
         AgentModelOption {
@@ -205,7 +273,7 @@ fn claude_code_role_mappings_drive_settings() {
     assert_eq!(value["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"], "gpt-opus");
     assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "gpt-sonnet");
     assert_eq!(value["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "gpt-haiku");
-    assert_eq!(value["env"][CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV], "272000");
+    assert_eq!(value["autoCompactWindow"], 272_000);
     assert_eq!(
         value["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"],
         "gpt-sonnet (272K context)"
@@ -274,6 +342,8 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
         disable_auto_compact: true,
         manage_default_model: true,
         manage_subagent_model: true,
+        startup_model: None,
+        subagent_model: None,
     };
     let models = vec![
         AgentModelOption {
@@ -304,9 +374,8 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
     .unwrap();
     let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
 
-    assert_eq!(value["env"][CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV], "1000000");
-    assert_eq!(value["env"][CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV], "75");
-    assert_eq!(value["env"][DISABLE_AUTO_COMPACT_ENV], "1");
+    assert_eq!(value["autoCompactWindow"], 1_000_000);
+    assert_eq!(value["autoCompactEnabled"], false);
     assert_eq!(value["env"]["ANTHROPIC_MODEL"], "custom-pro[1m]");
     assert_eq!(
         value["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],

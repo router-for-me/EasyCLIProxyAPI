@@ -98,14 +98,13 @@
 
 .credential-quota-dense .credential-quota-label span {
   min-width: 0;
-  padding: 2px 5px;
   overflow: hidden;
   padding: 2px 7px;
   border: 0;
   border-radius: 0;
   background: transparent;
-  font-size: 10px;
-  font-weight: 550;
+  font-size: 12px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -137,21 +136,22 @@
 .credential-quota-dense .credential-quota-empty {
   margin: 0;
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .credential-quota-dense .credential-quota-label strong {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
+  font-weight: 750;
 }
 
 .credential-quota-dense .credential-quota-track {
-  height: 5px;
+  height: 7px;
 }
 
 .credential-quota-dense .credential-quota-row small {
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -167,11 +167,11 @@
 }
 
 .credential-quota-dense .credential-quota-heading .credential-quota-reset {
-  min-height: 21px;
-  padding: 2px 6px;
+  min-height: 26px;
+  padding: 3px 8px;
   margin: 0;
-  border-radius: 4px;
-  font-size: 10px;
+  border-radius: 6px;
+  font-size: 12px;
   line-height: 1.3;
 }
 

@@ -2925,7 +2925,8 @@ pub(crate) fn inspect_claude_code_model_mappings(
         .get("ANTHROPIC_MODEL")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .or_else(|| root.get("model").and_then(serde_json::Value::as_str).map(str::trim).filter(|value| !value.is_empty()));
     let read_model = |key: &str| {
         let value = env
             .get(key)
@@ -2946,10 +2947,13 @@ pub(crate) fn inspect_claude_code_model_mappings(
         return Ok(None);
     };
     let legacy_1m = opus_had_1m || sonnet_had_1m || haiku_had_1m;
-    let max_context_tokens = env
-        .get(CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV)
-        .and_then(serde_json::Value::as_str)
-        .and_then(|value| value.trim().parse::<u64>().ok())
+    let max_context_tokens = root
+        .get("autoCompactWindow")
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| env
+            .get(CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV)
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| value.trim().parse::<u64>().ok()))
         .unwrap_or_else(|| {
             if legacy_1m {
                 CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW
@@ -2962,10 +2966,14 @@ pub(crate) fn inspect_claude_code_model_mappings(
         .and_then(serde_json::Value::as_str)
         .and_then(|value| value.trim().parse::<u8>().ok())
         .unwrap_or_else(default_claude_auto_compact_pct);
-    let disable_auto_compact = env
-        .get(DISABLE_AUTO_COMPACT_ENV)
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    let disable_auto_compact = root
+        .get("autoCompactEnabled")
+        .and_then(serde_json::Value::as_bool)
+        .map(|enabled| !enabled)
+        .unwrap_or_else(|| env
+            .get(DISABLE_AUTO_COMPACT_ENV)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true")));
     Ok(Some(ClaudeDesktopModelMappings {
         desktop_models: None,
         opus,
@@ -2987,6 +2995,17 @@ pub(crate) fn inspect_claude_code_model_mappings(
             .and_then(serde_json::Value::as_str)
             .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
             .unwrap_or(true),
+        startup_model: Some(env
+            .get("ANTHROPIC_MODEL")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| root.get("model").and_then(serde_json::Value::as_str))
+            .unwrap_or_default()
+            .to_string()),
+        subagent_model: Some(env
+            .get("CLAUDE_CODE_SUBAGENT_MODEL")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string()),
     }))
 }
 
@@ -3115,6 +3134,8 @@ pub(crate) fn claude_code_model_settings(
         disable_auto_compact: mappings.disable_auto_compact,
         manage_default_model: mappings.manage_default_model,
         manage_subagent_model: mappings.manage_subagent_model,
+        startup_model: mappings.startup_model.clone(),
+        subagent_model: mappings.subagent_model.clone(),
     }
 }
 

@@ -44,7 +44,7 @@ const fs = require('node:fs/promises');
         className: node.className, width: node.clientWidth, scroll: node.scrollWidth, overflowX: getComputedStyle(node).overflowX,
       })));
       assert.ok(dimensions.every(size => size.scroll <= size.width + 1 || (
-        size.className === 'auth-file-table-scroll' && size.width > 700 && size.width < 906 && size.overflowX === 'auto'
+        size.className === 'auth-file-table-scroll' && size.width > 700 && size.width < 980 && size.overflowX === 'auto'
       )), `${label}: only intermediate widths may scroll inside the table; cards must fit ${JSON.stringify(dimensions)}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${label}: page overflow`);
     };
@@ -93,7 +93,7 @@ const fs = require('node:fs/promises');
     const resetTitle = await resetTimes.first().getAttribute('title');
     assert.ok(resetTitle.startsWith(await resetTimes.first().innerText()) && resetTitle.includes('小时后'), 'Compact timestamps retain their exact time and relative countdown on hover');
     await next().click();
-    await card(11).waitFor();
+    await card(7).waitFor();
     assert.equal(await cards().count(), 2);
     assert.equal(await next().isDisabled(), true);
     assert.ok((await pagination().innerText()).includes('2 / 2'));
@@ -235,10 +235,10 @@ const fs = require('node:fs/promises');
     await page.setViewportSize({ width: 1800, height: 1200 });
     await open('theme=light&locale=zh-CN');
     const tableBounds = await page.locator('.auth-file-table-scroll').boundingBox();
-    const seventhBounds = await card(7).boundingBox();
+    const lastBounds = await cards().last().boundingBox();
     await page.screenshot({ path: path.join(screenshotDir, 'reference-dense-preview.png'), clip: {
       x: tableBounds.x, y: tableBounds.y, width: tableBounds.width,
-      height: seventhBounds.y + seventhBounds.height - tableBounds.y,
+      height: lastBounds.y + lastBounds.height - tableBounds.y,
     } });
     await open('theme=light&locale=zh-CN&small=1');
     await page.locator('.auth-file-table-scroll').screenshot({ path: path.join(screenshotDir, 'reference-small-idle-preview.png') });

@@ -840,6 +840,15 @@ fn validate_unmanaged_preserved(
             }
         }
         if client == "claude-code" {
+            if let Some(root) = value.as_object_mut() {
+                // These are CPA-managed Claude Code settings. Exclude them
+                // when comparing user-owned configuration so a model update
+                // does not get rejected as an unrelated custom edit.
+                root.remove("model");
+                root.remove("modelSettings");
+                root.remove("autoCompactWindow");
+                root.remove("autoCompactEnabled");
+            }
             if let Some(env) = value.get_mut("env").and_then(Value::as_object_mut) {
                 env.retain(|key, _| {
                     !matches!(

@@ -1043,6 +1043,8 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
         disable_auto_compact: requested.disable_auto_compact,
         manage_default_model: requested.manage_default_model,
         manage_subagent_model: requested.manage_subagent_model,
+        startup_model: requested.startup_model.map(|value| value.trim().to_string()),
+        subagent_model: requested.subagent_model.map(|value| value.trim().to_string()),
     }))
 }
 
@@ -1062,13 +1064,21 @@ pub(crate) fn resolve_claude_code_model_mappings(
     if !(1..=100).contains(&requested.auto_compact_pct) {
         return Err("Claude Code compaction trigger percentage must be between 1 and 100".to_string());
     }
-    let max_context_tokens = if requested.opus_1m || requested.sonnet_1m || requested.haiku_1m {
+    let explicit_1m = [&requested.startup_model, &requested.subagent_model]
+        .iter().any(|value| value.as_deref().is_some_and(|model|
+            model.trim().to_ascii_lowercase().ends_with("[1m]")));
+    let max_context_tokens = if requested.opus_1m || requested.sonnet_1m || requested.haiku_1m || explicit_1m {
         CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW
     } else {
         requested.max_context_tokens
     };
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
+    let normalize_override = |value: Option<String>| -> Result<Option<String>, String> {
+        value.map(|value| {
+            if value.trim().is_empty() { Ok(String::new()) } else { validate_agent_model(&value) }
+        }).transpose()
+    };
     Ok(Some(ClaudeDesktopModelMappings {
         desktop_models: None,
         opus: resolve(&requested.opus)?,
@@ -1082,6 +1092,8 @@ pub(crate) fn resolve_claude_code_model_mappings(
         disable_auto_compact: requested.disable_auto_compact,
         manage_default_model: requested.manage_default_model,
         manage_subagent_model: requested.manage_subagent_model,
+        startup_model: normalize_override(requested.startup_model)?,
+        subagent_model: normalize_override(requested.subagent_model)?,
     }))
 }
 

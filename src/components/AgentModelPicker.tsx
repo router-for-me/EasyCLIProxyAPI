@@ -28,6 +28,8 @@ export type AgentModelPickerProps = {
   allowCustomValue?: boolean;
   editable?: { label: string; placeholder: string; maxLength: number };
   menuClassName?: string;
+  emptyOption?: string;
+  preserveValue?: boolean;
 };
 
 type AgentModelDropdownLayout = {
@@ -48,6 +50,8 @@ export function AgentModelPicker({
   allowCustomValue = false,
   editable,
   menuClassName = '',
+  emptyOption,
+  preserveValue = false,
 }: AgentModelPickerProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -66,13 +70,16 @@ export function AgentModelPicker({
   );
   const choices = useMemo(() => {
     const options = visibleModels.map((model) => ({ name: model.name, alias: model.alias ?? '' }));
+    if (emptyOption && !search.trim()) options.unshift({ name: '', alias: emptyOption });
     if (allowCustomValue && search.trim() && !findAgentModel(models, search)) {
       options.push({ name: search.trim(), alias: t('agents.model.useCustom') });
     }
     return options;
-  }, [visibleModels, allowCustomValue, search, models, t]);
+  }, [visibleModels, allowCustomValue, search, models, t, emptyOption]);
   const selectedModel = findAgentModel(models, value);
-  const selectedName = selectedModel?.name ?? (allowCustomValue || editable ? value.trim() : '');
+  const selectedName = (selectedModel?.name
+    ?? (allowCustomValue || editable || preserveValue ? value.trim() : ''))
+    || (emptyOption && !value.trim() ? emptyOption : '');
   const selectedAlias = selectedName ? agentModelAlias(models, selectedName) : '';
 
   const updateDropdownLayout = useCallback(() => {
@@ -158,7 +165,7 @@ export function AgentModelPicker({
   useEffect(() => {
     if (!open) return;
     if (!editable) setSearch('');
-    const selectedIndex = (editable ? visibleModels : filterAgentModels(models, '')).findIndex(
+    const selectedIndex = choices.findIndex(
       (model) => model.name.toLocaleLowerCase() === value.trim().toLocaleLowerCase(),
     );
     setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
@@ -322,8 +329,8 @@ export function AgentModelPicker({
                   onClick={() => choose(choice.name)}
                 >
                   <span>
-                    <strong title={choice.name}>{choice.name}</strong>
-                    <small>{choice.alias || t('agents.model.available')}</small>
+                    <strong title={choice.name}>{choice.name || emptyOption}</strong>
+                    {choice.name ? <small>{choice.alias || t('agents.model.available')}</small> : null}
                   </span>
                   {selected ? <Check size={16} aria-hidden /> : null}
                 </button>

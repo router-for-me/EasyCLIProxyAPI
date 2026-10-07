@@ -7418,6 +7418,7 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+
 .agent-claude-context-toggle {
   display: flex;
   flex: none;

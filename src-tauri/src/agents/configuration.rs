@@ -584,14 +584,17 @@ pub(crate) fn build_claude_agent_config(
     let max_context_tokens = mappings.max_context_tokens;
     let model_settings = claude_code_model_settings(&mappings);
     let subagent_model = model_settings.haiku.clone();
-    let effort_level = claude_code_model_effort_level(models, &mappings.sonnet)?;
+    // Explicit/default session selections may switch roles, while Subagents may use
+    // another model. A global Sonnet-derived effort override is wrong for both.
+    let effort_level = if mappings.startup_model.is_none() && mappings.subagent_model.is_none() {
+        claude_code_model_effort_level(models, &mappings.sonnet)?
+    } else {
+        None
+    };
     let env = ensure_json_object_entry(root, "env");
     env.remove("ANTHROPIC_API_KEY");
     env.remove("CLAUDE_CODE_EFFORT_LEVEL");
-    env.remove(CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV);
     env.remove(CLAUDE_CODE_AUTO_MODE_SERVER_ENV);
-    env.remove(CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV);
-    env.remove(DISABLE_AUTO_COMPACT_ENV);
     for (key, value) in [
         ("ANTHROPIC_BASE_URL", base_url),
         ("ANTHROPIC_AUTH_TOKEN", api_key),
@@ -616,13 +619,19 @@ pub(crate) fn build_claude_agent_config(
     }
     env.insert(
         "EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL".to_string(),
-        serde_json::Value::String(if mappings.manage_default_model { "1" } else { "0" }.to_string()),
+        serde_json::Value::String(if mappings.startup_model.as_ref().map_or(mappings.manage_default_model, |value| !value.trim().is_empty()) { "1" } else { "0" }.to_string()),
     );
     env.insert(
         "EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL".to_string(),
-        serde_json::Value::String(if mappings.manage_subagent_model { "1" } else { "0" }.to_string()),
+        serde_json::Value::String(if mappings.subagent_model.as_ref().map_or(mappings.manage_subagent_model, |value| !value.trim().is_empty()) { "1" } else { "0" }.to_string()),
     );
-    if mappings.manage_default_model {
+    let explicit_startup_model = mappings.startup_model.as_ref().map(|model| model.trim().to_string());
+    if mappings.startup_model.is_some() {
+        // Claude Code's official persistent startup-model setting is the root
+        // `model` key. Keep ANTHROPIC_MODEL out of the generated file so the
+        // saved choice can still be changed from Claude Code's /model picker.
+        env.remove("ANTHROPIC_MODEL");
+    } else if mappings.manage_default_model {
         env.insert(
             "ANTHROPIC_MODEL".to_string(),
             serde_json::Value::String(model_settings.sonnet.clone()),
@@ -634,7 +643,13 @@ pub(crate) fn build_claude_agent_config(
     {
         env.remove("ANTHROPIC_MODEL");
     }
-    if mappings.manage_subagent_model {
+    if let Some(model) = &mappings.subagent_model {
+        if model.trim().is_empty() {
+            env.remove("CLAUDE_CODE_SUBAGENT_MODEL");
+        } else {
+            env.insert("CLAUDE_CODE_SUBAGENT_MODEL".into(), serde_json::Value::String(model.trim().into()));
+        }
+    } else if mappings.manage_subagent_model {
         env.entry("CLAUDE_CODE_SUBAGENT_MODEL".to_string())
             .or_insert_with(|| serde_json::Value::String(subagent_model));
     } else if env
@@ -645,10 +660,6 @@ pub(crate) fn build_claude_agent_config(
         env.remove("CLAUDE_CODE_SUBAGENT_MODEL");
     }
     env.insert(
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV.to_string(),
-        serde_json::Value::String(max_context_tokens.to_string()),
-    );
-    env.insert(
         CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV.to_string(),
         serde_json::Value::String("1".to_string()),
     );
@@ -656,16 +667,6 @@ pub(crate) fn build_claude_agent_config(
         CLAUDE_CODE_AUTO_MODE_SERVER_ENV.to_string(),
         serde_json::Value::String("0".to_string()),
     );
-    env.insert(
-        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV.to_string(),
-        serde_json::Value::String(mappings.auto_compact_pct.to_string()),
-    );
-    if mappings.disable_auto_compact {
-        env.insert(
-            DISABLE_AUTO_COMPACT_ENV.to_string(),
-            serde_json::Value::String("1".to_string()),
-        );
-    }
     for (key, value) in claude_code_model_presentation_environment(&mappings, models)? {
         env.insert(key, serde_json::Value::String(value));
     }
@@ -675,12 +676,49 @@ pub(crate) fn build_claude_agent_config(
             serde_json::Value::String(effort_level),
         );
     }
-    if mappings.manage_default_model {
+    // Claude Code 2.1.288+ supports a per-model auto-compaction window in
+    // settings.json. Keep the existing environment override for compatibility
+    // with older Claude Code versions and custom gateway IDs, but also emit the
+    // official settings so newer versions can apply the value per model.
+    root.insert("autoCompactWindow".into(), serde_json::Value::Number(max_context_tokens.into()));
+    root.insert("autoCompactEnabled".into(), serde_json::Value::Bool(!mappings.disable_auto_compact));
+    let model_settings_json = ensure_json_object_entry(root, "modelSettings");
+    for (model_id, window) in [
+        (&mappings.opus, if mappings.opus_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
+        (&mappings.sonnet, if mappings.sonnet_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
+        (&mappings.haiku, if mappings.haiku_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
+    ] {
+        let model_id = strip_claude_code_context_suffix(model_id).trim();
+        if model_id.is_empty() { continue; }
+        let entry = ensure_json_object_entry(model_settings_json, model_id);
+        let current = entry.get("autoCompactWindow").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        entry.insert("autoCompactWindow".into(), serde_json::Value::Number(current.max(window).into()));
+    }
+    for model in [&mappings.startup_model, &mappings.subagent_model] {
+        let Some(model) = model.as_deref().map(str::trim).filter(|value| !value.is_empty()) else { continue; };
+        let model_id = strip_claude_code_context_suffix(model).trim();
+        let window = if model.to_ascii_lowercase().ends_with("[1m]") {
+            CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW
+        } else {
+            mappings.max_context_tokens
+        };
+        let entry = ensure_json_object_entry(model_settings_json, model_id);
+        let current = entry.get("autoCompactWindow").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        entry.insert("autoCompactWindow".into(), serde_json::Value::Number(current.max(window).into()));
+    }
+    if let Some(model) = explicit_startup_model {
+        if model.is_empty() {
+            root.remove("model");
+        } else {
+            root.insert("model".into(), serde_json::Value::String(model));
+        }
+    }
+    if mappings.startup_model.is_none() && mappings.manage_default_model {
         root.insert(
             "model".to_string(),
             serde_json::Value::String(model_settings.sonnet),
         );
-    } else if root
+    } else if mappings.startup_model.is_none() && root
         .get("model")
         .and_then(serde_json::Value::as_str)
         .is_some_and(|value| value == model_settings.opus || value == model_settings.sonnet || value == model_settings.haiku)
