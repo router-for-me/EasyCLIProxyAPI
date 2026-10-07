@@ -43,6 +43,18 @@ describe('parseFinderAnswer', () => {
     expect(parseFinderAnswer(reply, many).matches).toHaveLength(3);
   });
 
+  it('shows display names instead of ids in the prose', () => {
+    const named = (id: string, name: string) => ({ ...entry(id), name }) as PluginStoreEntry;
+    const catalog = [named('quota-router', 'Quota Router'), named('quota-reset-router', 'Quota Reset Router')];
+    const reply = JSON.stringify({
+      matches: [{ id: 'quota-reset-router', why: 'Unlike quota-router, quota-reset-router waits for resets.' }],
+      note: 'Use quota-reset-router or quota-router-extra, not both.',
+    });
+    const answer = parseFinderAnswer(reply, catalog);
+    expect(answer.matches[0].why).toBe('Unlike Quota Router, Quota Reset Router waits for resets.');
+    expect(answer.note).toBe('Use Quota Reset Router or quota-router-extra, not both.');
+  });
+
   it('rejects replies without JSON', () => {
     expect(() => parseFinderAnswer('I think quota-router is best.', store)).toThrow();
   });

@@ -49,6 +49,7 @@ export function buildFinderPrompt(entries: PluginStoreEntry[], connectedProvider
     '{"matches":[{"id":"catalog id","why":"one plain sentence on how it solves the request","changes":"one plain sentence on what will behave differently once it is on","risk":"one plain sentence on the main risk or caveat"}],"note":"optional short advice, or empty"}',
     'If nothing fits, return an empty matches array and say so in note.',
     `Write why, changes, risk and note in ${languageName(locale)}, without jargon.`,
+    'In why, changes, risk and note, refer to plugins by their catalog name, never by their id.',
     '',
     'Catalog:',
     catalog,
@@ -56,6 +57,21 @@ export function buildFinderPrompt(entries: PluginStoreEntry[], connectedProvider
 }
 
 const text = (value: unknown) => typeof value === 'string' ? oneLine(value, MAX_TEXT) : '';
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Models sometimes echo catalog ids in prose; show the display name instead.
+export function withDisplayNames(value: string, entries: PluginStoreEntry[]): string {
+  const names = new Map<string, string>();
+  for (const entry of entries) {
+    const name = entry.name?.trim();
+    if (entry.id && name && name !== entry.id && !names.has(entry.id)) names.set(entry.id, name);
+  }
+  return [...names.keys()].sort((a, b) => b.length - a.length).reduce(
+    (result, id) => result.replace(new RegExp(`(?<![\\w-])${escapeRegExp(id)}(?![\\w-])`, 'g'), names.get(id)!),
+    value,
+  );
+}
 
 function extractJson(reply: string): unknown {
   const cleaned = reply.replace(/```(?:json)?/gi, '');
@@ -81,7 +97,8 @@ export function parseFinderAnswer(reply: string, entries: PluginStoreEntry[]): P
     const entry = candidates.find(isDefaultPluginStoreSource) ?? candidates[0];
     if (!entry) return [];
     seen.add(id);
-    return [{ entry, why: text(match.why), changes: text(match.changes), risk: text(match.risk) }];
+    const prose = (field: unknown) => withDisplayNames(text(field), entries);
+    return [{ entry, why: prose(match.why), changes: prose(match.changes), risk: prose(match.risk) }];
   }).slice(0, MAX_MATCHES);
-  return { matches, note: text(record.note) };
+  return { matches, note: withDisplayNames(text(record.note), entries) };
 }
