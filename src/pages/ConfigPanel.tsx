@@ -213,6 +213,7 @@ export function ConfigPanelPage() {
     <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
   );
   const [activeSubpage, setActiveSubpage] = useState<ConfigSubpage>('general');
+  const [showPluginAdvanced, setShowPluginAdvanced] = useState(false);
   const [settingsSearch, setSettingsSearch] = useState('');
   const [dirtyTemplateGroups, setDirtyTemplateGroups] = useState<readonly string[]>([]);
   const [sensitiveWordsDirty, setSensitiveWordsDirty] = useState(false);
@@ -1047,6 +1048,7 @@ export function ConfigPanelPage() {
       next => document.getElementById(`config-subpage-tab-${next}`));
   };
   const navigateToSetting = (destination: SettingDestination) => {
+    if (destination.category === 'extensions') setShowPluginAdvanced(true);
     activateConfigSubpage(destination.category);
     setPendingDestination(destination);
   };
@@ -1079,7 +1081,7 @@ export function ConfigPanelPage() {
   };
   const categoryDirty = (id: ConfigSubpage) => nativeCategoryDirty[id]
     || settingsTemplateGroups[id].some(group => dirtyTemplateGroups.includes(group.id));
-  const templateGroups = settingsTemplateGroups[activeSubpage];
+  const templateGroups = activeSubpage === 'extensions' && !showPluginAdvanced ? [] : settingsTemplateGroups[activeSubpage];
   const searchEntries: SettingSearchEntry[] = [
     ...nativeEntries,
     ...settingsCategories.flatMap(item => settingsTemplateGroups[item.id].flatMap(group => group.fields.map((field, index) => ({
@@ -2192,6 +2194,14 @@ export function ConfigPanelPage() {
                 </button></div>
         </section>
           </div>
+          {!searching && activeSubpage === 'extensions' ? <section className="config-extension-guide" aria-labelledby="config-extension-guide-title">
+            <h2 id="config-extension-guide-title">{st('pluginGuideTitle')}</h2>
+            <p>{st('pluginGuideBody')}</p>
+            <div className="config-extension-guide-actions">
+              <button type="button" className="primary-button compact-button" onClick={() => window.dispatchEvent(new CustomEvent('app:navigate', { detail: 'plugins' }))}>{st('pluginGuideOpen')}</button>
+              <button type="button" className="secondary-button compact-button" aria-expanded={showPluginAdvanced} onClick={() => setShowPluginAdvanced(value => !value)}>{st(showPluginAdvanced ? 'pluginGuideHide' : 'pluginGuideShow')}</button>
+            </div>
+          </section> : null}
           <div id="config-template-panel" hidden={searching || templateGroups.length === 0}><TemplateConfigSection groups={allSettingsTemplateGroups} visibleGroups={templateGroups.map(group => group.id)} onDirtyGroupsChange={setDirtyTemplateGroups} /></div>
           <div id="config-native-aliases" tabIndex={-1} role="region" aria-label={t('app.nav.thinkingAliases')} hidden={searching || activeSubpage !== 'aliases'}>{aliasesVisited ? <ThinkingAliasesPage embedded /> : null}</div>
           <div id="config-native-sensitive-words" tabIndex={-1} role="region" aria-label={t('config.sensitiveWords.title')} hidden={searching || activeSubpage !== 'requests'}>{sensitiveWordsVisited ? <SensitiveWordsPage onDirtyChange={setSensitiveWordsDirty} /> : null}</div>

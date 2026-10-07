@@ -1,7 +1,7 @@
 [package]
 name = "cpa-gui"
 # Single source of truth for the desktop app version.
-version = "0.3.12+personal-desk.23"
+version = "0.3.12+personal-desk.24"
 description = "CPA desktop management shell"
 authors = ["lzt404"]
 edition = "2021"

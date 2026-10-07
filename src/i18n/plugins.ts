@@ -68,6 +68,9 @@ const messages = {
   back: ['返回插件', 'Back to plugins', 'プラグインに戻る'],
   openExternal: ['在浏览器打开', 'Open in browser', 'ブラウザーで開く'],
   sourceErrors: ['部分来源读取失败', 'Some sources could not be loaded', '一部のソースを読み込めませんでした'],
+  recommendedTitle: ['为你推荐', 'Recommended for you', 'おすすめ'],
+  recommendedHint: ['根据你已连接的账号挑选。这些插件由第三方作者编写，会在代理内运行并可访问你的账号。路由类插件一次只装一个；启用插件需要重启代理，会短暂中断正在进行的会话。', 'Picked for the accounts you have connected. These are written by third-party authors and run inside the proxy with access to your accounts. Install one routing plugin at a time. Turning plugins on restarts the proxy, which briefly interrupts open sessions.', '接続済みのアカウントに合わせて選んでいます。これらはサードパーティ製で、プロキシ内で動作しアカウントにアクセスできます。ルーティング系は一度に 1 つだけ導入してください。プラグインを有効にするとプロキシが再起動し、接続中のセッションが一時的に中断されます。'],
+  allPlugins: ['全部插件', 'All plugins', 'すべてのプラグイン'],
   refreshFailed: ['操作已完成，但刷新失败，请重试刷新。', 'The operation completed, but refreshing failed. Retry the refresh.', '操作は完了しましたが、再読み込みに失敗しました。再試行してください。'],
 } as const;
 

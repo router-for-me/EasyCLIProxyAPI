@@ -8,6 +8,9 @@ import { useConfirmation } from '../components/ConfirmationDialog';
 import { pluginsApi, pluginStoreApi, type PluginListEntry, type PluginListResponse, type PluginStoreEntry, type PluginStoreResponse } from '../services/plugins';
 import { collectPluginResourceEntries, getPluginTitle, isOfficialPlugin, notifyPluginResourcesChanged, type PluginResourceEntry } from '../services/pluginResources';
 import { getPluginStatus, isPluginInstalled } from '../services/pluginStatus';
+import { managementApi, responseList } from '../services/managementApi';
+import { oauthModelProvidersFromAuthFiles, type AuthFileRecord } from '../services/authFiles';
+import { recommendPlugins } from '../services/pluginRecommendations';
 import { PluginConfigDialog } from './PluginConfigDialog';
 import { PluginInstallDialog } from './PluginInstallDialog';
 import { PluginOAuthDialog } from './PluginOAuthDialog';
@@ -34,6 +37,7 @@ export function PluginsPage() {
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
   const [oauthPlugin, setOAuthPlugin] = useState<PluginListEntry | null>(null);
   const [restartRequired, setRestartRequired] = useState(false);
+  const [providers, setProviders] = useState<string[]>([]);
   const [resource, setResource] = useState<{ entry: PluginResourceEntry; url: string } | null>(null);
   const requests = useRef(0);
   const mounted = useRef(false);
@@ -58,8 +62,12 @@ export function PluginsPage() {
       notifyPluginResourcesChanged();
       setResource(previous => previous && collectPluginResourceEntries(next.plugins).some(entry => entry.pluginID === previous.entry.pluginID && entry.menuIndex === previous.entry.menuIndex && entry.menu.path === previous.entry.menu.path) ? previous : null);
       if (target === 'store') {
-        const nextStore = await pluginStoreApi.list();
-        if (mounted.current && revision === requests.current) setStore(nextStore);
+        const [nextStore, credentials] = await Promise.all([
+          pluginStoreApi.list(),
+          // Recommendations are optional; a credential read failure must not hide the store.
+          managementApi.get('/credentials').then(payload => responseList(payload, 'files') as AuthFileRecord[]).catch(() => [] as AuthFileRecord[]),
+        ]);
+        if (mounted.current && revision === requests.current) { setStore(nextStore); setProviders(oauthModelProvidersFromAuthFiles(credentials)); }
       }
     } catch (reason) { if (mounted.current && revision === requests.current) setError(message(reason)); }
     finally { if (mounted.current && revision === requests.current) setLoading(false); }
@@ -126,7 +134,14 @@ export function PluginsPage() {
   const storePlugins = (store?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.name, plugin.description, plugin.author, ...plugin.tags]) && (filter === 'all' || (filter === 'installed' && plugin.installed) || (filter === 'updates' && plugin.updateAvailable)));
   const installedCount = data?.plugins.filter(isPluginInstalled).length ?? 0;
   const configOnlyCount = data?.plugins.filter(plugin => plugin.configured && !isPluginInstalled(plugin)).length ?? 0;
+  const recommendations = tab === 'store' && !search.trim() && filter === 'all' ? recommendPlugins(store?.plugins ?? [], providers, locale) : [];
   const locked = busy || loading || Boolean(configPlugin || installEntry || oauthPlugin);
+  const storeCard = (entry: PluginStoreEntry, summary?: string) => <article className="plugin-card" key={entry.storeId}>
+              <div className="plugin-card-title"><span className="plugin-icon"><Puzzle size={23} /></span><div><h2>{entry.name || entry.id}</h2><code>{entry.id}</code></div><span className={`plugin-badge ${isOfficialPlugin(entry) ? 'active' : 'warning'}`}>{pt(isOfficialPlugin(entry) ? 'official' : 'thirdParty')}</span></div>
+              <p className="plugin-card-description">{summary ?? entry.description}</p><p className="plugin-meta">{[entry.installedVersion && entry.updateAvailable ? `${entry.installedVersion} → ${entry.version}` : entry.installedVersion || entry.version, entry.author, entry.license].filter(Boolean).join(' · ')}</p><p className="plugin-meta">{pt('source')}: {entry.sourceName || entry.sourceId}</p>
+              {entry.platforms.length > 0 && <p className="plugin-meta">{entry.platforms.map(platform => `${platform.goos}/${platform.goarch}`).join(' · ')}</p>}
+              <div className="plugin-card-actions">{entry.installed && <span className="plugin-badge">{pt(entry.updateAvailable ? 'updates' : 'installed')}</span>}<button className="primary-button" disabled={locked || (entry.authRequired && !entry.authConfigured)} onClick={() => setInstallEntry(entry)}><Download size={15} />{pt(entry.authRequired && !entry.authConfigured ? 'authMissing' : !entry.installed ? 'install' : entry.updateAvailable ? 'update' : 'reinstall')}</button></div>
+            </article>;
 
   return <div className="plugins-page">
     <header className="plugins-heading"><div><h1>{pt('title')}</h1><p>{pt('description')}</p></div><button className="secondary-button" disabled={locked} onClick={() => void load()}><RefreshCw size={16} aria-hidden="true" />{t('common.refresh')}</button></header>
@@ -171,12 +186,8 @@ export function PluginsPage() {
             </div>
           </article>; })}</div> : <>
             {store?.sourceErrors.length ? <details className="plugin-source-errors" open><summary>{pt('sourceErrors')}</summary>{store.sourceErrors.map((entry, index) => <p key={index}>{entry.sourceName || entry.sourceId || entry.sourceUrl}: {entry.message}</p>)}</details> : null}
-            <div className="plugin-grid">{storePlugins.map(entry => <article className="plugin-card" key={entry.storeId}>
-              <div className="plugin-card-title"><span className="plugin-icon"><Puzzle size={23} /></span><div><h2>{entry.name || entry.id}</h2><code>{entry.id}</code></div><span className={`plugin-badge ${isOfficialPlugin(entry) ? 'active' : 'warning'}`}>{pt(isOfficialPlugin(entry) ? 'official' : 'thirdParty')}</span></div>
-              <p className="plugin-card-description">{entry.description}</p><p className="plugin-meta">{[entry.installedVersion && entry.updateAvailable ? `${entry.installedVersion} → ${entry.version}` : entry.installedVersion || entry.version, entry.author, entry.license].filter(Boolean).join(' · ')}</p><p className="plugin-meta">{pt('source')}: {entry.sourceName || entry.sourceId}</p>
-              {entry.platforms.length > 0 && <p className="plugin-meta">{entry.platforms.map(platform => `${platform.goos}/${platform.goarch}`).join(' · ')}</p>}
-              <div className="plugin-card-actions">{entry.installed && <span className="plugin-badge">{pt(entry.updateAvailable ? 'updates' : 'installed')}</span>}<button className="primary-button" disabled={locked || (entry.authRequired && !entry.authConfigured)} onClick={() => setInstallEntry(entry)}><Download size={15} />{pt(entry.authRequired && !entry.authConfigured ? 'authMissing' : !entry.installed ? 'install' : entry.updateAvailable ? 'update' : 'reinstall')}</button></div>
-            </article>)}</div>
+            {recommendations.length > 0 && <section className="plugin-recommended" aria-labelledby="plugin-recommended-title"><h2 id="plugin-recommended-title">{pt('recommendedTitle')}</h2><p>{pt('recommendedHint')}</p><div className="plugin-grid">{recommendations.map(({ entry, summary }) => storeCard(entry, summary))}</div><h2 className="plugin-recommended-all">{pt('allPlugins')}</h2></section>}
+            <div className="plugin-grid">{storePlugins.map(entry => storeCard(entry))}</div>
           </>}
           {!loading && !error && (tab === 'installed' ? !plugins.length : !storePlugins.length) && <section className="plugin-empty"><Puzzle size={36} /><h2>{pt(search || filter !== 'all' ? 'noMatches' : 'empty')}</h2>{tab === 'installed' && !search && <><p>{pt('emptyHint')}</p><button className="primary-button" onClick={() => setTab('store')}>{pt('store')}</button></>}</section>}
         </>}
