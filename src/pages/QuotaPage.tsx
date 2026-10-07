@@ -249,9 +249,13 @@ export function QuotaCard({ file, quota, onRefresh, onReset, stale = false }: { 
       {quota.status === 'success' || (quota.status === 'loading' && rows.length > 0) ? <div className="quota-row-list">{rows.map((row, index) => {
         const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
         const percent = row.remainingPercent !== null && Number.isFinite(row.remainingPercent) ? Math.max(0, Math.min(100, row.remainingPercent)) : null;
-        return <div className={`real-quota-row${percent === 0 ? ' is-exhausted' : ''}`} key={`${row.label}-${index}`}>
+        const isBlocker = availability.blockers.includes(row);
+        const blockedElsewhere = !isBlocker && ['exhausted', 'creditBacked', 'resetDue'].includes(availability.kind);
+        return <div className={`real-quota-row${percent === 0 || isBlocker ? ' is-exhausted' : ''}${blockedElsewhere ? ' is-blocked' : ''}`} key={`${row.label}-${index}`}>
           <div><span>{row.label}</span><strong>{percent === null ? '—' : t('quota.remaining', { percent: quotaPercent(percent) })}</strong></div>
           {percent !== null ? <div className="real-quota-track" role="progressbar" aria-label={row.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: `${percent}%` }} /></div> : null}
+          {blockedElsewhere ? <small>{t('authFiles.quota.blockedElsewhere')}</small> : null}
+          {row.justReset ? <small className="credential-quota-just-reset">{t('authFiles.quota.justReset')}</small> : null}
           <small>{[row.detail, reset].filter(Boolean).join(' · ')}</small>
         </div>;
       })}</div> : null}
