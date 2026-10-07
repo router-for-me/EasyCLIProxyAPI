@@ -38,6 +38,8 @@
 .credential-quota-row { --quota-color: var(--success-color); display: grid; gap: 5px; min-width: 0; }
 .credential-quota-row.medium { --quota-color: var(--amber-text); }
 .credential-quota-row.low { --quota-color: var(--failure-badge-text); }
+.credential-quota-row.blocked { --quota-color: var(--text-tertiary); }
+.credential-quota-row.blocked .credential-quota-track { opacity: .6; }
 .credential-quota-label { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .credential-quota-label span { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
 .credential-quota-label strong { flex-shrink: 0; font-variant-numeric: tabular-nums; font-size: var(--font-size-label); color: var(--quota-color); }
@@ -46,6 +48,7 @@
 .credential-quota-track i { display: block; height: 100%; border-radius: inherit; background: var(--quota-color, var(--primary-color)); transition: width .25s ease; }
 .credential-quota-row.unknown .credential-quota-track { background: repeating-linear-gradient(115deg, var(--border-color) 0 4px, transparent 4px 8px); }
 .credential-quota small, .credential-quota-empty, .credential-quota-loading { font-size: var(--font-size-caption); line-height: 1.6; color: var(--text-tertiary); overflow-wrap: anywhere; }
+.credential-quota small.credential-quota-just-reset { color: var(--success-color); font-weight: 600; }
 .credential-quota-empty { margin: 0; }
 .credential-quota-footnotes { display: grid; gap: 3px; }
 .credential-quota-footnotes:empty { display: none; }

@@ -16,6 +16,7 @@ import {
   trendAxisTicks,
   trendPointIndexAtRatio,
   trendTimeAxisTicks,
+  fitTrendTimeAxisTicks,
   trendTimePosition,
   type UsageTimelinePoint,
 } from '../src/services/usageTrend';
@@ -263,6 +264,26 @@ describe('usage trend helpers', () => {
     expect(counts.every((count, index) => index === 0 || count >= counts[index - 1])).toBe(true);
     expect(new Set(counts).size).toBeGreaterThanOrEqual(4);
     expect(counts.at(-1)).toBeGreaterThan(counts[0]);
+  });
+
+  test('fits actual label widths including the inward-aligned endpoints', () => {
+    const start = new Date(2026, 8, 14);
+    const end = new Date(2026, 8, 15);
+    for (const width of [180, 320, 480, 640, 1000, 1400]) {
+      const ticks = trendTimeAxisTicks(start, end, width, 64);
+      const widths = ticks.map((_, i) => i % 2 ? 123 : 97);
+      const visible = fitTrendTimeAxisTicks(ticks, start, end, width, widths);
+      expect(visible[0]).toEqual(start);
+      if (width >= widths[0] + widths.at(-1)! + 12) expect(visible.at(-1)).toEqual(end);
+      let right = 0;
+      visible.forEach((date, index) => {
+        const size = widths[ticks.indexOf(date)];
+        const left = index === 0 ? 0 : date === end ? width - size : trendTimePosition(date, start, end) * width - size / 2;
+        if (index) expect(left - right).toBeGreaterThanOrEqual(12);
+        right = left + size;
+        expect(right).toBeLessThanOrEqual(width);
+      });
+    }
   });
 
   test('stacks model tokens and groups overflow models', () => {

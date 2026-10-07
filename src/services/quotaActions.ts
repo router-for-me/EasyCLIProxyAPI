@@ -48,7 +48,7 @@ async function runConfirmedQuotaAction(
       commit({ ...previous, actionResult: { action, status, error: result.error } });
       return status;
     }
-    commit({ ...result, actionResult: { action, status: 'success' } });
+    commit({ ...result, rows: result.rows.map((row) => ({ ...row, justReset: true })), actionResult: { action, status: 'success' } });
     return 'success';
   } catch (error) {
     if (!pending) throw error;

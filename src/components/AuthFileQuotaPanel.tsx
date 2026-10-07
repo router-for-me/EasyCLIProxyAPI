@@ -4,16 +4,22 @@ import { MessageNotice } from '../appNotice';
 import { fileName, formatQuotaTimestamp, type AuthFile, type QuotaState } from '../services/quotaService';
 import { canResetCodexQuota } from '../services/quotaActions';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
+import { quotaAvailability, quotaPercent } from '../services/quotaAvailability';
+import { QuotaAvailabilityNotice } from './QuotaAvailabilityNotice';
 
-export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset }: {
+export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, stale = false }: {
   quota: QuotaState;
   file: AuthFile;
   disabled: boolean;
   onRefresh: () => void;
   onReset?: () => void;
+  stale?: boolean;
 }) {
   const { locale, t } = useI18n();
-  const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
+  const clock = useQuotaClock();
+  const now = clock + (quota.serverTimeOffsetMs ?? 0);
+  const availability = quotaAvailability(file, quota, clock, stale);
+  const rows = [...quota.rows].sort((a, b) => Number(availability.blockers.includes(b)) - Number(availability.blockers.includes(a)));
   const loading = quota.status === 'loading';
   const name = fileName(file);
   return (
@@ -31,17 +37,23 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset }
       {loading ? <div className="credential-quota-loading" role="status"><span>{t(quota.pendingAction === 'reset' ? 'quota.resetting' : 'authFiles.quota.loading')}</span><div className="credential-quota-track indeterminate"><i /></div></div> : null}
       {quota.status === 'idle' ? <p className="credential-quota-empty">{t(disabled ? 'quota.fileDisabled' : 'authFiles.settings.quotaIdle')}</p> : null}
       {quota.status === 'error' ? <div className="credential-quota-error" role="status"><span>{t('authFiles.quota.failed')}</span>{quota.error ? <small>{quota.error}</small> : null}</div> : null}
-      {quota.status === 'success' ? <>
-        {quota.rows.length ? <div className="credential-quota-rows">{quota.rows.map((row, index) => {
+      <QuotaAvailabilityNotice state={availability} now={clock} />
+      {quota.status === 'success' || (loading && rows.length > 0) ? <>
+        {rows.length ? <div className="credential-quota-rows">{rows.map((row, index) => {
           const percent = row.remainingPercent !== null && Number.isFinite(row.remainingPercent) ? Math.max(0, Math.min(100, row.remainingPercent)) : null;
           const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
-          const tone = percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
+          const isBlocker = availability.blockers.includes(row);
+          // A window can report healthy remaining% while the account is still blocked by a different, already-exhausted window (e.g. the 5-hour window looks fine while the 7-day cap is at zero). Don't render that as green.
+          const blockedElsewhere = !isBlocker && ['exhausted', 'creditBacked', 'resetDue'].includes(availability.kind);
+          const tone = isBlocker ? 'low' : blockedElsewhere ? 'blocked' : percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
           return <div className={`credential-quota-row ${tone}`} key={`${row.label}-${index}`}>
-            <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{percent === null ? '—' : `${Math.round(percent)}%`}</strong></div>
+            <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{percent === null ? '—' : `${quotaPercent(percent)}%`}</strong></div>
             <div className="credential-quota-track" role={percent === null ? undefined : 'progressbar'} aria-label={`${row.label} · ${t('authFiles.settings.quotaRemaining')}`}
               aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined}>
               {percent === null ? <span className="sr-only">{t('authFiles.settings.quotaUnknown')}</span> : <i style={{ width: `${percent}%` }} />}
             </div>
+            {blockedElsewhere ? <small>{t('authFiles.quota.blockedElsewhere')}</small> : null}
+            {row.justReset ? <small className="credential-quota-just-reset">{t('authFiles.quota.justReset')}</small> : null}
             {reset ? <small>{reset}</small> : null}
             {row.detail ? <small>{row.detail}</small> : null}
           </div>;

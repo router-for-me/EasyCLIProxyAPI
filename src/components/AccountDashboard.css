@@ -1,0 +1,67 @@
+.account-dashboard { --ad-accent: #bb704f; display: grid; gap: 20px; margin: 0 0 28px; color: var(--text-primary); }
+.home-page:has(.account-dashboard) { grid-template-rows: auto auto auto; grid-auto-rows: auto; align-content: start; }
+.home-page > .account-dashboard { grid-column: 1 / -1; grid-row: 2; }
+@container workspace (min-width: 840px) {
+  .home-page:has(.account-dashboard) > .home-layout,
+  .home-page:has(.account-dashboard) > .client-api-panel { grid-row: 3; }
+}
+.ad-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.ad-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .17em; color: var(--ad-accent); }
+.ad-heading h2 { margin: 8px 0; font-size: clamp(23px, 3vw, 32px); letter-spacing: -.035em; font-weight: 600; }
+.ad-heading p, .ad-footnote { color: var(--text-secondary); font-size: 12px; line-height: 1.6; margin: 0; }
+.ad-heading button { flex-shrink: 0; display: flex; gap: 7px; align-items: center; }
+.ad-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border-primary); border-radius: 14px; background: var(--bg-secondary); }
+.ad-metrics > div { position: relative; display: grid; gap: 7px; padding: 20px 24px; }
+.ad-metrics > div + div { border-left: 1px solid var(--border-primary); }
+.ad-metrics svg { position: absolute; right: 22px; top: 21px; color: var(--text-tertiary); }
+.ad-metrics span { color: var(--text-secondary); font-size: 12px; padding-right: 22px; }
+.ad-metrics strong { font-size: 30px; letter-spacing: -.045em; font-variant-numeric: tabular-nums; font-weight: 600; }
+.ad-metrics small { color: var(--text-tertiary); font-size: 11px; }
+.ad-toolbar { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 11px; color: var(--text-secondary); }
+.ad-routing { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.ad-routing > span:not(.ad-dot) { border-left: 1px solid var(--border-primary); padding-left: 14px; }
+.ad-dot { width: 7px; height: 7px; background: var(--text-tertiary); border-radius: 50%; }
+.ad-dot.online { background: #488363; }
+.ad-sort { display: flex; align-items: center; gap: 7px; }
+.ad-sort select { border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary); border-radius: 7px; padding: 6px 8px; font-size: 11px; }
+.ad-accounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; }
+.ad-card { min-width: 0; padding: 21px; border: 1px solid var(--border-primary); border-top: 3px solid var(--ad-accent); border-radius: 12px; background: var(--bg-secondary); }
+.ad-codex { border-top-color: #648476; }
+.ad-card-header { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.ad-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ad-identity > div { min-width: 0; }
+.ad-identity img { width: 29px; height: 29px; flex-shrink: 0; }
+.ad-provider { color: var(--text-secondary); font-size: 11px; }
+.ad-identity h3 { margin: 5px 0 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.ad-card-header .state-pill { flex-shrink: 0; font-size: 10px; }
+.ad-quota-list { display: grid; gap: 18px; margin: 23px 0; }
+.ad-quota-title, .ad-quota-reset { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ad-quota-title { font-size: 12px; }
+.ad-quota-title strong { font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ad-quota meter { display: block; width: 100%; height: 8px; margin: 9px 0; border: 0; border-radius: 5px; background: var(--bg-tertiary); }
+.ad-quota meter::-webkit-meter-bar { border: 0; border-radius: 5px; background: var(--bg-tertiary); }
+.ad-quota meter::-webkit-meter-optimum-value { background: #668b73; border-radius: 5px; }
+.ad-quota meter::-moz-meter-bar { background: #668b73; border-radius: 5px; }
+.ad-low meter::-webkit-meter-optimum-value { background: #bc7949; }
+.ad-low meter::-moz-meter-bar { background: #bc7949; }
+.ad-blocked meter::-webkit-meter-optimum-value { background: var(--text-tertiary); }
+.ad-blocked meter::-moz-meter-bar { background: var(--text-tertiary); }
+.ad-blocked meter { opacity: .6; }
+.ad-quota-reset { font-size: 10px; line-height: 1.6; color: var(--text-secondary); flex-wrap: wrap; }
+.ad-quota-reset time { color: var(--text-tertiary); }
+.ad-card-activity { display: flex; align-items: center; gap: 7px; padding: 12px 0; border-top: 1px solid var(--border-primary); font-size: 11px; color: var(--text-secondary); }
+.ad-card-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
+.ad-card-footer label { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.ad-card-footer input { width: 68px; min-width: 0; padding: 6px; border: 1px solid var(--border-primary); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); }
+.ad-card-footer button { font-size: 11px; padding: 7px 10px; min-height: 30px; }
+.ad-freshness { margin-left: auto; font-size: 10px; color: var(--text-tertiary); }
+.ad-card-note { color: var(--text-secondary); font-size: 11px; line-height: 1.6; margin: 8px 0; overflow-wrap: anywhere; }
+.ad-card-note.credential-quota-just-reset { color: var(--quota-green, #16845c); font-weight: 600; }
+.ad-notice { padding: 16px; border: 1px solid var(--border-primary); border-radius: 10px; font-size: 12px; margin: 0; background: var(--bg-secondary); }
+.ad-error { color: #b4533a; }
+.ad-eyebrow { color: #995338; }
+:root[data-theme='dark'] .ad-eyebrow,
+:root[data-theme='dark'] .ad-error { color: #e9a582; }
+.ad-footnote { display: grid; gap: 3px; font-size: 10px; }
+@media (max-width: 1000px) { .ad-accounts { grid-template-columns: 1fr; } .ad-freshness { margin-left: 0; } }
+@media (max-width: 720px) { .ad-heading { align-items: start; flex-direction: column; } .ad-metrics > div { padding: 15px 10px; } .ad-metrics svg { display: none; } .ad-metrics span { padding: 0; } .ad-metrics strong { font-size: 23px; } .ad-card { padding: 16px; } }

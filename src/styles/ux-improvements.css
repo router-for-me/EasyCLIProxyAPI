@@ -1,0 +1,44 @@
+/* Keep the ledger dense; details expand only when requested. */
+.ux-insight,.ux-change-preview,.ux-models { border:1px solid var(--border-primary); border-radius:10px; padding:12px 16px; margin:12px 0; background:var(--bg-secondary); color:var(--text-primary); font-size:13px; }
+.ux-insight summary,.ux-change-preview summary,.ux-models summary { cursor:pointer; font-weight:600; min-height:28px; align-content:center; }
+.ux-insight p,.ux-models p,.ux-change-preview p { color:var(--text-secondary); line-height:1.6; }
+.ux-insight header,.ux-overview-tools { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.ux-overview-tools > details { flex:1; }
+.ux-insight h3,.ux-insight h4 { margin:0; font-size:14px; }
+.ux-recovery { padding:0; list-style:none; margin:12px 0 0; }
+.ux-recovery li { display:grid; grid-template-columns:minmax(120px,1fr) minmax(120px,1fr) auto; gap:6px 16px; padding:10px 0; border-top:1px solid var(--border-primary); }
+.ux-recovery time { grid-column:2/-1; color:var(--text-secondary); font-variant-numeric:tabular-nums; }
+.ux-recovery strong,.ux-comparison h4 { overflow-wrap:anywhere; }
+.ux-comparison { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:12px; }
+.ux-comparison article { padding:14px; border:1px solid var(--border-primary); border-radius:8px; background:var(--bg-primary); min-width:0; }
+.ux-comparison small,.ux-models li span { display:block; color:var(--text-secondary); line-height:1.6; }
+.ux-model-catalog ul { max-height:280px; overflow:auto; list-style:none; padding:0; }
+.ux-model-catalog li { padding:8px 0; border-top:1px solid var(--border-primary); overflow-wrap:anywhere; }
+.ux-model-catalog button { margin-top:10px; }
+.ux-models ul { list-style:none; padding:0; display:grid; gap:10px; }
+.ux-models li { display:grid; grid-template-columns:1fr auto; gap:4px 12px; overflow-wrap:anywhere; }
+.ux-models li span { grid-column:1/-1; }
+.ux-models code { color:var(--text-secondary); font-size:12px; }
+.ux-alerts { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; font-size:12px; margin:8px 0 16px; }
+.ux-alerts label { display:flex; align-items:center; gap:7px; min-height:32px; cursor:pointer; }
+.ux-alerts small { color:var(--text-secondary); }
+.ux-alerts > div { flex-basis:100%; border-left:3px solid var(--personal-accent-text); padding:10px 14px; background:var(--bg-secondary); }
+.ux-alerts ul { padding-left:18px; line-height:1.7; }
+.ux-change-preview dl { margin:0; }
+.ux-change-preview dl > div { display:grid; grid-template-columns:minmax(120px,1fr) 2fr; gap:12px; border-top:1px solid var(--border-primary); padding:8px 0; }
+.ux-change-preview dt { text-transform:capitalize; }
+.ux-change-preview dd { display:grid; gap:4px; margin:0; overflow-wrap:anywhere; }
+.ux-change-preview dd span { color:var(--text-secondary); }
+.ux-restore-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.connection-evidence button { justify-self:start; margin:6px 0; }
+.quota-ledger time,.quota-ledger .quota-window-value { font-variant-numeric:tabular-nums; }
+.account-dashboard .ad-quota-reset,.account-dashboard .ad-sort select { font-size:12px; }
+.ux-insight button,.ux-restore-actions button { min-height:34px; }
+.ux-insight button:focus-visible,.ux-insight summary:focus-visible,.ux-models summary:focus-visible,.ux-alerts input:focus-visible { outline:2px solid var(--personal-accent-text); outline-offset:3px; }
+@media (prefers-reduced-motion:no-preference) { .ux-insight button { transition:background-color 150ms ease,border-color 150ms ease; } }
+@media(max-width:640px) { .ux-overview-tools { align-items:stretch; flex-direction:column; gap:0; } .ux-recovery li,.ux-models li,.ux-change-preview dl > div { grid-template-columns:1fr; } .ux-recovery time { grid-column:auto; } .ux-models code { overflow-wrap:anywhere; } }
+
+.ux-request-help { text-align:left; max-width:320px; font-size:12px; }
+.ux-request-help summary { cursor:pointer; padding:5px 0; }
+.ux-request-help p { margin:5px 0; line-height:1.5; color:var(--text-primary); }
+.ux-request-help small { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; }

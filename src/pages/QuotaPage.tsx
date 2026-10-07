@@ -11,7 +11,10 @@ import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
-import { managementApi, readBoolean, responseList } from '../services/managementApi';
+import { managementApi, responseList } from '../services/managementApi';
+import { authFileHealth } from '../services/authFileHealth';
+import { quotaAvailability, quotaPercent } from '../services/quotaAvailability';
+import { QuotaAvailabilityNotice } from '../components/QuotaAvailabilityNotice';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import {
   fileName,
@@ -29,6 +32,7 @@ import {
   commitQuotaCacheIfCurrent,
   getQuotaCacheSnapshot,
   pruneQuotaCache,
+  quotaResultUpdater,
   updateQuotaCache,
   useQuotaCache,
 } from '../services/quotaCache';
@@ -55,6 +59,7 @@ export function QuotaPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [fileListStale, setFileListStale] = useState(false);
   const querying = Object.values(quotas).some((quota) => quota.status === 'loading');
 
   const loadFiles = useCallback(async () => {
@@ -62,8 +67,9 @@ export function QuotaPage() {
     setError('');
     try {
       const payload = await managementApi.get('/auth-files');
+      setFileListStale(false);
       const allFiles = dedupeAuthFiles(responseList(payload, 'files'));
-      const nextFiles = allFiles.filter((file) => !readBoolean(file, 'disabled') && providerForFile(file));
+      const nextFiles = allFiles.filter((file) => !authFileHealth(file).disabled && providerForFile(file));
       setFiles(nextFiles);
       const validQuotaKeys = new Set(allFiles.map(quotaKey));
       pruneQuotaCache(validQuotaKeys);
@@ -76,6 +82,7 @@ export function QuotaPage() {
         return next;
       });
     } catch (requestError) {
+      setFileListStale(true);
       setError(String(requestError));
     } finally {
       setLoading(false);
@@ -90,10 +97,10 @@ export function QuotaPage() {
     const key = quotaKey(file);
     if (getQuotaCacheSnapshot()[key]?.status === 'loading') return;
     const cacheGeneration = captureQuotaCacheGeneration();
-    updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
+    updateQuotaCache((current) => ({ ...current, [key]: { ...current[key], status: 'loading', rows: current[key]?.rows ?? [], error: undefined } }));
     const result = await loadQuota(file);
     commitQuotaCacheIfCurrent(cacheGeneration, () => {
-      updateQuotaCache((current) => ({ ...current, [key]: result }));
+      updateQuotaCache(quotaResultUpdater(key, result));
     });
   }, [t]);
 
@@ -107,7 +114,7 @@ export function QuotaPage() {
     updateQuotaCache((current) => ({
       ...current,
       ...Object.fromEntries(files.map((file) => [quotaKey(file), {
-        ...current[quotaKey(file)], status: 'loading', rows: [],
+        ...current[quotaKey(file)], status: 'loading', rows: current[quotaKey(file)]?.rows ?? [], error: undefined,
       }])),
     }));
     try {
@@ -116,7 +123,7 @@ export function QuotaPage() {
         await Promise.all(batch.map(async (file) => {
           const result = await loadQuota(file);
           commitQuotaCacheIfCurrent(cacheGeneration, () => {
-            updateQuotaCache((current) => ({ ...current, [quotaKey(file)]: result }));
+            updateQuotaCache(quotaResultUpdater(quotaKey(file), result));
           });
         }));
       }
@@ -165,7 +172,7 @@ export function QuotaPage() {
           {grouped.map(([provider, items]) => (
             <section className="quota-provider-group" key={provider}>
               <div className="quota-group-heading"><div><img src={providerMeta[provider].icon} alt="" className={provider === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} /><h2>{providerMeta[provider].label}</h2></div><span>{t(items.length === 1 ? 'quota.credentials.one' : 'quota.credentials.other', { count: items.length })}</span></div>
-              <div className="real-quota-grid">{items.map(({ file, quota }) => <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' ? () => void resetCodexQuota(file, quota) : undefined} />)}</div>
+              <div className="real-quota-grid">{items.map(({ file, quota }) => <QuotaCard stale={fileListStale} key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' ? () => void resetCodexQuota(file, quota) : undefined} />)}</div>
             </section>
           ))}
         </div>
@@ -174,12 +181,15 @@ export function QuotaPage() {
   );
 }
 
-export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile; quota: QuotaState; onRefresh: () => void; onReset?: () => void }) {
+export function QuotaCard({ file, quota, onRefresh, onReset, stale = false }: { file: AuthFile; quota: QuotaState; onRefresh: () => void; onReset?: () => void; stale?: boolean }) {
   const { locale, t } = useI18n();
-  const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
+  const clock = useQuotaClock();
+  const now = clock + (quota.serverTimeOffsetMs ?? 0);
+  const availability = quotaAvailability(file, quota, clock, stale);
+  const rows = [...quota.rows].sort((a, b) => Number(availability.blockers.includes(b)) - Number(availability.blockers.includes(a)));
   const provider = providerForFile(file);
   const name = fileName(file);
-  const disabled = readBoolean(file, 'disabled');
+  const disabled = authFileHealth(file).disabled;
   return (
     <article className="panel real-quota-card">
       <div className="real-quota-card-header">
@@ -190,6 +200,7 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
         </div>
       </div>
       <QuotaActionFeedback quota={quota} name={name} />
+      <QuotaAvailabilityNotice state={availability} now={clock} />
       {quota.status === 'idle' ? <div className="quota-card-message"><span>{disabled ? t('quota.fileDisabled') : t('quota.notFetched')}</span><button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={disabled}>{disabled ? t('quota.disabled') : t('quota.fetch')}</button></div> : null}
       {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />{t(quota.pendingAction === 'reset' ? 'quota.resetting' : 'quota.querying')}</div> : null}
       {quota.status === 'error' ? <>
@@ -204,11 +215,12 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
         <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
       </div> : null}
       {quota.status === 'success' && provider === 'devin' && quota.subscriptionActiveUntil ? <div className="quota-reset-credit-summary"><span>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span></div> : null}
-      {quota.status === 'success' ? <div className="quota-row-list">{quota.rows.map((row, index) => {
+      {quota.status === 'success' || (quota.status === 'loading' && rows.length > 0) ? <div className="quota-row-list">{rows.map((row, index) => {
         const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
-        return <div className="real-quota-row" key={`${row.label}-${index}`}>
-          <div><span>{row.label}</span><strong>{row.remainingPercent === null ? '—' : t('quota.remaining', { percent: Math.round(row.remainingPercent) })}</strong></div>
-          {row.remainingPercent !== null ? <div className="real-quota-track"><span style={{ width: `${Math.max(0, Math.min(100, row.remainingPercent))}%` }} /></div> : null}
+        const percent = row.remainingPercent !== null && Number.isFinite(row.remainingPercent) ? Math.max(0, Math.min(100, row.remainingPercent)) : null;
+        return <div className={`real-quota-row${percent === 0 ? ' is-exhausted' : ''}`} key={`${row.label}-${index}`}>
+          <div><span>{row.label}</span><strong>{percent === null ? '—' : t('quota.remaining', { percent: quotaPercent(percent) })}</strong></div>
+          {percent !== null ? <div className="real-quota-track" role="progressbar" aria-label={row.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: `${percent}%` }} /></div> : null}
           <small>{[row.detail, reset].filter(Boolean).join(' · ')}</small>
         </div>;
       })}</div> : null}

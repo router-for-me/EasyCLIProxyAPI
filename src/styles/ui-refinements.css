@@ -60,6 +60,13 @@
   outline-offset: -2px;
 }
 
+/* Let a wrapped legend increase the chart panel instead of pushing its axis outside. */
+.usage-overview-layout { grid-template-rows: auto minmax(min-content, 1fr); }
+.usage-trend-panel { height: auto; min-height: 280px; grid-template-rows: auto minmax(min-content, 1fr); }
+.usage-trend-wrapper { min-height: min-content; grid-template-rows: auto minmax(166px, 1fr); }
+.usage-trend-chart { height: auto; grid-template-rows: minmax(140px, 1fr) 22px; }
+.usage-trend-x-axis { height: 22px; }
+
 .client-api-card-heading {
   width: 144px;
   flex-basis: 144px;

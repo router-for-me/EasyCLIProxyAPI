@@ -17,6 +17,7 @@ import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { VersionManagementPage, displayAppVersion } from './VersionManagementPage';
+import { AccountDashboard } from '../components/AccountDashboard';
 
 type CoreProcessCommand = 'start_core_process' | 'stop_core_process' | 'restart_core_process';
 
@@ -218,6 +219,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
       <header className="management-header home-page-header">
         <div><h1>{t('app.nav.home')}</h1></div>
       </header>
+      <AccountDashboard ready={coreReady} />
       <div className="kernel-layout home-layout">
         <div className="panel control-panel">
           <div className="panel-heading">

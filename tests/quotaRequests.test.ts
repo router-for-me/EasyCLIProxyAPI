@@ -120,6 +120,14 @@ describe('quota API compatibility', () => {
     await expect(consumeCodexResetCredit({ ...codexFile, disabled: true })).rejects.toThrow();
     expect(post).not.toHaveBeenCalled();
   });
+
+  it('Kimi 返回空对象（新账户尚无用量）视为成功而非无法识别的格式；非空但无法解析的内容仍报错', async () => {
+    const kimiFile = { name: 'kimi.json', provider: 'kimi', auth_index: 'k' };
+    handler = () => success({});
+    expect(await loadQuota(kimiFile)).toMatchObject({ status: 'success', rows: [] });
+    handler = () => success({ unexpected: 'shape' });
+    expect(await loadQuota(kimiFile)).toMatchObject({ status: 'error', rows: [] });
+  });
 });
 
 describe('xAI quota queries aligned with Management Center', () => {
@@ -135,48 +143,25 @@ describe('xAI quota queries aligned with Management Center', () => {
     calls.forEach((request) => expect(request.header['x-userid']).toBe('u'));
   });
 
-  it('付费账号直接探测，profile 失败不影响聊天成功', async () => {
-    handler = (request) => request.url.endsWith('/me')
-      ? { status_code: 403, body: 'profile denied' } : success({});
+  it('paid account quota refresh never sends inference or claims chat access', async () => {
     const result = await loadQuota({ ...file, using_api: true, prefix: 'paid' });
-    expect(result).toMatchObject({ status: 'success', plan: 'Paid' });
-    expect(result.rows[0].remainingPercent).toBeNull();
-    expect(result.rows[0].detail).toContain('Paid API chat is available');
-    expect(calls).toHaveLength(2);
-    expect(calls.map((request) => request.url)).toEqual([
-      'https://api.x.ai/v1/me', 'https://api.x.ai/v1/chat/completions',
-    ]);
-    expect(JSON.parse(calls[1].data!)).toEqual({
-      model: 'grok-4.5', messages: [{ role: 'user', content: 'ping' }],
-      max_tokens: 1, stream: false,
-    });
-    expect(calls[1].method).toBe('POST');
-    expect(calls[1].header).toEqual({
-      Authorization: 'Bearer $TOKEN$', accept: 'application/json', 'Content-Type': 'application/json',
-    });
-    post.mock.calls.forEach((call) => expect(call[2]).toEqual({ timeoutMs: 15000 }));
+    expect(result).toMatchObject({ status:'success', plan:'Paid', rows:[{ scope:'paid', remainingPercent:null }] });
+    expect(result.rows[0].detail).not.toContain('chat is available');
+    expect(calls).toHaveLength(0);
   });
 
-  it('账单为空后探测成功只显示账户可用，不伪造额度', async () => {
+  it('empty billing returns an error without falling back to paid inference', async () => {
     handler = () => success({});
-    const result = await loadQuota(file);
-    expect(result).toMatchObject({ status: 'success', plan: 'Paid', rows: [{ remainingPercent: null }] });
-    expect(calls).toHaveLength(4);
-  });
-
-  it('账单和回退都失败时保留原始账单错误', async () => {
-    handler = (request) => request.url.includes('cli-chat-proxy')
-      ? { status_code: 403, body: 'billing denied' } : { status_code: 429, body: 'paid denied' };
-    expect(await loadQuota(file)).toMatchObject({ status: 'error', error: 'billing denied' });
-    expect(calls).toHaveLength(4);
-  });
-
-  it('已识别付费账号聊天失败时显示聊天错误', async () => {
-    handler = (request) => request.url.endsWith('/me')
-      ? success({}) : { status_code: 429, body: 'chat denied' };
-    expect(await loadQuota({ ...file, using_api: true, prefix: 'paid' }))
-      .toMatchObject({ status: 'error', error: 'chat denied' });
+    expect(await loadQuota(file)).toMatchObject({ status:'error', rows:[] });
     expect(calls).toHaveLength(2);
+    expect(calls.every(call => call.method === 'GET' && call.url.includes('/billing'))).toBe(true);
+  });
+
+  it('billing failures retain the original error without sending chat', async () => {
+    handler = () => ({ status_code:403, body:'billing denied' });
+    expect(await loadQuota(file)).toMatchObject({ status:'error', error:'billing denied' });
+    expect(calls).toHaveLength(2);
+    expect(calls.every(call => call.method === 'GET')).toBe(true);
   });
 
   it('合并缺失百分比与零用量后仍查询成功，不触发探测', async () => {

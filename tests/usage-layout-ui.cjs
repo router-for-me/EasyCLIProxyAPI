@@ -31,7 +31,8 @@ const base = 'http://127.0.0.1:1421';
     assert.ok(/^\d+(\.\d+)?$/.test(statInfo1213.tpsValue), `TPS value should be numeric: ${statInfo1213.tpsValue}`);
 
     // Now test constrained width where cards wrap and ensure vertical scrolling is preserved
-    await page.setViewportSize({ width: 750, height: 600 });
+    // Stay above the 760px breakpoint, where the app intentionally switches to page scrolling.
+    await page.setViewportSize({ width: 800, height: 600 });
     await page.waitForTimeout(100);
 
     const geometry = await page.evaluate(() => {
@@ -85,7 +86,34 @@ const base = 'http://127.0.0.1:1421';
     assert.ok(wideAxis.width > narrowAxis.width, 'The trend plot follows the wider window');
     assert.ok(wideAxis.ticks > narrowAxis.ticks, 'The X axis adds readable ticks when more width is available');
 
-    console.log('PASS: usage overview layout and responsive trend axis passed.');
+    for (const locale of ['en', 'zh-TW', 'ja']) {
+      for (const range of ['4h', '24h', '7d']) {
+        await page.goto(`${base}/tests/fixtures/usage-layout.html?locale=${locale}&range=${range}&theme=light`);
+        await page.locator('.usage-trend-x-axis span').first().waitFor();
+        await page.evaluate(() => document.fonts.ready);
+        for (const width of [640, 960, 1280, 1808]) {
+          await page.setViewportSize({ width, height: 1088 });
+          await page.waitForTimeout(150);
+          const labels = await page.locator('.usage-trend-x-axis span').evaluateAll(nodes => nodes.map(node => {
+            const box = node.getBoundingClientRect();
+            return { left: box.left, right: box.right, text: node.textContent };
+          }));
+          for (let index = 1; index < labels.length; index++) {
+            assert.ok(labels[index].left - labels[index - 1].right >= 8,
+              `Axis labels overlap or crowd at ${locale}/${range}/${width}: ${JSON.stringify(labels)}`);
+          }
+        }
+      }
+    }
+    await page.setViewportSize({ width: 750, height: 600 });
+    await page.waitForTimeout(150);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollHeight > innerHeight), 'Mobile layout preserves page scrolling');
+    await page.locator('.usage-trend-x-axis').scrollIntoViewIfNeeded();
+    assert.ok(await page.locator('.usage-trend-x-axis').evaluate(axis => {
+      const box = axis.getBoundingClientRect();
+      return box.top >= 0 && box.bottom <= innerHeight;
+    }), 'The complete axis is reachable on mobile');
+    console.log('PASS: usage overview layout, desktop/mobile scrolling, and non-overlapping axis labels in 3 locales, 3 ranges, 4 widths.');
   } finally {
     await browser.close();
   }

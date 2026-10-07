@@ -790,7 +790,11 @@ pub(crate) fn build_claude_desktop_profile(
                     models,
                 );
                 value["name"] = serde_json::json!(entry.model_id());
-                value["labelOverride"] = serde_json::json!(entry.source_or_alias());
+                if desktop_uses_native_label(entry.model_id(), entry.source_or_alias()) {
+                    value.as_object_mut().unwrap().remove("labelOverride");
+                } else {
+                    value["labelOverride"] = serde_json::json!(entry.source_or_alias());
+                }
                 if let Some(tier) = claude_desktop_family_tier(entry.model_id()) {
                     value["isFamilyDefault"] = serde_json::json!(families.insert(tier));
                 }
@@ -843,6 +847,16 @@ pub(crate) fn build_claude_desktop_profile(
         serde_json::Value::Array(deduplicated_models),
     );
     render_agent_json(root, "Claude Desktop gateway configuration")
+}
+
+// Leave official Claude labels to Desktop's model catalog; aliases for other
+// providers must retain the upstream identity so they cannot look like Claude.
+fn desktop_uses_native_label(route: &str, source: &str) -> bool {
+    if !route.eq_ignore_ascii_case(source) { return false; }
+    let source = source.to_ascii_lowercase();
+    ["claude-sonnet-", "claude-opus-", "claude-haiku-", "claude-fable-", "claude-mythos-"]
+        .iter().any(|prefix| source.strip_prefix(prefix).is_some_and(|version|
+            !version.is_empty() && version.split('-').all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))))
 }
 
 pub(crate) fn claude_desktop_inference_model(

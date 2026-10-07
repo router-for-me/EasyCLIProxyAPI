@@ -1,3 +1,5 @@
+import { RequestFailureAction } from '../components/RequestFailureAction';
+import { failureKind } from '../services/connectionPresentation';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -38,6 +40,7 @@ import {
   trendAxisTicks,
   trendPointIndexAtRatio,
   trendTimeAxisTicks,
+  fitTrendTimeAxisTicks,
   trendTimePosition,
   stackModelTokens,
   type UsageTimelinePoint,
@@ -1306,8 +1309,19 @@ function UsageTrend({
     });
     const yTicks = trendAxisTicks(maxTokens);
     const compactSameDay = start.toDateString() === end.toDateString();
-    const timeTicks = trendTimeAxisTicks(start, end, plotWidth, compactSameDay ? 64 : 112);
-    const showAxisTime = timeTicks.length > 1 && timeTicks[1].getTime() - timeTicks[0].getTime() < 24 * 60 * 60 * 1000;
+    const candidates = trendTimeAxisTicks(start, end, plotWidth, compactSameDay ? 64 : 112);
+    const showAxisTime = candidates.length > 1 && candidates[1].getTime() - candidates[0].getTime() < 24 * 60 * 60 * 1000;
+    const context = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+    if (context) {
+      const style = getComputedStyle(document.documentElement);
+      context.font = `${style.getPropertyValue('--font-size-caption').trim() || '12px'} ${style.fontFamily}`;
+    }
+    const labelWidths = candidates.map(date => {
+      const label = formatTrendAxisLabel({ start: date }, series.bucket, locale, { compactSameDay, showTime: showAxisTime });
+      // Extra room covers tabular digit spacing and font rasterization differences.
+      return (context?.measureText(label).width ?? label.length * 12) + 8;
+    });
+    const timeTicks = fitTrendTimeAxisTicks(candidates, start, end, plotWidth, labelWidths);
 
     return {
       maxTokens,
@@ -1323,7 +1337,7 @@ function UsageTrend({
       PT,
       UH,
     };
-  }, [count, hiddenKeys, series, plotWidth]);
+  }, [count, hiddenKeys, series, plotWidth, locale]);
 
   if (count === 0) {
     return <UsageEmpty />;
@@ -1856,7 +1870,7 @@ function UsageResultCell({ record }: { record: UsageRecord }) {
         <span className="usage-result-dot" />
         {t(`usage.result.${state}`)}
       </span>
-      {detail ? <small title={detail}>{detail}</small> : null}
+      {record.failed && !record.canceled && <details className="ux-request-help"><summary>{t('connection.technical')}</summary><p>{t(`ux.${failureKind(record)}`)}</p><RequestFailureAction record={record} />{detail && <small>{detail}</small>}</details>}
     </td>
   );
 }

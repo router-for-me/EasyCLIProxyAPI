@@ -1,11 +1,10 @@
+import { PERSONAL_APP_NAME } from '../personalEdition';
 import { useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import {
   Download,
-  ExternalLink,
-  Info,
   RefreshCw,
   RotateCcw,
   Trash2,
@@ -13,10 +12,8 @@ import {
 import { useCoreRuntime } from '../coreRuntime';
 import { useCoreUpdate } from '../coreUpdate';
 import { useI18n } from '../i18n';
-import { useAppUpdate } from '../appUpdate';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
-import { AppReleaseNotes } from '../components/AppReleaseNotes';
 import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 
 export type CoreInstallResult = {
@@ -64,7 +61,6 @@ function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof
 }
 
 export type MessageType = 'info' | 'success' | 'error';
-const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
 export const DEFAULT_VERSION_DOWNLOAD_SOURCE = 'github';
 const recordVersionManagementVisit = createVersionManagementVisitTracker();
 
@@ -75,15 +71,6 @@ export function displayAppVersion(version: string) {
 
 export function VersionManagementPage() {
   const { t } = useI18n();
-  const {
-    info: appUpdate,
-    error: appUpdateError,
-    checking: checkingAppUpdate,
-    task: appUpdateTask,
-    check: checkAppUpdate,
-    requestInstall: requestAppUpdate,
-  } = useAppUpdate();
-
   const {
     status: coreStatus,
     refreshStatus,
@@ -321,23 +308,10 @@ export function VersionManagementPage() {
     setCancellingInstall(false);
   };
 
-  const openAppRelease = async (url = appUpdate?.releaseUrl || APP_RELEASE_URL) => {
-    try {
-      await invoke('open_external_url', { url });
-    } catch (error) {
-      showNotice({ key: 'kernel.error.openUpdate', variables: { error: String(error) } }, 'error');
-    }
-  };
-
   useEffect(() => {
     if (!recordVersionManagementVisit(pageVisitRef.current)) return;
-    if (!checkingAppUpdate && !appUpdateTask.running) {
-      void checkAppUpdate();
-    }
-    if (!checkingLatest) {
-      void checkLatest();
-    }
-  }, [appUpdateTask.running, checkAppUpdate, checkLatest, checkingAppUpdate, checkingLatest]);
+    if (!checkingLatest) void checkLatest();
+  }, [checkLatest, checkingLatest]);
 
   useEffect(() => {
     let disposed = false;
@@ -403,25 +377,7 @@ export function VersionManagementPage() {
   const busy = checkingLatest || installing || coreProcessBusy;
   const installDisabled = busy || installing;
 
-  const resolvedAppVersion = appUpdate?.currentVersion || installedAppVersion;
-  const currentAppVersion = resolvedAppVersion ? displayAppVersion(resolvedAppVersion) : t('common.detecting');
-  const latestAppVersion = appUpdate?.latestVersion ? displayAppVersion(appUpdate.latestVersion) : '';
-
-  const appHasUpdate = Boolean(appUpdate?.updateAvailable);
-  const appVersionStatusLabel: string | null = appUpdateTask.running
-    ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
-    : appUpdateError
-      ? t('kernel.update.failed')
-      : appHasUpdate
-        ? t('appUpdate.available', { version: latestAppVersion })
-        : checkingAppUpdate || !appUpdate
-          ? t('appUpdate.phase.checking')
-          : null;
-  const appVersionStatusTone = appUpdateError
-    ? 'error'
-    : appUpdateTask.running || checkingAppUpdate || !appUpdate
-      ? 'info'
-      : 'update';
+  const currentAppVersion = installedAppVersion ? displayAppVersion(installedAppVersion) : t('common.detecting');
 
   const coreVersionStatusTone = installing || progress?.running
     ? 'info'
@@ -514,121 +470,13 @@ export function VersionManagementPage() {
       </header>
       <MessageNotice message={versionSourceError} onDismiss={() => setVersionSourceError('')} />
       <section className="panel version-list">
-        <div className="version-source-row" aria-label={t('kernel.versions.downloadSource')}>
-          <div className="version-source-copy">
-            <strong>{t('kernel.versions.downloadSource')}</strong>
-            <span>{t('kernel.versions.downloadSourceHint')}</span>
-            {versionSource?.gitcodeAvailable === false ? (
-              <span>{t('kernel.versions.gitcodeUnavailable')}</span>
-            ) : null}
-          </div>
-          <div className="version-source-control">
-            <label>
-              <span className="sr-only">{t('kernel.versions.downloadSource')}</span>
-              <select
-                value={versionSource?.source ?? DEFAULT_VERSION_DOWNLOAD_SOURCE}
-                disabled={
-                  !versionSource
-                  || versionSourceSaving
-                  || appUpdateTask.running
-                  || installing
-                }
-                aria-label={t('kernel.versions.downloadSource')}
-                onChange={(event) => void updateVersionSource(event.currentTarget.value as VersionDownloadSource)}
-              >
-                <option value="github">{t('kernel.versions.source.github')}</option>
-                <option value="gitcode" disabled={!versionSource?.gitcodeAvailable}>
-                  {t('kernel.versions.source.gitcode')}
-                </option>
-                <option value="gh-proxy">{t('kernel.versions.source.ghProxy')}</option>
-                <option value="gh-fast">{t('kernel.versions.source.ghFast')}</option>
-                {versionSource?.customMirrors.map((url) => (
-                  <option key={url} value={`custom:${url}`}>
-                    {downloadSourceLabel(`custom:${url}`, t)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              className="primary-button version-source-add-button"
-              disabled={versionSourceSaving || appUpdateTask.running || installing}
-              onClick={() => {
-                setVersionSourceError('');
-                setCustomMirrorDialogOpen(true);
-              }}
-            >
-              <span>{t('kernel.versions.customMirrorAdd')}</span>
-            </button>
-          </div>
-        </div>
-
         <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
         <div className="version-card-grid">
         <article className="version-list-item app-module-card">
           <div className="version-item-content">
-            <div className="version-card-top">
-              <h2>{t('kernel.versions.appCardTitle')}</h2>
-              {appVersionStatusLabel ? (
-                <span className={`version-row-status ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
-                  {appVersionStatusLabel}
-                </span>
-              ) : null}
-            </div>
-
-            <dl className="version-metrics-comparison">
-              <div className="version-metric-tile">
-                <dt className="version-metric-label">{t('appUpdate.current')}</dt>
-                <dd className="version-metric-value">{currentAppVersion}</dd>
-              </div>
-              <div className={`version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
-                <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
-                <dd className="version-metric-value">
-                  {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
-                </dd>
-              </div>
-            </dl>
-
-            <MessageNotice message={appUpdateError} />
-            {!appUpdate?.autoUpdateSupported ? (
-              <div className="version-alert-banner neutral">
-                <Info size={14} />
-                <span>{t('appUpdate.manualFallback')}</span>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="version-card-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={checkingAppUpdate || appUpdateTask.running}
-              onClick={() => void checkAppUpdate()}
-            >
-              <RefreshCw size={15} className={checkingAppUpdate ? 'spin' : ''} aria-hidden="true" />
-              <span>{checkingAppUpdate ? t('appUpdate.checking') : t('appUpdate.check')}</span>
-            </button>
-
-            {appHasUpdate && appUpdate?.autoUpdateSupported ? (
-              <button
-                type="button"
-                className="primary-button"
-                disabled={appUpdateTask.running}
-                onClick={requestAppUpdate}
-              >
-                <Download size={15} aria-hidden="true" />
-                <span>{t('appUpdate.installNow')}</span>
-              </button>
-            ) : null}
-
-            <button
-              type="button"
-              className={appHasUpdate && !appUpdate?.autoUpdateSupported ? 'primary-button' : 'secondary-button'}
-              onClick={() => void openAppRelease()}
-            >
-              <ExternalLink size={15} aria-hidden="true" />
-              <span>{t('appUpdate.openRelease')}</span>
-            </button>
+            <div className="version-card-top"><h2>{PERSONAL_APP_NAME}</h2><span className="version-row-status neutral">{t('personal.edition')}</span></div>
+            <dl className="version-metrics-comparison"><div className="version-metric-tile"><dt className="version-metric-label">{t('appUpdate.current')}</dt><dd className="version-metric-value">{currentAppVersion}</dd></div></dl>
+            <p className="personal-context">{t('personal.updateNotice')}</p>
           </div>
         </article>
 
@@ -698,13 +546,56 @@ export function VersionManagementPage() {
           </div>
         </article>
         </div>
-        <AppReleaseNotes
-          key={appUpdate?.latestVersion ?? 'pending'}
-          info={appUpdate}
-          checking={checkingAppUpdate}
-          failed={Boolean(appUpdateError)}
-          onOpenUrl={openAppRelease}
-        />
+        <details className="personal-disclosure maintenance-downloads"><summary>{t('kernel.versions.downloadSource')}</summary>
+        <div className="version-source-row" aria-label={t('kernel.versions.downloadSource')}>
+          <div className="version-source-copy">
+            <strong>{t('kernel.versions.downloadSource')}</strong>
+            <span>{t('kernel.versions.downloadSourceHint')}</span>
+            {versionSource?.gitcodeAvailable === false ? (
+              <span>{t('kernel.versions.gitcodeUnavailable')}</span>
+            ) : null}
+          </div>
+          <div className="version-source-control">
+            <label>
+              <span className="sr-only">{t('kernel.versions.downloadSource')}</span>
+              <select
+                value={versionSource?.source ?? DEFAULT_VERSION_DOWNLOAD_SOURCE}
+                disabled={
+                  !versionSource
+                  || versionSourceSaving
+                  || installing
+                }
+                aria-label={t('kernel.versions.downloadSource')}
+                onChange={(event) => void updateVersionSource(event.currentTarget.value as VersionDownloadSource)}
+              >
+                <option value="github">{t('kernel.versions.source.github')}</option>
+                <option value="gitcode" disabled={!versionSource?.gitcodeAvailable}>
+                  {t('kernel.versions.source.gitcode')}
+                </option>
+                <option value="gh-proxy">{t('kernel.versions.source.ghProxy')}</option>
+                <option value="gh-fast">{t('kernel.versions.source.ghFast')}</option>
+                {versionSource?.customMirrors.map((url) => (
+                  <option key={url} value={`custom:${url}`}>
+                    {downloadSourceLabel(`custom:${url}`, t)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="primary-button version-source-add-button"
+              disabled={versionSourceSaving || installing}
+              onClick={() => {
+                setVersionSourceError('');
+                setCustomMirrorDialogOpen(true);
+              }}
+            >
+              <span>{t('kernel.versions.customMirrorAdd')}</span>
+            </button>
+          </div>
+        </div>
+
+        </details>
       </section>
 
       {customMirrorDialogOpen ? (

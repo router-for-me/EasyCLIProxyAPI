@@ -115,7 +115,7 @@ const cachedOAuthProviderStates = (): Partial<Record<OAuthProviderId, OAuthProvi
 
 export function OAuthManagementPage() {
   const { t } = useI18n();
-  const [activeSubpage, setActiveSubpage] = useState<OAuthSubpage>('login');
+  const [activeSubpage, setActiveSubpage] = useState<OAuthSubpage>('authFiles');
   const subpageIds = oauthSubpages.map((subpage) => subpage.id);
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, subpage: OAuthSubpage) => {
     handleHorizontalTabKey(
@@ -170,6 +170,7 @@ export function OAuthManagementPage() {
 }
 
 export function OAuthLoginPage() {
+  const [showOtherProviders, setShowOtherProviders] = useState(false);
   const { t } = useI18n();
   const [states, setStates] = useState<Partial<Record<OAuthProviderId, OAuthProviderState>>>(
     cachedOAuthProviderStates,
@@ -523,8 +524,9 @@ export function OAuthLoginPage() {
       </header>
 
       <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
+      <label className="personal-provider-toggle"><input type="checkbox" checked={showOtherProviders} onChange={(event) => setShowOtherProviders(event.target.checked)} />{t('personal.otherProviders')}</label>
       <div className="oauth-grid">
-        {oauthProviders.map((provider) => {
+        {oauthProviders.filter((provider) => showOtherProviders || ['claude', 'codex'].includes(provider.id)).map((provider) => {
           const state = states[provider.id] ?? { status: 'idle' as const };
           const canSubmitCallback = OAUTH_CALLBACK_SUPPORTED.has(provider.id) && Boolean(state.url);
           const loginLabel = state.status === 'success'

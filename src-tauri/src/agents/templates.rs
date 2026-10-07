@@ -79,10 +79,31 @@ pub(crate) async fn prepare_desktop_core_update(
                 models,
                 &definitions,
             )
-            .map_err(agent_core_error)?
+            .map_err(|error| desktop_mapping_error(error, mappings))?
         }
     };
     Ok((before, after))
+}
+
+fn desktop_mapping_error(error: String, mappings: &ClaudeDesktopModelMappings) -> String {
+    if let Some(entries) = &mappings.desktop_models {
+        // Only rows with both a model and a distinct alias actually reach
+        // ensure_claude_desktop_model_alias (see entry.has_mapping() in
+        // ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml);
+        // a row without an alias can share source_or_alias() with the row that really
+        // failed, so skipping has_mapping() here would misattribute the error to it.
+        for (index, entry) in entries.iter().enumerate() {
+            if !entry.has_mapping() {
+                continue;
+            }
+            let model = entry.source_or_alias();
+            let expected = format!("Unable to determine the CPA configuration source for model {model}; cannot create Claude Desktop alias ");
+            if error.starts_with(&expected) && validate_agent_model(model).is_ok() {
+                return format!("Row {}: model '{}' has no enabled access source. Enable its account/provider and refresh the model list, or remove this row and apply again. Nothing was applied; your model selections are preserved.", index + 1, model);
+            }
+        }
+    }
+    agent_core_error(error)
 }
 
 pub(crate) fn agent_core_error(error: String) -> String {

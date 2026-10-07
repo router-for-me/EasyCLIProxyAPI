@@ -1,3 +1,8 @@
+import { ConfigurationChangePreview } from '../components/ConfigurationChangePreview';
+import { ConnectionOverview } from '../components/ConnectionOverview';
+import { ConnectionError } from '../components/ConnectionError';
+import { DesktopModelPickerDialog } from '../components/DesktopModelPickerDialog';
+import { DesktopModelPresetControls } from '../components/DesktopModelPresetControls';
 import { MessageNotice } from '../appNotice';
 import {
   useCallback,
@@ -64,7 +69,7 @@ import {
   type DeepSeekHarnessLaunchOptions,
 } from '../services/deepSeekHarnessLaunch';
 import type { ModelOption } from '../services/modelService';
-import { claudeDesktopAliasSuggestions, claudeDesktopDefaultAliases, createDefaultDesktopModels, desktopAliasNotice, desktopEntryValidation, desktopModelEntries, desktopModelId, desktopModelValidation, isClaudeDesktopModel, selectedDesktopModelEntries, type ClaudeDesktopModelMapping } from '../services/claudeDesktopModels';
+import { claudeDesktopAliasSuggestions, claudeDesktopDefaultAliases, createDefaultDesktopModels, desktopAliasNotice, desktopEntryValidation, desktopModelNotListed, desktopModelEntries, desktopModelId, desktopModelValidation, isClaudeDesktopModel, selectedDesktopModelEntries, type ClaudeDesktopModelMapping } from '../services/claudeDesktopModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
@@ -382,7 +387,7 @@ const AGENT_SELECTED_CLIENT_KEY = 'cpa-gui.agent-selected-client.v1';
 const AGENT_LAUNCH_DIRECTORY_HISTORY_KEY = 'cpa-gui.agent-launch-directory-history.v1';
 
 const readSelectedAgentClient = (): AgentClientId => {
-  const fallback = agentDefinitions[0].id;
+  const fallback: AgentClientId = 'claude-desktop';
   if (typeof window === 'undefined') return fallback;
   try {
     const saved = window.localStorage.getItem(AGENT_SELECTED_CLIENT_KEY);
@@ -808,6 +813,7 @@ type AgentsPageProps = {
 
 export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsPageProps = {}) {
   const { t } = useI18n();
+  const [showOtherApps, setShowOtherApps] = useState(false);
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
   const [viewStateByClient, setViewStateByClient] = useState(() => agentViewStateCache);
   const viewMode = embedded ? 'embedded' : 'full';
@@ -860,6 +866,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [modelError, setModelError] = useState('');
   const [modelSelectionError, setModelSelectionError] = useState('');
   const [backupsOpen, setBackupsOpen] = useState(false);
+  const [undoBackupByClient, setUndoBackupByClient] = useState<Record<string, string>>({});
+  const [restoreInitialId, setRestoreInitialId] = useState<string | undefined>();
   const [defaultError, setDefaultError] = useState('');
   const [templatePreview, setTemplatePreview] = useState<{ revision: string; files: string[] } | null>(null);
   const [defaultConfirmOpen, setDefaultConfirmOpen] = useState(false);
@@ -869,6 +877,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
   const [harnessCatalogDialogOpen, setHarnessCatalogDialogOpen] = useState(false);
   const [desktopHelpOpen, setDesktopHelpOpen] = useState(false);
+  const [desktopPickerOpen, setDesktopPickerOpen] = useState(false);
   const [launchDirectory, setLaunchDirectory] = useState('');
   const [launchDirectoryTarget, setLaunchDirectoryTarget] = useState<AgentLaunchTarget | null>(null);
   const [launchDirectoryError, setLaunchDirectoryError] = useState('');
@@ -1518,6 +1527,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setBusyAction('apply');
     setConfigurationNotice('');
     try {
+      const backup = await invoke<{ id: string; restorable: boolean }>('create_agent_config_backup', { client: selected });
+      if (!backup.id || !backup.restorable) throw new Error('Could not create a restorable configuration snapshot. No changes saved.');
       const result = await invoke<AgentConfigActionResult>('update_agent_config', {
         client: selected,
         model,
@@ -1525,6 +1536,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         claudeCodeModelMappings: selected === 'claude-code' ? claudeModelMappings : null,
         claudeDesktopModelMappings: selected === 'claude-desktop' ? claudeModelMappings : null,
       });
+      setUndoBackupByClient(current => ({ ...current, [selected]: backup.id }));
       clearPendingChanges();
       if (isClaudeModelMappingClient) {
         claudeModelMappingsDirtyRef.current[selected] = false;
@@ -1949,15 +1961,22 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           <button type="button" className="secondary-button compact-button" onClick={() => setDesktopHelpOpen(true)}>
             {t('agents.claudeDesktopMapping.help')}
           </button>
+          <button type="button" className="secondary-button compact-button" disabled={busy || loading || modelLoading || !models.length}
+            onClick={() => setDesktopPickerOpen(true)}>
+            {t('agents.claudeDesktopMapping.pick')}
+          </button>
           <button type="button" className="primary-button compact-button" disabled={busy || loading}
             onClick={() => editDesktopEntries([...desktopEntries, { model: '', alias: '', context1m: false }])}>
             {t('agents.claudeDesktopMapping.add')}
           </button>
         </div>
       </div>
+      <button type="button" className="secondary-button compact-button" disabled={busy || modelLoading} onClick={refreshModels}>{t('preset.refreshCatalog')}</button>
+      <DesktopModelPresetControls models={models} catalogReady={!modelLoading && !modelError} entries={desktopEntries} disabled={busy || loading} onImport={editDesktopEntries} />
       {!desktopEntries.length ? <p className="agent-model-hint">{t('agents.claudeDesktopMapping.empty')}</p> : null}
       <div className="agent-desktop-model-list">
         {desktopEntries.map((entry, index) => {
+          const notListed = !modelLoading && !modelError && desktopModelNotListed(entry, models);
           const entryError = entry.model.trim() ? desktopEntryValidation(entry) : null;
           const aliasNotice = desktopAliasNotice(entry, desktopEntries, models, appliedDesktopEntries);
           const isClaude = isClaudeDesktopModel(entry.model);
@@ -1995,6 +2014,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </button>
               </div>
             </div>
+            {notListed && <p className="agent-inline-message warning agent-desktop-model-notice" role="status">{t('preset.notListed', { row: index + 1, model: entry.model })}</p>}
             {entryError && hasPendingChanges && !modelLoading
               ? <p className="agent-inline-message warning agent-desktop-model-notice" role="status">{t(`agents.claudeDesktopMapping.error.${entryError}`)}</p>
               : aliasNotice === 'aliasExists'
@@ -2042,11 +2062,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           </button>
         </div>
       </header>
+      {!embedded && <div className="personal-context"><strong>{t('personal.connectionTitle')}</strong> {t('personal.connectionHelp')}</div>}
+
 
       <div className="agent-workbench">
         <aside className="panel agent-client-list" aria-label={t('agents.localClients')}>
+          <label className="personal-provider-toggle"><input type="checkbox" checked={showOtherApps} onChange={(event) => setShowOtherApps(event.target.checked)} />{t('personal.otherApps')}</label>
           <div className="agent-list-items">
-            {agentDefinitions.map((agent) => {
+            {agentDefinitions.filter((agent) => showOtherApps || ['claude-code', 'claude-desktop', 'codex', selected].includes(agent.id)).map((agent) => {
               const status = statuses.find((item) => item.id === agent.id);
               return (
                 <button
@@ -2099,6 +2122,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           </div>
           ) : null}
           <div className="agent-config-scroll-region">
+          {!embedded && activeSubpage === 'core' && <ConnectionOverview configuredModels={selected === 'claude-desktop' ? activeStatus?.claudeDesktopModelMappings?.desktopModels ?? [] : activeStatus?.currentModel ? [{ model: activeStatus.currentModel }] : []} status={activeStatus} busy={busy || loading} detectionFailed={Boolean(detectionError)}
+            onDetect={() => void refresh()} onReview={() => {
+              const form = document.querySelector<HTMLElement>('.agent-core-config');
+              const control = form?.querySelector<HTMLElement>('.agent-model-trigger:not(:disabled) input:not(:disabled),button.agent-model-trigger:not(:disabled),select:not(:disabled)')
+                ?? form?.querySelector<HTMLElement>('input:not(:disabled),button:not(:disabled)');
+              (control ?? form)?.scrollIntoView({ block: 'center', behavior: 'auto' }); control?.focus();
+            }} />}
+
           {embedded && activeSubpage === 'core' ? (
             <div className="agent-minimal-config" id="agent-subpage-panel-core" role="tabpanel" aria-labelledby="agent-subpage-tab-core">
               <div className="agent-minimal-client-summary">
@@ -2112,7 +2143,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </span>
               </div>
 
-              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
+              <ConnectionError message={activeStatus?.error} />
+              <MessageNotice message={activeStatus?.warnings.join('；')} tone="info" />
 
               {selected === 'claude-desktop' ? desktopModelEditor : <div className="agent-minimal-field">
                 <label htmlFor="embedded-agent-model">{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</label>
@@ -2130,6 +2162,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
 
+              {!isPiClient && hasPendingChanges && <ConfigurationChangePreview before={formEditBaselineByClient[selected]} after={formValues} app={activeDefinition.name} />}
               <div className="agent-save-bar">
                 {configurationFeedback}
                 <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
@@ -2205,7 +2238,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 )}
               </div>
 
-              <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
+              <ConnectionError message={activeStatus?.error} />
+              <MessageNotice message={activeStatus?.warnings.join('；')} tone="info" />
 
               {!isClaudeModelMappingClient ? (
                 <section className="agent-core-setting-section agent-model-section">
@@ -2437,6 +2471,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </section>
               ) : null}
 
+              {!isPiClient && hasPendingChanges && <ConfigurationChangePreview before={formEditBaselineByClient[selected]} after={formValues} app={activeDefinition.name} />}
               <div className="agent-save-bar">
                 {configurationFeedback}
                   <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
@@ -2470,7 +2505,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 canUninstallPi={launchEnabled && Boolean(activeStatus?.pluginInstalled)}
                 pluginInstalled={Boolean(activeStatus?.pluginInstalled)} pluginVersion={activeStatus?.pluginVersion ?? null}
                 updateLabel={piPluginUpdateAvailable ? piPluginUpdateTitle ?? '' : ''}
-                onBackup={() => void createManualBackup()} onRestore={() => setBackupsOpen(true)}
+                onBackup={() => void createManualBackup()} onRestore={() => { setRestoreInitialId(undefined); setBackupsOpen(true); }}
                 onTemplate={() => void openDefaultConfirmation()} onClear={openClearConfirmation}
                 canClearIntegration={!loading && Boolean(activeStatus?.configValid && activeStatus.supportedPlatform)}
                 onClearIntegration={() => void clearCodexIntegration()}
@@ -2478,9 +2513,12 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 onUninstallPi={() => void uninstallPiProvider()} />
             </div>
           ) : null}
+          {!embedded && <div className="ux-restore-actions">
+            <button type="button" className="secondary-button compact-button" disabled={busy} onClick={() => { setRestoreInitialId(undefined); setBackupsOpen(true); }}>{t('ux.backups')}</button>
+            {undoBackupByClient[selected] && <button type="button" className="secondary-button compact-button" disabled={busy} title={t('ux.undoHint')} onClick={() => { setRestoreInitialId(undoBackupByClient[selected]); setBackupsOpen(true); }}>{t('ux.undo')}</button>}
+          </div>}
           {activeSubpage !== 'core' ? configurationFeedback : null}
-          <MessageNotice message={configurationErrorMessage}
-            onDismiss={() => { setConfigurationError(''); setModelSelectionError(''); setModelError(''); }} />
+          <ConnectionError message={configurationErrorMessage} onDismiss={() => { setConfigurationError(''); setModelSelectionError(''); setModelError(''); }} />
           <MessageNotice tone="success" message={!configurationErrorMessage ? configurationNotice || clearNotice : null}
             onDismiss={() => { setConfigurationNotice(''); setClearNotice(''); }} />
           {activeSubpage === 'core' ? <AgentRunControls name={activeDefinition.name} dualTargets={hasIndependentCliAndApp}
@@ -2494,7 +2532,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       </div>
 
       {desktopHelpOpen ? <ClaudeDesktopHelpDialog onClose={() => setDesktopHelpOpen(false)} /> : null}
-      {backupsOpen ? <AgentConfigBackupDialog client={selected} onClose={() => setBackupsOpen(false)} onRestored={async () => {
+      {desktopPickerOpen ? <DesktopModelPickerDialog models={models} existingEntries={desktopEntries}
+        onAdd={(entries) => { editDesktopEntries([...desktopEntries, ...entries]); setDesktopPickerOpen(false); }}
+        onClose={() => setDesktopPickerOpen(false)} /> : null}
+      {backupsOpen ? <AgentConfigBackupDialog initialId={restoreInitialId} client={selected} onClose={() => setBackupsOpen(false)} onRestored={async () => {
         clearPendingChanges();
         if (selected === 'claude-code' || selected === 'claude-desktop') claudeModelMappingsDirtyRef.current[selected] = false;
         setOauthConfigurationDraft(null);
@@ -2502,6 +2543,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         setStatuses(refreshed);
         const current = refreshed.find((status) => status.id === selected)?.currentModel;
         setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next); return next; });
+        setUndoBackupByClient(current => { const next = { ...current }; delete next[selected]; return next; });
         setConfigurationNotice(t('agents.backup.restored'));
       }} /> : null}
 

@@ -96,7 +96,6 @@ fn exiting_during_core_startup_cancels_the_port_wait() {
     let address = listener.local_addr().unwrap();
     drop(listener);
     let mut child = spawn_core_child(core_child_sleep_command()).unwrap();
-    let child_id = child.id();
     let exiting_state = state.clone();
     let exit = thread::spawn(move || {
         thread::sleep(Duration::from_millis(100));
@@ -105,15 +104,16 @@ fn exiting_during_core_startup_cancels_the_port_wait() {
 
     let started = Instant::now();
     let result = wait_for_core_management_port(&mut child, address, &state);
-    drop(child);
     exit.join().unwrap();
     assert!(matches!(result, Err(CoreStartupFailure::ShuttingDown)));
     assert!(started.elapsed() < Duration::from_secs(2));
-    assert!(!is_process_alive(child_id));
+    // The kernel is a background service now: canceling the startup wait because
+    // the app is exiting must not kill an otherwise-healthy child process.
+    assert_core_child_survives(&mut child);
 }
 
 #[test]
-fn exiting_rejects_new_core_operations_and_cleans_up_an_in_flight_child() {
+fn exiting_rejects_new_core_operations_and_leaves_an_in_flight_child_running() {
     let state = CoreProcessState::new(false);
     let child = spawn_core_child(core_child_sleep_command()).unwrap();
     let child_id = child.id();
@@ -126,8 +126,14 @@ fn exiting_rejects_new_core_operations_and_cleans_up_an_in_flight_child() {
         .store_child(child)
         .unwrap_err()
         .contains("Application is exiting"));
-    assert!(!is_process_alive(child_id));
+    // The kernel is a background service: a child that couldn't be stored because
+    // the app is already exiting must still be left running, not killed, same as
+    // every other exit path. The next launch picks it back up via
+    // adopt_existing_core_processes() instead of starting a duplicate.
+    thread::sleep(Duration::from_millis(200));
+    assert!(is_process_alive(child_id));
     assert_eq!(state.managed_pid(), None);
+    terminate_process_id(child_id).unwrap();
 }
 
 #[cfg(windows)]
@@ -224,15 +230,15 @@ fn core_child_owner_process_helper() {
     }
     let mut command = core_child_sleep_command();
     command.stdout(Stdio::inherit());
-    let _child = spawn_core_child(command).unwrap();
-    println!("CORE_CHILD_READY");
+    let child = spawn_core_child(command).unwrap();
+    println!("CORE_CHILD_READY {}", child.id());
     io::stdout().flush().unwrap();
     thread::sleep(Duration::from_secs(10));
 }
 
 #[cfg(any(target_os = "linux", windows))]
 #[test]
-fn core_child_stops_when_owner_process_is_killed() {
+fn core_child_survives_when_owner_process_is_killed() {
     use std::io::BufRead;
 
     let mut owner = Command::new(env::current_exe().unwrap())
@@ -248,32 +254,32 @@ fn core_child_stops_when_owner_process_is_killed() {
         .spawn()
         .unwrap();
     let mut output = io::BufReader::new(owner.stdout.take().unwrap());
-    let mut ready = false;
+    let mut core_child_id: Option<u32> = None;
     loop {
         let mut line = String::new();
         match output.read_line(&mut line) {
             Ok(0) | Err(_) => break,
-            Ok(_) if line.trim() == "CORE_CHILD_READY" => {
-                ready = true;
+            Ok(_) if line.trim().starts_with("CORE_CHILD_READY") => {
+                core_child_id = line.trim().strip_prefix("CORE_CHILD_READY ").and_then(|id| id.parse().ok());
                 break;
             }
             Ok(_) => {}
         }
     }
+    let core_child_id = core_child_id.expect("owner did not report its core child's PID");
 
-    let killed = owner.kill();
-    let waited = owner.wait();
-    let shutdown_started = Instant::now();
-    let mut remaining_output = String::new();
-    let drained = output.read_to_string(&mut remaining_output);
-    assert!(ready, "owner did not finish spawning its core child");
-    killed.unwrap();
-    waited.unwrap();
-    drained.unwrap();
+    owner.kill().unwrap();
+    owner.wait().unwrap();
+
+    // The kernel is a background service now: forcibly killing its launcher
+    // (simulating a GUI crash or force-kill, not just a clean exit) must not
+    // take the kernel down with it -- only an explicit stop does that.
+    thread::sleep(Duration::from_secs(2));
     assert!(
-        shutdown_started.elapsed() < Duration::from_secs(5),
-        "core kept its output pipe open after the owner was killed"
+        is_process_alive(core_child_id),
+        "core kernel child was killed when its owner process was killed"
     );
+    terminate_process_id(core_child_id).unwrap();
 }
 
 #[test]

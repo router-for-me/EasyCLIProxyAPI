@@ -563,3 +563,17 @@ fn legacy_desktop_upstream_fallback_does_not_shadow_an_exact_oauth_alias() {
         .iter()
         .all(|entry| entry["name"] == "actual-upstream"));
 }
+
+#[test]
+fn desktop_official_claude_models_use_native_labels_and_other_providers_keep_identity() {
+    let mappings = custom_mappings(&[("claude-sonnet-5", ""), ("claude-opus-5-5", ""), ("gemini-3.1-pro-low", "claude-custom-1")]);
+    let profile: serde_json::Value = serde_json::from_str(&build_claude_desktop_profile(
+        None, "http://localhost:8317", "key", "claude-sonnet-5", &[], Some(&mappings),
+    ).unwrap()).unwrap();
+    let models = profile["inferenceModels"].as_array().unwrap();
+    assert!(models[0].get("labelOverride").is_none());
+    assert!(models[1].get("labelOverride").is_none());
+    assert_eq!(models[0]["name"], "claude-sonnet-5");
+    assert_eq!(models[2]["name"], "claude-custom-1");
+    assert_eq!(models[2]["labelOverride"], "gemini-3.1-pro-low");
+}

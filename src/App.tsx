@@ -1,3 +1,4 @@
+import { UX_NAVIGATE } from './services/uxNavigation';
 import { MessageNotice } from './appNotice';
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -6,20 +7,18 @@ import {
   Bot,
   Check,
   ChevronUp,
-  ExternalLink,
   History,
   House,
   Languages,
   Lock,
   LogIn,
-  MessageCircle,
   Network,
   PackageOpen,
   ServerCog,
   Settings,
   X,
 } from 'lucide-react';
-import appLogo from './assets/logo.jpg';
+import { PERSONAL_APP_NAME, PERSONAL_APP_INITIAL } from './personalEdition';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
 import { CoreUpdateProvider, useCoreUpdate } from './coreUpdate';
 import { ConfigPanelPage } from './pages/ConfigPanel';
@@ -37,8 +36,6 @@ import { canOpenAppPage, isAlwaysAvailablePage } from './navigation';
 import { useThemePreference } from './theme';
 import { useDialogFocusTrap } from './components/useDialogFocusTrap';
 
-const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
-const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
 
 const pages = [
   {
@@ -242,21 +239,20 @@ function AppContent() {
     options[next]?.focus();
   };
 
+  useEffect(() => {
+    const navigate = (event: Event) => {
+      const target = (event as CustomEvent<unknown>).detail;
+      if ((target === 'home' || target === 'oauth' || target === 'agents') && canOpenAppPage(target, coreReady)) setActive(target);
+    };
+    window.addEventListener(UX_NAVIGATE, navigate);
+    return () => window.removeEventListener(UX_NAVIGATE, navigate);
+  }, [coreReady]);
+
   const select = (pageId: PageId) => {
     if (!canOpenAppPage(pageId, coreReady)) {
       return;
     }
     setActive(pageId);
-  };
-
-  const openContact = async () => {
-    try {
-      await invoke('open_external_url', {
-        url: locale === 'zh-CN' ? QQ_CONTACT_URL : DISCORD_SERVER_URL,
-      });
-    } catch (error) {
-      console.error('Failed to open the contact link', error);
-    }
   };
 
   const resolveWindowsCloseRequest = async (
@@ -293,21 +289,7 @@ function AppContent() {
     }
   };
 
-  return (
-    <>
-      <div className={`app-shell${active === "easy" ? " app-shell-easy-mode" : ""}`}>
-        {active !== "easy" ? (
-          <aside className="sidebar">
-          <div className="sidebar-brand" title={t('app.desktopConsole')}>
-            <img src={appLogo} alt="" className="brand-mark brand-logo" />
-            <div>
-              <strong>EasyCLIProxyAPI</strong>
-              <span>{t('app.desktopConsole')}</span>
-            </div>
-          </div>
-
-          <nav className="nav-section" aria-label={t('app.navigation')}>
-            {pages.filter((page) => page.id !== 'easy').map((page) => {
+  const renderNavigationPage = (page: (typeof pages)[number]) => {
               const Icon = page.icon;
               const locked = !canOpenAppPage(page.id, coreReady);
               const updateIndicator = page.id === 'versions'
@@ -323,6 +305,7 @@ function AppContent() {
                   ]
                     .filter(Boolean)
                     .join(' ')}
+                  aria-current={page.id === active ? 'page' : undefined}
                   disabled={locked}
                   title={locked ? t('app.nav.lockedHint') : undefined}
                   onClick={() => select(page.id)}
@@ -344,17 +327,33 @@ function AppContent() {
                   ) : null}
                 </button>
               );
-            })}
+
+  };
+
+  return (
+    <>
+      <div className={`app-shell${active === "easy" ? " app-shell-easy-mode" : ""}`}>
+        {active !== "easy" ? (
+          <aside className="sidebar">
+          <div className="sidebar-brand" title={t('app.desktopConsole')}>
+            <span className="personal-brand-mark" aria-hidden="true">{PERSONAL_APP_INITIAL}<span>↗</span></span>
+            <div>
+              <strong>{PERSONAL_APP_NAME}</strong>
+              <span>{t('personal.tagline')}</span>
+            </div>
+          </div>
+
+          <nav className="nav-section" aria-label={t('app.navigation')}>
+            {pages.filter((page) => !['easy', 'api', 'versions'].includes(page.id)).map(renderNavigationPage)}
+            <details className="personal-advanced" open={['api', 'versions'].includes(active) || undefined}>
+              <summary>{t('personal.advanced')}</summary>
+              <div>{pages.filter((page) => ['api', 'versions'].includes(page.id)).map(renderNavigationPage)}
+                <button type="button" className="sidebar-easy-entry" onClick={() => select('easy')}>{t('app.nav.easy')}</button>
+              </div>
+            </details>
           </nav>
 
           <div className="sidebar-bottom">
-            <button
-              type="button"
-              className="sidebar-easy-entry"
-              onClick={() => select('easy')}
-            >
-              <span>{t('app.nav.easy')}</span>
-            </button>
             <div
               className="sidebar-theme-selector"
               role="group"
@@ -447,16 +446,10 @@ function AppContent() {
                 </div>
               ) : null}
             </div>
-            <button
-              type="button"
-              className="sidebar-contact"
-              title={t('app.contact.title')}
-              onClick={() => void openContact()}
-            >
-              <MessageCircle size={16} aria-hidden="true" />
-              <span>{t('app.contact.label')}</span>
-              <ExternalLink size={13} aria-hidden="true" />
-            </button>
+            <div className="personal-runtime" role="status">
+              <span className={`ad-dot ${coreReady ? 'online' : ''}`} aria-hidden="true" />
+              <div><strong>{coreReady ? t('personal.running') : t('personal.notReady')}</strong><small>{t('personal.routing')}</small></div>
+            </div>
           </div>
           </aside>
         ) : null}

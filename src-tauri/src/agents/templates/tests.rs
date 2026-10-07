@@ -106,3 +106,40 @@ fn incomplete_or_invalid_template_never_writes_any_file() {
     assert!(prepare_config_updates("pi", &paths, &before, &updates, true).is_err());
     assert_eq!(before, config_images(&paths).unwrap());
 }
+
+#[test]
+fn desktop_missing_source_names_row_without_leaking_raw_error() {
+    let mappings: ClaudeDesktopModelMappings = serde_json::from_value(serde_json::json!({
+        "desktopModels": [
+            {"model":"claude-sonnet-5", "alias":""},
+            {"model":"kimi-k3", "alias":"claude-custom-7"}
+        ]
+    })).unwrap();
+    let error = desktop_mapping_error("Unable to determine the CPA configuration source for model kimi-k3; cannot create Claude Desktop alias secret-token".into(), &mappings);
+    assert!(error.contains("Row 2"));
+    assert!(error.contains("kimi-k3"));
+    assert!(error.contains("Nothing was applied"));
+    assert!(!error.contains("secret-token"));
+    assert!(!desktop_mapping_error("YAML key: secret-token".into(), &mappings).contains("secret-token"));
+}
+
+#[test]
+fn desktop_missing_source_skips_unmapped_rows_sharing_the_same_source_model() {
+    // Row 1 has no alias, so entry.has_mapping() is false and the real builder
+    // (ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml)
+    // never processes it or produces this error for it, even though its model matches
+    // the row that actually failed. Row 1 is also skipped a second time further down
+    // with a model==alias row, which has_mapping() excludes for the same reason. Only
+    // row 3, the one actually processed and failing, may be named.
+    let mappings: ClaudeDesktopModelMappings = serde_json::from_value(serde_json::json!({
+        "desktopModels": [
+            {"model":"kimi-k3", "alias":""},
+            {"model":"kimi-k3", "alias":"kimi-k3"},
+            {"model":"kimi-k3", "alias":"claude-custom-2"}
+        ]
+    })).unwrap();
+    let error = desktop_mapping_error("Unable to determine the CPA configuration source for model kimi-k3; cannot create Claude Desktop alias secret-token".into(), &mappings);
+    assert!(error.contains("Row 3"), "expected the real failing row, got: {error}");
+    assert!(!error.contains("Row 1"));
+    assert!(!error.contains("Row 2"));
+}
