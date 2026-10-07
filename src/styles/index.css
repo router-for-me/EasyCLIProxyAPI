@@ -1,6 +1,11 @@
 @import '../styles.css';
 @import './feature-pages.css';
 @import './ui-refinements.css';
+
+@import './personal-edition.css';
+@import './overview-light.css';
+
+@import './ux-improvements.css';
 @import './responsive-shell-usage.css';
 @import './responsive-providers.css';
 @import './responsive-agents.css';

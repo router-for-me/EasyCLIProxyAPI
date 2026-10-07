@@ -3,6 +3,49 @@ use std::{fs, path::Path};
 
 const APP_INSTANCE_LOCK_PREFIX: &str = "EasyCLIProxyAPI-instance";
 
+#[cfg(windows)]
+fn reopen_event_name(directory: &Path) -> Vec<u16> {
+    format!("Local\\EasyCLIProxyAPI-reopen-{}", app_instance_key(directory))
+        .encode_utf16().chain(Some(0)).collect()
+}
+
+#[cfg(windows)]
+pub(crate) fn notify_existing_app(directory: &Path) -> bool {
+    use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE}};
+    let name = reopen_event_name(directory);
+    // The first instance may still be constructing its window: wait up to 10s (slow
+    // disk, antivirus scan on a cold launch) before giving up on bringing it forward.
+    for _ in 0..100 {
+        let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr()) };
+        if !event.is_null() {
+            let sent = unsafe { SetEvent(event) } != 0;
+            unsafe { CloseHandle(event) };
+            return sent;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
+#[cfg(windows)]
+pub(crate) fn listen_for_app_reopen(app: &tauri::AppHandle) -> Result<(), String> {
+    use windows_sys::Win32::{Foundation::{CloseHandle, WAIT_OBJECT_0}, System::Threading::{CreateEventW, WaitForSingleObject, INFINITE}};
+    let name = reopen_event_name(&super::executable_dir()?);
+    let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
+    if event.is_null() { return Err(format!("Could not create app reopen signal: {}", std::io::Error::last_os_error())); }
+    let event = event as usize;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let event = event as windows_sys::Win32::Foundation::HANDLE;
+        while unsafe { WaitForSingleObject(event, INFINITE) } == WAIT_OBJECT_0 {
+            let target = app.clone();
+            if app.run_on_main_thread(move || super::show_windows_main_window(&target)).is_err() { break; }
+        }
+        unsafe { CloseHandle(event) };
+    });
+    Ok(())
+}
+
 pub(crate) struct AppInstanceGuard {
     #[cfg(windows)]
     handle: isize,
@@ -96,5 +139,24 @@ impl Drop for AppInstanceGuard {
         use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 
         unsafe { CloseHandle(self.handle as HANDLE) };
+    }
+}
+
+#[cfg(all(test, windows))]
+mod reopen_tests {
+    use super::*;
+    #[test]
+    fn reopen_signal_targets_only_its_installation_and_resets() {
+        use windows_sys::Win32::{Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT}, System::Threading::{CreateEventW, WaitForSingleObject}};
+        let root = std::env::temp_dir().join(format!("reopen-test-{}", std::process::id()));
+        let other = root.join("other");
+        let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, reopen_event_name(&root).as_ptr()) };
+        let other_event = unsafe { CreateEventW(std::ptr::null(), 0, 0, reopen_event_name(&other).as_ptr()) };
+        assert!(!event.is_null() && !other_event.is_null());
+        assert!(notify_existing_app(&root));
+        assert_eq!(unsafe { WaitForSingleObject(event, 0) }, WAIT_OBJECT_0);
+        assert_eq!(unsafe { WaitForSingleObject(event, 0) }, WAIT_TIMEOUT);
+        assert_eq!(unsafe { WaitForSingleObject(other_event, 0) }, WAIT_TIMEOUT);
+        unsafe { CloseHandle(event); CloseHandle(other_event); }
     }
 }

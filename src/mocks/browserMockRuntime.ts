@@ -167,6 +167,8 @@ function createUsageEvents() {
       timestamp: isoHoursAgo(index / 2),
       latency_ms: 620 + index * 47,
       ttft_ms: failed ? null : 180 + index * 9,
+      auth_index: index % 2 === 0 ? 'mock-codex-1' : 'mock-claude-1',
+      user_agent: index % 2 === 0 ? 'codex/1.0' : 'claude-cli/2.1 (claude-desktop-3p)',
       source: index % 2 === 0 ? 'codex' : 'claude-code',
       source_display: index % 2 === 0 ? 'Codex' : 'Claude Code',
       failed,
@@ -852,7 +854,6 @@ export function createBrowserMockRuntime(
       case 'restart_opencode_app':
       case 'check_codex_oauth_login':
       case 'restore_codex_official_config':
-      case 'create_agent_config_backup':
       case 'restore_agent_config_backup':
       case 'launch_agent': return null;
 
@@ -1076,6 +1077,7 @@ export function createBrowserMockRuntime(
         lastCollectedAt: new Date().toISOString(),
         totalRecords: state.usageOverview.totalRequests,
       };
+      case 'export_desktop_model_preset': return true;
       case 'get_usage_overview': return clone(state.usageOverview);
       case 'get_usage_analysis': return clone(state.analysis);
       case 'get_usage_events': {
@@ -1177,6 +1179,10 @@ export function createBrowserMockRuntime(
         { name: 'gemini-3-pro', displayName: 'Gemini 3 Pro', contextWindow: 1_000_000, inputModalities: ['text', 'image'] },
         { name: 'deepseek-chat', displayName: 'DeepSeek Chat', contextWindow: 64_000, inputModalities: ['text'] },
       ];
+      case 'ask_plugin_finder': return JSON.stringify({
+        matches: [{ id: 'request-inspector', why: 'Browser demo: shows what each request contains so you can see what is happening.', changes: 'Requests are sampled and their metadata is shown on a status page.', risk: 'Captured metadata may include prompt details; keep secret redaction on.' }],
+        note: 'This is a canned browser demo answer.',
+      });
       case 'update_agent_config':
       case 'apply_agent_config_template':
       case 'install_pi_provider':
@@ -1197,6 +1203,7 @@ export function createBrowserMockRuntime(
         state.deepSeekStatus = { running: true, pid: 43110, mode: 'web' };
         return clone(state.deepSeekStatus);
       }
+      case 'create_agent_config_backup': return { id: 'mock-backup-2026-09-25', restorable: true };
       case 'list_agent_config_backups': return {
         versions: [{
           id: 'mock-backup-2026-09-25', createdAt: isoHoursAgo(5), fileCount: 2,

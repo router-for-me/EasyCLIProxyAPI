@@ -15,8 +15,6 @@ pub(crate) fn lock_core_operation(
 
 pub(crate) struct CoreChild {
     child: Child,
-    #[cfg(windows)]
-    job: isize,
 }
 
 impl std::ops::Deref for CoreChild {
@@ -33,19 +31,10 @@ impl std::ops::DerefMut for CoreChild {
     }
 }
 
-impl Drop for CoreChild {
-    fn drop(&mut self) {
-        #[cfg(windows)]
-        {
-            close_windows_handle(self.job);
-            let _ = self.child.wait();
-        }
-        #[cfg(not(windows))]
-        if !matches!(self.child.try_wait(), Ok(Some(_))) {
-            let _ = terminate_child(&mut self.child);
-        }
-    }
-}
+// Intentionally no Drop impl: the kernel is a background service, not something
+// tied to this GUI's lifetime. Dropping a CoreChild (e.g. the app exiting without
+// an explicit stop/restart) must not kill the process -- only an explicit
+// stop_core_process_inner() call (take_child() + terminate_child()) does that.
 
 #[cfg(any(target_os = "linux", test))]
 struct CoreSpawnRequest {
@@ -87,24 +76,10 @@ pub(crate) fn spawn_core_child(command: Command) -> Result<CoreChild, String> {
             .map_err(|error| format!("Failed to start CPA kernel: {error}"))?
     };
 
-    #[cfg(windows)]
-    let job = match attach_child_to_windows_job(&child) {
-        Ok(job) => job,
-        Err(error) => {
-            let mut child = child;
-            return match terminate_child(&mut child) {
-                Ok(()) => Err(error),
-                Err(cleanup_error) => Err(format!(
-                    "{error}; failed to clean up unmanaged kernel process: {cleanup_error}"
-                )),
-            };
-        }
-    };
-    Ok(CoreChild {
-        child,
-        #[cfg(windows)]
-        job,
-    })
+    // Deliberately not attached to a kill-on-job-close Windows Job Object (unlike
+    // other managed children in this app): the kernel must keep serving requests
+    // after this GUI exits or crashes. Only an explicit stop/restart stops it.
+    Ok(CoreChild { child })
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -1600,6 +1575,10 @@ pub(crate) fn wait_for_core_management_port(
 
 #[cfg(any(target_os = "linux", test))]
 fn configure_child_lifetime(command: &mut Command) {
+    // No PR_SET_PDEATHSIG here on purpose: the kernel is a background service
+    // and must keep running after this GUI process exits or crashes, matching
+    // the Windows side (which no longer attaches the kernel to a kill-on-close
+    // Job Object either). Only an explicit stop/restart stops it.
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt;
@@ -1607,10 +1586,6 @@ fn configure_child_lifetime(command: &mut Command) {
         let parent_process_id = unsafe { libc::getpid() };
         unsafe {
             command.pre_exec(move || {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-
                 if libc::getppid() != parent_process_id {
                     return Err(io::Error::other(
                         "EasyCLIProxyAPI exited before the core process started",
@@ -2285,7 +2260,14 @@ pub(crate) fn adopt_existing_core_processes(
     Ok(process_ids)
 }
 
-pub(crate) fn shutdown_managed_core(
+/// Records whether the kernel was running as this GUI exits, for the informational
+/// `run_on_startup` setting -- it does NOT stop the kernel. The kernel is a
+/// background service: closing or crashing the GUI must not take it down, only
+/// an explicit stop (stop_core_process_inner, e.g. via the Settings "Stop kernel"
+/// action or an update/restart flow) does that. On the next launch, a kernel left
+/// running is picked back up by adopt_existing_core_processes() instead of a
+/// fresh one being started.
+pub(crate) fn record_core_state_before_exit(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) {
@@ -2294,11 +2276,6 @@ pub(crate) fn shutdown_managed_core(
             .ok()
             .and_then(|install_dir| find_core_binary(&install_dir))
             .is_some_and(|binary_path| is_core_running(&binary_path));
-    if was_running {
-        if let Err(error) = stop_core_process_inner(process_state) {
-            eprintln!("Failed to stop CPA kernel on exit: {error}");
-        }
-    }
     if let Err(error) = gui_config_state.set_run_on_startup(was_running) {
         eprintln!("Failed to save kernel state before exit: {error}");
     }

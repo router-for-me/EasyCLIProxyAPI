@@ -10,8 +10,8 @@ type Version = { id: string; createdAt: string | null; fileCount: number; locati
 type Listing = { versions: Version[] };
 type Preview = { revision: string; files: FileSummary[]; differences: { file: string; field: string; before: string; after: string }[] };
 
-export function AgentConfigBackupDialog({ client, onClose, onRestored }: {
-  client: string; onClose: () => void; onRestored: () => Promise<void>;
+export function AgentConfigBackupDialog({ client, onClose, onRestored, initialId }: {
+  initialId?: string; client: string; onClose: () => void; onRestored: () => Promise<void>;
 }) {
   const { t, formatDate } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -25,11 +25,20 @@ export function AgentConfigBackupDialog({ client, onClose, onRestored }: {
     let disposed = false;
     dialog.current?.showModal();
     void invoke<Listing>('list_agent_config_backups', { client })
-      .then((value) => { if (!disposed) setListing(value); })
+      .then(async (value) => {
+        if (disposed) return;
+        setListing(value);
+        const version = value.versions.find(item => item.id === initialId);
+        if (version?.restorable) {
+          setSelected(version);
+          const result = await invoke<Preview>('preview_agent_config_backup', { client, id: version.id });
+          if (!disposed) setPreview(result);
+        }
+      })
       .catch((cause) => { if (!disposed) setError(String(cause)); })
       .finally(() => { if (!disposed) setBusy(false); });
     return () => { disposed = true; };
-  }, [client]);
+  }, [client, initialId]);
   const choose = async (version: Version) => {
     setBusy(true); setError(''); setSelected(version); setPreview(null); setConfirmation(null);
     try {

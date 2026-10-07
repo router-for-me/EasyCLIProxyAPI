@@ -311,6 +311,25 @@ export function trendTimeAxisTicks(start: Date, end: Date, width: number, labelW
   return ticks;
 }
 
+/** Keep endpoint labels inside the plot and reserve a visible gap between text boxes. */
+export function fitTrendTimeAxisTicks(ticks: Date[], start: Date, end: Date, width: number, labelWidths: number[], gap = 12): Date[] {
+  if (ticks.length < 2) return ticks;
+  const last = ticks.length - 1;
+  const endLeft = width - labelWidths[last];
+  if (endLeft < labelWidths[0] + gap) return [ticks[0]];
+  const visible = [ticks[0]];
+  let right = labelWidths[0];
+  for (let index = 1; index < last; index++) {
+    const center = trendTimePosition(ticks[index], start, end) * width;
+    const half = labelWidths[index] / 2;
+    if (center - half >= right + gap && center + half <= endLeft - gap) {
+      visible.push(ticks[index]);
+      right = center + half;
+    }
+  }
+  return [...visible, ticks[last]];
+}
+
 export function findTrendPointIndex(points: PreparedTrendPoint[], time: Date): number {
   if (!points.length) return -1;
   const index = points.findIndex((point) => time.getTime() < point.end.getTime());

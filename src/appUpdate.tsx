@@ -1,18 +1,11 @@
 import { MessageNotice } from './appNotice';
 import {
   createContext,
-  useCallback,
   useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
   type ReactNode,
 } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { Download, RefreshCw } from 'lucide-react';
-import { getCurrentLocale, translate, useI18n, type AppLocale } from './i18n';
+import { useI18n, type AppLocale } from './i18n';
 import { useDialogFocusTrap } from './components/useDialogFocusTrap';
 
 export type AppUpdateInfo = {
@@ -80,104 +73,14 @@ const idleTask: AppUpdateTask = {
 const AppUpdateContext = createContext<AppUpdateContextValue | null>(null);
 
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
-  const [info, setInfo] = useState<AppUpdateInfo | null>(null);
-  const [task, setTask] = useState<AppUpdateTask>(idleTask);
-  const [error, setError] = useState('');
-  const [checking, setChecking] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const startupCheckStarted = useRef(false);
-
-  const check = useCallback(async () => {
-    setChecking(true);
-    setError('');
-    try {
-      const result = await invoke<AppUpdateInfo>('check_app_update');
-      setInfo(result);
-      setTask((current) => (
-        current.running
-          ? current
-          : {
-              ...current,
-              phase: result.updateAvailable ? 'available' : 'idle',
-              targetVersion: result.updateAvailable ? result.latestVersion : null,
-              message: null,
-            }
-      ));
-    } catch (nextError) {
-      setInfo(null);
-      setError(String(nextError));
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let stopListening: (() => void) | undefined;
-
-    void invoke<AppUpdateTask>('get_app_update_task')
-      .then((current) => {
-        if (!disposed) setTask(current);
-      })
-      .catch(() => undefined);
-
-    void listen<AppUpdateTask>('app-update-progress', (event) => {
-      if (disposed) return;
-      setTask(event.payload);
-      if (event.payload.phase === 'failed') {
-        setError(event.payload.message || translate(getCurrentLocale(), 'appUpdate.phase.failed'));
-      } else if (event.payload.phase !== 'cancelled') {
-        setError('');
-      }
-    }).then((stop) => {
-      if (disposed) stop();
-      else stopListening = stop;
-    });
-
-    if (!startupCheckStarted.current) {
-      startupCheckStarted.current = true;
-      void check();
-    }
-    return () => {
-      disposed = true;
-      stopListening?.();
-    };
-  }, []);
-
-  const install = useCallback(async () => {
-    setConfirmOpen(false);
-    setError('');
-    try {
-      await invoke('start_app_update');
-    } catch (nextError) {
-      setError(String(nextError));
-    }
-  }, []);
-
-  const cancel = useCallback(async () => {
-    setError('');
-    try {
-      await invoke('cancel_app_update');
-    } catch (nextError) {
-      setError(String(nextError));
-    }
-  }, []);
-
-  const value = useMemo<AppUpdateContextValue>(() => ({
-    info,
-    task,
-    error,
-    checking,
-    confirmOpen,
-    hasUpdate: Boolean(info?.updateAvailable),
-    processing: task.running,
-    check,
-    requestInstall: () => setConfirmOpen(true),
-    dismissConfirm: () => setConfirmOpen(false),
-    install,
-    cancel,
-  }), [cancel, check, checking, confirmOpen, error, info, install, task]);
-
+  // Personal builds have no upstream binary update channel. Never compare or
+  // replace this executable with the original application's release.
+  const value: AppUpdateContextValue = {
+    info: null, task: idleTask, error: '', checking: false,
+    confirmOpen: false, hasUpdate: false, processing: false,
+    check: async () => {}, requestInstall: () => {}, dismissConfirm: () => {},
+    install: async () => {}, cancel: async () => {},
+  };
   return <AppUpdateContext.Provider value={value}>{children}</AppUpdateContext.Provider>;
 }
 

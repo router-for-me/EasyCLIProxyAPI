@@ -124,6 +124,11 @@
 .home-runtime-state.error { color: var(--error-color); }
 .home-runtime-state.pending { color: var(--amber-text); }
 .home-runtime-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: currentColor; }
+.home-proxy-status { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-primary); color: var(--text-tertiary); font-size: var(--font-size-meta); cursor: pointer; }
+.home-proxy-status:hover { background: var(--bg-hover); }
+.home-proxy-status.success { color: var(--success-color); }
+.home-proxy-status.error { color: var(--error-color); }
+.home-proxy-status.pending { color: var(--amber-text); }
 .home-runtime-error { margin: 0; color: var(--error-color); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .home-dashboard .home-runtime-refresh { width: 32px; height: 32px; min-width: 32px; border-color: transparent; background: transparent; }
 .home-dashboard .home-runtime-refresh svg { width: 18px; height: 18px; }

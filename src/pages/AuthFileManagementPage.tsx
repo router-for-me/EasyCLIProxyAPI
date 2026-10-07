@@ -1,3 +1,5 @@
+import { readAccountNames } from '../services/accountNames';
+import { privateAccountLabel } from '../services/accountPrivacy';
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
@@ -55,6 +57,7 @@ import {
   commitQuotaCacheIfCurrent,
   getQuotaCacheSnapshot,
   pruneQuotaCache,
+  quotaResultUpdater,
   updateQuotaCache,
   useQuotaCache,
 } from '../services/quotaCache';
@@ -131,6 +134,8 @@ export function AuthFileManagementPage() {
     observedAt?: string;
   }>({ files: [], receivedAtMs: 0 });
   const { files, receivedAtMs, observedAt } = fileSnapshot;
+  const [names] = useState(readAccountNames);
+  const friendlyName = (file: AuthFile) => names[privateAccountLabel(file, quotaProviderForFile(file) ?? providerKey(file))] ?? '';
   const [filter, setFilter] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -142,6 +147,7 @@ export function AuthFileManagementPage() {
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [cooldownResetting, setCooldownResetting] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState('');
+  const [fileListStale, setFileListStale] = useState(false);
   const resetQuota = useQuotaReset(askConfirmation, setError);
   const feedback = useAppNotice();
   const { showNotice } = feedback;
@@ -176,6 +182,7 @@ export function AuthFileManagementPage() {
     try {
       const payload = await managementApi.get('/credentials');
       if (!mountedRef.current || requestId !== fileRequestRef.current) return;
+      setFileListStale(false);
       const nextFiles = sortAuthFilesByPriority(dedupeAuthFiles(responseList(payload, 'files')));
       setFileSnapshot({ files: nextFiles, receivedAtMs: Date.now(), observedAt: readString(payload, 'observed_at') });
       const validQuotaKeys = new Set(nextFiles.map(quotaKey));
@@ -189,6 +196,7 @@ export function AuthFileManagementPage() {
         return next;
       });
     } catch (requestError) {
+      setFileListStale(true);
       if (mountedRef.current && requestId === fileRequestRef.current) setError(String(requestError));
     } finally {
       if (mountedRef.current && requestId === fileRequestRef.current) setLoading(false);
@@ -237,14 +245,14 @@ export function AuthFileManagementPage() {
   };
 
   const refreshQuota = async (file: AuthFile) => {
-    if (readBoolean(file, 'disabled')) return;
+    if (authFileHealth(file).disabled) return;
     const key = quotaKey(file);
     if (getQuotaCacheSnapshot()[key]?.status === 'loading') return;
     const cacheGeneration = captureQuotaCacheGeneration();
-    updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
+    updateQuotaCache((current) => ({ ...current, [key]: { ...current[key], status: 'loading', rows: current[key]?.rows ?? [], error: undefined } }));
     const result = await loadQuota(file);
     commitQuotaCacheIfCurrent(cacheGeneration, () => {
-      updateQuotaCache((current) => ({ ...current, [key]: result }));
+      updateQuotaCache(quotaResultUpdater(key, result));
     });
   };
 
@@ -352,7 +360,7 @@ export function AuthFileManagementPage() {
     const query = filter.trim().toLowerCase();
     return files.filter((file) => {
       const providerMatch = providerFilter === 'all' || providerName(file) === providerFilter;
-      const disabled = readBoolean(file, 'disabled');
+      const disabled = authFileHealth(file).disabled;
       const runtimeMatch =
         statusFilter === 'all' ||
         (statusFilter === 'disabled' && disabled) ||
@@ -360,13 +368,13 @@ export function AuthFileManagementPage() {
         (statusFilter === 'runtime' && isRuntimeOnly(file));
       const searchMatch =
         !query ||
-        [fileName(file), providerName(file), readString(file, 'email', 'account', 'label')]
+        [friendlyName(file), fileName(file), providerName(file), readString(file, 'email', 'account', 'label')]
           .join(' ')
           .toLowerCase()
           .includes(query);
       return providerMatch && runtimeMatch && searchMatch;
     });
-  }, [files, filter, providerFilter, statusFilter]);
+  }, [files, filter, providerFilter, statusFilter, names]);
 
   const pageCount = Math.max(1, Math.ceil(visibleFiles.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -412,7 +420,7 @@ export function AuthFileManagementPage() {
     setBusy(true);
     setError('');
     try {
-      await setOAuthCredentialFileDisabled(file, !readBoolean(file, 'disabled'));
+      await setOAuthCredentialFileDisabled(file, !authFileHealth(file).disabled);
       await loadFiles(false);
     } catch (requestError) {
       setError(String(requestError));
@@ -463,7 +471,7 @@ export function AuthFileManagementPage() {
     }
   };
 
-  const disabledCount = files.filter((file) => readBoolean(file, 'disabled')).length;
+  const disabledCount = files.filter((file) => authFileHealth(file).disabled).length;
   const runtimeCount = files.filter(isRuntimeOnly).length;
 
   return (
@@ -530,9 +538,9 @@ export function AuthFileManagementPage() {
               const name = fileName(file);
               const key = quotaKey(file);
               const icon = providerIcons[providerKey(file)] ?? geminiIcon;
-              const disabled = readBoolean(file, 'disabled');
+              const disabled = authFileHealth(file).disabled;
               const priority = parseAuthFilePriority(file.priority) ?? 0;
-              const identity = readString(file, 'email', 'project_id', 'label');
+              const identity = friendlyName(file) || readString(file, 'email', 'project_id', 'label');
               const note = readString(file, 'note');
               const quota = quotas[quotaKey(file)] ?? idleQuota();
               const quotaProvider = quotaProviderForFile(file);
@@ -571,7 +579,7 @@ export function AuthFileManagementPage() {
                   <div className="auth-list-cell auth-list-recent" data-label={t('authFiles.list.recent')}><AuthFileRequestStatus file={file} compact /></div>
                   <div className="auth-list-cell auth-list-usage" data-label={t('authFiles.usage.title')}><AuthFileUsageSummary file={file} /></div>
                   <div className="auth-list-cell auth-list-quota" data-label={t('authFiles.list.quota')}>
-                    {quotaProvider ? <AuthFileQuotaPanel compact dense quota={quota} file={file} disabled={busy || disabled} onRefresh={() => void refreshQuota(file)} onReset={quotaProvider === 'codex' || quotaProvider === 'claude' ? () => void resetQuota(file, quota) : undefined} /> : <span className="auth-list-muted">{t('authFiles.list.noQuota')}</span>}
+                    {quotaProvider ? <AuthFileQuotaPanel compact dense stale={fileListStale} quota={quota} file={file} disabled={busy || disabled} onRefresh={() => void refreshQuota(file)} onReset={quotaProvider === 'codex' || quotaProvider === 'claude' ? () => void resetQuota(file, quota) : undefined} /> : <span className="auth-list-muted">{t('authFiles.list.noQuota')}</span>}
                     <QuotaActionFeedback quota={quota} name={name} />
                   </div>
                   <footer className="auth-card-actions auth-list-cell" data-label={t('authFiles.list.actions')}>

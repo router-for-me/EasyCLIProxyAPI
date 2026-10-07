@@ -14,6 +14,7 @@ import { authFileName } from './authFiles';
 import { DEVIN_QUOTA_DATA, DEVIN_QUOTA_HEADERS, DEVIN_QUOTA_URL, readDevinQuota } from './devinQuota';
 import { antigravityProjectFor, codexMetadataFor, isPaidXaiFile } from './quotaMetadata';
 import { quotaResetFor, quotaResetInstant } from './quotaTime';
+import { codexCreditsFor, type CodexCredits } from './codexCredits';
 import { getCurrentLocale, translate, type AppLocale } from '../i18n';
 
 const quotaText = (
@@ -25,13 +26,20 @@ export type AuthFile = Record<string, unknown>;
 export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin';
 export type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
 export type QuotaRow = {
+  scope?: 'account' | 'model' | 'paid';
+  windowId?: string;
+  groupId?: string;
+  groupLabel?: string;
   label: string;
   remainingPercent: number | null;
   reset?: string;
   resetAtMs?: number;
   detail?: string;
+  /** Set by the cache layer when this row's remaining% climbed since the last successful fetch -- a reset, not a refresh artifact. */
+  justReset?: boolean;
 };
 export type QuotaState = {
+  credits?: CodexCredits;
   status: QuotaStatus;
   rows: QuotaRow[];
   error?: string;
@@ -292,6 +300,8 @@ const codexWindowRows = (value: Record<string, unknown>): QuotaRow[] => {
     const resetAtMs = quotaResetFor(raw, ['reset_at', 'resetAt'], ['reset_after_seconds', 'resetAfterSeconds']);
     return {
       label: codexWindowLabel(duration, prefix, kind),
+      scope: prefix ? 'model' : 'account',
+      windowId: `${prefix || 'account'}:${kind}`,
       remainingPercent: remainingFromUsedPercent(raw.used_percent ?? raw.usedPercent)
         ?? (reached && resetAtMs !== undefined ? 0 : null),
       reset: codexResetLabel(raw),
@@ -407,6 +417,8 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
         if (!isRecord(raw) || !('utilization' in raw)) return null;
         return {
           label: labels[key],
+          scope: key === 'five_hour' || key === 'seven_day' ? 'account' : 'model',
+          windowId: key,
           remainingPercent: remainingFromUsedPercent(raw.utilization),
           reset: absoluteResetLabel(raw.resets_at ?? raw.resetsAt),
           resetAtMs: quotaResetFor(raw, ['resets_at', 'resetsAt']),
@@ -415,6 +427,8 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
       .filter((row): row is QuotaRow => row !== null);
     if (fable) rows.push({
       label: quotaText('quota.service.window.sevenDayFable'),
+      scope: 'model',
+      windowId: 'iguana_necktie',
       remainingPercent: remainingFromUsedPercent(fable.percent),
       reset: absoluteResetLabel(fable.resets_at ?? fable.resetsAt),
       resetAtMs: quotaResetFor(fable, ['resets_at', 'resetsAt']),
@@ -434,6 +448,8 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
       const limitLabel = formatUsdFromCents(monthlyLimit);
       rows.push({
         label: quotaText('quota.service.extraUsage'),
+        scope: 'paid',
+        windowId: 'extra_usage',
         remainingPercent:
           remainingFromUsedPercent(extraUsage.utilization)
           ?? clampPercent(computedRemaining),
@@ -457,8 +473,12 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
         const limit = numberValue(detail.limit);
         const used = numberValue(detail.used);
         const remaining = numberValue(detail.remaining);
-        const usedValue = used ?? (limit !== null && remaining !== null ? limit - remaining : null);
-        if (usedValue === null && limit === null) return null;
+        const validLimit = limit !== null && limit > 0;
+        const validUsed = used !== null && used >= 0;
+        const validRemaining = remaining !== null && remaining >= 0 && validLimit && remaining <= limit!;
+        const inconsistent = validUsed && validRemaining && Math.abs(Math.max(0, limit! - used) - remaining) > 1e-6;
+        const invalidUsage = (detail.used != null && !validUsed) || (detail.remaining != null && !validRemaining);
+        const usedValue = inconsistent || invalidUsage ? null : validUsed ? used : validRemaining ? limit! - remaining! : null;
         const window = isRecord(raw.window) ? raw.window : null;
         const duration = numberValue(window?.duration ?? raw.duration ?? detail.duration);
         const unit = (readString(window, 'timeUnit', 'time_unit')
@@ -487,11 +507,8 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
             || durationLabel
             || quotaText('quota.service.limit.numbered', { index: index + 1 }),
           remainingPercent: clampPercent(
-            limit !== null && limit > 0
-              ? (Math.max(0, limit - (usedValue ?? 0)) / limit) * 100
-              : (usedValue ?? 0) > 0
-                ? 0
-                : null,
+            validLimit && usedValue !== null
+              ? (Math.max(0, limit! - usedValue) / limit!) * 100 : null,
           ),
           reset:
             absoluteResetLabel(
@@ -499,7 +516,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
             )
             ?? relativeResetLabel(detail.reset_in ?? detail.resetIn ?? detail.ttl),
           resetAtMs: quotaResetFor(detail, ['reset_at', 'resetAt', 'reset_time', 'resetTime'], ['reset_in', 'resetIn', 'ttl']),
-          detail: limit === null ? undefined : `${usedValue ?? 0} / ${limit}`,
+          detail: limit === null || limit < 0 ? undefined : `${usedValue ?? '—'} / ${limit}`,
         };
       })
       .filter((row): row is QuotaRow => row !== null);
@@ -507,6 +524,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
 
   if (provider === 'xai') {
     if (value.mode === 'paid-health' || value.mode === 'paid-info') return [{
+      scope: 'paid',
       label: quotaText('quota.service.xaiPaidAccount'),
       remainingPercent: null,
       detail: quotaText(value.mode === 'paid-health'
@@ -572,28 +590,31 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
   const nested = parseBody(value.body);
   const summary = !Array.isArray(value.groups) && isRecord(nested) ? nested : value;
   const groups = Array.isArray(summary.groups) ? summary.groups : [];
-  return groups.flatMap((group) => {
-    if (!isRecord(group) || !Array.isArray(group.buckets)) return [];
+  return groups.flatMap((rawGroup, groupIndex) => {
+    const group = isRecord(rawGroup) ? rawGroup : {};
     const order = (bucket: unknown) => {
       const window = readString(bucket, 'window').toLowerCase();
       return ['5h', 'five-hour', 'five_hour'].includes(window) ? 0 : ['weekly', 'week'].includes(window) ? 1 : 2;
     };
-    const buckets = [...group.buckets].sort((a, b) => order(a) - order(b));
+    const buckets = (Array.isArray(group.buckets) && group.buckets.length ? [...group.buckets] : [{}]).sort((a, b) => order(a) - order(b));
     const groupLabel = readString(group, 'display_name', 'displayName')
       || quotaText('quota.service.quota');
     const groupDescription = readString(group, 'description');
     return buckets
-      .map((bucket, index): QuotaRow | null => {
-        if (!isRecord(bucket)) return null;
+      .map((rawBucket, index): QuotaRow => {
+        const bucket = isRecord(rawBucket) ? rawBucket : {};
         const remaining = quotaFraction(bucket.remaining_fraction ?? bucket.remainingFraction);
-        if (remaining === null) return null;
         const bucketLabel = readString(bucket, 'display_name', 'displayName', 'window');
         const label = bucketLabel && (buckets.length > 1 || bucketLabel !== groupLabel)
           ? `${groupLabel} · ${bucketLabel}`
           : groupLabel;
         return {
+          scope: 'model',
+          groupId: `antigravity-group-${groupIndex}`,
+          groupLabel,
+          windowId: readString(bucket, 'window') || `bucket-${index}`,
           label: label || quotaText('quota.service.quota.numbered', { index: index + 1 }),
-          remainingPercent: remaining * 100,
+          remainingPercent: remaining === null ? null : remaining * 100,
           reset: absoluteResetLabel(bucket.reset_time ?? bucket.resetTime),
           resetAtMs: quotaResetFor(bucket, ['reset_time', 'resetTime']),
           detail: readString(bucket, 'description') || groupDescription || undefined,
@@ -663,31 +684,11 @@ const requestQuotaPayload = async (
   return parseBody(response.body ?? response.bodyText);
 };
 
-const callXaiPaidHealth = async (authIndex: string): Promise<unknown> => {
-  const header = { Authorization: 'Bearer $TOKEN$', accept: 'application/json' };
-  const [profile, chat] = await Promise.allSettled([
-    requestQuotaPayload(authIndex, 'https://api.x.ai/v1/me', header, 'GET', undefined, 15_000),
-    requestQuotaPayload(authIndex, 'https://api.x.ai/v1/chat/completions', {
-      ...header, 'Content-Type': 'application/json',
-    }, 'POST', JSON.stringify({
-      model: 'grok-4.5',
-      messages: [{ role: 'user', content: 'ping' }],
-      max_tokens: 1,
-      stream: false,
-    }), 15_000),
-  ]);
-  if (chat.status === 'rejected') throw chat.reason;
-  const record = profile.status === 'fulfilled' && isRecord(profile.value) ? profile.value : {};
-  return {
-    mode: 'paid-health', plan_type: 'Paid',
-    userId: readString(record, 'user_id', 'userId') || undefined,
-    teamId: readString(record, 'team_id', 'teamId') || undefined,
-  };
-};
 const callXaiQuota = async (file: AuthFile): Promise<unknown> => {
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
   if (!authIndex) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
-  if (isPaidXaiFile(file)) return callXaiPaidHealth(authIndex);
+  // Quota refresh must never create a billable inference request.
+  if (isPaidXaiFile(file)) return { mode: 'paid-info', plan_type: 'Paid' };
   const header = { ...headersByProvider.xai };
   const userId = await resolveXaiUserId(file);
   if (userId) header['x-userid'] = userId;
@@ -702,11 +703,7 @@ const callXaiQuota = async (file: AuthFile): Promise<unknown> => {
   if (quotaRowsFor('xai', payload).length > 0) return payload;
   const billingError = weekly.status === 'rejected' && monthly.status === 'rejected'
     ? weekly.reason : new Error(quotaText('quota.service.error.unrecognized'));
-  try {
-    return await callXaiPaidHealth(authIndex);
-  } catch {
-    throw billingError;
-  }
+  throw billingError;
 };
 
 const booleanValue = (value: unknown): boolean | null => {
@@ -825,7 +822,7 @@ async function callUpstreamQuota(
       );
       if (provider === 'antigravity') {
         hadSuccessfulResponse = true;
-        if (quotaRowsFor('antigravity', payload).length === 0) {
+        if (quotaRowsFor('antigravity', payload).every(row => row.remainingPercent === null)) {
           lastError = quotaText('quota.service.error.antigravityEmpty');
           continue;
         }
@@ -906,6 +903,16 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
     ]);
     const rows = quotaRowsFor(provider, payload);
     if (rows.length === 0) {
+      // A genuinely empty object (e.g. Kimi returns a bare `{}` for a freshly
+      // connected account with no usage yet) is not the same as the upstream
+      // sending back content we can't parse -- a payload with real fields that
+      // just don't match what we look for (wrong shape, unexpected provider
+      // response) is still a real error. Only the fully-empty case gets the
+      // softer "no quota reported yet" treatment instead of "unrecognized format".
+      const parsed = parseBody(payload);
+      if (isRecord(parsed) && Object.keys(parsed).length === 0) {
+        return { status: 'success', rows: [], plan: detectedPlan, fetchedAt: Date.now() };
+      }
       return {
         status: 'error',
         rows: [],
@@ -922,6 +929,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
     return {
       status: 'success',
       rows,
+      credits: provider === 'codex' ? codexCreditsFor(payload) : undefined,
       plan: (provider === 'devin' ? readDevinQuota(payload).plan : detectedPlan)
         ?? (readString(isRecord(payload) ? payload : {}, 'plan_type', 'planType') || codexMetadata?.plan),
       creditBalance: accountCredits.balance,

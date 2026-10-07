@@ -97,3 +97,8 @@ export function desktopModelValidation(
   if (selectedEntries.some((entry) => desktopAliasNotice(entry, selectedEntries, models, appliedEntries) === 'aliasExists')) return 'aliasExists' as const;
   return null;
 }
+
+/** A missing catalog entry is a warning: custom sources can still resolve on the backend. */
+export function desktopModelNotListed(entry: ClaudeDesktopModelMapping, models: ModelOption[]) {
+  return Boolean(entry.model.trim()) && !models.some((model) => modelKey(model.name) === modelKey(entry.model));
+}

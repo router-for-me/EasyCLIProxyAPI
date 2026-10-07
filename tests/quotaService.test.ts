@@ -234,6 +234,19 @@ describe('quotaRowsFor', () => {
     expect(antigravity[0].remainingPercent).toBe(3);
   });
 
+  it('Kimi preserves unknown usage instead of inventing full or empty allowance', () => {
+    for (const detail of [{limit:100}, {limit:100,used:null}, {limit:100,used:-1}, {limit:100,used:'bad'},
+      {limit:100,remaining:101}, {limit:100,used:0,remaining:0}, {used:10}, {limit:0,used:10}, {}]) {
+      const row=quotaRowsFor('kimi',{limits:[{detail}]})[0];
+      expect(row.remainingPercent).toBeNull();
+      if ('limit' in detail && detail.limit === 100) expect(row.detail).toBe('— / 100');
+    }
+    for (const [detail, expected] of [[{limit:100,used:0},100], [{limit:100,remaining:0},0],
+      [{limit:100,used:110},0], [{limit:100,remaining:40},40]] as const) {
+      expect(quotaRowsFor('kimi',{limits:[{detail}]})[0].remainingPercent).toBe(expected);
+    }
+  });
+
   it('Kimi 短期窗口排在周汇总前，识别 protobuf 时间单位且保留小数', () => {
     const rows = quotaRowsFor('kimi', {
       usage: { used: 99.5, limit: 100 },

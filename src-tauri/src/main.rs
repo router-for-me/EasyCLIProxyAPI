@@ -20,6 +20,7 @@ mod network_proxy;
 ))]
 mod native_i18n;
 mod oauth_browser;
+mod plugin_finder;
 mod plugins;
 mod progress;
 mod provider_health;
@@ -30,6 +31,7 @@ mod provider_health;
 ))]
 mod tray;
 mod usage;
+mod model_preset;
 
 #[cfg(test)]
 use configuration_watcher::nearest_existing_watch_directory;
@@ -2397,6 +2399,10 @@ fn main() {
     let _instance_guard = match acquire_app_instance_guard() {
         Ok(guard) => guard,
         Err(error) => {
+            #[cfg(windows)]
+            if executable_dir().is_ok_and(|directory| notify_existing_app(&directory)) {
+                return;
+            }
             eprintln!("{error}");
             return;
         }
@@ -2534,6 +2540,11 @@ fn main() {
 
             if let Err(error) = configure_initial_main_window(app.handle(), start_hidden) {
                 eprintln!("Failed to configure startup window state: {error}");
+            }
+
+            #[cfg(windows)]
+            if let Err(error) = listen_for_app_reopen(app.handle()) {
+                eprintln!("{error}");
             }
 
             if let Err(error) =
@@ -2714,6 +2725,7 @@ fn main() {
             set_core_management_secret_key,
             clear_core_management_secret_key,
             management_api::management_request,
+            plugin_finder::ask_plugin_finder,
             plugins::get_plugin_support,
             plugins::get_plugin_resource_url,
             provider_health::provider_health_probe,
@@ -2752,6 +2764,7 @@ fn main() {
             usage::get_usage_overview,
             usage::get_usage_analysis,
             usage::get_usage_events,
+            model_preset::export_desktop_model_preset,
             usage::save_usage_events_export,
             usage::get_usage_pricing,
             usage::get_usage_storage_settings,
@@ -2800,7 +2813,7 @@ fn main() {
                     .unwrap_or_else(|error| error.into_inner());
                 let process_state = app_handle.state::<CoreProcessState>();
                 let gui_config_state = app_handle.state::<GuiConfigState>();
-                shutdown_managed_core(process_state.inner(), gui_config_state.inner());
+                record_core_state_before_exit(process_state.inner(), gui_config_state.inner());
                 process_state
                     .shutdown_complete
                     .store(true, Ordering::Release);
@@ -2817,7 +2830,7 @@ fn main() {
             let process_state = app_handle.state::<CoreProcessState>();
             if !process_state.shutdown_complete.load(Ordering::Acquire) {
                 process_state.shutting_down.store(true, Ordering::Release);
-                shutdown_managed_core(process_state.inner(), gui_config_state.inner());
+                record_core_state_before_exit(process_state.inner(), gui_config_state.inner());
             }
         }
         _ => {}

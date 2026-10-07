@@ -41,4 +41,9 @@ export const settingsMessages = {
   nativeNetwork: text('监听与上游代理', 'Listening & upstream proxy', '待ち受けと上流プロキシ'),
   nativeRouting: text('凭据选择与会话', 'Credential selection & sessions', '認証情報の選択とセッション'),
   nativeRetry: text('重试与冷却', 'Retries & cooldowns', '再試行とクールダウン'),
+  pluginGuideTitle: text('插件', 'Plugins', 'プラグイン'),
+  pluginGuideBody: text('在“插件”页面浏览、安装和管理插件，并查看为你的账号推荐的插件。下面的高级设置只在需要自定义插件目录或商店来源时使用。', 'Browse, install and manage plugins on the Plugins page, including picks recommended for your accounts. The advanced settings below are only needed for a custom plugin folder or extra store sources.', '「プラグイン」ページで、アカウントに合ったおすすめを含むプラグインを参照・インストール・管理できます。以下の詳細設定は、独自のフォルダーやストアを使う場合にのみ必要です。'),
+  pluginGuideOpen: text('打开插件页面', 'Open Plugins', 'プラグインを開く'),
+  pluginGuideShow: text('显示高级设置', 'Show advanced settings', '詳細設定を表示'),
+  pluginGuideHide: text('隐藏高级设置', 'Hide advanced settings', '詳細設定を隠す'),
 } satisfies Record<string, TemplateText>;

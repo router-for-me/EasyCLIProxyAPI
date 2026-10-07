@@ -9,6 +9,7 @@ import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { VersionManagementPage, displayAppVersion } from './VersionManagementPage';
+import { AccountDashboard } from '../components/AccountDashboard';
 import { HomeAccessPanel } from './HomeAccessPanel';
 import { HomeOverviewCards } from './HomeOverviewCards';
 import { CoreHealthPanel } from './CoreHealthPanel';
@@ -33,7 +34,7 @@ type CoreTlsSettings = {
   key: string;
 };
 
-export type KernelView = 'home' | 'versions';
+export type KernelView = 'home' | 'proxy' | 'versions';
 
 export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   if (view === 'versions') {
@@ -102,10 +103,10 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const runCoreProcessCommand = async (command: CoreProcessCommand) => {
     const actionLabel =
       command === 'start_core_process'
-        ? t('kernel.action.start')
+        ? t('kernel.notice.verb.start')
         : command === 'stop_core_process'
-          ? t('kernel.action.stop')
-          : t('kernel.action.restart');
+          ? t('kernel.notice.verb.stop')
+          : t('kernel.notice.verb.restart');
     setProcessBusy(true);
     clearProcessNotice();
 
@@ -208,10 +209,36 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const healthContext = [listenHost, customPort, tlsEnabled, coreStatus?.processId, configRevision].join(':');
   const overview = useHomeOverview(coreReady, healthContext);
 
+  if (view === 'home') {
+    return (
+      <section className="page kernel-page home-page">
+        <header className="management-header home-page-header">
+          <div><h1>{t('app.nav.home')}</h1></div>
+        </header>
+        <button type="button" className={`home-proxy-status ${statusTone}`}
+          onClick={() => window.dispatchEvent(new CustomEvent('app:navigate', { detail: 'proxy' }))}
+          title={t('home.proxyStatus.open')}>
+          {coreProcessBusy ? <LoaderCircle size={12} className="spin" aria-hidden="true" /> : <span className="home-runtime-dot" aria-hidden="true" />}
+          <span>{coreRunning ? t('home.proxyStatus.running', { port: customPort }) : statusLabel}</span>
+          <span aria-hidden="true">→</span>
+        </button>
+        <AccountDashboard ready={coreReady} />
+        <HomeOverviewCards snapshot={overview.snapshot} loading={overview.loading} coreReady={coreReady} onRefresh={overview.refresh} actions={<CoreHealthPanel compact
+          coreReady={coreReady} models={overview.snapshot?.models ?? []}
+          modelsLoading={overview.loading}
+          modelsError={overview.snapshot?.errors.models ?? ''}
+          onRefreshModels={overview.refresh} contextKey={healthContext}
+        />} />
+      </section>
+    );
+  }
+
   return (
-    <section className="page kernel-page home-page home-dashboard">
-      <h1 className="sr-only">{t('app.nav.home')}</h1>
-      <div className="home-top-grid">
+    <section className="page kernel-page home-page proxy-page">
+      <header className="management-header">
+        <div><h1>{t('app.nav.proxy')}</h1></div>
+      </header>
+      <div className="kernel-layout home-layout">
         <div className="panel control-panel">
           <div className="panel-heading home-panel-heading">
             <div>
@@ -290,12 +317,6 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         />
       </div>
       <FloatingNotice key={copyFeedback.revision} notice={copyFeedback.notice} onDismiss={copyFeedback.clearNotice} />
-      <HomeOverviewCards snapshot={overview.snapshot} loading={overview.loading} coreReady={coreReady} onRefresh={overview.refresh} actions={<CoreHealthPanel compact
-        coreReady={coreReady} models={overview.snapshot?.models ?? []}
-        modelsLoading={overview.loading}
-        modelsError={overview.snapshot?.errors.models ?? ''}
-        onRefreshModels={overview.refresh} contextKey={healthContext}
-      />} />
     </section>
   );
 }

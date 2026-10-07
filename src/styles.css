@@ -7383,6 +7383,74 @@ textarea:focus-visible {
   justify-content: flex-end;
 }
 
+.agent-desktop-picker-dialog {
+  grid-template-rows: auto 38px 34px minmax(180px, 1fr) auto;
+  width: min(520px, 100%);
+  height: min(560px, calc(100vh - 32px));
+  min-height: 320px;
+}
+
+.agent-desktop-picker-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 11px;
+  border: 1px solid var(--theme-d5d2cb);
+  border-radius: 7px;
+  background: var(--theme-ffffff);
+  color: var(--theme-8a847c);
+}
+
+.agent-desktop-picker-search input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--theme-2d2a26);
+}
+
+.agent-desktop-picker-toolbar {
+  display: flex;
+  gap: 8px;
+}
+
+.agent-desktop-picker-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: auto;
+  border: 1px solid var(--theme-e2ddd3);
+  border-radius: 7px;
+}
+
+.agent-desktop-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
+.agent-desktop-picker-row:hover {
+  background: var(--theme-f5f1e8);
+}
+
+.agent-desktop-picker-name {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-body);
+  color: var(--theme-2d2a26);
+}
+
+.agent-desktop-picker-display-name {
+  color: var(--theme-8a847c);
+  font-size: var(--font-size-meta);
+}
+
 @media (max-width: 700px) {
   .agent-desktop-models > .agent-section-heading { flex-wrap: wrap; }
   .agent-desktop-models > .agent-section-heading > .agent-section-heading-actions {

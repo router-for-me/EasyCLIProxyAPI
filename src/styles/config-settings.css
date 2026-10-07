@@ -517,3 +517,15 @@
   .config-page #config-group-management .template-config-field:not(.template-config-toggle),
   .config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) { grid-template-columns: minmax(0, 1fr); }
 }
+
+.config-page .config-extension-guide {
+  display: grid;
+  gap: 10px;
+  padding: 20px 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg-card);
+}
+.config-page .config-extension-guide h2 { margin: 0; font-size: 1.05rem; }
+.config-page .config-extension-guide p { margin: 0; color: var(--text-secondary); max-width: 70ch; }
+.config-page .config-extension-guide-actions { display: flex; flex-wrap: wrap; gap: 10px; }

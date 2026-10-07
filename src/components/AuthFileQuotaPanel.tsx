@@ -6,19 +6,25 @@ import { readBoolean } from '../services/managementApi';
 import { fileName, formatQuotaTimestamp, type AuthFile, type QuotaState } from '../services/quotaService';
 import { canResetQuota, hasPendingClaudeReset } from '../services/quotaActions';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
+import { quotaAvailability, quotaPercent } from '../services/quotaAvailability';
+import { QuotaAvailabilityNotice } from './QuotaAvailabilityNotice';
 import './AuthFileQuotaPanel.css';
 
-export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, compact = false, dense = false }: {
+export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, stale = false, compact = false, dense = false }: {
   quota: QuotaState;
   file: AuthFile;
   disabled: boolean;
   onRefresh: () => void;
   onReset?: () => void;
+  stale?: boolean;
   compact?: boolean;
   dense?: boolean;
 }) {
   const { locale, t } = useI18n();
-  const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
+  const clock = useQuotaClock();
+  const now = clock + (quota.serverTimeOffsetMs ?? 0);
+  const availability = quotaAvailability(file, quota, clock, stale);
+  const rows = [...quota.rows].sort((a, b) => Number(availability.blockers.includes(b)) - Number(availability.blockers.includes(a)));
   const loading = quota.status === 'loading';
   const name = fileName(file);
   const compactLayout = compact || dense;
@@ -37,13 +43,18 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
     const resetText = dense && row.resetAtMs !== undefined && Number.isFinite(row.resetAtMs)
       ? new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(row.resetAtMs)
       : reset;
-    const tone = percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
+    const isBlocker = availability.blockers.includes(row);
+    // A window can report healthy remaining% while the account is still blocked by a different, already-exhausted window (e.g. the 5-hour window looks fine while the 7-day cap is at zero). Don't render that as green.
+    const blockedElsewhere = !isBlocker && ['exhausted', 'creditBacked', 'resetDue'].includes(availability.kind);
+    const tone = isBlocker ? 'low' : blockedElsewhere ? 'blocked' : percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
     return <div className={`credential-quota-row ${tone}`} key={`${row.label}-${index}`}>
-      <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{percent === null ? '—' : `${Math.round(percent)}%`}</strong></div>
+      <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{percent === null ? '—' : `${quotaPercent(percent)}%`}</strong></div>
       <div className="credential-quota-track" role={percent === null ? undefined : 'progressbar'} aria-label={`${row.label} · ${t('authFiles.settings.quotaRemaining')}`}
         aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined}>
         {percent === null ? <span className="sr-only">{t('authFiles.settings.quotaUnknown')}</span> : <i style={{ width: `${percent}%` }} />}
       </div>
+      {blockedElsewhere ? <small>{t('authFiles.quota.blockedElsewhere')}</small> : null}
+      {row.justReset ? <small className="credential-quota-just-reset">{t('authFiles.quota.justReset')}</small> : null}
       {reset ? <small className={dense ? 'credential-quota-reset-time' : undefined} title={dense ? reset : undefined}>{resetText}</small> : null}
       {row.detail ? <small className={dense ? 'credential-quota-row-detail' : undefined} title={dense ? row.detail : undefined}>{row.detail}</small> : null}
     </div>;
@@ -67,12 +78,13 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
         {dense && quota.error ? <details className="credential-quota-error-details"><summary title={quota.error}>{t('authFiles.quota.failed')}</summary><small>{quota.error}</small></details>
           : <><span>{t('authFiles.quota.failed')}</span>{quota.error ? <small>{quota.error}</small> : null}</>}
       </div> : null}
-      {quota.status === 'success' ? <>
-        {quota.rows.length ? <>
-          <div className="credential-quota-rows">{(compactLayout ? quota.rows.slice(0, 2) : quota.rows).map(renderRow)}</div>
-          {compactLayout && quota.rows.length > 2 ? <details className="credential-quota-more">
-            <summary>{t('authFiles.health.details')} (+{quota.rows.length - 2})</summary>
-            <div className="credential-quota-rows">{quota.rows.slice(2).map((row, index) => renderRow(row, index + 2))}</div>
+      <QuotaAvailabilityNotice state={availability} now={clock} />
+      {quota.status === 'success' || (loading && rows.length > 0) ? <>
+        {rows.length ? <>
+          <div className="credential-quota-rows">{(compactLayout ? rows.slice(0, 2) : rows).map(renderRow)}</div>
+          {compactLayout && rows.length > 2 ? <details className="credential-quota-more">
+            <summary>{t('authFiles.health.details')} (+{rows.length - 2})</summary>
+            <div className="credential-quota-rows">{rows.slice(2).map((row, index) => renderRow(row, index + 2))}</div>
           </details> : null}
         </> : <p className="credential-quota-empty">{t('authFiles.quota.empty')}</p>}
         {!dense ? <div className="credential-quota-footnotes">

@@ -61,7 +61,7 @@ describe('VersionManagement update triggers', () => {
     return calls;
   };
 
-  for (const name of ['checkAppUpdate', 'checkLatest']) {
+  for (const name of ['checkLatest']) {
     it(`calls ${name} only from the visit effect and its manual check button`, () => {
       const calls = findCalls(name);
       expect(calls).toHaveLength(2);
@@ -78,6 +78,14 @@ describe('VersionManagement update triggers', () => {
       expect(triggers.sort()).toEqual(['onClick', 'useEffect']);
     });
   }
+
+  it('never checks or installs an upstream app binary in the personal edition', () => {
+    expect(findCalls('checkAppUpdate')).toHaveLength(0);
+    const updater = readFileSync(new URL('../src/appUpdate.tsx', import.meta.url), 'utf8');
+    expect(updater).not.toContain("'check_app_update'");
+    expect(updater).not.toContain("'start_app_update'");
+    expect(updater).not.toContain("'get_app_update_task'");
+  });
 
   it('only changes the saved download source from the source selector handler', () => {
     const sourceWrites = findCalls('invoke').filter((call) => {

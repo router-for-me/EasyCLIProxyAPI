@@ -8,7 +8,7 @@ import '../../src/styles/index.css';
 const params = new URLSearchParams(location.search);
 localStorage.setItem('easy-cli-proxy-api.locale', params.get('locale') || 'zh-TW');
 localStorage.setItem('cpa-gui.usage-records-tab.v1', params.get('tab') || 'overview');
-localStorage.setItem('cpa-gui.usage-records-range.v1', '4h');
+localStorage.setItem('cpa-gui.usage-records-range.v1', params.get('range') || '4h');
 document.documentElement.dataset.theme = params.get('theme') || 'dark';
 
 const hourKey = (date: Date) => [

@@ -22,6 +22,7 @@ const path = require('node:path');
     const channel = process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined);
     browser = await chromium.launch(channel ? { channel, headless: true, args: ['--no-proxy-server'] } : { headless: true, args: ['--no-proxy-server'] });
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.addInitScript(() => localStorage.setItem('easy-cli-proxy-api.locale', 'zh-CN'));
     await page.goto(`${base}?mock=running`, { waitUntil: 'commit' });
     await page.locator('.app-shell').waitFor();
 
@@ -125,6 +126,7 @@ const path = require('node:path');
     const sidebarHeight = await page.locator('.sidebar').evaluate((element) => element.getBoundingClientRect().height);
     assert.ok(sidebarHeight < 150, `compact sidebar is too tall: ${sidebarHeight}px`);
 
+    await page.locator('.personal-advanced summary').click();
     await page.locator('.sidebar-easy-entry').click();
     const steps = page.locator('.simple-mode-step-status-item');
     assert.equal(await steps.count(), 2);

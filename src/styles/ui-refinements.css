@@ -527,6 +527,13 @@ body, html, #root {
   outline-offset: -2px;
 }
 
+/* Let a wrapped legend increase the chart panel instead of pushing its axis outside. */
+.usage-overview-layout { grid-template-rows: auto minmax(min-content, 1fr); }
+.usage-trend-panel { height: auto; min-height: 280px; grid-template-rows: auto minmax(min-content, 1fr); }
+.usage-trend-wrapper { min-height: min-content; grid-template-rows: auto minmax(166px, 1fr); }
+.usage-trend-chart { height: auto; grid-template-rows: minmax(140px, 1fr) 22px; }
+.usage-trend-x-axis { height: 22px; }
+
 /* Usage records follow the same shell surface as the home page. */
 .app-shell:has(.usage-records-page) .content {
   padding: clamp(12px, 1.5vw, 20px) clamp(12px, 1.5vw, 20px) 16px;

@@ -4,8 +4,41 @@ import { AuthFileQuotaPanel } from '../src/components/AuthFileQuotaPanel';
 import { I18nProvider } from '../src/i18n';
 import type { QuotaState } from '../src/services/quotaService';
 import { QuotaCard } from '../src/pages/QuotaPage';
+import { quotaAvailability } from '../src/services/quotaAvailability';
 
 const render = (quota: QuotaState) => renderToStaticMarkup(<I18nProvider><AuthFileQuotaPanel file={{ name: 'test.json' }} quota={quota} disabled={false} onRefresh={() => {}} /></I18nProvider>);
+
+it.each(['exhausted', 'available', 'unknown', 'disabled', 'resetDue', 'limited', 'refreshing', 'stale'])(
+  'keeps both secondary pages consistent with Overview for %s', scenario => {
+    const now = Date.now();
+    const file = { name: 'test.json', provider: 'claude', status: 'active', disabled: scenario === 'disabled' };
+    const quota: QuotaState = { status: scenario === 'refreshing' ? 'loading' : 'success', fetchedAt: now, rows: [
+      { label: 'Model window', scope: 'model', remainingPercent: scenario === 'limited' ? 0 : 100 },
+      { label: 'Overall window', scope: 'account', remainingPercent: ['exhausted', 'resetDue', 'refreshing'].includes(scenario) ? 0 : scenario === 'unknown' ? null : 0.2,
+        resetAtMs: now + (scenario === 'resetDue' ? -1000 : 5 * 86400000) },
+    ] };
+    const stale = scenario === 'stale';
+    const state = quotaAvailability(file, quota, now, stale);
+    const pages = [<AuthFileQuotaPanel file={file} quota={quota} stale={stale} disabled={file.disabled} onRefresh={() => {}} />,
+      <QuotaCard file={file} quota={quota} stale={stale} onRefresh={() => {}} />];
+    for (const page of pages) {
+      const html = renderToStaticMarkup(<I18nProvider>{page}</I18nProvider>);
+      expect(html).toContain(`quota-availability-${state.kind}`);
+      if (state.kind === 'exhausted') {
+        expect(html).toContain('Blocked for');
+        expect(html.indexOf('Overall window')).toBeLessThan(html.indexOf('Model window'));
+      }
+      if (scenario === 'available') expect(html).toContain('&lt;1%');
+      if (scenario === 'refreshing') expect(html).toContain('Model window');
+    }
+  },
+);
+
+it('never renders nonfinite percentages on Quota lookup', () => {
+  const html = renderToStaticMarkup(<I18nProvider><QuotaCard file={{ name: 'test.json' }} quota={{ status: 'success', rows: [{ label: 'invalid', remainingPercent: NaN }] }} onRefresh={() => {}} /></I18nProvider>);
+  expect(html).not.toContain('NaN');
+  expect(html).not.toContain('role="progressbar"');
+});
 
 it('shows every reset expiry in chronological order, including duplicates, on both surfaces', () => {
   const quota: QuotaState = {

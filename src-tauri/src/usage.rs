@@ -235,7 +235,7 @@ pub(crate) struct UsageRecord {
     client_ip: Option<String>,
     #[serde(default, skip_serializing)]
     x_forwarded_for: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, serialize_with = "serialize_usage_client")]
     user_agent: Option<String>,
     #[serde(default)]
     reasoning_effort: String,
@@ -265,6 +265,21 @@ pub(crate) struct UsageRecord {
     collector_source: String,
     #[serde(default)]
     tokens: UsageTokenStats,
+}
+
+// Only disclose a recognized client family to the UI, never the raw user agent.
+fn serialize_usage_client<S: serde::Serializer>(agent: &Option<String>, serializer: S) -> Result<S::Ok, S::Error> {
+    let value = agent.as_deref().unwrap_or_default().to_ascii_lowercase();
+    let client = if value.contains("claude-desktop") {
+        Some("claude-desktop")
+    } else if value.contains("claude-cli") {
+        Some("claude-cli")
+    } else if value.contains("codex") {
+        Some("codex")
+    } else {
+        None
+    };
+    client.serialize(serializer)
 }
 
 #[derive(Clone, Serialize)]
@@ -5180,6 +5195,19 @@ mod tests {
             )
             .unwrap();
         connection
+    }
+
+    #[test]
+    fn dashboard_serializes_only_known_client_identity() {
+        let mut record = sample_record("client-test", "2026-10-02T21:24:00Z", "claude-sonnet-5");
+        record.user_agent = Some("claude-cli/2.1 (claude-desktop-3p, private-extra)".to_string());
+        let value = serde_json::to_value(&record).unwrap();
+        assert_eq!(value["user_agent"], "claude-desktop");
+        assert!(!value.to_string().contains("private-extra"));
+        record.user_agent = Some("unrecognized-private-client".to_string());
+        assert!(serde_json::to_value(&record).unwrap()["user_agent"].is_null());
+        record.user_agent = Some("claude-cli/2.1".to_string());
+        assert_eq!(serde_json::to_value(&record).unwrap()["user_agent"], "claude-cli");
     }
 
     fn sample_record(id: &str, timestamp: &str, model: &str) -> UsageRecord {
