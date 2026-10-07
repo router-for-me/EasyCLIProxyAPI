@@ -1,0 +1,352 @@
+/* Keep each section responsive to its available content width, including the
+   sidebar and the narrower cards in the two-column home layout. */
+.home-quick-actions {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@container workspace (max-width: 1080px) {
+  .home-quick-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container workspace (max-width: 480px) {
+  .home-quick-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.client-api-panel {
+  container: home-api / inline-size;
+}
+
+.client-api-panel .client-api-heading {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.client-api-panel .client-api-heading > div {
+  flex: 1 1 260px;
+}
+
+.client-api-panel .client-api-key-actions {
+  max-width: 100%;
+  flex-shrink: 1;
+}
+
+.client-api-key-code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container home-api (max-width: 480px) {
+  .client-api-card {
+    height: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .client-api-card-heading {
+    flex: none;
+    width: auto;
+    min-width: 0;
+  }
+}
+
+/* The download source is one control group: move the group together, then let
+   the select shrink while the action retains a readable label. */
+.version-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+
+.version-source-copy {
+  flex: 1 1 240px;
+}
+
+.version-source-control {
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: min(360px, 100%);
+  min-width: 0;
+}
+
+.version-source-control label,
+.version-source-control select {
+  min-width: 0;
+  width: 100%;
+}
+
+.version-source-add-button {
+  grid-column: auto;
+  white-space: nowrap;
+}
+
+@container workspace (max-width: 620px) {
+  .version-list,
+  .version-card-grid {
+    gap: 16px;
+  }
+
+  .version-source-row,
+  .version-list-item {
+    padding: 16px;
+  }
+
+  .app-release-notes-heading {
+    flex-wrap: wrap;
+    padding: 16px;
+  }
+
+  .app-release-notes-body {
+    padding: 0 16px 16px;
+  }
+
+  .app-release-notes-footer {
+    padding: 10px 16px;
+  }
+
+  .app-release-notes-markdown {
+    gap: 14px 12px;
+  }
+
+  .app-release-notes-markdown > .release-notes-category {
+    max-width: 80px;
+  }
+}
+
+/* Settings have variable-length descriptions; fixed row heights and controls
+   sized from the window instead of the workspace can make adjacent cards overlap. */
+.config-page .config-panel-heading,
+.config-page .config-heading-actions,
+.config-page .config-network-section-heading,
+.config-page .config-proxy-heading {
+  flex-wrap: wrap;
+}
+
+.config-page .config-panel-heading {
+  gap: 10px 14px;
+}
+
+.config-page .config-heading-actions {
+  margin-left: auto;
+}
+
+.config-keys-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.config-network-grid {
+  grid-auto-rows: minmax(154px, auto);
+}
+
+.config-network-field small,
+.config-diagnostics-setting-copy,
+.config-software-setting-copy {
+  overflow-wrap: anywhere;
+}
+
+.config-diagnostics-actions,
+.config-management-actions {
+  flex-wrap: wrap;
+}
+
+@container workspace (max-width: 900px) {
+  .config-network-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .config-diagnostics-toggle-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container workspace (max-width: 700px) {
+  .config-diagnostics-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .config-software-setting-row {
+    gap: 16px;
+    padding: 15px 16px;
+  }
+
+  .config-software-close-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .config-software-select {
+    width: 100%;
+    min-width: 0;
+    padding-left: 54px;
+  }
+
+  .config-diagnostics-footer,
+  .config-management-form-footer {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .config-diagnostics-actions {
+    justify-content: flex-end;
+  }
+}
+
+@container workspace (max-width: 560px) {
+  .config-network-grid,
+  .config-diagnostics-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .config-network-grid {
+    grid-auto-rows: auto;
+  }
+
+  .config-software-select {
+    padding-left: 0;
+  }
+
+  .config-heading-title h2 {
+    white-space: normal;
+  }
+}
+
+/* Alias routes should keep their names readable before metadata and actions
+   wrap onto a second line. The editor uses its own width inside a modal. */
+.thinking-alias-list-panel {
+  container: alias-list / inline-size;
+}
+
+.thinking-alias-dialog {
+  container: alias-editor / inline-size;
+}
+
+.thinking-alias-field {
+  min-width: 0;
+}
+
+@container alias-list (max-width: 560px) {
+  .thinking-alias-row {
+    grid-template-columns: minmax(0, 1fr) 34px;
+  }
+
+  .thinking-alias-route {
+    grid-column: 1 / -1;
+  }
+
+  .thinking-alias-badges {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+@container alias-editor (max-width: 580px) {
+  .thinking-effort-options {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Keep novice-mode actions compact at intermediate widths. Existing phone
+   rules made every action full-width even when two controls easily fit. */
+.simple-mode-topbar,
+.simple-mode-topbar-right,
+.simple-mode-brand-title,
+.simple-mode-choice-title,
+.simple-mode-api-model-heading,
+.simple-mode-api-model-selection-heading {
+  flex-wrap: wrap;
+}
+
+.simple-mode-topbar-left,
+.simple-mode-topbar-right,
+.simple-mode-brand,
+.simple-mode-brand-text {
+  min-width: 0;
+}
+
+.simple-mode-topbar-left {
+  flex: 1 1 340px;
+}
+
+.simple-mode-topbar-right {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.simple-mode-topbar-right > *,
+.simple-mode-guide-toggle {
+  flex-shrink: 0;
+}
+
+.simple-mode-choice-title strong,
+.simple-mode-brand-title strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.simple-mode-provider-card-foot {
+  flex-wrap: wrap;
+}
+
+.simple-mode-field .text-input,
+.simple-mode-field .select-input {
+  min-width: 0;
+}
+
+@container workspace (max-width: 720px) {
+  .simple-mode-topbar-left,
+  .simple-mode-topbar-right {
+    width: 100%;
+  }
+
+  .simple-mode-topbar-right {
+    justify-content: flex-start;
+  }
+
+  .simple-mode-choice-grid,
+  .simple-mode-api-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-mode-api-actions,
+  .simple-mode-task-footer {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .simple-mode-api-actions button,
+  .simple-mode-task-footer > .primary-button,
+  .simple-mode-task-footer > .secondary-button {
+    width: auto;
+  }
+
+  .simple-mode-task-footer > .primary-button {
+    margin-left: auto;
+  }
+}
+
+@container workspace (max-width: 520px) {
+  .simple-mode-api-model-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-mode-step-status-track {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .simple-mode-step-status-connector {
+    display: none;
+  }
+
+  .simple-mode-step-status-copy strong,
+  .simple-mode-step-status-copy small {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

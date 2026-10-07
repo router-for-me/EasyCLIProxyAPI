@@ -1,0 +1,57 @@
+import { getCurrentLocale, type AppLocale } from './index';
+import { createTraditionalMessages } from './traditional';
+
+const messages = {
+  inherit: ['继承 / 默认', 'Inherit / default', '継承 / 既定'],
+  configure: ['自定义', 'Configure', '設定する'],
+  enabled: ['启用', 'Enabled', '有効'],
+  disabled: ['关闭', 'Disabled', '無効'],
+  options: ['模型能力与兼容选项', 'Model capabilities and compatibility', 'モデル能力と互換性'],
+  retry: ['额外重试轮次', 'Additional retry rounds', '追加リトライ回数'],
+  retryHint: ['0 禁用额外轮次；未设置或负数继承全局设置。', '0 disables additional rounds; unset or negative values inherit the global setting.', '0 は追加リトライなし。未設定または負数はグローバル設定を継承します。'],
+  errors: ['请求错误规则', 'Request error rules', 'リクエストエラー規則'],
+  errorsHint: ['按 HTTP 状态码与正文匹配；空列表明确清除继承的规则。', 'Match HTTP status and body patterns. An empty list clears inherited rules.', 'HTTP ステータスと本文を照合します。空のリストは継承した規則を解除します。'],
+  addRule: ['添加规则', 'Add rule', '規則を追加'],
+  remove: ['删除', 'Remove', '削除'],
+  status: ['HTTP 状态码', 'HTTP status', 'HTTP ステータス'],
+  match: ['正文包含（每行一项）', 'Body contains (one per line)', '本文に含む文字列（行ごと）'],
+  regex: ['正则表达式（每行一项）', 'Regular expressions (one per line)', '正規表現（行ごと）'],
+  action: ['处理方式', 'Action', '処理'],
+  stop: ['返回错误，不冷却', 'Return error, no cooldown', 'エラーを返す・冷却なし'],
+  'stop-and-cooldown': ['返回错误并冷却', 'Return error and cool down', 'エラーを返す・冷却あり'],
+  continue: ['尝试下一凭据，不冷却', 'Try next credential, no cooldown', '次の認証情報・冷却なし'],
+  'continue-and-cooldown': ['尝试下一凭据并冷却', 'Try next credential and cool down', '次の認証情報・冷却あり'],
+  display: ['显示名称', 'Display name', '表示名'],
+  context: ['上下文窗口', 'Context window', 'コンテキスト長'],
+  force: ['响应模型名称映射回别名', 'Map response model back to alias', '応答モデル名を別名に戻す'],
+  compat: ['启用上游兼容模式', 'Enable upstream compatibility', '上流互換モードを有効化'],
+  configuration: ['支持 configuration_update', 'Support configuration_update', 'configuration_update 対応'],
+  image: ['启用图像生成与编辑接口', 'Enable image generation and edit endpoints', '画像生成・編集エンドポイントを有効化'],
+  imageHint: ['仅用于 /v1/images/*；聊天图像输入由输入模态控制。', 'Only /v1/images/*; chat image input is controlled by input modalities.', '/v1/images/* のみ。チャット画像入力は入力モダリティで設定します。'],
+  input: ['输入模态', 'Input modalities', '入力モダリティ'],
+  output: ['输出模态', 'Output modalities', '出力モダリティ'],
+  completion: ['使用 max_completion_tokens', 'Use max_completion_tokens', 'max_completion_tokens を使用'],
+  thinking: ['思考能力', 'Thinking capabilities', '思考能力'],
+  levels: ['支持的思考等级', 'Supported reasoning levels', '対応する思考レベル'],
+  min: ['最小思考预算', 'Minimum thinking budget', '最小思考予算'],
+  max: ['最大思考预算', 'Maximum thinking budget', '最大思考予算'],
+  zero: ['允许零预算', 'Allow zero budget', 'ゼロ予算を許可'],
+  dynamic: ['允许动态预算', 'Allow dynamic budget', '動的予算を許可'],
+  linesHint: ['每行一项；启用后留空表示空列表。', 'One per line; an enabled empty field is an empty list.', '1 行に 1 項目。有効な空欄は空のリストになります。'],
+  headersHint: ['值以 $ 开头时复制下游请求中的同名指定请求头，例如 $X-Session。', 'Values starting with $ copy the named downstream request header, e.g. $X-Session.', '$ で始まる値は指定した下流リクエストヘッダーをコピーします（例: $X-Session）。'],
+  promptCache: ['自动生成 prompt_cache_key', 'Derive prompt_cache_key', 'prompt_cache_key を生成'],
+  noCloak: ['禁用 Codex 请求伪装', 'Disable Codex request cloaking', 'Codex リクエスト偽装を無効化'],
+  alpha: ['启用 Alpha Search', 'Enable Alpha Search', 'Alpha Search を有効化'],
+  rebuild: ['将中途 system 消息移至系统提示', 'Move mid-conversation system messages to the system prompt', '会話中の system メッセージをシステムプロンプトへ移動'],
+  fingerprint: ['请求指纹', 'Request fingerprint', 'リクエスト指紋'],
+  caller: ['保持调用方请求指纹', 'Keep caller fingerprint', '呼び出し元の指紋を保持'],
+  cch: ['旧版 CCH 签名兼容字段', 'Legacy CCH signing compatibility', '旧 CCH 署名互換フィールド'],
+  deprecated: ['已废弃；新内核自动生成 CCH 签名。', 'Deprecated; current kernels generate CCH signatures automatically.', '非推奨。現在のカーネルは CCH 署名を自動生成します。'],
+  invalid: ['配置值无效，请检查标注字段：', 'Invalid configuration; check field: ', '設定値が無効です。確認する項目: '],
+  modelHint: ['字段关闭时保留默认行为；已启用字段中的 false、0 和空列表会明确覆盖默认值。', 'Unset fields use defaults; explicit false, 0 and empty lists override defaults.', '未設定は既定動作。false、0、空のリストは既定値を明示的に上書きします。'],
+} as const;
+export type ProviderTemplateMessage = keyof typeof messages;
+export function providerText(key: ProviderTemplateMessage, locale: AppLocale = getCurrentLocale()): string {
+  const value = messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
+}

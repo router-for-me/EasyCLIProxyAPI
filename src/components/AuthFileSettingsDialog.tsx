@@ -6,9 +6,12 @@ import { managementApi } from '../services/managementApi';
 import { loadAuthFileSettings, saveAuthFileSettings, type AuthFileSettingsDraft, type BooleanOverride } from '../services/authFileSettings';
 import { modelMatchesRule, normalizeOAuthExcludedRules, oauthModelCandidates, oauthModelsFromPayload, setOAuthModelsExcluded, type OAuthModelDefinition } from '../services/oauthModels';
 import './AuthFileSettingsDialog.css';
+import { CredentialAdvancedFields, CredentialHeadersEditor, credentialProviderKey } from './CredentialAdvancedFields';
+import { modelSearchText, type ModelOption } from '../services/modelService';
 
-export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
+export function AuthFileSettingsDialog({ name, provider = '', onClose, onSaved }: {
   name: string;
+  provider?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -19,15 +22,15 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
   const [original, setOriginal] = useState<AuthFileSettingsDraft | null>(null);
   const [draft, setDraft] = useState<AuthFileSettingsDraft | null>(null);
   const [models, setModels] = useState<OAuthModelDefinition[]>([]);
+  const [pickerModels, setPickerModels] = useState<ModelOption[]>([]);
   const [catalogError, setCatalogError] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [discard, setDiscard] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(original);
+  const dirty = draft !== null && (Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
 
   useEffect(() => {
     const previousFocus = document.activeElement;
@@ -53,8 +56,11 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : String(reason));
     }).finally(() => { if (active) setLoading(false); });
-    void managementApi.get('/auth-files/models', { name }).then((payload) => {
-      if (active) setModels(oauthModelsFromPayload(payload));
+    void managementApi.get('/credentials/models', { name }).then((payload) => {
+      const catalog = oauthModelsFromPayload(payload);
+      if (!active) return;
+      setModels(catalog);
+      setPickerModels(catalog.map((model) => ({ name: model.id, alias: model.displayName })));
     }).catch((reason: unknown) => {
       if (active) setCatalogError(reason instanceof Error ? reason.message : String(reason));
     }).finally(() => { if (active) setCatalogLoading(false); });
@@ -63,20 +69,17 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
 
   const close = () => {
     if (savingRef.current) return;
-    if (dirty) setDiscard(true);
-    else onClose();
+    onClose();
   };
   const update = <K extends keyof AuthFileSettingsDraft>(key: K, value: AuthFileSettingsDraft[K]) => {
     setDraft((current) => current ? { ...current, [key]: value } : current);
     setError('');
-    setDiscard(false);
   };
   const save = async () => {
     if (!draft || !original || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setError('');
-    setDiscard(false);
     try {
       const changed = await saveAuthFileSettings(name, original, draft);
       if (changed) onSaved();
@@ -89,8 +92,10 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
     }
   };
   const rules = normalizeOAuthExcludedRules((draft?.excluded_models ?? '').split(/\r?\n/));
-  const candidates = oauthModelCandidates(models, rules).filter((model) =>
-    `${model.id} ${model.displayName ?? ''}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const query = search.trim().toLowerCase();
+  const candidates = oauthModelCandidates(models, rules).filter((model) => modelSearchText({ name: model.id, displayName: model.displayName }).includes(query));
+  const resolvedProvider = credentialProviderKey(name, provider);
+  const showWebsockets = resolvedProvider === 'codex' || resolvedProvider === 'xai' || draft?.websockets === 'true' || draft?.websockets === 'false';
   const textField = (key: 'prefix' | 'proxy_url' | 'priority' | 'weight') => (
     <label className="credential-settings-field">
       <span>{t(`authFiles.settings.${key}`)} <code>{key}</code></span>
@@ -139,7 +144,7 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
             <fieldset disabled={saving}>
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.routing')}</h3>
-                <div className="credential-settings-grid">{textField('prefix')}{textField('proxy_url')}{textField('priority')}{textField('weight')}{booleanField('disable_cooling')}{booleanField('websockets')}</div>
+                <div className="credential-settings-grid">{textField('prefix')}{textField('proxy_url')}{textField('priority')}{textField('weight')}{booleanField('disable_cooling')}{showWebsockets ? booleanField('websockets') : null}</div>
               </section>
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.excluded_models')} <code>excluded_models</code></h3>
@@ -166,13 +171,10 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
                   </div>
                 </details>
               </section>
+              <CredentialAdvancedFields name={name} provider={provider} advanced={draft.advanced} models={pickerModels} modelsLoading={catalogLoading} modelsError={catalogError} disabled={saving} onChange={(advanced) => update('advanced', advanced)} />
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.additional')}</h3>
-                <label className="credential-settings-field">
-                  <span>{t('authFiles.settings.headers')} <code>headers</code></span>
-                  <textarea className="credential-settings-json" rows={5} value={draft.headers} onChange={(event) => update('headers', event.currentTarget.value)} spellCheck={false} autoComplete="off" />
-                  <small>{t('authFiles.settings.headersHint')}</small>
-                </label>
+                <CredentialHeadersEditor value={draft.headers} disabled={saving} onChange={(headers) => update('headers', headers)} />
                 <label className="credential-settings-field">
                   <span>{t('authFiles.settings.note')} <code>note</code></span>
                   <textarea rows={2} value={draft.note} onChange={(event) => update('note', event.currentTarget.value)} />
@@ -183,7 +185,6 @@ export function AuthFileSettingsDialog({ name, onClose, onSaved }: {
         </div>
         <footer className="credential-settings-footer">
           {error ? <p className="credential-settings-error" role="alert">{error}</p> : null}
-          {discard ? <div className="credential-settings-discard" role="alert"><span>{t('authFiles.settings.unsaved')}</span><button type="button" className="secondary-button compact-button" onClick={() => setDiscard(false)}>{t('authFiles.settings.keepEditing')}</button><button type="button" className="danger-button compact-button" onClick={onClose}>{t('authFiles.settings.discard')}</button></div> : null}
           <div className="credential-settings-actions">
             <button type="button" className="secondary-button" disabled={saving} onClick={close}>{t('common.cancel')}</button>
             {!loading && !draft ? <button type="button" className="primary-button" onClick={() => setAttempt((value) => value + 1)}>{t('common.refresh')}</button> : <button type="submit" className="primary-button" disabled={!draft || loading || saving || !dirty}>{saving ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{t(saving ? 'common.saving' : 'common.save')}</button>}

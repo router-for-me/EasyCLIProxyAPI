@@ -126,6 +126,25 @@ pub(crate) fn current_catalog_json() -> Result<String, String> {
     Ok(state.json.clone())
 }
 
+pub(crate) fn parse_public_models(payload: &Value) -> Result<Vec<CodexRuntimeModel>, String> {
+    let values = payload.get("data").and_then(Value::as_array)
+        .ok_or("Public model list response is missing a data array")?;
+    let mut entries = Vec::with_capacity(values.len());
+    for value in values {
+        let id = value.get("id").and_then(Value::as_str).map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or("Public model list entry is missing a model ID")?;
+        let mut entry = value.as_object().cloned().unwrap_or_default();
+        entry.insert("slug".into(), Value::String(id.to_string()));
+        // Public IDs are already resolved by the core. Never reinterpret them
+        // using configuration mapping fields or generate additional IDs.
+        entry.remove("alias");
+        entry.remove("fork");
+        entries.push(Value::Object(entry));
+    }
+    parse_runtime_models(&serde_json::json!({"data": entries}))
+}
+
 pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeModel>, String> {
     let values = payload
         .get("models")
@@ -475,6 +494,7 @@ fn prepare_catalog_with_customizations(
     }
 
     for entry in &mut entries {
+        entry.value.insert("supports_parallel_tool_calls".to_string(), Value::Bool(true));
         customizations::apply_customizations(&mut entry.value, customizations)?;
     }
 

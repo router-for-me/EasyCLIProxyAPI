@@ -24,6 +24,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
+import { SettingsHelp } from '../components/SettingsHelp';
 import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 
 type PresetThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -206,6 +207,7 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
   const [editorOpen, setEditorOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
   const [activeSourceIndex, setActiveSourceIndex] = useState(0);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const generatedAliasRef = useRef('');
@@ -485,7 +487,11 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
 
   const editorRef = useDialogFocusTrap<HTMLElement>({
     active: editorOpen,
-    onEscape: busyAlias ? undefined : closeEditor,
+    initialFocusRef: modelSearchRef,
+    onEscape: busyAlias ? undefined : () => {
+      if (modelPickerOpen) setModelPickerOpen(false);
+      else closeEditor();
+    },
     preventEscape: Boolean(busyAlias),
   });
 
@@ -591,7 +597,6 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
               <span><GitFork size={18} /></span>
               <div>
                 <h2 id="thinking-alias-editor-title">{t(editingEntry ? 'common.edit' : 'aliases.create.title')}</h2>
-                <p>{t('aliases.create.description')}</p>
               </div>
               <button type="button" className="icon-button quiet" onClick={closeEditor} disabled={Boolean(busyAlias)} title={t('common.close')} aria-label={t('common.close')}>
                 <X size={18} />
@@ -601,12 +606,13 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
             <div className="thinking-alias-dialog-body">
 
             <div className="thinking-alias-field thinking-model-field">
-            <label htmlFor="thinking-model-search">{t('aliases.originalModel')}</label>
+            <div className="config-field-label"><label htmlFor="thinking-model-search">{t('aliases.originalModel')}</label><SettingsHelp label={t('aliases.originalModel')}>{t('aliases.sourceHint')}</SettingsHelp></div>
             <div className="thinking-model-picker" ref={modelPickerRef}>
               <div className="thinking-model-search">
                 {loading ? <LoaderCircle size={15} className="spin" /> : <Search size={15} />}
                 <input
                   id="thinking-model-search"
+                  ref={modelSearchRef}
                   role="combobox"
                   autoFocus
                   aria-autocomplete="list"
@@ -701,15 +707,12 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
                   {t('aliases.sourceLabel', { source: thinkingAliasSourceDetail(selectedSource) })}
                 </strong>
               </div>
-            ) : (
-              <small className="thinking-model-hint">{t('aliases.sourceHint')}</small>
-            )}
+            ) : null}
             </div>
 
             <div className="thinking-alias-field">
             <div className="thinking-field-heading">
               <strong>{t('aliases.effort.title')}</strong>
-              <span>{t('aliases.effort.description')}</span>
             </div>
             <div className="thinking-effort-options">
               <button
@@ -750,7 +753,6 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
               <label className={`thinking-fast-option${fastEnabled ? ' active' : ''}`}>
                 <span className="thinking-fast-option-copy">
                   <span><Zap size={15} /> Fast</span>
-                  <small>{fastEnabled ? t('aliases.fast.enabled') : t('aliases.fast.disabled')}</small>
                 </span>
                 <span className="switch-control thinking-fast-switch">
                   <input

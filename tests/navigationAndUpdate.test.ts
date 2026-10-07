@@ -23,16 +23,16 @@ describe('简易模式、首页、配置与版本管理导航', () => {
   test('内核运行后解锁其他功能页', () => {
     expect(canOpenAppPage('config', true)).toBe(true);
     expect(canOpenAppPage('agents', true)).toBe(true);
+    expect(canOpenAppPage('quota', true)).toBe(true);
   });
 });
 
 describe('OAuth 子页面导航', () => {
-  test('认证文件和额度查询收纳在 OAuth 页面内', () => {
-    expect(oauthSubpages.map((page) => page.id)).toEqual(['login', 'authFiles', 'quota']);
+  test('OAuth 页面保留登录和认证文件，额度查询独立导航', () => {
+    expect(oauthSubpages.map((page) => page.id)).toEqual(['login', 'authFiles']);
     expect(oauthSubpages.map((page) => page.labelKey)).toEqual([
       'oauth.title',
       'authFiles.title',
-      'quota.title',
     ]);
   });
 });

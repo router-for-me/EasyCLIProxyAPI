@@ -1,0 +1,55 @@
+.config-dialog.plugin-config-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: min(660px, 100%);
+  height: auto;
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  overflow: hidden;
+  color: var(--theme-2d2a26);
+}
+.plugin-config-dialog .config-dialog-heading { flex-shrink: 0; padding: 20px 22px; border-bottom: 1px solid var(--theme-e3e1db); }
+.plugin-config-dialog .config-dialog-heading > div { display: block; }
+.plugin-config-dialog .config-dialog-heading h2 { display: flex; align-items: center; gap: 8px; }
+.plugin-config-dialog .config-dialog-heading p { margin: 7px 0 0; color: var(--theme-7a746c); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
+.plugin-config-dialog form { display: flex; flex-direction: column; min-height: 0; }
+.plugin-config-body { min-height: 0; overflow-y: auto; padding: 20px 22px; }
+.plugin-config-body fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.plugin-config-common, .plugin-config-parameters { display: grid; gap: 14px; }
+.plugin-config-parameters { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--theme-e3e1db); }
+.plugin-config-parameters h3, .plugin-config-parameters p { margin: 0; }
+.plugin-config-parameters h3 { font-size: var(--font-size-body); }
+.plugin-config-dialog small, .plugin-config-parameters p { color: var(--theme-7a746c); font-size: var(--font-size-caption); line-height: 1.6; overflow-wrap: anywhere; }
+.plugin-config-toggle { display: flex; align-items: center; gap: 10px; font-size: var(--font-size-body); font-weight: var(--font-weight-semibold); }
+.plugin-config-toggle input { width: 16px; height: 16px; accent-color: var(--theme-4f825c); }
+.plugin-config-field { display: grid; gap: 7px; min-width: 0; }
+.plugin-config-field > label { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; font-size: var(--font-size-body); overflow-wrap: anywhere; }
+.plugin-config-field code { font-size: var(--font-size-caption); color: var(--theme-7a746c); }
+.plugin-config-field input, .plugin-config-field select, .plugin-config-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--theme-d5d2cb);
+  border-radius: 6px;
+  background: var(--theme-ffffff);
+  color: var(--theme-2d2a26);
+  font: inherit;
+  font-size: var(--font-size-body);
+}
+.plugin-config-field textarea { font-family: ui-monospace, monospace; line-height: 1.6; resize: vertical; }
+.plugin-config-field [aria-invalid='true'] { border-color: var(--theme-a83f32); }
+.plugin-config-field input:disabled, .plugin-config-field select:disabled, .plugin-config-field textarea:disabled { opacity: .7; cursor: not-allowed; }
+.plugin-config-field small:empty { display: none; }
+.plugin-config-dialog .plugin-config-error { color: var(--theme-9f2d20); overflow-wrap: anywhere; }
+.plugin-config-footer { flex-shrink: 0; padding: 16px 22px; border-top: 1px solid var(--theme-e3e1db); }
+.plugin-config-footer > p { margin: 0 0 12px; font-size: var(--font-size-meta); line-height: 1.6; }
+.plugin-config-actions, .plugin-config-discard > div { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.plugin-config-actions button, .plugin-config-discard button { min-height: 38px; }
+.plugin-config-discard { display: grid; gap: 10px; margin-bottom: 14px; padding: 12px; border: 1px solid var(--theme-d5d2cb); border-radius: 6px; font-size: var(--font-size-meta); }
+.plugin-config-loading { display: flex; justify-content: center; align-items: center; gap: 10px; min-height: 140px; color: var(--theme-7a746c); }
+@media (max-width: 560px) {
+  .plugin-config-dialog .config-dialog-heading, .plugin-config-body, .plugin-config-footer { padding: 16px; }
+  .plugin-config-actions button { flex: 1; }
+}

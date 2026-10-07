@@ -42,6 +42,39 @@ const timeline = Array.from({ length: 4 }, (_, index) => ({
   })),
 }));
 
+const records = Array.from({ length: 400 }, (_, index) => ({
+  id: `record-${index + 1}`,
+  row_id: String(index + 1),
+  timestamp: new Date(now.getTime() - index * 1000).toISOString(),
+  latency_ms: 2000,
+  ttft_ms: 200,
+  source: index % 2 ? 'secondary-source' : 'test-source',
+  source_display: index % 2 ? 'Secondary source' : 'Test source',
+  failed: index % 4 === 0,
+  canceled: false,
+  failure_status: index % 4 === 0 ? 429 : 0,
+  failure_body: index % 4 === 0 ? 'Rate limit exceeded' : '',
+  provider: 'test-provider',
+  auth_type: index % 2 ? 'oauth' : 'apikey',
+  model: index % 3 ? 'test-model' : 'secondary-model',
+  alias: '',
+  reasoning_effort: 'high',
+  endpoint: '/v1/responses',
+  api_key_hash: 'test-key',
+  api_key_display: 'sk-test',
+  api_key_remark: 'Test key, "local"',
+  tokens: {
+    input_tokens: 1000,
+    output_tokens: 200,
+    reasoning_tokens: 100,
+    cache_read_tokens: 400,
+    cache_creation_tokens: 50,
+    total_tokens: 1200,
+  },
+}));
+
+const category = (key: string, label = key) => ({ key, label, requests: 200, failures: 25, tokens: 24_000 });
+
 mockIPC(async (cmd, args) => {
   if (cmd === 'plugin:event|listen') return 1;
   if (cmd === 'plugin:event|unlisten' || cmd === 'set_app_locale') return null;
@@ -49,43 +82,32 @@ mockIPC(async (cmd, args) => {
     return { state: 'collecting', message: '', lastCollectedAt: now.toISOString(), totalRecords: 54 };
   }
   if (cmd === 'get_usage_analysis') {
-    return { models: [], providers: [], sources: [], apiKeys: [] };
+    return {
+      models: [category('test-model'), category('secondary-model')],
+      providers: [category('test-provider')],
+      sources: [category('test-source', 'Test source'), category('secondary-source', 'Secondary source')],
+      apiKeys: [category('test-key', 'Test key')],
+    };
   }
   if (cmd === 'get_usage_events') {
-    const query = args?.query as { page: number; page_size: number };
+    const query = args?.query as {
+      page: number; page_size: number; model?: string; source?: string;
+      provider?: string; api_key_hash?: string; failed?: boolean; canceled?: boolean;
+    };
+    const filtered = records.filter(record =>
+      (!query.model || record.model === query.model)
+      && (!query.source || record.source === query.source)
+      && (!query.provider || record.provider === query.provider)
+      && (!query.api_key_hash || record.api_key_hash === query.api_key_hash)
+      && (query.failed === undefined || record.failed === query.failed)
+      && (query.canceled === undefined || record.canceled === query.canceled));
+    const start = (query.page - 1) * query.page_size;
     return {
       page: query.page,
       pageSize: query.page_size,
-      total: 400,
-      totalPages: Math.ceil(400 / query.page_size),
-      items: Array.from({ length: query.page_size }, (_, index) => ({
-        id: `record-${query.page}-${index}`,
-        timestamp: now.toISOString(),
-        latency_ms: 2000,
-        ttft_ms: 200,
-        source: 'test-source',
-        source_display: 'Test source',
-        failed: index % 4 === 0,
-        canceled: false,
-        failure_status: index % 4 === 0 ? 429 : 0,
-        failure_body: index % 4 === 0 ? 'Rate limit exceeded' : '',
-        provider: 'test-provider',
-        model: 'test-model',
-        alias: '',
-        reasoning_effort: 'high',
-        endpoint: '/v1/responses',
-        api_key_hash: 'test-key',
-        api_key_display: 'sk-test',
-        api_key_remark: 'Test key',
-        tokens: {
-          input_tokens: 1000,
-          output_tokens: 200,
-          reasoning_tokens: 100,
-          cache_read_tokens: 400,
-          cache_creation_tokens: 0,
-          total_tokens: 1600,
-        },
-      })),
+      total: filtered.length,
+      totalPages: Math.max(1, Math.ceil(filtered.length / query.page_size)),
+      items: filtered.slice(start, start + query.page_size),
     };
   }
   if (cmd === 'get_usage_overview') {

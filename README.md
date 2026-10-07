@@ -88,6 +88,14 @@ You can add multiple connections, search existing entries, refresh provider stat
 through the unified local CLIProxyAPI endpoint. Requests and responses can be converted between
 supported OpenAI, Claude, Gemini, and compatible formats.
 
+### Plugins
+
+The **Plugins** page manages installed core plugins, their enabled state and typed configuration.
+Browse the plugin store to install, update or select a release version, configure additional stores
+and environment-based authentication, open pages and sign in to accounts provided by enabled plugins. Third-party
+installations require source review and a typed confirmation. The page detects unsupported core
+builds and shows a restart action when an installation or removal requires it.
+
 ### Usage history and token analytics
 
 ![Usage history and token analytics](docs/screenshots/en/4.png)

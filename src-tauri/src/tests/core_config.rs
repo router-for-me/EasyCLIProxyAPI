@@ -109,30 +109,40 @@ fn webui_management_secret_requires_a_non_empty_plaintext_value() {
     )
     .is_err());
     assert!(normalize_management_secret_key("bad\nsecret".to_string()).is_err());
-    assert!(normalize_management_secret_key("123456".to_string()).is_err());
+    assert_eq!(
+        normalize_management_secret_key("  123456  ".to_string()).unwrap(),
+        "123456"
+    );
 }
 
 #[test]
-fn management_secret_rotation_replaces_legacy_values_and_preserves_custom_values() {
-    let mut fresh = GuiConfigFile::default();
-    assert!(ensure_strong_management_secret(&mut fresh).unwrap());
-    assert!(fresh.management_secret_key.starts_with("wui-Aa9_"));
-    assert!(fresh.management_secret_key.len() >= 50);
+fn management_secret_rotation_preserves_disabled_and_custom_values() {
+    let fresh = GuiConfigFile::default();
+    assert_eq!(
+        fresh.management_secret_key,
+        LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY
+    );
     assert!(!management_secret_requires_rotation(
         &fresh.management_secret_key
     ));
 
-    let first_generated = fresh.management_secret_key.clone();
+    let mut empty = GuiConfigFile {
+        management_secret_key: String::new(),
+        ..GuiConfigFile::default()
+    };
+    assert!(!ensure_strong_management_secret(&mut empty).unwrap());
+    assert!(empty.management_secret_key.is_empty());
+    assert!(validate_gui_config(&empty).is_ok());
+
     let mut legacy = GuiConfigFile {
         management_secret_key: LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string(),
         ..GuiConfigFile::default()
     };
-    assert!(ensure_strong_management_secret(&mut legacy).unwrap());
-    assert_ne!(
+    assert!(!ensure_strong_management_secret(&mut legacy).unwrap());
+    assert_eq!(
         legacy.management_secret_key,
         LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY
     );
-    assert_ne!(legacy.management_secret_key, first_generated);
 
     let mut hashed = GuiConfigFile {
         management_secret_key: "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"
@@ -140,7 +150,7 @@ fn management_secret_rotation_replaces_legacy_values_and_preserves_custom_values
         ..GuiConfigFile::default()
     };
     assert!(ensure_strong_management_secret(&mut hashed).unwrap());
-    assert!(hashed.management_secret_key.starts_with("wui-Aa9_"));
+    assert_eq!(hashed.management_secret_key, "123456");
 
     let mut custom = GuiConfigFile {
         management_secret_key: "user-selected-secret".to_string(),
@@ -148,6 +158,38 @@ fn management_secret_rotation_replaces_legacy_values_and_preserves_custom_values
     };
     assert!(!ensure_strong_management_secret(&mut custom).unwrap());
     assert_eq!(custom.management_secret_key, "user-selected-secret");
+}
+
+#[test]
+fn management_secret_recovery_synchronizes_kernel_and_request_credentials() {
+    let hash = "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu";
+    for (imported, saved, expected) in [
+        ("", None, "123456"),
+        (hash, None, "123456"),
+        (hash, Some(hash), "123456"),
+        ("bad\nkey", None, "123456"),
+        (hash, Some("known-secret"), "known-secret"),
+        ("", Some("known-secret"), "known-secret"),
+        ("", Some(""), ""),
+        ("new-secret", Some("old-secret"), "new-secret"),
+    ] {
+        let config = GuiConfigFile {
+            management_secret_key: recover_management_secret(imported, saved),
+            ..GuiConfigFile::default()
+        };
+        assert_eq!(config.management_secret_key, expected);
+        for (template, section) in [
+            ("remote-management: {secret-key: stale}\n", "remote-management"),
+            ("config-version: 8\nmanagement: {secret-key: stale}\n", "management"),
+        ] {
+            let updated = apply_gui_managed_settings(template, &config).unwrap();
+            let document: serde_norway::Value = serde_norway::from_str(&updated).unwrap();
+            assert_eq!(document[section]["secret-key"], expected);
+        }
+        if !expected.is_empty() {
+            assert_eq!(management_api::management_authorization(&config).unwrap(), format!("Bearer {expected}"));
+        }
+    }
 }
 
 #[test]
@@ -197,6 +239,7 @@ fn default_auth_directory_is_relative_and_legacy_absolute_value_is_migrated() {
 
     let mut config = GuiConfigFile {
         auth_dir: path_to_string(&fixed_oauth_dir().unwrap()),
+        auth_dir_user_selected: false,
         ..GuiConfigFile::default()
     };
     assert!(sanitize_gui_config(&mut config).unwrap());
@@ -1514,6 +1557,43 @@ fn v8_core_config_reads_and_writes_canonical_nested_fields() {
 }
 
 #[test]
+fn v8_inline_management_hash_is_preserved_without_duplicate_section() {
+    let input = "config-version: 8\nserver: {host: 127.0.0.1, port: 8317}\nmanagement: {secret-key: $2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu}\naccess: {api-keys: [client-key]}\nrequests: {proxy-url: direct}\n";
+    let mut config = GuiConfigFile::default();
+    config.management_secret_key = "plaintext-management-key".into();
+    let updated = apply_gui_managed_settings(input, &config)
+        .unwrap_or_else(|error| panic!("management key update failed: {error}"));
+    let parsed = serde_norway::from_str::<serde_norway::Value>(&updated).unwrap();
+    assert_eq!(parsed["management"]["secret-key"], "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu");
+}
+
+#[test]
+fn v8_multiline_management_hash_with_comments_is_preserved() {
+    let input = "# generated by CLIProxyAPI\n# keep this comment\nconfig-version: 8\nserver:\n  host: 127.0.0.1\n  port: 8317\nmanagement:\n  secret-key: $2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu\n  allow-remote: false\naccess:\n  api-keys:\n    - client-key\nrequests:\n  proxy-url: direct\n";
+    let mut config = GuiConfigFile::default();
+    config.management_secret_key = "plaintext-management-key".into();
+    let updated = apply_gui_managed_settings(input, &config)
+        .unwrap_or_else(|error| panic!("management key update failed: {error}"));
+    let parsed = serde_norway::from_str::<serde_norway::Value>(&updated).unwrap();
+    assert_eq!(parsed["management"]["secret-key"], "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu");
+    assert_eq!(parsed["management"]["allow-remote"], false);
+}
+
+#[test]
+fn gui_start_preserves_hashed_v8_management_key() {
+    let hash = "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu";
+    let input = format!(
+        "config-version: 8\nserver: {{host: 127.0.0.1, port: 8317}}\nmanagement: {{secret-key: {hash}}}\naccess: {{api-keys: [client-key]}}\nrequests: {{proxy-url: direct}}\n"
+    );
+    let mut config = GuiConfigFile::default();
+    config.management_secret_key = "plaintext-management-key".into();
+    let updated = apply_gui_managed_settings(&input, &config).unwrap();
+    let parsed = serde_norway::from_str::<serde_norway::Value>(&updated).unwrap();
+    assert_eq!(parsed["management"]["secret-key"], hash);
+    assert!(!updated.contains("plaintext-management-key"));
+}
+
+#[test]
 fn v8_omitted_fields_use_runtime_defaults_instead_of_gui_presets() {
     let settings = core_config_settings_from_value(
         &serde_norway::from_str("config-version: 8\nserver: {port: 8317}\n").unwrap(),
@@ -1876,7 +1956,7 @@ fn core_config_validates_keys_and_routing_strategy() {
     assert!(validate_core_api_key("").is_err());
     assert!(validate_core_api_key("contains space").is_err());
     assert!(validate_routing_strategy("round-robin").is_ok());
-    assert!(validate_routing_strategy("weighted-round-robin").is_err());
+    assert!(validate_routing_strategy("weighted-round-robin").is_ok());
     assert!(validate_routing_strategy("fill-first").is_ok());
     assert!(validate_routing_strategy("random").is_err());
 }
@@ -1939,6 +2019,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         window_width: None,
         window_height: None,
         auth_dir: path_to_string(&fixed_oauth_dir().unwrap()),
+        auth_dir_user_selected: false,
         api_keys: vec![
             default_api_key_entry(),
             GuiApiKeyEntry {
@@ -1955,6 +2036,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         error_logs_max_files: 25,
         usage_statistics_enabled: false,
         redis_usage_queue_retention_seconds: 180,
+        usage_statistics_disabled: Some(true),
         request_log: true,
         plugins_enabled: true,
         routing_strategy: "fill-first".to_string(),
@@ -2108,4 +2190,73 @@ fn startup_merge_can_shrink_template_api_key_sequence() {
         document["remote-management"]["secret-key"],
         config.management_secret_key
     );
+}
+
+
+
+#[test]
+fn startup_merge_repairs_disabled_fields_rejected_by_native_provider_keys() {
+    let template = "config-version: 8\nhost: \"\"\nport: 8317\napi-keys:\n  codex: []\n  claude: []\n  openai-compatibility: []\n";
+    let current = "config-version: 8\nhost: 127.0.0.1\nport: 8317\napi-keys:\n  codex:\n    - name: codex-1\n      excluded-models:\n        - preview-*\n      keys:\n        - api-key: live\n        - api-key: paused\n          disabled: true\n          excluded-models:\n            - preview-*\n  claude:\n    - name: claude-1\n      disabled: true\n      keys:\n        - api-key: claude-key\n  openai-compatibility:\n    - name: relay\n      base-url: https://relay.example/v1\n      disabled: true\n      keys:\n        - api-key: relay-key\n";
+    let config = GuiConfigFile::default();
+    let merged = merge_core_config_yaml(template, Some(current), &config).unwrap();
+    let document = serde_norway::from_str::<serde_norway::Value>(&merged)
+        .unwrap_or_else(|error| panic!("invalid YAML: {error}\n{merged}"));
+
+    assert!(serde_norway::to_string(&document["api-keys"]["codex"]).unwrap().contains("disabled") == false);
+    assert_eq!(document["api-keys"]["codex"][0]["keys"][1]["excluded-models"][0], "preview-*");
+    assert_eq!(document["api-keys"]["codex"][0]["keys"][1]["excluded-models"][1], "*");
+    assert!(document["api-keys"]["claude"][0].get("disabled").is_none());
+    assert_eq!(document["api-keys"]["claude"][0]["excluded-models"][0], "*");
+    assert_eq!(document["api-keys"]["claude"][0]["keys"][0]["api-key"], "claude-key");
+    assert_eq!(document["api-keys"]["openai-compatibility"][0]["disabled"], true);
+    assert!(!merged.contains("disabled: true\n          excluded-models"));
+}
+
+#[test]
+fn v8_signed_retry_weighted_routing_and_empty_host_roundtrip() {
+    let content = "config-version: 8\nserver: {host: '', port: 8317}\nrouting: {strategy: weighted-round-robin, retry: {max-retry-interval: -1}}\nmanagement: {secret-key: ''}\n";
+    let settings = core_config_settings_from_value(&serde_norway::from_str(content).unwrap()).unwrap();
+    let mut config = GuiConfigFile::default();
+    apply_core_settings_to_gui_config(&mut config, &settings);
+    sanitize_gui_config(&mut config).unwrap();
+    validate_gui_config(&config).unwrap();
+    assert_eq!(config.host, "");
+    assert_eq!(config.max_retry_interval, -1);
+    assert_eq!(config.routing_strategy, "weighted-round-robin");
+    assert!(!ensure_strong_management_secret(&mut config).unwrap());
+    assert!(config.management_secret_key.is_empty());
+    let serialized = toml::to_string(&config).unwrap();
+    let mut restored: GuiConfigFile = toml::from_str(&serialized).unwrap();
+    assert!(!ensure_strong_management_secret(&mut restored).unwrap());
+    assert_eq!(restored.max_retry_interval, -1);
+    let saved = apply_gui_managed_settings(content, &restored).unwrap();
+    let document: serde_norway::Value = serde_norway::from_str(&saved).unwrap();
+    assert_eq!(document["server"]["host"], "");
+    assert_eq!(document["management"]["secret-key"], "");
+    assert_eq!(document["routing"]["retry"]["max-retry-interval"], -1);
+}
+
+
+#[test]
+fn explicitly_selected_auth_directory_is_not_moved_on_restart() {
+    let root = agent_test_home("selected-auth-no-migration");
+    let install_dir = root.join("cpa-core");
+    let selected = install_dir.join("oauth");
+    let persistent = root.join("oauth");
+    fs::create_dir_all(&selected).unwrap();
+    fs::write(selected.join("account.json"), "credential").unwrap();
+    let mut config = GuiConfigFile { auth_dir: "oauth".into(), auth_dir_user_selected: true, ..GuiConfigFile::default() };
+    sanitize_gui_config_at(&mut config, &install_dir, &persistent).unwrap();
+    assert_eq!(config.auth_dir, "oauth");
+    assert!(selected.join("account.json").exists());
+    assert!(!persistent.exists());
+    let config_path = root.join("selected.toml");
+    write_gui_config_to_path(&config, &config_path).unwrap();
+    let mut restored: GuiConfigFile = toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert!(restored.auth_dir_user_selected);
+    sanitize_gui_config_at(&mut restored, &install_dir, &persistent).unwrap();
+    assert_eq!(restored.auth_dir, "oauth");
+    assert!(selected.join("account.json").exists());
+    fs::remove_dir_all(root).unwrap();
 }

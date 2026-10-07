@@ -1300,6 +1300,45 @@
   min-width: 0;
 }
 
+.simple-mode-oauth-authorization {
+  min-width: 0;
+}
+
+.simple-mode-oauth-authorization .oauth-hint {
+  margin: 0 0 0.6rem;
+}
+
+.simple-mode-oauth-authorization .oauth-auth-url-actions {
+  flex-wrap: wrap;
+}
+
+.simple-mode-device-code {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.6rem;
+  margin-top: 0.8rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.65rem;
+  background: var(--bg-tertiary);
+}
+
+.simple-mode-device-code-label {
+  flex: 1 0 100%;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
+.simple-mode-device-code code {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 .simple-mode-provider-card-foot .primary-button,
 .simple-mode-provider-card-foot .secondary-button {
   min-height: 34px;
@@ -2191,7 +2230,6 @@
 }
 
 .agents-page-embedded .agent-list-items {
-  inset: 16px;
   min-height: 0;
   max-height: none;
   overflow-y: auto;
@@ -2930,8 +2968,20 @@
   }
 
   .provider-category-panel {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     height: auto;
+  }
+
+  .provider-category-panel button {
+    height: auto;
+    min-height: 48px;
+    padding-block: 8px;
+  }
+
+  .provider-category-panel span {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .provider-resource-panel {
@@ -2953,6 +3003,7 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+
   .config-network-grid,
   .config-tls-fields,
   .config-management-form,
@@ -2965,25 +3016,19 @@
     grid-template-columns: 1fr;
   }
 
-  .usage-topbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .usage-tabs {
     display: flex;
     width: 100%;
-    flex-wrap: wrap;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .usage-tabs button {
-    flex: 1 1 45%;
-    min-width: 0;
-    padding-inline: 7px;
-  }
-
-  .usage-topbar-actions {
-    width: 100%;
+    flex: 0 0 auto;
+    min-width: max-content;
+    padding-inline: 12px;
   }
 
   .usage-events-summary-left,
@@ -2992,29 +3037,7 @@
     justify-content: space-between;
   }
 
-  .usage-collector-state {
-    flex: 1;
-  }
-
   .usage-analysis-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .usage-pricing-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .usage-pricing-actions {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .usage-pricing-actions input {
-    width: 100%;
-  }
-
-  .usage-price-editor {
     grid-template-columns: 1fr;
   }
 
@@ -3220,11 +3243,13 @@
   background: var(--theme-e8e5dc);
   color: var(--theme-2d2a26);
 }
-.agent-auth-segmented-button.active {
-  background: var(--theme-fffdf8);
-  color: var(--theme-2d2a26);
+.agent-auth-segmented-button.active,
+.agent-auth-segmented-button.active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card));
+  color: var(--ui-accent);
+  border-color: transparent;
   font-weight: var(--font-weight-semibold);
-  box-shadow: 0 1px 3px rgba(45, 42, 38, 0.12);
+  box-shadow: none;
 }
 .agent-auth-segmented-button:disabled {
   cursor: not-allowed;
@@ -3441,7 +3466,7 @@
 .app-shell:has(.agents-page:not(.agents-page-embedded)) .agents-page:not(.agents-page-embedded) {
   min-height: 0;
   flex: 1 1 auto;
-  grid-template-rows: minmax(54px, auto) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -3510,7 +3535,7 @@
 
   .app-shell:has(.agents-page:not(.agents-page-embedded)) .agents-page:not(.agents-page-embedded) {
     flex: none;
-    grid-template-rows: auto auto;
+    grid-template-rows: auto;
     overflow: visible;
   }
 

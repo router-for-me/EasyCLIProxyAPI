@@ -1,0 +1,32 @@
+.structured-list, .structured-map { display: grid; gap: 12px; min-width: 0; }
+.structured-list-item, .structured-map-item { padding: 14px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-card); min-width: 0; }
+.structured-list-toolbar, .structured-map-key, .structured-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.structured-list-toolbar { margin-bottom: 10px; color: var(--text-tertiary); font-size: 12px; }
+.structured-list-toolbar > div { display: flex; gap: 2px; }
+.structured-map-key { margin-bottom: 12px; overflow-wrap: anywhere; }
+.structured-object { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 14px; min-width: 0; }
+.structured-field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.structured-field-wide { grid-column: 1 / -1; }
+.structured-label { font-size: 13px; font-weight: 600; }
+.structured-label label { overflow-wrap: anywhere; }
+.structured-field small { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; }
+.structured-field .text-input, .structured-field .select-input, .structured-map-add .text-input, .structured-any .select-input, .structured-list-item > .text-input { width: 100%; min-width: 0; }
+.structured-unset { justify-content: flex-start; color: var(--text-tertiary); white-space: normal; text-align: start; }
+.structured-add { justify-self: start; }
+.structured-map-add { display: flex; gap: 8px; flex-wrap: wrap; }
+.structured-map-add .text-input { flex: 1 1 180px; width: auto; }
+.structured-map-add .secondary-button { flex: 0 0 auto; }
+.structured-any { display: grid; gap: 8px; min-width: 0; }
+.structured-any > .select-input { max-width: 160px; }
+.structured-error { color: var(--failure-badge-text); font-size: 12px; }
+.structured-list .text-input, .structured-list .select-input,
+.structured-map .text-input, .structured-map .select-input,
+.structured-object .text-input, .structured-object .select-input,
+.structured-any > .text-input, .structured-any > .select-input {
+  box-sizing: border-box; min-width: 0; width: 100%; padding: 9px 11px;
+  border: 1px solid var(--border-color); border-radius: 8px;
+  background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 13px; line-height: 1.5;
+}
+.structured-list :is(input, select):focus-visible, .structured-map :is(input, select):focus-visible,
+.structured-object :is(input, select):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.structured-list button, .structured-map button, .structured-object button { max-width: 100%; }

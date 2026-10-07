@@ -25,7 +25,7 @@ export function AuthFileModelsDialog({ name, onClose }: AuthFileModelsDialogProp
     setLoading(true);
     setModels([]);
     setError('');
-    void managementApi.get('/auth-files/models', { name })
+    void managementApi.get('/credentials/models', { name })
       .then((payload) => { if (!cancelled) setModels(oauthModelsFromPayload(payload)); })
       .catch((requestError: unknown) => { if (!cancelled) setError(String(requestError)); })
       .finally(() => { if (!cancelled) setLoading(false); });

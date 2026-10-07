@@ -1,0 +1,106 @@
+.select-menu {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.select-menu-trigger {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) 16px;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: 100%;
+  min-height: 34px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.select-menu-trigger:hover:not(:disabled),
+.select-menu.open .select-menu-trigger {
+  border-color: var(--text-tertiary);
+  background: var(--bg-secondary);
+}
+
+.select-menu-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.select-menu-trigger strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+
+.select-menu-trigger > svg {
+  color: var(--text-tertiary);
+  transition: transform 0.16s ease;
+}
+
+.select-menu.open .select-menu-trigger > svg {
+  transform: rotate(180deg);
+}
+
+.select-menu-dropdown {
+  position: fixed;
+  z-index: 45;
+  display: grid;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 0;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  box-shadow: 0 14px 34px rgba(45, 42, 38, 0.18);
+}
+
+.select-menu-list {
+  min-height: 0;
+  overflow: auto;
+  border-radius: 8px;
+}
+
+.select-menu-option {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) 16px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.select-menu-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-meta);
+}
+
+.select-menu-option:hover,
+.select-menu-option.active {
+  background: var(--bg-secondary);
+}
+
+.select-menu-option.selected {
+  background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-card));
+}
+
+.select-menu-option > svg {
+  color: var(--primary-color);
+}

@@ -83,9 +83,79 @@
 .auth-health-record-heading strong { min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
 .auth-health-record-meta { margin: 3px 0; }
 .auth-health-hint { display: block; margin: 3px 0 0; color: var(--text-tertiary); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
+.auth-health-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color);
+}
+.auth-health-actions .auth-health-hint { flex: 1; min-width: 140px; margin: 0; }
+.auth-health-reset { flex-shrink: 0; margin-left: auto; }
 
 @media (max-width: 760px) {
   .auth-health-summary-content { flex-basis: calc(100% - 30px); }
   .auth-health-countdown { margin-left: 26px; }
   .auth-health-disclosure { margin-left: auto; }
+}
+
+/* A visible cooldown strip below the credential row, independent of file details. */
+.auth-file-health.auth-file-health-compact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0 12px;
+  grid-column: auto;
+  border: 0;
+  border-top: 1px solid var(--auth-border, var(--border-color));
+  border-radius: 0;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.auth-file-health-compact > details { min-width: 0; }
+.auth-file-health-compact > details[open] { grid-column: 1 / -1; }
+.auth-file-health-compact .auth-health-summary {
+  min-height: 38px;
+  padding: 7px 0;
+  gap: 4px 8px;
+}
+.auth-file-health-compact .auth-health-summary-content { flex: 1; flex-basis: auto; }
+.auth-file-health-compact .auth-health-icon { width: 14px; height: 14px; }
+.auth-file-health-compact .auth-health-heading { gap: 4px 8px; }
+.auth-file-health-compact .auth-health-heading strong { font-size: 12px; font-weight: 650; }
+.auth-file-health-compact .auth-health-countdown { margin: 0 0 0 auto; color: var(--text-tertiary); font-size: 11px; }
+.auth-file-health-compact .auth-health-disclosure { margin: 0; }
+.auth-file-health-compact .auth-health-body { padding: 0 0 12px; }
+.auth-file-health-compact .auth-health-records { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 20px; }
+.auth-file-health-compact .auth-health-records li { min-width: 0; padding: 10px 0; }
+.auth-file-health-compact .auth-health-record-heading { gap: 4px 10px; }
+.auth-file-health-compact .auth-health-record-heading strong { font-size: 12px; font-weight: 600; }
+.auth-file-health-compact .auth-health-record-heading > span { font-size: 11px; color: var(--text-tertiary); }
+.auth-file-health-compact .auth-health-record-meta { gap: 3px 10px; color: var(--text-secondary); font-size: 11px; }
+.auth-file-health-compact .auth-health-hint { font-size: 11px; line-height: 1.5; }
+.auth-file-health-compact .auth-health-core-state { margin: 6px 0; color: var(--text-tertiary); font-size: 11px; }
+.auth-file-health-compact .auth-health-core-message p { margin-bottom: 8px; font-size: 12px; }
+.auth-file-health-compact .auth-health-actions { padding: 4px 0; border: 0; }
+.auth-file-health-compact:has(> details[open]) .auth-health-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  padding: 8px 0;
+  border-top: 1px solid var(--auth-border, var(--border-color));
+}
+.auth-file-health-compact .auth-health-actions .auth-health-hint { display: none; }
+.auth-file-health-compact .auth-health-reset { width: auto; min-height: 28px; margin: 0; padding: 4px 8px; border-radius: 6px; box-shadow: none; font-size: 11px; }
+
+@container credential-files (max-width: 700px) {
+  .auth-file-health.auth-file-health-compact { gap: 0 8px; }
+  .auth-file-health-compact .auth-health-records { grid-template-columns: minmax(0, 1fr); }
+  .auth-file-health-compact .auth-health-summary { position: relative; padding-right: 18px; }
+  .auth-file-health-compact .auth-health-summary-content { flex-basis: calc(100% - 24px); }
+  .auth-file-health-compact .auth-health-countdown { margin: 0 0 0 22px; }
+  .auth-file-health-compact .auth-health-disclosure { position: absolute; top: 11px; right: 0; }
+  .auth-file-health-compact > details[open] .auth-health-summary-content { flex-basis: auto; }
+  .auth-file-health-compact > details[open] .auth-health-countdown { margin-left: auto; }
 }

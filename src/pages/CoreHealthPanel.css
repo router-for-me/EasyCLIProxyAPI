@@ -1,0 +1,77 @@
+.core-health-panel { min-width: 0; overflow: hidden; border: 1px solid var(--border-color); border-radius: 14px; background: var(--bg-card); }
+.core-health-entry { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; min-width: 0; }
+.core-health-entry .core-health-open { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 8px 12px; font-size: 12px; }
+.core-health-open > svg:first-child { color: var(--primary-color); }
+.core-health-entry-status { color: var(--text-quaternary); font-size: 11px; line-height: 1.6; }
+.config-dialog-backdrop.core-health-backdrop { padding: 24px; }
+.core-health-dialog { position: relative; display: flex; flex-direction: column; width: min(1080px, 100%); max-height: calc(100dvh - 48px); box-shadow: var(--ui-panel-shadow); color: var(--text-primary); }
+.core-health-dialog > :not(.core-health-table-wrap):not(.core-health-empty) { flex-shrink: 0; }
+.core-health-dialog .core-health-heading { padding-right: 66px; }
+.core-health-dialog .core-health-close { position: absolute; z-index: 2; top: 20px; right: 18px; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; }
+.core-health-dialog .core-health-table-wrap { flex: 1 1 auto; min-height: 0; max-height: min(440px, 55dvh); overscroll-behavior: contain; }
+.core-health-dialog .core-health-empty { min-height: 0; overflow-y: auto; padding-block: 40px; }
+.core-health-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 24px 18px; }
+.core-health-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.core-health-icon { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: 1px solid color-mix(in srgb, var(--primary-color) 12%, var(--border-color)); border-radius: 11px; color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 5%, var(--bg-card)); }
+.core-health-title h2 { margin: 0; font-size: 16px; font-weight: 650; line-height: 1.5; }
+.core-health-title p { margin: 3px 0 0; color: var(--text-quaternary); font-size: 12px; line-height: 1.6; }
+.core-health-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.core-health-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 12px; font-size: 12px; white-space: nowrap; }
+.core-health-panel .core-health-actions .primary-button { color: var(--ui-accent-contrast, #fff); }
+.core-health-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 0 24px 16px; }
+.core-health-search { display: flex; align-items: center; gap: 8px; width: min(330px, 100%); min-width: 0; padding: 8px 11px; border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-quaternary); background: var(--bg-primary); }
+.core-health-search:focus-within { border-color: var(--primary-color); box-shadow: 0 0 0 2px var(--ui-focus-ring); }
+.core-health-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font-size: 12px; line-height: 18px; box-shadow: none; }
+.core-health-overview { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 24px; border-top: 1px solid var(--border-secondary); background: var(--bg-tertiary); color: var(--text-quaternary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.core-health-summary { display: inline-flex; align-items: center; gap: 7px; }
+.core-health-summary-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--primary-color); }
+.core-health-progress { height: 2px; background: var(--border-secondary); }
+.core-health-progress > span { display: block; height: 100%; background: var(--primary-color); transition: width .2s ease; }
+.core-health-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 156px; padding: 24px; color: var(--text-quaternary); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
+.core-health-empty p { margin: 0; }
+.core-health-error { color: var(--error-color); }
+.core-health-table-wrap { max-height: 320px; overflow: auto; scrollbar-width: thin; }
+.core-health-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
+.core-health-table th { position: sticky; top: 0; z-index: 1; padding: 10px 12px; background: var(--bg-card); color: var(--text-quaternary); font-size: 11px; font-weight: 500; text-align: left; box-shadow: 0 1px 0 var(--border-secondary); }
+.core-health-table th:first-child { width: 38%; padding-left: 24px; }
+.core-health-table th:nth-child(2) { width: 16%; }
+.core-health-table th:nth-child(3) { width: 25%; }
+.core-health-table th:last-child { width: 52px; }
+.core-health-table td { padding: 11px 12px; border-bottom: 1px solid var(--border-secondary); vertical-align: middle; }
+.core-health-table tr:last-child td { border-bottom: 0; }
+.core-health-table td:first-child { padding-left: 24px; }
+.core-health-table td:last-child { padding-right: 24px; }
+.core-health-table tbody tr:hover { background: color-mix(in srgb, var(--bg-hover) 55%, transparent); }
+.core-health-model-name { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); font-family: var(--font-family-mono, monospace); font-weight: 500; white-space: nowrap; }
+.core-health-model-error { margin-top: 4px; color: var(--error-color); font-size: 11px; }
+.core-health-model-error summary { cursor: pointer; }
+.core-health-model-error p { margin: 6px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.5; }
+.core-health-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border-radius: 5px; color: var(--text-quaternary); background: var(--bg-tertiary); font-size: 11px; white-space: nowrap; }
+.core-health-status.healthy { color: var(--success-badge-text); background: var(--success-badge-bg); }
+.core-health-status.failed { color: var(--failure-badge-text); background: var(--failure-badge-bg); }
+.core-health-status.checking { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-card)); }
+.core-health-latency, .core-health-time { color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.core-health-latency span, .core-health-time { color: var(--text-quaternary); }
+.core-health-row-check { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-card); color: var(--primary-color); cursor: pointer; }
+.core-health-row-check:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--primary-color); }
+.core-health-row-check:disabled { opacity: .4; cursor: default; }
+.core-health-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; padding: 12px 24px; border-top: 1px solid var(--border-secondary); color: var(--text-quaternary); font-size: 11px; line-height: 1.6; }
+.core-health-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 900px) {
+  .core-health-heading { align-items: flex-start; flex-direction: column; gap: 14px; }
+  .core-health-actions { align-self: flex-end; }
+}
+@media (max-width: 640px) {
+  .config-dialog-backdrop.core-health-backdrop { padding: 12px; }
+  .core-health-dialog { max-height: calc(100dvh - 24px); }
+  .core-health-dialog .core-health-heading { padding-right: 52px; }
+  .core-health-dialog .core-health-close { top: 14px; right: 12px; }
+  .core-health-heading { padding: 18px 16px 14px; }
+  .core-health-toolbar { padding: 0 16px 14px; }
+  .core-health-search { width: 100%; }
+  .core-health-overview { padding: 10px 16px; }
+  .core-health-table { min-width: 540px; }
+  .core-health-table th:first-child, .core-health-table td:first-child { padding-left: 16px; }
+  .core-health-table td:last-child { padding-right: 16px; }
+  .core-health-footer { padding: 12px 16px; }
+}

@@ -1,0 +1,279 @@
+.agent-client-list {
+  /* The configuration panel or shell sets the height, not the full catalog. */
+  contain: size;
+}
+
+.agents-page .agent-client-list .agent-list-items {
+  gap: 4px;
+  flex: 1 1 auto;
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: none;
+  grid-auto-rows: 56px;
+  min-height: 56px;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+  padding: 0;
+}
+
+.agents-page .agent-client-list .agent-list-items button {
+  min-height: 56px;
+  height: 56px;
+  padding: 8px;
+  gap: 8px;
+}
+
+.agents-page .agent-list-items button > span {
+  gap: 2px;
+}
+
+.agents-page .agent-list-items strong {
+  font-size: var(--font-size-body);
+}
+
+.agents-page .agent-list-items strong,
+.agents-page .agent-list-items small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-client-list-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--border-primary);
+  padding-top: 10px;
+}
+
+.agent-client-pagination {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
+.agent-client-pagination > span {
+  text-align: center;
+  font-size: var(--font-size-meta);
+  color: var(--theme-8a847c);
+}
+
+.agent-client-pagination > button {
+  width: 30px;
+  height: 30px;
+}
+
+.agent-client-list-footer > .compact-button {
+  width: auto;
+}
+
+.agent-client-list-footer small,
+.agent-client-manager small,
+.agent-client-manager p,
+.agent-client-manager footer > span {
+  color: var(--theme-8a847c);
+  font-size: var(--font-size-meta);
+  line-height: 1.5;
+}
+
+.agent-client-manager {
+  box-sizing: border-box;
+  width: min(600px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 22px;
+  border: 1px solid var(--border-primary);
+  border-radius: 14px;
+  background: var(--theme-fffdf8);
+  color: var(--theme-2d2a26);
+  box-shadow: 0 24px 80px #0005;
+  overflow: auto;
+}
+
+.agent-client-manager[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.agent-client-manager::backdrop {
+  background: #0007;
+}
+
+.agent-client-manager header,
+.agent-client-manager footer,
+.agent-client-manager footer > div,
+.agent-client-manager-defaults {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-client-manager h2,
+.agent-client-manager p {
+  margin: 0;
+}
+
+.agent-client-manager h2 {
+  font-size: var(--font-size-panel-title);
+}
+
+.agent-client-manager > p {
+  flex: none;
+}
+
+.agent-client-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--theme-8a847c);
+}
+
+.agent-client-search:focus-within {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.agent-client-search input {
+  min-width: 0;
+  width: 100%;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+
+.agent-client-catalog {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px;
+  min-height: 80px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 3px;
+}
+
+.agent-client-catalog > p {
+  grid-column: 1 / -1;
+  padding-block: 20px;
+  text-align: center;
+}
+
+.agent-client-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.agent-client-option:has(input:checked) {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+}
+
+.agent-client-option:focus-within {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+
+.agent-client-option input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ui-accent);
+}
+
+.agent-client-option .agent-client-icon {
+  flex: none;
+}
+
+.agent-client-option .provider-logo {
+  width: 24px;
+  height: 24px;
+}
+
+.agent-client-option-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.agent-client-option-copy strong {
+  font-size: var(--font-size-body);
+  overflow-wrap: anywhere;
+}
+
+.agent-client-option-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-client-manager-defaults {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.agent-client-manager footer {
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border-primary);
+  padding-top: 14px;
+}
+
+.agent-client-manager footer > div {
+  margin-left: auto;
+}
+
+@media (max-width: 520px) {
+  .agent-client-manager {
+    padding: 16px;
+  }
+
+  .agent-client-catalog {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container agent-workspace (max-width: 760px) {
+  .agents-page:not(.agents-page-embedded) .agent-client-list,
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-client-list {
+    contain: none;
+    height: 270px;
+    max-height: 270px;
+  }
+}
+
+/* These three compact controls fit side by side at ordinary desktop widths. */
+@container agent-panel (min-width: 620px) and (max-width: 760px) {
+  .agent-claude-desktop-mapping-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .agent-claude-code-runtime-settings {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);
+  }
+
+  .agent-claude-code-disable-compact {
+    grid-column: auto;
+  }
+}

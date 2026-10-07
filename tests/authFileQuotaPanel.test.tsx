@@ -40,6 +40,46 @@ it('never renders nonfinite percentages on Quota lookup', () => {
   expect(html).not.toContain('role="progressbar"');
 });
 
+it('shows every reset expiry in chronological order, including duplicates, on both surfaces', () => {
+  const quota: QuotaState = {
+    status: 'success', rows: [], resetCredits: 3,
+    resetCreditExpiries: ['2030-12-20T00:00:00Z', '2030-10-10T00:00:00Z', '2030-10-10T00:00:00Z'],
+  };
+  const file = { name: 'codex.json', provider: 'codex' };
+  for (const content of [
+    <AuthFileQuotaPanel file={file} quota={quota} disabled={false} compact dense onRefresh={() => {}} />,
+    <QuotaCard file={file} quota={quota} onRefresh={() => {}} />,
+  ]) {
+    const html = renderToStaticMarkup(<I18nProvider>{content}</I18nProvider>);
+    expect(html.match(/<li>/g)).toHaveLength(3);
+    expect(html).toContain('Reset 3 expires');
+    expect(html).not.toContain('Earliest expiry');
+    expect(html.indexOf('10/10/2030')).toBeLessThan(html.indexOf('12/20/2030'));
+  }
+});
+
+it('shows the OAuth credential priority on the quota card', () => {
+  const html = renderToStaticMarkup(<I18nProvider><QuotaCard
+    file={{ name: 'priority.json', provider: 'codex', priority: 7 }}
+    quota={{ status: 'success', rows: [] }} onRefresh={() => {}}
+  /></I18nProvider>);
+  expect(html).toContain('Priority 7');
+  expect(html).not.toContain('Priority 0');
+});
+
+it('normalizes a string priority and keeps zero as the default', () => {
+  const stringPriority = renderToStaticMarkup(<I18nProvider><QuotaCard
+    file={{ name: 'priority.json', provider: 'codex', priority: '3' }}
+    quota={{ status: 'idle', rows: [] }} onRefresh={() => {}}
+  /></I18nProvider>);
+  const missingPriority = renderToStaticMarkup(<I18nProvider><QuotaCard
+    file={{ name: 'default.json', provider: 'codex' }}
+    quota={{ status: 'idle', rows: [] }} onRefresh={() => {}}
+  /></I18nProvider>);
+  expect(stringPriority).toContain('Priority 3');
+  expect(missingPriority).toContain('Priority 0');
+});
+
 it('renders real quota values with bounded bars and keeps unknown distinct from zero', () => {
   const html = render({ status: 'success', rows: [
     { label: 'empty', remainingPercent: 0 }, { label: 'full', remainingPercent: 100 },

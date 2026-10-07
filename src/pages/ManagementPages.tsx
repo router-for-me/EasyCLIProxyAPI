@@ -14,6 +14,7 @@ import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
+import metaIcon from '../assets/icons/meta.svg';
 import { useI18n } from '../i18n';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { oauthSubpages, type OAuthSubpage } from '../oauthNavigation';
@@ -28,15 +29,17 @@ import {
   shouldShowOAuthLoginStatus,
 } from '../services/oauthLoginState';
 import { AuthFileManagementPage } from './AuthFileManagementPage';
-import { QuotaPage } from './QuotaPage';
 import { validateDevinCallback } from '../services/devinOAuth';
 import { handleHorizontalTabKey } from '../components/tabKeyboardNavigation';
+import { PluginOAuthProviders } from './PluginOAuthProviders';
+import { notifyPluginResourcesChanged } from '../services/pluginResources';
 
-type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'devin';
+type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'devin' | 'meta';
 type OAuthFlowStatus = 'idle' | 'waiting' | 'success' | 'error';
 
 type OAuthProviderState = {
   url?: string;
+  userCode?: string;
   state?: string;
   status: OAuthFlowStatus;
   error?: string;
@@ -51,6 +54,9 @@ type OAuthProviderState = {
 type OAuthStartResult = {
   url: string;
   state?: string | null;
+  userCode?: string | null;
+  flow?: string | null;
+  expiresIn?: number | null;
   opened: boolean;
   openError?: string | null;
 };
@@ -72,6 +78,7 @@ const oauthProviders = [
   { id: 'kimi' as const, name: 'Kimi OAuth', icon: kimiIcon },
   { id: 'xai' as const, name: 'xAI OAuth', icon: grokIcon },
   { id: 'devin' as const, name: 'Devin OAuth', icon: devinIcon },
+  { id: 'meta' as const, name: 'Muse (Meta) OAuth', icon: metaIcon },
 ];
 
 const OAUTH_CALLBACK_SUPPORTED = new Set<OAuthProviderId>([
@@ -81,6 +88,7 @@ const OAUTH_CALLBACK_SUPPORTED = new Set<OAuthProviderId>([
   'xai',
   'devin',
 ]);
+const BUILTIN_OAUTH_PROVIDER_IDS = oauthProviders.map(provider => provider.id);
 const XAI_CALLBACK_URL = 'http://127.0.0.1:56121/callback';
 const OAUTH_POLL_INTERVAL_MS = 3000;
 const OAUTH_BROWSER_STORAGE_KEY = 'easy-cli-proxy-api.oauth-browser.v3';
@@ -163,7 +171,6 @@ export function OAuthManagementPage() {
       >
         {activeSubpage === 'login' ? <OAuthLoginPage /> : null}
         {activeSubpage === 'authFiles' ? <AuthFileManagementPage /> : null}
-        {activeSubpage === 'quota' ? <QuotaPage /> : null}
       </div>
     </section>
   );
@@ -242,6 +249,7 @@ export function OAuthLoginPage() {
       updateProviderState(provider, {
         url: undefined,
         state: undefined,
+        userCode: undefined,
         status: 'success',
         error: undefined,
         polling: false,
@@ -255,7 +263,7 @@ export function OAuthLoginPage() {
   );
 
   const captureCredentialSnapshot = useCallback(async (provider: OAuthProviderId) => {
-    const payload = await managementApi.get('/auth-files');
+    const payload = await managementApi.get('/credentials');
     credentialSnapshots.current[provider] = snapshotAuthFiles(responseList(payload, 'files'));
   }, []);
 
@@ -264,9 +272,9 @@ export function OAuthLoginPage() {
     delete credentialSnapshots.current[provider];
     if (!before) return;
 
-    const payload = await managementApi.get('/auth-files');
+    const payload = await managementApi.get('/credentials');
     const names = changedOAuthAuthFileNames(before, responseList(payload, 'files'), provider);
-    await Promise.all(names.map((name) => managementApi.patch('/auth-files/fields', {
+    await Promise.all(names.map((name) => managementApi.patch('/credentials/fields', {
       name,
       priority: 0,
     })));
@@ -349,6 +357,7 @@ export function OAuthLoginPage() {
     updateProviderState(provider, {
       url: undefined,
       state: undefined,
+      userCode: undefined,
       status: 'waiting',
       polling: true,
       error: undefined,
@@ -378,6 +387,7 @@ export function OAuthLoginPage() {
       updateProviderState(provider, {
         url: result.url,
         state: result.state,
+        userCode: result.userCode ?? undefined,
         status: 'waiting',
         polling: true,
       });
@@ -408,7 +418,7 @@ export function OAuthLoginPage() {
     updateProviderState(provider, { refreshing: true });
     try {
       if (currentState) {
-        await managementApi.delete('/oauth-session', { query: { state: currentState } });
+        await managementApi.delete('/oauth/session', { query: { state: currentState } });
       }
     } catch (error) {
       if (provider === 'devin') {
@@ -445,6 +455,16 @@ export function OAuthLoginPage() {
       showNotice({ key: 'oauth.linkCopied' }, 'success');
     } catch {
       showNotice({ key: 'oauth.linkCopyFailed' }, 'error');
+    }
+  };
+
+  const copyDeviceCode = async (code?: string) => {
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      showNotice({ key: 'oauth.deviceCodeCopied' }, 'success');
+    } catch {
+      showNotice({ key: 'oauth.deviceCodeCopyFailed' }, 'error');
     }
   };
 
@@ -500,9 +520,8 @@ export function OAuthLoginPage() {
   };
 
   return (
-    <section className="page management-page">
+    <section className="page management-page oauth-login-page">
       <header className="management-header">
-        <div><h1>{t('oauth.title')}</h1></div>
         <label className="oauth-browser-picker">
           <span>{t('oauth.browser.label')}</span>
           <select
@@ -519,8 +538,10 @@ export function OAuthLoginPage() {
             ))}
             <option value={NO_AUTO_OPEN_BROWSER_ID}>{t('oauth.browser.noAutoOpen')}</option>
           </select>
-          <small>{t('oauth.browser.remembered')}</small>
         </label>
+        <button type="button" className="secondary-button" onClick={notifyPluginResourcesChanged}>
+          <RefreshCw size={16} aria-hidden="true" />{t('common.refresh')}
+        </button>
       </header>
 
       <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
@@ -548,7 +569,7 @@ export function OAuthLoginPage() {
               </div>
 
               <div className="oauth-card-body">
-                <p className="oauth-hint">{t(provider.id === 'devin' ? 'oauth.devinHint' : 'oauth.hint')}</p>
+                <p className="oauth-hint">{t(provider.id === 'devin' ? 'oauth.devinHint' : provider.id === 'meta' ? 'oauth.metaHint' : 'oauth.hint')}</p>
                 {state.url ? (
                   <div className="oauth-auth-url-box">
                     <div className="oauth-auth-url-label">{t('oauth.authorizationLink')}</div>
@@ -561,6 +582,15 @@ export function OAuthLoginPage() {
                         <ExternalLink size={15} aria-hidden="true" />{t('oauth.openLink')}
                       </button>
                     </div>
+                    {state.userCode ? (
+                      <div className="oauth-device-code-box">
+                        <div className="oauth-auth-url-label">{t('oauth.deviceCodeLabel')}</div>
+                        <div className="oauth-device-code-value">{state.userCode}</div>
+                        <button type="button" className="secondary-button compact-button" onClick={() => void copyDeviceCode(state.userCode)}>
+                          <Copy size={15} aria-hidden="true" />{t('oauth.copyDeviceCode')}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -603,6 +633,10 @@ export function OAuthLoginPage() {
             </section>
           );
         })}
+        <PluginOAuthProviders
+          builtInProviderIds={BUILTIN_OAUTH_PROVIDER_IDS}
+          browser={selectedBrowser === NO_AUTO_OPEN_BROWSER_ID ? 'default' : selectedBrowser || 'default'}
+        />
       </div>
     </section>
   );

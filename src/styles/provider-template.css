@@ -1,0 +1,17 @@
+.provider-template-fields, .provider-template-rules { display: grid; min-width: 0; gap: 12px; }
+.provider-template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 12px; min-width: 0; }
+.provider-template-field { display: grid; align-content: start; min-width: 0; gap: 6px; }
+.provider-template-field small { color: var(--text-secondary); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.provider-template-field :is(input, textarea, select), .provider-template-rule :is(input, select) { min-width: 0; max-width: 100%; width: 100%; box-sizing: border-box; }
+.provider-template-section { min-width: 0; padding: 10px 12px; border: 1px solid var(--theme-e8e4dc); border-radius: 8px; }
+.provider-template-section summary { cursor: pointer; font-size: 12px; overflow-wrap: anywhere; }
+.provider-template-section[open] > :not(summary) { margin-top: 12px; }
+.api-provider-dialog .provider-template-toggle { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.api-provider-dialog .provider-template-toggle input { width: 16px; height: 16px; flex-shrink: 0; }
+.api-provider-dialog .provider-template-toggle span { overflow-wrap: anywhere; }
+.provider-template-rule { margin: 0; padding: 10px; border: 1px solid var(--theme-e8e4dc); border-radius: 8px; min-width: 0; }
+.provider-template-rule legend { font-size: 11px; padding: 0 4px; }
+.provider-template-rule > button { margin-top: 10px; }
+.provider-model-config { display: grid; gap: 6px; min-width: 0; }
+.provider-template-section select, .provider-template-field select { min-height: 36px; border: 1px solid var(--theme-e8e4dc); border-radius: 7px; background: var(--bg-primary); color: var(--text-primary); padding: 5px 8px; font: inherit; }
+.api-provider-dialog .provider-template-fields { grid-column: 1 / -1; }

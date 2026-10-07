@@ -106,3 +106,106 @@
   left: auto;
   transform: none;
 }
+
+.auth-file-requests.auth-file-requests-compact {
+  grid-column: auto;
+  gap: 6px;
+  align-content: center;
+}
+
+.auth-file-requests-compact .auth-file-requests-latest {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.auth-file-requests-compact .auth-file-requests-chart {
+  flex-basis: 100%;
+  max-width: none;
+}
+
+.auth-file-requests-compact .auth-file-requests-blocks {
+  gap: 2px;
+}
+
+.auth-file-requests-compact .auth-file-request-block {
+  height: 16px;
+}
+
+.auth-file-requests-compact .auth-file-requests-tooltip {
+  max-width: min(280px, 80vw);
+}
+
+.auth-file-requests.auth-file-requests-summary {
+  grid-column: auto;
+  align-content: start;
+  gap: 5px;
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.auth-file-requests-summary .auth-file-requests-heading {
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.auth-file-requests-summary .auth-file-requests-heading > span:first-child {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.auth-file-requests-summary .auth-file-requests-heading > .auth-file-requests-counts {
+  min-width: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 8px;
+  font-weight: 550;
+}
+
+.auth-file-requests-summary .auth-file-requests-heading > .auth-file-requests-counts > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-file-requests-summary .auth-file-requests-timeline {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.auth-file-requests-summary .auth-file-requests-chart {
+  flex: 1 1 0;
+  max-width: none;
+}
+
+.auth-file-requests-summary .auth-file-requests-blocks {
+  gap: 2px;
+}
+
+.auth-file-requests-summary .auth-file-request-block {
+  height: 14px;
+}
+
+.auth-file-requests-summary .auth-file-requests-rate {
+  flex: 0 0 42px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.auth-file-requests-summary .auth-file-requests-unavailable {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.auth-file-requests-summary .auth-file-requests-tooltip {
+  max-width: min(300px, 80vw);
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+}

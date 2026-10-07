@@ -722,6 +722,14 @@ pub(crate) async fn fetch_agent_models(
     port: u16,
     api_key: &str,
 ) -> Result<Vec<AgentModelOption>, String> {
+    let payload = fetch_agent_model_payload(port, api_key).await?;
+    parse_agent_model_options(&payload)
+}
+
+pub(crate) async fn fetch_agent_model_payload(
+    port: u16,
+    api_key: &str,
+) -> Result<serde_json::Value, String> {
     if port == 0 {
         return Err("Invalid kernel port".to_string());
     }
@@ -760,7 +768,7 @@ pub(crate) async fn fetch_agent_models(
                     truncate_for_error(&body)
                 )
             })?;
-            return parse_agent_model_options(&payload);
+            return Ok(payload);
         }
 
         let can_try_legacy_path = index == 0 && matches!(status.as_u16(), 404 | 405);
@@ -831,10 +839,12 @@ pub(crate) async fn fetch_codex_catalog_runtime_models(
     config: &GuiConfigFile,
 ) -> Result<Vec<codex_catalog::CodexRuntimeModel>, String> {
     let (runtime, content) = tokio::join!(
-        fetch_codex_runtime_models(config.port, effective_agent_api_key(config)),
+        fetch_agent_model_payload(config.port, effective_agent_api_key(config)),
         fetch_management_config_yaml(config),
     );
-    let mut runtime = runtime?;
+    // Codex selection and its written catalog must use the public /v1/models
+    // IDs, not the alternate catalog selected by client_version.
+    let mut runtime = codex_catalog::parse_public_models(&runtime?)?;
     codex_catalog::apply_configured_context_limits(&mut runtime, &content?)?;
     Ok(runtime)
 }
@@ -1030,6 +1040,8 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
         max_context_tokens: requested.max_context_tokens,
         auto_compact_pct: requested.auto_compact_pct,
         disable_auto_compact: requested.disable_auto_compact,
+        manage_default_model: requested.manage_default_model,
+        manage_subagent_model: requested.manage_subagent_model,
     }))
 }
 
@@ -1067,6 +1079,8 @@ pub(crate) fn resolve_claude_code_model_mappings(
         max_context_tokens,
         auto_compact_pct: requested.auto_compact_pct,
         disable_auto_compact: requested.disable_auto_compact,
+        manage_default_model: requested.manage_default_model,
+        manage_subagent_model: requested.manage_subagent_model,
     }))
 }
 

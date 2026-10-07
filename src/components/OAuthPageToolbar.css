@@ -1,0 +1,91 @@
+.oauth-page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  min-width: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+
+.oauth-page-toolbar-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.oauth-page-toolbar-icon {
+  display: inline-flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--ui-accent-soft);
+  color: var(--primary-color);
+}
+
+.oauth-page-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.oauth-page-toolbar-actions > button {
+  flex: 0 0 auto;
+  gap: 7px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 12px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.oauth-page-toolbar-actions > .primary-button {
+  color: var(--primary-contrast);
+}
+
+.oauth-page-toolbar .oauth-page-toolbar-actions > button.oauth-toolbar-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.oauth-page-toolbar .oauth-page-toolbar-actions > button.oauth-toolbar-quiet:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.oauth-page-toolbar-actions > button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 3px;
+}
+
+@container workspace (max-width: 760px) {
+  .oauth-page-toolbar {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .oauth-page-toolbar-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+  }
+}

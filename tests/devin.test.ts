@@ -67,7 +67,7 @@ describe('Devin live quota', () => {
     expect(get).not.toHaveBeenCalled();
     expect(post).toHaveBeenCalledTimes(1);
     const [path, body] = post.mock.calls[0];
-    expect(path).toBe('/api-call');
+    expect(path).toBe('/requests/api-call');
     expect(body).toMatchObject({ authIndex: 'devin-index', method: 'POST', url: 'https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetUserStatus', header: { 'Content-Type': 'application/json', 'Connect-Protocol-Version': '1' } });
     expect(JSON.parse((body as { data: string }).data)).toEqual({ metadata: { ideName: 'chisel', ideVersion: '3000.10.21', apiKey: '$TOKEN$', locale: 'en', os: 'darwin', extensionVersion: '3000.10.21', clientName: 'chisel' } });
     await loadQuota(file);
@@ -84,7 +84,7 @@ describe('Devin live quota', () => {
   it('reports upstream errors and empty successful responses', async () => {
     const post = spyOn(managementApi, 'post').mockResolvedValue({ status_code: 401, body: { error: 'expired' } } as never);
     mocks.push(post);
-    expect(await loadQuota(file)).toMatchObject({ status: 'error', rows: [], error: 'expired' });
+    expect(await loadQuota(file)).toMatchObject({ status: 'error', rows: [], error: 'HTTP 401: expired' });
     post.mockResolvedValue({ status_code: 200, body: liveStatus({ planInfo: { planName: 'Pro' } }) } as never);
     expect(await loadQuota(file)).toMatchObject({ status: 'error', rows: [] });
   });
@@ -95,15 +95,15 @@ it('loads and saves Devin model exclusions under its own provider channel', asyn
   const api = {
     get: async (path: string) => {
       calls.push(path);
-      return path === '/model-definitions/devin'
+      return path === '/routing/model-definitions/devin'
         ? { models: [{ id: 'devin/swe-2', display_name: 'SWE-2' }] }
-        : { 'oauth-excluded-models': { devin: ['devin/old'] } };
+        : { devin: ['devin/old'] };
     },
     patch: async (path: string, body: Record<string, unknown>) => { calls.push([path, body]); },
-    delete: async () => {},
+    put: async (path: string, body: Record<string, unknown>) => { calls.push([path, body]); },
   };
   const settings = await loadOAuthModelSettings({ scope: 'provider', provider: 'devin', label: 'Devin' }, api);
   expect(settings.models.map((model) => model.id)).toEqual(['devin/old', 'devin/swe-2']);
   await saveOAuthModelSettings(settings, ['devin/swe-2'], api);
-  expect(calls).toContainEqual(['/oauth-excluded-models', { provider: 'devin', models: ['devin/swe-2'] }]);
+  expect(calls).toContainEqual(['/config/oauth/excluded-models', { devin: ['devin/swe-2'] }]);
 });

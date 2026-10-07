@@ -30,9 +30,9 @@ const desktopViewports = [
         waitUntil: 'domcontentloaded',
         timeout: 30000,
       });
-      await page.waitForFunction(() => window.fixtureCalls.some(call => call.cmd === 'get_agent_config_statuses')
+      await page.waitForFunction(() => window.fixtureCalls?.some(call => call.cmd === 'get_agent_config_statuses')
         && document.querySelector('.agent-config-panel')?.getBoundingClientRect().height > 0
-        && !document.querySelector('.agent-header-actions button')?.disabled);
+        && !document.querySelector('.agent-client-list-heading button')?.disabled);
       await page.evaluate(() => document.fonts.ready);
     };
 
@@ -119,39 +119,34 @@ const desktopViewports = [
         assert.deepEqual(metrics.controlsOutside, [], `${label}: every visible control must remain inside the panel`);
         const tabs = await page.locator('.agent-subpage-tabs').evaluateAll(nodes => nodes
           .filter(node => getComputedStyle(node).display !== 'none')
-          .map(node => node.getBoundingClientRect().height));
-        assert.ok(tabs.every(height => height >= 40), `${label}: the tab bar must retain its full height`);
+          .map(node => ({
+            height: node.getBoundingClientRect().height,
+            buttonHeights: Array.from(node.querySelectorAll('[role="tab"]'))
+              .map(button => button.getBoundingClientRect().height),
+          })));
+        assert.ok(tabs.every(({ height, buttonHeights }) => height >= 39 && buttonHeights.every(value => value >= 38)),
+          `${label}: the tab bar must retain its 38px buttons and 1px bottom border`);
       }
       return metrics;
     };
 
-    const assertClientListScroll = async (label, { requireOverflow = true } = {}) => {
+    const assertClientPage = async label => {
       const metrics = await page.locator('.agent-list-items').evaluate(list => {
-        const style = getComputedStyle(list);
-        const last = list.lastElementChild;
-        list.scrollTop = list.scrollHeight;
-        const scrollTop = list.scrollTop;
-        const listRect = list.getBoundingClientRect();
-        const lastRect = last?.getBoundingClientRect();
-        const lastReachable = !!lastRect && lastRect.top >= listRect.top - 1 && lastRect.bottom <= listRect.bottom + 1;
-        list.scrollTop = 0;
-        return {
-          clientHeight: list.clientHeight,
-          scrollHeight: list.scrollHeight,
-          overflowY: style.overflowY,
-          scrollTop,
-          lastReachable,
-        };
+        const rect = list.getBoundingClientRect();
+        const buttons = Array.from(list.querySelectorAll('button'));
+        return { count: buttons.length,
+          overflow: list.scrollHeight > list.clientHeight + 1 || list.scrollWidth > list.clientWidth + 1,
+          clipped: buttons.filter(button => {
+            const r = button.getBoundingClientRect();
+            return r.top < rect.top - 1 || r.bottom > rect.bottom + 1 || r.left < rect.left - 1 || r.right > rect.right + 1;
+          }).map(button => button.textContent) };
       });
-      assert.equal(metrics.overflowY, 'auto', `${label}: the client list must own vertical scrolling`);
-      if (requireOverflow) {
-        assert.ok(metrics.scrollHeight > metrics.clientHeight + 1, `${label}: the complete client list must overflow internally`);
-        assert.ok(metrics.scrollTop > 0, `${label}: the client list must accept scrolling`);
-      }
-      assert.equal(metrics.lastReachable, true, `${label}: scrolling must reveal the final client`);
+      assert.ok(metrics.count >= 1 && metrics.count <= 13, `${label}: render a nonempty client page`);
+      assert.equal(metrics.overflow, false, `${label}: each client page must fit without scrolling`);
+      assert.deepEqual(metrics.clipped, [], `${label}: no client row may be clipped`);
     };
 
-    const assertDesktopLayout = async (label, { requireClientOverflow = true } = {}) => {
+    const assertDesktopLayout = async label => {
       const [clientList, configuration] = await page.locator('.agent-client-list, .agent-config-panel')
         .evaluateAll(nodes => nodes.map(node => {
           const rect = node.getBoundingClientRect();
@@ -164,7 +159,7 @@ const desktopViewports = [
       assert.ok(Math.abs(clientList.y - configuration.y) <= 1,
         `${label}: the desktop panels must share a top edge`);
       await assertNaturalPanel(label);
-      await assertClientListScroll(label, { requireOverflow: requireClientOverflow });
+      await assertClientPage(label);
       return { clientList, configuration };
     };
 
@@ -180,7 +175,7 @@ const desktopViewports = [
       assert.ok(clientList.y + clientList.height <= configuration.y + 1,
         `${label}: the client list must stay above the configuration panel`);
       await assertNaturalPanel(label, { checkControls: false });
-      await assertClientListScroll(label);
+      await assertClientPage(label);
       const pageWidth = await page.evaluate(() => ({
         clientWidth: document.documentElement.clientWidth,
         scrollWidth: document.documentElement.scrollWidth,
@@ -272,7 +267,7 @@ const desktopViewports = [
       if (metrics.tabRect) {
         assert.equal(metrics.tabInsideRegion, false,
           `${label}: tabs must stay fixed above, not inside, the scrolling content region`);
-        assert.ok(metrics.tabRect.height >= 40 && metrics.tabHeights.every(height => height >= 34),
+        assert.ok(metrics.tabRect.height >= 39 && metrics.tabHeights.every(height => height >= 38),
           `${label}: the tab bar and tab buttons must retain their full height`);
         assert.ok(metrics.tabRect.top >= metrics.panelRect.top - 1
           && metrics.tabRect.bottom <= metrics.panelRect.bottom + 1,
@@ -329,7 +324,7 @@ const desktopViewports = [
         `${label}: fixed-height desktop layout must not create a far-right page scrollbar`);
       assert.ok(metrics.documentScrollWidth <= metrics.documentClientWidth + 1,
         `${label}: fixed-height desktop layout must not create horizontal page scrolling`);
-      await assertClientListScroll(label, { requireOverflow: requireRightOverflow });
+      await assertClientPage(label);
       await assertShellScrollRegion(label, { requireOverflow: requireRightOverflow });
       return metrics;
     };
@@ -340,7 +335,6 @@ const desktopViewports = [
     };
 
     const textFlow = { full: {}, embedded: {} };
-    const naturalHeight = { full: {}, embedded: {} };
     for (const viewport of desktopViewports) {
       await page.setViewportSize(viewport);
       for (const embedded of [false, true]) {
@@ -348,25 +342,39 @@ const desktopViewports = [
           await open({ client, embedded });
           await openSubpage('基础配置');
           const label = `${viewport.width}x${viewport.height}/${embedded ? 'embedded' : 'full'}/${client}/core`;
-          const core = await assertDesktopLayout(label);
+          await assertDesktopLayout(label);
           if (client === 'zcode' && viewport.height === 941) {
-            naturalHeight[embedded ? 'embedded' : 'full'][viewport.width] = core.configuration.height;
-            const status = page.locator('.agent-list-items button').filter({ hasText: 'Antigravity CLI' }).locator('small');
-            await status.evaluate(node => {
-              node.textContent = '当前设备已检测到本地智能体客户端，可以直接从此页面启动';
-            });
+            const status = page.locator('.agent-list-items button').filter({ hasText: 'ZCode' }).locator('small');
+            const longModel = 'gemini-3.8-flash-high-with-a-long-client-status-for-layout-verification';
+            await page.evaluate(model => {
+              window.fixtureClientStatusesOverride = { 'zcode': { appliedModel: model } };
+            }, longModel);
+            await page.locator('.agent-client-list-heading button').click();
+            await page.waitForFunction(model => Array.from(document.querySelectorAll('.agent-list-items small'))
+              .some(node => node.textContent.includes(model)), longModel);
             const flow = await status.evaluate(node => ({
               width: node.getBoundingClientRect().width,
               height: node.getBoundingClientRect().height,
-              fits: node.scrollWidth <= node.clientWidth + 1 && node.scrollHeight <= node.clientHeight + 1,
+              rowHeight: node.closest('button').getBoundingClientRect().height,
+              overflows: node.scrollWidth > node.clientWidth + 1,
+              fitsVertically: node.scrollHeight <= node.clientHeight + 1,
               whiteSpace: getComputedStyle(node).whiteSpace,
+              overflow: getComputedStyle(node).overflow,
+              textOverflow: getComputedStyle(node).textOverflow,
+              title: node.title,
+              text: node.textContent,
             }));
-            assert.equal(flow.fits, true, `${label}: client status text must wrap without clipping`);
-            assert.equal(flow.whiteSpace, 'normal', `${label}: client status text must use responsive wrapping`);
-            const afterWrap = await page.locator('.agent-client-list, .agent-config-panel')
+            assert.equal(flow.overflows, true, `${label}: the long status fixture must exercise text truncation`);
+            assert.equal(flow.fitsVertically, true, `${label}: client status text must fit on one line`);
+            assert.equal(flow.whiteSpace, 'nowrap', `${label}: client status text must remain on one line`);
+            assert.equal(flow.overflow, 'hidden', `${label}: long client status text must stay within its row`);
+            assert.equal(flow.textOverflow, 'ellipsis', `${label}: truncated client status text must show an ellipsis`);
+            assert.equal(flow.title, flow.text, `${label}: the title must retain the full client status text`);
+            assert.ok(flow.title.includes(longModel), `${label}: the title must include the full long model name`);
+            const afterTruncation = await page.locator('.agent-client-list, .agent-config-panel')
               .evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
-            assert.ok(Math.abs(afterWrap[0] - afterWrap[1]) <= 1,
-              `${label}: wrapped client text must not break equal panel heights`);
+            assert.ok(Math.abs(afterTruncation[0] - afterTruncation[1]) <= 1,
+              `${label}: truncated client text must not break equal panel heights`);
             textFlow[embedded ? 'embedded' : 'full'][viewport.width] = flow;
           }
 
@@ -379,10 +387,10 @@ const desktopViewports = [
     for (const mode of ['full', 'embedded']) {
       assert.ok(textFlow[mode][900].width < textFlow[mode][1280].width,
         `${mode}: client text width must follow the proportional sidebar`);
-      assert.ok(textFlow[mode][900].height > textFlow[mode][1280].height,
-        `${mode}: client text must reflow as the proportional sidebar narrows`);
-      assert.ok(naturalHeight[mode][900] > naturalHeight[mode][1280],
-        `${mode}: the natural panel height must grow when its content reflows at a narrower width`);
+      assert.ok(Math.abs(textFlow[mode][900].height - textFlow[mode][1280].height) <= 1,
+        `${mode}: client status must retain a single line as the proportional sidebar narrows`);
+      assert.ok(Math.abs(textFlow[mode][900].rowHeight - textFlow[mode][1280].rowHeight) <= 1,
+        `${mode}: compact client rows must retain their height as the proportional sidebar narrows`);
     }
 
     // In the real application shell, the desktop workbench fills the same bounded content area as Usage records.
@@ -394,7 +402,9 @@ const desktopViewports = [
       await open({ client: 'claude-desktop', shell: true });
       await openSubpage('基础配置');
       const label = `${viewport.width}x${viewport.height}/shell/claude-desktop/core`;
-      const metrics = await assertFixedShellDesktop(label, { requireRightOverflow: height === 700 });
+      const metrics = await assertFixedShellDesktop(label, {
+        requireRightOverflow: height === 700,
+      });
       fixedShellByHeight.set(height, metrics);
     }
     const fixedShellEntries = [...fixedShellByHeight.entries()];
@@ -410,22 +420,27 @@ const desktopViewports = [
         `${viewportHeight}px shell: vertical resizing must not move the workbench top edge`);
     }
 
-    // A 900px window still uses the bounded shell, but its usable workspace crosses the one-column breakpoint.
-    await page.setViewportSize({ width: 900, height: 941 });
+    // A 790px window keeps the bounded shell while its padded workspace crosses the 760px container breakpoint.
+    await page.setViewportSize({ width: 790, height: 941 });
     await open({ client: 'claude-desktop', shell: true });
     await openSubpage('基础配置');
-    const shellNarrowLabel = '900x941/shell/claude-desktop/core';
+    const shellNarrowLabel = '790x941/shell/claude-desktop/core';
+    const shellWorkspaceWidth = await page.locator('.agents-page').evaluate(node => node.clientWidth);
+    assert.ok(shellWorkspaceWidth <= 760,
+      `${shellNarrowLabel}: the usable workspace must cross the 760px container breakpoint`);
     const shellNarrow = await shellLayoutMetrics();
     assert.ok(Math.abs(shellNarrow.client.x - shellNarrow.configuration.x) <= 1
       && Math.abs(shellNarrow.client.width - shellNarrow.configuration.width) <= 1,
     `${shellNarrowLabel}: panels must stack at the same width after the workspace breakpoint`);
     assert.ok(shellNarrow.client.bottom <= shellNarrow.configuration.y + 1,
       `${shellNarrowLabel}: the client list must remain above the configuration panel`);
+    assert.ok(shellNarrow.configuration.height >= shellNarrow.workbench.height / 2,
+      `${shellNarrowLabel}: stacked client options must leave most of the workbench available for configuration`);
     assert.ok(Math.abs(shellNarrow.bottomGap - shellNarrow.paddingBottom) <= 1,
       `${shellNarrowLabel}: the stacked workbench must preserve the fixed window-edge gap`);
     assert.ok(shellNarrow.documentScrollHeight <= shellNarrow.documentClientHeight + 1,
       `${shellNarrowLabel}: the bounded one-column shell must not leak scrolling to the page`);
-    await assertClientListScroll(shellNarrowLabel);
+    await assertClientPage(shellNarrowLabel);
     await assertShellScrollRegion(shellNarrowLabel);
 
     // At phone width the shell follows Usage records and returns to natural document scrolling.
@@ -441,7 +456,7 @@ const desktopViewports = [
       `${shellPhoneLabel}: phone-width client list must remain above configuration content`);
     assert.ok(shellPhone.documentScrollWidth <= shellPhone.documentClientWidth + 1,
       `${shellPhoneLabel}: natural document flow must not create horizontal scrolling`);
-    await assertClientListScroll(shellPhoneLabel);
+    await assertClientPage(shellPhoneLabel);
     await assertShellScrollRegion(shellPhoneLabel, { natural: true });
 
     for (const viewport of [{ width: 640, height: 700 }, { width: 360, height: 941 }]) {
@@ -470,7 +485,7 @@ const desktopViewports = [
       await tab('会话管理').click();
       await page.locator('.codex-session-row').first().waitFor();
       const label = `${viewport.width}x${viewport.height}/full/codex/sessions`;
-      await assertDesktopLayout(label, { requireClientOverflow: false });
+      await assertDesktopLayout(label);
       const sessions = await page.locator('.codex-session-list').evaluate(list => {
         const style = getComputedStyle(list);
         const last = list.querySelector('.codex-session-row:last-child');

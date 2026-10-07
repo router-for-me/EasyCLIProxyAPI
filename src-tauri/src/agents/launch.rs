@@ -202,6 +202,11 @@ pub(crate) fn launch_agent(
         }
         (AgentClient::Codex, "app") => launch_codex_desktop(&home),
         (AgentClient::OpenCode, "app") => launch_opencode_desktop(&home),
+        (AgentClient::DeepSeekHarness, "app") => {
+            let executable = find_deepseek_harness_desktop_application(&home)
+                .ok_or_else(|| "DeepSeek Harness Desktop application not found".to_string())?;
+            launch_desktop_agent(&executable, "DeepSeek Harness Desktop")
+        }
         (AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy, "cli") => {
             Err(format!("{} does not support CLI launch mode", client.name()))
         }

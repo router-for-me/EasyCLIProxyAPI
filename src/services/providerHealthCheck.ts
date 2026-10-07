@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { normalizeBaseUrl, type ModelOption, type ModelProvider } from './modelService';
+import { defaultProviderBaseUrl, providerDefaultHeaders, normalizeBaseUrl, type ModelOption, type ModelProvider } from './modelService';
 
 export const PROVIDER_HEALTH_TIMEOUT_MS = 15_000;
 export const PROVIDER_HEALTH_CONCURRENCY = 4;
@@ -8,7 +8,7 @@ export type ProviderHealthProbe = {
   url: string;
   header: Record<string, string>;
   data: string;
-  protocol: 'openai-chat' | 'openai-responses' | 'claude' | 'gemini';
+  protocol: 'openai-chat' | 'openai-responses' | 'claude' | 'gemini' | 'interactions';
   model: string;
   source: string;
   authIndex: string;
@@ -35,14 +35,10 @@ export type ProviderHealthCheckOptions = {
   authIndex?: string;
   customHeaders?: Record<string, string>;
   timeoutMs?: number;
+  proxyUrl?: string;
 };
 
-const defaultBaseUrl = (provider: ModelProvider) => {
-  if (provider === 'claude') return 'https://api.anthropic.com';
-  if (provider === 'gemini') return 'https://generativelanguage.googleapis.com';
-  if (provider === 'deepseek') return 'https://api.deepseek.com';
-  return '';
-};
+const defaultBaseUrl = defaultProviderBaseUrl;
 
 const endpointRoot = (provider: ModelProvider, baseUrl: string) => {
   const normalized = normalizeBaseUrl(baseUrl.trim() || defaultBaseUrl(provider));
@@ -106,7 +102,7 @@ export function buildProviderHealthProbe(
   const root = endpointRoot(provider, baseUrl);
   const headers = { ...customHeaders };
   const key = apiKey.trim();
-  const normalizedModel = provider === 'gemini'
+  const normalizedModel = ['gemini', 'interactions', 'vertex'].includes(provider)
     ? model.trim().replace(/^models\//i, '')
     : model.trim();
   const metadata = {
@@ -115,13 +111,22 @@ export function buildProviderHealthProbe(
     authIndex: authIndex.trim(),
   };
   setHeaderIfMissing(headers, 'Content-Type', 'application/json');
+  for (const [name, value] of Object.entries(providerDefaultHeaders(provider))) setHeaderIfMissing(headers, name, value);
 
-  if (provider === 'gemini') {
+  if (provider === 'interactions') {
+    if (key) setHeaderIfMissing(headers, 'x-goog-api-key', key);
+    else if (authIndex) setHeaderIfMissing(headers, 'x-goog-api-key', '$TOKEN$');
+    return { ...metadata, url: `${root}/v1beta/interactions`, header: headers, protocol: 'interactions',
+      data: JSON.stringify({ model: normalizedModel, input: 'hi', stream: true }) };
+  }
+
+  if (provider === 'gemini' || provider === 'vertex') {
     if (key) setHeaderIfMissing(headers, 'x-goog-api-key', key);
     else if (authIndex) setHeaderIfMissing(headers, 'x-goog-api-key', '$TOKEN$');
     return {
       ...metadata,
-      url: `${root}/v1beta/models/${encodeURIComponent(normalizedModel)}:generateContent?alt=sse`,
+      url: provider === 'vertex' ? `${root}/v1/publishers/google/models/${encodeURIComponent(normalizedModel)}:streamGenerateContent?alt=sse`
+        : `${root}/v1beta/models/${encodeURIComponent(normalizedModel)}:streamGenerateContent?alt=sse`,
       header: headers,
       protocol: 'gemini',
       data: JSON.stringify({
@@ -154,10 +159,10 @@ export function buildProviderHealthProbe(
   if (key) setHeaderIfMissing(headers, 'Authorization', `Bearer ${key}`);
   else if (authIndex) setHeaderIfMissing(headers, 'Authorization', 'Bearer $TOKEN$');
 
-  if (provider === 'codex' || provider === 'deepseek') {
+  if (provider === 'codex' || provider === 'deepseek' || provider === 'xai' || provider === 'meta') {
     return {
       ...metadata,
-      url: provider === 'deepseek'
+      url: provider === 'deepseek' || provider === 'xai' || provider === 'meta'
         ? `${normalizeBaseUrl(baseUrl.trim() || defaultBaseUrl(provider))}/responses`
         : `${root}/v1/responses`,
       header: headers,
@@ -199,6 +204,7 @@ export async function checkProviderHealthProbe(
   authIndex = '',
   customHeaders: Record<string, string> = {},
   timeoutMs = PROVIDER_HEALTH_TIMEOUT_MS,
+  proxyUrl?: string,
 ): Promise<ProviderHealthProbeResult> {
   try {
     const probe = buildProviderHealthProbe(
@@ -220,6 +226,7 @@ export async function checkProviderHealthProbe(
       responseLatencyMs: number;
     }>('provider_health_probe', {
       request: {
+        ...(['interactions', 'vertex', 'xai', 'meta'].includes(provider) ? { sourceProvider: provider } : {}),
         protocol: probe.protocol,
         timeoutMs,
         data: probe.data,
@@ -228,6 +235,7 @@ export async function checkProviderHealthProbe(
         model: probe.model,
         source: probe.source,
         authIndex: probe.authIndex,
+        proxyUrl: proxyUrl?.trim() || undefined,
       },
     });
     const firstTokenLatencyMs = Number.isFinite(response.firstTokenLatencyMs)
@@ -263,6 +271,7 @@ export async function checkProviderModelHealth(
     options.authIndex,
     options.customHeaders,
     options.timeoutMs,
+    options.proxyUrl,
   );
   return {
     ...result,

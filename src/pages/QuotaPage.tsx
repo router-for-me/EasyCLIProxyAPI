@@ -1,18 +1,19 @@
+import { ResetCreditExpiries } from '../components/ResetCreditExpiries';
 import { MessageNotice } from '../appNotice';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, LoaderCircle, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { AlertCircle, Gauge, ListRestart, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useConfirmation } from '../components/ConfirmationDialog';
+import { OAuthPageToolbar } from '../components/OAuthPageToolbar';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
-import { canResetCodexQuota } from '../services/quotaActions';
-import { useCodexQuotaReset } from '../components/useCodexQuotaReset';
+import { canResetQuota, hasPendingClaudeReset } from '../services/quotaActions';
+import { useQuotaReset } from '../components/useQuotaReset';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
 import grokIcon from '../assets/icons/grok.svg';
 import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
-import { managementApi, responseList } from '../services/managementApi';
-import { authFileHealth } from '../services/authFileHealth';
+import { managementApi, readBoolean, responseList } from '../services/managementApi';
 import { quotaAvailability, quotaPercent } from '../services/quotaAvailability';
 import { QuotaAvailabilityNotice } from '../components/QuotaAvailabilityNotice';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
@@ -36,8 +37,9 @@ import {
   updateQuotaCache,
   useQuotaCache,
 } from '../services/quotaCache';
-import { dedupeAuthFiles } from '../services/authFiles';
+import { dedupeAuthFiles, parseAuthFilePriority, sortAuthFilesByPriority } from '../services/authFiles';
 import { useI18n } from '../i18n';
+import './QuotaPage.css';
 
 const providerMeta: Record<QuotaProvider, { label: string; icon: string }> = {
   claude: { label: 'Claude', icon: claudeIcon },
@@ -60,16 +62,17 @@ export function QuotaPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [fileListStale, setFileListStale] = useState(false);
+  const [category, setCategory] = useState<'all' | QuotaProvider>('all');
   const querying = Object.values(quotas).some((quota) => quota.status === 'loading');
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const payload = await managementApi.get('/auth-files');
+      const payload = await managementApi.get('/credentials');
       setFileListStale(false);
-      const allFiles = dedupeAuthFiles(responseList(payload, 'files'));
-      const nextFiles = allFiles.filter((file) => !authFileHealth(file).disabled && providerForFile(file));
+      const allFiles = sortAuthFilesByPriority(dedupeAuthFiles(responseList(payload, 'files')));
+      const nextFiles = allFiles.filter((file) => !readBoolean(file, 'disabled') && providerForFile(file));
       setFiles(nextFiles);
       const validQuotaKeys = new Set(allFiles.map(quotaKey));
       pruneQuotaCache(validQuotaKeys);
@@ -104,7 +107,7 @@ export function QuotaPage() {
     });
   }, [t]);
 
-  const resetCodexQuota = useCodexQuotaReset(askConfirmation, setError);
+  const resetQuota = useQuotaReset(askConfirmation, setError);
 
   const refreshAll = useCallback(async () => {
     if (Object.values(getQuotaCacheSnapshot()).some((quota) => quota.status === 'loading')) return;
@@ -146,36 +149,62 @@ export function QuotaPage() {
       return items ? [[provider, items] as const] : [];
     });
   }, [files, quotas]);
+  const activeCategory = category !== 'all' && grouped.some(([provider]) => provider === category) ? category : 'all';
+  const visibleItems = (activeCategory === 'all' ? grouped : grouped.filter(([provider]) => provider === activeCategory))
+    .flatMap(([provider, items]) => items.map((item) => ({ provider, ...item })));
+  const moveCategory = (event: KeyboardEvent<HTMLDivElement>) => {
+    const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+    if (!buttons.length) return;
+    const current = Math.max(0, buttons.findIndex((button) => button === document.activeElement));
+    let next = current;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (current + 1) % buttons.length;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (current - 1 + buttons.length) % buttons.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = buttons.length - 1;
+    else return;
+    event.preventDefault();
+    buttons[next]?.focus();
+    buttons[next]?.click();
+  };
 
   return (
-    <section className="page management-page quota-page">
+    <section className="page management-page quota-page" aria-label={t('quota.title')}>
       {confirmationDialog}
-      <header className="management-header">
-        <div><h1>{t('quota.title')}</h1></div>
-        <div className="management-heading-actions">
-          <span className="muted-summary">{t(files.length === 1 ? 'quota.queryableCredentials.one' : 'quota.queryableCredentials.other', { count: files.length })}</span>
-          <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || refreshing || querying}>
-            <RefreshCw size={16} />{t('quota.readList')}
-          </button>
-          <button type="button" className="secondary-button compact-button" onClick={() => void refreshAll()} disabled={refreshing || loading || querying || files.length === 0}>
-            <RefreshCw size={16} className={refreshing ? 'spin' : ''} />{t('quota.refreshAll')}
-          </button>
-        </div>
-      </header>
       {error ? <MessageNotice message={error} /> : null}
+      <OAuthPageToolbar
+        icon={<Gauge size={18} />}
+        summary={t(files.length === 1 ? 'quota.queryableCredentials.one' : 'quota.queryableCredentials.other', { count: files.length })}
+      >
+        <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || refreshing || querying}>
+          {loading ? <RefreshCw size={16} className="spin" /> : <ListRestart size={16} />}{t('quota.readList')}
+        </button>
+        <button type="button" className="primary-button compact-button" onClick={() => void refreshAll()} disabled={refreshing || loading || querying || files.length === 0}>
+          <RefreshCw size={16} className={refreshing ? 'spin' : ''} />{t('quota.refreshAll')}
+        </button>
+      </OAuthPageToolbar>
       {loading ? (
         <div className="management-loading"><LoaderCircle size={20} className="spin" />{t('quota.loadingFiles')}</div>
       ) : grouped.length === 0 ? (
         <div className="management-empty"><AlertCircle size={24} /><strong>{t('quota.empty.title')}</strong><span>{t('quota.empty.description')}</span></div>
       ) : (
-        <div className="quota-group-list">
-          {grouped.map(([provider, items]) => (
-            <section className="quota-provider-group" key={provider}>
-              <div className="quota-group-heading"><div><img src={providerMeta[provider].icon} alt="" className={provider === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} /><h2>{providerMeta[provider].label}</h2></div><span>{t(items.length === 1 ? 'quota.credentials.one' : 'quota.credentials.other', { count: items.length })}</span></div>
-              <div className="real-quota-grid">{items.map(({ file, quota }) => <QuotaCard stale={fileListStale} key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' ? () => void resetCodexQuota(file, quota) : undefined} />)}</div>
-            </section>
-          ))}
-        </div>
+        <>
+          <div className="quota-category-filter" role="radiogroup" aria-label={t('quota.filter.label')} onKeyDown={moveCategory}>
+            {([['all', files.length] as const, ...grouped.map(([provider, items]) => [provider, items.length] as const)]).map(([provider, count]) => {
+              const selected = activeCategory === provider;
+              const label = provider === 'all' ? t('quota.filter.all') : providerMeta[provider].label;
+              return (
+                <button key={provider} type="button" role="radio" aria-checked={selected} tabIndex={selected ? 0 : -1}
+                  aria-label={`${label}, ${t(count === 1 ? 'quota.credentials.one' : 'quota.credentials.other', { count })}`}
+                  onClick={() => setCategory(provider)}>
+                  {provider === 'all' ? null : <img src={providerMeta[provider].icon} alt="" className={provider === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} />}
+                  <span>{label}</span>
+                  <span className="quota-filter-count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="real-quota-grid">{visibleItems.map(({ provider, file, quota }) => <QuotaCard stale={fileListStale} key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' || provider === 'claude' ? () => void resetQuota(file, quota) : undefined} />)}</div>
+        </>
       )}
     </section>
   );
@@ -189,13 +218,18 @@ export function QuotaCard({ file, quota, onRefresh, onReset, stale = false }: { 
   const rows = [...quota.rows].sort((a, b) => Number(availability.blockers.includes(b)) - Number(availability.blockers.includes(a)));
   const provider = providerForFile(file);
   const name = fileName(file);
-  const disabled = authFileHealth(file).disabled;
+  const disabled = readBoolean(file, 'disabled');
+  const priority = parseAuthFilePriority(file.priority) ?? 0;
   return (
     <article className="panel real-quota-card">
       <div className="real-quota-card-header">
-        <div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}{quota.plan ? ' · ' + quota.plan : ''}</span></div>
+        <div className="quota-identity">
+          <img src={provider ? providerMeta[provider].icon : ''} alt="" className="quota-account-icon" />
+          <div><strong title={name}>{name}</strong><span>{provider ? providerMeta[provider].label : t('quota.unknownProvider')}</span></div>
+        </div>
+        <div className="quota-plan"><strong>{quota.plan || '—'}</strong><span>{quota.subscriptionActiveUntil ? t('quota.expiresAt', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) }) : ''}</span></div>
+        <div className="quota-status"><span className={quota.status === 'success' ? 'quota-status-badge ready' : quota.status === 'error' ? 'quota-status-badge error' : 'quota-status-badge'}>{quota.status === 'success' ? t('common.enabled') : quota.status === 'loading' ? t('quota.querying') : quota.status === 'error' ? t('common.unavailable') : t('quota.notFetched')}</span><small>{t('authFiles.settings.priority')} {priority}</small></div>
         <div className="quota-card-actions">
-          {onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button" onClick={onReset} disabled={!canResetCodexQuota(file, quota)} title={t('quota.reset')}>{t('quota.reset')}</button> : null}
           <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={disabled || quota.status === 'loading'} title={disabled ? t('quota.fileDisabled') : t('quota.refresh')} aria-label={disabled ? t('quota.fileDisabled') : t('quota.refresh')}><RefreshCw size={16} className={quota.status === 'loading' ? 'spin' : ''} aria-hidden="true" /></button>
         </div>
       </div>
@@ -204,14 +238,11 @@ export function QuotaCard({ file, quota, onRefresh, onReset, stale = false }: { 
       {quota.status === 'idle' ? <div className="quota-card-message"><span>{disabled ? t('quota.fileDisabled') : t('quota.notFetched')}</span><button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={disabled}>{disabled ? t('quota.disabled') : t('quota.fetch')}</button></div> : null}
       {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />{t(quota.pendingAction === 'reset' ? 'quota.resetting' : 'quota.querying')}</div> : null}
       {quota.status === 'error' ? <>
-        <MessageNotice message={quota.error ? name + ': ' + quota.error : null} />
-        <div className="quota-card-error"><AlertCircle size={18} />{t('authFiles.quota.failed')}</div>
+        <div className="quota-card-error"><AlertCircle size={18} /><span>{t('authFiles.quota.failed')}{quota.error ? <small>{quota.error}</small> : null}</span></div>
       </> : null}
-      {quota.status === 'success' && provider === 'codex' ? <div className="quota-reset-credit-summary">
-        <span>{t('quota.resetCredits')} <strong>{quota.resetCredits ?? '—'}</strong></span>
-        {quota.resetCreditsApplicable !== undefined ? <span>{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</span> : null}
-        <span>{t('quota.earliestExpiry')} <strong>{formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale)}</strong></span>
-        {quota.subscriptionActiveUntil ? <span>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span> : null}
+      {quota.status === 'success' && (provider === 'codex' || provider === 'claude') ? <div className="quota-reset-credit-summary">
+        {(quota.creditsUnlimited || quota.creditBalance !== undefined) ? <span>{t('quota.creditBalance')} <strong>{quota.creditsUnlimited ? t('quota.creditUnlimited') : quota.creditBalance}</strong></span> : null}
+        <ResetCreditExpiries quota={quota} />
         <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
       </div> : null}
       {quota.status === 'success' && provider === 'devin' && quota.subscriptionActiveUntil ? <div className="quota-reset-credit-summary"><span>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span></div> : null}
@@ -224,6 +255,7 @@ export function QuotaCard({ file, quota, onRefresh, onReset, stale = false }: { 
           <small>{[row.detail, reset].filter(Boolean).join(' · ')}</small>
         </div>;
       })}</div> : null}
+      {onReset && ((quota.resetCredits ?? 0) > 0 || hasPendingClaudeReset(file)) ? <button type="button" className="secondary-button compact-button quota-reset-footer" onClick={onReset} disabled={!canResetQuota(file, quota)} title={t('quota.reset')}>{t(hasPendingClaudeReset(file) ? 'quota.claude.retry' : 'quota.reset')}</button> : null}
     </article>
   );
 }

@@ -1,0 +1,57 @@
+.template-config-section { display: grid; gap: 18px; min-width: 0; margin-top: 20px; }
+.template-config-section[hidden], .template-config-card[hidden] { display: none; }
+.template-config-card { min-width: 0; padding: 20px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-card); scroll-margin-top: 18px; transition: border-color 150ms ease, box-shadow 150ms ease; }
+.template-config-card-dirty { border-color: color-mix(in srgb, var(--primary-color) 55%, var(--border-color)); box-shadow: inset 3px 0 0 var(--primary-color); }
+.template-config-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.template-config-heading-main { display: flex; align-items: center; gap: 6px; flex: 1 1 220px; min-width: 0; }
+.template-config-heading h3 { min-width: 0; margin: 0; color: var(--text-primary); font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.template-config-restart-hint { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.template-config-restart-hint svg { flex: none; }
+.template-config-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); align-items: start; gap: 18px 22px; margin-top: 18px; }
+.template-config-field { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+.template-config-field-wide { grid-column: 1 / -1; }
+.template-config-field-dirty > .template-config-label { color: var(--primary-color); }
+.template-config-field-dirty .config-network-input, .template-config-field-dirty .template-config-custom { border-color: color-mix(in srgb, var(--primary-color) 55%, var(--border-primary)); }
+.template-config-label { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 13px; line-height: 1.5; width: 100%; min-width: 0; color: var(--text-primary); }
+.template-config-label label, .template-config-label > span:first-child { overflow-wrap: anywhere; }
+.template-config-label-tools { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; }
+.template-config-control { min-width: 0; width: 100%; }
+.template-config-toggle { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; align-items: center; gap: 8px 12px; min-height: 38px; }
+.template-config-toggle > .template-config-label { grid-column: 1; }
+.template-config-toggle > .template-config-control { grid-column: 2; grid-row: 1; width: auto; }
+.template-config-toggle > small { grid-column: 1 / -1; }
+.template-config-switch input:checked + .switch-track { border-color: var(--primary-color); background: var(--primary-color); }
+.template-config-switch input:focus-visible + .switch-track { outline: 2px solid var(--primary-color); outline-offset: 3px; }
+.template-config-directory { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.template-config-directory > input { flex: 1 1 180px; min-width: 0; width: auto; }
+.template-config-directory > button { flex: 0 1 auto; white-space: normal; }
+.template-config-custom { width: 100%; min-width: 0; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; background: var(--bg-card); box-sizing: border-box; }
+.template-config-custom > summary { cursor: pointer; color: var(--primary-color); font-size: 12px; }
+.template-config-custom[open] > summary { margin-bottom: 14px; }
+.template-config-control > input, .template-config-control > select, .template-config-control > textarea { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; }
+.template-config-control .config-network-input { border-color: var(--border-primary); background: var(--bg-card); color: var(--text-primary); }
+.template-config-control .config-network-input:focus { border-color: var(--primary-color); box-shadow: 0 0 0 3px var(--ui-focus-ring); }
+.template-config-control .config-network-input[aria-invalid='true'] { border-color: var(--danger-color); }
+.template-config-textarea { resize: vertical; line-height: 1.6; padding: 10px 12px; font-family: inherit; }
+.template-config-control > textarea.template-config-textarea { height: auto; min-height: 86px; padding: 10px 12px; }
+.template-config-field > small { font-size: 12px; line-height: 1.6; }
+.template-config-reset { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-tertiary); cursor: pointer; }
+.template-config-reset svg { flex: none; }
+.template-config-reset:hover:not(:disabled) { background: var(--bg-hover); color: var(--primary-color); }
+.template-config-reset:disabled { opacity: .5; cursor: default; }
+.template-config-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color); }
+.template-config-actions > span { min-width: 0; font-size: 12px; color: var(--text-tertiary); overflow-wrap: anywhere; }
+.template-config-actions > .template-config-action-status-dirty { color: var(--primary-color); font-weight: 600; }
+.template-config-actions > .template-config-action-status-saved { color: var(--success-color); }
+.template-config-actions > div { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.template-config-card .compact-button { margin-top: 0; min-height: 36px; }
+.template-config-card :is(button, summary):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 3px; }
+.template-config-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-card); color: var(--text-secondary); overflow-wrap: anywhere; font-size: 13px; }
+.template-config-error, .template-config-field small.template-config-error { color: var(--danger-color); overflow-wrap: anywhere; }
+@media (max-width: 680px) {
+  .template-config-card { padding: 16px; }
+  .template-config-heading-main { flex-basis: 180px; }
+  .template-config-actions > div { width: 100%; }
+  .template-config-actions button { flex: 1 1 auto; white-space: normal; }
+}
+@media (prefers-reduced-motion: reduce) { .template-config-card { transition: none; } }

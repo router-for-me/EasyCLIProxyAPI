@@ -12,7 +12,7 @@ pub(crate) struct OAuthAliasChannel {
     pub(crate) force_mapping: bool,
 }
 
-pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 8] = [
+pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 9] = [
     OAuthAliasChannel {
         key: "vertex",
         provider: "Vertex OAuth",
@@ -85,6 +85,15 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 8] = [
         supports_fast: false,
         force_mapping: false,
     },
+    OAuthAliasChannel {
+        key: "meta",
+        provider: "Meta OAuth",
+        kind: "meta-oauth",
+        protocol: "openai",
+        supports_reasoning: false,
+        supports_fast: false,
+        force_mapping: false,
+    },
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,6 +146,7 @@ pub(crate) fn normalize_oauth_alias_channel(value: &str) -> Option<&'static str>
         "kimi" | "moonshot" => Some("kimi"),
         "devin" | "cognition" => Some("devin"),
         "xai" | "x-ai" | "grok" => Some("xai"),
+        "meta" | "muse" => Some("meta"),
         _ => None,
     }
 }
@@ -226,6 +236,10 @@ pub(crate) fn validate_thinking_alias_effort(value: &str) -> Result<String, Stri
 }
 
 pub(crate) async fn fetch_management_config_yaml(config: &GuiConfigFile) -> Result<String, String> {
+    management_v8_yaml_to_legacy_view(&fetch_management_raw_config_yaml(config).await?)
+}
+
+pub(crate) async fn fetch_management_raw_config_yaml(config: &GuiConfigFile) -> Result<String, String> {
     let client = management_http_client()?;
     let response = client
         .get(management_endpoint(config, "config.yaml")?)
@@ -237,8 +251,7 @@ pub(crate) async fn fetch_management_config_yaml(config: &GuiConfigFile) -> Resu
         .send()
         .await
         .map_err(|error| format_management_request_error("Failed to read kernel YAML configuration", &error))?;
-    let content = read_management_text(response).await?;
-    management_v8_yaml_to_legacy_view(&content)
+    read_management_text(response).await
 }
 
 pub(crate) async fn put_management_config_yaml(
@@ -470,6 +483,7 @@ pub(crate) fn management_v8_yaml_to_legacy_view(content: &str) -> Result<String,
     let client_keys = yaml_mapping_value(root, "access")
         .and_then(serde_norway::Value::as_mapping)
         .and_then(|access| yaml_mapping_value(access, "api-keys"))
+        .or_else(|| yaml_mapping_value(root, "api-keys").filter(|value| value.is_sequence()))
         .cloned();
     let oauth_aliases = yaml_mapping_value(root, "oauth")
         .and_then(serde_norway::Value::as_mapping)
@@ -516,19 +530,20 @@ pub(crate) fn management_v8_yaml_to_legacy_view(content: &str) -> Result<String,
         root.insert(yaml_key("payload"), payload);
     }
     for (legacy, provider) in V8_PROVIDER_FAMILIES {
-        let groups = yaml_mapping_value(&upstreams, provider)
-            .cloned()
-            .unwrap_or_else(|| serde_norway::Value::Sequence(Vec::new()));
-        root.insert(
-            yaml_key(legacy),
-            flatten_v8_provider_groups(provider, &groups)?,
-        );
+        // The version marker alone does not migrate a legacy file. Only an
+        // explicitly present v8 family replaces its legacy spelling (including []).
+        if let Some(groups) = yaml_mapping_value(&upstreams, provider) {
+            root.insert(yaml_key(legacy), flatten_v8_provider_groups(provider, groups)?);
+        } else {
+            root.entry(yaml_key(legacy))
+                .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()));
+        }
     }
     serde_norway::to_string(&document)
         .map_err(|error| format!("Failed to serialize kernel YAML configuration: {error}"))
 }
 
-async fn put_management_config_value(
+pub(crate) async fn put_management_config_value(
     config: &GuiConfigFile,
     path: &str,
     value: &serde_norway::Value,
@@ -579,6 +594,7 @@ async fn put_management_legacy_alias_view_changes(
     };
     let mut current = parse(current)?;
     let mut updated = parse(updated)?;
+    let v8 = current.get(yaml_key("config-version")).and_then(serde_norway::Value::as_i64) == Some(8);
 
     // OAuth aliases are written by put_management_oauth_model_aliases so their
     // transaction and rollback remain independent from other alias routes.
@@ -591,7 +607,7 @@ async fn put_management_legacy_alias_view_changes(
         let before = current.remove(yaml_key(legacy));
         let after = updated.remove(yaml_key(legacy));
         if before != after {
-            provider_changes.push((provider, after));
+            provider_changes.push((provider, before, after));
         }
     }
     if current != updated {
@@ -601,6 +617,25 @@ async fn put_management_legacy_alias_view_changes(
         );
     }
 
+    let native = if v8 && !provider_changes.is_empty() {
+        Some(parse(&fetch_management_raw_config_yaml(config).await?)?)
+    } else { None };
+    // Resolve every group change before writing payload rules or provider data.
+    let provider_changes = provider_changes.into_iter().map(|(provider, before, after)| {
+        let groups = match after {
+            Some(after) => Some(if let Some(native) = &native {
+                let before = before.unwrap_or_else(|| serde_norway::Value::Sequence(Vec::new()));
+                let groups = match nested_yaml_value(native, &["api-keys", provider]) {
+                    Some(groups) => groups.clone(),
+                    None => group_legacy_provider_records(provider, &before)?,
+                };
+                update_v8_provider_group_models(provider, &groups, &before, &after)?
+            } else { group_legacy_provider_records(provider, &after)? }),
+            None => None,
+        };
+        Ok::<_, String>((provider, groups))
+    }).collect::<Result<Vec<_>, _>>()?;
+
     if current_payload != updated_payload {
         if let Some(value) = updated_payload.as_ref() {
             put_management_config_value(config, "requests/payload", value).await?;
@@ -608,10 +643,9 @@ async fn put_management_legacy_alias_view_changes(
             delete_management_config_value(config, "requests/payload").await?;
         }
     }
-    for (provider, records) in provider_changes {
-        if let Some(records) = records.as_ref() {
-            let groups = group_legacy_provider_records(provider, records)?;
-            put_management_config_value(config, &format!("api-keys/{provider}"), &groups).await?;
+    for (provider, groups) in provider_changes {
+        if let Some(groups) = groups.as_ref() {
+            put_management_config_value(config, &format!("api-keys/{provider}"), groups).await?;
         } else {
             delete_management_config_value(config, &format!("api-keys/{provider}")).await?;
         }
@@ -1734,7 +1768,11 @@ pub(crate) fn collect_config_thinking_alias_sources(
             else {
                 continue;
             };
-            if !thinking_alias_model_is_available(available_models, &client_model) {
+            // A matching ID may be served by another provider. Check this
+            // source's exclusions too, including '*' used to disable API keys.
+            if !configured_provider_model_is_enabled(provider, &client_model)
+                || !thinking_alias_model_is_available(available_models, &client_model)
+            {
                 continue;
             }
             if client_model != upstream_model

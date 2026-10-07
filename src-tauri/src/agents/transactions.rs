@@ -844,7 +844,10 @@ fn validate_unmanaged_preserved(
                 env.retain(|key, _| {
                     !matches!(
                         key.as_str(),
-                        "CLAUDE_CODE_SUBAGENT_MODEL" | "CLAUDE_CODE_EFFORT_LEVEL"
+                        "CLAUDE_CODE_SUBAGENT_MODEL"
+                            | "CLAUDE_CODE_EFFORT_LEVEL"
+                            | "EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL"
+                            | "EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL"
                     ) && !key.starts_with("ANTHROPIC_DEFAULT_")
                         && !key.starts_with("ANTHROPIC_MODEL_")
                         && !key.starts_with("ANTHROPIC_CUSTOM_MODEL_OPTION")

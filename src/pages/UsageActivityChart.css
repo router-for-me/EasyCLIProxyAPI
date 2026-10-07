@@ -1,0 +1,208 @@
+.usage-activity-card {
+  --usage-activity-success: var(--analysis-success, #28a786);
+  --usage-activity-failed: var(--analysis-failed, #e66b70);
+  --usage-activity-canceled: var(--analysis-canceled, #a8b1bf);
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 17px 18px 14px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 16px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 2%);
+}
+
+.usage-activity-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usage-activity-title h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.usage-activity-title p {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.usage-activity-summary {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+.usage-activity-summary > strong {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.usage-activity-legend,
+.usage-activity-legend > span,
+.usage-activity-tooltip div > span {
+  display: flex;
+  align-items: center;
+}
+
+.usage-activity-legend {
+  gap: 14px;
+  color: var(--text-quaternary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.usage-activity-legend > span,
+.usage-activity-tooltip div > span {
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.usage-activity-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 2px;
+}
+
+.usage-activity-success {
+  fill: var(--usage-activity-success);
+  background: var(--usage-activity-success);
+}
+
+.usage-activity-failed {
+  fill: var(--usage-activity-failed);
+  background: var(--usage-activity-failed);
+}
+
+.usage-activity-canceled {
+  fill: var(--usage-activity-canceled);
+  background: var(--usage-activity-canceled);
+}
+
+.usage-activity-plot {
+  position: relative;
+  min-width: 0;
+  height: 154px;
+}
+
+.usage-activity-svg {
+  display: block;
+  width: 100%;
+  height: 154px;
+  overflow: visible;
+  border-radius: 5px;
+  outline: none;
+}
+
+.usage-activity-svg:focus-visible {
+  box-shadow: 0 0 0 2px var(--ui-focus-ring);
+}
+
+.usage-activity-axis line {
+  stroke: var(--border-color);
+  stroke-dasharray: 3 4;
+  stroke-opacity: .8;
+  vector-effect: non-scaling-stroke;
+}
+
+.usage-activity-axis text,
+.usage-activity-time {
+  fill: var(--text-quaternary);
+  font-family: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-activity-highlight {
+  fill: var(--bg-hover);
+}
+
+.usage-activity-tooltip {
+  position: absolute;
+  z-index: 4;
+  top: 1px;
+  display: flex;
+  width: min(224px, 100%);
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: var(--ui-panel-shadow);
+  font-size: 11px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.usage-activity-tooltip > strong {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.usage-activity-tooltip-total {
+  margin-bottom: 3px;
+  color: var(--text-quaternary);
+}
+
+.usage-activity-tooltip > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.usage-activity-tooltip b {
+  font-weight: 600;
+}
+
+.usage-activity-empty {
+  position: absolute;
+  inset: 0 0 26px 40px;
+  display: grid;
+  place-items: center;
+  color: var(--text-quaternary);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+@container workspace (max-width: 540px) {
+  .usage-activity-card {
+    padding: 14px 12px 12px;
+  }
+
+  .usage-activity-heading {
+    flex-wrap: wrap;
+    gap: 9px;
+  }
+
+  .usage-activity-summary {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 9px;
+  }
+
+  .usage-activity-legend {
+    gap: 10px;
+  }
+}

@@ -2,22 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import {
-  Check,
-  Copy,
-  Eye,
-  EyeOff,
-} from 'lucide-react';
+import { LoaderCircle, Play, RefreshCw, RotateCw, Square } from 'lucide-react';
 import { type CoreStatus, useCoreRuntime } from '../coreRuntime';
-import openaiIcon from '../assets/icons/openai-light.svg';
-import claudeIcon from '../assets/icons/claude.svg';
-import geminiIcon from '../assets/icons/gemini.svg';
 import { clientApiProfiles } from '../services/clientAccess';
 import { useI18n } from '../i18n';
 import { useAppUpdate } from '../appUpdate';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { VersionManagementPage, displayAppVersion } from './VersionManagementPage';
 import { AccountDashboard } from '../components/AccountDashboard';
+import { HomeAccessPanel } from './HomeAccessPanel';
+import { HomeOverviewCards } from './HomeOverviewCards';
+import { CoreHealthPanel } from './CoreHealthPanel';
+import { useHomeOverview } from './useHomeOverview';
+import './HomeDashboard.css';
 
 type CoreProcessCommand = 'start_core_process' | 'stop_core_process' | 'restart_core_process';
 
@@ -63,7 +60,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const [copiedApiField, setCopiedApiField] = useState('');
   const [homeApiKey, setHomeApiKey] = useState<string | null | undefined>(undefined);
   const [homeApiKeyError, setHomeApiKeyError] = useState(false);
-  const [showHomeApiKey, setShowHomeApiKey] = useState(false);
+  const [configRevision, setConfigRevision] = useState(0);
   const [tlsEnabled, setTlsEnabled] = useState(false);
 
   const savedPortRef = useRef(8317);
@@ -75,6 +72,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
 
     void listen('config-files-changed', () => {
       if (disposed) return;
+      setConfigRevision((value) => value + 1);
       void loadGuiSettings();
       void loadTlsSettings();
       void refreshStatus();
@@ -184,16 +182,16 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const coreReady = Boolean(coreStatus?.ready);
   const coreProcessBusy = processBusy || Boolean(coreStatus?.starting);
 
-  const statusTone = statusError ? 'error' : coreRunning ? 'success' : 'neutral';
-  const statusLabel = coreStatus
-    ? coreRunning
-      ? t('kernel.status.running')
-      : coreInstalled
-        ? t('kernel.status.stopped')
-        : t('kernel.status.notInstalled')
-    : statusError
-      ? t('common.detectionFailed')
-      : t('common.detecting');
+  const statusTone = statusError ? 'error' : coreProcessBusy ? 'pending' : coreRunning ? 'success' : 'neutral';
+  const statusLabel = statusError
+    ? t('common.detectionFailed')
+    : !coreStatus
+      ? t('common.detecting')
+      : coreProcessBusy
+        ? t('common.processing')
+        : coreRunning
+          ? t('kernel.status.running')
+          : t(coreInstalled ? 'kernel.status.stopped' : 'kernel.status.notInstalled');
 
   const resolvedAppVersion = appUpdate?.currentVersion || installedAppVersion;
   const currentAppVersion = resolvedAppVersion
@@ -208,11 +206,8 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     tlsEnabled,
     listenHost,
   );
-  const apiProfileIcons = {
-    openai: openaiIcon,
-    claude: claudeIcon,
-    gemini: geminiIcon,
-  } as const;
+  const healthContext = [listenHost, customPort, tlsEnabled, coreStatus?.processId, configRevision].join(':');
+  const overview = useHomeOverview(coreReady, healthContext);
 
   return (
     <section className="page kernel-page home-page">
@@ -222,45 +217,53 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
       <AccountDashboard ready={coreReady} />
       <div className="kernel-layout home-layout">
         <div className="panel control-panel">
-          <div className="panel-heading">
+          <div className="panel-heading home-panel-heading">
             <div>
               <h2>{t('kernel.control.title')}</h2>
+              <p>{t(coreReady ? 'home.runtime.ready' : coreInstalled ? 'home.runtime.stopped' : 'home.runtime.notInstalled')}</p>
             </div>
-            <span className={`state-pill ${statusTone}`} title={statusError || undefined} role="status">
-              {coreProcessBusy ? t('common.processing') : statusLabel}
-            </span>
+            <button type="button" className="icon-button quiet home-runtime-refresh" disabled={coreProcessBusy} onClick={() => void refreshStatus()} title={t('kernel.control.refresh')} aria-label={t('kernel.control.refresh')}><RefreshCw size={15} aria-hidden="true" /></button>
           </div>
-
-          <dl className="panel-detail-grid">
-            <div className="panel-detail-row">
+          <dl className="panel-detail-grid home-runtime-details">
+            <div className="panel-detail-row" data-runtime="installation">
               <dt>{t('kernel.control.installStatus')}</dt>
-              <dd>{coreStatus ? (coreInstalled ? t('kernel.control.installed') : t('kernel.status.notInstalled')) : t('common.detecting')}</dd>
+              <dd>{coreStatus ? t(coreInstalled ? 'kernel.control.installed' : 'kernel.status.notInstalled') : t(statusError ? 'common.detectionFailed' : 'common.detecting')}</dd>
             </div>
-            <div className="panel-detail-row">
+            <div className="panel-detail-row" data-runtime="status">
               <dt>{t('kernel.control.runStatus')}</dt>
-              <dd>{coreStatus ? (coreRunning ? t('kernel.status.running') : t('kernel.control.notRunning')) : t('common.detecting')}</dd>
-            </div>
-            <div className="panel-detail-row">
-              <dt>{t('kernel.control.pid')}</dt>
-              <dd>{coreStatus?.processId || t('kernel.control.noPid')}</dd>
+              <dd><span className={`home-runtime-state ${statusTone}`} role="status" title={statusError || undefined}>
+                {coreProcessBusy ? <LoaderCircle size={12} className="spin" aria-hidden="true" /> : <span className="home-runtime-dot" aria-hidden="true" />}
+                {statusLabel}
+              </span></dd>
             </div>
             <div className="panel-detail-row">
               <dt>{t('kernel.overview.coreVersion')}</dt>
               <dd>
-                {currentVersion
-                  || (coreInstalled ? t('common.unavailable') : t('kernel.status.notInstalled'))}
+                <span className="mono-tag">
+                  {currentVersion
+                    || (coreInstalled ? t('common.unavailable') : t('kernel.status.notInstalled'))}
+                </span>
               </dd>
             </div>
             <div className="panel-detail-row">
               <dt>{t('kernel.overview.appVersion')}</dt>
-              <dd>{currentAppVersion}</dd>
+              <dd><span className="mono-tag">{currentAppVersion}</span></dd>
+            </div>
+            <div className="panel-detail-row">
+              <dt>{t('kernel.control.pid')}</dt>
+              <dd><span className="mono-tag">{coreStatus?.processId || t('kernel.control.noPid')}</span></dd>
+            </div>
+            <div className="panel-detail-row">
+              <dt>{t('home.runtime.port')}</dt>
+              <dd><span className="mono-tag">{customPort}</span></dd>
             </div>
           </dl>
+          {statusError && <p className="home-runtime-error" role="alert">{statusError}</p>}
 
           <div className="button-row panel-action-row control-action-row">
             <button
               type="button"
-              className={coreRunning ? 'danger-button' : 'primary-button'}
+              className={coreRunning ? 'danger-button home-runtime-stop' : 'primary-button'}
               disabled={!coreInstalled || coreProcessBusy}
               onClick={() =>
                 void runCoreProcessCommand(
@@ -268,6 +271,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                 )
               }
             >
+              {coreRunning ? <Square size={13} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
               {coreProcessBusy ? t('common.processing') : coreRunning ? t('kernel.action.stop') : t('kernel.action.start')}
             </button>
             <button
@@ -278,110 +282,24 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
                 void runCoreProcessCommand('restart_core_process')
               }
             >
+              <RotateCw size={14} aria-hidden="true" />
               {t('kernel.action.restart')}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={coreProcessBusy}
-              onClick={() => void refreshStatus()}
-            >
-              {t('kernel.control.refresh')}
             </button>
           </div>
           <FloatingNotice key={processFeedback.revision} notice={processFeedback.notice} onDismiss={processFeedback.clearNotice} />
         </div>
+        <HomeAccessPanel
+          profiles={apiProfiles} apiKey={homeApiKey} keyError={homeApiKeyError}
+          ready={coreReady} copiedField={copiedApiField} onCopy={copyApiValue}
+        />
       </div>
-
-      <section className="panel client-api-panel">
-        <div className="panel-heading client-api-heading">
-          <div>
-            <h2>{t('app.nav.api')}</h2>
-            <div className="client-api-key-actions">
-              {homeApiKeyError ? (
-                <span className="client-api-meta error">{t('common.detectionFailed')}</span>
-              ) : homeApiKey ? (
-                <>
-                  <span className="client-api-meta">{t('kernel.access.firstKey')}</span>
-                  <code className="client-api-key-code">
-                    {showHomeApiKey ? homeApiKey : '••••••••••••••••'}
-                  </code>
-                  <button
-                    type="button"
-                    className="icon-button quiet"
-                    onClick={() => setShowHomeApiKey((current) => !current)}
-                    title={showHomeApiKey ? t('config.keys.hide') : t('config.keys.show')}
-                    aria-label={showHomeApiKey ? t('config.keys.hide') : t('config.keys.show')}
-                  >
-                    {showHomeApiKey ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
-                  </button>
-                  <button
-                    type="button"
-                    className={`icon-button quiet ${copiedApiField === 'home:apikey' ? 'copied' : ''}`}
-                    onClick={() => void copyApiValue(homeApiKey, 'home:apikey')}
-                    title={copiedApiField === 'home:apikey' ? t('config.notice.keyCopied') : t('config.keys.copy')}
-                    aria-label={copiedApiField === 'home:apikey' ? t('config.notice.keyCopied') : t('config.keys.copy')}
-                  >
-                    {copiedApiField === 'home:apikey' ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-                  </button>
-                </>
-              ) : homeApiKey === null ? (
-                <span className="client-api-meta quiet">{t('kernel.access.noConfiguredKey')}</span>
-              ) : (
-                <span className="client-api-meta quiet">{t('common.loading')}</span>
-              )}
-            </div>
-          </div>
-          <span className={`state-pill ${coreReady ? 'success' : 'neutral'}`}>
-            {coreReady ? t('kernel.access.connectable') : t('kernel.access.waiting')}
-          </span>
-        </div>
-
-        <FloatingNotice key={copyFeedback.revision} notice={copyFeedback.notice} onDismiss={copyFeedback.clearNotice} />
-        <div className="client-api-grid">
-          {apiProfiles.map((profile) => (
-            <article key={profile.id} className={`client-api-card ${profile.id}`}>
-              <div className="client-api-card-heading">
-                <span className="client-api-logo">
-                  <img src={apiProfileIcons[profile.id]} alt="" />
-                </span>
-                <div>
-                  <strong>{profile.name}</strong>
-                  <span className="client-api-format-tag">{profile.description}</span>
-                </div>
-              </div>
-
-              <div className="client-api-values">
-                <div className="client-api-value-row">
-                  <span>{t('kernel.access.apiUrl')}</span>
-                  <code title={profile.baseUrl}>
-                    {profile.baseUrl}
-                  </code>
-                  <button
-                    type="button"
-                    className={`icon-button quiet ${copiedApiField === `${profile.id}:base` ? 'copied' : ''}`}
-                    onClick={() =>
-                      void copyApiValue(
-                        profile.baseUrl,
-                        `${profile.id}:base`,
-                      )
-                    }
-                    title={t(copiedApiField === `${profile.id}:base` ? 'kernel.access.apiCopied' : 'kernel.access.copyApi', { name: profile.name })}
-                    aria-label={t(copiedApiField === `${profile.id}:base` ? 'kernel.access.apiCopied' : 'kernel.access.copyApi', { name: profile.name })}
-                  >
-                    {copiedApiField === `${profile.id}:base` ? (
-                      <Check size={15} aria-hidden="true" />
-                    ) : (
-                      <Copy size={15} aria-hidden="true" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
+      <FloatingNotice key={copyFeedback.revision} notice={copyFeedback.notice} onDismiss={copyFeedback.clearNotice} />
+      <HomeOverviewCards snapshot={overview.snapshot} loading={overview.loading} coreReady={coreReady} onRefresh={overview.refresh} actions={<CoreHealthPanel compact
+        coreReady={coreReady} models={overview.snapshot?.models ?? []}
+        modelsLoading={overview.loading}
+        modelsError={overview.snapshot?.errors.models ?? ''}
+        onRefreshModels={overview.refresh} contextKey={healthContext}
+      />} />
     </section>
   );
 }

@@ -3,6 +3,10 @@ import { isRecord, managementApi } from './managementApi';
 import { normalizeAuthFilePriorityInput } from './authFiles';
 import { authFileExcludedRulesFromPayload } from './oauthModelSettings';
 import { normalizeOAuthExcludedRules } from './oauthModels';
+import { credentialAdvancedShape } from './credentialAdvancedSettings';
+import { validateStructuredValueText } from './structuredConfig';
+import { templateText } from '../i18n/templateConfig';
+import { sameTemplateValue } from './templateConfig';
 
 export type BooleanOverride = '' | 'true' | 'false';
 export type AuthFileSettingsDraft = {
@@ -15,6 +19,8 @@ export type AuthFileSettingsDraft = {
   excluded_models: string;
   headers: string;
   note: string;
+  advanced: Record<string, unknown>;
+  normalizeCloakMetadata?: string[];
 };
 
 const fail = (key: 'metadata' | 'headers' | 'weight' | 'priority') => {
@@ -47,6 +53,27 @@ const headersFromText = (text: string): Record<string, string> => {
   return result;
 };
 
+// OAuth cloak metadata is consumed as strings by the core, unlike the typed
+// cloak block in API-key configuration. Keep typed values only in the form.
+const advancedDraftValue = (key: string, value: unknown): unknown => {
+  if (value == null) return value;
+  if (key === 'cloak_strict_mode' || key === 'cloak_cache_user_id') {
+    if (typeof value === 'string') return value.trim().toLowerCase() === 'true';
+  }
+  if (key === 'cloak_sensitive_words' && typeof value === 'string') {
+    return value.split(',').map(word => word.trim()).filter(Boolean);
+  }
+  // Accept typed values persisted by older versions of this editor as well.
+  return value;
+};
+
+const advancedMetadataValue = (key: string, value: unknown): unknown => {
+  if (value == null) return null;
+  if (key === 'cloak_strict_mode' || key === 'cloak_cache_user_id') return String(value);
+  if (key === 'cloak_sensitive_words') return (value as string[]).map(word => word.trim()).filter(Boolean).join(',');
+  return value;
+};
+
 export const authFileSettingsFromPayload = (payload: unknown): AuthFileSettingsDraft => {
   let metadata = payload;
   if (typeof metadata === 'string') {
@@ -58,7 +85,14 @@ export const authFileSettingsFromPayload = (payload: unknown): AuthFileSettingsD
   const text = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
   const headers = metadata.headers == null ? {} : metadata.headers;
   if (!isRecord(headers) || Object.values(headers).some((value) => typeof value !== 'string')) return fail('headers');
+  const normalizeCloakMetadata = ['cloak_strict_mode', 'cloak_cache_user_id', 'cloak_sensitive_words'].filter(key => {
+    const value = read(key, key.replace(/_/g, '-'));
+    return key === 'cloak_sensitive_words'
+      ? Array.isArray(value) && value.every(word => typeof word === 'string')
+      : typeof value === 'boolean';
+  });
   return {
+    ...(normalizeCloakMetadata.length ? { normalizeCloakMetadata } : {}),
     prefix: text(metadata.prefix),
     proxy_url: text(read('proxy_url', 'proxy-url')),
     priority: text(metadata.priority),
@@ -68,6 +102,10 @@ export const authFileSettingsFromPayload = (payload: unknown): AuthFileSettingsD
     excluded_models: authFileExcludedRulesFromPayload(metadata).join('\n'),
     headers: JSON.stringify(headers, null, 2),
     note: text(metadata.note),
+    advanced: Object.fromEntries(Object.keys(credentialAdvancedShape.fields ?? {}).flatMap(key => {
+      const value = read(key, key.replace(/_/g, '-'));
+      return value === undefined ? [] : [[key, advancedDraftValue(key, value)]];
+    })),
   };
 };
 
@@ -109,6 +147,13 @@ export const buildAuthFileSettingsPatch = (
     }
     if (Object.keys(headers).length) patch.headers = headers;
   }
+  for (const [key, shape] of Object.entries(credentialAdvancedShape.fields ?? {})) {
+    const next = draft.advanced[key];
+    if (sameTemplateValue(next, original.advanced[key]) && !original.normalizeCloakMetadata?.includes(key)) continue;
+    const error = validateStructuredValueText(shape, next, key);
+    if (error) throw new Error(templateText(error, getCurrentLocale()));
+    patch[key] = advancedMetadataValue(key, next);
+  }
   return patch;
 };
 
@@ -118,7 +163,7 @@ type SettingsApi = {
 };
 
 export const loadAuthFileSettings = async (name: string, api: SettingsApi = managementApi) =>
-  authFileSettingsFromPayload(await api.get('/auth-files/download', { name }));
+  authFileSettingsFromPayload(await api.get('/credentials/download', { name }));
 
 export const saveAuthFileSettings = async (
   name: string, original: AuthFileSettingsDraft, draft: AuthFileSettingsDraft,
@@ -126,6 +171,6 @@ export const saveAuthFileSettings = async (
 ) => {
   const patch = buildAuthFileSettingsPatch(original, draft);
   if (!Object.keys(patch).length) return false;
-  await api.patch('/auth-files/fields', { name, ...patch });
+  await api.patch('/credentials/fields', { name, ...patch });
   return true;
 };

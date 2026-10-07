@@ -8,7 +8,7 @@ export type { AppTheme, ThemePreference } from './themeController';
 
 const STORAGE_KEY = 'easy-cli-proxy-api.theme';
 const WINDOW_BACKGROUND: Record<AppTheme, string> = {
-  light: '#f6f7f5',
+  light: '#ffffff',
   dark: '#0b0d11',
 };
 

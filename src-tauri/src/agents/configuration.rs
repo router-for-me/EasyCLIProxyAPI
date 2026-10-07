@@ -578,7 +578,6 @@ pub(crate) fn build_claude_agent_config(
     for (key, value) in [
         ("ANTHROPIC_BASE_URL", base_url),
         ("ANTHROPIC_AUTH_TOKEN", api_key),
-        ("ANTHROPIC_MODEL", model_settings.sonnet.as_str()),
         (
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             model_settings.haiku.as_str(),
@@ -598,8 +597,36 @@ pub(crate) fn build_claude_agent_config(
             serde_json::Value::String(value.to_string()),
         );
     }
-    env.entry("CLAUDE_CODE_SUBAGENT_MODEL".to_string())
-        .or_insert_with(|| serde_json::Value::String(subagent_model));
+    env.insert(
+        "EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL".to_string(),
+        serde_json::Value::String(if mappings.manage_default_model { "1" } else { "0" }.to_string()),
+    );
+    env.insert(
+        "EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL".to_string(),
+        serde_json::Value::String(if mappings.manage_subagent_model { "1" } else { "0" }.to_string()),
+    );
+    if mappings.manage_default_model {
+        env.insert(
+            "ANTHROPIC_MODEL".to_string(),
+            serde_json::Value::String(model_settings.sonnet.clone()),
+        );
+    } else if env
+        .get("ANTHROPIC_MODEL")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| value == model_settings.opus || value == model_settings.sonnet || value == model_settings.haiku)
+    {
+        env.remove("ANTHROPIC_MODEL");
+    }
+    if mappings.manage_subagent_model {
+        env.entry("CLAUDE_CODE_SUBAGENT_MODEL".to_string())
+            .or_insert_with(|| serde_json::Value::String(subagent_model));
+    } else if env
+        .get("CLAUDE_CODE_SUBAGENT_MODEL")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| value == model_settings.opus || value == model_settings.sonnet || value == model_settings.haiku)
+    {
+        env.remove("CLAUDE_CODE_SUBAGENT_MODEL");
+    }
     env.insert(
         CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV.to_string(),
         serde_json::Value::String(max_context_tokens.to_string()),
@@ -631,10 +658,18 @@ pub(crate) fn build_claude_agent_config(
             serde_json::Value::String(effort_level),
         );
     }
-    root.insert(
-        "model".to_string(),
-        serde_json::Value::String(model_settings.sonnet),
-    );
+    if mappings.manage_default_model {
+        root.insert(
+            "model".to_string(),
+            serde_json::Value::String(model_settings.sonnet),
+        );
+    } else if root
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| value == model_settings.opus || value == model_settings.sonnet || value == model_settings.haiku)
+    {
+        root.remove("model");
+    }
     let mut rendered = serde_json::to_string_pretty(&serde_json::Value::Object(root.clone()))
         .map_err(|error| format!("Failed to generate Claude Code configuration: {error}"))?;
     rendered.push('\n');
@@ -1158,6 +1193,8 @@ pub(crate) fn prepare_claude_code_managed_removal(
                 "ANTHROPIC_DEFAULT_SONNET_MODEL",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL",
                 "ANTHROPIC_DEFAULT_FABLE_MODEL",
+                "EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL",
+                "EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL",
                 CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV,
                 CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
                 CLAUDE_CODE_AUTO_MODE_SERVER_ENV,
@@ -1788,6 +1825,8 @@ pub(crate) fn build_restored_claude_code_config(
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL",
+            "EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL",
             CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV,
             CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
             CLAUDE_CODE_AUTO_MODE_SERVER_ENV,

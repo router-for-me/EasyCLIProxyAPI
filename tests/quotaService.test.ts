@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  codexAccountCreditsFor,
   codexResetCreditDetailsFor,
   codexResetCreditsFor,
   quotaRowsFor,
 } from '../src/services/quotaService';
+
+describe('Codex account credits', () => {
+  it('reads a numeric balance and unlimited flag from usage payloads', () => {
+    expect(codexAccountCreditsFor({ credits: { balance: 12.5, unlimited: false } }))
+      .toEqual({ balance: '12.5', unlimited: false });
+    expect(codexAccountCreditsFor({ credits: { unlimited: true } }))
+      .toEqual({ unlimited: true });
+  });
+
+  it('ignores malformed balances', () => {
+    expect(codexAccountCreditsFor({ credits: { balance: 'N/A', unlimited: false } }))
+      .toEqual({ unlimited: false });
+  });
+});
 
 describe('quotaRowsFor', () => {
   it('把 Codex 的已用百分比转换为剩余额度', () => {
@@ -121,11 +136,12 @@ describe('quotaRowsFor', () => {
     expect(result).toEqual({
       availableCount: 2,
       earliestExpiry: '2026-08-12T18:06:25Z',
+      expiries: ['2026-08-12T18:06:25Z', '2026-08-20T00:00:00Z'],
     });
   });
 
   it('重置次数支持 applicable 字段、空列表，不把过期积分算入推断次数', () => {
-    expect(codexResetCreditDetailsFor({ credits: [] })).toEqual({ availableCount: undefined, earliestExpiry: undefined });
+    expect(codexResetCreditDetailsFor({ credits: [] })).toEqual({ availableCount: undefined, earliestExpiry: undefined, expiries: [] });
     expect(codexResetCreditDetailsFor({
       applicableAvailableCount: '0',
       credits: [
@@ -135,7 +151,7 @@ describe('quotaRowsFor', () => {
         { resetType: 'other', status: 'available', expiresAt: '2030-01-01T00:00:00Z' },
       ],
     }, Date.parse('2026-01-01T00:00:00Z'))).toEqual({
-      availableCount: 1, applicableAvailableCount: 0, earliestExpiry: '2030-01-01T00:00:00Z',
+      availableCount: 1, applicableAvailableCount: 0, earliestExpiry: '2030-01-01T00:00:00Z', expiries: ['2030-01-01T00:00:00Z'],
     });
   });
 

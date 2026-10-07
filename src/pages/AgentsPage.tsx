@@ -8,12 +8,10 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ComponentType,
-  type KeyboardEvent,
 } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -25,8 +23,6 @@ import {
   Check,
   ChevronDown,
   LoaderCircle,
-  RefreshCw,
-  Search,
   SlidersHorizontal,
   Trash2,
   X,
@@ -44,8 +40,6 @@ import zcodeIcon from '../assets/icons/zcode.png';
 import workbuddyIcon from '../assets/icons/workbuddy.png';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import {
-  agentModelAlias,
-  filterAgentModels,
   filterAgentModelsByAlias,
   findAgentModel,
   resolveAgentModelForAliasMode,
@@ -69,12 +63,14 @@ import {
   type DeepSeekHarnessLaunchOptions,
 } from '../services/deepSeekHarnessLaunch';
 import type { ModelOption } from '../services/modelService';
+import { AgentModelPicker } from '../components/AgentModelPicker';
 import { claudeDesktopAliasSuggestions, claudeDesktopDefaultAliases, createDefaultDesktopModels, desktopAliasNotice, desktopEntryValidation, desktopModelNotListed, desktopModelEntries, desktopModelId, desktopModelValidation, isClaudeDesktopModel, selectedDesktopModelEntries, type ClaudeDesktopModelMapping } from '../services/claudeDesktopModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
 import { DeepSeekHarnessCatalogDialog } from './DeepSeekHarnessCatalogDialog';
 import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
+import { AgentClientList } from './AgentClientList';
 import { AgentConfigManagementPanel, AgentConfigurationFeedback, AgentRunControls } from './AgentControls';
 import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
 
@@ -165,6 +161,8 @@ type ClaudeModelMappings = {
   maxContextTokens: number;
   autoCompactPct: number;
   disableAutoCompact: boolean;
+  manageDefaultModel: boolean;
+  manageSubagentModel: boolean;
 };
 
 type AgentFormValues = {
@@ -195,6 +193,8 @@ const createClaudeModelMappings = (model: string): ClaudeModelMappings => ({
   maxContextTokens: DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS,
   autoCompactPct: DEFAULT_CLAUDE_AUTO_COMPACT_PCT,
   disableAutoCompact: false,
+  manageDefaultModel: true,
+  manageSubagentModel: true,
 });
 
 const createClaudeModelMappingsByClient = (): Record<
@@ -383,6 +383,9 @@ let agentViewStateCache: Record<'full' | 'embedded', Partial<Record<AgentClientI
 };
 
 const AGENT_MODEL_SELECTIONS_KEY = 'cpa-gui.agent-model-selections.v1';
+// Keep the last successful data across page visits; revalidate it in the background.
+let agentStatusesCache: AgentConfigStatus[] | null = null;
+const agentModelsCache: Partial<Record<AgentClientId, ModelOption[]>> = {};
 const AGENT_SELECTED_CLIENT_KEY = 'cpa-gui.agent-selected-client.v1';
 const AGENT_LAUNCH_DIRECTORY_HISTORY_KEY = 'cpa-gui.agent-launch-directory-history.v1';
 
@@ -479,296 +482,6 @@ const listStatusText = (status: AgentConfigStatus | undefined) => {
     : translate(locale, 'agents.list.installed');
 };
 
-type AgentModelPickerProps = {
-  models: ModelOption[];
-  value: string;
-  loading: boolean;
-  error: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-  onRefresh?: () => void;
-  allowCustomValue?: boolean;
-  editable?: { label: string; placeholder: string; maxLength: number };
-};
-
-type AgentModelDropdownLayout = {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-};
-
-function AgentModelPicker({
-  models,
-  value,
-  loading,
-  error,
-  disabled,
-  onChange,
-  onRefresh,
-  allowCustomValue = false,
-  editable,
-}: AgentModelPickerProps) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [dropdownLayout, setDropdownLayout] = useState<AgentModelDropdownLayout | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const valueRef = useRef<HTMLInputElement>(null);
-  const listboxId = useId();
-  const visibleModels = useMemo(
-    () => editable && !search.trim() ? models : filterAgentModels(models, search),
-    [models, search, editable],
-  );
-  const choices = useMemo(() => {
-    const options = visibleModels.map((model) => ({ name: model.name, alias: model.alias ?? '' }));
-    if (allowCustomValue && search.trim() && !findAgentModel(models, search)) {
-      options.push({ name: search.trim(), alias: t('agents.model.useCustom') });
-    }
-    return options;
-  }, [visibleModels, allowCustomValue, search, models, t]);
-  const selectedModel = findAgentModel(models, value);
-  const selectedName = selectedModel?.name ?? (allowCustomValue || editable ? value.trim() : '');
-  const selectedAlias = selectedName ? agentModelAlias(models, selectedName) : '';
-
-  const updateDropdownLayout = useCallback(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const rect = root.getBoundingClientRect();
-    const edgeGap = 12;
-    const triggerGap = 6;
-    const preferredHeight = 282;
-    const minimumHeight = 150;
-    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - triggerGap - edgeGap);
-    const spaceAbove = Math.max(0, rect.top - triggerGap - edgeGap);
-    const placeAbove = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
-    const availableHeight = placeAbove ? spaceAbove : spaceBelow;
-    const height = Math.min(preferredHeight, Math.max(minimumHeight, availableHeight));
-    const width = Math.min(rect.width, window.innerWidth - edgeGap * 2);
-    const left = Math.min(
-      Math.max(edgeGap, rect.left),
-      Math.max(edgeGap, window.innerWidth - edgeGap - width),
-    );
-    const desiredTop = placeAbove
-      ? rect.top - triggerGap - height
-      : rect.bottom + triggerGap;
-    const top = Math.min(
-      Math.max(edgeGap, desiredTop),
-      Math.max(edgeGap, window.innerHeight - edgeGap - height),
-    );
-
-    setDropdownLayout({ top, left, width, height });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setDropdownLayout(null);
-      return undefined;
-    }
-
-    updateDropdownLayout();
-    window.addEventListener('resize', updateDropdownLayout);
-    window.addEventListener('scroll', updateDropdownLayout);
-    return () => {
-      window.removeEventListener('resize', updateDropdownLayout);
-      window.removeEventListener('scroll', updateDropdownLayout);
-    };
-  }, [open, updateDropdownLayout]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (!editable) setSearch('');
-    const selectedIndex = (editable ? visibleModels : filterAgentModels(models, '')).findIndex(
-      (model) => model.name.toLocaleLowerCase() === value.trim().toLocaleLowerCase(),
-    );
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
-    if (!editable) requestAnimationFrame(() => searchRef.current?.focus());
-  }, [open]);
-
-  useEffect(() => {
-    setActiveIndex((current) => Math.min(current, Math.max(choices.length - 1, 0)));
-  }, [choices.length]);
-
-  const choose = (name: string) => {
-    onChange(name);
-    setOpen(false);
-    if (editable) valueRef.current?.focus();
-  };
-
-  const moveActive = (offset: number) => {
-    if (choices.length === 0) return;
-    setActiveIndex((current) => (current + offset + choices.length) % choices.length);
-  };
-
-  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      if (!open) setOpen(true);
-      else moveActive(1);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      if (!open) setOpen(true);
-      else moveActive(-1);
-    } else if (event.key === 'Enter' && open && choices[activeIndex]) {
-      event.preventDefault();
-      choose(choices[activeIndex].name);
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      setOpen(false);
-    }
-  };
-
-  return (
-    <div className={`agent-model-picker ${open ? 'open' : ''}`} ref={rootRef}
-      onMouseDown={(event) => {
-        if (event.button === 0 && event.currentTarget.contains(document.activeElement)
-          && event.target instanceof Element && event.target.closest('button')) {
-          event.preventDefault();
-        }
-      }}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
-      }}>
-      {editable ? (
-        <div className="agent-model-trigger agent-model-editable-trigger">
-          <input ref={valueRef} type="text" value={value} aria-label={editable.label}
-            placeholder={editable.placeholder} maxLength={editable.maxLength} disabled={disabled}
-            spellCheck={false} autoComplete="off" role="combobox" aria-autocomplete="list"
-            aria-controls={listboxId} aria-expanded={open}
-            onClick={() => { setSearch(''); setOpen(true); }} onKeyDown={handleSearchKeyDown}
-            onChange={(event) => {
-              onChange(event.currentTarget.value);
-              setSearch(event.currentTarget.value);
-              setActiveIndex(0);
-              setOpen(true);
-            }} />
-          <button type="button" className="icon-button quiet" aria-label={editable.label}
-            aria-haspopup="listbox" aria-expanded={open} aria-controls={listboxId}
-            disabled={disabled} onClick={() => { setSearch(''); setOpen((current) => !current); }}>
-            <ChevronDown size={17} aria-hidden />
-          </button>
-        </div>
-      ) : <button
-        type="button"
-        className="agent-model-trigger"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={listboxId}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (!open && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
-            event.preventDefault();
-            setOpen(true);
-          }
-        }}
-      >
-        <span>
-          <strong title={selectedName || undefined}>
-            {selectedName || (loading ? t('agents.model.loading') : error ? t('agents.model.loadFailed') : models.length ? t('agents.model.select') : t('agents.model.none'))}
-          </strong>
-          {selectedAlias ? <small title={selectedAlias}>{selectedAlias}</small> : null}
-        </span>
-        <ChevronDown size={17} aria-hidden />
-      </button>}
-
-      {open ? (
-        <div
-          className={`agent-model-dropdown${editable ? ' agent-model-dropdown-editable' : ''}`}
-          style={dropdownLayout
-            ? dropdownLayout
-            : { top: 0, left: 0, width: 0, height: 0, visibility: 'hidden' }}
-        >
-          {!editable ? <div className="agent-model-search">
-            <Search size={15} aria-hidden />
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={(event) => {
-                setSearch(event.currentTarget.value);
-                setActiveIndex(0);
-              }}
-              onKeyDown={handleSearchKeyDown}
-              placeholder={t('agents.model.search')}
-              role="combobox"
-              aria-controls={listboxId}
-              aria-expanded="true"
-            />
-            {search ? (
-              <button
-                type="button"
-                className="icon-button quiet"
-                onClick={() => {
-                  setSearch('');
-                  setActiveIndex(0);
-                  searchRef.current?.focus();
-                }}
-                title={t('agents.model.clearSearch')}
-                aria-label={t('agents.model.clearSearch')}
-              >
-                <X size={14} aria-hidden="true" />
-              </button>
-            ) : null}
-            {onRefresh ? <button type="button" className="icon-button quiet" onClick={onRefresh} disabled={loading} title={t('agents.model.refresh')} aria-label={t('agents.model.refresh')}>
-              <RefreshCw size={14} className={loading ? 'spin' : ''} aria-hidden="true" />
-            </button> : null}
-          </div> : null}
-
-          <div className="agent-model-list" id={listboxId} role="listbox">
-            {loading && models.length === 0 && choices.length === 0 ? (
-              <div className="agent-model-empty"><LoaderCircle size={18} className="spin" />{t('agents.model.fetching')}</div>
-            ) : error && models.length === 0 && choices.length === 0 ? (
-              <div className="agent-model-empty error"><strong>{t('agents.model.loadFailed')}</strong><span>{error}</span></div>
-            ) : choices.length === 0 ? (
-              <div className="agent-model-empty">
-                {editable ? <span>{t('agents.claudeDesktopMapping.customAliasHint')}</span> : <>
-                  <strong>{search.trim() ? t('agents.model.noMatch') : t('agents.model.unavailable')}</strong>
-                  <span>{search.trim() ? t('agents.model.tryKeywords') : t('agents.model.connectFirst')}</span>
-                </>}
-              </div>
-            ) : choices.map((choice, index) => {
-              const selected = choice.name.toLocaleLowerCase() === value.trim().toLocaleLowerCase();
-              return (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  className={`agent-model-option ${selected ? 'selected' : ''} ${index === activeIndex ? 'active' : ''}`}
-                  key={choice.name}
-                  onMouseEnter={() => setActiveIndex(index)}
-                  onClick={() => choose(choice.name)}
-                >
-                  <span>
-                    <strong title={choice.name}>{choice.name}</strong>
-                    <small>{choice.alias || t('agents.model.available')}</small>
-                  </span>
-                  {selected ? <Check size={16} aria-hidden /> : null}
-                </button>
-              );
-            })}
-          </div>
-          <div className="agent-model-dropdown-footer">
-            <span>{t(editable ? 'agents.claudeDesktopMapping.suggestionCount' : 'agents.model.count', { count: models.length })}</span>
-            {error && models.length > 0 ? <span className="error">{t('agents.model.stale')}</span> : null}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function ClaudeDesktopHelpDialog({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -813,7 +526,6 @@ type AgentsPageProps = {
 
 export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsPageProps = {}) {
   const { t } = useI18n();
-  const [showOtherApps, setShowOtherApps] = useState(false);
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
   const [viewStateByClient, setViewStateByClient] = useState(() => agentViewStateCache);
   const viewMode = embedded ? 'embedded' : 'full';
@@ -839,8 +551,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const setConfigurationNotice = (configurationNotice: string) => updateViewState({ configurationNotice });
   const setClearNotice = (clearNotice: string) => updateViewState({ clearNotice });
   const setLaunchError = (launchError: string) => updateViewState({ launchError });
-  const [statuses, setStatuses] = useState<AgentConfigStatus[]>([]);
-  const [models, setModels] = useState<ModelOption[]>([]);
+  const [statuses, setStatuses] = useState<AgentConfigStatus[]>(() => agentStatusesCache ?? []);
+  const [modelData, setModelData] = useState(() => ({
+    client: selected, models: agentModelsCache[selected] ?? [],
+  }));
+  const models = modelData.client === selected ? modelData.models : agentModelsCache[selected] ?? [];
   const [modelByClient, setModelByClient] = useState<Partial<Record<AgentClientId, string>>>(
     readAgentModelSelections,
   );
@@ -856,7 +571,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [claudeCustomMappingByClient, setClaudeCustomMappingByClientState] = useState(
     () => ({ ...claudeCustomMappingCache }),
   );
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => agentStatusesCache === null);
   const [modelLoading, setModelLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<
     'backup' | 'apply' | 'close-config' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'native-oauth' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | 'restart-deepseek' | null
@@ -898,6 +613,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   );
   const [piProviderUpdateStatus, setPiProviderUpdateStatus] = useState<PiProviderUpdateStatus | null>(null);
   const modelRequestRef = useRef(0);
+  const statusRequestRef = useRef(0);
   const piUpdateRequestRef = useRef(0);
   const claudeModelMappingsDirtyRef = useRef(claudeModelMappingsDirtyCache);
   const launchDirectoryDialogRef = useDialogFocusTrap<HTMLElement>({
@@ -955,11 +671,23 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   }, []);
 
   const loadStatuses = useCallback(async (forceRefresh = false) => {
+    const requestId = ++statusRequestRef.current;
     const command = forceRefresh
       ? 'refresh_agent_config_statuses'
       : 'get_agent_config_statuses';
     const nextStatuses = await invoke<AgentConfigStatus[]>(command);
+    if (requestId !== statusRequestRef.current) return;
     setStatuses(nextStatuses);
+  }, []);
+
+  useEffect(() => {
+    if (statuses.length) agentStatusesCache = statuses;
+  }, [statuses]);
+
+  useEffect(() => () => {
+    // Responses from a previous visit must not overwrite the shared cache.
+    modelRequestRef.current += 1;
+    statusRequestRef.current += 1;
   }, []);
 
   const loadDeepSeekHarnessProcessStatus = useCallback(async () => {
@@ -967,16 +695,16 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setDeepSeekHarnessProcessStatus(status);
   }, []);
 
-  const loadModels = useCallback(async (client: AgentClientId, preferredModel = '') => {
+  const loadModels = useCallback(async (client: AgentClientId, preferredModel = '', background = false) => {
     const requestId = modelRequestRef.current + 1;
     modelRequestRef.current = requestId;
-    setModelLoading(true);
+    setModelLoading(!background || agentModelsCache[client] === undefined);
     setModelError('');
-    setModels([]);
     try {
       const nextModels = await invoke<ModelOption[]>('get_agent_models', { client });
       if (modelRequestRef.current !== requestId) return;
-      setModels(nextModels);
+      agentModelsCache[client] = nextModels;
+      setModelData({ client, models: nextModels });
       setModelSelectionError('');
       setModelByClient((current) => {
         const next = {
@@ -1006,7 +734,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   }, [loadStatuses]);
 
   useEffect(() => {
-    setLoading(true);
+    setLoading(agentStatusesCache === null);
     setDetectionError('');
     void loadStatuses()
       .catch((requestError) => setDetectionError(String(requestError)))
@@ -1017,7 +745,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     if (loading) return;
     const status = statuses.find((status) => status.id === selected);
     const preferredModel = status?.currentModel ?? '';
-    void loadModels(selected, preferredModel);
+    void loadModels(selected, preferredModel, true);
   }, [loadModels, loading, selected]);
 
   useEffect(() => {
@@ -1029,7 +757,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       void loadStatuses().catch((requestError) => {
         if (!disposed) setDetectionError(String(requestError));
       });
-      void loadModels(selected);
+      void loadModels(selected, '', true);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else stop = unlisten;
@@ -1087,7 +815,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const selectedModel = selectedModelOption?.name ?? '';
   const isPiClient = selected === 'pi';
   const isDeepSeekHarnessClient = selected === 'deepseek-harness';
-  const hasIndependentCliAndApp = selected === 'codex' || selected === 'opencode';
+  const hasIndependentCliAndApp = selected === 'codex' || selected === 'opencode' || isDeepSeekHarnessClient;
   const isClaudeModelMappingClient = selected === 'claude-code' || selected === 'claude-desktop';
   const claudeModelMappingsDraft = isClaudeModelMappingClient
     ? claudeModelMappingsDraftByClient[selected]
@@ -1172,6 +900,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         maxContextTokens: source.maxContextTokens ?? DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS,
         autoCompactPct: source.autoCompactPct ?? DEFAULT_CLAUDE_AUTO_COMPACT_PCT,
         disableAutoCompact: Boolean(source.disableAutoCompact),
+        manageDefaultModel: source.manageDefaultModel !== false,
+        manageSubagentModel: source.manageSubagentModel !== false,
       };
       return sameAgentModelMappings(currentClientDraft, next)
         ? current
@@ -1440,6 +1170,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     resolved.maxContextTokens = claudeModelMappingsDraft.maxContextTokens;
     resolved.autoCompactPct = claudeModelMappingsDraft.autoCompactPct;
     resolved.disableAutoCompact = claudeModelMappingsDraft.disableAutoCompact;
+    resolved.manageDefaultModel = claudeModelMappingsDraft.manageDefaultModel;
+    resolved.manageSubagentModel = claudeModelMappingsDraft.manageSubagentModel;
     return resolved;
   };
 
@@ -2039,56 +1771,30 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
   return (
     <section className={`page management-page agents-page${embedded ? ' agents-page-embedded' : ''}`}>
-      <header className="management-header">
-        <div className={embedded ? 'agent-embedded-header-copy' : undefined}>
-          {embedded ? (
-            <>
-              <h1>{t('agents.embedded.title')}</h1>
-              <p>{t('agents.embedded.subtitle')}</p>
-            </>
-          ) : (
-            <>
-              <h1>{t('agents.title')}</h1>
-            </>
-          )}
-        </div>
-        <div className="agent-header-actions">
-          {detectionError ? (
-            <MessageNotice message={detectionError} onDismiss={() => setDetectionError('')} />
-          ) : null}
-          <button type="button" className="secondary-button compact-button" onClick={() => void refresh()} disabled={loading || busy}>
-            <RefreshCw size={16} className={loading ? 'spin' : ''} />
-            {t('agents.redetect')}
-          </button>
-        </div>
-      </header>
+      {embedded ? (
+        <header className="management-header">
+          <div className="agent-embedded-header-copy">
+            <h1>{t('agents.embedded.title')}</h1>
+            <p>{t('agents.embedded.subtitle')}</p>
+          </div>
+        </header>
+      ) : null}
       {!embedded && <div className="personal-context"><strong>{t('personal.connectionTitle')}</strong> {t('personal.connectionHelp')}</div>}
 
-
       <div className="agent-workbench">
-        <aside className="panel agent-client-list" aria-label={t('agents.localClients')}>
-          <label className="personal-provider-toggle"><input type="checkbox" checked={showOtherApps} onChange={(event) => setShowOtherApps(event.target.checked)} />{t('personal.otherApps')}</label>
-          <div className="agent-list-items">
-            {agentDefinitions.filter((agent) => showOtherApps || ['claude-code', 'claude-desktop', 'codex', selected].includes(agent.id)).map((agent) => {
-              const status = statuses.find((item) => item.id === agent.id);
-              return (
-                <button
-                  type="button"
-                  className={selected === agent.id ? 'active' : ''}
-                  key={agent.id}
-                  onClick={() => setSelected(agent.id)}
-                  disabled={busy}
-                >
-                  <span className="agent-client-icon"><AgentMark definition={agent} /></span>
-                  <span><strong>{agent.name}</strong><small>{listStatusText(status)}</small></span>
-                  {status?.installed ? (
-                    <i className="agent-installed-indicator" title={t('agents.clientDetected')} aria-hidden="true" />
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </aside>
+        <AgentClientList clients={agentDefinitions.map((agent) => {
+          const status = statuses.find((item) => item.id === agent.id);
+          return {
+            id: agent.id,
+            name: agent.name,
+            icon: <AgentMark definition={agent} />,
+            summary: listStatusText(status),
+            installed: Boolean(status?.installed),
+            detected: Boolean(status && (status.installed || status.configExists || status.configured
+              || (agent.id === 'pi' && status.pluginInstalled))),
+          };
+        })} selected={selected} onSelect={setSelected} onRefresh={() => void refresh()}
+          loading={loading} busy={busy} error={detectionError} onDismissError={() => setDetectionError('')} />
 
         <section className="panel agent-config-panel">
           {availableSubpages.length > 1 ? (
@@ -2428,6 +2134,48 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                           <span className="switch-track" />
                         </span>
                       </label>
+                      <label
+                        className="agent-claude-code-disable-compact"
+                        title={t('agents.claudeCodeRuntime.manageDefaultModelHint')}
+                      >
+                        <span>
+                          <strong>{t('agents.claudeCodeRuntime.manageDefaultModel')}</strong>
+                          <small>{t('agents.claudeCodeRuntime.manageDefaultModelHint')}</small>
+                        </span>
+                        <span className="switch-control">
+                          <input
+                            type="checkbox"
+                            checked={claudeModelMappingsDraft.manageDefaultModel}
+                            onChange={(event) => editClaudeModelMappings((current) => ({
+                              ...current,
+                              manageDefaultModel: event.currentTarget.checked,
+                            }))}
+                            disabled={busy || loading || modelLoading}
+                          />
+                          <span className="switch-track" />
+                        </span>
+                      </label>
+                      <label
+                        className="agent-claude-code-disable-compact"
+                        title={t('agents.claudeCodeRuntime.manageSubagentModelHint')}
+                      >
+                        <span>
+                          <strong>{t('agents.claudeCodeRuntime.manageSubagentModel')}</strong>
+                          <small>{t('agents.claudeCodeRuntime.manageSubagentModelHint')}</small>
+                        </span>
+                        <span className="switch-control">
+                          <input
+                            type="checkbox"
+                            checked={claudeModelMappingsDraft.manageSubagentModel}
+                            onChange={(event) => editClaudeModelMappings((current) => ({
+                              ...current,
+                              manageSubagentModel: event.currentTarget.checked,
+                            }))}
+                            disabled={busy || loading || modelLoading}
+                          />
+                          <span className="switch-track" />
+                        </span>
+                      </label>
                     </div>
                   ) : null}
                   <div className="agent-claude-desktop-mapping-grid">
@@ -2522,7 +2270,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           <MessageNotice tone="success" message={!configurationErrorMessage ? configurationNotice || clearNotice : null}
             onDismiss={() => { setConfigurationNotice(''); setClearNotice(''); }} />
           {activeSubpage === 'core' ? <AgentRunControls name={activeDefinition.name} dualTargets={hasIndependentCliAndApp}
-            desktop={hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode' || selected === 'workbuddy'}
+            desktop={(hasIndependentCliAndApp && !isDeepSeekHarnessClient) || selected === 'claude-desktop' || selected === 'zcode' || selected === 'workbuddy'}
             targets={activeLaunchTargets} enabled={launchEnabled} busyAction={busyAction}
             harness={isDeepSeekHarnessClient ? deepSeekHarnessProcessStatus : null}
             onLaunch={(target) => void launchAgent(target)} onRestart={() => void restartDesktopApp()}

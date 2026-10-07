@@ -1,0 +1,244 @@
+/* Use the space left for the workbench, including the app sidebar and padding. */
+.agents-page:not(.agents-page-embedded) {
+  container: agent-workspace / inline-size;
+}
+
+@container agent-workspace (max-width: 760px) {
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-workbench {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .app-shell:has(.agents-page:not(.agents-page-embedded)) .agent-client-list {
+    height: auto;
+    max-height: none;
+    gap: 6px;
+    padding: 10px 12px;
+  }
+
+  .agents-page:not(.agents-page-embedded) .agent-list-items {
+    display: grid;
+    flex: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 192px;
+    grid-template-columns: none;
+    grid-template-rows: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 4px;
+    scrollbar-gutter: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  .agents-page:not(.agents-page-embedded) .agent-list-items button {
+    min-height: 58px;
+    scroll-snap-align: start;
+  }
+
+  .agents-page:not(.agents-page-embedded) .agent-list-items strong,
+  .agents-page:not(.agents-page-embedded) .agent-list-items small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.agent-save-bar,
+.agent-codex-save-actions,
+.agent-signin-label,
+.agent-section-heading-actions {
+  flex-wrap: wrap;
+}
+
+.agent-save-bar .agent-save-feedback {
+  flex-basis: 180px;
+}
+
+.agent-save-actions button,
+.agent-management-actions button {
+  max-width: 100%;
+}
+
+.agent-section-heading > div:first-child,
+.agent-claude-code-disable-compact > span:first-child {
+  overflow-wrap: anywhere;
+}
+
+@container agent-panel (max-width: 640px) {
+  .agent-desktop-models > .agent-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .agent-desktop-models > .agent-section-heading > .agent-section-heading-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .agent-desktop-model-fields {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .agent-desktop-model-field:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .agent-desktop-model-actions {
+    height: 44px;
+    justify-self: end;
+  }
+
+  .agent-status-grid,
+  .agent-status-grid.dual-install-status-grid,
+  .agent-status-grid.pi-status-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  }
+
+  .codex-session-overview-head,
+  .codex-session-list-head {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .codex-session-selection-actions {
+    justify-content: flex-start;
+  }
+
+  .codex-session-pagination {
+    flex-wrap: wrap;
+  }
+}
+
+@container agent-panel (max-width: 420px) {
+  .agent-subpage-tabs {
+    width: fit-content;
+    overflow-x: auto;
+  }
+
+  .agent-subpage-tabs button {
+    flex: none;
+    width: auto;
+    padding-inline: 10px;
+  }
+
+  .agent-signin-explanation dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .codex-session-meta,
+  .codex-session-row:has(.codex-session-checkbox) .codex-session-meta {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .codex-session-meta time {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+/* Catalog forms must respond to the editor width, not the whole dialog. */
+.codex-catalog-editor {
+  container: catalog-editor / inline-size;
+}
+
+.codex-catalog-sidebar,
+.codex-catalog-form > label,
+.codex-catalog-models > button {
+  min-width: 0;
+}
+
+.codex-catalog-model-heading,
+.codex-catalog-footer,
+.codex-catalog-footer > div:last-child,
+.codex-catalog-confirm > div > div {
+  flex-wrap: wrap;
+}
+
+.codex-catalog-model-heading > button {
+  flex: none;
+  max-width: 100%;
+}
+
+.codex-catalog-footer > div:last-child {
+  margin-left: auto;
+}
+
+.codex-catalog-hint,
+.codex-catalog-heading p {
+  overflow-wrap: anywhere;
+}
+
+@container catalog-editor (max-width: 500px) {
+  .codex-catalog-form,
+  .harness-reasoning-levels {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Keep the model list beside the editor on small desktop windows so it does
+   not consume most of the dialog's available height. */
+@media (min-width: 600px) and (max-width: 900px) {
+  .codex-catalog-body,
+  .harness-catalog-dialog .codex-catalog-body {
+    grid-template-columns: 180px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .codex-catalog-sidebar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 10px;
+    border-right: 1px solid var(--theme-d5d2cb);
+    border-bottom: 0;
+  }
+
+  .harness-catalog-dialog .codex-catalog-sidebar {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .codex-catalog-sidebar > *,
+  .harness-catalog-dialog .codex-catalog-sidebar > * {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .codex-catalog-footer {
+    flex-direction: row;
+    gap: 8px;
+  }
+
+  .codex-catalog-footer > div:last-child {
+    display: flex;
+  }
+}
+
+.agent-backup-modal {
+  container: agent-backup / inline-size;
+}
+
+.agent-backup-modal footer {
+  flex-wrap: wrap;
+}
+
+.agent-backup-columns nav {
+  min-width: 0;
+}
+
+.agent-backup-columns nav button {
+  overflow-wrap: anywhere;
+}
+
+@container agent-backup (max-width: 680px) {
+  .agent-backup-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-backup-columns nav {
+    max-height: 160px;
+  }
+}

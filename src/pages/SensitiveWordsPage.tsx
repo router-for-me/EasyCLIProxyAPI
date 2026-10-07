@@ -96,7 +96,7 @@ function WordEditor({ provider, entries, composer, disabled, onAdd, onCompose, o
   );
 }
 
-export function SensitiveWordsPage() {
+export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void } = {}) {
   const { t } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const nextEntryId = useRef(0);
@@ -142,6 +142,8 @@ export function SensitiveWordsPage() {
     JSON.stringify(words.antigravitySensitiveWords) !== JSON.stringify(saved.antigravitySensitiveWords)
     || JSON.stringify(words.devinSensitiveWords) !== JSON.stringify(saved.devinSensitiveWords)
   );
+
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
 
   const changeWord = (provider: Provider, id: number, value: string) => {
     setDraft((current) => ({

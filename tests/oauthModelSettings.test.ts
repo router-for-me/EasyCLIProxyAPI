@@ -3,6 +3,7 @@ import {
   authFileExcludedRulesFromPayload,
   loadOAuthModelSettings,
   saveOAuthModelSettings,
+  saveOAuthProviderExclusions,
   type OAuthModelTarget,
 } from '../src/services/oauthModelSettings';
 import { openOAuthModelNames, setOAuthModelsExcluded } from '../src/services/oauthModels';
@@ -26,11 +27,11 @@ function createApi() {
   const api = {
     async get(path: string, query?: Record<string, string>): Promise<unknown> {
       reads.push({ path, query });
-      if (path.startsWith('/model-definitions/')) return { models };
-      if (path === '/oauth-excluded-models') return { 'oauth-excluded-models': structuredClone(globalRules) };
+      if (path.startsWith('/routing/model-definitions/')) return { models };
+      if (path === '/config/oauth/excluded-models') return structuredClone(globalRules);
       const file = query?.name ? files[query.name] : undefined;
-      if (path === '/auth-files/download' && file) return structuredClone(file);
-      if (path === '/auth-files/models' && file) {
+      if (path === '/credentials/download' && file) return structuredClone(file);
+      if (path === '/credentials/models' && file) {
         const allowed = openOAuthModelNames(models, [...authFileExcludedRulesFromPayload(file), ...globalRules.codex ?? []]);
         return { models: models.filter((model) => allowed.has(model.id)) };
       }
@@ -38,18 +39,17 @@ function createApi() {
     },
     async patch(path: string, body: Record<string, unknown>): Promise<unknown> {
       writes.push({ path, body });
-      if (path === '/auth-files/fields') {
+      if (path === '/credentials/fields') {
         const { name, ...fields } = body;
         Object.assign(files[String(name)], fields);
-      } else if (path === '/oauth-excluded-models') {
-        globalRules[String(body.provider)] = body.models as string[];
       } else throw new Error('unexpected write');
       return { status: 'ok' };
     },
-    async delete(path: string, options?: { query?: Record<string, string> }): Promise<unknown> {
-      if (path !== '/oauth-excluded-models' || !options?.query?.provider) throw new Error('unexpected delete');
-      deletes.push({ path, query: options.query });
-      delete globalRules[options.query.provider];
+    async put(path: string, body: Record<string, unknown>): Promise<unknown> {
+      if (path !== '/config/oauth/excluded-models') throw new Error('unexpected put');
+      writes.push({ path, body });
+      for (const key of Object.keys(globalRules)) delete globalRules[key];
+      Object.assign(globalRules, structuredClone(body));
       return { status: 'ok' };
     },
   };
@@ -57,6 +57,36 @@ function createApi() {
 }
 
 describe('OAuth model settings scopes', () => {
+  it('serializes simultaneous provider edits and preserves unrelated values verbatim', async () => {
+    const { api, globalRules } = createApi();
+    globalRules[' CODEX '] = ['old'];
+    globalRules['Future-Plugin'] = ['CaseSensitive-*'];
+    await Promise.all([
+      saveOAuthProviderExclusions(' Codex ', ['next'], api),
+      saveOAuthProviderExclusions('meta', [], api),
+      saveOAuthProviderExclusions('claude', undefined, api),
+    ]);
+    expect(globalRules).toEqual({ codex: ['next'], meta: [], 'Future-Plugin': ['CaseSensitive-*'] });
+  });
+
+  it('only defaults missing config nodes and releases the write queue after errors', async () => {
+    const { api, writes } = createApi();
+    const get = api.get;
+    for (const error of ['Management API error (401): unauthorized', 'Management API error (404): 404 page not found']) {
+      api.get = async () => { throw new Error(error); };
+      await expect(saveOAuthProviderExclusions('codex', ['next'], api)).rejects.toThrow(error);
+    }
+    api.get = async () => [];
+    await expect(saveOAuthProviderExclusions('codex', ['next'], api)).rejects.toThrow('Invalid OAuth exclusion configuration');
+    expect(writes).toEqual([]);
+    api.get = async () => { throw 'Management API error (404): not_found'; };
+    await saveOAuthProviderExclusions('codex', ['next'], api);
+    expect(writes).toEqual([{ path: '/config/oauth/excluded-models', body: { codex: ['next'] } }]);
+    api.get = get;
+    await saveOAuthProviderExclusions('claude', ['next'], api);
+    expect(writes.at(-1)?.body).toEqual({ codex: ['next'], claude: ['next'] });
+  });
+
   it('saves A exclusions without changing B, global rules, or refreshed account fields', async () => {
     const { api, files, globalRules, writes, reads } = createApi();
     const settings = await loadOAuthModelSettings(account('a.json'), api);
@@ -66,9 +96,9 @@ describe('OAuth model settings scopes', () => {
     expect(files['a.json']).toMatchObject({ excluded_models: [modelId], access_token: 'refreshed-during-edit', priority: 9 });
     expect((await loadOAuthModelSettings(account('b.json'), api)).excludedRules).toEqual([]);
     expect(globalRules).toEqual({ codex: [], claude: ['claude-old-*'] });
-    expect(writes).toEqual([{ path: '/auth-files/fields', body: { name: 'a.json', excluded_models: [modelId] } }]);
-    expect(reads).toContainEqual({ path: '/auth-files/models', query: { name: 'a.json' } });
-    expect(reads.some(({ path }) => path === '/oauth-excluded-models' || path.startsWith('/model-definitions/'))).toBe(false);
+    expect(writes).toEqual([{ path: '/credentials/fields', body: { name: 'a.json', excluded_models: [modelId] } }]);
+    expect(reads).toContainEqual({ path: '/credentials/models', query: { name: 'a.json' } });
+    expect(reads.some(({ path }) => path === '/config/oauth/excluded-models' || path.startsWith('/routing/model-definitions/'))).toBe(false);
   });
 
   it('loads exact account exclusions as checked candidates without copying inherited bans', async () => {
@@ -82,7 +112,7 @@ describe('OAuth model settings scopes', () => {
     expect(files['a.json'].excluded_models).toEqual(['gpt-5.4', modelId]);
     expect(globalRules.codex).toEqual(['gpt-image-*']);
     globalRules.codex = [];
-    expect((await api.get('/auth-files/models', { name: 'a.json' }) as { models: typeof models }).models)
+    expect((await api.get('/credentials/models', { name: 'a.json' }) as { models: typeof models }).models)
       .toEqual([{ id: 'gpt-image-2' }]);
   });
 
@@ -93,7 +123,7 @@ describe('OAuth model settings scopes', () => {
     await saveOAuthModelSettings(settings, ['gpt-image-*'], api);
     globalRules.codex = [];
     expect(files['a.json'].excluded_models).toEqual(['gpt-image-*']);
-    expect((await api.get('/auth-files/models', { name: 'a.json' }) as { models: typeof models }).models)
+    expect((await api.get('/credentials/models', { name: 'a.json' }) as { models: typeof models }).models)
       .not.toContainEqual({ id: 'gpt-image-2' });
   });
 
@@ -112,7 +142,7 @@ describe('OAuth model settings scopes', () => {
     const { api, files } = createApi();
     const originalGet = api.get;
     api.get = async (path, query) => {
-      if (path === '/auth-files/models') throw new Error('catalog unavailable');
+      if (path === '/credentials/models') throw new Error('catalog unavailable');
       return originalGet(path, query);
     };
     const settings = await loadOAuthModelSettings(account('a.json'), api);
@@ -125,14 +155,15 @@ describe('OAuth model settings scopes', () => {
     const { api, files, globalRules, writes, deletes, reads } = createApi();
     files['a.json'].excluded_models = [modelId];
     await saveOAuthModelSettings(await loadOAuthModelSettings(provider, api), ['gpt-image-*'], api);
-    expect(writes).toEqual([{ path: '/oauth-excluded-models', body: { provider: 'codex', models: ['gpt-image-*'] } }]);
+    expect(writes).toEqual([{ path: '/config/oauth/excluded-models', body: { codex: ['gpt-image-*'], claude: ['claude-old-*'] } }]);
     await saveOAuthModelSettings(await loadOAuthModelSettings(provider, api), [], api);
-    expect(deletes).toEqual([{ path: '/oauth-excluded-models', query: { provider: 'codex' } }]);
+    expect(deletes).toEqual([]);
+    expect(writes.at(-1)).toEqual({ path: '/config/oauth/excluded-models', body: { claude: ['claude-old-*'] } });
     expect(globalRules).toEqual({ claude: ['claude-old-*'] });
     expect(files['a.json'].excluded_models).toEqual([modelId]);
-    expect(reads.some(({ path }) => path.startsWith('/auth-files/'))).toBe(false);
+    expect(reads.some(({ path }) => path.startsWith('/credentials/'))).toBe(false);
     await saveOAuthModelSettings(await loadOAuthModelSettings(provider, api), [], api);
-    expect(deletes).toHaveLength(1);
+    expect(writes).toHaveLength(2);
   });
 
   it('uses only the OAuth exclusion endpoint even when excluding every model for a provider', async () => {
@@ -140,17 +171,19 @@ describe('OAuth model settings scopes', () => {
     const beforeFiles = structuredClone(files);
     await saveOAuthModelSettings(await loadOAuthModelSettings(provider, api), ['*'], api);
     expect(reads).toEqual([
-      { path: '/model-definitions/codex', query: undefined },
-      { path: '/oauth-excluded-models', query: undefined },
+      { path: '/routing/model-definitions/codex', query: undefined },
+      { path: '/config/oauth/excluded-models', query: undefined },
+      { path: '/config/oauth/excluded-models', query: undefined },
     ]);
     expect(writes).toEqual([
-      { path: '/oauth-excluded-models', body: { provider: 'codex', models: ['*'] } },
+      { path: '/config/oauth/excluded-models', body: { codex: ['*'], claude: ['claude-old-*'] } },
     ]);
     expect(globalRules).toEqual({ codex: ['*'], claude: ['claude-old-*'] });
     expect(files).toEqual(beforeFiles);
     await saveOAuthModelSettings(await loadOAuthModelSettings(provider, api), [], api);
-    expect(deletes).toEqual([{ path: '/oauth-excluded-models', query: { provider: 'codex' } }]);
-    expect(writes).toHaveLength(1);
+    expect(deletes).toEqual([]);
+    expect(writes.at(-1)).toEqual({ path: '/config/oauth/excluded-models', body: { claude: ['claude-old-*'] } });
+    expect(writes).toHaveLength(2);
     expect(files).toEqual(beforeFiles);
   });
 

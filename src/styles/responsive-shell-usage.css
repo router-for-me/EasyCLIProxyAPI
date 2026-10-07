@@ -1,0 +1,228 @@
+/* Keep footer controls reachable when desktop navigation exceeds the height. */
+@media (min-width: 901px) {
+  .sidebar-brand,
+  .sidebar-bottom {
+    flex-shrink: 0;
+  }
+
+  .sidebar > .nav-section {
+    min-height: 0;
+    margin-bottom: 18px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell:has(.usage-records-page) {
+    /* Loading a shorter tab must not stretch the navigation row above it. */
+    grid-template-rows: max-content minmax(0, 1fr);
+  }
+}
+
+/* Let toolbar rows keep their height instead of overlapping the table. */
+.usage-events-summary {
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.usage-events-summary-left,
+.usage-events-summary-right {
+  width: auto;
+  max-width: 100%;
+  justify-content: flex-start;
+}
+
+.usage-events-summary-right {
+  margin-left: auto;
+}
+
+.usage-pagination-controls {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.usage-topbar,
+.usage-filter-panel {
+  flex-shrink: 0;
+}
+
+.usage-page-navigation,
+.usage-topbar-actions {
+  max-width: 100%;
+}
+
+.usage-tabs,
+.config-subpage-tabs,
+.oauth-subpage-tabs {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.usage-tabs button,
+.config-subpage-tabs button,
+.oauth-subpage-tabs button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.usage-topbar-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.usage-collector-state {
+  max-width: 100%;
+}
+
+.usage-collector-state > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.usage-section-heading {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.usage-section-heading > div {
+  min-width: 0;
+}
+
+.usage-section-heading strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.usage-custom-range input {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.usage-pricing-table-wrap:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
+}
+
+.usage-pricing-panel {
+  overflow: auto;
+}
+
+.usage-price-editor {
+  min-height: 160px;
+  max-height: min(320px, 40vh);
+  flex-shrink: 0;
+}
+
+.usage-storage-limit-editor {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.usage-storage-limit-editor label {
+  min-width: 0;
+  flex: 1;
+}
+
+.usage-storage-limit-editor input {
+  min-width: 0;
+  width: 100%;
+  max-width: 168px;
+}
+
+.usage-storage-limit-editor button {
+  flex: none;
+  white-space: nowrap;
+}
+
+@container workspace (min-width: 600px) {
+  .usage-overview-layout .usage-stat-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+@container workspace (max-width: 880px) {
+  .usage-overview-layout .usage-stat-card {
+    gap: 5px;
+    padding: 10px 8px;
+  }
+
+  .usage-overview-layout .usage-stat-card-value {
+    font-size: 24px;
+  }
+}
+
+@container workspace (max-width: 760px) {
+  .usage-data-management-action {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .usage-data-management-action > div:first-child {
+    min-width: 0;
+    flex: 1 1 260px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root:has(.usage-records-page) {
+    scrollbar-gutter: stable;
+  }
+
+  .usage-overview-layout {
+    grid-template-rows: max-content auto;
+    overflow: visible;
+  }
+
+  .usage-overview-canvas {
+    position: static;
+    width: 100%;
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 300px auto;
+    transform: none;
+  }
+
+  .usage-health-panel {
+    container-type: inline-size;
+    grid-template-rows: auto auto;
+  }
+
+  .usage-token-content {
+    grid-template-rows: auto auto auto;
+  }
+
+  .usage-token-composition {
+    container-type: inline-size;
+    min-height: 240px;
+  }
+
+  .usage-token-donut {
+    width: 100%;
+    max-width: 240px;
+  }
+}
+
+@container workspace (max-width: 540px) {
+  .usage-events-summary-right {
+    margin-left: 0;
+  }
+
+  .usage-storage-limit-editor {
+    flex-direction: row;
+  }
+
+  .usage-storage-limit-editor .primary-button {
+    width: auto;
+  }
+}
+
+@media (min-width: 761px) {
+  .usage-events-panel > .usage-table-wrap,
+  .usage-events-panel > .usage-empty {
+    min-height: 0;
+  }
+}

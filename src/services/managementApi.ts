@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentLocale, translate } from '../i18n';
-import { normalizeProviderModels } from './providerModels';
 
 export type ManagementJson = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
@@ -10,35 +9,19 @@ type ManagementRequestOptions = {
   timeoutMs?: number;
 };
 
-const PROVIDER_PATHS = {
-  '/gemini-api-key': { provider: 'gemini', legacy: 'gemini-api-key' },
-  '/interactions-api-key': { provider: 'interactions', legacy: 'interactions-api-key' },
-  '/vertex-api-key': { provider: 'vertex', legacy: 'vertex-api-key' },
-  '/codex-api-key': { provider: 'codex', legacy: 'codex-api-key' },
-  '/claude-api-key': { provider: 'claude', legacy: 'claude-api-key' },
-  '/xai-api-key': { provider: 'xai', legacy: 'xai-api-key' },
-  '/meta-api-key': { provider: 'meta', legacy: 'meta-api-key' },
-  '/openai-compatibility': { provider: 'openai-compatibility', legacy: 'openai-compatibility' },
-} as const;
-
-type ProviderPath = keyof typeof PROVIDER_PATHS;
-
-const SHARED_PROVIDER_FIELDS = new Set([
-  'priority',
-  'prefix',
-  'proxy-url',
-  'headers',
-  'models',
-  'excluded-models',
-  'disable-cooling',
-  'request-retry',
-  'request-scoped-errors',
-]);
-
-const providerDefinition = (path: string) => PROVIDER_PATHS[path as ProviderPath];
+// Native v8 groups: callers keep keys and overrides intact through every edit.
+export const providerGroupsApi = {
+  get: async (section: string): Promise<Record<string, unknown>[]> => {
+    const value = await optionalConfigValue(`/config/api-keys/${section.replace(/-api-key$/, '')}`, [], {});
+    if (!Array.isArray(value) || !value.every(isRecord)) throw new Error('Invalid provider group response');
+    return value;
+  },
+  put: (section: string, groups: Record<string, unknown>[]) =>
+    request('PUT', `/config/api-keys/${section.replace(/-api-key$/, '')}`, { body: groups }),
+};
 
 async function optionalConfigValue(
-  path: string, fallback: ManagementJson, options: ManagementRequestOptions,
+  path: string, fallback: ManagementJson, options: ManagementRequestOptions = {},
 ): Promise<unknown> {
   try {
     return await invoke<unknown>('management_request', {
@@ -50,75 +33,6 @@ async function optionalConfigValue(
     if (message === 'Management API error (404): not_found') return fallback;
     throw error;
   }
-}
-
-export function flattenV8ProviderGroups(provider: string, payload: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(payload)) return [];
-  return payload.filter(isRecord).flatMap((group) => {
-    const keys = Array.isArray(group.keys) ? group.keys.filter(isRecord) : [];
-    if (provider === 'openai-compatibility') {
-      const record: Record<string, unknown> = { ...group };
-      delete record.keys;
-      delete record['test-model'];
-      delete record.testModel;
-      if (keys.length > 0) record['api-key-entries'] = keys.map((key) => ({ ...key }));
-      return [normalizeProviderModels(record)];
-    }
-    const shared = Object.fromEntries(
-      Object.entries(group).filter(([key]) => key === 'base-url' || SHARED_PROVIDER_FIELDS.has(key)),
-    );
-    const name = readString(group, 'name');
-    const generatedName = name.startsWith(`${provider}-`) && /^[0-9]+$/.test(name.slice(provider.length + 1));
-    if (name && !generatedName) shared.name = name;
-    return keys.map((key) => {
-      const overrides = Object.fromEntries(Object.entries(key).filter(([, value]) => value !== null));
-      return normalizeProviderModels({ ...shared, ...overrides });
-    });
-  });
-}
-
-export function groupLegacyProviderRecords(provider: string, payload: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(payload)) return [];
-  return payload.filter(isRecord).map((input, index) => {
-    const record = normalizeProviderModels(input);
-    if (provider === 'openai-compatibility') {
-      const group: Record<string, unknown> = {
-        ...record,
-        keys: Array.isArray(record['api-key-entries'])
-          ? record['api-key-entries'].filter(isRecord).map((key) => ({ ...key }))
-          : [],
-      };
-      delete group['api-key-entries'];
-      delete group['test-model'];
-      delete group.testModel;
-      return group;
-    }
-    const group: Record<string, unknown> = { name: readString(record, 'name') || `${provider}-${index + 1}` };
-    const key: Record<string, unknown> = {};
-    Object.entries(record).forEach(([field, value]) => {
-      if (field === 'name') return;
-      if (field === 'base-url' || SHARED_PROVIDER_FIELDS.has(field)) group[field] = value;
-      else key[field] = value;
-    });
-    group.keys = [key];
-    return group;
-  });
-}
-
-export function legacyManagementConfigView(payload: unknown): unknown {
-  if (!isRecord(payload)) return payload;
-  const legacy: Record<string, unknown> = { ...payload };
-  const upstream = isRecord(payload['api-keys']) ? payload['api-keys'] : {};
-  Object.values(PROVIDER_PATHS).forEach(({ provider, legacy: legacyKey }) => {
-    legacy[legacyKey] = flattenV8ProviderGroups(provider, upstream[provider]);
-  });
-  const access = isRecord(payload.access) ? payload.access : null;
-  if (access && Array.isArray(access['api-keys'])) legacy['api-keys'] = access['api-keys'];
-  const oauth = isRecord(payload.oauth) ? payload.oauth : null;
-  if (oauth && oauth['model-alias'] !== undefined) legacy['oauth-model-alias'] = oauth['model-alias'];
-  const requests = isRecord(payload.requests) ? payload.requests : null;
-  if (requests && requests.payload !== undefined) legacy.payload = requests.payload;
-  return legacy;
 }
 
 const normalizeQuery = (
@@ -141,93 +55,15 @@ async function request<T = ManagementJson>(
   path: string,
   options: ManagementRequestOptions = {},
 ): Promise<T> {
-  if (path === '/oauth-excluded-models') {
-    if (method === 'PATCH' && isRecord(options.body)) {
-      const provider = readString(options.body, 'provider');
-      if (!provider || !Array.isArray(options.body.models)) {
-        throw new Error('Invalid OAuth model exclusion update');
-      }
-      return invoke<T>('management_request', {
-        request: {
-          method: 'PUT',
-          path: `/config/oauth/excluded-models/${encodeURIComponent(provider)}`,
-          body: options.body.models,
-        },
-      });
-    }
-    if (method === 'DELETE') {
-      const provider = options.query?.provider;
-      if (typeof provider !== 'string' || !provider.trim()) {
-        throw new Error('Invalid OAuth model exclusion delete');
-      }
-      return invoke<T>('management_request', {
-        request: {
-          method: 'DELETE',
-          path: `/config/oauth/excluded-models/${encodeURIComponent(provider.trim())}`,
-        },
-      });
-    }
-    if (method === 'GET') {
-      const exclusions = await optionalConfigValue('/config/oauth/excluded-models', {}, options);
-      return { 'oauth-excluded-models': exclusions } as T;
-    }
-  }
-  const definition = providerDefinition(path);
-  if (method === 'GET' && definition) {
-    const groups = await optionalConfigValue(`/config/api-keys/${definition.provider}`, [], options);
-    return { [definition.legacy]: flattenV8ProviderGroups(definition.provider, groups) } as T;
-  }
-  if (method === 'PATCH' && path === '/openai-compatibility' && isRecord(options.body)) {
-    const index = Number(options.body.index);
-    const value = options.body.value;
-    if (!Number.isInteger(index) || index < 0 || !isRecord(value)) {
-      throw new Error('Invalid OpenAI compatibility update');
-    }
-    const groups = await invoke<unknown>('management_request', {
-      request: { method: 'GET', path: '/config/api-keys/openai-compatibility' },
-    });
-    const records = flattenV8ProviderGroups('openai-compatibility', groups);
-    if (!records[index]) throw new Error('OpenAI compatibility entry no longer exists');
-    records[index] = { ...records[index], ...value };
-    return invoke<T>('management_request', {
-      request: {
-        method: 'PUT',
-        path: '/config/api-keys/openai-compatibility',
-        body: groupLegacyProviderRecords('openai-compatibility', records),
-      },
-    });
-  }
-
-  let apiPath = path;
-  let body = options.body;
-  if (definition) {
-    apiPath = `/config/api-keys/${definition.provider}`;
-    if (method === 'PUT' || method === 'PATCH') {
-      body = groupLegacyProviderRecords(definition.provider, body);
-    }
-  } else if (path === '/api-call') {
-    apiPath = '/requests/api-call';
-  } else if (path === '/oauth-session') {
-    apiPath = '/oauth/session';
-  } else if (path.startsWith('/auth-files')) {
-    apiPath = `/credentials${path.slice('/auth-files'.length)}`;
-  } else if (path.startsWith('/model-definitions/')) {
-    apiPath = `/routing${path}`;
-  }
-
-  const payload = await invoke<unknown>('management_request', {
+  return invoke<T>('management_request', {
     request: {
       method,
-      path: apiPath,
+      path,
       query: normalizeQuery(options.query),
-      body,
+      body: options.body,
       timeoutMs: options.timeoutMs,
     },
   });
-  if (method === 'GET' && path === '/config') {
-    return legacyManagementConfigView(payload) as T;
-  }
-  return payload as T;
 }
 
 export const managementApi = {
@@ -344,44 +180,93 @@ export function normalizeAuthIndex(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
 }
 
-const messageFromPayload = (value: unknown, depth = 0): string => {
-  if (value === null || value === undefined || depth > 3) return '';
-  if (typeof value === 'string') {
-    const text = value.trim();
-    if (!text) return '';
-    try {
-      const parsed = JSON.parse(text) as unknown;
-      const nested = messageFromPayload(parsed, depth + 1);
-      if (nested) return nested;
-    } catch {
-    }
-    return text;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nested = messageFromPayload(item, depth + 1);
-      if (nested) return nested;
-    }
-    return '';
-  }
-  if (isRecord(value)) {
-    for (const key of ['message', 'error', 'detail', 'error_description', 'title']) {
-      const nested = messageFromPayload(value[key], depth + 1);
-      if (nested) return nested;
+type ApiErrorDetail = { message: string; code: string };
+
+const emptyApiErrorDetail = (): ApiErrorDetail => ({ message: '', code: '' });
+
+const mergeApiErrorDetail = (current: ApiErrorDetail, next: ApiErrorDetail): ApiErrorDetail => ({
+  message: current.message || next.message,
+  code: current.code || next.code,
+});
+
+const errorCodeFromRecord = (value: Record<string, unknown>): string => {
+  for (const key of ['code', 'error_code', 'errorCode']) {
+    const candidate = value[key];
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) return String(Math.trunc(candidate));
+    if (typeof candidate === 'string') {
+      const text = candidate.trim();
+      if (text && text.length <= 64) return text;
     }
   }
   return '';
+};
+
+const detailFromPayload = (value: unknown, depth = 0): ApiErrorDetail => {
+  if (value === null || value === undefined || depth > 3) return emptyApiErrorDetail();
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return emptyApiErrorDetail();
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      const nested = detailFromPayload(parsed, depth + 1);
+      if (nested.message || nested.code) return nested;
+    } catch {
+    }
+    return { message: text, code: '' };
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return { message: String(value), code: '' };
+  if (Array.isArray(value)) {
+    let detail = emptyApiErrorDetail();
+    for (const item of value) {
+      detail = mergeApiErrorDetail(detail, detailFromPayload(item, depth + 1));
+      if (detail.message && detail.code) break;
+    }
+    return detail;
+  }
+  if (isRecord(value)) {
+    let detail: ApiErrorDetail = { message: '', code: errorCodeFromRecord(value) };
+    for (const key of ['message', 'error', 'detail', 'error_description', 'title']) {
+      detail = mergeApiErrorDetail(detail, detailFromPayload(value[key], depth + 1));
+      if (detail.message && detail.code) break;
+    }
+    return detail;
+  }
+  return emptyApiErrorDetail();
+};
+
+const httpStatusFromResponse = (response: Record<string, unknown>): number => {
+  const status = Number(response.status_code ?? response.statusCode ?? response.status ?? 0);
+  return Number.isFinite(status) && status > 0 ? Math.trunc(status) : 0;
+};
+
+const mentionsHttpStatus = (text: string, status: number): boolean => {
+  if (!status) return false;
+  if (text.trim() === String(status)) return true;
+  return new RegExp(`(?:\\bhttp\\s*|\\(|\\[|^|\\s)${status}(?:\\b|\\)|\\]|\\s|$)`, 'i').test(text);
 };
 
 export function apiCallErrorMessage(
   response: Record<string, unknown>,
   fallback = translate(getCurrentLocale(), 'management.error.upstream'),
 ): string {
-  const status = Number(response.status_code ?? response.statusCode ?? 0);
-  const message = messageFromPayload(response.body ?? response.bodyText);
-  if (message) return message;
+  const locale = getCurrentLocale();
+  const status = httpStatusFromResponse(response);
+  const detail = detailFromPayload(response.body ?? response.bodyText);
+  const message = status > 0 && detail.message.trim() === String(status) ? '' : detail.message;
+  const code = detail.code.trim();
+  const showCode = Boolean(
+    code
+    && code !== String(status)
+    && code.toLowerCase() !== message.toLowerCase()
+    && !message.toLowerCase().includes(code.toLowerCase()),
+  );
+  const text = message ? (showCode ? `${message} (${code})` : message) : code;
+  const httpError = status > 0 && (status < 200 || status >= 300);
+  if (httpError && text && !mentionsHttpStatus(text, status)) {
+    return translate(locale, 'management.error.upstreamHttpDetail', { status, message: text });
+  }
+  if (text) return text;
   return status > 0
-    ? translate(getCurrentLocale(), 'management.error.upstreamHttp', { status })
+    ? translate(locale, 'management.error.upstreamHttp', { status })
     : fallback;
 }

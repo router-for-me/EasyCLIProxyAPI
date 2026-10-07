@@ -1,17 +1,18 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const { mkdirSync } = require('node:fs');
+const base = process.env.ALIAS_TEST_BASE_URL || 'http://127.0.0.1:1423';
 
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     page.setDefaultTimeout(10000);
-    await page.route('**/*', route => route.request().url().startsWith('http://127.0.0.1:1423/')
+    await page.route('**/*', route => route.request().url().startsWith(base + '/')
       ? route.continue() : route.abort());
     const errors = [];
     page.on('pageerror', error => errors.push(String(error)));
-    await page.goto('http://127.0.0.1:1423/tests/fixtures/model-alias-editor.html', { waitUntil: 'domcontentloaded' });
+    await page.goto(`${base}/tests/fixtures/model-alias-editor.html`, { waitUntil: 'domcontentloaded' });
     const writes = () => page.evaluate(() => window.fixtureCalls.filter(call => call.cmd === 'create_thinking_alias'));
     await page.getByRole('button', { name: 'Edit', exact: true }).click();
     const dialog = page.getByRole('dialog');

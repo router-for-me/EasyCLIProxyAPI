@@ -2,6 +2,128 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn installation_detection_separates_executables_from_version_metadata() {
+    for client in [
+        AgentClient::ClaudeCode,
+        AgentClient::Codex,
+        AgentClient::OpenCode,
+        AgentClient::OpenClaw,
+        AgentClient::Hermes,
+        AgentClient::DeepSeekHarness,
+        AgentClient::KimiCode,
+        AgentClient::GrokBuild,
+    ] {
+        assert!(agent_installation_detected(client, None, true, false));
+        assert!(!agent_installation_detected(client, None, false, false));
+        assert!(!agent_installation_detected(
+            client,
+            Some("1.0.0"),
+            false,
+            false
+        ));
+    }
+    assert!(agent_installation_detected(
+        AgentClient::Codex,
+        None,
+        false,
+        true
+    ));
+    assert!(agent_installation_detected(
+        AgentClient::ClaudeDesktop,
+        Some("1.0.0"),
+        false,
+        false,
+    ));
+}
+
+#[test]
+fn executable_directories_preserve_path_precedence_and_package_manager_locations() {
+    let home = agent_test_home("agent-search-environment");
+    let inherited = home.join("inherited");
+    let registered = home.join("registered");
+    let npm = home.join("custom-npm");
+    let uv = home.join("custom-uv");
+    let volta = home.join("custom-volta");
+    let directories = agent_executable_directories_from_environment(
+        &home,
+        |name| match name {
+            "PATH" => Some(env::join_paths([&inherited, &inherited]).unwrap()),
+            "NPM_CONFIG_PREFIX" => Some(npm.clone().into_os_string()),
+            "UV_TOOL_BIN_DIR" => Some(uv.clone().into_os_string()),
+            "VOLTA_HOME" => Some(volta.clone().into_os_string()),
+            "BUN_INSTALL" => Some(std::ffi::OsString::new()),
+            _ => None,
+        },
+        &[registered.clone(), inherited.clone()],
+    );
+    assert_eq!(&directories[..2], &[inherited.clone(), registered]);
+    assert_eq!(
+        directories
+            .iter()
+            .filter(|path| **path == inherited)
+            .count(),
+        1
+    );
+    let npm_bin = if cfg!(target_os = "windows") {
+        npm
+    } else {
+        npm.join("bin")
+    };
+    assert!(directories.contains(&npm_bin));
+    assert!(directories.contains(&uv));
+    assert!(directories.contains(&volta.join("bin")));
+    assert!(directories.iter().all(|path| path.is_absolute()));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_cli_search_skips_shell_stubs_and_finds_runnable_shims() {
+    let home = agent_test_home("agent-search-shims");
+    let first = home.join("first");
+    let second = home.join("second");
+    fs::create_dir_all(first.join("agent.exe")).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    fs::write(first.join("agent"), "shell stub").unwrap();
+    fs::write(first.join("agent.ps1"), "powershell stub").unwrap();
+    let executable = second.join("agent.cmd");
+    fs::write(&executable, "@exit /b 1\r\n").unwrap();
+    assert_eq!(
+        find_named_agent_executable_in_directories(&[first, second], &["agent"]),
+        Some(executable.clone()),
+    );
+    let version = read_agent_version(&executable, &home);
+    assert_eq!(version, None);
+    assert!(agent_installation_detected(
+        AgentClient::ClaudeCode,
+        version.as_deref(),
+        agent_cli_executable(&executable),
+        false,
+    ));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_cli_search_requires_executable_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = agent_test_home("agent-search-permissions");
+    let executable = home.join("agent");
+    fs::write(&executable, "exit 1\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(
+        find_named_agent_executable_in_directories(&[home.clone()], &["agent"]),
+        None
+    );
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        find_named_agent_executable_in_directories(&[home.clone()], &["agent"]),
+        Some(executable)
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn configuration_paths_ignore_inherited_environment() {
     let home = agent_test_home("isolated-paths");
     for client in [

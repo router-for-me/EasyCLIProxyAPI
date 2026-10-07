@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { I18nProvider } from '../../src/i18n';
 import { ApiAccessPage, providerRemarkIdentity, type ApiAccessRemarkLocator, type ProviderSection } from '../../src/pages/ApiAccessPage';
-import { flattenV8ProviderGroups, groupLegacyProviderRecords } from '../../src/services/managementApi';
 import '../../src/styles/index.css';
 
 localStorage.setItem('easy-cli-proxy-api.locale', 'en');
@@ -12,7 +11,7 @@ const fixture = window as typeof window & {
 };
 fixture.providerFixture = {
   records: [{
-    'api-key': 'shared-test-key', 'base-url': 'https://claude.example.test', priority: 10,
+    name: 'First route', keys: [{ 'api-key': 'shared-test-key' }], 'base-url': 'https://claude.example.test', priority: 10,
     models: [{ name: 'upstream-a', alias: 'claude-a' }],
   }],
   writes: [],
@@ -40,13 +39,13 @@ mockIPC((cmd, rawArgs) => {
       return { status_code: 200, body: { data: [{ id: 'discovered-model' }] } };
     }
     if (request.method === 'GET') {
-      const groups = groupLegacyProviderRecords('claude', fixture.providerFixture.records);
+      const groups = structuredClone(fixture.providerFixture.records);
       if (section === 'config') return { 'api-keys': { claude: groups } };
       return section === 'config/api-keys/claude' ? groups : [];
     }
     fixture.providerFixture.writes.push({ method: request.method, body: structuredClone(request.body) });
     if (request.method !== 'PUT' || section !== 'config/api-keys/claude') throw new Error('Unexpected provider mutation');
-    fixture.providerFixture.records = flattenV8ProviderGroups('claude', structuredClone(request.body));
+    fixture.providerFixture.records = structuredClone(request.body);
     return { status: 'ok' };
   }
   throw new Error(`Unhandled fixture command: ${cmd}`);

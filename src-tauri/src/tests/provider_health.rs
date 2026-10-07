@@ -97,3 +97,18 @@ data: {"delta":{"type":"text_delta","text":"H"}}
         gemini_thought_only
     ));
 }
+
+
+#[test]
+fn interactions_health_probe_recognizes_content_and_completed_events() {
+    assert!(provider_health_stream_has_text("interactions", br#"data: {"event_type":"content.delta","delta":{"type":"text","text":"Hello"}}
+"#));
+    assert!(provider_health_stream_has_text("interactions", br#"data: {"event_type":"interaction.complete","interaction":{"status":"completed","outputs":[{"type":"text","text":"Hello"}]}}
+"#));
+    assert!(provider_health_stream_has_terminal_success("interactions", br#"data: {"event_type":"interaction.complete","interaction":{"status":"completed"}}
+"#));
+    assert!(!provider_health_stream_has_terminal_success("interactions", br#"data: {"event_type":"interaction.complete","interaction":{"status":"failed"}}
+"#));
+    assert!(!provider_health_stream_has_text("interactions", br#"data: {"event_type":"content.delta","delta":{"type":"image","text":"metadata"}}
+"#));
+}

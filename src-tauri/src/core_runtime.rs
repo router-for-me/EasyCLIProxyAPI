@@ -1932,7 +1932,11 @@ pub(crate) fn migrate_core_config_for_update(
     }
     let template_document = serde_norway::from_str::<serde_norway::Value>(&template)
         .map_err(|error| format!("Failed to parse new kernel configuration template: {error}"))?;
-    let migrated = if core_config_uses_v8(&template_document) {
+    let migrated = if (core_config_declares_v8(&template_document) || core_config_uses_v8(&template_document))
+        && !core_config_declares_v8(&old_document)
+    {
+        migrate_legacy_core_config_to_v8(&template, &old_config)?
+    } else if core_config_uses_v8(&template_document) {
         old_config
     } else {
         merge_core_config_fields(&template, Some(&old_config))?

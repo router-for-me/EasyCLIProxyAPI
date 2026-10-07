@@ -1,19 +1,24 @@
+import { ResetCreditExpiries } from './ResetCreditExpiries';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { MessageNotice } from '../appNotice';
+import { readBoolean } from '../services/managementApi';
 import { fileName, formatQuotaTimestamp, type AuthFile, type QuotaState } from '../services/quotaService';
-import { canResetCodexQuota } from '../services/quotaActions';
+import { canResetQuota, hasPendingClaudeReset } from '../services/quotaActions';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import { quotaAvailability, quotaPercent } from '../services/quotaAvailability';
 import { QuotaAvailabilityNotice } from './QuotaAvailabilityNotice';
+import './AuthFileQuotaPanel.css';
 
-export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, stale = false }: {
+export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, stale = false, compact = false, dense = false }: {
   quota: QuotaState;
   file: AuthFile;
   disabled: boolean;
   onRefresh: () => void;
   onReset?: () => void;
   stale?: boolean;
+  compact?: boolean;
+  dense?: boolean;
 }) {
   const { locale, t } = useI18n();
   const clock = useQuotaClock();
@@ -22,48 +27,72 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   const rows = [...quota.rows].sort((a, b) => Number(availability.blockers.includes(b)) - Number(availability.blockers.includes(a)));
   const loading = quota.status === 'loading';
   const name = fileName(file);
+  const compactLayout = compact || dense;
+  const fileDisabled = readBoolean(file, 'disabled');
+  const showReset = Boolean(onReset && ((quota.resetCredits ?? 0) > 0 || hasPendingClaudeReset(file)));
+  const accountCreditsLabel = quota.creditsUnlimited
+    ? t('quota.creditUnlimited')
+    : quota.creditBalance !== undefined ? quota.creditBalance : '';
+  const denseMetadata = dense ? [
+    quota.subscriptionActiveUntil ? t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) }) : '',
+    accountCreditsLabel ? t('quota.creditBalance') + ': ' + accountCreditsLabel : '',
+  ].filter(Boolean).join(' · ') : '';
+  const renderRow = (row: QuotaState['rows'][number], index: number) => {
+    const percent = row.remainingPercent !== null && Number.isFinite(row.remainingPercent) ? Math.max(0, Math.min(100, row.remainingPercent)) : null;
+    const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
+    const resetText = dense && row.resetAtMs !== undefined && Number.isFinite(row.resetAtMs)
+      ? new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(row.resetAtMs)
+      : reset;
+    const isBlocker = availability.blockers.includes(row);
+    // A window can report healthy remaining% while the account is still blocked by a different, already-exhausted window (e.g. the 5-hour window looks fine while the 7-day cap is at zero). Don't render that as green.
+    const blockedElsewhere = !isBlocker && ['exhausted', 'creditBacked', 'resetDue'].includes(availability.kind);
+    const tone = isBlocker ? 'low' : blockedElsewhere ? 'blocked' : percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
+    return <div className={`credential-quota-row ${tone}`} key={`${row.label}-${index}`}>
+      <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{percent === null ? '—' : `${quotaPercent(percent)}%`}</strong></div>
+      <div className="credential-quota-track" role={percent === null ? undefined : 'progressbar'} aria-label={`${row.label} · ${t('authFiles.settings.quotaRemaining')}`}
+        aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined}>
+        {percent === null ? <span className="sr-only">{t('authFiles.settings.quotaUnknown')}</span> : <i style={{ width: `${percent}%` }} />}
+      </div>
+      {blockedElsewhere ? <small>{t('authFiles.quota.blockedElsewhere')}</small> : null}
+      {row.justReset ? <small className="credential-quota-just-reset">{t('authFiles.quota.justReset')}</small> : null}
+      {reset ? <small className={dense ? 'credential-quota-reset-time' : undefined} title={dense ? reset : undefined}>{resetText}</small> : null}
+      {row.detail ? <small className={dense ? 'credential-quota-row-detail' : undefined} title={dense ? row.detail : undefined}>{row.detail}</small> : null}
+    </div>;
+  };
   return (
-    <section className="credential-quota" aria-label={t('authFiles.quota.aria')} aria-busy={loading}>
-      <div className="credential-quota-heading">
-        <strong>{t('authFiles.settings.quotaRemaining')}</strong>
-        {quota.plan ? <span className="credential-quota-plan">{quota.plan}</span> : null}
-        {onReset && (quota.resetCredits ?? 0) > 0 ? <button type="button" className="secondary-button compact-button credential-quota-reset" onClick={onReset} disabled={disabled || !canResetCodexQuota(file, quota)} title={t('quota.reset')}>{t('quota.reset')}</button> : null}
-        <button type="button" className="credential-quota-refresh" disabled={disabled || loading} onClick={onRefresh}
+    <section className={`credential-quota${compactLayout ? ' credential-quota-compact' : ''}${dense ? ' credential-quota-dense' : ''}`} aria-label={t('authFiles.quota.aria')} aria-busy={loading} title={denseMetadata || undefined}>
+      {!compactLayout || showReset ? <div className="credential-quota-heading">
+        {!compactLayout ? <strong>{t('authFiles.settings.quotaRemaining')}</strong> : null}
+        {!compactLayout && quota.plan ? <span className="credential-quota-plan">{quota.plan}</span> : null}
+        {showReset ? <button type="button" className="secondary-button compact-button credential-quota-reset" onClick={onReset} disabled={disabled || !canResetQuota(file, quota)}
+          title={t('quota.reset')}>{t(hasPendingClaudeReset(file) ? 'quota.claude.retry' : 'quota.reset')}</button> : null}
+        {!compactLayout ? <button type="button" className="credential-quota-refresh" disabled={disabled || loading} onClick={onRefresh}
           title={disabled ? t('quota.fileDisabled') : t('authFiles.quota.refresh')}>
           {loading ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />}
           {t(loading ? 'authFiles.quota.querying' : quota.status === 'idle' ? 'authFiles.quota.fetch' : 'common.refresh')}
-        </button>
-      </div>
+        </button> : null}
+      </div> : null}
       {loading ? <div className="credential-quota-loading" role="status"><span>{t(quota.pendingAction === 'reset' ? 'quota.resetting' : 'authFiles.quota.loading')}</span><div className="credential-quota-track indeterminate"><i /></div></div> : null}
-      {quota.status === 'idle' ? <p className="credential-quota-empty">{t(disabled ? 'quota.fileDisabled' : 'authFiles.settings.quotaIdle')}</p> : null}
-      {quota.status === 'error' ? <div className="credential-quota-error" role="status"><span>{t('authFiles.quota.failed')}</span>{quota.error ? <small>{quota.error}</small> : null}</div> : null}
+      {quota.status === 'idle' ? <p className="credential-quota-empty">{t(dense ? (fileDisabled ? 'quota.disabled' : 'quota.notFetched') : disabled ? 'quota.fileDisabled' : 'authFiles.settings.quotaIdle')}</p> : null}
+      {quota.status === 'error' ? <div className="credential-quota-error" role="status">
+        {dense && quota.error ? <details className="credential-quota-error-details"><summary title={quota.error}>{t('authFiles.quota.failed')}</summary><small>{quota.error}</small></details>
+          : <><span>{t('authFiles.quota.failed')}</span>{quota.error ? <small>{quota.error}</small> : null}</>}
+      </div> : null}
       <QuotaAvailabilityNotice state={availability} now={clock} />
       {quota.status === 'success' || (loading && rows.length > 0) ? <>
-        {rows.length ? <div className="credential-quota-rows">{rows.map((row, index) => {
-          const percent = row.remainingPercent !== null && Number.isFinite(row.remainingPercent) ? Math.max(0, Math.min(100, row.remainingPercent)) : null;
-          const reset = formatQuotaReset(row.resetAtMs, row.reset, locale, now);
-          const isBlocker = availability.blockers.includes(row);
-          // A window can report healthy remaining% while the account is still blocked by a different, already-exhausted window (e.g. the 5-hour window looks fine while the 7-day cap is at zero). Don't render that as green.
-          const blockedElsewhere = !isBlocker && ['exhausted', 'creditBacked', 'resetDue'].includes(availability.kind);
-          const tone = isBlocker ? 'low' : blockedElsewhere ? 'blocked' : percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
-          return <div className={`credential-quota-row ${tone}`} key={`${row.label}-${index}`}>
-            <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{percent === null ? '—' : `${quotaPercent(percent)}%`}</strong></div>
-            <div className="credential-quota-track" role={percent === null ? undefined : 'progressbar'} aria-label={`${row.label} · ${t('authFiles.settings.quotaRemaining')}`}
-              aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined}>
-              {percent === null ? <span className="sr-only">{t('authFiles.settings.quotaUnknown')}</span> : <i style={{ width: `${percent}%` }} />}
-            </div>
-            {blockedElsewhere ? <small>{t('authFiles.quota.blockedElsewhere')}</small> : null}
-            {row.justReset ? <small className="credential-quota-just-reset">{t('authFiles.quota.justReset')}</small> : null}
-            {reset ? <small>{reset}</small> : null}
-            {row.detail ? <small>{row.detail}</small> : null}
-          </div>;
-        })}</div> : <p className="credential-quota-empty">{t('authFiles.quota.empty')}</p>}
-        <div className="credential-quota-footnotes">
-          {quota.resetCredits !== undefined ? <small>{t('authFiles.quota.resets', { count: quota.resetCredits })}</small> : null}
-          {quota.resetCreditsApplicable !== undefined ? <small>{t('quota.resetApplicable', { count: quota.resetCreditsApplicable })}</small> : null}
+        {rows.length ? <>
+          <div className="credential-quota-rows">{(compactLayout ? rows.slice(0, 2) : rows).map(renderRow)}</div>
+          {compactLayout && rows.length > 2 ? <details className="credential-quota-more">
+            <summary>{t('authFiles.health.details')} (+{rows.length - 2})</summary>
+            <div className="credential-quota-rows">{rows.slice(2).map((row, index) => renderRow(row, index + 2))}</div>
+          </details> : null}
+        </> : <p className="credential-quota-empty">{t('authFiles.quota.empty')}</p>}
+        {!dense ? <div className="credential-quota-footnotes">
           {quota.subscriptionActiveUntil ? <small>{t('quota.subscriptionExpiry', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</small> : null}
-          {quota.resetCreditsEarliestExpiry ? <small>{t('authFiles.quota.expiry', { time: formatQuotaTimestamp(quota.resetCreditsEarliestExpiry, locale) })}</small> : null}
-        </div>
+          {accountCreditsLabel ? <small>{t('quota.creditBalance')}: {accountCreditsLabel}</small> : null}
+
+        </div> : null}
+        <ResetCreditExpiries quota={quota} />
         <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
       </> : null}
     </section>

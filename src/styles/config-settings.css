@@ -1,0 +1,519 @@
+.config-page { gap: 20px; min-width: 0; }
+.config-settings-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 0; }
+.config-settings-header h1 { margin: 0; font-size: 25px; letter-spacing: -.035em; }
+.config-settings-search { display: flex; align-items: center; gap: 10px; flex: 0 1 370px; min-width: 0; padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-card); color: var(--text-tertiary); }
+.config-settings-search:focus-within { border-color: var(--primary-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent); }
+.config-settings-search > svg { flex: none; }
+.config-settings-search input { width: 100%; min-width: 0; padding: 3px 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px; }
+.config-settings-search input::-webkit-search-cancel-button { display: none; }
+.config-settings-search button { flex: none; width: 26px; height: 26px; }
+.config-settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; min-width: 0; }
+.config-settings-topnav { position: sticky; top: 0; z-index: 10; min-width: 0; padding-top: 8px; background: var(--bg-secondary); }
+.config-settings-navigation.config-subpage-tabs { display: flex; flex-wrap: nowrap; gap: 4px; width: 100%; max-width: 100%; padding: 0 0 5px; margin: 0; border: 0; border-bottom: 1px solid var(--border-color); background: none; border-radius: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: var(--border-color) transparent; scroll-padding-inline: 4px; }
+.config-settings-navigation::-webkit-scrollbar { height: 5px; }
+.config-settings-navigation::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--border-color); }
+.config-page .config-settings-navigation.config-subpage-tabs button { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 7px; min-width: 0; width: auto; height: auto; min-height: 44px; margin: 0; padding: 10px 12px; border: 1px solid transparent; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; background: transparent; color: var(--text-secondary); text-align: center; white-space: nowrap; font-size: 12px; line-height: 1.5; font-weight: 500; box-shadow: none; }
+.config-page .config-settings-navigation.config-subpage-tabs button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.config-page .config-settings-navigation.config-subpage-tabs button.active { border-bottom-color: var(--primary-color); background: var(--ui-accent-soft); color: var(--primary-color); font-weight: 650; box-shadow: none; }
+.config-page .config-settings-navigation.config-subpage-tabs button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -3px; }
+.config-settings-navigation button > svg { flex: none; color: var(--text-tertiary); }
+.config-settings-navigation button.active > svg { color: var(--primary-color); }
+.config-settings-navigation button > span:not(.config-nav-dirty) { min-width: 0; }
+.config-nav-dirty { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--primary-color); }
+.config-settings-content { min-width: 0; }
+/* Only flatten page sections. Dialogs may be rendered inside these sections. */
+.config-page .config-settings-cards > section,
+.config-page #config-template-panel > .template-config-section > .template-config-card,
+.config-page #config-native-sensitive-words > .config-sensitive-words-panel,
+.config-page #config-native-aliases > .thinking-alias-page > .thinking-alias-list-panel {
+  margin: 0;
+  padding: 20px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.config-page .config-settings-content .template-config-section,
+.config-page .config-settings-content .config-settings-cards { gap: 0; margin-top: 0; }
+.config-page .config-settings-content .config-sensitive-words-panel { width: 100%; }
+.config-page .config-settings-content .thinking-alias-list-panel { height: auto; min-height: 0; }
+.config-page #config-native-aliases > .thinking-alias-page { gap: 12px; padding-top: 20px; }
+.config-page #config-native-aliases > .thinking-alias-page > .management-header { margin: 0; padding: 0; }
+.config-page #config-native-aliases > .thinking-alias-page > .thinking-alias-list-panel { padding-top: 0; }
+.config-page .config-sensitive-words-grid { gap: 16px; }
+.config-page .config-sensitive-words-grid > .config-sensitive-words-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.config-page .config-sensitive-words-grid > .config-sensitive-words-card + .config-sensitive-words-card {
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+}
+.config-settings-cards { display: grid; gap: 16px; min-width: 0; }
+.config-settings-cards > [hidden], .config-settings-content > [hidden] { display: none; }
+.config-settings-cards > section, .config-settings-content .template-config-card { scroll-margin-top: 80px; border-radius: 12px; }
+.config-settings-content :is(input, select, textarea, button, .template-config-field) { scroll-margin-top: 80px; }
+.config-settings-cards > section:focus-visible, .config-settings-content .template-config-card:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 4px; }
+.config-settings-content .config-keys-panel { height: auto; min-height: 225px; max-height: 370px; grid-template-rows: auto minmax(0, 1fr); }
+.config-settings-content .config-network-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; }
+.config-settings-content .config-network-field { height: auto; min-height: 86px; gap: 10px; padding: 0; border: 0; background: transparent; }
+.config-settings-content .config-proxy-field { grid-column: 1 / -1; }
+.config-settings-content .config-network-routing-field { grid-column: 1 / -1; min-height: 0; }
+.config-settings-content .routing-segmented { grid-template-columns: repeat(3, minmax(0, 1fr)); height: auto; background: var(--bg-secondary); }
+.config-settings-content .routing-segmented button { min-height: 38px; padding: 8px 10px; overflow: visible; white-space: normal; text-overflow: clip; line-height: 1.5; }
+.config-settings-content .routing-segmented button.active { background: var(--bg-card); color: var(--primary-color); box-shadow: 0 0 0 1px var(--border-color); }
+.config-settings-content .config-network-section { padding: 20px; }
+.config-settings-content .config-panel-heading { flex-wrap: wrap; gap: 12px; }
+.config-settings-content .config-network-section-heading { flex-wrap: wrap; gap: 10px; }
+.config-card-status { margin-left: auto; color: var(--primary-color); font-size: 11px; }
+.config-settings-content .config-diagnostics-toggle-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+.config-settings-content .config-diagnostics-fields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); }
+.config-settings-content .config-management-content { grid-template-columns: minmax(0, 1fr); }
+.config-settings-content .config-management-form { max-width: none; }
+.config-settings-content .config-tls-fields { grid-template-columns: minmax(0, 1fr); }
+.config-settings-content .thinking-alias-page { padding: 0; }
+.config-settings-content .template-config-section { margin-top: 18px; }
+.config-settings-content .config-settings-cards:empty + #config-template-panel .template-config-section { margin-top: 0; }
+.config-search-results { min-width: 0; }
+.config-search-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.config-search-heading h2 { margin: 0; font-size: 19px; }
+.config-search-heading > span { padding: 3px 8px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 11px; color: var(--text-secondary); }
+.config-search-result-list { display: grid; border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; background: var(--bg-card); }
+.config-search-result-list > button { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 16px 18px; border: 0; background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; }
+.config-search-result-list > button + button { border-top: 1px solid var(--border-color); }
+.config-search-result-list > button:hover { background: var(--bg-hover); }
+.config-search-result-list > button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -3px; }
+.config-search-result-copy { display: grid; min-width: 0; gap: 6px; overflow-wrap: anywhere; }
+.config-search-result-copy strong { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.config-search-result-copy small { font-size: 11px; color: var(--text-tertiary); }
+.config-search-result-list > button > svg { flex: none; }
+.config-search-empty { padding: 40px 20px; border: 1px dashed var(--border-color); border-radius: 12px; color: var(--text-secondary); font-size: 13px; text-align: center; }
+
+.config-field-label { display: flex; align-items: center; gap: 6px; min-width: 0; line-height: 1.5; }
+.config-field-label > label { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.config-inline-status { margin-left: auto; color: var(--text-tertiary); font-size: 11px; font-weight: 400; }
+.config-settings-content .config-network-port-field .config-network-input { width: 100%; }
+.config-settings-content .config-proxy-heading > .settings-help { margin-right: auto; }
+.config-settings-content .config-diagnostics-setting { padding: 8px 0; border: 0; background: transparent; grid-template-columns: 28px minmax(0, 1fr) 44px; gap: 10px; }
+.config-settings-content .config-diagnostics-setting-icon,
+.config-settings-content .config-software-setting-icon { width: 28px; height: 28px; border: 0; background: transparent; }
+.config-settings-content .config-diagnostics-field { padding: 0; border: 0; background: transparent; gap: 10px; }
+.config-settings-content .config-management-form { padding: 0; border: 0; background: transparent; }
+.config-settings-content .config-management-content > p { margin: 0; font-size: 12px; color: var(--text-secondary); }
+.config-settings-content .config-software-setting-row { min-height: 66px; padding: 14px 16px; gap: 16px; }
+.settings-help { display: inline-flex; flex: none; vertical-align: middle; }
+.settings-help-trigger { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-tertiary); cursor: pointer; }
+.settings-help-trigger:hover,
+.settings-help-trigger[aria-expanded="true"] { background: var(--bg-hover); color: var(--text-primary); }
+.settings-help-trigger:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.settings-help-popover { position: fixed; z-index: 1000; display: block; width: min(320px, calc(100vw - 24px)); max-height: min(360px, calc(100vh - 24px)); overflow-y: auto; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-card); box-shadow: 0 8px 28px rgba(0, 0, 0, .14); color: var(--text-secondary); font-size: 12px; font-weight: 400; line-height: 1.7; overflow-wrap: anywhere; }
+
+@media (max-width: 1150px) {
+  .config-settings-layout { gap: 20px; }
+  .config-page .config-settings-navigation.config-subpage-tabs button { padding: 10px; }
+  .config-settings-header { gap: 18px; }
+}
+@media (max-width: 720px) {
+  .config-page { gap: 20px; }
+  .config-settings-header { flex-direction: column; align-items: stretch; gap: 16px; }
+  .config-settings-search { flex-basis: auto; }
+  .config-settings-header h1 { font-size: 23px; }
+  .config-settings-navigation button > svg { display: none; }
+  .config-page .config-settings-navigation.config-subpage-tabs button { padding: 10px 12px; }
+  .config-settings-content .config-network-grid { grid-template-columns: minmax(0, 1fr); }
+  .config-settings-content .config-network-section { padding: 16px; }
+  .config-settings-content .config-network-field { min-height: 0; }
+  .config-search-result-list > button { padding: 14px; }
+}
+
+/* Settings rows share a label column; controls size to their content, not the window. */
+.config-page .config-settings-content {
+  --settings-label-width: 250px;
+  --settings-row-gap: 24px;
+  max-width: 1000px;
+  width: 100%;
+}
+.config-page .config-settings-content :is(.config-network-grid, .config-diagnostics-toggle-grid, .config-diagnostics-fields, .config-management-form, .template-config-fields) {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+.config-page .config-settings-content :is(.config-network-field, .config-management-field, .config-diagnostics-field, .template-config-field:not(.template-config-field-wide)) {
+  display: grid;
+  grid-template-columns: var(--settings-label-width) minmax(0, 1fr);
+  align-items: center;
+  align-content: center;
+  gap: 8px var(--settings-row-gap);
+  min-height: 40px;
+  height: auto;
+}
+.config-page .config-settings-content :is(.config-network-field, .config-management-field, .config-diagnostics-field) > :is(input, .config-secret-input, .config-tls-path-control) {
+  width: 100%;
+  max-width: 420px;
+  min-width: 0;
+}
+.config-page .config-settings-content .config-network-field > input { max-width: 320px; }
+.config-page .config-settings-content :is(.config-network-port-field, #config-native-retry .config-network-field, .config-diagnostics-field) > input { max-width: 160px; }
+.config-page .config-settings-content #config-input-config-network-sessionTtl { max-width: 200px; }
+.config-page .config-settings-content .config-network-toggle { justify-content: start; }
+.config-page .config-settings-content .config-network-toggle > .switch-control { justify-self: start; }
+.config-page .config-settings-content .template-config-label { gap: 6px; font-weight: 500; }
+.config-page .config-settings-content .template-config-label-tools { margin-left: 0; }
+.config-page .config-settings-content .template-config-control { max-width: 360px; }
+.config-page .config-settings-content [data-field-type='number'] > .template-config-control { max-width: 160px; }
+.config-page .config-settings-content .template-config-toggle > .template-config-control { justify-self: start; }
+.config-page .config-settings-content .template-config-field > small { grid-column: 2; }
+.config-page .config-settings-content .template-config-field-wide { gap: 10px; }
+.config-page .config-settings-content .template-config-field-wide > .template-config-control { max-width: 720px; }
+.config-page .config-settings-content .template-config-custom { max-width: 100%; }
+.config-page .config-settings-content .template-config-custom .template-config-control { max-width: none; }
+.config-page .config-settings-content .template-config-actions {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 20px;
+  justify-content: flex-start;
+}
+.config-page .config-settings-content .template-config-actions > div { margin-left: 0; }
+.config-page .config-settings-content .template-config-actions > span:empty { display: none; }
+.config-page .config-settings-content .config-diagnostics-setting {
+  grid-template-columns: 24px calc(var(--settings-label-width) - 34px) auto;
+  gap: 10px;
+  justify-content: start;
+  min-height: 40px;
+  padding: 0;
+}
+.config-page .config-settings-content .config-diagnostics-setting > .switch-control { margin-left: 14px; }
+.config-page .config-settings-content .config-software-setting-row {
+  display: grid;
+  grid-template-columns: var(--settings-label-width) minmax(0, 1fr);
+  gap: var(--settings-row-gap);
+  justify-content: start;
+  padding: 12px 0;
+  min-height: 56px;
+}
+.config-page .config-settings-content .config-software-settings-list { border: 0; background: transparent; }
+.config-page .config-settings-content .config-software-select { width: min(100%, 320px); padding: 0; }
+.config-page .config-settings-content .config-network-routing-field > .routing-segmented { width: 100%; max-width: 540px; }
+.config-page .config-settings-content .config-network-routing-field > .config-network-label { flex-wrap: wrap; }
+.config-page .config-settings-content .config-inline-status { margin-left: 8px; }
+.config-page .config-settings-content .config-management-form-footer { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.config-page .config-settings-content .config-management-error:not(.visible) { display: none; }
+.config-page .config-settings-content .config-management-actions { justify-content: flex-start; flex-wrap: wrap; }
+.config-page .config-settings-content :is(.config-management-form-footer, .config-diagnostics-actions, .template-config-actions) { padding-left: calc(var(--settings-label-width) + var(--settings-row-gap)); }
+.config-page .config-settings-content .config-diagnostics-actions { justify-content: flex-start; }
+.config-page .config-settings-content .config-proxy-field { align-items: start; }
+.config-page .config-settings-content .config-proxy-heading { display: flex; flex-wrap: wrap; gap: 6px; }
+.config-page .config-settings-content .config-proxy-heading > .settings-help { margin-right: 0; }
+.config-page .config-settings-content .config-proxy-system-toggle { margin: 4px 0 0; width: 100%; justify-content: flex-start; gap: 12px; }
+.config-page .config-settings-content .config-proxy-field > input { max-width: 420px; }
+.config-page .config-settings-content .config-keys-panel { min-height: 0; }
+.config-page .config-settings-content .config-sensitive-words-grid { max-width: 720px; }
+@media (max-width: 900px) {
+  .config-page .config-settings-content { --settings-label-width: 210px; --settings-row-gap: 16px; }
+}
+@media (max-width: 720px) {
+  .config-page .config-settings-content :is(.config-network-field:not(.config-network-toggle), .config-management-field, .config-diagnostics-field, .template-config-field:not(.template-config-toggle)) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .config-page .config-settings-content :is(.config-network-toggle, .template-config-field.template-config-toggle, .config-software-setting-row) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+  }
+  .config-page .config-settings-content .config-diagnostics-setting { grid-template-columns: 24px minmax(0, 1fr) auto; }
+  .config-page .config-settings-content .config-diagnostics-setting > .switch-control { margin-left: 0; }
+  .config-page .config-settings-content .template-config-field > small { grid-column: 1 / -1; }
+  .config-page .config-settings-content :is(.config-management-form-footer, .config-diagnostics-actions, .template-config-actions) { padding-left: 0; }
+  .config-page .config-settings-content .config-software-setting-row:has(select) { grid-template-columns: minmax(0, 1fr); }
+  .config-page .config-settings-content .config-proxy-system-toggle { width: auto; margin: 0 0 0 auto; }
+}
+.config-page .config-settings-content .config-settings-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+  padding-left: calc(var(--settings-label-width) + var(--settings-row-gap));
+}
+.config-page .config-settings-content .config-diagnostics-footer { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.config-page .config-settings-content .config-diagnostics-footer > .config-form-message:not(.error) { display: none; }
+.config-page .config-settings-content .config-diagnostics-actions .config-card-status { margin-left: 0; }
+.config-page .config-settings-content .config-diagnostics-actions .config-card-status:empty { display: none; }
+.config-page .config-settings-content .config-proxy-heading { justify-content: flex-start; }
+.config-page #config-native-software > :is(.config-panel-heading, .config-software-content) { width: 100%; margin: 0; }
+@media (max-width: 720px) {
+  .config-page .config-settings-content .config-settings-save-row { padding-left: 0; }
+  .config-page .config-settings-content .template-config-actions > div { width: auto; }
+  .config-page .config-settings-content .template-config-actions button { flex: none; }
+}
+
+/* Section headings stay light; paired fields read as individual form controls. */
+.config-page .config-settings-layout { gap: 12px; }
+.config-page .config-settings-cards > section > :is(.config-panel-heading, .config-network-section-heading),
+.config-page #config-template-panel > .template-config-section > .template-config-card > .template-config-heading,
+.config-page #config-native-aliases > .thinking-alias-page > .management-header,
+.config-page #config-native-sensitive-words > .config-sensitive-words-panel > .config-panel-heading {
+  min-height: 32px;
+  margin: 0 0 16px;
+  padding: 0 0 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+  background: transparent;
+  box-sizing: border-box;
+}
+.config-page .config-settings-content .template-config-fields { margin-top: 0; }
+.config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions) { margin-top: 12px; }
+.config-page .config-settings-content .config-network-grid { row-gap: 12px; }
+@media (min-width: 1160px) {
+  .config-page .config-settings-content { --settings-label-width: 210px; --settings-row-gap: 14px; }
+  .config-page .config-settings-content :is(.config-network-grid, .config-diagnostics-toggle-grid, .config-diagnostics-fields, .template-config-fields) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 32px;
+  }
+  .config-page .config-settings-content .config-diagnostics-setting {
+    grid-template-columns: 24px calc(var(--settings-label-width) - 34px) auto;
+  }
+  .config-page .config-settings-content .config-diagnostics-setting > .switch-control { margin-left: 4px; }
+  .config-page .config-settings-content .template-config-field-wide { grid-column: 1 / -1; }
+  .config-page .config-settings-content :is(.config-network-routing-field, .config-proxy-field) { grid-column: 1 / -1; }
+  .config-page .config-settings-content .config-network-routing-field > .routing-segmented { max-width: 540px; }
+  .config-page .config-settings-content .config-software-settings-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 32px;
+    border-radius: 0;
+  }
+  .config-page .config-settings-content .config-software-setting-row {
+    border: 0;
+    border-bottom: 1px solid var(--border-color);
+    min-height: 54px;
+    padding-block: 8px;
+  }
+}
+
+/* Keep labels attached to their controls rather than spanning empty grid tracks. */
+.config-page .config-settings-content { max-width: 880px; }
+.config-page .config-settings-content :is(.config-network-field:not(.config-network-toggle), .config-management-field, .config-diagnostics-field, .template-config-field:not(.template-config-toggle)) {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 7px;
+}
+.config-page .config-settings-content :is(.config-network-toggle, .template-config-field.template-config-toggle, .config-software-setting-row) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+}
+.config-page .config-settings-content .config-network-toggle { align-self: end; min-height: 38px; }
+.config-page .config-settings-content .template-config-toggle { align-self: end; min-height: 38px; }
+.config-page .config-settings-content :is(.config-network-toggle, .template-config-toggle) > .template-config-control { justify-self: end; }
+.config-page .config-settings-content .config-diagnostics-setting {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+}
+.config-page .config-settings-content .config-diagnostics-setting > .switch-control { margin: 0; }
+.config-page .config-settings-content .config-network-toggle > .switch-control { justify-self: end; }
+.config-page .config-settings-content .template-config-field > small { grid-column: 1 / -1; }
+.config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions, .config-management-form-footer, .config-diagnostics-actions) {
+  padding-left: 0;
+  justify-content: flex-end;
+}
+.config-page .config-settings-content .template-config-actions > span { margin-right: auto; }
+.config-page .config-settings-content .config-management-form-footer { align-items: stretch; }
+.config-page .config-settings-content .config-management-actions { justify-content: flex-end; }
+.config-page .config-settings-content .config-proxy-system-toggle { width: auto; margin: 0 0 0 auto; }
+.config-page .config-settings-content .config-proxy-field > input { max-width: 100%; }
+.config-page .config-settings-content .config-network-routing-field > .routing-segmented { max-width: 100%; }
+.config-page .config-settings-content :is(.config-network-grid, .template-config-fields) { row-gap: 18px; }
+.config-page .config-settings-content .config-management-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.config-page .config-settings-content :is(.config-management-field, .config-proxy-field, .config-network-routing-field) > .config-field-label { min-height: 26px; }
+@media (min-width: 1160px) {
+  .config-page .config-settings-content :is(.config-network-grid, .template-config-fields, .config-diagnostics-fields, .config-diagnostics-toggle-grid) { column-gap: 40px; }
+}
+@media (max-width: 720px) {
+  .config-page .config-settings-content .config-management-form { grid-template-columns: minmax(0, 1fr); }
+  .config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions, .config-management-actions, .config-diagnostics-actions) { justify-content: flex-start; }
+}
+.config-page .config-settings-cards > section > :is(.config-panel-heading, .config-network-section-heading) { margin-bottom: 0; }
+.config-page .config-settings-content :is(.config-heading-title h2, .config-network-section-title h3, .template-config-heading h3) { font-size: 15px; font-weight: 600; line-height: 1.5; }
+.config-page .config-settings-content :is(.config-network-label, .config-field-label, .config-management-field > span) { font-size: 13px; font-weight: 500; }
+.config-page .config-settings-content .primary-button:disabled { background: var(--bg-secondary); border-color: var(--border-color); color: var(--text-tertiary); opacity: 1; box-shadow: none; }
+.config-page .config-settings-content .config-proxy-heading { max-width: 420px; }
+.config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions) { margin-top: 4px; }
+
+/* Each functional group is a card; complex groups span the available workspace. */
+.config-page .config-settings-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 20px;
+  max-width: none;
+}
+.config-page .config-settings-content > .config-settings-cards,
+.config-page .config-settings-content > #config-template-panel:not([hidden]),
+.config-page #config-template-panel:not([hidden]) > .template-config-section:not([hidden]) { display: contents; }
+.config-page .config-settings-cards > section:not([hidden]),
+.config-page #config-template-panel > .template-config-section > .template-config-card:not([hidden]),
+.config-page #config-native-aliases:not([hidden]),
+.config-page #config-native-sensitive-words:not([hidden]) {
+  container: settings-card / inline-size;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: none;
+}
+.config-page #config-native-aliases > .thinking-alias-page { padding-top: 0; }
+.config-page #config-native-aliases > .thinking-alias-page > .thinking-alias-list-panel,
+.config-page #config-native-sensitive-words > .config-sensitive-words-panel { padding: 0; border: 0; }
+.config-page .config-settings-content .config-keys-panel { max-height: none; }
+.config-page .config-settings-content .config-key-list { max-height: 300px; overflow-y: auto; border-top: 0; }
+.config-page .config-settings-content > .config-search-results,
+.config-page #config-template-panel .template-config-notice { grid-column: 1 / -1; }
+.config-page .config-settings-content .config-sensitive-words-grid { max-width: none; }
+@media (min-width: 1240px) {
+  .config-page .config-settings-content { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Plan complete rows rather than sizing cards by their number of fields. */
+  .config-page .config-settings-content :is(.config-settings-cards > section, .template-config-card, #config-native-aliases, #config-native-sensitive-words) { grid-column: 1 / -1; }
+  .config-page .config-settings-content :is(#config-native-network, #config-native-tls, #config-native-routing, #config-native-retry, #config-group-codex-client, #config-group-multimedia, #config-group-oauth-codex, #config-group-oauth-others) { grid-column: auto; }
+}
+/* Equal-height peers keep their content at the top and actions on one baseline. */
+.config-page .config-settings-cards > section:not([hidden]):not(#config-native-keys),
+.config-page #config-template-panel > .template-config-section > .template-config-card:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+}
+.config-page .config-settings-cards > section > .config-settings-save-row,
+.config-page #config-template-panel > .template-config-section > .template-config-card > .template-config-actions {
+  margin-top: auto;
+  padding-top: 16px;
+}
+@container settings-card (max-width: 620px) {
+  .config-page .config-settings-content :is(.config-network-grid, .config-management-form, .template-config-fields, .config-diagnostics-fields, .config-diagnostics-toggle-grid, .config-software-settings-list) { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .config-page .config-settings-content .config-management-form-footer { grid-column: 1; }
+  .config-page .config-settings-content :is(.config-network-toggle, .template-config-field.template-config-toggle) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto;
+    align-items: center;
+    gap: 12px;
+    min-height: 38px;
+  }
+  .config-page .config-settings-content .template-config-toggle > .template-config-control { grid-column: 2; grid-row: 1; }
+  .config-page .config-settings-content :is(.config-network-toggle, .template-config-toggle) > :first-child { min-height: 0; }
+  .config-page .config-settings-content .config-management-actions { gap: 8px; }
+  .config-page .config-settings-content .config-proxy-system-toggle { flex-wrap: wrap; }
+}
+
+/* Three related short cards form a complete row when each has room to breathe. */
+@media (min-width: 1560px) {
+  .config-page .config-settings-content { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .config-page .config-settings-content :is(#config-native-network, #config-native-tls, #config-group-oauth-codex, #config-group-oauth-others) { grid-column: span 3; }
+  .config-page .config-settings-content :is(#config-native-routing, #config-native-retry, #config-group-routing-advanced, #config-group-request-behavior, #config-group-codex-client, #config-group-multimedia) { grid-column: span 2; }
+}
+/* A single-purpose page has one centered workspace instead of an empty grid cell. */
+.config-page .config-settings-content #config-native-software { width: min(100%, 1000px); justify-self: center; }
+.config-page .config-settings-content #config-group-extensions-plugins { width: min(100%, 1100px); justify-self: center; }
+@container settings-card (min-width: 1040px) {
+  .config-page :is(#config-group-extensions-concurrency, #config-group-extensions-inflight, #config-group-diagnostics, #config-group-request-behavior) .template-config-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .config-page :is(#config-group-extensions-concurrency, #config-group-extensions-inflight, #config-group-diagnostics, #config-group-request-behavior) .template-config-field:not(.template-config-toggle) {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+  }
+  .config-page :is(#config-group-extensions-concurrency, #config-group-extensions-inflight, #config-group-diagnostics, #config-group-request-behavior) .template-config-field:not(.template-config-toggle) > .template-config-control { justify-self: start; }
+}
+
+/* Internal form layout follows the card width, independently of the page grid. */
+.config-page .config-settings-content :is(.template-config-fields, .config-network-grid) {
+  gap: 16px 28px;
+}
+.config-page .config-settings-content .template-config-field:not(.template-config-field-wide) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 200px);
+  align-items: center;
+  align-content: center;
+  min-height: 48px;
+  gap: 8px 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+.config-page .config-settings-content .template-config-field:not(.template-config-field-wide) > .template-config-control {
+  justify-self: end;
+}
+.config-page .config-settings-content .template-config-field.template-config-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto;
+  align-self: stretch;
+}
+.config-page .config-settings-content .template-config-toggle > .template-config-control {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+}
+.config-page .config-settings-content .template-config-field-wide > .template-config-control { max-width: none; }
+.config-page .config-settings-content .config-network-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+}
+.config-page .config-settings-content .config-diagnostics-setting {
+  min-height: 48px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+}
+.config-page .config-settings-content .config-diagnostics-field {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 160px);
+  align-items: center;
+  min-height: 48px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+}
+.config-page .config-settings-content .config-proxy-heading { max-width: none; }
+.config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions) { margin-top: 16px; }
+
+@container settings-card (min-width: 460px) {
+  .config-page #config-native-network .config-network-grid { grid-template-columns: minmax(0, 160px) minmax(0, 1fr); }
+  .config-page #config-native-network .config-network-field > input { max-width: none; }
+}
+/* Short numeric values share a row with their label, even in paired cards. */
+.config-page #config-native-retry .config-network-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+@container settings-card (min-width: 360px) {
+  .config-page .config-settings-content #config-native-retry .config-network-field:not(.config-network-toggle),
+  .config-page .config-settings-content #config-native-routing .config-network-field:has(#config-input-config-network-sessionTtl) {
+    grid-template-columns: minmax(0, 1fr) 120px;
+    align-items: center;
+    min-height: 40px;
+    gap: 12px;
+  }
+}
+@container settings-card (max-width: 620px) {
+  .config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 160px);
+  }
+}
+@container settings-card (max-width: 420px) {
+  .config-page .config-settings-content .config-diagnostics-field { grid-template-columns: minmax(0, 1fr); }
+  .config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+  .config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) > .template-config-control { justify-self: start; }
+}
+/* Paths and repository URLs need more room than short scalar settings. */
+.config-page #config-group-management .template-config-field:not(.template-config-toggle),
+.config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+}
+.config-page #config-group-management .template-config-field:not(.template-config-toggle) > .template-config-control,
+.config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) > .template-config-control { max-width: none; }
+@container settings-card (max-width: 620px) {
+  .config-page #config-group-management .template-config-field:not(.template-config-toggle),
+  .config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) { grid-template-columns: minmax(0, 1fr); }
+}

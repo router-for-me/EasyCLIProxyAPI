@@ -1,11 +1,54 @@
-import { managementApi, readBoolean, readString } from './managementApi';
+import { isRecord, managementApi, readBoolean, readString } from './managementApi';
 import { getCurrentLocale, translate } from '../i18n';
 
 export type AuthFileRecord = Record<string, unknown>;
 export type AuthFileSnapshot = Map<string, string>;
 
+export type AuthFileCooldownResetResponse = {
+  status: 'ok';
+  auth_index: string;
+  models: string[];
+};
+
+export const authFileCooldownResetIndex = (file: AuthFileRecord): string | undefined => {
+  const value = file.auth_index ?? file.authIndex;
+  if (typeof value === 'string') return value.trim() || undefined;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
+  return undefined;
+};
+
+export const resetAuthFileCooldown = async (
+  authIndex: string,
+  api: { post: (path: string, body: Record<string, unknown>) => Promise<unknown> } = managementApi,
+): Promise<AuthFileCooldownResetResponse> => {
+  const index = authFileCooldownResetIndex({ auth_index: authIndex });
+  if (!index) throw new Error(translate(getCurrentLocale(), 'authFiles.cooldown.missingIndex'));
+  const response = await api.post('/routing/cooldown/reset', { auth_index: index });
+  // Only an acknowledgement for this index confirms the operation. The caller
+  // reloads the list to obtain authoritative health and disabled state afterward.
+  if (!isRecord(response) || response.status !== 'ok' || response.auth_index !== index
+    || (response.models != null && (!Array.isArray(response.models)
+      || response.models.some((model) => typeof model !== 'string')))) {
+    throw new Error(translate(getCurrentLocale(), 'authFiles.cooldown.invalidResponse'));
+  }
+  return { status: 'ok', auth_index: index, models: (response.models ?? []) as string[] };
+};
+
 export const authFileName = (file: AuthFileRecord) =>
   readString(file, 'name') || translate(getCurrentLocale(), 'authFiles.unnamed');
+
+/**
+ * Present credentials in the same order used by routing: higher explicit
+ * priority first, then a deterministic case-insensitive filename order.
+ * Return a new array so callers do not mutate the API response or snapshots.
+ */
+export const sortAuthFilesByPriority = <File extends AuthFileRecord>(files: File[]): File[] =>
+  [...files].sort((left, right) => {
+    const priorityDelta = (parseAuthFilePriority(right.priority) ?? 0)
+      - (parseAuthFilePriority(left.priority) ?? 0);
+    if (priorityDelta !== 0) return priorityDelta;
+    return authFileName(left).localeCompare(authFileName(right), undefined, { sensitivity: 'base' });
+  });
 
 export const isRuntimeOnlyAuthFile = (file: AuthFileRecord) =>
   readBoolean(file, 'runtime_only', 'runtimeOnly');
@@ -27,7 +70,7 @@ export const setOAuthCredentialFileDisabled = async (
   if (!isOAuthCredentialFile(file)) {
     throw new Error(translate(getCurrentLocale(), 'authFiles.fileOnly'));
   }
-  await api.patch('/auth-files/status', { name: readString(file, 'name'), disabled });
+  await api.patch('/credentials/status', { name: readString(file, 'name'), disabled });
 };
 
 export const parseAuthFilePriority = (value: unknown): number | undefined => {
@@ -47,12 +90,13 @@ export const normalizeAuthFilePriorityInput = (value: string): number | null => 
   return parseAuthFilePriority(normalized) ?? null;
 };
 
-const normalizeOAuthProvider = (value: string) => {
+export const normalizeOAuthProvider = (value: string) => {
   const provider = value.trim().toLowerCase();
   if (provider === 'cognition') return 'devin';
   if (provider === 'anthropic') return 'claude';
   if (provider === 'anti-gravity') return 'antigravity';
   if (provider === 'openai') return 'codex';
+  if (provider === 'muse') return 'meta';
   return provider;
 };
 
@@ -156,8 +200,24 @@ export const dedupeAuthFiles = (files: AuthFileRecord[]) => {
     grouped.set(key, entries);
   });
   return Array.from(grouped.values())
-    .map(mergeDuplicateAuthFiles)
-    .sort((left, right) =>
-      authFileName(left).localeCompare(authFileName(right), undefined, { sensitivity: 'base' }),
-    );
+    .flatMap((entries) => {
+      const byAuthIndex = new Map<string | undefined, AuthFileRecord[]>();
+      entries.forEach((entry) => {
+        const authIndex = authFileCooldownResetIndex(entry);
+        const matches = byAuthIndex.get(authIndex) ?? [];
+        matches.push(entry);
+        byAuthIndex.set(authIndex, matches);
+      });
+      const knownIndexCount = byAuthIndex.size - (byAuthIndex.has(undefined) ? 1 : 0);
+      // Legacy disk entries can enrich one indexed runtime record. Conflicting
+      // indexes identify different credentials; unindexed entries stay separate.
+      return knownIndexCount <= 1
+        ? [mergeDuplicateAuthFiles(entries)]
+        : Array.from(byAuthIndex.values()).map(mergeDuplicateAuthFiles);
+    })
+    .sort((left, right) => {
+      const nameOrder = authFileName(left).localeCompare(authFileName(right), undefined, { sensitivity: 'base' });
+      return nameOrder || (authFileCooldownResetIndex(left) ?? '')
+        .localeCompare(authFileCooldownResetIndex(right) ?? '');
+    });
 };

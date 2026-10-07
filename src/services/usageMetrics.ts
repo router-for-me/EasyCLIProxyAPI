@@ -8,6 +8,34 @@ type CacheReadRateInput = {
   cacheReadTokens: number;
 };
 
+export const calculateTokenComposition = (tokens: {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}) => {
+  const normalizedCount = (value: number) => Number.isFinite(value) ? Math.max(0, value) : 0;
+  const input = normalizedCount(tokens.inputTokens);
+  const output = normalizedCount(tokens.outputTokens);
+  const cacheRead = normalizedCount(tokens.cacheReadTokens);
+  const cacheCreation = normalizedCount(tokens.cacheCreationTokens);
+  const uncachedInput = Math.max(0, input - cacheRead - cacheCreation);
+  const total = uncachedInput + cacheRead + cacheCreation + output;
+  let offset = 0;
+  const segments = ([
+    { key: 'input', value: uncachedInput },
+    { key: 'cache-read', value: cacheRead },
+    { key: 'cache-creation', value: cacheCreation },
+    { key: 'output', value: output },
+  ] as const).map((segment) => {
+    const percent = total > 0 ? segment.value / total * 100 : 0;
+    const result = { ...segment, percent, offset };
+    offset += percent;
+    return result;
+  });
+  return { total, segments, cacheShare: total > 0 ? cacheRead / total * 100 : 0 };
+};
+
 export const calculateGenerationSpeed = ({
   outputTokens,
   latencyMs,

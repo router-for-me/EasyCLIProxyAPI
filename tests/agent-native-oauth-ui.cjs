@@ -28,7 +28,7 @@ const base = 'http://127.0.0.1:1421';
       await page.goto(`${base}/tests/fixtures/agent-backups.html?reset-selections&client=codex&${query}`, { waitUntil: 'domcontentloaded' });
       await update().waitFor();
       await page.waitForFunction(() => {
-        const button = document.querySelector('.agents-page .management-header button');
+        const button = document.querySelector('.agent-client-list-heading button');
         return window.fixtureCalls.some(call => call.cmd === 'get_agent_models') && button && !button.disabled;
       });
     };

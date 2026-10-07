@@ -16,6 +16,7 @@ import {
   providerProxyDraftFromRecord,
   providerRecordWithDisabledState,
   providerRemarkIdentity,
+  providerRowsFromGroups,
   providerSectionOrder,
   reorderProviderRecords,
   resolveProviderRecordIndex,
@@ -23,7 +24,7 @@ import {
   stripResponseFields,
 } from '../src/pages/ApiAccessPage';
 import { modelsFromRecord } from '../src/services/modelService';
-import { flattenV8ProviderGroups } from '../src/services/managementApi';
+import { flattenV8ProviderGroups } from './fixtures/legacyProviderRecords';
 
 describe('shared-credential provider entries (#276)', () => {
   const first = {
@@ -277,13 +278,17 @@ it('keeps remark identities separate for records that share an API key', () => {
 });
 
 describe('API 接入配置合并', () => {
-  it('固定使用 Codex、OpenAI、DeepSeek、Claude、Gemini 顺序且不包含 Vertex', () => {
+  it('保留常用分类顺序并覆盖 v8 模板全部原生提供商', () => {
     expect(providerSectionOrder).toEqual([
       'codex-api-key',
       'openai-compatibility',
       'deepseek',
       'claude-api-key',
       'gemini-api-key',
+      'interactions-api-key',
+      'vertex-api-key',
+      'xai-api-key',
+      'meta-api-key',
     ]);
   });
 
@@ -585,7 +590,42 @@ describe('API 接入配置合并', () => {
     const enabled = providerRecordWithDisabledState('codex-api-key', disabled, false);
 
     expect(disabled['excluded-models']).toEqual(['preview-*', '*']);
+    expect(disabled.disabled).toBeUndefined();
     expect(enabled['excluded-models']).toEqual(['preview-*']);
+    expect(enabled.disabled).toBeUndefined();
+  });
+
+  it('does not persist disabled on Codex keys because the core rejects that field', () => {
+    const disabled = providerRecordWithDisabledState('codex-api-key', {
+      'api-key': 'codex-key',
+      disabled: true,
+      'excluded-models': ['preview-*'],
+    }, true);
+    const enabled = providerRecordWithDisabledState('codex-api-key', disabled, false);
+
+    expect(disabled).not.toHaveProperty('disabled');
+    expect(disabled['excluded-models']).toEqual(['preview-*', '*']);
+    expect(enabled).not.toHaveProperty('disabled');
+    expect(enabled['excluded-models']).toEqual(['preview-*']);
+  });
+
+  it('列表按原生 disabled 标记显示每把密钥的启用状态', () => {
+    const rows = providerRowsFromGroups('claude-api-key', [{
+      name: 'claude-1',
+      keys: [
+        { 'api-key': 'live-key' },
+        { 'api-key': 'paused-key', disabled: true },
+      ],
+    }]);
+    expect(rows.map((row) => row.disabled)).toEqual([false, true]);
+    expect(providerRowsFromGroups('openai-compatibility', [{
+      name: 'relay',
+      keys: [{ 'api-key': 'a' }, { 'api-key': 'b', disabled: true }],
+    }])[0].disabled).toBe(false);
+    expect(providerRowsFromGroups('openai-compatibility', [{
+      name: 'relay',
+      keys: [{ 'api-key': 'a', disabled: true }, { 'api-key': 'b', disabled: true }],
+    }])[0].disabled).toBe(true);
   });
 
   it('运行时补全默认 Base URL 后仍能按原始索引找到配置记录', () => {

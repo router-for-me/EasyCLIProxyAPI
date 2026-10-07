@@ -154,6 +154,8 @@ fn claude_code_role_mappings_drive_settings() {
         max_context_tokens: 272_000,
         auto_compact_pct: 80,
         disable_auto_compact: false,
+        manage_default_model: true,
+        manage_subagent_model: true,
     };
     let models = vec![
         AgentModelOption {
@@ -211,6 +213,53 @@ fn claude_code_role_mappings_drive_settings() {
 }
 
 #[test]
+fn claude_code_can_leave_session_model_and_subagents_to_claude_code() {
+    let mappings = ClaudeDesktopModelMappings {
+        manage_default_model: false,
+        manage_subagent_model: false,
+        ..ClaudeDesktopModelMappings::all("gpt-sonnet")
+    };
+    let rendered = build_claude_agent_config(
+        Some(r#"{"model":"user-selected","env":{"ANTHROPIC_MODEL":"user-selected","CLAUDE_CODE_SUBAGENT_MODEL":"user-subagent"}}"#),
+        "http://127.0.0.1:8317",
+        "test-key",
+        "gpt-sonnet",
+        &test_agent_models(&["gpt-sonnet"]),
+        Some(&mappings),
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert_eq!(value["model"], "user-selected");
+    assert_eq!(value["env"]["ANTHROPIC_MODEL"], "user-selected");
+    assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "user-subagent");
+    assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "gpt-sonnet");
+    assert_eq!(value["env"]["EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL"], "0");
+    assert_eq!(value["env"]["EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL"], "0");
+}
+
+#[test]
+fn claude_code_unmanaged_mode_removes_previous_cpa_overrides() {
+    let mappings = ClaudeDesktopModelMappings {
+        manage_default_model: false,
+        manage_subagent_model: false,
+        ..ClaudeDesktopModelMappings::all("gpt-sonnet")
+    };
+    let rendered = build_claude_agent_config(
+        Some(r#"{"model":"gpt-sonnet","env":{"ANTHROPIC_MODEL":"gpt-sonnet","CLAUDE_CODE_SUBAGENT_MODEL":"gpt-sonnet"}}"#),
+        "http://127.0.0.1:8317",
+        "test-key",
+        "gpt-sonnet",
+        &test_agent_models(&["gpt-sonnet"]),
+        Some(&mappings),
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert!(value.get("model").is_none());
+    assert!(value["env"].get("ANTHROPIC_MODEL").is_none());
+    assert!(value["env"].get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
+}
+
+#[test]
 fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
     let mappings = ClaudeDesktopModelMappings {
         desktop_models: None,
@@ -223,6 +272,8 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
         max_context_tokens: 1_000_000,
         auto_compact_pct: 75,
         disable_auto_compact: true,
+        manage_default_model: true,
+        manage_subagent_model: true,
     };
     let models = vec![
         AgentModelOption {
@@ -1448,6 +1499,54 @@ fn agent_model_list_parser_exposes_aliases_as_selectable_model_ids() {
             },
         ]
     );
+}
+
+#[tokio::test]
+async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let mut paths = Vec::new();
+        for _ in 0..2 {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 2048];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            let path = request.split_whitespace().nth(1).unwrap().to_string();
+            let body = if path == "/v1/models" {
+                assert!(request.to_lowercase().contains("authorization: bearer public-test-key\r\n"));
+                r#"{"data":[{"id":"public-model","alias":"not-an-id","slug":"not-public","context_length":64000},{"id":"another-model"}]}"#
+            } else {
+                assert_eq!(path, "/v8/management/config.yaml");
+                "config-version: 8\n"
+            };
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            paths.push(path);
+        }
+        assert!(paths.iter().any(|path| path == "/v1/models"));
+    });
+    let config = GuiConfigFile {
+        port,
+        management_secret_key: "management-test-key".into(),
+        api_keys: vec![GuiApiKeyEntry { key: "public-test-key".into(), remark: String::new() }],
+        ..GuiConfigFile::default()
+    };
+    let prepared = fetch_prepared_agent_models(AgentClient::Codex, &config).await.unwrap();
+    server.join().unwrap();
+    let mut ids: Vec<_> = prepared.models.iter().map(|model| model.name.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, ["another-model", "public-model"]);
+    let catalog: serde_json::Value = serde_json::from_str(prepared.codex_catalog.as_deref().unwrap()).unwrap();
+    let mut written: Vec<_> = catalog["models"].as_array().unwrap().iter().map(|model| model["slug"].as_str().unwrap()).collect();
+    written.sort();
+    assert_eq!(ids, written);
 }
 
 #[test]

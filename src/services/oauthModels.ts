@@ -21,15 +21,10 @@ export const oauthModelsFromPayload = (payload: unknown): OAuthModelDefinition[]
 
 export const oauthExcludedRulesFromPayload = (payload: unknown, provider: string): string[] => {
   if (!isRecord(payload)) return [];
-  const source = isRecord(payload['oauth-excluded-models'])
-    ? payload['oauth-excluded-models']
-    : payload;
-  const value = source[provider.trim().toLowerCase()];
-  if (!Array.isArray(value)) return [];
-  return value
-    .map(String)
-    .map((rule) => rule.trim().toLowerCase())
-    .filter((rule, index, rules) => rule && rules.indexOf(rule) === index);
+  const key = provider.trim().toLowerCase();
+  return normalizeOAuthExcludedRules(Object.entries(payload).flatMap(([name, value]) =>
+    name.trim().toLowerCase() === key && Array.isArray(value) ? value.map(String) : [],
+  ));
 };
 
 const wildcardPattern = (rule: string) => new RegExp(

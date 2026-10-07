@@ -121,7 +121,7 @@ async function audit(page, scope, label) {
       await page.locator('.auth-file-card').first().waitFor();
       await audit(page, '.auth-files-page', `${theme} credential cards`);
       await screenshot(`credential-cards-${theme}`);
-      await page.locator('.auth-file-card').first().getByRole('button', { name: '设置', exact: true }).click();
+      await page.locator('.auth-file-card').first().getByRole('button', { name: '凭证设置', exact: true }).click();
       await page.locator('.credential-settings-body[aria-busy="false"]').waitFor();
       await audit(page, '.credential-settings-dialog', `${theme} credential settings`);
       await screenshot(`credential-settings-${theme}`);

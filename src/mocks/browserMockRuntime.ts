@@ -1,3 +1,7 @@
+import { applyTemplateChanges, readTemplatePath, sameTemplateValue, type TemplateConfigChange } from '../services/templateConfig';
+import { createPluginMock } from './pluginMock';
+import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
+
 export type BrowserMockScenario = 'running' | 'stopped' | 'empty' | 'error';
 export type BrowserMockMode = BrowserMockScenario | 'off';
 
@@ -15,16 +19,26 @@ export type BrowserMockRuntime = {
 };
 
 const SCENARIOS = new Set<BrowserMockScenario>(['running', 'stopped', 'empty', 'error']);
+const BUNDLED_CORE = { version: '7.3.15', assetName: 'CLIProxyAPI_7.3.15_windows_amd64.zip' };
 const PROVIDER_SECTIONS = [
   'gemini-api-key',
+  'interactions-api-key',
+  'vertex-api-key',
   'codex-api-key',
   'claude-api-key',
+  'xai-api-key',
+  'meta-api-key',
   'openai-compatibility',
 ] as const;
+type ProviderSection = (typeof PROVIDER_SECTIONS)[number];
 const V8_PROVIDER_BY_SECTION = {
   'gemini-api-key': 'gemini',
+  'interactions-api-key': 'interactions',
+  'vertex-api-key': 'vertex',
   'codex-api-key': 'codex',
   'claude-api-key': 'claude',
+  'xai-api-key': 'xai',
+  'meta-api-key': 'meta',
   'openai-compatibility': 'openai-compatibility',
 } as const;
 const SHARED_PROVIDER_FIELDS = new Set([
@@ -34,7 +48,7 @@ const SHARED_PROVIDER_FIELDS = new Set([
 
 const clone = <Value,>(value: Value): Value => structuredClone(value);
 const sleep = (delayMs: number) => delayMs > 0
-  ? new Promise<void>((resolve) => window.setTimeout(resolve, delayMs))
+  ? new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs))
   : Promise.resolve();
 
 const asObject = (value: unknown): JsonObject => (
@@ -49,6 +63,24 @@ const readNumber = (value: unknown, fallback = 0) => {
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+
+function groupProviderRecords(section: ProviderSection, records: JsonObject[]): JsonObject[] {
+  return records.map((record, index) => {
+    if (section === 'openai-compatibility') {
+      const group: JsonObject = { ...clone(record), keys: asArray(record['api-key-entries']).map((item) => clone(asObject(item))) };
+      delete group['api-key-entries'];
+      return group;
+    }
+    const group: JsonObject = { name: readString(record.name).trim() || `${V8_PROVIDER_BY_SECTION[section]}-${index + 1}` };
+    const key: JsonObject = {};
+    Object.entries(record).forEach(([field, value]) => {
+      if (field === 'base-url' || SHARED_PROVIDER_FIELDS.has(field)) group[field] = clone(value);
+      else key[field] = clone(value);
+    });
+    group.keys = [key];
+    return group;
+  });
+}
 
 const isoHoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 const localHourKey = (date: Date) => [
@@ -140,10 +172,10 @@ function createUsageEvents() {
       source: index % 2 === 0 ? 'codex' : 'claude-code',
       source_display: index % 2 === 0 ? 'Codex' : 'Claude Code',
       failed,
-      canceled: false,
+      canceled: index === 9,
       failure_status: failed ? 429 : 0,
       failure_body: failed ? 'Mock rate limit exceeded' : '',
-      provider: index % 2 === 0 ? 'OpenAI OAuth' : 'Claude OAuth',
+      provider: index % 2 === 0 ? 'openai-oauth' : 'claude-oauth',
       model: models[index % models.length],
       alias: '',
       reasoning_effort: index % 2 === 0 ? 'high' : 'medium',
@@ -274,6 +306,7 @@ function createState(scenario: BrowserMockScenario) {
       modtime: Date.now() - 45 * 60_000,
       excluded_models: ['claude-legacy-*'],
     },
+    ...createQuotaMockFiles(),
     {
       name: 'gemini-runtime',
       provider: 'gemini',
@@ -286,7 +319,11 @@ function createState(scenario: BrowserMockScenario) {
       failed: 0,
     },
   ];
-  const providerConfig: Record<(typeof PROVIDER_SECTIONS)[number], JsonObject[]> = {
+  const legacyProviderConfig: Record<ProviderSection, JsonObject[]> = {
+    'interactions-api-key': [],
+    'vertex-api-key': [],
+    'xai-api-key': [],
+    'meta-api-key': [],
     'codex-api-key': [
       {
         name: 'Codex Direct',
@@ -381,6 +418,9 @@ function createState(scenario: BrowserMockScenario) {
       errorLogsMaxFiles: 10,
       usageStatisticsEnabled: true,
       redisUsageQueueRetentionSeconds: 60,
+      requestLog: false,
+      pluginsEnabled: false,
+      managementSecretConfigured: true,
       host: '127.0.0.1',
       port: 8317,
       allowLan: false,
@@ -395,6 +435,18 @@ function createState(scenario: BrowserMockScenario) {
       maxRetryInterval: 30,
       streamingBootstrapRetries: 0,
     },
+    extendedConfig: {
+      'config-version': 8,
+      server: { host: '127.0.0.1', port: 8317, 'commercial-mode': false, tls: { enable: false, cert: '', key: '' } },
+      management: { 'allow-remote': false, 'disable-control-panel': false },
+      routing: {
+        strategy: 'round-robin', 'session-affinity': true, 'session-affinity-ttl': '30m',
+        retry: { 'request-retry': 3, 'max-retry-credentials': 0, 'max-retry-interval': 30 },
+        cooldown: { 'disable-cooling': false },
+      },
+      requests: { 'proxy-url': '', streaming: { 'bootstrap-retries': 0 } },
+      observability: { logs: { debug: false, 'logging-to-file': true, 'logs-max-total-size-mb': 256, 'error-logs-max-files': 10 }, usage: { 'usage-statistics-enabled': true, 'redis-usage-queue-retention-seconds': 60 } },
+    } as JsonObject,
     softwareSettings: {
       closeBehavior: 'ask',
       autostartEnabled: false,
@@ -448,8 +500,12 @@ function createState(scenario: BrowserMockScenario) {
       result: null,
     },
     versionSource: { source: 'github', gitcodeAvailable: true, customMirrors: ['https://gh-proxy.example.com/'] },
-    providerConfig,
-    authFiles,
+    // Native groups are authoritative; legacy routes only adapt their own view.
+    providerConfig: Object.fromEntries(PROVIDER_SECTIONS.map((section) => [
+      section, scenario === 'empty' ? [] : groupProviderRecords(section, legacyProviderConfig[section]),
+    ])) as Record<ProviderSection, JsonObject[]>,
+    authFiles: scenario === 'empty' ? [] : authFiles,
+    quotaApiCall: createQuotaMock(),
     oauthExcludedModels: { codex: [], claude: ['claude-legacy-*'], gemini: [] } as Record<string, string[]>,
     oauthSessions: new Map<string, string>(),
     analysis,
@@ -534,6 +590,7 @@ function createState(scenario: BrowserMockScenario) {
           input_modalities: ['text', 'image'],
           visibility: 'list',
           supports_parallel_tool_calls: true,
+          base_instructions: 'You are Codex, a coding assistant.',
         };
         return {
           slug,
@@ -579,7 +636,9 @@ function mockModelDefinitions() {
   };
 }
 
-function mockApiCall(body: JsonObject) {
+function mockApiCall(state: BrowserMockState, body: JsonObject) {
+  const quota = state.quotaApiCall(body);
+  if (quota) return quota;
   const url = readString(body.url).toLowerCase();
   if (url.includes('/models')) {
     return {
@@ -593,47 +652,8 @@ function mockApiCall(body: JsonObject) {
       },
     };
   }
-  if (url.includes('/api/oauth/profile')) {
-    return { status_code: 200, body: { account: { has_claude_pro: true, has_claude_max: false } } };
-  }
-  if (url.includes('wham/usage')) {
-    return {
-      status_code: 200,
-      body: {
-        rate_limit: {
-          primary_window: { used_percent: 28, reset_after_seconds: 7_200, limit_window_seconds: 18_000 },
-          secondary_window: { used_percent: 42, reset_after_seconds: 345_600, limit_window_seconds: 604_800 },
-        },
-      },
-    };
-  }
-  if (url.includes('anthropic.com/api/oauth/usage')) {
-    return {
-      status_code: 200,
-      body: {
-        five_hour: { utilization: 24, resets_at: isoHoursAgo(-3) },
-        seven_day: { utilization: 41, resets_at: isoHoursAgo(-72) },
-      },
-    };
-  }
-  if (url.includes('retrieveuserquotasummary')) {
-    return {
-      status_code: 200,
-      body: {
-        groups: [{ display_name: 'Gemini Pro', buckets: [{ window: '5h', remaining_fraction: 0.74, reset_time: isoHoursAgo(-3) }] }],
-      },
-    };
-  }
-  if (url.includes('billing')) {
-    return {
-      status_code: 200,
-      body: {
-        periodType: 'weekly',
-        usagePercent: 36,
-        periodEnd: isoHoursAgo(-48),
-        productUsage: [{ product: 'Grok Code', usagePercent: 31 }],
-      },
-    };
+  if (!/\/(chat\/completions|responses|messages)(\?|$)/.test(url)) {
+    throw new Error(`Browser Mock upstream request not implemented: ${readString(body.method)} ${readString(body.url)}`);
   }
   return {
     status_code: 200,
@@ -655,64 +675,34 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   const v8Provider = Object.entries(V8_PROVIDER_BY_SECTION).find(
     ([, provider]) => path === `/config/api-keys/${provider}`,
   );
-  const groupRecords = (section: (typeof PROVIDER_SECTIONS)[number], records: JsonObject[]) => records.map((record, index) => {
-    if (section === 'openai-compatibility') {
-      const group: JsonObject = { ...record, keys: asArray(record['api-key-entries']).map((item) => clone(asObject(item))) };
-      delete group['api-key-entries'];
-      return group;
-    }
-    const group: JsonObject = { name: `${V8_PROVIDER_BY_SECTION[section]}-${index + 1}` };
-    const key: JsonObject = {};
-    Object.entries(record).forEach(([field, value]) => {
-      if (field === 'base-url' || SHARED_PROVIDER_FIELDS.has(field)) group[field] = value;
-      else key[field] = value;
-    });
-    group.keys = [key];
-    return group;
-  });
-  const flattenGroups = (section: (typeof PROVIDER_SECTIONS)[number], groups: unknown) => asArray(groups).flatMap((item) => {
-    const group = asObject(item);
-    const keys = asArray(group.keys).map(asObject);
-    if (section === 'openai-compatibility') {
-      const record: JsonObject = { ...group };
-      delete record.keys;
-      if (keys.length > 0) record['api-key-entries'] = keys;
-      return [record];
-    }
-    const shared = Object.fromEntries(Object.entries(group).filter(([field]) => field === 'base-url' || SHARED_PROVIDER_FIELDS.has(field)));
-    return keys.map((key) => ({ ...shared, ...Object.fromEntries(Object.entries(key).filter(([, value]) => value !== null)) }));
-  });
-
   if (method === 'GET' && path === '/config') {
     return {
+      ...clone(state.extendedConfig),
       'config-version': 8,
       'api-keys': Object.fromEntries(PROVIDER_SECTIONS.map((section) => [
         V8_PROVIDER_BY_SECTION[section],
-        groupRecords(section, state.providerConfig[section]),
+        clone(state.providerConfig[section]),
       ])),
     };
   }
-  if (v8Provider) {
-    const section = v8Provider[0] as (typeof PROVIDER_SECTIONS)[number];
-    if (method === 'GET') return groupRecords(section, state.providerConfig[section]);
-    if (method === 'PUT') {
-      state.providerConfig[section] = flattenGroups(section, body).map((item) => clone(asObject(item)));
-      return { status: 'ok', 'config-version': 8 };
-    }
+  if (method === 'GET' && path === '/config/api-keys') {
+    return Object.fromEntries(PROVIDER_SECTIONS.map(section => [V8_PROVIDER_BY_SECTION[section], clone(state.providerConfig[section])]));
   }
-  if (PROVIDER_SECTIONS.some((section) => path === `/${section}`)) {
-    const section = path.slice(1) as (typeof PROVIDER_SECTIONS)[number];
-    if (method === 'GET') return { [section]: clone(state.providerConfig[section]) };
+  const legacySection = PROVIDER_SECTIONS.find(section => path === `/${section}`);
+  if (method === 'GET' && legacySection) {
+    return state.providerConfig[legacySection].flatMap(group => {
+      const { keys, ...shared } = group;
+      return legacySection === 'openai-compatibility'
+        ? [{ ...clone(shared), 'api-key-entries': clone(keys) }]
+        : asArray(keys).map(key => ({ ...clone(shared), ...clone(asObject(key)) }));
+    });
+  }
+  if (v8Provider) {
+    const section = v8Provider[0] as ProviderSection;
+    if (method === 'GET') return clone(state.providerConfig[section]);
     if (method === 'PUT') {
       state.providerConfig[section] = asArray(body).map((item) => clone(asObject(item)));
-      return { [section]: clone(state.providerConfig[section]) };
-    }
-    if (method === 'PATCH' && section === 'openai-compatibility') {
-      const patch = asObject(body);
-      const index = readNumber(patch.index, -1);
-      const current = state.providerConfig[section][index];
-      if (current) state.providerConfig[section][index] = { ...current, ...asObject(patch.value) };
-      return { [section]: clone(state.providerConfig[section]) };
+      return { status: 'ok', 'config-version': 8 };
     }
   }
   if (method === 'GET' && path === '/credentials') {
@@ -720,49 +710,65 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   }
   if (method === 'GET' && path === '/credentials/download') {
     const file = findAuthFile(state, readString(query.name));
-    return clone(file ?? { name: query.name, excluded_models: [] });
+    if (!file) throw new Error(`Browser Mock credential not found: ${readString(query.name)}`);
+    return clone(file);
   }
   if (method === 'GET' && path === '/credentials/models') return mockModelDefinitions();
   if (method === 'GET' && path.startsWith('/routing/model-definitions/')) return mockModelDefinitions();
   if (method === 'GET' && path === '/config/oauth/excluded-models') {
     return clone(state.oauthExcludedModels);
   }
-  if (path.startsWith('/config/oauth/excluded-models/')) {
-    const provider = decodeURIComponent(path.slice('/config/oauth/excluded-models/'.length));
-    if (method === 'PUT') state.oauthExcludedModels[provider] = asArray(body).map(String);
-    if (method === 'DELETE') delete state.oauthExcludedModels[provider];
+  if (method === 'PUT' && path === '/config/oauth/excluded-models') {
+    state.oauthExcludedModels = clone(asObject(body)) as Record<string, string[]>;
     return { status: 'ok', 'config-version': 8 };
-  }
-  if (method === 'GET' && path === '/oauth-excluded-models') {
-    return { 'oauth-excluded-models': clone(state.oauthExcludedModels) };
-  }
-  if (method === 'PATCH' && path === '/oauth-excluded-models') {
-    const patch = asObject(body);
-    state.oauthExcludedModels[readString(patch.provider)] = asArray(patch.models).map(String);
-    return { 'oauth-excluded-models': clone(state.oauthExcludedModels) };
-  }
-  if (method === 'DELETE' && path === '/oauth-excluded-models') {
-    delete state.oauthExcludedModels[readString(query.provider)];
-    return null;
   }
   if (method === 'PATCH' && (path === '/credentials/fields' || path === '/credentials/status')) {
     const patch = asObject(body);
     const file = findAuthFile(state, readString(patch.name));
-    if (file) Object.assign(file, patch);
-    return clone(file ?? null);
+    if (!file) throw new Error(`Browser Mock credential not found: ${readString(patch.name)}`);
+    Object.assign(file, clone(patch));
+    return { status: 'ok' };
+  }
+  if (method === 'POST' && path === '/routing/cooldown/reset') {
+    const authIndex = readString(asObject(body).auth_index);
+    const file = state.authFiles.find(file => file.auth_index === authIndex);
+    if (!file) throw new Error(`Browser Mock credential not found: ${authIndex}`);
+    const models = asArray(file.cooldowns).map(item => readString(asObject(item).model_key)).filter(Boolean);
+    file.cooldowns = [];
+    return { status: 'ok', auth_index: authIndex, models };
   }
   if (method === 'DELETE' && path === '/credentials') {
     const index = state.authFiles.findIndex((file) => file.name === query.name);
-    if (index >= 0) state.authFiles.splice(index, 1);
+    if (index < 0) throw new Error(`Browser Mock credential not found: ${readString(query.name)}`);
+    state.authFiles.splice(index, 1);
     return null;
   }
-  if (method === 'POST' && path === '/requests/api-call') return mockApiCall(asObject(body));
-  if (method === 'DELETE' && path === '/oauth/session') return null;
-  return {};
+  if (method === 'POST' && path === '/requests/api-call') return mockApiCall(state, asObject(body));
+  if (method === 'DELETE' && path === '/oauth/session') {
+    state.oauthSessions.delete(readString(query.state));
+    return null;
+  }
+  throw new Error(`Browser Mock management request not implemented: ${method} ${path}`);
 }
 
+const CORE_CONFIG_PATHS: Record<string, string> = {
+  debug: 'observability.logs.debug', commercialMode: 'server.commercial-mode',
+  loggingToFile: 'observability.logs.logging-to-file', logsMaxTotalSizeMb: 'observability.logs.logs-max-total-size-mb',
+  errorLogsMaxFiles: 'observability.logs.error-logs-max-files', usageStatisticsEnabled: 'observability.usage.usage-statistics-enabled',
+  redisUsageQueueRetentionSeconds: 'observability.usage.redis-usage-queue-retention-seconds',
+  requestLog: 'observability.logs.request-log', pluginsEnabled: 'plugins.enabled',
+  host: 'server.host', port: 'server.port', routingStrategy: 'routing.strategy', proxyUrl: 'requests.proxy-url',
+  routingSessionAffinity: 'routing.session-affinity', routingSessionAffinityTtl: 'routing.session-affinity-ttl',
+  disableCooling: 'routing.cooldown.disable-cooling', requestRetry: 'routing.retry.request-retry',
+  maxRetryCredentials: 'routing.retry.max-retry-credentials', maxRetryInterval: 'routing.retry.max-retry-interval',
+  streamingBootstrapRetries: 'requests.streaming.bootstrap-retries',
+};
+
 function updateCoreConfig(state: BrowserMockState, payload: JsonObject) {
-  Object.assign(state.coreConfig, asObject(payload.settings));
+  const settings = asObject(payload.settings);
+  Object.assign(state.coreConfig, settings);
+  const changes: TemplateConfigChange[] = Object.entries(settings).flatMap(([key, value]) => CORE_CONFIG_PATHS[key] ? [{ path: CORE_CONFIG_PATHS[key].split('.'), value, remove: false, expected: null, expectedExists: false }] : []);
+  state.extendedConfig = applyTemplateChanges(state.extendedConfig, changes);
   state.guiSettings.host = state.coreConfig.host;
   state.guiSettings.port = state.coreConfig.port;
   return clone(state.coreConfig);
@@ -782,10 +788,13 @@ const ERROR_SCENARIO_COMMANDS = new Set([
   'get_core_status',
   'get_gui_settings',
   'get_core_config_settings',
+  'get_extended_core_config',
   'check_app_update',
   'check_latest_core',
   'management_request',
   'get_usage_overview',
+  'get_core_models',
+  'core_health_probe',
   'get_agent_config_statuses',
 ]);
 
@@ -795,6 +804,18 @@ export function createBrowserMockRuntime(
   delayMs = 0,
 ): BrowserMockRuntime {
   const state = createState(scenario);
+  if (scenario === 'empty') {
+    state.usageEvents = [];
+    state.usagePrices = [];
+    Object.assign(state.usageOverview, Object.fromEntries(Object.entries(state.usageOverview)
+      .filter(([, value]) => typeof value === 'number').map(([key]) => [key, 0])));
+    state.usageOverview.timeline = [];
+    state.analysis = { models: [], providers: [], sources: [], apiKeys: [] };
+    state.usageStorage.databaseSizeBytes = 0;
+    state.usageStorage.totalRecords = 0;
+    state.coreConfig.apiKeys = [];
+  }
+  const pluginMock = createPluginMock(state);
   const emit = (event: string, payload: unknown) => emitEvent(event, clone(payload));
 
   const invoke = async (command: string, rawPayload?: unknown): Promise<unknown> => {
@@ -803,6 +824,9 @@ export function createBrowserMockRuntime(
     if (scenario === 'error' && ERROR_SCENARIO_COMMANDS.has(command)) {
       throw new Error(`Browser Mock error scenario: ${command}`);
     }
+
+    const pluginResponse = pluginMock.handle(command, payload);
+    if (pluginResponse.handled) return pluginResponse.value;
 
     switch (command) {
       case 'plugin:app|version': return '0.2.97-mock';
@@ -816,6 +840,7 @@ export function createBrowserMockRuntime(
           : 'C:\\Users\\Mock\\Certificates\\mock.pem';
       }
       case 'plugin:dialog|save': return 'C:\\Users\\Mock\\Downloads\\mock-output.json';
+      case 'save_usage_events_export': return null;
       case 'detect_core_platform': return { os: 'windows', arch: 'x86_64', assetOs: 'windows', assetArch: 'amd64', archiveKind: 'zip' };
       case 'get_linux_system_theme': return 'light';
       case 'set_app_locale':
@@ -854,6 +879,27 @@ export function createBrowserMockRuntime(
       }
       case 'get_gui_settings': return clone(state.guiSettings);
       case 'get_core_config_settings': return clone(state.coreConfig);
+      case 'get_extended_core_config': return clone(state.extendedConfig);
+      case 'save_extended_core_config': {
+        const changes = asArray(payload.changes) as TemplateConfigChange[];
+        for (const change of changes) {
+          const original = readTemplatePath(state.extendedConfig, change.path);
+          if (original.exists !== change.expectedExists || (original.exists && !sameTemplateValue(original.value, change.expected))) throw new Error(`Configuration changed externally: ${change.path.join('.')}. Discard this group's changes and edit the latest values.`);
+        }
+        const before = state.extendedConfig;
+        state.extendedConfig = applyTemplateChanges(before, changes);
+        const syncValues: JsonObject = {};
+        for (const [key, path] of Object.entries(CORE_CONFIG_PATHS)) {
+          if (!changes.some((change) => change.path.join('.') === path)) continue;
+          const current = readTemplatePath(state.extendedConfig, path.split('.'));
+          if (current.exists) syncValues[key] = current.value;
+          else if (key === 'requestLog' || key === 'pluginsEnabled') syncValues[key] = false;
+        }
+        Object.assign(state.coreConfig, syncValues);
+        const restartRequired = changes.some((change) => !sameTemplateValue(readTemplatePath(before, change.path), readTemplatePath(state.extendedConfig, change.path)) && ['server.host', 'server.port', 'server.tls', 'management', 'oauth.auth-dir'].some((prefix) => change.path.join('.') === prefix || change.path.join('.').startsWith(`${prefix}.`)));
+        emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
+        return { config: clone(state.extendedConfig), restartRequired };
+      }
       case 'get_software_settings': return clone(state.softwareSettings);
       case 'get_core_tls_settings': return clone(state.tlsSettings);
       case 'get_core_sensitive_words_settings': return clone(state.sensitiveWords);
@@ -868,28 +914,31 @@ export function createBrowserMockRuntime(
       }
       case 'save_core_tls_settings': {
         Object.assign(state.tlsSettings, asObject(payload.settings));
+        state.extendedConfig = applyTemplateChanges(state.extendedConfig, [{ path: ['server', 'tls'], value: { enable: state.tlsSettings.enabled, cert: state.tlsSettings.cert, key: state.tlsSettings.key }, remove: false, expected: null, expectedExists: false }]);
         emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
         return clone(state.tlsSettings);
       }
       case 'save_core_logging_settings':
       case 'save_network_endpoint_settings':
       case 'save_retry_settings':
-      case 'save_session_routing_settings': return updateCoreConfig(state, payload);
+      case 'save_session_routing_settings': {
+        const config = updateCoreConfig(state, payload);
+        emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
+        return config;
+      }
       case 'set_core_routing_strategy': {
-        state.coreConfig.routingStrategy = readString(payload.strategy);
-        return clone(state.coreConfig);
+        const config = updateCoreConfig(state, { settings: { routingStrategy: readString(payload.strategy) } });
+        emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
+        return config;
       }
       case 'set_core_proxy_url': {
-        state.coreConfig.proxyUrl = readString(payload.proxyUrl);
-        return clone(state.coreConfig);
+        return updateCoreConfig(state, { settings: { proxyUrl: readString(payload.proxyUrl) } });
       }
       case 'set_core_session_affinity': {
-        state.coreConfig.routingSessionAffinity = Boolean(payload.enabled);
-        return clone(state.coreConfig);
+        return updateCoreConfig(state, { settings: { routingSessionAffinity: Boolean(payload.enabled) } });
       }
       case 'set_core_session_affinity_ttl': {
-        state.coreConfig.routingSessionAffinityTtl = readString(payload.ttl);
-        return clone(state.coreConfig);
+        return updateCoreConfig(state, { settings: { routingSessionAffinityTtl: readString(payload.ttl) } });
       }
       case 'add_core_api_key': {
         state.coreConfig.apiKeys.push({ apiKey: readString(payload.apiKey), remark: readString(payload.remark) });
@@ -904,8 +953,14 @@ export function createBrowserMockRuntime(
         state.coreConfig.apiKeys = state.coreConfig.apiKeys.filter((item) => item.apiKey !== payload.apiKey);
         return clone(state.coreConfig);
       }
-      case 'set_core_management_secret_key':
-      case 'clear_core_management_secret_key': return clone(state.coreConfig);
+      case 'set_core_management_secret_key': {
+        state.coreConfig.managementSecretConfigured = true;
+        return clone(state.coreConfig);
+      }
+      case 'clear_core_management_secret_key': {
+        state.coreConfig.managementSecretConfigured = false;
+        return clone(state.coreConfig);
+      }
 
       case 'check_app_update': return clone(state.appUpdateInfo);
       case 'get_app_update_task': return clone(state.appUpdateTask);
@@ -932,9 +987,10 @@ export function createBrowserMockRuntime(
       case 'get_core_install_task': return clone(state.coreInstallTask);
       case 'install_core_version':
       case 'install_bundled_core': {
+        const source = command === 'install_bundled_core' ? BUNDLED_CORE : state.coreLatest;
         const result = {
-          version: readString(payload.version) || state.coreLatest.version,
-          assetName: state.coreLatest.assetName,
+          version: command === 'install_bundled_core' ? source.version : readString(payload.version) || source.version,
+          assetName: source.assetName,
           installDir: state.coreStatus.installDir,
           binaryPath: 'C:\\EasyCLIProxyAPI\\cpa-core\\cli-proxy-api.exe',
         };
@@ -945,7 +1001,7 @@ export function createBrowserMockRuntime(
         return clone(result);
       }
       case 'cancel_core_install': return null;
-      case 'detect_bundled_core': return { version: '7.3.15', assetName: 'CLIProxyAPI_7.3.15_windows_amd64.zip' };
+      case 'detect_bundled_core': return clone(BUNDLED_CORE);
       case 'get_version_source_settings': return clone(state.versionSource);
       case 'set_download_source': {
         state.versionSource.source = readString(payload.source) || 'github';
@@ -967,7 +1023,13 @@ export function createBrowserMockRuntime(
       case 'management_request': return clone(managementResponse(state, payload));
       case 'upload_auth_file': {
         const name = readString(payload.name) || 'uploaded-mock.json';
-        state.authFiles.push({ name, provider: 'codex', type: 'codex', source: 'file', auth_index: `mock-upload-${state.authFiles.length + 1}`, disabled: false, priority: 0 });
+        const parsed: unknown = JSON.parse(new TextDecoder().decode(Uint8Array.from(asArray(payload.data) as number[])));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Browser Mock: credential must be a JSON object');
+        const content = asObject(parsed);
+        const existing = findAuthFile(state, name);
+        const file = { ...clone(content), name, provider: readString(content.provider || content.type) || 'codex', source: 'file',
+          auth_index: existing?.auth_index ?? `mock-upload-${crypto.randomUUID()}`, modtime: Date.now() };
+        if (existing) state.authFiles[state.authFiles.indexOf(existing)] = file; else state.authFiles.push(file);
         return { ok: true, name };
       }
       case 'resolve_api_access_remarks': {
@@ -978,6 +1040,11 @@ export function createBrowserMockRuntime(
       }
       case 'save_api_access_remark': return null;
       case 'provider_health_probe': return { firstTokenLatencyMs: 184, responseLatencyMs: 642 };
+      case 'core_health_probe': {
+        if (!state.coreStatus.ready) throw new Error('Browser Mock: the core is not ready');
+        if (!readString(payload.model).trim()) throw new Error('Select a model first');
+        return { firstTokenLatencyMs: 184, responseLatencyMs: 642 };
+      }
 
       case 'list_oauth_browsers': return [
         { id: 'default', label: 'System default browser' },
@@ -993,6 +1060,7 @@ export function createBrowserMockRuntime(
       case 'get_oauth_status': {
         const session = readString(payload.state);
         const provider = state.oauthSessions.get(session);
+        if (!provider) return { status: 'error', error: 'Unknown or canceled mock OAuth session' };
         if (provider && !state.authFiles.some((file) => file.name === `${provider}-mock-login.json`)) {
           state.authFiles.push({
             name: `${provider}-mock-login.json`, provider, type: provider, source: 'file',
@@ -1016,13 +1084,24 @@ export function createBrowserMockRuntime(
         const query = asObject(payload.query);
         const page = Math.max(1, readNumber(query.page, 1));
         const pageSize = Math.max(1, readNumber(query.page_size, 50));
+        const events = state.usageEvents.filter(event => {
+          for (const key of ['model', 'provider', 'source', 'api_key_hash'] as const) {
+            if (query[key] && event[key] !== query[key]) return false;
+          }
+          for (const key of ['failed', 'canceled'] as const) {
+            if (typeof query[key] === 'boolean' && event[key] !== query[key]) return false;
+          }
+          const timestamp = Date.parse(event.timestamp);
+          return (!query.start || timestamp >= Date.parse(String(query.start)))
+            && (!query.end || timestamp <= Date.parse(String(query.end)));
+        });
         const start = (page - 1) * pageSize;
         return {
-          items: clone(state.usageEvents.filter((item) => (query.failed === undefined || item.failed === query.failed) && (query.canceled === undefined || item.canceled === query.canceled)).slice(start, start + pageSize)),
-          total: state.usageEvents.length,
+          items: clone(events.slice(start, start + pageSize)),
+          total: events.length,
           page,
           pageSize,
-          totalPages: Math.max(1, Math.ceil(state.usageEvents.length / pageSize)),
+          totalPages: Math.max(1, Math.ceil(events.length / pageSize)),
         };
       }
       case 'get_usage_pricing': {
@@ -1037,7 +1116,7 @@ export function createBrowserMockRuntime(
           estimatedCost: index === 0 ? 1.92 : 1.71,
           price: clone(price),
         }));
-        return { rows, totalCost: 3.63, totalRequests: 278, pricedRequests: 278, savedPrices: state.usagePrices.length };
+        return { rows, totalCost: rows.length ? 3.63 : 0, totalRequests: rows.length ? 278 : 0, pricedRequests: rows.length ? 278 : 0, savedPrices: state.usagePrices.length };
       }
       case 'get_usage_storage_settings': return clone(state.usageStorage);
       case 'save_usage_storage_settings': {
@@ -1088,6 +1167,10 @@ export function createBrowserMockRuntime(
 
       case 'get_agent_config_statuses':
       case 'refresh_agent_config_statuses': return clone(state.agentStatuses);
+      case 'get_core_models': {
+        if (!state.coreStatus.ready) throw new Error('Browser Mock: the core is not ready');
+        return invoke('get_agent_models', {});
+      }
       case 'get_agent_models': return [
         { name: 'gpt-5.2-codex', alias: 'codex-latest', displayName: 'GPT-5.2 Codex', isAlias: true, contextWindow: 272_000, inputModalities: ['text', 'image'] },
         { name: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', contextWindow: 200_000, inputModalities: ['text', 'image'] },

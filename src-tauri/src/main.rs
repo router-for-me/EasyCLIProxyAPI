@@ -20,6 +20,7 @@ mod network_proxy;
 ))]
 mod native_i18n;
 mod oauth_browser;
+mod plugins;
 mod progress;
 mod provider_health;
 #[cfg(any(
@@ -155,7 +156,7 @@ const DEFAULT_AGENT_TERMINAL: &str = "auto";
 const DEFAULT_API_KEY_INITIAL_REMARK: &str = "Default key";
 const DEFAULT_REQUEST_RETRY: u32 = 3;
 const DEFAULT_MAX_RETRY_CREDENTIALS: u32 = 0;
-const DEFAULT_MAX_RETRY_INTERVAL: u32 = 30;
+const DEFAULT_MAX_RETRY_INTERVAL: i64 = 30;
 const DEFAULT_STREAMING_BOOTSTRAP_RETRIES: u32 = 0;
 const DEFAULT_DISABLE_COOLING: bool = false;
 const DEFAULT_LOGS_MAX_TOTAL_SIZE_MB: u32 = 0;
@@ -604,6 +605,7 @@ struct GuiConfigFile {
     window_width: Option<u32>,
     window_height: Option<u32>,
     auth_dir: String,
+    auth_dir_user_selected: bool,
     #[serde(deserialize_with = "deserialize_gui_api_keys")]
     api_keys: Vec<GuiApiKeyEntry>,
     api_access_remarks: Vec<GuiApiAccessRemark>,
@@ -614,6 +616,8 @@ struct GuiConfigFile {
     logs_max_total_size_mb: u32,
     error_logs_max_files: u32,
     usage_statistics_enabled: bool,
+    #[serde(rename = "usage_statistics_disabled", skip_serializing_if = "Option::is_none")]
+    usage_statistics_disabled: Option<bool>,
     redis_usage_queue_retention_seconds: u32,
     request_log: bool,
     plugins_enabled: bool,
@@ -629,7 +633,7 @@ struct GuiConfigFile {
     disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
-    max_retry_interval: u32,
+    max_retry_interval: i64,
     streaming_bootstrap_retries: u32,
 }
 
@@ -910,15 +914,17 @@ impl Default for GuiConfigFile {
             window_width: Some(DEFAULT_MAIN_WINDOW_WIDTH),
             window_height: Some(DEFAULT_MAIN_WINDOW_HEIGHT),
             auth_dir: DEFAULT_AUTH_DIR.to_string(),
+            auth_dir_user_selected: false,
             api_keys: vec![default_api_key_entry()],
             api_access_remarks: Vec::new(),
-            management_secret_key: String::new(),
+            management_secret_key: LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string(),
             debug: false,
             commercial_mode: false,
             logging_to_file: false,
             logs_max_total_size_mb: DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
             error_logs_max_files: DEFAULT_ERROR_LOGS_MAX_FILES,
             usage_statistics_enabled: true,
+            usage_statistics_disabled: None,
             redis_usage_queue_retention_seconds: DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS,
             request_log: false,
             plugins_enabled: false,
@@ -976,7 +982,7 @@ struct GuiConfigPresence {
     disable_cooling: Option<bool>,
     request_retry: Option<u32>,
     max_retry_credentials: Option<u32>,
-    max_retry_interval: Option<u32>,
+    max_retry_interval: Option<i64>,
     streaming_bootstrap_retries: Option<u32>,
 }
 
@@ -1145,6 +1151,14 @@ struct ClaudeDesktopModelMappings {
     auto_compact_pct: u8,
     #[serde(default)]
     disable_auto_compact: bool,
+    /// Keep Claude Code's session/default model selection under CPA control.
+    /// Defaults to true for backwards compatibility with existing profiles.
+    #[serde(default = "default_true")]
+    manage_default_model: bool,
+    /// Set CLAUDE_CODE_SUBAGENT_MODEL when enabled; otherwise allow inheritance.
+    /// Defaults to true for backwards compatibility with existing profiles.
+    #[serde(default = "default_true")]
+    manage_subagent_model: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -1190,6 +1204,10 @@ fn default_claude_auto_compact_pct() -> u8 {
     DEFAULT_CLAUDE_AUTO_COMPACT_PCT
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl ClaudeDesktopModelMappings {
     fn all(model: &str) -> Self {
         Self {
@@ -1203,6 +1221,8 @@ impl ClaudeDesktopModelMappings {
             max_context_tokens: default_claude_code_max_context_tokens(),
             auto_compact_pct: default_claude_auto_compact_pct(),
             disable_auto_compact: false,
+            manage_default_model: true,
+            manage_subagent_model: true,
         }
     }
 }
@@ -1468,7 +1488,7 @@ struct GuiNetworkRoutingSettings {
     disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
-    max_retry_interval: u32,
+    max_retry_interval: i64,
     streaming_bootstrap_retries: u32,
 }
 
@@ -1490,7 +1510,7 @@ struct GuiRetrySettings {
     disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
-    max_retry_interval: u32,
+    max_retry_interval: i64,
     streaming_bootstrap_retries: u32,
 }
 
@@ -1555,7 +1575,7 @@ struct CoreConfigSettings {
     disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
-    max_retry_interval: u32,
+    max_retry_interval: i64,
     streaming_bootstrap_retries: u32,
     #[allow(dead_code)]
     #[serde(skip_serializing)]
@@ -1594,7 +1614,7 @@ struct CoreConfigView {
     disable_cooling: bool,
     request_retry: u32,
     max_retry_credentials: u32,
-    max_retry_interval: u32,
+    max_retry_interval: i64,
     streaming_bootstrap_retries: u32,
 }
 
@@ -2163,14 +2183,18 @@ impl GuiConfigState {
     }
 
     fn sync_core_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, false)
+        self.sync_core_settings_internal(settings, None, false, false)
+    }
+
+    fn sync_core_logging_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
+        self.sync_core_settings_internal(settings, None, false, true)
     }
 
     fn sync_core_settings_external(
         &self,
         settings: &CoreConfigSettings,
     ) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, true)
+        self.sync_core_settings_internal(settings, None, true, false)
     }
 
     fn sync_core_settings_with_api_key(
@@ -2178,7 +2202,7 @@ impl GuiConfigState {
         settings: &CoreConfigSettings,
         added_api_key: Option<GuiApiKeyEntry>,
     ) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, added_api_key, false)
+        self.sync_core_settings_internal(settings, added_api_key, false, false)
     }
 
     fn sync_core_settings_internal(
@@ -2186,6 +2210,7 @@ impl GuiConfigState {
         settings: &CoreConfigSettings,
         added_api_key: Option<GuiApiKeyEntry>,
         apply_external_proxy: bool,
+        save_usage_preference: bool,
     ) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.api_keys = merge_core_api_keys_with_gui_metadata(
@@ -2203,13 +2228,15 @@ impl GuiConfigState {
             config.logs_max_total_size_mb = settings.logs_max_total_size_mb;
             config.error_logs_max_files = settings.error_logs_max_files;
             config.usage_statistics_enabled = settings.usage_statistics_enabled;
+            if save_usage_preference {
+                config.usage_statistics_disabled = (!settings.usage_statistics_enabled).then_some(true);
+            }
             config.redis_usage_queue_retention_seconds =
                 settings.redis_usage_queue_retention_seconds;
             config.request_log = settings.request_log;
             if let Some(secret_key) = settings
                 .management_secret_key
                 .as_deref()
-                .filter(|secret_key| !secret_key.is_empty())
                 .filter(|secret_key| !is_hashed_management_secret_key(secret_key))
             {
                 config.management_secret_key = secret_key.to_string();
@@ -2389,10 +2416,10 @@ fn main() {
                 return;
             }
             let mut config = GuiConfigFile::default();
-            if let Err(secret_error) = ensure_strong_management_secret(&mut config) {
-                eprintln!("Failed to initialize WebUI security key: {secret_error}");
-                return;
-            }
+            // If the GUI configuration cannot be read before the kernel starts,
+            // use the shared recovery key so requests and the generated kernel
+            // configuration stay synchronized.
+            config.management_secret_key = LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
             if let Err(sanitize_error) = sanitize_gui_config(&mut config) {
                 eprintln!("Failed to initialize fixed credentials directory: {sanitize_error}");
             }
@@ -2624,6 +2651,8 @@ fn main() {
             detect_core_platform,
             get_core_status,
             get_gui_settings,
+            get_usage_view_preferences,
+            save_usage_view_preferences,
             resolve_api_access_remarks,
             save_api_access_remark,
             set_app_locale,
@@ -2685,6 +2714,8 @@ fn main() {
             get_core_sensitive_words_settings,
             save_core_sensitive_words_settings,
             get_core_config_settings,
+            get_extended_core_config,
+            save_extended_core_config,
             save_core_logging_settings,
             set_core_request_log,
             add_core_api_key,
@@ -2693,7 +2724,11 @@ fn main() {
             set_core_management_secret_key,
             clear_core_management_secret_key,
             management_api::management_request,
+            plugins::get_plugin_support,
+            plugins::get_plugin_resource_url,
             provider_health::provider_health_probe,
+            provider_health::get_core_models,
+            provider_health::core_health_probe,
             management_api::upload_auth_file,
             management_api::open_auth_files_directory,
             management_api::open_core_logs_directory,
@@ -2728,6 +2763,7 @@ fn main() {
             usage::get_usage_analysis,
             usage::get_usage_events,
             model_preset::export_desktop_model_preset,
+            usage::save_usage_events_export,
             usage::get_usage_pricing,
             usage::get_usage_storage_settings,
             usage::repair_usage_cache_records,

@@ -41,12 +41,12 @@ export function AgentRunControls({
   return <section className="agent-run-controls" aria-label={t('agents.run.title')}>
     <div className="agent-section-heading"><div><strong>{t('agents.run.title')}</strong></div></div>
     <div className="agent-launch-actions">
-      {dualTargets ? <>{launchButton(cli, 'cli')}{launchButton(app, 'app')}</>
-        : harness?.running ? <button type="button" className="danger-button agent-launch-button"
+      {harness?.running ? <button type="button" className="danger-button agent-launch-button"
           disabled={busy} onClick={onStop} title={t('agents.deepseekLaunch.runningDetail', { pid: harness.pid ?? '—', mode: harness.mode ?? '—' })}>
           {busyAction === 'stop-deepseek' ? <LoaderCircle size={16} className="spin" /> : <Square size={16} />}
           {t(busyAction === 'stop-deepseek' ? 'agents.deepseekLaunch.stopping' : 'agents.deepseekLaunch.stop')}
-        </button> : launchButton(targets[0] ?? null)}
+        </button> : dualTargets ? launchButton(cli, 'cli') : launchButton(targets[0] ?? null)}
+      {dualTargets ? launchButton(app, 'app') : null}
       {desktop ? <button type="button" className="secondary-button agent-launch-button"
         onClick={onRestart} disabled={busy || !enabled || !app} title={app?.detail ?? t('agents.launch.unavailable')}>
         {busyAction === 'restart-app' ? <LoaderCircle size={16} className="spin" /> : <RefreshCw size={16} />}

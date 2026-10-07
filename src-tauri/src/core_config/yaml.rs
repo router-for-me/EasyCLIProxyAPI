@@ -36,6 +36,127 @@ pub(crate) fn merge_core_config_for_start(
     Ok(config_path)
 }
 
+/// Codex, Claude, Gemini and the other native key types have no disabled field.
+/// OpenAI-compatible providers do. Drop the illegal field and keep the key
+/// disabled through excluded-models: ["*"], which is how the enable switch works.
+pub(crate) fn sanitize_unsupported_provider_disabled_yaml(content: &str) -> Result<String, String> {
+    let original = serde_norway::from_str::<serde_norway::Value>(content)
+        .map_err(|error| format!("Failed to parse kernel configuration: {error}"))?;
+    let mut updated = original.clone();
+    if !sanitize_unsupported_provider_disabled(&mut updated) {
+        return Ok(content.to_string());
+    }
+    let file = content
+        .parse::<yaml_edit::YamlFile>()
+        .map_err(|error| format!("Failed to parse editable kernel configuration: {error}"))?;
+    let root = file
+        .document()
+        .and_then(|document| document.as_mapping())
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+    let mut removed = Vec::new();
+    collect_removed_yaml_paths(&original, &updated, &mut Vec::new(), &mut removed);
+    for path in removed {
+        remove_yaml_edit_path(&root, &path);
+    }
+    let prepared = file.to_string();
+    let before = serde_norway::from_str::<serde_norway::Value>(&prepared)
+        .map_err(|error| format!("Failed to parse repaired kernel configuration: {error}"))?;
+    render_yaml_value_changes(&prepared, &before, &updated)
+}
+
+fn sanitize_unsupported_provider_disabled(document: &mut serde_norway::Value) -> bool {
+    let Some(keys) = document
+        .as_mapping_mut()
+        .and_then(|root| root.get_mut(yaml_key("api-keys")))
+        .and_then(serde_norway::Value::as_mapping_mut)
+    else {
+        return false;
+    };
+    let mut changed = false;
+    for (name, groups) in keys.iter_mut() {
+        if name.as_str() == Some("openai-compatibility") {
+            continue;
+        }
+        let Some(groups) = groups.as_sequence_mut() else {
+            continue;
+        };
+        for group in groups {
+            changed |= strip_disabled_field(group);
+            let Some(entries) = group
+                .as_mapping_mut()
+                .and_then(|group| group.get_mut(yaml_key("keys")))
+                .and_then(serde_norway::Value::as_sequence_mut)
+            else {
+                continue;
+            };
+            for entry in entries {
+                changed |= strip_disabled_field(entry);
+            }
+        }
+    }
+    changed
+}
+
+fn strip_disabled_field(value: &mut serde_norway::Value) -> bool {
+    let Some(mapping) = value.as_mapping_mut() else {
+        return false;
+    };
+    let Some(disabled) = mapping.remove(yaml_key("disabled")) else {
+        return false;
+    };
+    if disabled.as_bool() == Some(true) {
+        let excluded = mapping
+            .entry(yaml_key("excluded-models"))
+            .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()));
+        match excluded {
+            serde_norway::Value::Sequence(models) => {
+                let present = models.iter().any(|model| model.as_str().is_some_and(|model| model.trim() == "*"));
+                if !present {
+                    models.push(serde_norway::Value::String("*".to_string()));
+                }
+            }
+            _ => {
+                *excluded = serde_norway::Value::Sequence(vec![serde_norway::Value::String("*".to_string())]);
+            }
+        }
+    }
+    true
+}
+
+fn collect_removed_yaml_paths(
+    before: &serde_norway::Value,
+    after: &serde_norway::Value,
+    path: &mut Vec<String>,
+    removed: &mut Vec<Vec<String>>,
+) {
+    let (Some(before), Some(after)) = (before.as_mapping(), after.as_mapping()) else {
+        return;
+    };
+    for (key, value) in before {
+        let Some(key) = key.as_str() else { continue };
+        path.push(key.to_string());
+        if let Some(next) = after.get(yaml_key(key)) {
+            collect_removed_yaml_paths(value, next, path, removed);
+        } else {
+            removed.push(path.clone());
+        }
+        path.pop();
+    }
+}
+
+fn remove_yaml_edit_path(mapping: &yaml_edit::Mapping, path: &[String]) {
+    let Some((key, rest)) = path.split_first() else {
+        return;
+    };
+    if rest.is_empty() {
+        mapping.remove(key.as_str());
+    } else if let Some(node) = mapping.get(key.as_str()) {
+        if let Some(child) = node.as_mapping() {
+            remove_yaml_edit_path(&child, rest);
+        }
+    }
+}
+
 pub(crate) fn patch_core_network_settings(config: &GuiConfigFile) -> Result<(), String> {
     let _config_guard = lock_core_config_file()?;
     let install_dir = core_install_dir()?;
@@ -1189,6 +1310,14 @@ pub(crate) fn core_config_uses_v8(document: &serde_norway::Value) -> bool {
         || yaml_mapping_value(root, "api-keys").is_some_and(serde_norway::Value::is_mapping)
 }
 
+pub(crate) fn core_config_declares_v8(document: &serde_norway::Value) -> bool {
+    document
+        .as_mapping()
+        .and_then(|root| yaml_mapping_value(root, "config-version"))
+        .and_then(serde_norway::Value::as_u64)
+        .is_some_and(|version| version >= 8)
+}
+
 pub(crate) fn set_core_yaml_path_value(
     document: &mut serde_norway::Value,
     path: &[&str],
@@ -1217,6 +1346,186 @@ pub(crate) fn set_core_yaml_path_value(
     }
     mapping.insert(key, value);
     Ok(true)
+}
+
+pub(crate) fn migrate_legacy_core_config_to_v8(
+    template: &str,
+    legacy: &str,
+) -> Result<String, String> {
+    let template_document = serde_norway::from_str::<serde_norway::Value>(template)
+        .map_err(|error| format!("Failed to parse new kernel configuration template: {error}"))?;
+    if !core_config_uses_v8(&template_document) {
+        return Err("New kernel configuration template is not v8".to_string());
+    }
+    let legacy_document = serde_norway::from_str::<serde_norway::Value>(legacy)
+        .map_err(|error| format!("Failed to parse existing kernel configuration: {error}"))?;
+    if core_config_declares_v8(&legacy_document) {
+        return Ok(legacy.to_string());
+    }
+    let legacy_root = legacy_document
+        .as_mapping()
+        .ok_or_else(|| "Existing kernel configuration root must be a YAML mapping".to_string())?;
+    let mut migrated = template_document.clone();
+    // Start from the new template so newly introduced defaults remain available,
+    // then overlay the complete legacy document. The explicit lifts below only
+    // move fields whose spelling changed between schemas; all other user-owned
+    // sections must survive the upgrade as-is.
+    merge_yaml_values(&mut migrated, legacy_document.clone());
+    if let Some(version) = yaml_mapping_value(
+        template_document
+            .as_mapping()
+            .ok_or_else(|| "New kernel configuration template root must be a YAML mapping".to_string())?,
+        "config-version",
+    ).cloned() {
+        set_core_yaml_path_value(&mut migrated, &["config-version"], version)?;
+    } else {
+        set_core_yaml_path_value(&mut migrated, &["config-version"], serde_norway::Value::Number(8.into()))?;
+    }
+    lift_legacy_core_config_fields(
+        &mut migrated,
+        legacy_root,
+        template_document
+            .as_mapping()
+            .ok_or_else(|| "New kernel configuration template root must be a YAML mapping".to_string())?,
+    )?;
+    render_yaml_value_changes(template, &template_document, &migrated)
+}
+
+fn lift_legacy_core_config_fields(
+    document: &mut serde_norway::Value,
+    legacy: &serde_norway::Mapping,
+    template: &serde_norway::Mapping,
+) -> Result<(), String> {
+    let copy = |document: &mut serde_norway::Value, legacy_path: &[&str], v8_path: &[&str]| -> Result<(), String> {
+        // Read the remaining source: narrower moves may already have consumed
+        // children which now belong elsewhere in the v8 layout.
+        let Some(value) = document.as_mapping().and_then(|root| nested_yaml_value(root, legacy_path)).cloned() else {
+            return Ok(());
+        };
+        lift_legacy_config_value(document, legacy, v8_path, value)?;
+        if nested_yaml_value(template, legacy_path).is_none() {
+            remove_core_yaml_path_value(document, legacy_path);
+        }
+        Ok(())
+    };
+    for (legacy_path, v8_path) in [
+        (&["host"][..], &["server", "host"][..]),
+        (&["port"], &["server", "port"]),
+        (&["tls"], &["server", "tls"]),
+        (&["commercial-mode"], &["server", "commercial-mode"]),
+        (&["auth-dir"], &["oauth", "auth-dir"]),
+        (&["debug"], &["observability", "logs", "debug"]),
+        (&["logging-to-file"], &["observability", "logs", "logging-to-file"]),
+        (&["logs-max-total-size-mb"], &["observability", "logs", "logs-max-total-size-mb"]),
+        (&["error-logs-max-files"], &["observability", "logs", "error-logs-max-files"]),
+        (&["request-log"], &["observability", "logs", "request-log"]),
+        (&["usage-statistics-enabled"], &["observability", "usage", "usage-statistics-enabled"]),
+        (&["redis-usage-queue-retention-seconds"], &["observability", "usage", "redis-usage-queue-retention-seconds"]),
+        (&["proxy-url"], &["requests", "proxy-url"]),
+        (&["disable-cooling"], &["routing", "cooldown", "disable-cooling"]),
+        (&["request-retry"], &["routing", "retry", "request-retry"]),
+        (&["max-retry-credentials"], &["routing", "retry", "max-retry-credentials"]),
+        (&["max-retry-interval"], &["routing", "retry", "max-retry-interval"]),
+        (&["streaming", "bootstrap-retries"], &["requests", "streaming", "bootstrap-retries"]),
+        (&["remote-management", "secret-key"], &["management", "secret-key"]),
+        (&["oauth-model-alias"], &["oauth", "model-alias"]),
+        (&["payload"], &["requests", "payload"]),
+    ] {
+        copy(document, legacy_path, v8_path)?;
+    }
+    if let Some(keys) = yaml_mapping_value(legacy, "api-keys").filter(|value| value.is_sequence()).cloned() {
+        if nested_yaml_value(legacy, &["access", "api-keys"]).is_none() {
+            set_core_yaml_path_value(document, &["access", "api-keys"], keys)?;
+        }
+        if let Some(template_upstreams) = yaml_mapping_value(template, "api-keys")
+            .filter(|value| value.is_mapping())
+            .cloned()
+        {
+            // A v8 template may already contain the upstream credential map at
+            // the root. The legacy client-key sequence must not replace it.
+            set_core_yaml_path_value(document, &["api-keys"], template_upstreams)?;
+        } else {
+            remove_core_yaml_path_value(document, &["api-keys"]);
+        }
+    }
+    for (legacy_name, provider) in V8_PROVIDER_FAMILIES {
+        let Some(records) = yaml_mapping_value(legacy, legacy_name) else {
+            continue;
+        };
+        if nested_yaml_value(legacy, &["api-keys", provider]).is_none() {
+            let grouped = group_legacy_provider_records(provider, records)?;
+            set_core_yaml_path_value(document, &["api-keys", provider], grouped)?;
+        }
+        if yaml_mapping_value(template, legacy_name).is_none() {
+            remove_core_yaml_path_value(document, &[legacy_name]);
+        }
+    }
+    for (legacy_path, v8_path) in legacy_extended_config_paths() {
+        copy(document, &legacy_path, &v8_path)?;
+    }
+    Ok(())
+}
+
+// Structs have independent leaf settings. User-owned maps (aliases, payload
+// params, headers, etc.) instead retain the canonical value as a whole.
+fn lift_legacy_config_value(
+    document: &mut serde_norway::Value,
+    original: &serde_norway::Mapping,
+    path: &[&str],
+    value: serde_norway::Value,
+) -> Result<(), String> {
+    // Explicit canonical null/scalar parents must not be recreated by a
+    // narrower legacy spelling such as claude-header-defaults.
+    if (1..path.len()).any(|length| {
+        nested_yaml_value(original, &path[..length]).is_some_and(|value| !value.is_mapping())
+    }) {
+        return Ok(());
+    }
+    let is_struct = matches!(path,
+        ["server", "tls"] | ["server", "discovery"]
+        | ["server", "discovery", "interfaces"] | ["management"]
+        | ["credentials", "concurrency"] | ["credentials", "in-flight"]
+        | ["requests", "streaming"] | ["observability", "pprof"]
+        | ["oauth", "providers", "codex"] | ["oauth", "providers", "claude"]
+        | ["oauth", "providers", "antigravity"] | ["oauth", "providers", "devin"]
+        | ["oauth", "providers", "xai"]
+        | ["oauth", "providers", "codex", "live-media-relay"]
+        | ["oauth", "providers", "codex", "header-defaults"]
+        | ["oauth", "providers", "claude", "header-defaults"]
+        | ["oauth", "providers", "claude", "claude-code"]
+        | ["oauth", "providers", "antigravity", "connection-pool"]
+    );
+    let canonical = nested_yaml_value(original, path);
+    if is_struct && value.is_mapping() && canonical.is_none_or(serde_norway::Value::is_mapping) {
+        for (key, child) in value.as_mapping().unwrap() {
+            let key = key.as_str().ok_or("Configuration field must be a string")?;
+            let mut child_path = path.to_vec();
+            child_path.push(key);
+            lift_legacy_config_value(document, original, &child_path, child.clone())?;
+        }
+    } else if canonical.is_none() {
+        set_core_yaml_path_value(document, path, value)?;
+    }
+    Ok(())
+}
+
+fn remove_core_yaml_path_value(document: &mut serde_norway::Value, path: &[&str]) -> bool {
+    let Some((key, parents)) = path.split_last() else {
+        return false;
+    };
+    let Some(mut mapping) = document.as_mapping_mut() else {
+        return false;
+    };
+    for section in parents {
+        let Some(parent) = mapping.get_mut(yaml_key(section)) else {
+            return false;
+        };
+        let Some(parent) = parent.as_mapping_mut() else {
+            return false;
+        };
+        mapping = parent;
+    }
+    mapping.remove(yaml_key(key)).is_some()
 }
 
 pub(crate) fn set_core_yaml_schema_value(
@@ -1468,7 +1777,7 @@ pub(crate) fn core_config_settings_from_value(
                 .ok_or_else(|| "auth-dir must be a string".to_string())
         })
         .transpose()?
-        .unwrap_or_else(|| OAUTH_DIR_NAME.to_string());
+        .unwrap_or_else(|| "~/.cli-proxy-api".to_string());
     let debug = v8_or_legacy(&["observability", "logs", "debug"], &["debug"])
         .map(|value| {
             value
@@ -1622,9 +1931,8 @@ pub(crate) fn core_config_settings_from_value(
     let max_retry_interval = v8_or_legacy(&["routing", "retry", "max-retry-interval"], &["max-retry-interval"])
         .map(|value| {
             value
-                .as_u64()
-                .and_then(|value| u32::try_from(value).ok())
-                .ok_or_else(|| "max-retry-interval must be a non-negative integer".to_string())
+                .as_i64()
+                .ok_or_else(|| "max-retry-interval must be an integer".to_string())
         })
         .transpose()?
         .unwrap_or(0);
@@ -1743,9 +2051,6 @@ pub(crate) fn extract_core_management_secret_key(
         .ok_or_else(|| "remote-management.secret-key must be a string".to_string())?
         .trim()
         .to_string();
-    if value.is_empty() {
-        return Ok(None);
-    }
     Ok(Some(value))
 }
 

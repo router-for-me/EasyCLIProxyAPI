@@ -1,12 +1,14 @@
+import { resetGrantOperations, RETRY_WINDOW_MS } from './claudeResetOperations';
+import { selectResetGrant } from './selectClaudeResetGrant';
 import {
   captureQuotaCacheGeneration,
   commitQuotaCacheIfCurrent,
   getQuotaCacheSnapshot,
   updateQuotaCache,
 } from './quotaCache';
-import { readBoolean } from './managementApi';
+import { normalizeAuthIndex, readBoolean } from './managementApi';
 import {
-  consumeCodexResetCredit, idleQuota, providerForFile, quotaKey,
+  consumeClaudeResetCredit, consumeCodexResetCredit, idleQuota, providerForFile, quotaKey,
   type AuthFile, type QuotaState,
 } from './quotaService';
 
@@ -62,4 +64,23 @@ async function runConfirmedQuotaAction(
 export function resetCodexQuotaWithConfirmation(file: AuthFile, confirmReset: () => Promise<boolean>): Promise<QuotaActionOutcome> {
   if (!canResetCodexQuota(file, getQuotaCacheSnapshot()[quotaKey(file)] ?? idleQuota())) return Promise.resolve('cancelled');
   return runConfirmedQuotaAction(file, 'reset', confirmReset, consumeCodexResetCredit);
+}
+
+export function hasPendingClaudeReset(file: AuthFile): boolean {
+  const operation = resetGrantOperations.inspect(quotaKey(file));
+  return Boolean(operation && !operation.code);
+}
+
+export function canResetQuota(file: AuthFile, quota: QuotaState): boolean {
+  if (providerForFile(file) !== 'claude') return canResetCodexQuota(file, quota);
+  if (readBoolean(file, 'disabled') || quota.status === 'loading' || !normalizeAuthIndex(file.auth_index ?? file.authIndex)) return false;
+  const operation = resetGrantOperations.inspect(quotaKey(file));
+  if (operation && !operation.code) return Date.now() - operation.createdAt < RETRY_WINDOW_MS;
+  return Boolean(quota.claudeResetGrants && selectResetGrant(quota.claudeResetGrants, Date.now()));
+}
+
+export function resetQuotaWithConfirmation(file: AuthFile, confirmReset: () => Promise<boolean>): Promise<QuotaActionOutcome> {
+  if (providerForFile(file) !== 'claude') return resetCodexQuotaWithConfirmation(file, confirmReset);
+  if (!canResetQuota(file, getQuotaCacheSnapshot()[quotaKey(file)] ?? idleQuota())) return Promise.resolve('cancelled');
+  return runConfirmedQuotaAction(file, 'reset', confirmReset, consumeClaudeResetCredit);
 }

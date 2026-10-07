@@ -5,6 +5,7 @@ import { normalizeThinkingConfig } from './providerModels';
 const modelText = (key: Parameters<typeof translate>[1]) => translate(getCurrentLocale(), key);
 
 export type ModelOption = {
+  config?: Record<string, unknown>;
   name: string;
   alias?: string;
   displayName?: string;
@@ -13,13 +14,29 @@ export type ModelOption = {
   inputModalities?: Array<'text' | 'image'>;
   thinking?: Record<string, unknown>;
 };
-export type ModelProvider = 'gemini' | 'codex' | 'deepseek' | 'claude' | 'openai';
+export type ModelProvider = 'gemini' | 'interactions' | 'vertex' | 'xai' | 'meta' | 'codex' | 'deepseek' | 'claude' | 'openai';
 
 export type ModelSelectionMode = 'initial' | 'refresh';
 
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com';
 const DEFAULT_CLAUDE_BASE_URL = 'https://api.anthropic.com';
 export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
+// Meta's native executor sends this client identity on both model and inference requests.
+export function providerDefaultHeaders(provider: ModelProvider): Record<string, string> {
+  return provider === 'meta' ? {
+    'User-Agent': 'muse-build/1.3.0 (interactive; macos-aarch64; build ac7280f2aca67769d1455a8847bb502b617d50f6)',
+    'X-Client-Id': 'tbh:tui',
+  } : {};
+}
+export const defaultProviderBaseUrl = (provider: ModelProvider): string => {
+  if (provider === 'gemini' || provider === 'interactions') return DEFAULT_GEMINI_BASE_URL;
+  if (provider === 'vertex') return 'https://aiplatform.googleapis.com';
+  if (provider === 'xai') return 'https://api.x.ai/v1';
+  if (provider === 'meta') return 'https://api.meta.ai/v1';
+  if (provider === 'claude') return DEFAULT_CLAUDE_BASE_URL;
+  if (provider === 'deepseek') return DEEPSEEK_BASE_URL;
+  return '';
+};
 
 const modelKey = (name: string) => name.trim().toLowerCase();
 
@@ -107,33 +124,27 @@ const stripKnownSuffix = (baseUrl: string) =>
     .replace(/\/models$/i, '');
 
 export const modelEndpointCandidates = (provider: ModelProvider, baseUrl: string): string[] => {
-  const resolvedBaseUrl = baseUrl.trim()
-    || (provider === 'gemini'
-      ? DEFAULT_GEMINI_BASE_URL
-      : provider === 'claude'
-        ? DEFAULT_CLAUDE_BASE_URL
-        : provider === 'deepseek'
-          ? DEEPSEEK_BASE_URL
-        : '');
+  const resolvedBaseUrl = baseUrl.trim() || defaultProviderBaseUrl(provider);
   const normalized = normalizeBaseUrl(resolvedBaseUrl);
   if (!normalized) return [];
-  if (provider === 'openai') {
+  if (provider === 'openai' || provider === 'xai' || provider === 'meta') {
     return [/\/models$/i.test(normalized) ? normalized : `${normalized}/models`];
   }
   const base = stripKnownSuffix(normalized);
   const withoutVersion = base.replace(/\/(?:v1beta|v1)$/i, '');
-  if (provider === 'gemini') return [`${withoutVersion}/v1beta/models`];
+  if (provider === 'gemini' || provider === 'interactions') return [`${withoutVersion}/v1beta/models`];
+  if (provider === 'vertex') return [`${withoutVersion}/v1/publishers/google/models`, `${base}/models`, `${withoutVersion}/v1/models`];
   if (provider === 'claude') return [`${withoutVersion}/v1/models`];
   if (provider === 'deepseek') return [`${base}/models`];
   return [/\/v1$/i.test(base) ? `${base}/models` : `${base}/v1/models`];
 };
 
-const normalizeModelList = (payload: unknown, preserveExistingAlias = false): ModelOption[] => {
+const normalizeModelList = (payload: unknown, preserveExistingAlias = false, preserveConfiguration = false): ModelOption[] => {
   const parsed = typeof payload === 'string' ? (() => {
     try { return JSON.parse(payload) as unknown; } catch { return payload; }
   })() : payload;
   const source = isRecord(parsed)
-    ? (Array.isArray(parsed.data) ? parsed.data : Array.isArray(parsed.models) ? parsed.models : [])
+    ? (Array.isArray(parsed.data) ? parsed.data : Array.isArray(parsed.models) ? parsed.models : Array.isArray(parsed.publisherModels) ? parsed.publisherModels : [])
     : Array.isArray(parsed) ? parsed : [];
   const seen = new Set<string>();
   return source.map((item): ModelOption | null => {
@@ -149,6 +160,7 @@ const normalizeModelList = (payload: unknown, preserveExistingAlias = false): Mo
       : undefined;
     return {
       name,
+      ...(preserveConfiguration && record ? { config: { ...record, ...(thinking ? { thinking } : {}) } } : {}),
       ...(alias && alias !== name ? { alias } : {}),
       ...(displayName && displayName !== name ? { displayName } : {}),
       ...(thinking && (preserveExistingAlias || Object.keys(thinking).length > 0) ? { thinking } : {}),
@@ -156,9 +168,9 @@ const normalizeModelList = (payload: unknown, preserveExistingAlias = false): Mo
   }).filter((item): item is ModelOption => item !== null);
 };
 
-export function modelsFromRecord(value: unknown): ModelOption[] {
+export function modelsFromRecord(value: unknown, preserveConfiguration = false): ModelOption[] {
   if (!Array.isArray(value)) return [];
-  return normalizeModelList(value, true);
+  return normalizeModelList(value, true, preserveConfiguration);
 }
 
 export function modelsFromDiscoveredPayload(payload: unknown): ModelOption[] {
@@ -172,6 +184,7 @@ export async function fetchModels(
   authIndex?: string,
   customHeaders: Record<string, string> = {},
   timeoutMs?: number,
+  proxyUrl?: string,
 ): Promise<ModelOption[]> {
   const normalized = baseUrl.trim() ? normalizeBaseUrl(baseUrl) : '';
   const candidates = modelEndpointCandidates(provider, normalized);
@@ -179,10 +192,11 @@ export async function fetchModels(
   const headers: Record<string, string> = { ...customHeaders };
   const hasHeader = (name: string) =>
     Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase());
+  for (const [name, value] of Object.entries(providerDefaultHeaders(provider))) if (!hasHeader(name)) headers[name] = value;
   const headerValue = (name: string) =>
     Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1] ?? '';
   const key = apiKey.trim();
-  if (provider === 'gemini') {
+  if (provider === 'gemini' || provider === 'interactions' || provider === 'vertex') {
     if (key && !hasHeader('x-goog-api-key')) headers['x-goog-api-key'] = key;
     else if (authIndex && !hasHeader('x-goog-api-key')) headers['x-goog-api-key'] = '$TOKEN$';
   } else if (provider === 'claude') {
@@ -204,11 +218,12 @@ export async function fetchModels(
       const seen = new Set<string>();
       let pageToken = '';
 
-      for (let page = 0; page < (provider === 'gemini' ? 20 : 1); page += 1) {
+      for (let page = 0; page < (['gemini', 'interactions', 'vertex'].includes(provider) ? 20 : 1); page += 1) {
         const pageUrl = new URL(url);
         if (pageToken) pageUrl.searchParams.set('pageToken', pageToken);
-        const response = await managementApi.post<Record<string, unknown>>('/api-call', {
+        const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
           authIndex: authIndex?.trim() || undefined,
+          proxy_url: proxyUrl?.trim() || undefined,
           method: 'GET',
           url: pageUrl.toString(),
           header: Object.keys(headers).length ? headers : undefined,
@@ -221,7 +236,7 @@ export async function fetchModels(
 
         const payload = response.body ?? response.bodyText;
         modelsFromDiscoveredPayload(payload).forEach((model) => {
-          const name = provider === 'gemini' ? model.name.replace(/^models\//i, '') : model.name;
+          const name = ['gemini', 'interactions', 'vertex'].includes(provider) ? model.name.replace(/^(?:publishers\/google\/)?models\//i, '') : model.name;
           const dedupeKey = name.toLowerCase();
           if (!name || seen.has(dedupeKey)) return;
           seen.add(dedupeKey);
@@ -244,7 +259,8 @@ export async function fetchModels(
       if (collected.length) return collected;
 
       if (provider === 'openai' && Object.keys(headers).length > 0) {
-        const response = await managementApi.post<Record<string, unknown>>('/api-call', {
+        const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
+          proxy_url: proxyUrl?.trim() || undefined,
           method: 'GET',
           url,
         }, { timeoutMs });
@@ -258,7 +274,8 @@ export async function fetchModels(
       lastError = String(error);
       if (provider === 'openai' && Object.keys(headers).length > 0) {
         try {
-          const response = await managementApi.post<Record<string, unknown>>('/api-call', {
+          const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
+            proxy_url: proxyUrl?.trim() || undefined,
             method: 'GET',
             url,
           }, { timeoutMs });

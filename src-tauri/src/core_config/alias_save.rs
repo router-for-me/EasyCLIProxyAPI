@@ -102,7 +102,8 @@ pub(crate) async fn commit_management_alias_config_changes<T>(
     let _guard = SAVE_LOCK.lock().await;
     validate_alias_api_access_preserved(current, updated)?;
     let changes = management_alias_config_changes(current, updated)?;
-    let latest = fetch_management_config_yaml(config).await?;
+    let native_before = fetch_management_raw_config_yaml(config).await?;
+    let latest = management_v8_yaml_to_legacy_view(&native_before)?;
     if !alias_config_is_unchanged(current, &latest)? {
         return Err("Configuration changed. Close the editor, refresh, and try again".to_string());
     }
@@ -118,7 +119,7 @@ pub(crate) async fn commit_management_alias_config_changes<T>(
     .await;
     match result {
         Ok(value) => Ok(value),
-        Err(error) => Err(match restore_management_alias_config(config, current, updated).await {
+        Err(error) => Err(match restore_management_alias_config(config, current, updated, &native_before).await {
             Ok(()) => format!("Save failed. Original configuration was restored; you can retry: {error}"),
             Err(restore_error) => format!("Save failed: {error}; automatic restoration failed, and the configuration may be partially written. Close the editor, refresh, and inspect it: {restore_error}"),
         }),
@@ -129,6 +130,7 @@ async fn restore_management_alias_config(
     config: &GuiConfigFile,
     current: &str,
     updated: &str,
+    native_before: &str,
 ) -> Result<(), String> {
     let latest = fetch_management_config_yaml(config).await?;
     validate_alias_transaction_state(current, updated, &latest)?;
@@ -136,6 +138,13 @@ async fn restore_management_alias_config(
     let mut errors = Vec::new();
     if from_current.update_config_yaml {
         if let Err(error) = put_management_config_yaml(config, current).await {
+            errors.push(error);
+        }
+    }
+    // Semantic rollback can leave an explicit per-key model list where the key
+    // originally inherited its group. Restore the original native layout too.
+    if errors.is_empty() {
+        if let Err(error) = restore_native_provider_groups(config, native_before).await {
             errors.push(error);
         }
     }

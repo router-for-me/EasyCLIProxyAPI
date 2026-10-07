@@ -1,0 +1,12 @@
+.plugin-oauth-provider-status {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+}
+
+.plugin-oauth-provider-status > span {
+  flex: 1 1 240px;
+}

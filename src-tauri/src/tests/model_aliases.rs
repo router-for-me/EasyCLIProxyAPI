@@ -49,6 +49,8 @@ fn oauth_auth_provider_names_map_to_alias_channels() {
         Some("aistudio")
     );
     assert_eq!(normalize_oauth_alias_channel("grok"), Some("xai"));
+    assert_eq!(normalize_oauth_alias_channel("meta"), Some("meta"));
+    assert_eq!(normalize_oauth_alias_channel(" Muse "), Some("meta"));
 }
 
 #[test]
@@ -169,6 +171,82 @@ fn thinking_alias_uses_source_native_override_parameters() {
         let restored = remove_thinking_alias_from_yaml(&rendered, &alias).unwrap();
         assert!(!restored.contains(&alias), "{channel}: {restored}");
     }
+}
+
+#[test]
+fn alias_sources_exclude_blocked_providers_even_when_another_provider_serves_the_model() {
+    for section in ["codex-api-key", "openai-compatibility", "claude-api-key", "gemini-api-key"] {
+        let input = format!(r#"
+{section}:
+  - name: disabled
+    disabled: true
+    models: [{{name: upstream, alias: gpt-test, thinking: {{levels: [low, high]}}}}]
+  - name: disabled-with-wildcard
+    excluded-models: ['*']
+    models: [{{name: upstream, alias: gpt-test, thinking: {{levels: [low, high]}}}}]
+  - name: excluded-exactly
+    excluded-models: [' GPT-TEST ']
+    models: [{{name: upstream, alias: gpt-test, thinking: {{levels: [low, high]}}}}]
+  - name: excluded-by-pattern
+    excluded-models: ['gpt-*']
+    models: [{{name: upstream, alias: gpt-test, thinking: {{levels: [low, high]}}}}]
+  - name: active
+    excluded-models: [unrelated]
+    models: [{{name: upstream, alias: gpt-test, thinking: {{levels: [low, high]}}}}]
+"#);
+        for capability in [AliasSourceCapability::Base, AliasSourceCapability::Reasoning, AliasSourceCapability::Fast] {
+            if capability == AliasSourceCapability::Fast
+                && !matches!(section, "codex-api-key" | "openai-compatibility")
+            {
+                continue;
+            }
+            let sources = resolved_oauth_alias_sources(
+                &input, &[], &test_agent_models(&["gpt-test"]), capability,
+            ).unwrap();
+            assert_eq!(sources.len(), 1, "{section}: blocked providers must not borrow availability");
+            assert_eq!(sources[0].source.provider, "active");
+            assert!(matches!(sources[0].location,
+                ThinkingAliasSourceLocation::ConfigModel { provider_index: 4, model_index: 0, .. }
+            ));
+        }
+    }
+}
+
+#[test]
+fn v8_alias_creation_uses_the_enabled_source_and_keeps_disabled_aliases_editable() {
+    let input = r#"
+config-version: 8
+api-keys:
+  codex:
+    - name: disabled-luna
+      excluded-models: ['*']
+      models:
+        - name: gpt-5.6-luna
+        - name: gpt-5.6-luna
+          alias: gpt-5.6-luna-max-fast-fp
+      keys: [{api-key: disabled-test-key}]
+    - name: active-luna
+      models: [{name: gpt-5.6-luna}]
+      keys: [{api-key: active-test-key}]
+"#;
+    let content = management_v8_yaml_to_legacy_view(input).unwrap();
+    let sources = resolved_oauth_alias_sources(
+        &content, &[], &test_agent_models(&["gpt-5.6-luna"]), AliasSourceCapability::Base,
+    ).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].source.provider, "active-luna");
+    let updated = add_model_alias_to_yaml(
+        &content, &sources[0], "luna-active-max-fast", "max", true,
+    ).unwrap();
+    let before: serde_norway::Value = serde_norway::from_str(&content).unwrap();
+    let after: serde_norway::Value = serde_norway::from_str(&updated).unwrap();
+    assert_eq!(before["codex-api-key"][0], after["codex-api-key"][0]);
+    assert_eq!(after["codex-api-key"][1]["models"][1]["alias"].as_str(), Some("luna-active-max-fast"));
+    let context = model_alias_edit_context(&updated, "luna-active-max-fast", &[]).unwrap();
+    assert_eq!(context.effort.as_deref(), Some("max"));
+    assert!(context.fast);
+    let disabled = model_alias_edit_context(&updated, "gpt-5.6-luna-max-fast-fp", &[]).unwrap();
+    assert_eq!(disabled.source.provider, "disabled-luna");
 }
 
 #[test]

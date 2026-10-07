@@ -600,20 +600,36 @@ fn replacing_a_core_migrates_old_fields_into_the_new_template() {
 }
 
 #[test]
-fn replacing_v7_with_v8_preserves_the_legacy_config_byte_for_byte() {
+fn replacing_v7_with_v8_lifts_legacy_values_into_the_new_layout() {
     let root = agent_test_home("core-config-v8-preserve");
     let source = root.join("source");
     let target = root.join("target");
     fs::create_dir_all(&source).unwrap();
     fs::create_dir_all(&target).unwrap();
-    let old_config = "# User v7 config\nhost: 127.0.0.1\nport: 9527\nremote-management:\n  secret-key: user-secret\napi-keys: [client-key]\nproxy-url: direct\n";
-    let v8_template = "config-version: 8\nserver: {host: '', port: 8317}\nmanagement: {secret-key: ''}\naccess: {api-keys: [template-key]}\nrequests: {proxy-url: ''}\n";
+    let old_config = "# User v7 config\nhost: 127.0.0.1\nport: 9527\nremote-management:\n  secret-key: user-secret\napi-keys: [client-key]\nproxy-url: direct\nrouting:\n  strategy: fill-first\n  session-affinity: true\n  session-affinity-ttl: 2h\nplugins:\n  configs:\n    local:\n      enabled: true\n  store-auth:\n    registry: stored-token\n";
+    let v8_template = "config-version: 8\nserver: {host: '', port: 8317}\nmanagement: {secret-key: ''}\naccess: {api-keys: [template-key]}\napi-keys: {codex: [{name: template-upstream, keys: []}]}\nrequests: {proxy-url: ''}\nrouting: {strategy: round-robin, session-affinity: false, session-affinity-ttl: 30m}\nplugins: {configs: {}, store-auth: {}}\n";
     fs::write(source.join(CORE_CONFIG_FILE), old_config).unwrap();
     fs::write(target.join(CORE_EXAMPLE_CONFIG_FILE), v8_template).unwrap();
 
     migrate_core_config_for_update(&source, &target).unwrap();
 
-    assert_eq!(fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap(), old_config);
+    let migrated = fs::read_to_string(target.join(CORE_CONFIG_FILE)).unwrap();
+    let document = serde_norway::from_str::<serde_norway::Value>(&migrated).unwrap();
+    let settings = core_config_settings_from_value(&document).unwrap();
+    assert_eq!(settings.host, "127.0.0.1");
+    assert_eq!(settings.port, 9527);
+    assert_eq!(settings.api_keys, vec!["client-key"]);
+    assert_eq!(settings.management_secret_key.as_deref(), Some("user-secret"));
+    assert_eq!(settings.proxy_url, "direct");
+    assert_eq!(document["routing"]["strategy"], "fill-first");
+    assert_eq!(document["routing"]["session-affinity"], true);
+    assert_eq!(document["routing"]["session-affinity-ttl"], "2h");
+    assert_eq!(document["plugins"]["configs"]["local"]["enabled"], true);
+    assert_eq!(document["plugins"]["store-auth"]["registry"], "stored-token");
+    assert_eq!(document["api-keys"]["codex"][0]["name"], "template-upstream");
+    assert!(migrated.starts_with("config-version:"));
+    assert!(document.get("host").is_none());
+    assert!(document.get("port").is_none());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -629,17 +645,19 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
     let legacy = "# User configuration\nusage-statistics-enabled: true\nhost: 127.0.0.1\nport: 9527\nauth-dir: ../oauth\napi-keys: [client-key]\nremote-management: {secret-key: user-secret}\nproxy-url: direct\nrequest-retry: 9\ncodex-api-key: [{api-key: upstream-key, base-url: 'https://example.invalid/v1'}]\noauth-model-alias: {codex: [{name: model, alias: custom-model}]}\n";
     let template = "observability: {usage: {usage-statistics-enabled: false}}\nserver: {host: '', port: 8317}\noauth: {auth-dir: '~/.cli-proxy-api'}\naccess: {api-keys: [your-api-key-1]}\nmanagement: {secret-key: ''}\nrequests: {proxy-url: ''}\nrouting: {retry: {request-retry: 3}}\n";
 
-    for prefix in ["", "config-version: 8\n", "server: {host: 127.0.0.1}\n", "config-version: 8\nserver: {host: 127.0.0.1}\n"] {
+    for prefix in ["", "config-version: 7\n", "server: {host: 127.0.0.1}\n"] {
         let original = format!("{prefix}{legacy}");
         fs::write(install_dir.join(CORE_CONFIG_FILE), &original).unwrap();
         for template_prefix in ["config-version: 8\n", ""] {
             fs::create_dir_all(&staging_dir).unwrap();
             fs::write(staging_dir.join(CORE_EXAMPLE_CONFIG_FILE), format!("{template_prefix}{template}")).unwrap();
             migrate_core_config_for_update(&install_dir, &staging_dir).unwrap();
+            let migrated = fs::read_to_string(staging_dir.join(CORE_CONFIG_FILE)).unwrap();
             overlay_install_dir(&install_dir, &staging_dir).unwrap();
+            fs::write(install_dir.join(CORE_CONFIG_FILE), &original).unwrap();
 
-            let migrated = fs::read_to_string(install_dir.join(CORE_CONFIG_FILE)).unwrap();
             let document = serde_norway::from_str::<serde_norway::Value>(&migrated).unwrap();
+            assert_eq!(document["config-version"].as_u64(), Some(8));
             let settings = core_config_settings_from_value(&document).unwrap();
             assert_eq!(settings.auth_dir, "../oauth", "credential directory changed during update");
             assert_eq!(settings.port, 9527);
@@ -648,22 +666,120 @@ fn v8_core_updates_preserve_partially_migrated_config_and_credentials() {
             assert_eq!(settings.management_secret_key.as_deref(), Some("user-secret"));
             assert_eq!(settings.proxy_url, "direct");
             assert_eq!(settings.request_retry, 9);
-            assert_eq!(migrated, original, "update must preserve every existing field and comment");
+            assert!(migrated.contains("server:"), "legacy configuration must be lifted into the v8 layout: {migrated}");
+            assert!(document.get("host").is_none(), "{migrated}");
+            assert!(document.get("auth-dir").is_none());
+            assert!(document.get("codex-api-key").is_none());
+            assert_eq!(document["oauth"]["model-alias"]["codex"][0]["alias"], "custom-model");
+            assert_eq!(document["api-keys"]["codex"][0]["keys"][0]["api-key"], "upstream-key");
 
             let mut gui = GuiConfigFile::default();
             apply_core_settings_to_gui_config(&mut gui, &settings);
             gui.proxy_url = settings.proxy_url.clone();
             let startup = merge_core_config_yaml(template, Some(&migrated), &gui).unwrap();
             let startup = serde_norway::from_str::<serde_norway::Value>(&startup).unwrap();
+            assert_eq!(startup["config-version"].as_u64(), Some(8));
             let effective = core_config_settings_from_value(&startup).unwrap();
             assert_eq!(auth_dir_path_for_core(&effective.auth_dir, &install_dir).unwrap(), root.join("oauth"));
             assert!(effective.usage_statistics_enabled);
-            assert_eq!(startup["codex-api-key"], document["codex-api-key"]);
-            assert_eq!(startup["oauth-model-alias"], document["oauth-model-alias"]);
+            assert_eq!(startup["api-keys"]["codex"], document["api-keys"]["codex"]);
+            assert_eq!(startup["oauth"]["model-alias"], document["oauth"]["model-alias"]);
             assert_eq!(fs::read(&credential_path).unwrap(), b"existing-credential");
         }
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn v7_config_startup_with_v8_template_writes_v8_version() {
+    for marker in ["", "config-version: 8\n"] {
+        let template = format!("{marker}server: {{port: 8317}}\naccess: {{api-keys: []}}\n");
+        let current = "config-version: 7\ncodex-api-key: [{api-key: upstream-test, models: [{name: example}]}]\n";
+        let rendered = merge_core_config_yaml(&template, Some(current), &GuiConfigFile::default()).unwrap();
+        let document: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
+        assert_eq!(document["config-version"].as_u64(), Some(8));
+        assert_eq!(document["api-keys"]["codex"][0]["keys"][0]["api-key"], "upstream-test");
+        assert!(document.get("codex-api-key").is_none());
+    }
+}
+
+#[test]
+fn v8_migration_preserves_each_legacy_provider_family_independently() {
+    let template = "config-version: 8\napi-keys: {codex: [], claude: []}\n";
+    for marker in ["", "config-version: 7\n"] {
+        let old = format!("{marker}api-keys: {{codex: []}}\ncodex-api-key: [{{api-key: ignored}}]\nclaude-api-key: [{{api-key: fixture, models: [{{name: upstream, alias: claude-alias}}]}}]\n");
+        let migrated = migrate_legacy_core_config_to_v8(template, &old).unwrap();
+        let value: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+        assert_eq!(value["api-keys"]["codex"].as_sequence().unwrap().len(), 0);
+        assert_eq!(value["api-keys"]["claude"][0]["keys"][0]["api-key"], "fixture");
+        assert_eq!(value["api-keys"]["claude"][0]["models"][0]["alias"], "claude-alias");
+        assert!(value.get("claude-api-key").is_none());
+        assert!(value.get("codex-api-key").is_none());
+    }
+}
+
+#[test]
+fn v8_migration_preserves_narrow_fields_and_canonical_struct_leaves() {
+    let template = "config-version: 8\nmanagement: {allow-remote: false}\noauth: {providers: {claude: {model-level-cooling: false}, codex: {response-steering: false}}}\n";
+    let legacy = r#"
+remote-management: {allow-remote: true, secret-key: old-secret}
+management: {secret-key: canonical-secret}
+claude-header-defaults: {user-agent: custom-agent, timezone: custom-zone}
+claude-code: {disable-cloaking-model-list: true}
+disable-claude-cloak-mode: true
+claude: {model-level-cooling: true}
+codex-header-defaults: {user-agent: codex-agent}
+codex: {response-steering: true, optimize-multi-agent-v2: true}
+oauth:
+  providers:
+    claude:
+      model-level-cooling: false
+      header-defaults: {timezone: canonical-zone}
+    codex: {response-steering: false}
+"#;
+    let migrated = migrate_legacy_core_config_to_v8(template, legacy).unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+    let claude = &value["oauth"]["providers"]["claude"];
+    assert_eq!(claude["header-defaults"]["user-agent"], "custom-agent");
+    assert_eq!(claude["header-defaults"]["timezone"], "canonical-zone");
+    assert_eq!(claude["model-level-cooling"].as_bool(), Some(false));
+    assert_eq!(claude["claude-code"]["disable-cloaking-model-list"].as_bool(), Some(true));
+    assert_eq!(claude["disable-claude-cloak-mode"].as_bool(), Some(true));
+    assert_eq!(value["management"]["allow-remote"].as_bool(), Some(true));
+    assert_eq!(value["management"]["secret-key"], "canonical-secret");
+    assert_eq!(value["oauth"]["providers"]["codex"]["header-defaults"]["user-agent"], "codex-agent");
+    assert_eq!(value["oauth"]["providers"]["codex"]["response-steering"].as_bool(), Some(false));
+    assert!(value["oauth"]["providers"]["codex"].get("optimize-multi-agent-v2").is_none());
+    assert_eq!(value["client"]["codex"]["optimize-multi-agent-v2"].as_bool(), Some(true));
+}
+
+#[test]
+fn v8_migration_preserves_network_settings_over_template_defaults() {
+    let template = "config-version: 8\nserver: {trusted-proxies: [], discovery: {enabled: false}, tls: {enable: false, cert: '', key: ''}}\n";
+    let legacy = "trusted-proxies: [127.0.0.1]\ndiscovery: {enabled: true, service-name: office}\ntls: {enable: true, cert: old-cert, key: old-key}\nserver: {tls: {cert: canonical-cert}}\n";
+    let migrated = migrate_legacy_core_config_to_v8(template, legacy).unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+    assert_eq!(value["server"]["trusted-proxies"][0], "127.0.0.1");
+    assert_eq!(value["server"]["discovery"]["enabled"].as_bool(), Some(true));
+    assert_eq!(value["server"]["discovery"]["service-name"], "office");
+    assert_eq!(value["server"]["tls"]["enable"].as_bool(), Some(true));
+    assert_eq!(value["server"]["tls"]["cert"], "canonical-cert");
+    assert_eq!(value["server"]["tls"]["key"], "old-key");
+    assert!(value.get("trusted-proxies").is_none());
+    assert!(value.get("discovery").is_none());
+}
+
+#[test]
+fn v8_migration_preserves_explicit_canonical_clears_and_existing_v8_files() {
+    let template = "config-version: 8\nserver: {trusted-proxies: [192.0.2.1]}\n";
+    let old = "trusted-proxies: [127.0.0.1]\nserver: {trusted-proxies: []}\nclaude-header-defaults: {user-agent: legacy}\nclaude: {model-level-cooling: true}\noauth: {providers: {claude: null}, model-alias: {}}\noauth-model-alias: {claude: [{name: original, alias: old-alias}]}\n";
+    let migrated = migrate_legacy_core_config_to_v8(template, old).unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&migrated).unwrap();
+    assert!(value["server"]["trusted-proxies"].as_sequence().unwrap().is_empty());
+    assert!(value["oauth"]["providers"]["claude"].is_null());
+    assert!(value["oauth"]["model-alias"].as_mapping().unwrap().is_empty());
+    let already_v8 = format!("config-version: 8\n{old}");
+    assert_eq!(migrate_legacy_core_config_to_v8(template, &already_v8).unwrap(), already_v8);
 }
 
 #[test]

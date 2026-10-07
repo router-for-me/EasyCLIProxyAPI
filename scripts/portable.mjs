@@ -92,17 +92,20 @@ await writeFile(join(output, 'portable-app.json'), `${JSON.stringify({
 }, null, 2)}\n`);
 
 const coreOutput = join(output, 'cpa-core');
-if (preserveRuntimeConfig) {
-  await mkdir(coreOutput, { recursive: true });
-  const entries = await readdir(coreOutput, { withFileTypes: true });
-  await Promise.all(entries
-    .filter((entry) => entry.name !== 'config.yaml')
-    .map((entry) => rm(join(coreOutput, entry.name), { recursive: true, force: true })));
-} else {
+if (!preserveRuntimeConfig) {
   await rm(coreOutput, { recursive: true, force: true });
 }
 await mkdir(coreOutput, { recursive: true });
 await copyFile(sourceArchive, join(coreOutput, assetName));
+if (preserveRuntimeConfig) {
+  // Local rebuilds share this directory with installed plugins and other runtime data.
+  // Replace only bundled archives; the app handles installed core version upgrades.
+  const entries = await readdir(coreOutput, { withFileTypes: true });
+  await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name !== assetName
+      && /^CLIProxyAPI_.+_(?:windows|linux|darwin)_.+\.(?:zip|tar\.gz)$/.test(entry.name))
+    .map((entry) => rm(join(coreOutput, entry.name))));
+}
 const coreEntries = await readdir(coreOutput, { withFileTypes: true });
 const bundledArchive = coreEntries.find((entry) => entry.isFile() && entry.name === assetName);
 if (!bundledArchive) {
@@ -113,4 +116,4 @@ if (!preserveRuntimeConfig && coreEntries.length !== 1) {
 }
 
 console.log(`Prepared portable directory: ${output}`);
-console.log(`Bundled core: ${basename(sourceArchive)}${preserveRuntimeConfig ? ' (preserved cpa-core/config.yaml)' : ' (archive only)'}`);
+console.log(`Bundled core: ${basename(sourceArchive)}${preserveRuntimeConfig ? ' (preserved installed plugins and runtime data)' : ' (archive only)'}`);

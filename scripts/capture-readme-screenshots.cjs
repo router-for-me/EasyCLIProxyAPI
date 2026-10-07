@@ -44,7 +44,7 @@ const pages = [
       await response.text();
     }
     const channel = process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined);
-    browser = await chromium.launch(channel ? { channel, headless: true } : { headless: true });
+    browser = await chromium.launch(channel ? { channel, headless: true, args: ['--no-proxy-server'] } : { headless: true, args: ['--no-proxy-server'] });
 
     for (const locale of locales) {
       const context = await browser.newContext({

@@ -1,10 +1,19 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
-const base = 'http://127.0.0.1:1421';
+const path = require('node:path');
 
 (async () => {
-  const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--no-proxy-server'] });
+  const { createServer } = await import('vite');
+  const react = (await import('@vitejs/plugin-react')).default;
+  const server = await createServer({ configFile: false, root: path.resolve(__dirname, '..'), plugins: [react()],
+    optimizeDeps: { entries: ['tests/fixtures/provider-duplicates.html'] }, logLevel: 'error',
+    server: { host: '127.0.0.1', port: 0, watch: null } });
+  let browser;
   try {
+    await server.listen();
+    const base = `http://127.0.0.1:${server.httpServer.address().port}`;
+    const channel = process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined);
+    browser = await chromium.launch({ channel, headless: true, args: ['--no-proxy-server'] });
     const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
     page.setDefaultTimeout(10000);
     const errors = [];
@@ -18,9 +27,11 @@ const base = 'http://127.0.0.1:1421';
     const form = page.locator('.api-provider-dialog');
     const waitForSave = () => form.waitFor({ state: 'detached' });
 
-    await page.getByRole('button', { name: 'Add', exact: true }).click();
-    await form.getByLabel('API Keys (one per line)', { exact: true }).fill('shared-test-key');
+    await page.getByRole('button', { name: 'Add API Key', exact: true }).click();
+    assert.equal(await form.getByLabel('Group Name', { exact: true }).count(), 0);
+    await form.getByLabel('API Key', { exact: true }).fill('shared-test-key');
     await form.getByLabel('Base URL', { exact: true }).fill('https://claude.example.test');
+    await form.locator('.provider-advanced-settings > summary').click();
     await form.getByLabel('Priority', { exact: true }).fill('1');
     await form.getByLabel('Remark', { exact: true }).fill('Second route');
     await form.getByRole('button', { name: 'Add Custom Model', exact: true }).click();
@@ -33,19 +44,20 @@ const base = 'http://127.0.0.1:1421';
     assert.equal(await rows.count(), 2);
 
     await rows.filter({ hasText: 'Second route' }).getByRole('button', { name: 'Edit', exact: true }).click();
+    await form.locator('.provider-advanced-settings > summary').click();
     await form.getByLabel('Priority', { exact: true }).fill('2');
     await form.locator('.model-config-entry input').nth(1).fill('claude-b-edited');
     await page.evaluate(() => window.providerFixture.records.reverse());
     await form.getByRole('button', { name: 'Save', exact: true }).click();
     await waitForSave();
     let saved = await records();
-    assert.equal(saved[0].priority, 2);
-    assert.equal(saved[0].models[0].alias, 'claude-b-edited');
+    assert.equal(saved[0].keys[0].priority, 2);
+    assert.equal(saved[0].keys[0].models[0].alias, 'claude-b-edited');
     assert.equal(saved[1].priority, 10);
     assert.equal(saved[1].models[0].alias, 'claude-a');
 
     await rows.filter({ hasText: 'Second route' }).getByRole('checkbox').uncheck();
-    await page.waitForFunction(() => window.providerFixture.records[0]['excluded-models']?.includes('*'));
+    await page.waitForFunction(() => window.providerFixture.records[0].keys[0]['excluded-models']?.includes('*'));
     assert.equal((await records())[1]['excluded-models'], undefined);
     await rows.filter({ hasText: 'Second route' }).waitFor();
 
@@ -57,7 +69,7 @@ const base = 'http://127.0.0.1:1421';
     await page.keyboard.press('ArrowDown');
     await page.waitForTimeout(250);
     await page.keyboard.press('Space');
-    await page.waitForFunction(() => window.providerFixture.records[1].priority === 2);
+    await page.waitForFunction(() => window.providerFixture.records[1].keys[0].priority === 2);
     assert.equal((await records())[0].priority, 10);
 
     await rows.filter({ hasText: 'Second route' }).getByRole('button', { name: 'Delete', exact: true }).click();
@@ -69,6 +81,7 @@ const base = 'http://127.0.0.1:1421';
     assert.deepEqual(errors, []);
     console.log('PASS: #276 create, edit after external reorder, disable, drag, and delete preserve shared-credential sibling routes.');
   } finally {
-    await browser.close();
+    await browser?.close();
+    await server.close();
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

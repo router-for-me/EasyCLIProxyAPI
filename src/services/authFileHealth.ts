@@ -66,7 +66,7 @@ function normalizeCooldown(value: unknown): AuthFileCooldown | null {
     ...(scope === 'model' ? { model } : {}),
     retryAt,
     remainingSeconds,
-    reason: readString(value, 'reason') || 'unknown',
+    reason: typeof value.reason === 'string' && value.reason.trim() ? value.reason.trim() : 'unknown',
     ...(typeof httpStatus === 'number' && Number.isInteger(httpStatus)
       && httpStatus >= 400 && httpStatus <= 599 ? { httpStatus } : {}),
     ...(typeof backoffLevel === 'number' && Number.isSafeInteger(backoffLevel)
@@ -87,11 +87,18 @@ export function normalizeAuthFileCooldowns(
   return { ...snapshot, records: records as AuthFileCooldown[] };
 }
 
+export function cooldownRemainingSeconds(record: AuthFileCooldown, receivedAtMs: number, nowMs: number): number {
+  // Server-provided remaining time avoids client/server wall-clock skew. Keep
+  // expired records visible until a fresh snapshot confirms the restriction lifted.
+  const elapsedSeconds = Math.max(0, nowMs - receivedAtMs) / 1000;
+  return Math.max(0, Math.ceil(record.remainingSeconds - elapsedSeconds));
+}
+
 export function summarizeAuthFileCooldowns(snapshot: AuthFileCooldownSnapshot | undefined, nowMs: number) {
-  const elapsedSeconds = snapshot ? Math.max(0, nowMs - snapshot.receivedAtMs) / 1000 : 0;
+  const receivedAtMs = snapshot?.receivedAtMs ?? nowMs;
   const rows = (snapshot?.records ?? []).map((record) => ({
     record,
-    remainingSeconds: Math.max(0, Math.ceil(record.remainingSeconds - elapsedSeconds)),
+    remainingSeconds: cooldownRemainingSeconds(record, receivedAtMs, nowMs),
   }));
   const active = rows.filter((row) => row.remainingSeconds > 0);
   return {

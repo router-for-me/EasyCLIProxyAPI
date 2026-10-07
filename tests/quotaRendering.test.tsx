@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider } from '../src/i18n';
 import { QuotaCard } from '../src/pages/QuotaPage';
-import { quotaRowsFor } from '../src/services/quotaService';
+import { quotaRowsFor, formatQuotaTimestamp } from '../src/services/quotaService';
 import type { QuotaState } from '../src/services/quotaService';
 
 const render = (quota: QuotaState, provider = 'codex') => renderToStaticMarkup(
@@ -18,9 +18,10 @@ describe('quota card rendering', () => {
     expect(html).toMatch(/<button[^>]*title="Reset Quota"[^>]*>Reset Quota<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Reset Quota<\/button>/);
     expect(html).not.toContain('No applicable reset credits');
-    expect(html).toContain('Currently applicable: 0');
+    expect(html).not.toContain('Currently applicable: 0');
     expect(html).not.toContain('temporary failure');
-    expect(html).toContain('Subscription expires');
+    expect(html).toContain('Expires 01/01/2030, 00:00');
+    expect(html).not.toContain('Subscription expires:');
   });
 
   it.each(['error', 'refresh-error'] as const)('重置结果为 %s 时仍可再次点击重置', (status) => {
@@ -58,5 +59,11 @@ describe('quota card rendering', () => {
     const html = render({ status: 'success', rows: [{ label: '5h', remainingPercent: 0, resetAtMs: Date.parse('2020-01-01T00:00:00Z') }] });
     expect(html).toContain('Reset time reached; refresh to verify');
     expect(html).toContain('0% remaining');
+  });
+
+  it('Kimi 免费账号取不到额度时只显示卡片内失败状态', () => {
+    const html = render({ status: 'error', rows: [], error: 'free account cannot access quota' }, 'kimi');
+    expect(html).toContain('quota-card-error');
+    expect(html).not.toContain('app-notice-entry');
   });
 });
