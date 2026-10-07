@@ -67,7 +67,7 @@ export function AccountDashboard({ ready }: { ready: boolean }) {
     setError('');
     try {
       const [payload, settings] = await Promise.all([
-        managementApi.get('/auth-files'),
+        managementApi.get('/credentials'),
         invoke<Routing>('get_core_config_settings'),
       ]);
       const next = dedupeAuthFiles(responseList(payload, 'files'));
@@ -112,7 +112,7 @@ export function AccountDashboard({ ready }: { ready: boolean }) {
     busy.current = true;
     setSaving(true);
     try {
-      await managementApi.patch('/auth-files/fields', { name: fileName(file), priority });
+      await managementApi.patch('/credentials/fields', { name: fileName(file), priority });
       setFiles((current) => current.map((item) => quotaKey(item) === quotaKey(file) ? { ...item, priority } : item));
     } finally {
       busy.current = false;

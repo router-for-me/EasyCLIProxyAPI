@@ -48,7 +48,7 @@ function CandidateModels({ file }: { file: AuthFile }) {
   const load = async () => {
     setBusy(true); setError(false);
     try {
-      const result = await managementApi.get('/auth-files/models', { name: fileName(file) });
+      const result = await managementApi.get('/credentials/models', { name: fileName(file) });
       setModels(isRecord(result) && Array.isArray(result.models) ? result.models.filter(isRecord) : []);
     } catch { setError(true); }
     finally { setBusy(false); }

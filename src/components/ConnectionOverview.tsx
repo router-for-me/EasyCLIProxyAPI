@@ -38,7 +38,7 @@ export function ConnectionOverview({ status, busy, detectionFailed, onReview, on
       finally { if (active) setRefreshing(false); }
     });
     reload.current = subscription.request;
-    void managementApi.get('/auth-files').then(data => { if (active) setFiles(responseList(data, 'files')); }).catch(() => {});
+    void managementApi.get('/credentials').then(data => { if (active) setFiles(responseList(data, 'files')); }).catch(() => {});
     setPayloadLoaded(false); setPayload(null);
     void managementApi.get('/config/requests/payload').then(data => { if (active) { setPayload(data); setPayloadLoaded(true); } }).catch(() => {});
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
