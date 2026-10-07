@@ -103,10 +103,10 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const runCoreProcessCommand = async (command: CoreProcessCommand) => {
     const actionLabel =
       command === 'start_core_process'
-        ? t('kernel.action.start')
+        ? t('kernel.notice.verb.start')
         : command === 'stop_core_process'
-          ? t('kernel.action.stop')
-          : t('kernel.action.restart');
+          ? t('kernel.notice.verb.stop')
+          : t('kernel.notice.verb.restart');
     setProcessBusy(true);
     clearProcessNotice();
 
