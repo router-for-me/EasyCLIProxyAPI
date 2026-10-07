@@ -80,6 +80,12 @@ const pages = [
     component: AgentsPage,
   },
   {
+    id: 'proxy',
+    labelKey: 'app.nav.proxy',
+    icon: ServerCog,
+    component: ProxyPage,
+  },
+  {
     id: 'usage-records',
     labelKey: 'app.nav.usageRecords',
     icon: History,
@@ -121,6 +127,10 @@ type GuiSettings = {
 
 function HomePage() {
   return <KernelPage view="home" />;
+}
+
+function ProxyPage() {
+  return <KernelPage view="proxy" />;
 }
 
 function VersionManagementPageWrapper() {

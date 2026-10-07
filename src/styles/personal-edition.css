@@ -130,6 +130,9 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 .home-page-header { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .home-page:has(.account-dashboard) { row-gap: 24px; }
 .home-page > .account-dashboard { grid-row: 1; }
+.home-page > .home-proxy-status { grid-row: 1; grid-column: 1 / -1; justify-self: start; }
+.home-page > .home-proxy-status ~ .account-dashboard { grid-row: 2; }
+.home-page.proxy-page { display: flex; flex-direction: column; gap: 16px; }
 .account-dashboard { gap: 0; margin: 0; --quota-green: #159b6c; }
 :root[data-theme='dark'] .content:has(.home-page) { background: #12130f; }
 :root[data-theme='dark'] .home-page { --bg-primary: #191a16; --bg-secondary: #12130f; --bg-tertiary: #2c2e27; --border-primary: #30322b; --border-color: #292c25; --text-primary: #e8e9e4; --text-secondary: #a2a59a; --text-tertiary: #92968a; }

@@ -34,7 +34,7 @@ type CoreTlsSettings = {
   key: string;
 };
 
-export type KernelView = 'home' | 'versions';
+export type KernelView = 'home' | 'proxy' | 'versions';
 
 export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   if (view === 'versions') {
@@ -209,12 +209,35 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   const healthContext = [listenHost, customPort, tlsEnabled, coreStatus?.processId, configRevision].join(':');
   const overview = useHomeOverview(coreReady, healthContext);
 
+  if (view === 'home') {
+    return (
+      <section className="page kernel-page home-page">
+        <header className="management-header home-page-header">
+          <div><h1>{t('app.nav.home')}</h1></div>
+        </header>
+        <button type="button" className={`home-proxy-status ${statusTone}`}
+          onClick={() => window.dispatchEvent(new CustomEvent('app:navigate', { detail: 'proxy' }))}
+          title={t('home.proxyStatus.open')}>
+          {coreProcessBusy ? <LoaderCircle size={12} className="spin" aria-hidden="true" /> : <span className="home-runtime-dot" aria-hidden="true" />}
+          <span>{coreRunning ? t('home.proxyStatus.running', { port: customPort }) : statusLabel}</span>
+          <span aria-hidden="true">→</span>
+        </button>
+        <AccountDashboard ready={coreReady} />
+        <HomeOverviewCards snapshot={overview.snapshot} loading={overview.loading} coreReady={coreReady} onRefresh={overview.refresh} actions={<CoreHealthPanel compact
+          coreReady={coreReady} models={overview.snapshot?.models ?? []}
+          modelsLoading={overview.loading}
+          modelsError={overview.snapshot?.errors.models ?? ''}
+          onRefreshModels={overview.refresh} contextKey={healthContext}
+        />} />
+      </section>
+    );
+  }
+
   return (
-    <section className="page kernel-page home-page">
-      <header className="management-header home-page-header">
-        <div><h1>{t('app.nav.home')}</h1></div>
+    <section className="page kernel-page home-page proxy-page">
+      <header className="management-header">
+        <div><h1>{t('app.nav.proxy')}</h1></div>
       </header>
-      <AccountDashboard ready={coreReady} />
       <div className="kernel-layout home-layout">
         <div className="panel control-panel">
           <div className="panel-heading home-panel-heading">
@@ -294,12 +317,6 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         />
       </div>
       <FloatingNotice key={copyFeedback.revision} notice={copyFeedback.notice} onDismiss={copyFeedback.clearNotice} />
-      <HomeOverviewCards snapshot={overview.snapshot} loading={overview.loading} coreReady={coreReady} onRefresh={overview.refresh} actions={<CoreHealthPanel compact
-        coreReady={coreReady} models={overview.snapshot?.models ?? []}
-        modelsLoading={overview.loading}
-        modelsError={overview.snapshot?.errors.models ?? ''}
-        onRefreshModels={overview.refresh} contextKey={healthContext}
-      />} />
     </section>
   );
 }
