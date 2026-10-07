@@ -105,3 +105,42 @@
 .plugin-recommended .plugin-recommended-all {
   margin-top: 12px;
 }
+
+.plugin-finder {
+  display: grid;
+  gap: 10px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+
+.plugin-finder h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.plugin-finder > p,
+.plugin-finder-result > p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.plugin-finder-form {
+  display: flex;
+  gap: 10px;
+}
+
+.plugin-finder-form input {
+  flex: 1;
+  min-width: 0;
+}
+
+.plugin-finder-result {
+  display: grid;
+  gap: 12px;
+}

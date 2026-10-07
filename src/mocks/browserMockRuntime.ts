@@ -1179,6 +1179,10 @@ export function createBrowserMockRuntime(
         { name: 'gemini-3-pro', displayName: 'Gemini 3 Pro', contextWindow: 1_000_000, inputModalities: ['text', 'image'] },
         { name: 'deepseek-chat', displayName: 'DeepSeek Chat', contextWindow: 64_000, inputModalities: ['text'] },
       ];
+      case 'ask_plugin_finder': return JSON.stringify({
+        matches: [{ id: 'request-inspector', why: 'Browser demo: shows what each request contains so you can see what is happening.', changes: 'Requests are sampled and their metadata is shown on a status page.', risk: 'Captured metadata may include prompt details; keep secret redaction on.' }],
+        note: 'This is a canned browser demo answer.',
+      });
       case 'update_agent_config':
       case 'apply_agent_config_template':
       case 'install_pi_provider':

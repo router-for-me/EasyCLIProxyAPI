@@ -20,6 +20,7 @@ mod network_proxy;
 ))]
 mod native_i18n;
 mod oauth_browser;
+mod plugin_finder;
 mod plugins;
 mod progress;
 mod provider_health;
@@ -2724,6 +2725,7 @@ fn main() {
             set_core_management_secret_key,
             clear_core_management_secret_key,
             management_api::management_request,
+            plugin_finder::ask_plugin_finder,
             plugins::get_plugin_support,
             plugins::get_plugin_resource_url,
             provider_health::provider_health_probe,
