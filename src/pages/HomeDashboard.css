@@ -128,6 +128,31 @@
 .home-dashboard .home-runtime-refresh { width: 32px; height: 32px; min-width: 32px; border-color: transparent; background: transparent; }
 .home-dashboard .home-runtime-refresh svg { width: 18px; height: 18px; }
 
+.home-dashboard .home-runtime-stop {
+  border-color: #a33b32;
+  background: #a33b32;
+  color: #fff;
+  box-shadow: none;
+}
+
+.home-dashboard .home-runtime-stop:hover:not(:disabled) {
+  border-color: #872f28;
+  background: #872f28;
+}
+
+[data-theme="dark"] .home-dashboard .home-runtime-stop {
+  border-color: #8d403b;
+  background: #6b302c;
+  color: #f6e4e2;
+}
+
+[data-theme="dark"] .home-dashboard .home-runtime-stop:hover:not(:disabled) {
+  border-color: #b86a64;
+  background: #81403b;
+  color: #fff;
+}
+
+
 .home-panel-heading,
 .home-overview-heading {
   display: flex;

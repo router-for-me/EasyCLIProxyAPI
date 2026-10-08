@@ -3,22 +3,30 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { createThemeController, type AppTheme, type ThemePreference } from './themeController';
+import { ThemePreferences } from './services/themePreferences';
 
 export type { AppTheme, ThemePreference } from './themeController';
 
-const STORAGE_KEY = 'easy-cli-proxy-api.theme';
+const preferences = new ThemePreferences(() => window.localStorage);
 const WINDOW_BACKGROUND: Record<AppTheme, string> = {
   light: '#ffffff',
   dark: '#0b0d11',
 };
 
 export function detectThemePreference(): ThemePreference {
+  return preferences.get();
+}
+
+export async function initializeThemePreferences(): Promise<void> {
+  if (!isTauri()) return;
   try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
+    await preferences.initialize({
+      load: () => invoke<ThemePreference | null>('get_theme_preference'),
+      save: (preference) => invoke('save_theme_preference', { preference }),
+    });
   } catch {
+    console.error('Failed to load theme preference; using browser preference');
   }
-  return 'system';
 }
 
 function applyTheme(theme: AppTheme): void {
@@ -38,10 +46,7 @@ export function initializeTheme() {
   controller = createThemeController({
     readPreference: detectThemePreference,
     savePreference(preference) {
-      try {
-        window.localStorage.setItem(STORAGE_KEY, preference);
-      } catch {
-      }
+      preferences.set(preference);
     },
     readMediaTheme: () => media?.matches ? 'dark' : 'light',
     listenMedia(listener) {

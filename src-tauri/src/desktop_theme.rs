@@ -1,3 +1,36 @@
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ThemePreference {
+    Light,
+    Dark,
+    System,
+}
+
+fn read_preference(path: &std::path::Path) -> Result<Option<ThemePreference>, String> {
+    match std::fs::read(path) {
+        Ok(content) => serde_json::from_slice(&content)
+            .map(Some)
+            .map_err(|_| "Failed to parse theme preference".to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("Failed to read theme preference".to_string()),
+    }
+}
+
+fn write_preference(path: &std::path::Path, preference: ThemePreference) -> Result<(), String> {
+    let content = serde_json::to_vec(&preference).map_err(|error| error.to_string())?;
+    super::write_bytes_atomically(path, &content)
+}
+
+#[tauri::command]
+pub(crate) fn get_theme_preference() -> Result<Option<ThemePreference>, String> {
+    read_preference(&super::core_base_dir()?.join("theme-preference.json"))
+}
+
+#[tauri::command]
+pub(crate) fn save_theme_preference(preference: ThemePreference) -> Result<(), String> {
+    write_preference(&super::core_base_dir()?.join("theme-preference.json"), preference)
+}
+
 #[tauri::command]
 pub(crate) async fn get_linux_system_theme() -> Option<tauri::Theme> {
     #[cfg(target_os = "linux")]
@@ -46,6 +79,25 @@ fn portal_color_scheme(value: u32) -> Option<tauri::Theme> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_preference_survives_restart_and_rejects_invalid_values() {
+        let directory = std::env::temp_dir().join(format!(
+            "ezcpa-theme-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("theme-preference.json");
+        assert_eq!(read_preference(&path).unwrap(), None);
+        for preference in [ThemePreference::Light, ThemePreference::Dark, ThemePreference::System] {
+            write_preference(&path, preference).unwrap();
+            assert_eq!(read_preference(&path).unwrap(), Some(preference));
+        }
+        std::fs::write(&path, b"\"invalid\"").unwrap();
+        assert!(read_preference(&path).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn follows_the_freedesktop_color_scheme_values() {

@@ -432,6 +432,10 @@ code, pre, kbd, samp {
   box-sizing: border-box;
 }
 
+html {
+  scrollbar-width: thin;
+}
+
 html,
 body,
 #root {
@@ -487,7 +491,9 @@ textarea:focus-visible {
 .app-shell {
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: var(--theme-faf9f5);
 }
 
@@ -867,6 +873,9 @@ textarea:focus-visible {
 
 .workspace {
   min-width: 0;
+  height: 100%;
+  overflow: auto;
+  scrollbar-width: thin;
 }
 
 .state-pill {

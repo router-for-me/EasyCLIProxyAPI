@@ -2663,6 +2663,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             desktop_theme::get_linux_system_theme,
+            desktop_theme::get_theme_preference,
+            desktop_theme::save_theme_preference,
             health_check,
             detect_core_platform,
             get_core_status,

@@ -4,12 +4,12 @@ import { isTauri } from '@tauri-apps/api/core';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import App from './App';
 import { I18nProvider } from './i18n';
-import { initializeTheme } from './theme';
+import { initializeTheme, initializeThemePreferences } from './theme';
 import { initializeUsagePreferences } from './services/usagePreferences';
 import './styles/index.css';
 
 async function bootstrap() {
-  await initializeUsagePreferences();
+  await Promise.all([initializeUsagePreferences(), initializeThemePreferences()]);
   if (import.meta.env.DEV && !isTauri()) {
     const { installBrowserMock } = await import('./mocks/browserMock');
     installBrowserMock();
