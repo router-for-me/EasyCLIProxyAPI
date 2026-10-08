@@ -1926,6 +1926,7 @@ export const zhCN = {
   'quota.service.limit.numbered': '限制 {index}',
   'quota.service.product.numbered': '产品 {index}',
   'quota.service.monthlyIncluded': '月度包含额度',
+  'quota.service.prepaidBalance': '预付余额',
   'quota.service.onDemand': '按量付费额度',
   'quota.service.quota': '配额',
   'quota.service.quota.numbered': '配额 {index}',

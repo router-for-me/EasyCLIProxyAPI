@@ -1927,6 +1927,7 @@ export const en: Record<MessageKey, string> = {
   'quota.service.limit.numbered': 'Limit {index}',
   'quota.service.product.numbered': 'Product {index}',
   'quota.service.monthlyIncluded': 'Monthly included quota',
+  'quota.service.prepaidBalance': 'Prepaid balance',
   'quota.service.onDemand': 'On-demand quota',
   'quota.service.quota': 'Quota',
   'quota.service.quota.numbered': 'Quota {index}',

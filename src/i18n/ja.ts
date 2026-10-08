@@ -1927,6 +1927,7 @@ export const jaOverrides = {
   'quota.service.limit.numbered': '制限 {index}',
   'quota.service.product.numbered': '製品 {index}',
   'quota.service.monthlyIncluded': '月間内包クォータ',
+  'quota.service.prepaidBalance': '前払い残高',
   'quota.service.onDemand': '従量課金クォータ',
   'quota.service.quota': 'クォータ',
   'quota.service.quota.numbered': 'クォータ {index}',

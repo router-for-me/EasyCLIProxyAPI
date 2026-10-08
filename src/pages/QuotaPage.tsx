@@ -1,3 +1,4 @@
+import { commitFetchedQuota } from '../services/quotaEnrichment';
 import { ResetCreditExpiries } from '../components/ResetCreditExpiries';
 import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
@@ -28,7 +29,6 @@ import {
 } from '../services/quotaService';
 import {
   captureQuotaCacheGeneration,
-  commitQuotaCacheIfCurrent,
   getQuotaCacheSnapshot,
   pruneQuotaCache,
   updateQuotaCache,
@@ -96,9 +96,7 @@ export function QuotaPage() {
     const cacheGeneration = captureQuotaCacheGeneration();
     updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
     const result = await loadQuota(file);
-    commitQuotaCacheIfCurrent(cacheGeneration, () => {
-      updateQuotaCache((current) => ({ ...current, [key]: result }));
-    });
+    commitFetchedQuota(cacheGeneration, file, result);
   }, [t]);
 
   const resetQuota = useQuotaReset(askConfirmation, setError);
@@ -119,9 +117,7 @@ export function QuotaPage() {
         const batch = files.slice(index, index + REFRESH_CONCURRENCY);
         await Promise.all(batch.map(async (file) => {
           const result = await loadQuota(file);
-          commitQuotaCacheIfCurrent(cacheGeneration, () => {
-            updateQuotaCache((current) => ({ ...current, [quotaKey(file)]: result }));
-          });
+          commitFetchedQuota(cacheGeneration, file, result);
         }));
       }
     } finally {

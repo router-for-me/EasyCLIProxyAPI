@@ -24,6 +24,8 @@ export interface XaiBillingConfig {
   monthlyLimit?: XaiBillingCent | number | string | null;
   monthly_limit?: XaiBillingCent | number | string | null;
   used?: XaiBillingCent | number | string | null;
+  prepaidBalance?: XaiBillingCent | number | string | null;
+  prepaid_balance?: XaiBillingCent | number | string | null;
   onDemandCap?: XaiBillingCent | number | string | null;
   on_demand_cap?: XaiBillingCent | number | string | null;
   onDemandUsed?: XaiBillingCent | number | string | null;
@@ -59,6 +61,7 @@ export interface XaiBillingSummary {
   productUsage: XaiProductUsageSummary[];
   monthlyLimitCents: number | null;
   usedCents: number | null;
+  prepaidBalanceCents: number | null;
   includedUsedCents: number | null;
   onDemandCapCents: number | null;
   onDemandUsedCents: number | null;
@@ -154,6 +157,7 @@ const emptyXaiBillingSummary = (): XaiBillingSummary => ({
   productUsage: [],
   monthlyLimitCents: null,
   usedCents: null,
+  prepaidBalanceCents: null,
   includedUsedCents: null,
   onDemandCapCents: null,
   onDemandUsedCents: null,
@@ -200,6 +204,7 @@ export function buildXaiBillingSummary(
 
   const monthlyLimitCents = normalizeXaiCentValue(config.monthlyLimit ?? config.monthly_limit);
   const usedCents = normalizeXaiCentValue(config.used);
+  const prepaidBalanceCents = normalizeXaiCentValue(config.prepaidBalance ?? config.prepaid_balance);
   const onDemandCapCents = normalizeXaiCentValue(config.onDemandCap ?? config.on_demand_cap);
   const explicitOnDemandUsedCents = normalizeXaiCentValue(
     config.onDemandUsed ?? config.on_demand_used
@@ -236,7 +241,7 @@ export function buildXaiBillingSummary(
     usedCents !== null ||
     (!hasWeeklyData && (onDemandCapCents !== null || !!billingPeriodEnd));
 
-  if (!hasWeeklyData && !hasMonthlyData) return null;
+  if (!hasWeeklyData && !hasMonthlyData && prepaidBalanceCents === null) return null;
 
   summary.periodType = hasWeeklyData
     ? periodType === 'unknown'
@@ -249,6 +254,7 @@ export function buildXaiBillingSummary(
   summary.productUsage = productUsage;
   summary.monthlyLimitCents = monthlyLimitCents;
   summary.usedCents = usedCents;
+  summary.prepaidBalanceCents = prepaidBalanceCents;
   summary.includedUsedCents = includedUsedCents;
   summary.onDemandCapCents = onDemandCapCents;
   summary.onDemandUsedCents = onDemandUsedCents;
@@ -285,7 +291,8 @@ export function mergeXaiBillingSummaries(
     mode: 'billing',
     source: 'cli-chat-proxy',
     periodType: periodSummary.periodType,
-    usagePercent: primary.usagePercent ?? fallback.usagePercent,
+    // Usage belongs to the same period as its dates; monthly spending cannot fill a weekly gap.
+    usagePercent: periodSummary.usagePercent,
     periodStart,
     periodEnd,
     resetAtMs: periodInstants.resetAtMs,
@@ -293,6 +300,7 @@ export function mergeXaiBillingSummaries(
     productUsage: primary.productUsage.length > 0 ? primary.productUsage : fallback.productUsage,
     monthlyLimitCents: primary.monthlyLimitCents ?? fallback.monthlyLimitCents,
     usedCents: primary.usedCents ?? fallback.usedCents,
+    prepaidBalanceCents: primary.prepaidBalanceCents ?? fallback.prepaidBalanceCents,
     includedUsedCents: primary.includedUsedCents ?? fallback.includedUsedCents,
     onDemandCapCents: primary.onDemandCapCents ?? fallback.onDemandCapCents,
     onDemandUsedCents: primary.onDemandUsedCents ?? fallback.onDemandUsedCents,

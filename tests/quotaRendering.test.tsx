@@ -55,6 +55,18 @@ describe('quota card rendering', () => {
     expect(full).toContain('width:100%');
     expect(full).not.toContain('disabled=""');
   });
+  it('Grok 套餐、未知周额度和预付余额可通过现有卡片完整显示', () => {
+    const html = render({ status: 'success', plan: 'SuperGrok Heavy', rows: quotaRowsFor('xai', {
+      weekly: { config: { currentPeriod: { type: 'weekly', end: '2030-01-08T00:00:00Z' }, prepaidBalance: 250 } },
+      monthly: { config: { monthlyLimit: 10000, used: 2500 } },
+    }) }, 'xai');
+    expect(html).toContain('SuperGrok Heavy');
+    expect(html).toContain('Weekly quota');
+    expect(html).toContain('Prepaid balance');
+    expect(html).toContain('$2.50');
+    expect(html.match(/75% remaining/g)).toHaveLength(1);
+    expect(html.match(/real-quota-track/g)).toHaveLength(1);
+  });
   it('缓存中的原始重置时间提供动态提示，过期额度不伪造为已恢复', () => {
     const html = render({ status: 'success', rows: [{ label: '5h', remainingPercent: 0, resetAtMs: Date.parse('2020-01-01T00:00:00Z') }] });
     expect(html).toContain('Reset time reached; refresh to verify');

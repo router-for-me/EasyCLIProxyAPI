@@ -184,7 +184,7 @@ describe('xAI quota queries aligned with Management Center', () => {
     handler = (request) => success({ config: request.url.includes('format=credits')
       ? { currentPeriod: { type: 'weekly' } } : { creditUsagePercent: 0 } });
     expect(await loadQuota(file)).toMatchObject({
-      status: 'success', rows: [{ remainingPercent: 100 }],
+      status: 'success', rows: [{ remainingPercent: null }],
     });
     expect(calls).toHaveLength(2);
   });

@@ -1,3 +1,4 @@
+import { commitFetchedQuota } from '../services/quotaEnrichment';
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
@@ -49,7 +50,6 @@ import {
 } from '../services/quotaService';
 import {
   captureQuotaCacheGeneration,
-  commitQuotaCacheIfCurrent,
   getQuotaCacheSnapshot,
   pruneQuotaCache,
   updateQuotaCache,
@@ -240,9 +240,7 @@ export function AuthFileManagementPage() {
     const cacheGeneration = captureQuotaCacheGeneration();
     updateQuotaCache((current) => ({ ...current, [key]: { status: 'loading', rows: [] } }));
     const result = await loadQuota(file);
-    commitQuotaCacheIfCurrent(cacheGeneration, () => {
-      updateQuotaCache((current) => ({ ...current, [key]: result }));
-    });
+    commitFetchedQuota(cacheGeneration, file, result);
   };
 
   const refreshAllQuotas = async () => {

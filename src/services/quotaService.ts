@@ -527,8 +527,8 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
       reset: absoluteResetLabel(billing.periodEnd),
       resetAtMs: billing.resetAtMs ?? undefined,
     };
-    if (billing.periodType === 'weekly'
-      && (billing.usagePercent !== null || billing.periodEnd || billing.productUsage.length > 0)) {
+    const hasWeeklyData = billing.periodType === 'weekly';
+    if (hasWeeklyData) {
       rows.push({
         label: quotaText('quota.service.weekly'),
         remainingPercent: remainingFromUsedPercent(billing.usagePercent),
@@ -555,13 +555,18 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
         detail: amount(billing.onDemandCapCents, billing.onDemandUsedCents),
       });
     }
-    if (billing.monthlyLimitCents !== null || billing.usedCents !== null || billing.billingPeriodEnd) {
+    if ((billing.monthlyLimitCents !== null || billing.usedCents !== null || billing.billingPeriodEnd)
+      && !(hasWeeklyData && billing.monthlyLimitCents === 0 && billing.usedCents === 0)) {
       rows.push({
         label: quotaText('quota.service.monthlyIncluded'),
         remainingPercent: remainingFromUsedPercent(billing.usedPercent),
         detail: amount(billing.monthlyLimitCents, billing.includedUsedCents),
         ...monthlyReset,
       });
+    }
+    if (billing.prepaidBalanceCents !== null && billing.prepaidBalanceCents > 0) {
+      rows.push({ label: quotaText('quota.service.prepaidBalance'), remainingPercent: null,
+        detail: formatUsdFromCents(billing.prepaidBalanceCents) });
     }
     return rows.length > 0 ? rows : [{
       label: quotaText(billing.periodType === 'weekly'
@@ -707,6 +712,43 @@ const callXaiQuota = async (file: AuthFile): Promise<unknown> => {
   } catch {
     throw billingError;
   }
+};
+
+// Optional subscription requests run after the quota has been committed to the shared cache.
+export const enrichXaiQuotaPlan = async (file: AuthFile, quota: QuotaState): Promise<QuotaState> => {
+  if (providerForFile(file) !== 'xai' || quota.status !== 'success') return quota;
+  const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
+  if (!authIndex) return quota;
+  const header = { ...headersByProvider.xai };
+  const userId = resolveXaiUserId(file);
+  if (userId) header['x-userid'] = userId;
+  const [user, settings] = await Promise.allSettled([
+    requestQuotaPayload(authIndex, 'https://cli-chat-proxy.grok.com/v1/user?include=subscription', header, 'GET', undefined, 8_000),
+    requestQuotaPayload(authIndex, 'https://cli-chat-proxy.grok.com/v1/settings', header, 'GET', undefined, 8_000),
+  ]);
+  const readPlan = (result: PromiseSettledResult<unknown>, keys: string[]) => {
+    if (result.status !== 'fulfilled' || !isRecord(result.value)) return '';
+    for (const key of keys) {
+      const value = result.value[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return '';
+  };
+  const plan = readPlan(settings, ['subscription_tier_display', 'subscriptionTierDisplay'])
+    || readPlan(user, ['subscriptionTier', 'subscription_tier']);
+  return plan ? { ...quota, plan } : quota;
+};
+
+const xaiBillingPlan = (payload: unknown): string | undefined => {
+  if (!isRecord(payload)) return undefined;
+  const configs = [payload.monthly, payload.weekly, payload].filter(isRecord)
+    .map((record) => isRecord(record.config) ? record.config : record);
+  for (const config of configs) {
+    const limit = buildXaiBillingSummary(config as XaiBillingConfig)?.monthlyLimitCents;
+    if (limit === 150_000) return 'SuperGrok Heavy';
+    if (limit === 15_000) return 'SuperGrok';
+  }
+  return undefined;
 };
 
 const booleanValue = (value: unknown): boolean | null => {
@@ -923,6 +965,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
       status: 'success',
       rows,
       plan: (provider === 'devin' ? readDevinQuota(payload).plan : detectedPlan)
+        ?? (provider === 'xai' ? xaiBillingPlan(payload) : undefined)
         ?? (readString(isRecord(payload) ? payload : {}, 'plan_type', 'planType') || codexMetadata?.plan),
       creditBalance: accountCredits.balance,
       creditsUnlimited: accountCredits.unlimited,
