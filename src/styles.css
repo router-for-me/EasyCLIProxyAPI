@@ -9623,97 +9623,6 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
-.usage-row-height-settings {
-  display: grid;
-  gap: 12px;
-  margin: 0 0 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  background: var(--bg-tertiary);
-}
-
-.usage-row-height-heading,
-.usage-row-height-control {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.usage-row-height-heading {
-  justify-content: space-between;
-}
-
-.usage-row-height-heading > div {
-  display: grid;
-  gap: 3px;
-}
-
-.usage-row-height-heading strong,
-.usage-row-height-control label {
-  color: var(--text-primary);
-  font-size: var(--font-size-body);
-  font-weight: var(--font-weight-semibold);
-}
-
-.usage-row-height-heading span,
-.usage-row-height-hint {
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-}
-
-.usage-settings-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-
-.usage-settings-switch > span:first-child {
-  position: relative;
-  width: 34px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--border-primary);
-  transition: background .15s ease;
-}
-
-.usage-settings-switch > span:first-child::after {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  content: '';
-  transition: transform .15s ease;
-}
-
-.usage-settings-switch.active > span:first-child { background: var(--ui-accent); }
-.usage-settings-switch.active > span:first-child::after { transform: translateX(14px); }
-
-.usage-row-height-control {
-  flex-wrap: wrap;
-}
-
-.usage-row-height-control input[type='range'] {
-  flex: 1 1 180px;
-  accent-color: var(--ui-accent);
-}
-
-.usage-row-height-control output {
-  min-width: 42px;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-caption);
-  text-align: right;
-}
-
 .usage-column-options {
   display: grid;
   min-height: 0;
@@ -10107,20 +10016,6 @@ body.table-col-resizing * {
 
   .usage-column-options {
     grid-template-columns: 1fr;
-  }
-
-  .usage-row-height-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .usage-row-height-control {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .usage-row-height-control input[type='range'] {
-    width: 100%;
   }
 
   .usage-column-dialog-footer {

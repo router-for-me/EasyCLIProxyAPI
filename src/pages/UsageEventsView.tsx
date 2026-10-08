@@ -1,5 +1,5 @@
 import { usagePreferences } from '../services/usagePreferences';
-import { useEffect, useRef, useState, type KeyboardEvent, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { ArrowDown, ArrowUp, Brain, ChevronLeft, ChevronRight, Columns3, Database, DatabaseZap, Download, RotateCcw, TriangleAlert, X } from 'lucide-react';
@@ -116,25 +116,7 @@ const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v4';
 const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v3';
 const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v6';
 const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v5';
-const EVENT_ROW_HEIGHT_ENABLED_STORAGE_KEY = 'cpa-gui.usage-events-row-height-enabled.v1';
-const EVENT_ROW_HEIGHT_STORAGE_KEY = 'cpa-gui.usage-events-row-height.v1';
-const DEFAULT_EVENT_ROW_HEIGHT = 68;
-const MIN_EVENT_ROW_HEIGHT = 48;
-const MAX_EVENT_ROW_HEIGHT = 140;
-
 const getAllEventColumnKeys = () => EVENT_COLUMNS.map((column) => column.key);
-
-const clampEventRowHeight = (value: number) => Math.min(
-  MAX_EVENT_ROW_HEIGHT,
-  Math.max(MIN_EVENT_ROW_HEIGHT, Math.round(value)),
-);
-
-const getInitialRowHeightEnabled = () => usagePreferences.getItem(EVENT_ROW_HEIGHT_ENABLED_STORAGE_KEY) === 'true';
-
-const getInitialRowHeight = () => {
-  const value = Number(usagePreferences.getItem(EVENT_ROW_HEIGHT_STORAGE_KEY));
-  return Number.isFinite(value) ? clampEventRowHeight(value) : DEFAULT_EVENT_ROW_HEIGHT;
-};
 
 export const getInitialVisibleColumns = (): EventColumnKey[] => {
   try {
@@ -497,8 +479,6 @@ export function EventsView({
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
-  const [fixedRowHeight, setFixedRowHeight] = useState(getInitialRowHeightEnabled);
-  const [rowHeight, setRowHeight] = useState(getInitialRowHeight);
   const [exporting, setExporting] = useState(false);
 
   const columnDialogRef = useDialogFocusTrap<HTMLElement>({
@@ -560,17 +540,6 @@ export function EventsView({
 
   const resetVisibleColumns = () => {
     setDraftVisibleColumnKeys(getAllEventColumnKeys());
-  };
-
-  const updateFixedRowHeight = (enabled: boolean) => {
-    setFixedRowHeight(enabled);
-    usagePreferences.setItem(EVENT_ROW_HEIGHT_ENABLED_STORAGE_KEY, String(enabled));
-  };
-
-  const updateRowHeight = (value: number) => {
-    const next = clampEventRowHeight(value);
-    setRowHeight(next);
-    usagePreferences.setItem(EVENT_ROW_HEIGHT_STORAGE_KEY, String(next));
   };
 
   const resetSingleColumn = (key: EventColumnKey, e: React.MouseEvent) => {
@@ -716,12 +685,12 @@ export function EventsView({
   };
 
   return (
-    <section className={`panel usage-events-panel usage-request-log${isCompactDefault ? ' usage-events-compact' : ''}${fixedRowHeight ? ' usage-row-height-fixed' : ' usage-row-height-auto'}`} aria-label={t('usage.events.title')} aria-busy={loading}>
+    <section className={`panel usage-events-panel usage-request-log${isCompactDefault ? ' usage-events-compact' : ''}`} aria-label={t('usage.events.title')} aria-busy={loading}>
       {loading && events.items.length === 0 ? <div className="usage-empty" role="status"><Database size={20} aria-hidden="true" /><span>{t('usage.loading')}</span></div> : events.items.length ? (
         <div ref={tableWrapRef} className="usage-table-wrap" tabIndex={0} role="region" aria-label={t('usage.events.title')}>
           <table
             className="usage-events-table"
-            style={{ width: `${totalTableWidth}px`, '--usage-row-height': `${rowHeight}px` } as CSSProperties}
+            style={{ width: `${totalTableWidth}px` }}
           >
             <colgroup>
               {visibleColumns.map((col) => (
@@ -871,40 +840,6 @@ export function EventsView({
             <p className="usage-column-dialog-description">
               {t('usage.events.columnSettingsDescription')}
             </p>
-            <section className="usage-row-height-settings" aria-labelledby="usage-row-height-title">
-              <div className="usage-row-height-heading">
-                <div>
-                  <strong id="usage-row-height-title">{t('usage.events.rowHeight.title')}</strong>
-                  <span>{t('usage.events.rowHeight.description')}</span>
-                </div>
-                <button
-                  type="button"
-                  className={`usage-settings-switch${fixedRowHeight ? ' active' : ''}`}
-                  role="switch"
-                  aria-checked={fixedRowHeight}
-                  onClick={() => updateFixedRowHeight(!fixedRowHeight)}
-                >
-                  <span aria-hidden="true" />
-                  <span>{fixedRowHeight ? t('common.enabled') : t('common.disabled')}</span>
-                </button>
-              </div>
-              <div className="usage-row-height-control">
-                <label htmlFor="usage-row-height-range">{t('usage.events.rowHeight.fixed')}</label>
-                <input
-                  id="usage-row-height-range"
-                  type="range"
-                  min={MIN_EVENT_ROW_HEIGHT}
-                  max={MAX_EVENT_ROW_HEIGHT}
-                  step="1"
-                  value={rowHeight}
-                  disabled={!fixedRowHeight}
-                  onChange={(event) => updateRowHeight(Number(event.currentTarget.value))}
-                  aria-label={t('usage.events.rowHeight.fixed')}
-                />
-                <output htmlFor="usage-row-height-range">{rowHeight}px</output>
-                <span className="usage-row-height-hint">{t('usage.events.rowHeight.dragHint')}</span>
-              </div>
-            </section>
             <div className="usage-column-options">
               {EVENT_COLUMNS.map((column) => {
                 const checked = draftVisibleColumnKeys.includes(column.key);
