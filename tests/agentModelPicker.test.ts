@@ -100,6 +100,11 @@ const appliedConfiguration = (
 });
 
 describe('agent configuration update action', () => {
+  test('Fable mappings compare names with the same normalization as other roles', () => {
+    const baseline = { opus: 'model-a', sonnet: 'model-a', haiku: 'model-a', fable: 'model-fable' };
+    expect(sameAgentModelMappings({ ...baseline, fable: ' MODEL-FABLE ' }, baseline)).toBeTrue();
+    expect(sameAgentModelMappings({ ...baseline, fable: 'model-other' }, baseline)).toBeFalse();
+  });
   test('Claude mapping clients keep their own unsaved draft after switching away and back', () => {
     const codeDraft = { opus: 'code-opus', sonnet: 'code-sonnet', haiku: 'code-haiku' };
     const desktopDraft = {

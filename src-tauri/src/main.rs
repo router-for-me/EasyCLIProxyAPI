@@ -206,6 +206,8 @@ const CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV: &str =
 const CLAUDE_CODE_AUTO_MODE_SERVER_ENV: &str = "CLAUDE_CODE_AUTO_MODE_SERVER";
 const CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV: &str = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE";
 const DISABLE_AUTO_COMPACT_ENV: &str = "DISABLE_AUTO_COMPACT";
+const CLAUDE_CODE_MANAGED_MODEL_SETTINGS_ENV: &str = "EASYCLIPROXY_CLAUDE_CODE_MODEL_SETTINGS";
+const CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV: &str = "EASYCLIPROXY_CLAUDE_CODE_STARTUP_MODEL";
 const DEFAULT_CLAUDE_AUTO_COMPACT_PCT: u8 = 90;
 const MODEL_ALIAS_CONFIG_SECTIONS: &[&str] = &[
     "codex-api-key",
@@ -1167,7 +1169,7 @@ struct ClaudeDesktopModelMappings {
     /// Defaults to true for backwards compatibility with existing profiles.
     #[serde(default = "default_true")]
     manage_subagent_model: bool,
-    /// Optional explicit model written to ANTHROPIC_MODEL.
+    /// Optional explicit model written to the root Claude Code `model` setting.
     #[serde(default)]
     startup_model: Option<String>,
     /// Optional explicit model written to CLAUDE_CODE_SUBAGENT_MODEL.

@@ -1,6 +1,7 @@
 use super::*;
 
 mod agent_configuration;
+mod claude_code_live;
 mod deepseek_harness_catalog;
 mod deepseek_desktop;
 mod agent_paths;

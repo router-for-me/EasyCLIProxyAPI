@@ -71,7 +71,7 @@ export const sameAgentModelMappings = (
   && sameAgentModel(left.haiku, right.haiku)
   && Boolean(left.opus1m) === Boolean(right.opus1m)
   && Boolean(left.sonnet1m) === Boolean(right.sonnet1m)
-  && (left.fable ?? left.sonnet) === (right.fable ?? right.sonnet)
+  && sameAgentModel(left.fable ?? left.sonnet, right.fable ?? right.sonnet)
   && Boolean(left.fable1m) === Boolean(right.fable1m)
   && Boolean(left.haiku1m) === Boolean(right.haiku1m)
   && (left.maxContextTokens ?? 200_000) === (right.maxContextTokens ?? 200_000)

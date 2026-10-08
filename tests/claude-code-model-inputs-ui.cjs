@@ -2,17 +2,24 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const os = require('node:os');
+const base = process.env.AGENT_MODEL_INPUTS_TEST_URL || 'http://127.0.0.1:1421';
 
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    await page.goto('http://127.0.0.1:1421/tests/fixtures/agent-backups.html?client=claude-code&reset-selections');
+    page.setDefaultTimeout(10000);
+    await page.goto(`${base}/tests/fixtures/agent-backups.html?client=claude-code&reset-selections`);
     const startup = page.getByRole('combobox', { name: '默认模型', exact: true });
     const subagent = page.getByRole('combobox', { name: 'Subagent 模型', exact: true });
     await startup.click();
     await page.getByRole('option', { name: /^sonnet / }).click();
     assert.equal(await startup.inputValue(), 'sonnet');
+    assert(await page.getByRole('button', { name: '更新配置', exact: true }).isDisabled());
+    for (const role of ['opus', 'haiku', 'fable']) {
+      await page.locator(`.claude-role-row[data-role=${role}] .agent-model-trigger`).click();
+      await page.getByRole('option', { name: /^gpt-one / }).click();
+    }
     await page.locator('.claude-role-row .agent-model-trigger').first().click();
     await page.getByRole('option', { name: /gpt-two/ }).click();
     assert.equal(await page.locator('.claude-code-model-summary').count(), 0);

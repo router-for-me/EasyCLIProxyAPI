@@ -578,6 +578,13 @@ pub(crate) fn build_claude_agent_config(
     let root = root
         .as_object_mut()
         .ok_or_else(|| "Claude Code settings.json root must be an object".to_string())?;
+    // Track only the compaction windows CPA owns so route changes and closing
+    // the connection can remove them without deleting unrelated model settings.
+    let previous_managed_models = root.get("env").and_then(serde_json::Value::as_object)
+        .and_then(|env| env.get(CLAUDE_CODE_MANAGED_MODEL_SETTINGS_ENV))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+        .unwrap_or_default();
     let mappings = mappings
         .cloned()
         .unwrap_or_else(|| ClaudeDesktopModelMappings::all(model));
@@ -667,6 +674,13 @@ pub(crate) fn build_claude_agent_config(
         CLAUDE_CODE_AUTO_MODE_SERVER_ENV.to_string(),
         serde_json::Value::String("0".to_string()),
     );
+    for (key, value) in [
+        (CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV, max_context_tokens.to_string()),
+        (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV, mappings.auto_compact_pct.to_string()),
+        (DISABLE_AUTO_COMPACT_ENV, if mappings.disable_auto_compact { "1" } else { "0" }.to_string()),
+    ] {
+        env.insert(key.to_string(), serde_json::Value::String(value));
+    }
     for (key, value) in claude_code_model_presentation_environment(&mappings, models)? {
         env.insert(key, serde_json::Value::String(value));
     }
@@ -682,7 +696,7 @@ pub(crate) fn build_claude_agent_config(
     // official settings so newer versions can apply the value per model.
     root.insert("autoCompactWindow".into(), serde_json::Value::Number(max_context_tokens.into()));
     root.insert("autoCompactEnabled".into(), serde_json::Value::Bool(!mappings.disable_auto_compact));
-    let model_settings_json = ensure_json_object_entry(root, "modelSettings");
+    let mut model_windows = std::collections::BTreeMap::<String, u64>::new();
     for (model_id, window) in [
         (&mappings.fable, if mappings.fable_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
         (&mappings.opus, if mappings.opus_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
@@ -691,9 +705,8 @@ pub(crate) fn build_claude_agent_config(
     ] {
         let model_id = strip_claude_code_context_suffix(model_id).trim();
         if model_id.is_empty() { continue; }
-        let entry = ensure_json_object_entry(model_settings_json, model_id);
-        let current = entry.get("autoCompactWindow").and_then(serde_json::Value::as_u64).unwrap_or(0);
-        entry.insert("autoCompactWindow".into(), serde_json::Value::Number(current.max(window).into()));
+        let current = model_windows.entry(model_id.to_string()).or_default();
+        *current = (*current).max(window);
     }
     for model in [&mappings.startup_model, &mappings.subagent_model] {
         let Some(model) = model.as_deref().map(str::trim).filter(|value| !value.is_empty()) else { continue; };
@@ -703,9 +716,21 @@ pub(crate) fn build_claude_agent_config(
         } else {
             mappings.max_context_tokens
         };
-        let entry = ensure_json_object_entry(model_settings_json, model_id);
-        let current = entry.get("autoCompactWindow").and_then(serde_json::Value::as_u64).unwrap_or(0);
-        entry.insert("autoCompactWindow".into(), serde_json::Value::Number(current.max(window).into()));
+        let current = model_windows.entry(model_id.to_string()).or_default();
+        *current = (*current).max(window);
+    }
+    let managed_model_ids = model_windows.keys().cloned().collect::<Vec<_>>();
+    let model_settings_json = ensure_json_object_entry(root, "modelSettings");
+    for model in previous_managed_models {
+        if model_windows.contains_key(&model) { continue; }
+        if let Some(entry) = model_settings_json.get_mut(&model).and_then(serde_json::Value::as_object_mut) {
+            entry.remove("autoCompactWindow");
+            if entry.is_empty() { model_settings_json.remove(&model); }
+        }
+    }
+    for (model_id, window) in model_windows {
+        let entry = ensure_json_object_entry(model_settings_json, &model_id);
+        entry.insert("autoCompactWindow".into(), serde_json::Value::Number(window.into()));
     }
     if let Some(model) = explicit_startup_model {
         if model.is_empty() {
@@ -725,6 +750,19 @@ pub(crate) fn build_claude_agent_config(
         .is_some_and(|value| value == model_settings.opus || value == model_settings.sonnet || value == model_settings.haiku)
     {
         root.remove("model");
+    }
+    // The saved selection identifies a CPA default separately from a later
+    // user change made through Claude Code's own /model picker.
+    let managed_startup = root.get("model").and_then(serde_json::Value::as_str)
+        .filter(|_| mappings.startup_model.as_ref().map_or(mappings.manage_default_model, |model| !model.trim().is_empty()))
+        .map(str::to_string);
+    let env = ensure_json_object_entry(root, "env");
+    env.insert(CLAUDE_CODE_MANAGED_MODEL_SETTINGS_ENV.into(), serde_json::Value::String(
+        serde_json::to_string(&managed_model_ids).map_err(|_| "Failed to record managed Claude Code models".to_string())?));
+    if let Some(model) = managed_startup {
+        env.insert(CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV.into(), serde_json::Value::String(model));
+    } else {
+        env.remove(CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV);
     }
     let mut rendered = serde_json::to_string_pretty(&serde_json::Value::Object(root.clone()))
         .map_err(|error| format!("Failed to generate Claude Code configuration: {error}"))?;
@@ -1205,7 +1243,7 @@ pub(crate) fn prepare_claude_code_managed_removal(
         let managed_model = root
             .get("env")
             .and_then(serde_json::Value::as_object)
-            .and_then(|env| env.get("ANTHROPIC_MODEL"))
+            .and_then(|env| env.get(CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV).or_else(|| env.get("ANTHROPIC_MODEL")))
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
         let managed = root
@@ -1219,7 +1257,21 @@ pub(crate) fn prepare_claude_code_managed_removal(
         if !managed {
             return false;
         }
-        if root.get("model").and_then(serde_json::Value::as_str) == managed_model.as_deref() {
+        let has_managed_model_record = root.get("env").and_then(serde_json::Value::as_object)
+            .is_some_and(|env| env.contains_key(CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV));
+        let managed_role_selection = !has_managed_model_record && root.get("model").and_then(serde_json::Value::as_str)
+            .is_some_and(|model| {
+                let base = strip_claude_code_context_suffix(model);
+                matches!(base.to_ascii_lowercase().as_str(), "opus" | "sonnet" | "haiku" | "fable")
+                    || root.get("env").and_then(serde_json::Value::as_object).is_some_and(|env| {
+                        ["ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                            "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL"]
+                            .iter().any(|key| env.get(*key).and_then(serde_json::Value::as_str)
+                                .is_some_and(|route| strip_claude_code_context_suffix(route) == base))
+                    })
+            });
+        restore_claude_code_compaction_settings(root, None);
+        if managed_role_selection || root.get("model").and_then(serde_json::Value::as_str) == managed_model.as_deref() {
             root.remove("model");
         }
         let env_empty = if let Some(env) = root
@@ -1242,6 +1294,8 @@ pub(crate) fn prepare_claude_code_managed_removal(
                 CLAUDE_CODE_AUTO_MODE_SERVER_ENV,
                 CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
                 DISABLE_AUTO_COMPACT_ENV,
+                CLAUDE_CODE_MANAGED_MODEL_SETTINGS_ENV,
+                CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV,
                 "CLAUDE_CODE_SUBAGENT_MODEL",
                 "CLAUDE_CODE_EFFORT_LEVEL",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
@@ -1843,12 +1897,58 @@ pub(crate) fn render_restored_json(
     }
 }
 
+fn restore_claude_code_compaction_settings(
+    root: &mut serde_json::Map<String, serde_json::Value>,
+    original: Option<&serde_json::Map<String, serde_json::Value>>,
+) {
+    let env = root.get("env").and_then(serde_json::Value::as_object);
+    let mut managed_models = [
+        "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+    ].iter().filter_map(|key| env?.get(*key)?.as_str())
+        .chain(root.get("model").and_then(serde_json::Value::as_str))
+        .map(|model| strip_claude_code_context_suffix(model).to_string())
+        .collect::<Vec<_>>();
+    if let Some(recorded) = env.and_then(|env| env.get(CLAUDE_CODE_MANAGED_MODEL_SETTINGS_ENV))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok()) {
+        managed_models = recorded;
+    }
+    managed_models.sort();
+    managed_models.dedup();
+    for key in ["autoCompactWindow", "autoCompactEnabled"] {
+        restore_json_key(root, original, key);
+    }
+    let original_models = original.and_then(|root| root.get("modelSettings"));
+    if original_models.is_some_and(|value| !value.is_object()) {
+        restore_json_key(root, original, "modelSettings");
+        return;
+    }
+    let original_models = original_models.and_then(serde_json::Value::as_object);
+    if let Some(models) = root.get_mut("modelSettings").and_then(serde_json::Value::as_object_mut) {
+        for model in managed_models {
+            let original_entry = original_models.and_then(|models| models.get(&model));
+            if let Some(entry) = models.get_mut(&model).and_then(serde_json::Value::as_object_mut) {
+                restore_json_key(entry, original_entry.and_then(serde_json::Value::as_object), "autoCompactWindow");
+                if entry.is_empty() && original_entry.is_none() {
+                    models.remove(&model);
+                }
+            }
+        }
+        if models.is_empty() && original_models.is_none() {
+            root.remove("modelSettings");
+        }
+    }
+}
+
 pub(crate) fn build_restored_claude_code_config(
     current: &str,
     original: Option<&str>,
 ) -> Result<Option<String>, String> {
     let mut root = parse_agent_json_object(Some(current), "Current Claude Code configuration")?;
     let original_root = parse_restored_json_object(original, "Original Claude Code configuration")?;
+    restore_claude_code_compaction_settings(&mut root, original_root.as_ref());
     restore_json_key(&mut root, original_root.as_ref(), "model");
     let original_env = original_root
         .as_ref()
@@ -1875,6 +1975,8 @@ pub(crate) fn build_restored_claude_code_config(
             CLAUDE_CODE_AUTO_MODE_SERVER_ENV,
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
             DISABLE_AUTO_COMPACT_ENV,
+            CLAUDE_CODE_MANAGED_MODEL_SETTINGS_ENV,
+            CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV,
             "CLAUDE_CODE_SUBAGENT_MODEL",
             "CLAUDE_CODE_EFFORT_LEVEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",

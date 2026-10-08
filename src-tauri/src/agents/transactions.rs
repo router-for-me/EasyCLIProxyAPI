@@ -854,6 +854,8 @@ fn validate_unmanaged_preserved(
                     !matches!(
                         key.as_str(),
                         "CLAUDE_CODE_SUBAGENT_MODEL"
+                            | CLAUDE_CODE_MANAGED_MODEL_SETTINGS_ENV
+                            | CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV
                             | "CLAUDE_CODE_EFFORT_LEVEL"
                             | "EASYCLIPROXY_MANAGE_CLAUDE_CODE_DEFAULT_MODEL"
                             | "EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL"
