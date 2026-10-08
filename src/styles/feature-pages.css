@@ -3498,8 +3498,9 @@
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 4px;
-  scrollbar-gutter: stable;
+  padding-right: 0;
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
 }
 
 @media (min-width: 761px) {

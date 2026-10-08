@@ -24,6 +24,10 @@ export const authFileListZhCN = {
   'authFiles.usage.title': '累计用量',
   'authFiles.toolbar.refreshList': '刷新列表',
   'authFiles.toolbar.refreshQuota': '刷新额度',
+  'authFiles.action.refreshQuota': '刷新',
+  'authFiles.action.settings': '设置',
+  'authFiles.action.models': '模型',
+  'authFiles.action.copy': '复制',
 } as const;
 
 export const authFileListEn: Record<keyof typeof authFileListZhCN, string> = {
@@ -52,6 +56,10 @@ export const authFileListEn: Record<keyof typeof authFileListZhCN, string> = {
   'authFiles.usage.title': 'Cumulative usage',
   'authFiles.toolbar.refreshList': 'Refresh list',
   'authFiles.toolbar.refreshQuota': 'Refresh quota',
+  'authFiles.action.refreshQuota': 'Refresh',
+  'authFiles.action.settings': 'Settings',
+  'authFiles.action.models': 'Models',
+  'authFiles.action.copy': 'Copy',
 };
 
 export const authFileListJa: Record<keyof typeof authFileListZhCN, string> = {
@@ -80,4 +88,8 @@ export const authFileListJa: Record<keyof typeof authFileListZhCN, string> = {
   'authFiles.usage.title': '累計使用量',
   'authFiles.toolbar.refreshList': '一覧を更新',
   'authFiles.toolbar.refreshQuota': 'クォータを更新',
+  'authFiles.action.refreshQuota': '更新',
+  'authFiles.action.settings': '設定',
+  'authFiles.action.models': 'モデル',
+  'authFiles.action.copy': 'コピー',
 };

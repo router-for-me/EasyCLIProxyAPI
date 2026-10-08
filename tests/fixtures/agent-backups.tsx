@@ -13,6 +13,12 @@ const ids = ['claude-code','claude-desktop','codex','opencode','openclaw','herme
 let count=0; let backupCount=0; const backups:any[]=[]; let currentModel=params.has('fresh')?null:'gpt-one';
 let nativeOauth=params.has('native-oauth'); let nativeSwitchCount=0; let codexClosed=false; let closeCount=0;
 let currentOauth=false; const currentMappings:Record<string,any>={};
+const claudeAliasLayoutModels = [
+ {name:'gpt-6.1-sol-high-fast',alias:'gpt-6.1-sol',isAlias:true},
+ {name:'gpt-6.1-sol',isAlias:true},
+ {name:'provider/very-long-upstream-model-name-with-reasoning-high',alias:'provider/very-long-original-model-name-with-context-window',isAlias:true},
+];
+if(params.has('claude-alias-layout'))currentMappings['claude-code']={opus:claudeAliasLayoutModels[0].name,sonnet:claudeAliasLayoutModels[0].name,fable:claudeAliasLayoutModels[1].name,haiku:claudeAliasLayoutModels[2].name,startupModel:'opus',subagentModel:''};
 if(params.has('legacy-desktop'))currentMappings['claude-desktop']={opus:'gpt-one',sonnet:'gpt-two',haiku:'gpt-one',opus1m:true};
 if(params.has('legacy-desktop-direct'))currentMappings['claude-desktop']={opus:'',sonnet:'claude-sonnet-custom-7',haiku:'',desktopModels:[{model:'',alias:'claude-sonnet-custom-7',context1m:false}]};
 if(params.has('saved-desktop-alias'))currentMappings['claude-desktop']={opus:'',sonnet:'gpt-one',haiku:'',desktopModels:[{model:'gpt-one',alias:'claude-opus-5',context1m:false}]};
@@ -65,6 +71,7 @@ mockIPC(async (cmd,args:any) => {
    nativeOauth=true; return {outcome:'updated'};
  }
  if(cmd==='get_agent_models') {
+   if(params.has('claude-alias-layout'))return claudeAliasLayoutModels;
    if(params.has('no-models'))return [];
    if(params.has('no-core'))throw new Error('CPA core is offline');
    if(params.has('defer-models'))await new Promise<void>(resolve=>{(window as any).fixtureFinishModels=resolve;});

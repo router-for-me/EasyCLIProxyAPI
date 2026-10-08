@@ -185,11 +185,11 @@ const CODEX_OAUTH_LOGIN_REQUIRED_ERROR = 'CODEX_OAUTH_LOGIN_REQUIRED';
 const DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS = 200_000;
 const DEFAULT_CLAUDE_AUTO_COMPACT_PCT = 90;
 
-const createClaudeModelMappings = (model: string): ClaudeModelMappings => ({
-  opus: model,
-  sonnet: model,
-  haiku: model,
-  fable: model,
+const createClaudeModelMappings = (): ClaudeModelMappings => ({
+  opus: '',
+  sonnet: '',
+  haiku: '',
+  fable: '',
   fable1m: false,
   opus1m: false,
   sonnet1m: false,
@@ -207,8 +207,8 @@ const createClaudeModelMappingsByClient = (): Record<
   ClaudeModelMappingClientId,
   ClaudeModelMappings
 > => ({
-  'claude-code': createClaudeModelMappings(''),
-  'claude-desktop': { ...createClaudeModelMappings(''), desktopModels: createDefaultDesktopModels() },
+  'claude-code': createClaudeModelMappings(),
+  'claude-desktop': { ...createClaudeModelMappings(), desktopModels: createDefaultDesktopModels() },
 });
 
 const createClaudeBooleanByClient = (): Record<ClaudeModelMappingClientId, boolean> => ({
@@ -830,7 +830,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const isClaudeModelMappingClient = selected === 'claude-code' || selected === 'claude-desktop';
   const claudeModelMappingsDraft = isClaudeModelMappingClient
     ? claudeModelMappingsDraftByClient[selected]
-    : createClaudeModelMappings('');
+    : createClaudeModelMappings();
   const claudeCustomMapping = isClaudeModelMappingClient
     ? claudeCustomMappingByClient[selected]
     : false;
@@ -896,19 +896,19 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         current,
         selected,
         appliedMappings,
-        createClaudeModelMappings(selected === 'claude-desktop' ? '' : selectedModel),
+        createClaudeModelMappings(),
         dirty,
       );
       const next: ClaudeModelMappings = {
         ...(selected === 'claude-desktop' ? { desktopModels: dirty && source.desktopModels
           ? source.desktopModels : appliedMappings ? desktopModelEntries(source) : createDefaultDesktopModels() } : {}),
-        opus: findAgentModel(models, source.opus)?.name ?? (selected === 'claude-code' ? source.opus || selectedModel : ''),
-        sonnet: findAgentModel(models, source.sonnet)?.name ?? (selected === 'claude-code' ? source.sonnet || selectedModel : ''),
-        haiku: findAgentModel(models, source.haiku)?.name ?? (selected === 'claude-code' ? source.haiku || selectedModel : ''),
+        opus: findAgentModel(models, source.opus)?.name ?? '',
+        sonnet: findAgentModel(models, source.sonnet)?.name ?? '',
+        haiku: findAgentModel(models, source.haiku)?.name ?? '',
         opus1m: Boolean(source.opus1m),
         sonnet1m: Boolean(source.sonnet1m),
         haiku1m: Boolean(source.haiku1m),
-        fable: source.fable || source.sonnet || selectedModel,
+        fable: findAgentModel(models, source.fable)?.name ?? '',
         fable1m: Boolean(source.fable1m),
         maxContextTokens: source.maxContextTokens ?? DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS,
         autoCompactPct: source.autoCompactPct ?? DEFAULT_CLAUDE_AUTO_COMPACT_PCT,
@@ -928,7 +928,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     isClaudeModelMappingClient,
     models,
     selected,
-    selectedModel,
   ]);
 
   const connectionState = activeStatus?.connectionState ?? 'invalid';
@@ -1075,12 +1074,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     const model = findAgentModel(models, value);
     if (!model) return;
     if (isClaudeModelMappingClient) {
-      editClaudeModelMappings((current) => ({
-        ...current,
-        opus: model.name,
-        sonnet: model.name,
-        haiku: model.name,
-      }));
+      editClaudeModelMappings((current) => ({ ...current, sonnet: model.name }));
     }
     selectModel(model.name);
   };
@@ -1164,7 +1158,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         return null;
       }
       const selectedEntries = selectedDesktopModelEntries(desktopEntries);
-      return { ...createClaudeModelMappings(''), sonnet: selectedEntries[0].model.trim(),
+      return { ...createClaudeModelMappings(), sonnet: selectedEntries[0].model.trim(),
         desktopModels: selectedEntries.map((entry) => ({ ...entry, model: entry.model.trim(), alias: entry.alias.trim() })) };
     }
     const resolved = {} as ClaudeModelMappings;

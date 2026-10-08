@@ -52,7 +52,7 @@
 .claude-code-model-inputs .agent-model-trigger,
 .claude-role-table .agent-model-trigger {
   min-height: 40px;
-  height: 40px;
+  height: auto;
   padding: 7px 11px;
   border: 1px solid var(--theme-d5d2cb);
   border-radius: 6px;

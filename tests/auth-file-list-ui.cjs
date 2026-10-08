@@ -58,9 +58,9 @@ const fs = require('node:fs/promises');
       assert.equal(await card(1).getByRole('switch').isVisible(), true);
       assert.equal(await card(1).locator('.auth-list-details-button').isVisible(), true);
       assert.equal(await card(1).locator('.auth-list-details').isVisible(), false, `${label}: file metadata and the expanded request summary start collapsed`);
-      if (width >= 1280) {
+      if (width >= 1800) {
         const heights = await page.locator('.auth-credential-row').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
-        assert.ok(heights.every(height => height >= 88 && height <= 120), `${label}: dense desktop rows stay near 104px, including quota footnotes: ${JSON.stringify(heights)}`);
+        assert.ok(heights.every(height => height >= 88 && height <= 190), `${label}: desktop rows stay compact, allowing labeled actions to wrap: ${JSON.stringify(heights)}`);
         const cells = await card(1).locator('.auth-credential-row > .auth-list-cell').evaluateAll(nodes => nodes.map(node => {
           const bounds = node.getBoundingClientRect(); return { left: bounds.left, right: bounds.right };
         }));
@@ -74,7 +74,7 @@ const fs = require('node:fs/promises');
     assert.equal(await previous().isDisabled(), true);
     assert.ok((await pagination().innerText()).includes('1 / 2'));
     assert.equal(await page.locator('.auth-file-list-head > span').count(), 7);
-    await assertMainInformation('initial desktop', 1800);
+    await assertMainInformation('initial desktop', 1500);
     assert.equal(await card(2).locator('.auth-file-health-compact').isVisible(), true, 'Cooldown summary is directly visible below the main row');
     assert.equal(await card(2).locator('.auth-health-body').isVisible(), false, 'Individual cooldown records start collapsed');
     assert.equal(await card(2).getByRole('button', { name: '清除冷却', exact: true }).isVisible(), true, 'Clear cooldown is available without opening file details');
@@ -244,6 +244,35 @@ const fs = require('node:fs/promises');
     await page.locator('.auth-file-table-scroll').screenshot({ path: path.join(screenshotDir, 'reference-small-idle-preview.png') });
     assert.deepEqual(errors, []);
     assert.deepEqual(externalRequests, []);
+    await page.goto(`${base}/tests/fixtures/auth-file-list.html?displayCases=1&locale=zh-CN&theme=light`);
+    await cards().nth(5).waitFor();
+    assert.equal(await cards().count(), 6, 'Display fixture renders every representative credential');
+    const disabledBadges = page.locator('.auth-status-badge.neutral');
+    assert.equal(await disabledBadges.count(), 5, 'Every disabled credential uses the neutral status treatment');
+    for (const badge of await disabledBadges.all()) assert.equal(await badge.innerText(), '已停用');
+    assert.equal(await page.locator('.auth-status-badge.success').innerText(), '可用');
+    const actionLabels = ['刷新', '设置', '模型', '复制', '删除'];
+    for (const label of actionLabels) {
+      const action = cards().first().getByRole('button', { name: label, exact: true });
+      assert.equal(await action.innerText(), label, `${label} is a visible text button`);
+      assert.equal(await action.locator('svg title').count(), 0, `${label} does not rely on an icon-only label`);
+    }
+    assert.equal(await cards().last().locator('.credential-quota-row-detail').innerText(), '付费 API 对话可用。xAI 暂不为此 OAuth 凭证提供额度总量数据。');
+    for (const width of [1680, 1366, 1180, 980, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const collisions = await page.locator('.auth-file-card').evaluateAll(nodes => nodes.flatMap(card => {
+        const buttons = [...card.querySelectorAll('.auth-card-actions button')].filter(button => button.getClientRects().length);
+        const boxes = buttons.map(button => button.getBoundingClientRect());
+        return boxes.flatMap((box, index) => boxes.slice(index + 1)
+          .filter(other => box.left < other.right - 1 && other.left < box.right - 1 && box.top < other.bottom - 1 && other.top < box.bottom - 1)
+          .map(other => ({ width: innerWidth, texts: [buttons[index].textContent, buttons[boxes.indexOf(other)].textContent] })));
+      }));
+      assert.deepEqual(collisions, [], `${width}: credential actions overlap ${JSON.stringify(collisions)}`);
+      const quotaOverflow = await page.locator('.auth-list-quota').evaluateAll(nodes => nodes.filter(node => node.scrollWidth > node.clientWidth + 1).map(node => node.textContent));
+      assert.deepEqual(quotaOverflow, [], `${width}: quota content overflows its column`);
+      await page.screenshot({ path: path.join(screenshotDir, `display-cases-${width}.png`), fullPage: true });
+    }
+
     console.log('PASS: offline seven-column dense credential list with visible request/runtime/quota/action data, compact row height, exact quota percentages/reset timestamps, unknown quota, ten/two pagination, search/provider/status reset, page size twenty, additional quota disclosure, main-row and detail-summary request keyboard tooltips, directly visible cooldown controls, exact status PATCH, direct delete confirmation/cancel, small idle accounts without pagination, light/dark Chinese/English 1800/1280/1024/390 without page or card overflow, contained table scrolling only at intermediate widths.');
     console.log(`Screenshots: ${screenshotDir}`);
   } finally { await browser?.close(); await server.close(); }

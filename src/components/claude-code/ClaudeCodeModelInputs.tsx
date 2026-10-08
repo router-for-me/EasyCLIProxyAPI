@@ -50,7 +50,6 @@ export function ClaudeCodeModelInputs({ startupModel, subagentModel, models, rou
             <span className="switch-track" aria-hidden="true" /></span><span>1M</span>
           </label>
           </div>
-          {preview.role && <small className="claude-code-model-summary" aria-live="polite">{preview.role} → {preview.model}</small>}
           {!loading && !isKnownClaudeCodeModel(value, models) ? (
             <small role="status">{t('agents.claudeCodeRuntime.unverifiedModel')}</small>
           ) : null}

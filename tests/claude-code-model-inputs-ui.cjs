@@ -15,7 +15,7 @@ const os = require('node:os');
     assert.equal(await startup.inputValue(), 'sonnet');
     await page.locator('.claude-role-row .agent-model-trigger').first().click();
     await page.getByRole('option', { name: /gpt-two/ }).click();
-    await page.getByText('sonnet → gpt-two', { exact: true }).waitFor();
+    assert.equal(await page.locator('.claude-code-model-summary').count(), 0);
     assert.equal(await startup.inputValue(), 'sonnet');
     await startup.click();
     await page.getByRole('option', { name: /^gpt-two / }).click();
