@@ -2,7 +2,6 @@ import { ResetCreditExpiries } from './ResetCreditExpiries';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { MessageNotice } from '../appNotice';
-import { readBoolean } from '../services/managementApi';
 import { fileName, formatQuotaTimestamp, type AuthFile, type QuotaState } from '../services/quotaService';
 import { canResetQuota, hasPendingClaudeReset } from '../services/quotaActions';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
@@ -22,7 +21,6 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   const loading = quota.status === 'loading';
   const name = fileName(file);
   const compactLayout = compact || dense;
-  const fileDisabled = readBoolean(file, 'disabled');
   const showReset = Boolean(onReset && ((quota.resetCredits ?? 0) > 0 || hasPendingClaudeReset(file)));
   const accountCreditsLabel = quota.creditsUnlimited
     ? t('quota.creditUnlimited')
@@ -62,7 +60,7 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
         </button> : null}
       </div> : null}
       {loading ? <div className="credential-quota-loading" role="status"><span>{t(quota.pendingAction === 'reset' ? 'quota.resetting' : 'authFiles.quota.loading')}</span><div className="credential-quota-track indeterminate"><i /></div></div> : null}
-      {quota.status === 'idle' ? <p className="credential-quota-empty">{t(dense ? (fileDisabled ? 'quota.disabled' : 'quota.notFetched') : disabled ? 'quota.fileDisabled' : 'authFiles.settings.quotaIdle')}</p> : null}
+      {quota.status === 'idle' ? <p className="credential-quota-empty">{t(dense ? 'quota.notFetched' : disabled ? 'quota.fileDisabled' : 'authFiles.settings.quotaIdle')}</p> : null}
       {quota.status === 'error' ? <div className="credential-quota-error" role="status">
         {dense && quota.error ? <details className="credential-quota-error-details"><summary title={quota.error}>{t('authFiles.quota.failed')}</summary><small>{quota.error}</small></details>
           : <><span>{t('authFiles.quota.failed')}</span>{quota.error ? <small>{quota.error}</small> : null}</>}

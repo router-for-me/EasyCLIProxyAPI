@@ -130,7 +130,8 @@
 .auth-file-health-compact .auth-health-countdown { margin: 0 0 0 auto; color: var(--text-tertiary); font-size: 11px; }
 .auth-file-health-compact .auth-health-disclosure { margin: 0; }
 .auth-file-health-compact .auth-health-body { padding: 0 0 12px; }
-.auth-file-health-compact .auth-health-records { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 20px; }
+.auth-file-health-compact .auth-health-records { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 0 16px; }
+.auth-file-health-compact .auth-health-record-heading strong { overflow-wrap: anywhere; }
 .auth-file-health-compact .auth-health-records li { min-width: 0; padding: 10px 0; }
 .auth-file-health-compact .auth-health-record-heading { gap: 4px 10px; }
 .auth-file-health-compact .auth-health-record-heading strong { font-size: 12px; font-weight: 600; }
@@ -151,7 +152,6 @@
 
 @container credential-files (max-width: 700px) {
   .auth-file-health.auth-file-health-compact { gap: 0 8px; }
-  .auth-file-health-compact .auth-health-records { grid-template-columns: minmax(0, 1fr); }
   .auth-file-health-compact .auth-health-summary { position: relative; padding-right: 18px; }
   .auth-file-health-compact .auth-health-summary-content { flex-basis: calc(100% - 24px); }
   .auth-file-health-compact .auth-health-countdown { margin: 0 0 0 22px; }

@@ -45,7 +45,7 @@ const fs = require('node:fs/promises');
       })));
       assert.ok(dimensions.every(size => size.scroll <= size.width + 1 || (
         size.className === 'auth-file-table-scroll' && size.width > 700 && size.width < 980 && size.overflowX === 'auto'
-      )), `${label}: only intermediate widths may scroll inside the table; cards must fit ${JSON.stringify(dimensions)}`);
+      )), `${label}: cards and the credential list must fit ${JSON.stringify(dimensions)}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${label}: page overflow`);
     };
     const assertMainInformation = async (label, width) => {
@@ -58,14 +58,17 @@ const fs = require('node:fs/promises');
       assert.equal(await card(1).getByRole('switch').isVisible(), true);
       assert.equal(await card(1).locator('.auth-list-details-button').isVisible(), true);
       assert.equal(await card(1).locator('.auth-list-details').isVisible(), false, `${label}: file metadata and the expanded request summary start collapsed`);
-      if (width >= 1800) {
+      if (width >= 1024) {
         const heights = await page.locator('.auth-credential-row').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
-        assert.ok(heights.every(height => height >= 88 && height <= 190), `${label}: desktop rows stay compact, allowing labeled actions to wrap: ${JSON.stringify(heights)}`);
+        assert.ok(heights.every(height => height >= 140 && height <= 420), `${label}: credential cards stay compact: ${JSON.stringify(heights)}`);
         const cells = await card(1).locator('.auth-credential-row > .auth-list-cell').evaluateAll(nodes => nodes.map(node => {
-          const bounds = node.getBoundingClientRect(); return { left: bounds.left, right: bounds.right };
+          const bounds = node.getBoundingClientRect(); return { top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right, hidden: bounds.width === 0 };
         }));
-        assert.equal(cells.length, 7, `${label}: desktop has seven information columns`);
-        assert.ok(cells.slice(1).every((cell, index) => cell.left >= cells[index].right - 1), `${label}: all seven columns remain in one row`);
+        assert.equal(cells.length, 7, `${label}: each card keeps seven information sections`);
+        assert.equal(cells[1].hidden, false, `${label}: a known plan remains visible`);
+        assert.ok(cells[2].left >= cells[0].right - 1, `${label}: status stays beside the account`);
+        assert.ok(cells[1].top >= cells[0].bottom - 8, `${label}: plan stays on its own row`);
+        assert.ok(cells.slice(3).every(cell => cell.top >= cells[1].top), `${label}: activity, quota and actions follow the account`);
       }
     };
     await fs.mkdir(screenshotDir, { recursive: true });
@@ -273,7 +276,7 @@ const fs = require('node:fs/promises');
       await page.screenshot({ path: path.join(screenshotDir, `display-cases-${width}.png`), fullPage: true });
     }
 
-    console.log('PASS: offline seven-column dense credential list with visible request/runtime/quota/action data, compact row height, exact quota percentages/reset timestamps, unknown quota, ten/two pagination, search/provider/status reset, page size twenty, additional quota disclosure, main-row and detail-summary request keyboard tooltips, directly visible cooldown controls, exact status PATCH, direct delete confirmation/cancel, small idle accounts without pagination, light/dark Chinese/English 1800/1280/1024/390 without page or card overflow, contained table scrolling only at intermediate widths.');
+    console.log('PASS: offline compact credential card grid with visible request/runtime/quota/action data, compact row height, exact quota percentages/reset timestamps, unknown quota, ten/two pagination, search/provider/status reset, page size twenty, additional quota disclosure, main-row and detail-summary request keyboard tooltips, directly visible cooldown controls, exact status PATCH, direct delete confirmation/cancel, small idle accounts without pagination, light/dark Chinese/English 1800/1280/1024/390 without page or card overflow, contained table scrolling only at intermediate widths.');
     console.log(`Screenshots: ${screenshotDir}`);
   } finally { await browser?.close(); await server.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

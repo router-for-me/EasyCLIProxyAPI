@@ -13,16 +13,15 @@
   --auth-border: #293241;
   --success-color: #34d399;
 }
-.auth-files-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; }
+.auth-files-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; min-height: 36px; }
 .auth-files-heading > div:first-child { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
 .auth-files-heading h2 { margin: 0; color: var(--auth-text); font-size: 16px; font-weight: 700; }
 .auth-files-heading p { margin: 0; color: var(--auth-muted); font-size: 12px; }
-.auth-files-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.auth-files-heading-actions { display: flex; align-items: center; justify-content: flex-end; flex: 1 1 280px; flex-wrap: wrap; gap: 6px; }
 .auth-files-heading-actions > button { flex: none; width: auto; margin: 0; min-height: 32px; padding: 5px 10px; gap: 6px; border-radius: 7px; box-shadow: none; font-size: 12px; }
 .auth-files-heading-actions > .auth-toolbar-quiet { border-color: transparent; background: transparent; color: var(--auth-muted); }
 .auth-files-heading-actions > .auth-toolbar-quiet:hover:not(:disabled) { background: var(--bg-hover); color: var(--auth-text); }
 .auth-files-page .auth-files-panel {
-  --auth-list-columns: minmax(160px, 1fr) 72px 90px 112px 148px minmax(220px, 1.35fr) minmax(300px, 1.55fr);
   padding: 0;
   min-height: 0;
   border: 0;
@@ -39,16 +38,20 @@
 .auth-files-filters { display: flex; align-items: center; gap: 8px; }
 .auth-files-page .auth-files-toolbar .auth-files-filters select { width: auto; min-width: 0; max-width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--auth-border); border-radius: 7px; background: var(--bg-card); color: var(--auth-muted); font: inherit; font-size: 12px; }
 .auth-files-page .auth-files-toolbar select:focus-visible { outline: 2px solid var(--auth-accent); outline-offset: 1px; }
-.auth-file-table-scroll { min-width: 0; overflow-x: auto; padding: 0 0 2px; }
-.auth-file-list-head, .auth-credential-row { display: grid; grid-template-columns: var(--auth-list-columns); align-items: center; column-gap: 10px; }
-.auth-file-list-head { min-width: 1280px; min-height: 38px; padding: 4px 14px 0; color: var(--auth-muted); font-size: 13px; font-weight: 700; }
-.auth-file-list-head > span { min-width: 0; line-height: 1.25; text-align: center; }
-.auth-file-list-head > :first-child, .auth-file-list-head > :nth-child(6) { text-align: left; }
-.auth-file-card-grid { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 1280px; gap: 10px; }
-.auth-file-card { min-width: 0; padding: 0 14px; border: 1px solid var(--auth-border); border-radius: 10px; background: var(--bg-card); }
+.auth-file-table-scroll { min-width: 0; overflow: visible; padding: 0 0 2px; }
+.auth-file-list-head { display: none; }
+.auth-file-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 12px; align-items: stretch; min-width: 0; }
+.auth-file-card { display: flex; flex-direction: column; min-width: 0; padding: 12px 14px 10px; border: 1px solid var(--auth-border); border-radius: 10px; background: var(--bg-card); }
 .auth-file-card:hover { border-color: color-mix(in srgb, var(--auth-accent) 24%, var(--auth-border)); }
-.auth-credential-row { min-height: 108px; padding: 12px 0; }
+.auth-credential-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "identity status" "plan plan" "recent recent" "usage usage" "quota quota" "actions actions"; align-items: start; gap: 8px 12px; min-height: 0; padding: 0; }
 .auth-list-cell { min-width: 0; }
+.auth-card-header { grid-area: identity; }
+.auth-list-plan { grid-area: plan; }
+.auth-list-status { grid-area: status; }
+.auth-list-recent { grid-area: recent; }
+.auth-list-usage { grid-area: usage; }
+.auth-list-quota { grid-area: quota; }
+.auth-card-actions { grid-area: actions; }
 .auth-card-header { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .auth-card-header .provider-logo { width: 35px; height: 35px; object-fit: contain; flex-shrink: 0; }
 [data-theme="dark"] .auth-card-header .provider-logo[data-provider="xai"] { filter: invert(1); }
@@ -56,6 +59,9 @@
 .auth-card-identity strong { color: var(--auth-text); font-size: 14px; font-weight: 750; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auth-card-filename, .auth-card-provider { color: var(--auth-muted); font-size: 12px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auth-list-plan, .auth-list-status { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; }
+.auth-list-plan { flex-direction: row; align-items: baseline; justify-content: flex-start; gap: 8px; text-align: left; }
+.auth-list-plan:not(:has(span, small)) { display: none; }
+.auth-list-status { align-items: flex-end; justify-self: end; text-align: right; gap: 2px; }
 .auth-list-plan > span { max-width: 100%; color: var(--auth-text); font-size: 13px; font-weight: 600; text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auth-list-plan small, .auth-list-status small { color: var(--auth-muted); font-size: 12px; line-height: 1.3; }
 .auth-list-status small { font-weight: 600; }
@@ -66,29 +72,34 @@
 .auth-status-badge.info { color: var(--auth-accent); background: color-mix(in srgb, var(--auth-accent) 8%, var(--bg-card)); }
 .auth-status-badge.neutral { color: var(--auth-muted); background: color-mix(in srgb, var(--auth-muted) 10%, var(--bg-card)); }
 .auth-list-muted { color: var(--auth-muted); font-size: 12px; }
-.auth-list-recent .auth-file-requests { gap: 9px; }
-.auth-list-recent .auth-file-requests-latest { color: var(--auth-muted); font-size: 12px; font-weight: 650; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.auth-list-recent, .auth-list-usage, .auth-list-quota { display: grid; gap: 4px; }
+.auth-list-recent::before, .auth-list-usage::before, .auth-list-quota::before { content: attr(data-label); color: var(--auth-muted); font-size: 11px; font-weight: 650; line-height: 1.2; }
+.auth-list-recent .auth-file-requests { display: grid; grid-template-columns: max-content minmax(0, 1fr); grid-template-areas: "time bars" "empty empty"; align-items: center; gap: 4px 10px; }
+.auth-list-recent .auth-file-requests-latest { grid-area: time; color: var(--auth-muted); font-size: 12px; font-weight: 650; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.auth-list-recent .auth-file-requests-timeline { display: contents; }
+.auth-list-recent .auth-file-requests-chart { grid-area: bars; max-width: none; width: auto; min-width: 0; }
+.auth-list-recent .auth-file-requests-timeline > span { grid-area: empty; justify-self: start; color: var(--auth-muted); font-size: 12px; line-height: 1.4; }
 .auth-list-recent .auth-file-requests-blocks { gap: 2px; padding: 0; }
-.auth-list-recent .auth-file-request-block { height: 16px; border-radius: 2px; }
-.auth-list-recent .auth-file-requests-timeline { justify-content: center; gap: 5px; font-size: 11px; }
-.auth-list-recent .auth-file-requests-unavailable { font-size: 12px; line-height: 1.4; text-align: center; color: var(--auth-muted); }
+.auth-list-recent .auth-file-request-block { height: 12px; border-radius: 2px; }
+.auth-list-recent .auth-file-requests-timeline { gap: 5px; font-size: 11px; }
+.auth-list-recent .auth-file-requests-unavailable { grid-area: empty; justify-self: start; font-size: 12px; line-height: 1.4; text-align: left; color: var(--auth-muted); }
 .auth-list-usage .auth-file-usage { color: var(--auth-text); }
-.auth-list-usage .auth-file-usage-metrics { grid-template-columns: max-content max-content; grid-template-rows: repeat(2, 20px); gap: 0 18px; justify-content: center; align-content: center; }
+.auth-list-usage .auth-file-usage-metrics { grid-template-columns: repeat(auto-fit, minmax(92px, max-content)); grid-template-rows: none; gap: 4px 14px; justify-content: start; align-content: center; }
 .auth-list-usage .auth-file-usage-metric { gap: 5px; }
 .auth-list-usage .auth-file-usage-metric { min-height: 0; height: 20px; line-height: 1; }
 .auth-list-usage .auth-file-usage-metric svg { width: 12px; height: 12px; padding: 2px; }
 .auth-list-usage .auth-file-usage-metric svg { width: 12px; height: 12px; padding: 2px; border-radius: 4px; }
 .auth-list-usage .auth-file-usage-metric.total svg { color: var(--auth-accent); background: color-mix(in srgb, var(--auth-accent) 9%, var(--bg-card)); }
 .auth-list-usage .auth-file-usage-metric strong { font-size: 13px; line-height: 1.2; font-weight: 750; }
-.auth-list-usage .auth-file-usage-scope { margin-top: 6px; color: var(--auth-muted); text-align: right; font-size: 10px; line-height: 1.2; }
-.auth-card-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.auth-list-usage .auth-file-usage-scope { display: none; }
+.auth-card-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--auth-border); }
 .auth-list-icon-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-width: max-content; }
 .auth-card-actions .auth-list-action { display: inline-flex; align-items: center; justify-content: center; flex: none; width: auto; min-width: 0; min-height: 30px; padding: 4px 8px; gap: 4px; border: 1px solid color-mix(in srgb, var(--auth-accent) 16%, var(--auth-border)); border-radius: 8px; color: var(--auth-accent); background: var(--bg-card); font: inherit; font-size: 12px; font-weight: 650; line-height: 1.2; white-space: nowrap; cursor: pointer; }
 .auth-card-actions .auth-list-action.muted { color: var(--auth-text); border-color: var(--auth-border); background: var(--bg-card); }
 .auth-card-actions .auth-list-action.danger { color: #e11d48; border-color: color-mix(in srgb, #e11d48 22%, var(--auth-border)); background: var(--bg-card); }
 .auth-card-actions .auth-list-action:disabled { opacity: .38; cursor: default; }
 .auth-card-actions .auth-list-action:not(:disabled):hover { background: color-mix(in srgb, currentColor 8%, var(--bg-card)); border-color: currentColor; }
-.auth-list-main-actions { display: flex; align-items: center; justify-content: flex-end; flex: none; gap: 8px; padding-left: 10px; border-left: 1px solid var(--auth-border); }
+.auth-list-main-actions { display: flex; align-items: center; justify-content: flex-end; flex: none; gap: 8px; margin-left: auto; padding-left: 0; border-left: 0; }
 .auth-list-switch { display: flex; align-items: center; flex: none; width: 40px; height: 24px; padding: 2px; border: 1px solid color-mix(in srgb, var(--auth-muted) 22%, var(--bg-card)); border-radius: 20px; background: color-mix(in srgb, var(--auth-muted) 28%, var(--bg-card)); cursor: pointer; }
 .auth-list-switch > span { display: block; width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0002; transition: transform .15s; }
 .auth-list-switch[aria-checked="true"] { background: var(--auth-accent); border-color: var(--auth-accent); }
@@ -154,36 +165,12 @@
 @media (prefers-reduced-motion: reduce) { .credential-quota-track.indeterminate i { animation: none; width: 100%; opacity: .3; } }
 
 
-@container credential-files (min-width: 1501px) and (max-width: 1500px) {
-  .auth-file-list-head, .auth-credential-row { grid-template-columns: minmax(136px, 1fr) 62px 78px 96px 128px minmax(170px, 1.25fr) minmax(220px, 1.15fr); column-gap: 8px; }
-  .auth-file-card-grid, .auth-file-list-head { min-width: 1120px; }
-  .auth-card-actions { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: end; gap: 6px; }
-  .auth-list-icon-actions { display: grid; grid-template-columns: repeat(3, max-content); justify-content: end; gap: 4px; }
-  .auth-card-actions .auth-list-action { min-height: 28px; padding: 3px 7px; font-size: 12px; }
-  .auth-list-details-button { min-width: 48px; min-height: 30px; padding-inline: 8px; font-size: 12px; }
-  .auth-list-usage .auth-file-usage-metric strong { font-size: 12px; }
-}
 @container credential-files (max-width: 1500px) {
   .auth-file-table-scroll { overflow: visible; }
   .auth-file-list-head { display: none; }
-  .auth-file-card-grid { min-width: 0; margin-top: 10px; }
-  .auth-credential-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 10px; padding: 14px 0; }
-  .auth-card-header { grid-column: 1 / 3; }
-  .auth-list-plan { grid-column: 3; }
-  .auth-list-status { grid-column: 1; }
-  .auth-list-recent { grid-column: 2; }
-  .auth-list-usage { grid-column: 3; }
-  .auth-list-quota { grid-column: 1 / -1; border-top: 1px solid var(--auth-border); padding-top: 12px; }
-  .auth-card-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--auth-border); padding-top: 12px; }
-  .auth-list-main-actions { display: flex; gap: 8px; padding-left: 8px; }
-  .auth-list-icon-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-  .auth-list-usage .auth-file-usage-metrics { gap: 5px; }
-  .auth-list-usage .auth-file-usage-metric { gap: 3px; }
-  .auth-list-usage .auth-file-usage-metric strong { font-size: 11px; }
-  .auth-list-usage .auth-file-usage-metric svg { width: 10px; height: 10px; padding: 1px; }
-  .auth-list-cell[data-label]::before { content: attr(data-label); display: block; margin-bottom: 7px; color: var(--auth-muted); font-size: 10px; font-weight: 500; }
-  .auth-list-plan[data-label]::before, .auth-list-status[data-label]::before { margin: 0; }
-  .auth-card-actions[data-label]::before { flex: none; margin: 0 auto 0 0; white-space: nowrap; }
+  .auth-file-card-grid { min-width: 0; margin-top: 0; }
+  .auth-card-actions .auth-list-action { min-height: 28px; padding: 3px 7px; font-size: 12px; }
+  .auth-list-details-button { min-width: 48px; min-height: 30px; padding-inline: 8px; font-size: 12px; }
 }
 @container credential-files (max-width: 400px) {
   .auth-files-search { flex-basis: 100%; max-width: none; }
@@ -201,7 +188,7 @@
 /* Keep the quota column airy without the heavy framed inset used previously. */
 .auth-files-page .auth-list-quota {
   min-width: 0;
-  padding: 0 10px;
+  padding: 2px 0 0;
   border: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
@@ -240,7 +227,7 @@
   overflow: hidden;
   white-space: normal;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 .auth-files-page .auth-file-card {
   border-color: #edf0f4;

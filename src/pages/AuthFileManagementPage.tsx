@@ -558,7 +558,7 @@ export function AuthFileManagementPage() {
                     </div>
                   </header>
                   <div className="auth-list-cell auth-list-plan" data-label={t('authFiles.list.plan')}>
-                    <span title={plan || undefined}>{plan || '—'}</span>
+                    {plan ? <span title={plan}>{plan}</span> : null}
                     {expiryMs !== undefined ? <small title={t('authFiles.list.expiry', { time: formatDate(new Date(expiryMs).toISOString()) })}>{expiryMs <= now ? t('authFiles.list.expired') : t('authFiles.list.daysRemaining', { count: Math.ceil((expiryMs - now) / 86_400_000) })}</small> : null}
                   </div>
                   <div className="auth-list-cell auth-list-status" data-label={t('authFiles.list.status')}>

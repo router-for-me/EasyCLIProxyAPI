@@ -37,7 +37,7 @@ const fs = require('node:fs/promises');
     };
     const assertMainRowHeight = async label => {
       const heights = await page.locator('.auth-credential-row').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height));
-      assert.ok(heights.every(height => height >= 88 && height <= 120), `${label}: cooldown content does not stretch the seven-column main row: ${JSON.stringify(heights)}`);
+      assert.ok(heights.every(height => height >= 140 && height <= 420), `${label}: cooldown content does not stretch the credential card: ${JSON.stringify(heights)}`);
     };
     const open = async query => {
       await page.goto(`${base}/tests/fixtures/auth-file-cooldown.html?${query || ''}`);
@@ -58,7 +58,7 @@ const fs = require('node:fs/promises');
     assert.equal(await primary().locator('.auth-file-health-compact').isVisible(), true, 'Cooldown summary is visible before opening any details');
     assert.equal(await primary().locator('.auth-health-body').isVisible(), false, 'Individual cooldown records start collapsed');
     assert.ok((await primary().locator('.auth-health-heading').innerText()).includes('凭证及 2 个模型冷却'));
-    assert.equal(await primary().locator('.auth-credential-row > .auth-list-cell').count(), 7, 'Cooldown rows retain the complete seven-column overview');
+    assert.equal(await primary().locator('.auth-credential-row > .auth-list-cell').count(), 7, 'Cooldown cards retain the complete seven-section overview');
     assert.equal(await primary().locator('.auth-list-recent').isVisible(), true, 'Recent requests stay visible while diagnostics are collapsed');
     assert.equal(await primary().locator('.auth-list-usage').isVisible(), true, 'Runtime counters stay visible while diagnostics are collapsed');
     assert.equal(await primary().locator('.auth-list-icon-actions > button:visible').count(), 5, 'Credential actions stay directly available');
@@ -151,7 +151,7 @@ const fs = require('node:fs/promises');
     await open();
     await confirmReset(primary());
     await page.evaluate(() => { window.cooldownFixture.holdNextRead = true; });
-    await page.getByRole('button', { name: '刷新', exact: true }).click();
+    await page.locator('.auth-files-heading').getByRole('button', { name: '刷新列表', exact: true }).click();
     await page.waitForFunction(() => Boolean(window.cooldownFixture.releaseRead));
     await releaseReset();
     await page.waitForFunction(() => window.cooldownFixture.reads === 3 && window.cooldownFixture.completedReads === 2);
@@ -209,7 +209,7 @@ const fs = require('node:fs/promises');
       }
     }
     assert.deepEqual(errors, []);
-    console.log('PASS: directly visible cooldown summary/reset, independent keyboard disclosure, seven-column main-row height, cooldown models/reasons/countdowns, request summary counts/rate and keyboard tooltips, confirmation and cancel, single auth_index POST, pending duplicate protection, isolated success refresh, failure preservation, stale response protection, unknown/empty/missing-index guards, elapsed records, runtime/disabled state, light/dark desktop/mobile layout.');
+    console.log('PASS: directly visible cooldown summary/reset, independent keyboard disclosure, compact card height, cooldown models/reasons/countdowns, request summary counts/rate and keyboard tooltips, confirmation and cancel, single auth_index POST, pending duplicate protection, isolated success refresh, failure preservation, stale response protection, unknown/empty/missing-index guards, elapsed records, runtime/disabled state, light/dark desktop/mobile layout.');
     console.log(`Screenshots: ${screenshotDir}`);
   } finally { await browser?.close(); await server.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
