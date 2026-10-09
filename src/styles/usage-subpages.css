@@ -278,6 +278,14 @@ body.table-col-resizing .usage-records-page .usage-request-log .usage-events-tab
   margin-top: 4px;
 }
 
+.usage-records-page .usage-request-log .usage-events-table td.usage-result-cell:has(.usage-result-detail) {
+  text-align: left;
+}
+
+.usage-records-page .usage-request-log .usage-result-cell:has(.usage-result-detail) .usage-result {
+  margin-inline: 0;
+}
+
 .usage-records-page .usage-request-log .usage-result {
   display: flex;
   width: fit-content;

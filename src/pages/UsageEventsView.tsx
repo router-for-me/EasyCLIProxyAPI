@@ -303,7 +303,7 @@ function UsageResultCell({ record }: { record: UsageRecord }) {
         <span className="usage-result-dot" />
         {t(`usage.result.${state}`)}
       </span>
-      {detail ? <small title={detail}>{detail}</small> : null}
+      {detail ? <small className={state === 'success' ? undefined : 'usage-result-detail'} title={detail}>{detail}</small> : null}
     </td>
   );
 }

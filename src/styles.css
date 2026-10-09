@@ -9997,11 +9997,17 @@ body.table-col-resizing * {
 
 .usage-result-cell > small {
   display: block;
+  max-width: 100%;
   margin-top: 2px;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--theme-8a847c);
   font-size: var(--font-size-caption);
+}
+
+.usage-result-cell > .usage-result-detail {
+  font-family: var(--font-family-mono);
 }
 
 @media (max-width: 768px) {
