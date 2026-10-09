@@ -63,3 +63,54 @@ fn mid_transaction_external_edit_is_preserved_while_earlier_writes_are_rolled_ba
     );
     fs::remove_dir_all(home).unwrap();
 }
+
+
+fn link_path(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let output = Command::new("cmd.exe")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .creation_flags(0x08000000)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "temporary junction creation failed");
+    }
+}
+
+#[test]
+fn relocated_configuration_root_accepts_writes_but_nested_links_do_not() {
+    let home_root = std::env::temp_dir().join(format!("cpa-link-home-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&home_root);
+    fs::create_dir_all(&home_root).unwrap();
+    let home = home_root;
+    let outside = std::env::temp_dir().join(format!("cpa-link-outside-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&outside);
+    fs::create_dir_all(&outside).unwrap();
+    let relocated = outside.join("codex-data");
+    fs::create_dir_all(&relocated).unwrap();
+    let link = home.join(".codex");
+    link_path(&relocated, &link);
+
+    let previous_home = env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+    env::set_var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }, &home);
+    let config = link.join("config.toml");
+    let allowed = validate_config_path(&config);
+    let nested = link.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    let secret = outside.join("secret");
+    fs::create_dir_all(&secret).unwrap();
+    link_path(&secret, &nested.join("escape"));
+    let rejected = validate_config_path(&nested.join("escape").join("config.toml"));
+    match previous_home {
+        Some(value) => env::set_var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }, value),
+        None => env::remove_var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }),
+    }
+
+    assert!(allowed.is_ok(), "{allowed:?}");
+    assert!(rejected.is_err(), "a link inside the configuration root must stay rejected");
+}

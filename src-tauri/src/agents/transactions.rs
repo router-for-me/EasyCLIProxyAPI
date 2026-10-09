@@ -259,13 +259,9 @@ pub(crate) fn validate_config_path(path: &Path) -> Result<(), String> {
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
             Ok(meta) => {
-                let linked = meta.file_type().is_symlink();
-                #[cfg(windows)]
-                let linked = {
-                    use std::os::windows::fs::MetadataExt;
-                    linked || meta.file_attributes() & 0x400 != 0
-                };
-                if linked {
+                if path_has_reparse_point(ancestor, &meta)
+                    && !relocated_configuration_root_allowed(ancestor)
+                {
                     return Err(format!(
                         "Configuration path cannot contain symbolic links: {}",
                         path_to_string(ancestor)
@@ -280,6 +276,140 @@ pub(crate) fn validate_config_path(path: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn path_has_reparse_point(path: &Path, meta: &fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let _ = path;
+        return meta.file_attributes() & 0x400 != 0;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// A configuration root may itself be relocated with a symlink or junction.
+/// Deeper links are still rejected so a file inside that root cannot escape it.
+fn relocated_configuration_root_allowed(path: &Path) -> bool {
+    let Ok(canonical_path) = normalize_existing_path(path) else {
+        return false;
+    };
+    let Some(home) = user_home_directory() else {
+        return false;
+    };
+    let Ok(canonical_home) = normalize_existing_path(&home) else {
+        return false;
+    };
+    if canonical_path == canonical_home {
+        return true;
+    }
+
+    configuration_root_candidates(&home)
+        .into_iter()
+        .any(|root| paths_equivalent(&root, path) || paths_equivalent(&root, &canonical_path))
+}
+
+fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (normalize_existing_path(left), normalize_existing_path(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn normalize_existing_path(path: &Path) -> Result<PathBuf, String> {
+    fs::canonicalize(path).map_err(|_| "Unable to resolve configuration path".into())
+}
+
+fn user_home_directory() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let name = "USERPROFILE";
+    #[cfg(not(windows))]
+    let name = "HOME";
+    env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
+fn configuration_root_candidates(home: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![
+        home.join(".claude"),
+        home.join(".codex"),
+        home.join(".config").join("opencode"),
+        home.join(".openclaw"),
+        home.join(".hermes"),
+        home.join(".dsh"),
+        home.join(".workbuddy"),
+        home.join(".workbuddy-ai"),
+        home.join(".gemini"),
+        home.join(".gemini").join("antigravity-cli"),
+        home.join(".zcode"),
+        home.join(".zcode").join("v2"),
+        home.join(".kimi-code"),
+        home.join(".grok"),
+        home.join(".omp"),
+        home.join(".omp").join("agent"),
+        home.join(".pi"),
+        home.join(".pi").join("agent"),
+        home.join(".minimax"),
+    ];
+    #[cfg(target_os = "macos")]
+    {
+        let support = home.join("Library/Application Support");
+        roots.push(support.join("Claude"));
+        roots.push(support.join("Claude-3p"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let local = env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| home.join("AppData/Local"));
+        roots.push(local.join("Claude"));
+        roots.push(local.join("Claude-3p"));
+        roots.push(local.join("hermes"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let config_home = env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| home.join(".config"));
+        roots.push(config_home.join("Claude"));
+        roots.push(config_home.join("Claude-3p"));
+    }
+    for name in [
+        "CODEX_HOME",
+        "OPENCODE_CONFIG",
+        "XDG_CONFIG_HOME",
+        "OPENCLAW_CONFIG_PATH",
+        "OPENCLAW_STATE_DIR",
+        "OPENCLAW_HOME",
+        "KIMI_CODE_HOME",
+        "GROK_HOME",
+        "PI_CODING_AGENT_DIR",
+        "DSH_HOME",
+        "HERMES_HOME",
+        "WORKBUDDY_CONFIG_DIR",
+        "CODEBUDDY_CONFIG_DIR",
+        "MINIMAX_DATA_DIR",
+    ] {
+        if let Some(path) = env::var_os(name).map(PathBuf::from) {
+            if path.is_absolute() {
+                roots.push(path);
+            }
+        }
+    }
+    roots
 }
 
 pub(crate) fn config_images(paths: &[PathBuf]) -> Result<Images, String> {
