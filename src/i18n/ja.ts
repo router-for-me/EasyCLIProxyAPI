@@ -826,6 +826,7 @@ export const jaOverrides = {
   'usage.provider.hint': '使用量 API の provider と auth_type に基づく接続先と認証方式です。モデル名から提供元を推測しません。',
   'usage.provider.unknownAccess': '接続方式の記録なし',
   'usage.column.effort': '推論レベル',
+  'usage.speedMode.fast': 'fast',
   'usage.column.request': 'リクエスト',
   'usage.column.tokens': 'Token',
   'usage.column.provider': 'プロバイダー',

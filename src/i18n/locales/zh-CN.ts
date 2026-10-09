@@ -813,6 +813,7 @@ export const zhCN = {
   'usage.provider.hint': '来自用量 API 的 provider 与 auth_type，表示接入通道和认证方式，不按模型名推断厂商。',
   'usage.provider.unknownAccess': '未记录接入方式',
   'usage.column.effort': '推理强度',
+  'usage.speedMode.fast': 'fast',
   'usage.column.request': '请求',
   'usage.column.tokens': 'Token',
   'usage.column.provider': '提供商',

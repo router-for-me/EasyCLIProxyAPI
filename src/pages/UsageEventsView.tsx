@@ -49,6 +49,8 @@ export type UsageRecord = {
   cost?: { total: number; pricing_model: string } | null;
   alias: string;
   reasoning_effort: string;
+  service_tier?: string;
+  response_service_tier?: string;
   endpoint: string;
   api_key_hash: string;
   api_key_display: string;
@@ -344,6 +346,7 @@ function UsageEventCell({
     case 'model': {
       const model = usageModelDetails(record.model, record.alias, record.response_model);
       const effort = record.reasoning_effort || 'auto';
+      const fast = ['priority', 'fast'].includes(record.service_tier?.trim().toLowerCase() ?? '');
       const modelTitle = [
         `${t('usage.model.request')}: ${model.requested}`,
         model.showResolved ? `${t('usage.model.upstream')}: ${model.resolved}` : '',
@@ -355,7 +358,10 @@ function UsageEventCell({
       return (
         <td className="usage-stacked-cell usage-td-model align-left" title={modelTitle}>
           <strong title={modelTitle}>{model.requested}</strong>
-          <small className="usage-model-effort" title={effort}>{effort}</small>
+          <span className="usage-model-badges">
+            <small className="usage-model-effort" title={effort}>{effort}</small>
+            {fast ? <small className="usage-model-fast" title={record.service_tier}>{t('usage.speedMode.fast')}</small> : null}
+          </span>
           {model.showResolved ? <small title={modelTitle}>{model.resolved}</small> : null}
           {model.mismatch ? (
             <small className="usage-response-model" title={modelTitle}>

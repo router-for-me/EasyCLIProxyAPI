@@ -264,7 +264,7 @@ body.table-col-resizing .usage-records-page .usage-request-log .usage-events-tab
   line-height: 1.4;
 }
 
-.usage-records-page .usage-request-log .usage-model-effort,
+.usage-records-page .usage-request-log .usage-model-badges > .usage-model-effort,
 .usage-records-page .usage-request-log .usage-access-type {
   width: fit-content;
   max-width: 100%;
@@ -277,6 +277,11 @@ body.table-col-resizing .usage-records-page .usage-request-log .usage-events-tab
   font-size: 11px;
   font-weight: 650;
   line-height: 1.45;
+}
+
+.usage-records-page .usage-request-log .usage-model-badges > .usage-model-effort,
+.usage-records-page .usage-request-log .usage-model-badges > .usage-model-fast {
+  margin: 0;
 }
 
 .usage-records-page .usage-request-log .usage-access-type {

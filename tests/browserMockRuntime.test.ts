@@ -19,6 +19,15 @@ describe('browser mock options', () => {
 });
 
 describe('browser mock runtime', () => {
+  test('offers fast and standard request samples in the first usage rows', async () => {
+    const runtime = createBrowserMockRuntime('running');
+    const page = await runtime.invoke('get_usage_events', { query: { page_size: 3 } }) as {
+      items: Array<{ reasoning_effort: string; service_tier: string }>;
+    };
+    expect(page.items.map(({ reasoning_effort, service_tier }) => [reasoning_effort, service_tier]))
+      .toEqual([['medium', 'priority'], ['medium', 'fast'], ['medium', 'default']]);
+  });
+
   test('empty scenario exposes empty credentials, providers and usage after installing the core', async () => {
     const runtime = createBrowserMockRuntime('empty');
     await runtime.invoke('install_bundled_core');

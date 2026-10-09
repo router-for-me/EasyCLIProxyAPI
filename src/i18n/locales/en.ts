@@ -814,6 +814,7 @@ export const en: Record<MessageKey, string> = {
   'usage.provider.hint': 'From usage API provider and auth_type: the route and authentication method, not a vendor inferred from the model name.',
   'usage.provider.unknownAccess': 'Access type unrecorded',
   'usage.column.effort': 'Reasoning Effort',
+  'usage.speedMode.fast': 'fast',
   'usage.column.request': 'Request',
   'usage.column.tokens': 'Token',
   'usage.column.provider': 'Provider',

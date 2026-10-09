@@ -55,9 +55,9 @@ const record = (id: string, model: string, alias: string, response_model?: strin
 
 // Keep these cases in a stable order; the browser test uses it to inspect each model cell.
 const records: UsageRecord[] = [
-  record('differing', 'gpt-6-astra', 'astra', 'gpt-5.6-luna'),
-  record('matching', 'gpt-6-sol', 'same-alias', 'gpt-6-sol'),
-  record('snapshot-prefix', 'openai/gpt-4o-latest', 'gpt4o', 'gpt-4o-2024-08-06'),
+  { ...record('differing', 'gpt-6-astra', 'astra', 'gpt-5.6-luna'), service_tier: 'priority' },
+  { ...record('matching', 'gpt-6-sol', 'same-alias', 'gpt-6-sol'), service_tier: 'fast' },
+  { ...record('snapshot-prefix', 'openai/gpt-4o-latest', 'gpt4o', 'gpt-4o-2024-08-06'), service_tier: 'default' },
   record('missing', 'gpt-4o', '', undefined),
   record('empty', 'empty-response-model', '', ''),
   record('whitespace', 'whitespace-response-model', '', '   '),

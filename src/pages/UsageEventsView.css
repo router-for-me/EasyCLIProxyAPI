@@ -169,16 +169,37 @@
   margin-top: 2px;
 }
 
-.usage-request-log .usage-events-table .usage-td-model > .usage-model-effort {
-  display: block;
+.usage-request-log .usage-events-table .usage-model-badges {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.usage-request-log .usage-events-table .usage-model-badges > .usage-model-effort {
+  display: inline-block;
   width: fit-content;
   max-width: 100%;
-  margin-top: 2px;
   overflow: hidden;
   color: var(--usage-log-muted);
   font-size: var(--font-size-caption);
   line-height: 1.4;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-request-log .usage-events-table .usage-model-badges > .usage-model-fast {
+  display: inline-block;
+  width: fit-content;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 32%, transparent);
+  border-radius: 999px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
   white-space: nowrap;
 }
 

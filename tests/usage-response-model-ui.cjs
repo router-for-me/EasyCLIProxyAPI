@@ -88,6 +88,19 @@ function parseCsv(text) {
 
     await open('zh-CN');
     assert.equal(await modelCells().count(), 9, 'Every fixture record renders a model cell');
+    assert.deepEqual(await page.locator('.usage-model-fast').allTextContents(), ['fast', 'fast'], 'Only priority and fast request tiers show a badge');
+    assert.equal(await modelCells().nth(2).locator('.usage-model-fast').count(), 0, 'Default request tier has no badge');
+    const badgePositions = await modelCells().first().locator('.usage-model-badges > small').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top));
+    assert.ok(Math.abs(badgePositions[0] - badgePositions[1]) < 2, 'Fast badge stays beside reasoning effort');
+    const badgeAlignment = await modelCells().first().evaluate(cell => {
+      const cellBounds = cell.getBoundingClientRect();
+      const badgesBounds = cell.querySelector('.usage-model-badges').getBoundingClientRect();
+      const badges = Array.from(cell.querySelectorAll('.usage-model-badges > small'));
+      const left = badges[0].getBoundingClientRect().left;
+      const right = badges.at(-1).getBoundingClientRect().right;
+      return { cellCenter: cellBounds.left + cellBounds.width / 2, badgesCenter: (left + right) / 2, containerCenter: badgesBounds.left + badgesBounds.width / 2 };
+    });
+    assert.ok(Math.abs(badgeAlignment.badgesCenter - badgeAlignment.cellCenter) < 2, 'The badge group is centered in the model cell');
     const zhDetails = await modelDetails();
     assert.equal(await page.locator('.usage-th-effort').count(), 1, 'Migration enables reasoning effort for existing layouts');
     assert.equal(await page.locator('.usage-td-request').first().textContent(), '/v1/responses');
