@@ -737,6 +737,76 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml
     )
 }
 
+pub(crate) fn assign_available_claude_desktop_aliases(
+    mappings: &mut ClaudeDesktopModelMappings,
+    models: &[AgentModelOption],
+    content: &str,
+) -> Result<(), String> {
+    let Some(entries) = mappings.desktop_models.as_mut() else {
+        return Ok(());
+    };
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let document = yaml_serde_edit::YamlValue::parse(content)
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
+    let sources = document
+        .get()
+        .as_mapping()
+        .cloned()
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+    let managed_aliases = managed_claude_desktop_aliases(&sources);
+    let mut planned = entries.clone();
+    for index in 0..planned.len() {
+        if !planned[index].has_mapping() {
+            continue;
+        }
+        let alias = planned[index].alias.trim().to_string();
+        if !claude_desktop_alias_conflicts(&sources, models, &alias, &managed_aliases) {
+            continue;
+        }
+        let suffixed = format!("{alias}-cc");
+        let occupied_by_sibling = planned.iter().enumerate().any(|(other_index, entry)| {
+            other_index != index && entry.model_id().eq_ignore_ascii_case(&suffixed)
+        });
+        if occupied_by_sibling
+            || !valid_claude_desktop_alias(&suffixed)
+            || claude_desktop_alias_conflicts(&sources, models, &suffixed, &managed_aliases)
+        {
+            return Err(format!(
+                "Alias {alias} is already used by another model. Choose a different alias"
+            ));
+        }
+        planned[index].alias = suffixed;
+    }
+    *entries = planned;
+    Ok(())
+}
+
+fn claude_desktop_alias_conflicts(
+    sources: &serde_norway::Mapping,
+    models: &[AgentModelOption],
+    alias: &str,
+    managed_aliases: &[String],
+) -> bool {
+    let occupied = configured_model_client_identity(sources, alias).is_some()
+        || models
+            .iter()
+            .any(|model| model.name.eq_ignore_ascii_case(alias));
+    let unmanaged_collision = claude_desktop_configured_models(sources)
+        .into_iter()
+        .any(|model| {
+            configured_model_identity(model).is_some_and(|(_, existing, _)| {
+                existing.eq_ignore_ascii_case(alias) && !is_managed_claude_model_alias(model, &existing)
+            })
+        });
+    unmanaged_collision
+        || (occupied
+            && !managed_aliases
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(alias)))
+}
+
 pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml(
     content: &str,
     mappings: &ClaudeDesktopModelMappings,
@@ -759,22 +829,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
             if !entry.has_mapping() {
                 continue;
             }
-            let occupied = configured_model_client_identity(&sources, &entry.alias).is_some()
-                || models
-                    .iter()
-                    .any(|model| model.name.eq_ignore_ascii_case(&entry.alias));
-            let unmanaged_collision = claude_desktop_configured_models(&sources)
-                .into_iter()
-                .any(|model| {
-                    configured_model_identity(model).is_some_and(|(_, alias, _)| {
-                        alias.eq_ignore_ascii_case(&entry.alias)
-                            && !is_managed_claude_model_alias(model, &alias)
-                    })
-                });
-            if unmanaged_collision
-                || (occupied && !managed_aliases.iter()
-                    .any(|alias| alias.eq_ignore_ascii_case(&entry.alias)))
-            {
+            if claude_desktop_alias_conflicts(&sources, models, &entry.alias, &managed_aliases) {
                 return Err(format!("Alias {} is already used by another model. Choose a different alias", entry.alias));
             }
         }

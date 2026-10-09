@@ -184,8 +184,8 @@ async fn check_claude_model_routes(legacy_marker: Option<&str>) {
         }]),
         ..ClaudeDesktopModelMappings::all("model-one")
     };
-    let profile = commit_agent_with_core(&gui, Some(&mappings), &desktop.models, || {
-        build_claude_desktop_profile(None, &core.origin, "isolated-client-key", "model-one", &desktop.models, Some(&mappings))
+    let profile = commit_agent_with_core(&gui, Some(mappings), &desktop.models, |mappings| {
+        build_claude_desktop_profile(None, &core.origin, "isolated-client-key", "model-one", &desktop.models, mappings)
     }).await.unwrap();
     let profile: serde_json::Value = serde_json::from_str(&profile).unwrap();
     assert_eq!(profile["inferenceModels"][0]["name"], "claude-sonnet-custom");

@@ -969,7 +969,7 @@ async fn desktop_update_and_template_preserve_core_access_and_rollback_failed_lo
                 }
                 let before = config_images(&paths).unwrap();
                 let core = MockCore::new(initial, Failure::None);
-                let result = commit_agent_with_core(&core.config, Some(&mappings), &models, || {
+                let result = commit_agent_with_core(&core.config, Some(mappings.clone()), &models, |mappings| {
                     if fail {
                         return Err("local write rejected".into());
                     }
@@ -984,7 +984,7 @@ async fn desktop_update_and_template_preserve_core_access_and_rollback_failed_lo
                             codex_catalog: None,
                             oauth_configuration: false,
                             claude_code_model_mappings: None,
-                            claude_desktop_model_mappings: Some(&mappings),
+                            claude_desktop_model_mappings: mappings,
                         })
                     } else {
                         apply_agent_configuration_with_oauth(
@@ -998,7 +998,7 @@ async fn desktop_update_and_template_preserve_core_access_and_rollback_failed_lo
                                 codex_catalog: None,
                                 oauth_configuration: false,
                                 claude_code_model_mappings: None,
-                                claude_desktop_model_mappings: Some(&mappings),
+                                claude_desktop_model_mappings: mappings,
                             },
                         )
                     }

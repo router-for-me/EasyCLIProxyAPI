@@ -166,6 +166,42 @@ fn desktop_custom_alias_edits_remove_old_managed_routes_and_preserve_user_routes
 }
 
 #[test]
+fn desktop_occupied_alias_gets_cc_suffix_before_it_is_routed() {
+    let input = "codex-api-key:\n  - models: [{name: gemini-3.8-flash-high}, {name: claude-opus-5}]\n";
+    let mut mappings = custom_mappings(&[("gemini-3.8-flash-high", "claude-opus-5")]);
+    assign_available_claude_desktop_aliases(&mut mappings, &[], input).unwrap();
+    assert_eq!(mappings.desktop_models.as_ref().unwrap()[0].alias, "claude-opus-5-cc");
+    let routed = json(&ensure_claude_desktop_model_aliases_in_yaml(input, &mappings, &[]).unwrap());
+    assert!(routed["codex-api-key"][0]["models"].as_array().unwrap().iter().any(|entry| {
+        entry["name"] == "gemini-3.8-flash-high" && entry["alias"] == "claude-opus-5-cc"
+    }));
+    let profile: serde_json::Value = serde_json::from_str(&build_claude_desktop_profile(
+        None, "http://localhost:8317", "key", "gemini-3.8-flash-high", &[], Some(&mappings),
+    ).unwrap()).unwrap();
+    assert_eq!(profile["inferenceModels"][0]["name"], "claude-opus-5-cc");
+
+    let listed = "codex-api-key:\n  - models: [{name: gemini-3.8-flash-high}]\n";
+    let mut listed_mappings = custom_mappings(&[("gemini-3.8-flash-high", "claude-fable-5")]);
+    assign_available_claude_desktop_aliases(
+        &mut listed_mappings,
+        &test_agent_models(&["gemini-3.8-flash-high", "claude-fable-5"]),
+        listed,
+    ).unwrap();
+    assert_eq!(listed_mappings.desktop_models.as_ref().unwrap()[0].alias, "claude-fable-5-cc");
+
+    let managed = "codex-api-key:\n  - models:\n      - name: gemini-3.8-flash-high\n      - name: gemini-3.8-flash-high\n        alias: claude-fable-5\n        display-name: EasyCLIProxyAPI managed Claude Desktop mapping\n";
+    let mut managed_mappings = custom_mappings(&[("gemini-3.8-flash-high", "claude-fable-5")]);
+    assign_available_claude_desktop_aliases(&mut managed_mappings, &[], managed).unwrap();
+    assert_eq!(managed_mappings.desktop_models.as_ref().unwrap()[0].alias, "claude-fable-5");
+
+    let blocked = "codex-api-key:\n  - models: [{name: claude-opus-5}, {name: claude-opus-5-cc}, {name: gemini-3.8-flash-high}]\n";
+    let mut blocked_mappings = custom_mappings(&[("gemini-3.8-flash-high", "claude-opus-5")]);
+    assert!(assign_available_claude_desktop_aliases(&mut blocked_mappings, &[], blocked)
+        .unwrap_err()
+        .contains("already used by another model"));
+}
+
+#[test]
 fn desktop_custom_mapping_validates_aliases_and_accepts_one_model() {
     let models = test_agent_models(&["gpt-one"]);
     let resolved = resolve_claude_desktop_model_mappings(AgentClient::ClaudeDesktop, &models, "gpt-one",

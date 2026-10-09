@@ -61,7 +61,7 @@ import {
 } from '../services/deepSeekHarnessLaunch';
 import type { ModelOption } from '../services/modelService';
 import { AgentModelPicker } from '../components/AgentModelPicker';
-import { claudeDesktopAliasSuggestions, claudeDesktopDefaultAliases, createDefaultDesktopModels, desktopAliasNotice, desktopEntryValidation, desktopModelEntries, desktopModelId, desktopModelValidation, isClaudeDesktopModel, selectedDesktopModelEntries, type ClaudeDesktopModelMapping } from '../services/claudeDesktopModels';
+import { claudeDesktopAliasSuggestions, claudeDesktopDefaultAliases, createDefaultDesktopModels, desktopAliasNotice, desktopEntryValidation, desktopModelEntries, desktopModelId, desktopModelValidation, isClaudeDesktopModel, selectedDesktopModelEntries, suffixCollidingDesktopAliases, type ClaudeDesktopModelMapping } from '../services/claudeDesktopModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
@@ -857,7 +857,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const desktopEntries = claudeModelMappingsDraft.desktopModels ?? desktopModelEntries(claudeModelMappingsDraft);
   const appliedDesktopEntries = activeStatus?.claudeDesktopModelMappings
     ? desktopModelEntries(activeStatus.claudeDesktopModelMappings) : [];
-  const desktopValidation = desktopModelValidation(desktopEntries, models, appliedDesktopEntries);
+  const resolvedDesktopEntries = suffixCollidingDesktopAliases(desktopEntries, models, appliedDesktopEntries);
+  const desktopValidation = desktopModelValidation(resolvedDesktopEntries, models, appliedDesktopEntries);
 
   const loadPiProviderUpdateStatus = useCallback(async () => {
     const requestId = piUpdateRequestRef.current + 1;
@@ -1173,7 +1174,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         setModelSelectionError(t(`agents.claudeDesktopMapping.error.${desktopValidation}`));
         return null;
       }
-      const selectedEntries = selectedDesktopModelEntries(desktopEntries);
+      const selectedEntries = selectedDesktopModelEntries(resolvedDesktopEntries);
       return { ...createClaudeModelMappings(), sonnet: selectedEntries[0].model.trim(),
         desktopModels: selectedEntries.map((entry) => ({ ...entry, model: entry.model.trim(), alias: entry.alias.trim() })) };
     }
@@ -1750,9 +1751,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       </div>
       {!desktopEntries.length ? <p className="agent-model-hint">{t('agents.claudeDesktopMapping.empty')}</p> : null}
       <div className="agent-desktop-model-list">
-        {desktopEntries.map((entry, index) => {
+        {resolvedDesktopEntries.map((entry, index) => {
           const entryError = entry.model.trim() ? desktopEntryValidation(entry) : null;
-          const aliasNotice = desktopAliasNotice(entry, desktopEntries, models, appliedDesktopEntries);
+          const aliasNotice = desktopAliasNotice(entry, resolvedDesktopEntries, models, appliedDesktopEntries);
+          const aliasSuffixed = desktopEntries[index].alias.trim().toLowerCase() !== entry.alias.trim().toLowerCase();
           const isClaude = isClaudeDesktopModel(entry.model);
           return (
           <div className="agent-claude-desktop-mapping-row agent-desktop-model-row" key={index}>
@@ -1767,7 +1769,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               <div className="agent-desktop-model-field">
                 <span>{t('agents.claudeDesktopMapping.alias')}</span>
                 <AgentModelPicker
-                  models={claudeDesktopAliasSuggestions.filter((alias) => !desktopEntries.some((other, i) => i !== index && other.model.trim() && desktopModelId(other).toLowerCase() === alias))
+                  models={claudeDesktopAliasSuggestions.filter((alias) => !resolvedDesktopEntries.some((other, i) => i !== index && other.model.trim() && desktopModelId(other).toLowerCase() === alias))
                     .map((name) => ({ name, alias: t('agents.claudeDesktopMapping.suggestedAlias') }))}
                   value={entry.alias} loading={false} error="" disabled={busy || loading}
                   editable={{ label: t('agents.claudeDesktopMapping.alias'),
@@ -1788,7 +1790,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </button>
               </div>
             </div>
-            {entryError && hasPendingChanges && !modelLoading
+            {aliasSuffixed
+              ? <p className="agent-desktop-model-notice" role="status">{t('agents.claudeDesktopMapping.aliasSuffixed', { alias: entry.alias.trim() })}</p>
+              : entryError && hasPendingChanges && !modelLoading
               ? <p className="agent-inline-message warning agent-desktop-model-notice" role="status">{t(`agents.claudeDesktopMapping.error.${entryError}`)}</p>
               : aliasNotice === 'aliasExists'
                 ? <p className="agent-inline-message warning agent-desktop-model-notice" role="status">{t(

@@ -61,6 +61,24 @@ export function desktopAliasNotice(
   return null;
 }
 
+export function suffixCollidingDesktopAliases(
+  entries: ClaudeDesktopModelMapping[],
+  models: ModelOption[],
+  appliedEntries: ClaudeDesktopModelMapping[] = [],
+) {
+  return entries.map((entry, index) => {
+    const alias = entry.alias.trim();
+    if (!alias || desktopAliasNotice(entry, entries, models, appliedEntries) !== 'aliasExists') return entry;
+    const suffixed = `${alias}-cc`;
+    if (!validClaudeDesktopAlias(suffixed)) return entry;
+    const candidate = { ...entry, alias: suffixed };
+    const nextEntries = entries.map((item, itemIndex) => itemIndex === index ? candidate : item);
+    if (desktopAliasNotice(candidate, nextEntries, models, appliedEntries) === 'aliasExists') return entry;
+    if (entries.some((other, otherIndex) => otherIndex !== index && modelKey(desktopModelId(other)) === modelKey(suffixed))) return entry;
+    return candidate;
+  });
+}
+
 export function desktopModelEntries(mappings: AgentModelMappings): ClaudeDesktopModelMapping[] {
   if (mappings.desktopModels) return mappings.desktopModels.map((entry) => {
     const model = entry.model.trim() || entry.alias.trim();

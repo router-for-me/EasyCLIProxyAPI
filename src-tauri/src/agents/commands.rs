@@ -1177,7 +1177,7 @@ pub(crate) async fn apply_agent_config(
         &model,
         claude_desktop_model_mappings,
     )?;
-    commit_agent_with_core(&config, claude_desktop_model_mappings.as_ref(), &prepared.models, || {
+    commit_agent_with_core(&config, claude_desktop_model_mappings, &prepared.models, |claude_desktop_model_mappings| {
         let _guard = AGENT_CONFIG_FILE_LOCK
             .lock()
             .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
@@ -1192,7 +1192,7 @@ pub(crate) async fn apply_agent_config(
                 codex_catalog: prepared.codex_catalog.as_deref(),
                 oauth_configuration,
                 claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-                claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+                claude_desktop_model_mappings,
             },
         )
     }).await
@@ -1248,7 +1248,7 @@ pub(crate) async fn set_agent_config_enabled(
             &model,
             claude_desktop_model_mappings,
         )?;
-        commit_agent_with_core(&config, claude_desktop_model_mappings.as_ref(), &prepared.models, || {
+        commit_agent_with_core(&config, claude_desktop_model_mappings, &prepared.models, |claude_desktop_model_mappings| {
             let _guard = AGENT_CONFIG_FILE_LOCK
                 .lock()
                 .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
@@ -1268,7 +1268,7 @@ pub(crate) async fn set_agent_config_enabled(
                     codex_catalog: prepared.codex_catalog.as_deref(),
                     oauth_configuration,
                     claude_code_model_mappings: claude_code_model_mappings.as_ref(),
-                    claude_desktop_model_mappings: claude_desktop_model_mappings.as_ref(),
+                    claude_desktop_model_mappings,
                 },
             )
         }).await

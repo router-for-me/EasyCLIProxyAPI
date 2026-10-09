@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { claudeDesktopAliasSuggestions, createDefaultDesktopModels, desktopAliasNotice, desktopModelEntries, desktopModelValidation, isClaudeDesktopModel, selectedDesktopModelEntries, validClaudeDesktopAlias } from '../src/services/claudeDesktopModels';
+import { claudeDesktopAliasSuggestions, createDefaultDesktopModels, desktopAliasNotice, desktopModelEntries, desktopModelValidation, isClaudeDesktopModel, selectedDesktopModelEntries, suffixCollidingDesktopAliases, validClaudeDesktopAlias } from '../src/services/claudeDesktopModels';
 import { sameAgentModelMappings } from '../src/services/agentConfigurationDraft';
 
 const legacy = { opus: 'gpt-one', sonnet: 'gpt-two', haiku: 'claude-haiku-4-5', opus1m: true };
@@ -89,6 +89,16 @@ describe('Claude Desktop custom models', () => {
     expect(desktopModelValidation([renamed], available)).toBe('aliasExists');
     expect(desktopAliasNotice(renamed, [renamed, { ...direct, alias: 'claude-haiku-4-5' }], models)).toBe('aliasExists');
     expect(desktopAliasNotice(renamed, [renamed], [{ name: 'claude-opus-5', isAlias: true }])).toBe('aliasExists');
+  });
+
+  test('adds -cc when an alias is already taken and leaves a free or owned alias unchanged', () => {
+    const occupied = { ...entry, alias: 'claude-opus-5' };
+    const modelsWithOpus = [...models, { name: 'claude-opus-5' }];
+    expect(suffixCollidingDesktopAliases([occupied], modelsWithOpus)).toEqual([{ ...occupied, alias: 'claude-opus-5-cc' }]);
+    expect(desktopModelValidation(suffixCollidingDesktopAliases([occupied], modelsWithOpus), modelsWithOpus)).toBeNull();
+    expect(suffixCollidingDesktopAliases([occupied], [{ name: 'claude-opus-5', isAlias: true }], [occupied])).toEqual([occupied]);
+    expect(suffixCollidingDesktopAliases([occupied], [...modelsWithOpus, { name: 'claude-opus-5-cc' }])).toEqual([occupied]);
+    expect(suffixCollidingDesktopAliases([entry], models)).toEqual([entry]);
   });
 
   test('allows existing Desktop aliases but still warns about unrelated aliases or real models', () => {
