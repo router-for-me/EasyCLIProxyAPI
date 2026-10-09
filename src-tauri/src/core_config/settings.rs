@@ -122,16 +122,31 @@ pub(crate) fn ensure_strong_management_secret(config: &mut GuiConfigFile) -> Res
     Ok(true)
 }
 
-// An empty template or a hashed kernel value cannot supply a request credential.
-// Preserve a saved plaintext key (including an explicitly disabled API) before
-// falling back, so the shared GUI state and the next kernel config use one key.
-pub(crate) fn recover_management_secret(imported: &str, saved: Option<&str>) -> String {
+// A hashed kernel value cannot supply a request credential. If the GUI saved
+// an empty key while the kernel still has an enabled key, recover both sides
+// to the same usable credential. A disabled kernel stays disabled.
+pub(crate) fn recover_management_secret(
+    imported: &str,
+    saved: Option<&str>,
+    kernel_key: Option<&str>,
+) -> String {
     if validate_strong_management_secret_key(imported).is_ok() {
         return imported.trim().to_string();
     }
     if let Some(saved) = saved {
-        if saved.is_empty() || validate_strong_management_secret_key(saved).is_ok() {
+        if validate_strong_management_secret_key(saved).is_ok() {
             return saved.trim().to_string();
+        }
+        if saved.is_empty() {
+            if let Some(kernel_key) = kernel_key {
+                if validate_strong_management_secret_key(kernel_key).is_ok() {
+                    return kernel_key.trim().to_string();
+                }
+                if is_hashed_management_secret_key(kernel_key) {
+                    return LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
+                }
+            }
+            return String::new();
         }
     }
     LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string()
@@ -1551,9 +1566,17 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         presence.proxy_override.is_some(),
     );
     config.prefer_gitcode_downloads = config.download_source == VersionDownloadSource::Gitcode;
+    let installed_management_secret = if saved_management_secret == Some("") {
+        read_installed_core_config_settings()
+            .ok()
+            .and_then(|settings| settings.management_secret_key)
+    } else {
+        None
+    };
     let recovered_secret = recover_management_secret(
         &config.management_secret_key,
         saved_management_secret,
+        installed_management_secret.as_deref(),
     );
     let management_secret_rotated = recovered_secret != config.management_secret_key;
     config.management_secret_key = recovered_secret;

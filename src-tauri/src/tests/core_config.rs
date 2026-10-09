@@ -163,18 +163,21 @@ fn management_secret_rotation_preserves_disabled_and_custom_values() {
 #[test]
 fn management_secret_recovery_synchronizes_kernel_and_request_credentials() {
     let hash = "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuu";
-    for (imported, saved, expected) in [
-        ("", None, "123456"),
-        (hash, None, "123456"),
-        (hash, Some(hash), "123456"),
-        ("bad\nkey", None, "123456"),
-        (hash, Some("known-secret"), "known-secret"),
-        ("", Some("known-secret"), "known-secret"),
-        ("", Some(""), ""),
-        ("new-secret", Some("old-secret"), "new-secret"),
+    for (imported, saved, kernel_key, expected) in [
+        ("", None, None, "123456"),
+        (hash, None, None, "123456"),
+        (hash, Some(hash), None, "123456"),
+        ("bad\nkey", None, None, "123456"),
+        (hash, Some("known-secret"), None, "known-secret"),
+        ("", Some("known-secret"), None, "known-secret"),
+        ("", Some(""), None, ""),
+        ("", Some(""), Some(""), ""),
+        ("", Some(""), Some(hash), "123456"),
+        ("", Some(""), Some("kernel-secret"), "kernel-secret"),
+        ("new-secret", Some("old-secret"), Some(hash), "new-secret"),
     ] {
         let config = GuiConfigFile {
-            management_secret_key: recover_management_secret(imported, saved),
+            management_secret_key: recover_management_secret(imported, saved, kernel_key),
             ..GuiConfigFile::default()
         };
         assert_eq!(config.management_secret_key, expected);
