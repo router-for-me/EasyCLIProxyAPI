@@ -155,6 +155,7 @@ function createTimeline() {
 
 function createUsageEvents() {
   const models = ['gpt-5.2-codex', 'claude-sonnet-4-6', 'gemini-3-pro'];
+  const longError = 'Mock upstream rate limit exceeded: this preview account reached its per-minute request allowance while several parallel jobs were active. The proxy retried the request three times, but every attempt received HTTP 429. Retry after 45 seconds or reduce the number of concurrent requests. If this keeps happening, check the provider quota and the client retry policy. Diagnostic context: route=/v1/responses, attempt=3/3, window=60s, trace=preview_long_error_0123456789abcdefghijklmnopqrstuvwxyz_0123456789abcdefghijklmnopqrstuvwxyz.';
   return Array.from({ length: 18 }, (_, index) => {
     const failed = index === 5 || index === 13;
     const input = 1_200 + index * 137;
@@ -172,7 +173,7 @@ function createUsageEvents() {
       failed,
       canceled: index === 9,
       failure_status: failed ? 429 : 0,
-      failure_body: failed ? 'Mock rate limit exceeded' : '',
+      failure_body: index === 5 ? longError : failed ? 'Mock rate limit exceeded' : '',
       provider: index % 2 === 0 ? 'openai-oauth' : 'claude-oauth',
       model: models[index % models.length],
       alias: '',

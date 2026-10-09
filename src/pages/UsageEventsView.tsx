@@ -1,5 +1,5 @@
 import { usagePreferences } from '../services/usagePreferences';
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { ArrowDown, ArrowUp, Brain, ChevronLeft, ChevronRight, Columns3, Database, DatabaseZap, Download, RotateCcw, TriangleAlert, X } from 'lucide-react';
@@ -300,15 +300,20 @@ function TableTopScrollbar({
   );
 }
 
-function UsageResultCell({ record }: { record: UsageRecord }) {
-  const { t } = useI18n();
+function usageResultDetail(record: UsageRecord) {
   const state = record.canceled ? 'canceled' : record.failed ? 'failed' : 'success';
-  const detail = [
+  return [
     record.failure_status > 0 && (state !== 'success' || record.failure_status >= 400) ? `HTTP ${record.failure_status}` : '',
     record.failure_body.trim(),
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+function UsageResultCell({ record }: { record: UsageRecord }) {
+  const { t } = useI18n();
+  const state = record.canceled ? 'canceled' : record.failed ? 'failed' : 'success';
+  const detail = usageResultDetail(record);
   return (
     <td className="usage-result-cell align-left" title={detail || t(`usage.result.${state}`)}>
       <span className={`usage-result ${state}`}>
@@ -756,19 +761,29 @@ export function EventsView({
                 const showDate = index === 0
                   || !previousRecord
                   || formatEventDate(previousRecord.timestamp) !== formatEventDate(record.timestamp);
+                const detail = usageResultDetail(record);
                 return (
-                  <tr key={record.row_id}>
-                    {visibleColumns.map((column) => (
-                      <UsageEventCell
-                        key={column.key}
-                        record={record}
-                        columnKey={column.key}
-                        noRemarkLabel={noRemarkLabel}
-                        showDate={showDate}
-                        compact={isCompactDefault}
-                      />
-                    ))}
-                  </tr>
+                  <Fragment key={record.row_id}>
+                    <tr>
+                      {visibleColumns.map((column) => (
+                        <UsageEventCell
+                          key={column.key}
+                          record={record}
+                          columnKey={column.key}
+                          noRemarkLabel={noRemarkLabel}
+                          showDate={showDate}
+                          compact={isCompactDefault}
+                        />
+                      ))}
+                    </tr>
+                    {!collapseErrors && detail ? (
+                      <tr className="usage-event-error-row">
+                        <td colSpan={visibleColumns.length}>
+                          <div className="usage-event-error-message">{detail}</div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 );
               })}
             </tbody>

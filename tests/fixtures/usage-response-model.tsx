@@ -58,7 +58,7 @@ const records: UsageRecord[] = [
   { ...record('differing', 'gpt-6-astra', 'astra', 'gpt-5.6-luna'), service_tier: 'priority' },
   { ...record('matching', 'gpt-6-sol', 'same-alias', 'gpt-6-sol'), service_tier: 'fast' },
   { ...record('snapshot-prefix', 'openai/gpt-4o-latest', 'gpt4o', 'gpt-4o-2024-08-06'), service_tier: 'default' },
-  record('missing', 'gpt-4o', '', undefined),
+  { ...record('missing', 'gpt-4o', '', undefined), failed: true, failure_status: 429, failure_body: 'Mock rate limit exceeded' },
   record('empty', 'empty-response-model', '', ''),
   record('whitespace', 'whitespace-response-model', '', '   '),
   record('long', `model-${'x'.repeat(120)}`, `alias-${'a'.repeat(120)}`, `response-${'r'.repeat(120)}`),

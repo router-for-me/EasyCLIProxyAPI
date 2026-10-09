@@ -28,6 +28,14 @@ describe('browser mock runtime', () => {
       .toEqual([['medium', 'priority'], ['medium', 'fast'], ['medium', 'default']]);
   });
 
+  test('offers a long failed request for the expanded error preview', async () => {
+    const page = await createBrowserMockRuntime('running').invoke('get_usage_events', { query: { page_size: 6 } }) as {
+      items: Array<{ failed: boolean; failure_body: string }>;
+    };
+    expect(page.items[5].failed).toBe(true);
+    expect(page.items[5].failure_body.length).toBeGreaterThan(300);
+  });
+
   test('empty scenario exposes empty credentials, providers and usage after installing the core', async () => {
     const runtime = createBrowserMockRuntime('empty');
     await runtime.invoke('install_bundled_core');

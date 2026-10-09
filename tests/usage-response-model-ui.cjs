@@ -101,6 +101,14 @@ function parseCsv(text) {
       return { cellCenter: cellBounds.left + cellBounds.width / 2, badgesCenter: (left + right) / 2, containerCenter: badgesBounds.left + badgesBounds.width / 2 };
     });
     assert.ok(Math.abs(badgeAlignment.badgesCenter - badgeAlignment.cellCenter) < 2, 'The badge group is centered in the model cell');
+    const resultAlignment = await page.locator('.usage-result-cell').evaluateAll(cells => cells.slice(0, 4).map(cell => {
+      const cellBounds = cell.getBoundingClientRect();
+      const badgeBounds = cell.querySelector('.usage-result').getBoundingClientRect();
+      return { cellCenter: cellBounds.left + cellBounds.width / 2, badgeCenter: badgeBounds.left + badgeBounds.width / 2 };
+    }));
+    assert.equal(await page.locator('.usage-result-cell').nth(3).locator('.usage-result').getAttribute('class'), 'usage-result failed');
+    assert.ok(resultAlignment.every(({ cellCenter, badgeCenter }) => Math.abs(cellCenter - badgeCenter) < 2), 'Success and failed badges share the result column center');
+    assert.equal(await page.locator('.usage-result-detail').first().evaluate(element => getComputedStyle(element).textAlign), 'left', 'Error detail keeps its original alignment');
     const zhDetails = await modelDetails();
     assert.equal(await page.locator('.usage-th-effort').count(), 1, 'Migration enables reasoning effort for existing layouts');
     assert.equal(await page.locator('.usage-td-request').first().textContent(), '/v1/responses');

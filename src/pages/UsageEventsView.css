@@ -357,14 +357,6 @@
   color: var(--usage-log-muted);
 }
 
-.usage-request-log .usage-result-cell:has(.usage-result-detail) {
-  text-align: left;
-}
-
-.usage-request-log .usage-result-cell:has(.usage-result-detail) .usage-result {
-  margin-inline: 0;
-}
-
 .usage-request-log .usage-result-cell > small {
   display: block;
   max-width: 100%;
@@ -380,8 +372,25 @@
 }
 
 .usage-request-log.usage-events-errors-expanded .usage-result-cell > .usage-result-detail {
-  overflow: visible;
-  text-overflow: clip;
+  display: none;
+}
+
+.usage-request-log .usage-event-error-message {
+  position: sticky;
+  left: 16px;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: min(100%, 760px);
+  margin-inline: auto;
+  padding: 8px 12px;
+  border-left: 3px solid var(--failure-badge-text);
+  border-radius: 6px;
+  background: var(--failure-badge-bg);
+  color: var(--usage-log-text);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  text-align: left;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

@@ -224,6 +224,13 @@
   box-shadow: inset 0 -1px 0 var(--usage-log-line);
 }
 
+.usage-records-page .usage-request-log .usage-events-table .usage-event-error-row > td {
+  height: auto;
+  min-height: 0;
+  padding: 0 16px 12px;
+  text-align: left;
+}
+
 body.table-col-resizing .usage-records-page .usage-request-log .usage-events-table tbody tr {
   pointer-events: none;
 }
@@ -286,14 +293,6 @@ body.table-col-resizing .usage-records-page .usage-request-log .usage-events-tab
 
 .usage-records-page .usage-request-log .usage-access-type {
   margin-top: 4px;
-}
-
-.usage-records-page .usage-request-log .usage-events-table td.usage-result-cell:has(.usage-result-detail) {
-  text-align: left;
-}
-
-.usage-records-page .usage-request-log .usage-result-cell:has(.usage-result-detail) .usage-result {
-  margin-inline: 0;
 }
 
 .usage-records-page .usage-request-log .usage-result {
