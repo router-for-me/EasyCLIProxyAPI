@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { UsagePreferences } from '../src/services/usagePreferences';
-import { getInitialVisibleColumns, getInitialColumnWidths } from '../src/pages/UsageEventsView';
+import { getInitialVisibleColumns, getInitialColumnWidths, getInitialCollapseErrors } from '../src/pages/UsageEventsView';
 
 const pageSize = 'cpa-gui.usage-events-page-size.v1';
 const columns = 'cpa-gui.usage-events-visible-cols.v6';
@@ -34,6 +34,9 @@ describe('usage preferences across updates', () => {
       expect(getInitialVisibleColumns()).toEqual(['provider', 'model']);
       browser.setItem('cpa-gui.usage-events-visible-cols.v3', '["source","model"]');
       expect(getInitialVisibleColumns()).toEqual(['provider', 'model']);
+      expect(getInitialCollapseErrors()).toBe(true);
+      browser.setItem('cpa-gui.usage-events-collapse-errors.v1', '0');
+      expect(getInitialCollapseErrors()).toBe(false);
     } finally {
       if (original) Object.defineProperty(globalThis, 'localStorage', original);
       else Reflect.deleteProperty(globalThis, 'localStorage');

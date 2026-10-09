@@ -358,6 +358,13 @@
   font-family: var(--font-family-mono);
 }
 
+.usage-request-log.usage-events-errors-expanded .usage-result-cell > .usage-result-detail {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .usage-request-log .usage-col-resizer::after {
   height: 50%;
   background: var(--usage-log-line);

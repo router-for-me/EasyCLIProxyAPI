@@ -210,6 +210,11 @@
   border-radius: 0 14px 14px 0;
 }
 
+.usage-records-page .usage-request-log.usage-events-errors-expanded .usage-events-table td {
+  height: auto;
+  min-height: 78px;
+}
+
 .usage-records-page .usage-request-log .usage-events-table td {
   height: 78px;
   padding: 14px 16px;

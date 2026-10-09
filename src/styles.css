@@ -9632,6 +9632,35 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+.usage-error-collapse-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--theme-e3e1db);
+  border-radius: 8px;
+  background: var(--theme-fffdf8);
+}
+
+.usage-error-collapse-setting > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.usage-error-collapse-setting strong {
+  color: var(--theme-2d2a26);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-semibold);
+}
+
+.usage-error-collapse-setting small {
+  color: var(--theme-7a746c);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+
 .usage-column-options {
   display: grid;
   min-height: 0;

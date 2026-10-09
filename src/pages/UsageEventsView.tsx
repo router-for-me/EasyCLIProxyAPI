@@ -116,6 +116,7 @@ const EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v4';
 const LEGACY_EVENT_COL_WIDTHS_STORAGE_KEY = 'cpa-gui.usage-events-col-widths.v3';
 const EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v6';
 const LEGACY_EVENT_VISIBLE_COLS_STORAGE_KEY = 'cpa-gui.usage-events-visible-cols.v5';
+const EVENT_COLLAPSE_ERRORS_KEY = 'cpa-gui.usage-events-collapse-errors.v1';
 const getAllEventColumnKeys = () => EVENT_COLUMNS.map((column) => column.key);
 
 export const getInitialVisibleColumns = (): EventColumnKey[] => {
@@ -146,6 +147,15 @@ export const getInitialVisibleColumns = (): EventColumnKey[] => {
   } catch {
   }
   return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
+};
+
+export const getInitialCollapseErrors = (): boolean => {
+  try {
+    const raw = usagePreferences.getItem(EVENT_COLLAPSE_ERRORS_KEY);
+    if (raw === '0' || raw === 'false') return false;
+  } catch {
+  }
+  return true;
 };
 
 export const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
@@ -477,6 +487,8 @@ export function EventsView({
   const widthsRef = useRef(widths);
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<EventColumnKey[]>(getInitialVisibleColumns);
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
+  const [collapseErrors, setCollapseErrors] = useState(getInitialCollapseErrors);
+  const [draftCollapseErrors, setDraftCollapseErrors] = useState(collapseErrors);
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -514,6 +526,7 @@ export function EventsView({
 
   const openColumnSettings = () => {
     setDraftVisibleColumnKeys(visibleColumnKeys);
+    setDraftCollapseErrors(collapseErrors);
     setColumnSettingsOpen(true);
   };
 
@@ -534,7 +547,9 @@ export function EventsView({
     setVisibleColumnKeys(next);
     try {
       usagePreferences.setItem(EVENT_VISIBLE_COLS_STORAGE_KEY, JSON.stringify(next));
+      usagePreferences.setItem(EVENT_COLLAPSE_ERRORS_KEY, draftCollapseErrors ? '1' : '0');
     } catch {}
+    setCollapseErrors(draftCollapseErrors);
     setColumnSettingsOpen(false);
   };
 
@@ -685,7 +700,7 @@ export function EventsView({
   };
 
   return (
-    <section className={`panel usage-events-panel usage-request-log${isCompactDefault ? ' usage-events-compact' : ''}`} aria-label={t('usage.events.title')} aria-busy={loading}>
+    <section className={`panel usage-events-panel usage-request-log${isCompactDefault ? ' usage-events-compact' : ''}${collapseErrors ? '' : ' usage-events-errors-expanded'}`} aria-label={t('usage.events.title')} aria-busy={loading}>
       {loading && events.items.length === 0 ? <div className="usage-empty" role="status"><Database size={20} aria-hidden="true" /><span>{t('usage.loading')}</span></div> : events.items.length ? (
         <div ref={tableWrapRef} className="usage-table-wrap" tabIndex={0} role="region" aria-label={t('usage.events.title')}>
           <table
@@ -840,6 +855,22 @@ export function EventsView({
             <p className="usage-column-dialog-description">
               {t('usage.events.columnSettingsDescription')}
             </p>
+            <label className="usage-error-collapse-setting">
+              <span>
+                <strong>{t('usage.events.collapseErrors')}</strong>
+                <small>{t('usage.events.collapseErrorsHint')}</small>
+              </span>
+              <span className="switch-control">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={draftCollapseErrors}
+                  aria-label={t('usage.events.collapseErrors')}
+                  onChange={(event) => setDraftCollapseErrors(event.currentTarget.checked)}
+                />
+                <span className="switch-track" aria-hidden="true" />
+              </span>
+            </label>
             <div className="usage-column-options">
               {EVENT_COLUMNS.map((column) => {
                 const checked = draftVisibleColumnKeys.includes(column.key);
