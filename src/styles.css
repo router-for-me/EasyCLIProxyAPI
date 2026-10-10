@@ -3707,7 +3707,9 @@ textarea:focus-visible {
 }
 
 
-.oauth-card {
+.oauth-card,
+.vertex-login-card,
+.plugin-oauth-card {
   display: grid;
   grid-template-rows: auto auto auto;
   gap: 12px;
@@ -11967,7 +11969,9 @@ body.table-col-resizing * {
     text-align: left;
   }
 
-  .oauth-card {
+  .oauth-card,
+  .vertex-login-card,
+  .plugin-oauth-card {
     grid-template-rows: auto auto auto;
     min-height: 0;
   }
@@ -11983,6 +11987,8 @@ body.table-col-resizing * {
   }
 
   .oauth-card-body,
+  .vertex-login-card-body,
+  .plugin-oauth-card-body,
   .oauth-callback-row {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
