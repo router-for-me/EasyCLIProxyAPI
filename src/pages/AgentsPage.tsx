@@ -70,6 +70,7 @@ import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
 import { AgentClientList } from './AgentClientList';
 import { AgentConfigManagementPanel, AgentConfigurationFeedback, AgentRunControls } from './AgentControls';
 import { useDialogFocusTrap } from '../components/useDialogFocusTrap';
+import { requestAppNavigation } from '../navigation';
 
 type AgentClientId =
   | 'claude-code'
@@ -577,7 +578,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       return next;
     });
   };
-  const setActiveSubpage = (subpage: AgentSubpageId) => updateViewState({ subpage });
+  const setActiveSubpage = (subpage: AgentSubpageId) => {
+    if (subpage !== activeSubpage) requestAppNavigation(() => updateViewState({ subpage }));
+  };
   const { connectionHelpOpen, configurationError, configurationNotice, clearNotice, launchError } = viewState;
   const setConfigurationError = (configurationError: string) => updateViewState({ configurationError });
   const setConfigurationNotice = (configurationNotice: string) => updateViewState({ configurationNotice });
@@ -1845,7 +1848,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             detected: Boolean(status && (status.installed || status.configExists || status.configured
               || (agent.id === 'pi' && status.pluginInstalled))),
           };
-        })} selected={selected} onSelect={setSelected} onRefresh={() => void refresh()}
+        })} selected={selected} onSelect={(client) => {
+          if (client !== selected) requestAppNavigation(() => setSelected(client));
+        }} onRefresh={() => void refresh()}
           loading={loading} busy={busy} error={detectionError} onDismissError={() => setDetectionError('')} />
 
         <section className="panel agent-config-panel">
