@@ -67,7 +67,7 @@ describe('智能体模型选择器', () => {
     expect(findAgentModel(models, 'gpt-5.2-codex')?.name).toBe('gpt-5.2-codex');
   });
 
-  test('Claude 映射关闭时不显示已有别名的原模型，开启时只显示别名', () => {
+  test('Claude 映射关闭时保留所有原模型，开启时只显示别名', () => {
     const mixedModels = [
       { name: 'gpt-original', alias: 'GPT Original', isAlias: false },
       { name: 'gpt-high', alias: 'gpt-original', isAlias: true },
@@ -76,26 +76,73 @@ describe('智能体模型选择器', () => {
     ];
 
     expect(filterAgentModelsByAlias(mixedModels, false).map((model) => model.name))
-      .toEqual(['claude-original']);
+      .toEqual(['gpt-original', 'claude-original']);
     expect(filterAgentModelsByAlias(mixedModels, true).map((model) => model.name))
       .toEqual(['gpt-high', 'GPT-FAST']);
     expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-original', true)).toBe('gpt-high');
-    expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-original', false)).toBe('claude-original');
-    expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-high', false)).toBe('claude-original');
+    expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-original', false)).toBe('gpt-original');
+    expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-high', false)).toBe('gpt-original');
     expect(resolveAgentModelForAliasMode(mixedModels, 'claude-original', true)).toBe('gpt-high');
     expect(resolveAgentModelForAliasMode([], 'gpt-original', true)).toBe('');
     expect(filterAgentModelsByAlias([
       { name: 'gpt-original', isAlias: false },
       { name: 'gpt-high', alias: 'gpt-original', isAlias: true },
-    ], false)).toEqual([]);
+    ], false)).toEqual([{ name: 'gpt-original', isAlias: false }]);
     expect(resolveAgentModelForAliasMode([
       { name: 'gpt-original', isAlias: false },
       { name: 'gpt-high', alias: 'gpt-original', isAlias: true },
-    ], 'gpt-high', false)).toBe('');
+    ], 'gpt-high', false)).toBe('gpt-original');
     expect(resolveAgentModelForAliasMode([
       { name: 'gpt-original', isAlias: false },
       { name: 'gpt-high', alias: 'gpt-original', isAlias: true },
-    ], 'gpt-original', false)).toBe('');
+    ], 'gpt-original', false)).toBe('gpt-original');
+  });
+
+  test('存在 DeepSeek 别名时仍可搜索和选择原始 DeepSeek 模型', () => {
+    const deepseekModels = [
+      { name: 'deepseek-v4-pro', alias: 'DeepSeek V4 Pro' },
+      { name: 'deepseek-flash', alias: 'DeepSeek Flash', isAlias: false },
+      { name: 'deepseek-flash-fast', alias: 'deepseek-flash', isAlias: true },
+    ];
+    const originals = filterAgentModelsByAlias(deepseekModels, false);
+    expect(filterAgentModels(originals, 'deepseek-flash').map((model) => model.name))
+      .toEqual(['deepseek-flash']);
+    expect(findAgentModel(originals, 'deepseek-flash')?.name).toBe('deepseek-flash');
+    expect(resolveAgentModelForAliasMode(deepseekModels, 'deepseek-flash-fast', false))
+      .toBe('deepseek-flash');
+    expect(filterAgentModelsByAlias(deepseekModels, true).map((model) => model.name))
+      .toEqual(['deepseek-flash-fast']);
+  });
+
+  test.each([
+    'deepseek-flash', 'gpt-6-sol', 'claude-opus-5', 'gemini-3.1-pro',
+    'grok-4.6', 'qwen3-coder', 'custom-provider-model',
+  ])('%s 配置多个别名后仍可搜索、选择并从别名切回', (name) => {
+    const original = { name, alias: 'Display name', isAlias: false };
+    const high = { name: `${name}-high`, alias: ` ${name.toUpperCase()} `, isAlias: true };
+    const fast = { name: `${name}-fast`, alias: name, isAlias: true };
+    // An unrelated first entry catches accidental fallback to another model.
+    const catalog = [{ name: 'unrelated-model' }, high, original, fast];
+    const originals = filterAgentModelsByAlias(catalog, false);
+    expect(originals).toEqual([catalog[0], original]);
+    expect(filterAgentModels(originals, name.toUpperCase())).toEqual([original]);
+    expect(findAgentModel(originals, name)).toBe(original);
+    expect(resolveAgentModelForAliasMode(catalog, name, false)).toBe(name);
+    expect(resolveAgentModelForAliasMode(catalog, high.name, false)).toBe(name);
+    expect(resolveAgentModelForAliasMode(catalog, fast.name, false)).toBe(name);
+    expect(resolveAgentModelForAliasMode(catalog, name, true)).toBe(high.name);
+    expect(filterAgentModelsByAlias(catalog, true)).toEqual([high, fast]);
+  });
+
+  test('全部原始模型都有别名时普通列表仍完整，缺失的来源不会被伪造', () => {
+    const originals = [{ name: 'gpt-6-sol' }, { name: 'deepseek-flash', isAlias: false }];
+    const aliases = originals.map((model) => ({
+      name: `${model.name}-fast`, alias: model.name, isAlias: true,
+    }));
+    const orphan = { name: 'alias-only', alias: 'missing-source', isAlias: true };
+    expect(filterAgentModelsByAlias([...aliases, orphan, ...originals], false)).toEqual(originals);
+    expect(filterAgentModelsByAlias([orphan], false)).toEqual([]);
+    expect(filterAgentModelsByAlias([orphan], true)).toEqual([orphan]);
   });
 });
 

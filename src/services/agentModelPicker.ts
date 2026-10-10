@@ -28,23 +28,12 @@ export function filterAgentModels(models: ModelOption[], search: string): ModelO
     .map((item) => item.model);
 }
 
-const aliasedSourceNames = (models: ModelOption[]) => {
-  const names = new Set<string>();
-  for (const model of models) {
-    if (!model.isAlias) continue;
-    const source = normalized(model.alias ?? '');
-    if (source) names.add(source);
-  }
-  return names;
-};
-
 export function filterAgentModelsByAlias(
   models: ModelOption[],
   aliasesOnly: boolean,
 ): ModelOption[] {
-  if (aliasesOnly) return models.filter((model) => Boolean(model.isAlias));
-  const aliasedSources = aliasedSourceNames(models);
-  return models.filter((model) => !model.isAlias && !aliasedSources.has(normalized(model.name)));
+  // An alias does not make its source model unavailable.
+  return models.filter((model) => Boolean(model.isAlias) === aliasesOnly);
 }
 
 export function resolveAgentModelForAliasMode(
