@@ -44,6 +44,7 @@ import { appUpdateIndicatorState } from './appUpdateModel';
 import { canOpenAppPage, isAlwaysAvailablePage } from './navigation';
 import { useThemePreference } from './theme';
 import { useDialogFocusTrap } from './components/useDialogFocusTrap';
+import { WindowsWindowControls } from './components/WindowsWindowControls';
 
 const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
@@ -334,6 +335,7 @@ function AppContent() {
   return (
     <>
       <div className={`app-shell${active === "easy" ? " app-shell-easy-mode" : ""}`}>
+        <WindowsWindowControls />
         {active !== "easy" ? (
           <aside className="sidebar">
             <div className="sidebar-brand" title={t('app.desktopConsole')}>

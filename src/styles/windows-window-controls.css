@@ -1,0 +1,89 @@
+.app-shell:has(> .windows-window-controls) {
+  --window-controls-height: 32px;
+  --window-sidebar-width: 264px;
+}
+
+.app-shell:has(> .windows-window-controls) > .workspace {
+  padding-top: var(--window-controls-height);
+}
+
+.windows-window-controls {
+  position: fixed;
+  z-index: 100;
+  inset: 0 0 auto var(--window-sidebar-width);
+  display: flex;
+  height: var(--window-controls-height);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.windows-window-drag-region {
+  min-width: 0;
+  flex: 1;
+}
+
+.windows-window-button {
+  display: grid;
+  width: 46px;
+  height: 100%;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+}
+
+.windows-window-button:hover {
+  background: var(--border-secondary);
+  color: var(--text-primary);
+}
+
+.windows-window-button:active {
+  background: var(--border-primary);
+}
+
+.windows-window-button:focus-visible {
+  outline-offset: -3px;
+}
+
+.windows-window-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.windows-window-close:active {
+  background: #a92318;
+  color: #fff;
+}
+
+.app-shell-easy-mode:has(> .windows-window-controls) {
+  --window-sidebar-width: 0px;
+}
+
+@media (min-width: 901px) and (max-width: 1080px) {
+  .app-shell:not(.app-shell-easy-mode):has(> .windows-window-controls) {
+    --window-sidebar-width: 232px;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell:has(> .windows-window-controls) {
+    --window-sidebar-width: 0px;
+  }
+
+  .app-shell:not(.app-shell-easy-mode):has(> .windows-window-controls) > .sidebar {
+    padding-top: calc(12px + var(--window-controls-height));
+  }
+
+  .app-shell:not(.app-shell-easy-mode):has(> .windows-window-controls) > .workspace {
+    padding-top: 0;
+  }
+
+  .app-shell:not(.app-shell-easy-mode):has(> .windows-window-controls) > .windows-window-controls {
+    background: var(--bg-primary);
+  }
+}

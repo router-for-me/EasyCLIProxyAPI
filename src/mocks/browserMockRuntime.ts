@@ -821,6 +821,7 @@ export function createBrowserMockRuntime(
   }
   const pluginMock = createPluginMock(state);
   const emit = (event: string, payload: unknown) => emitEvent(event, clone(payload));
+  let windowMaximized = false;
 
   const invoke = async (command: string, rawPayload?: unknown): Promise<unknown> => {
     await sleep(delayMs);
@@ -833,6 +834,14 @@ export function createBrowserMockRuntime(
     if (pluginResponse.handled) return pluginResponse.value;
 
     switch (command) {
+      case 'plugin:window|is_maximized': return windowMaximized;
+      case 'plugin:window|toggle_maximize':
+        windowMaximized = !windowMaximized;
+        emit('tauri://resize', { width: 1280, height: 800 });
+        return null;
+      case 'plugin:window|close':
+        emit('windows-close-requested', null);
+        return null;
       case 'plugin:app|version': return '0.2.97-mock';
       case 'plugin:app|name': return 'EasyCLIProxyAPI Browser Mock';
       case 'plugin:app|tauri_version': return '2.x-mock';
