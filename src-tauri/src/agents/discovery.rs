@@ -3067,13 +3067,11 @@ pub(crate) fn inspect_claude_code_model_mappings(
         return Ok(None);
     };
     let legacy_1m = opus_had_1m || sonnet_had_1m || haiku_had_1m;
-    let max_context_tokens = root
-        .get("autoCompactWindow")
-        .and_then(serde_json::Value::as_u64)
-        .or_else(|| env
-            .get(CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV)
-            .and_then(serde_json::Value::as_str)
-            .and_then(|value| value.trim().parse::<u64>().ok()))
+    let read_window = |value: &serde_json::Value| value.as_u64().or_else(|| value.as_str().and_then(|text| text.trim().parse::<u64>().ok()));
+    let max_context_tokens = env
+        .get(CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV)
+        .and_then(read_window)
+        .or_else(|| root.get("autoCompactWindow").and_then(read_window))
         .unwrap_or_else(|| {
             if legacy_1m {
                 CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW
@@ -3263,6 +3261,7 @@ pub(crate) fn claude_code_model_settings(
     }
 }
 
+
 pub(crate) fn format_context_window(context_window: u64) -> String {
     if context_window.is_multiple_of(1_000_000) {
         format!("{}M", context_window / 1_000_000)
@@ -3281,13 +3280,19 @@ pub(crate) fn claude_code_model_presentation(
     role: Option<&str>,
 ) -> (String, String) {
     let display_name = agent_model_display_name(models, model_name);
-    let context_window = context_window_override
-        .or_else(|| claude_effective_context_window(models, model_name, enable_1m))
-        .unwrap_or(DEFAULT_CLAUDE_CONTEXT_WINDOW);
-    let context_label = format_context_window(context_window);
     let extended = enable_1m || model_name.trim().to_ascii_lowercase().ends_with("[1m]");
+    let display_name = if extended {
+        format!("{display_name}[1m]")
+    } else {
+        display_name.to_string()
+    };
+    let context_window = context_window_override.unwrap_or_else(|| {
+        claude_effective_context_window(models, model_name, enable_1m)
+            .unwrap_or(DEFAULT_CLAUDE_CONTEXT_WINDOW)
+    });
+    let context_label = format_context_window(context_window);
     let name = match role {
-        Some(role) => format!("{display_name} · {role}"),
+        Some(role) => format!("{role} · {display_name}"),
         None => display_name.to_string(),
     };
     let description = if extended {
@@ -3326,7 +3331,7 @@ pub(crate) fn claude_code_model_presentation_environment(
     let fable = claude_code_model_presentation(
         models,
         if mappings.fable.is_empty() { &mappings.sonnet } else { &mappings.fable },
-        mappings.fable_1m,
+        if mappings.fable.is_empty() { mappings.sonnet_1m } else { mappings.fable_1m },
         Some(mappings.max_context_tokens),
         Some("Fable"),
     );

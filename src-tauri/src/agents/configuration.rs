@@ -675,7 +675,6 @@ pub(crate) fn build_claude_agent_config(
         serde_json::Value::String("0".to_string()),
     );
     for (key, value) in [
-        (CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV, max_context_tokens.to_string()),
         (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV, mappings.auto_compact_pct.to_string()),
         (DISABLE_AUTO_COMPACT_ENV, if mappings.disable_auto_compact { "1" } else { "0" }.to_string()),
     ] {
@@ -690,43 +689,49 @@ pub(crate) fn build_claude_agent_config(
             serde_json::Value::String(effort_level),
         );
     }
-    // Claude Code 2.1.288+ supports a per-model auto-compaction window in
-    // settings.json. Keep the existing environment override for compatibility
-    // with older Claude Code versions and custom gateway IDs, but also emit the
-    // official settings so newer versions can apply the value per model.
-    root.insert("autoCompactWindow".into(), serde_json::Value::Number(max_context_tokens.into()));
-    root.insert("autoCompactEnabled".into(), serde_json::Value::Bool(!mappings.disable_auto_compact));
-    let mut model_windows = std::collections::BTreeMap::<String, u64>::new();
-    for (model_id, window) in [
-        (&mappings.fable, mappings.max_context_tokens),
-        (&mappings.opus, mappings.max_context_tokens),
-        (&mappings.sonnet, mappings.max_context_tokens),
-        (&mappings.haiku, mappings.max_context_tokens),
-    ] {
+    // Claude Code reads one context window from settings.json env and
+    // compacts at the smaller of that window and the compact setting.
+    let fable_model = if mappings.fable.trim().is_empty() { mappings.sonnet.as_str() } else { mappings.fable.as_str() };
+    let mut model_ids = std::collections::BTreeSet::<String>::new();
+    for model_id in [fable_model, mappings.opus.as_str(), mappings.sonnet.as_str(), mappings.haiku.as_str()] {
         let model_id = strip_claude_code_context_suffix(model_id).trim();
-        if model_id.is_empty() { continue; }
-        let current = model_windows.entry(model_id.to_string()).or_default();
-        *current = (*current).max(window);
+        if !model_id.is_empty() {
+            model_ids.insert(model_id.to_string());
+        }
     }
     for model in [&mappings.startup_model, &mappings.subagent_model] {
         let Some(model) = model.as_deref().map(str::trim).filter(|value| !value.is_empty()) else { continue; };
-        let model_id = strip_claude_code_context_suffix(model).trim();
-        let window = mappings.max_context_tokens;
-        let current = model_windows.entry(model_id.to_string()).or_default();
-        *current = (*current).max(window);
+        let role = strip_claude_code_context_suffix(model).trim().to_ascii_lowercase();
+        let resolved = match role.as_str() {
+            "opus" => mappings.opus.as_str(),
+            "sonnet" => mappings.sonnet.as_str(),
+            "haiku" => mappings.haiku.as_str(),
+            "fable" => fable_model,
+            _ => model,
+        };
+        let model_id = strip_claude_code_context_suffix(resolved).trim();
+        if !model_id.is_empty() {
+            model_ids.insert(model_id.to_string());
+        }
     }
-    let managed_model_ids = model_windows.keys().cloned().collect::<Vec<_>>();
+    let env = ensure_json_object_entry(root, "env");
+    let window_text = max_context_tokens.to_string();
+    env.insert(CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV.to_string(), serde_json::Value::String(window_text.clone()));
+    env.insert(CLAUDE_CODE_AUTO_COMPACT_WINDOW_ENV.to_string(), serde_json::Value::String(window_text));
+    root.insert("autoCompactWindow".into(), serde_json::Value::Number(max_context_tokens.into()));
+    root.insert("autoCompactEnabled".into(), serde_json::Value::Bool(!mappings.disable_auto_compact));
+    let managed_model_ids = model_ids.iter().cloned().collect::<Vec<_>>();
     let model_settings_json = ensure_json_object_entry(root, "modelSettings");
     for model in previous_managed_models {
-        if model_windows.contains_key(&model) { continue; }
+        if model_ids.contains(&model) { continue; }
         if let Some(entry) = model_settings_json.get_mut(&model).and_then(serde_json::Value::as_object_mut) {
             entry.remove("autoCompactWindow");
             if entry.is_empty() { model_settings_json.remove(&model); }
         }
     }
-    for (model_id, window) in model_windows {
+    for model_id in model_ids {
         let entry = ensure_json_object_entry(model_settings_json, &model_id);
-        entry.insert("autoCompactWindow".into(), serde_json::Value::Number(window.into()));
+        entry.insert("autoCompactWindow".into(), serde_json::Value::Number(max_context_tokens.into()));
     }
     if let Some(model) = explicit_startup_model {
         if model.is_empty() {
@@ -1287,6 +1292,7 @@ pub(crate) fn prepare_claude_code_managed_removal(
                 "EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL",
                 CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV,
                 CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
+                CLAUDE_CODE_AUTO_COMPACT_WINDOW_ENV,
                 CLAUDE_CODE_AUTO_MODE_SERVER_ENV,
                 CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
                 DISABLE_AUTO_COMPACT_ENV,
@@ -1968,6 +1974,7 @@ pub(crate) fn build_restored_claude_code_config(
             "EASYCLIPROXY_MANAGE_CLAUDE_CODE_SUBAGENT_MODEL",
             CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV,
             CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV,
+            CLAUDE_CODE_AUTO_COMPACT_WINDOW_ENV,
             CLAUDE_CODE_AUTO_MODE_SERVER_ENV,
             CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV,
             DISABLE_AUTO_COMPACT_ENV,

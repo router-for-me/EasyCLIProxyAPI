@@ -21,6 +21,10 @@ fn claude_code_explicit_model_inputs_replace_clear_and_round_trip() {
     assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "custom-worker");
     assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "route-model");
     assert_eq!(value["modelSettings"]["route-model"]["autoCompactWindow"], 200_000);
+    assert_eq!(value["modelSettings"]["custom-startup"]["autoCompactWindow"], 200_000);
+    assert_eq!(value["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
+    assert_eq!(value["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "200000");
+    assert_eq!(value["autoCompactWindow"], 200_000);
     assert_eq!(value["model"], "custom-startup[1m]");
     fs::write(&path, &rendered).unwrap();
     let mut inspected = inspect_claude_code_model_mappings(&path).unwrap().unwrap();
@@ -56,6 +60,8 @@ fn claude_code_role_selection_survives_mapping_changes_without_global_effort_ove
         assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "haiku");
         assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], format!("{route}[1m]"));
         assert_eq!(value["modelSettings"][route]["autoCompactWindow"], 200_000);
+        assert_eq!(value["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
+        assert_eq!(value["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "200000");
         assert!(value["env"].get("CLAUDE_CODE_EFFORT_LEVEL").is_none());
         assert_eq!(value["model"], "sonnet");
     }
@@ -66,6 +72,7 @@ fn claude_code_role_selection_survives_mapping_changes_without_global_effort_ove
     ).unwrap().unwrap();
     assert_eq!(resolved.max_context_tokens, 200_000);
     assert_eq!(resolved.startup_model.as_deref(), Some("route-a[1m]"));
+    assert_eq!(resolved.fable_1m, resolved.sonnet_1m);
 }
 
 #[test]
@@ -383,6 +390,8 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
     let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
 
     assert_eq!(value["autoCompactWindow"], 1_000_000);
+    assert_eq!(value["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1000000");
+    assert_eq!(value["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "1000000");
     assert_eq!(value["autoCompactEnabled"], false);
     assert_eq!(value["env"]["ANTHROPIC_MODEL"], "custom-pro[1m]");
     assert_eq!(
@@ -409,13 +418,22 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
     );
     assert_eq!(
         value["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"],
-        "Custom Pro"
+        "Custom Pro[1m]"
     );
     assert_eq!(
         value["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"],
-        "Custom Pro · Fable"
+        "Fable · Custom Pro[1m]"
+    );
+    assert_eq!(
+        value["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION"],
+        "1M enabled · Auto-compact window: 1M"
     );
     assert_eq!(value["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION"], "1M enabled · Auto-compact window: 1M");
+    assert_eq!(value["modelSettings"]["custom-flash"]["autoCompactWindow"], 1_000_000);
+    assert_eq!(value["modelSettings"]["custom-pro"]["autoCompactWindow"], 1_000_000);
+    assert_eq!(value["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1000000");
+    assert_eq!(value["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "1000000");
+    assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION"], "1M enabled · Auto-compact window: 1M");
     assert_eq!(value["model"], "custom-pro[1m]");
 }
 

@@ -1775,6 +1775,19 @@ pub(crate) fn alias_source_supports_fast(source: &ResolvedThinkingAliasSource) -
     }
 }
 
+fn provider_has_unaliased_model(provider: &serde_norway::Mapping, upstream_model: &str) -> bool {
+    yaml_mapping_value(provider, "models")
+        .and_then(serde_norway::Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(configured_model_identity)
+        .any(|(upstream, client, _)| {
+            upstream.eq_ignore_ascii_case(upstream_model)
+                && client.eq_ignore_ascii_case(&upstream)
+                && configured_provider_model_is_enabled(provider, &client)
+        })
+}
+
 pub(crate) fn collect_config_thinking_alias_sources(
     root: &serde_norway::Mapping,
     section: &'static str,
@@ -1826,8 +1839,8 @@ pub(crate) fn collect_config_thinking_alias_sources(
             {
                 continue;
             }
-            if client_model != upstream_model
-                && find_thinking_alias_effort(root, &client_model, protocol).is_some()
+            if !client_model.eq_ignore_ascii_case(&upstream_model)
+                && provider_has_unaliased_model(provider, &upstream_model)
             {
                 continue;
             }

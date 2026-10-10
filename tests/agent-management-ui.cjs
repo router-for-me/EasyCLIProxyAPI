@@ -169,6 +169,7 @@ const path = require('node:path');
         assert.deepEqual((await calls('set_agent_config_enabled')).map(call => call.args), [{
           client, model: '', enabled: false, forceRestore: false,
           claudeCodeModelMappings: null, claudeDesktopModelMappings: null,
+          executableOverrides: {},
         }]);
         assert.equal((await calls('clear_codex_config')).length, 0);
         await tab('基础配置').click();

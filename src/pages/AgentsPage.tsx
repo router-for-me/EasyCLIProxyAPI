@@ -915,6 +915,18 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           && appliedModels.every((model) => Boolean(model.isAlias)),
       }));
     }
+    if (!dirty && selected === 'claude-desktop' && models.length > 0 && appliedMappings) {
+      const appliedEntries = desktopModelEntries(appliedMappings).filter((entry) => entry.model.trim());
+      const appliedModels = appliedEntries
+        .map((entry) => findAgentModel(models, entry.model))
+        .filter((model): model is ModelOption => model !== null);
+      if (appliedModels.length > 0 && appliedModels.length === appliedEntries.length) {
+        setClaudeCustomMappingByClient((current) => ({
+          ...current,
+          [selected]: appliedModels.every((model) => Boolean(model.isAlias)),
+        }));
+      }
+    }
     setClaudeModelMappingsDraftByClient((current) => {
       const currentClientDraft = current[selected];
       const source = resolveAgentModelMappingsDraftSourceForClient(
@@ -1143,6 +1155,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     if (!isClaudeModelMappingClient) return;
     setClaudeCustomMappingByClient((current) => ({ ...current, [selected]: enabled }));
     setModelSelectionError('');
+    if (selected !== 'claude-code') return;
     editClaudeModelMappings((current) => ({
       ...current,
       opus: resolveAgentModelForAliasMode(models, current.opus, enabled),
@@ -1296,6 +1309,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         oauthConfiguration,
         claudeCodeModelMappings: selected === 'claude-code' ? claudeModelMappings : null,
         claudeDesktopModelMappings: selected === 'claude-desktop' ? claudeModelMappings : null,
+        executableOverrides: executablePaths,
       });
       clearPendingChanges();
       if (isClaudeModelMappingClient) {
@@ -1323,7 +1337,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setConfigurationNotice('');
     setClearNotice('');
     try {
-      await invoke<AgentConfigActionResult>('install_pi_provider', { model });
+      await invoke<AgentConfigActionResult>('install_pi_provider', { model, executableOverrides: executablePaths });
       clearPendingChanges();
       await reloadStatusesAfterAction();
       setConfigurationNotice(t('agents.management.pluginInstalled'));
@@ -1344,7 +1358,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setClearNotice('');
     setPiProviderUpdateStatus(null);
     try {
-      await invoke<AgentConfigActionResult>('update_pi_provider', { model });
+      await invoke<AgentConfigActionResult>('update_pi_provider', { model, executableOverrides: executablePaths });
       clearPendingChanges();
       await reloadStatusesAfterAction();
       setConfigurationNotice(t('agents.management.pluginUpdated'));
@@ -1381,7 +1395,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setClearNotice('');
     setPiProviderUpdateStatus(null);
     try {
-      await invoke<AgentConfigActionResult>('uninstall_pi_provider');
+      await invoke<AgentConfigActionResult>('uninstall_pi_provider', { executableOverrides: executablePaths });
       clearPendingChanges();
       await reloadStatusesAfterAction();
       setConfigurationNotice(t('agents.management.pluginUninstalled'));
@@ -1416,7 +1430,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       if (isClaudeModelMappingClient) {
         claudeModelMappingsDirtyRef.current[selected] = false;
       }
-      const refreshed = await invoke<AgentConfigStatus[]>('refresh_agent_config_statuses');
+      const refreshed = await invoke<AgentConfigStatus[]>('refresh_agent_config_statuses', { executableOverrides: executablePaths });
       setStatuses(refreshed);
       const current = refreshed.find((status) => status.id === selected)?.currentModel;
       setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next); return next; });
@@ -1438,6 +1452,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     : invoke<AgentConfigActionResult>('set_agent_config_enabled', {
       client: selected, model: '', enabled: false, forceRestore: false,
       claudeCodeModelMappings: null, claudeDesktopModelMappings: null,
+      executableOverrides: executablePaths,
     });
 
   const clearConfiguration = async () => {
@@ -1745,6 +1760,21 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       <div className="agent-section-heading">
         <strong>{t('agents.claudeDesktopMapping.title')}</strong>
         <div className="agent-section-heading-actions">
+          <label
+            className="agent-claude-desktop-mapping-filter"
+            title={t('agents.claudeDesktopMapping.customMappingHint')}
+          >
+            <span>{t('agents.claudeDesktopMapping.customMapping')}</span>
+            <span className="switch-control">
+              <input
+                type="checkbox"
+                checked={claudeCustomMapping}
+                onChange={(event) => changeClaudeCustomMapping(event.currentTarget.checked)}
+                disabled={busy || loading || modelLoading}
+              />
+              <span className="switch-track" />
+            </span>
+          </label>
           <button type="button" className="secondary-button compact-button" onClick={() => setDesktopHelpOpen(true)}>
             {t('agents.claudeDesktopMapping.help')}
           </button>
@@ -1766,7 +1796,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             <div className="agent-desktop-model-fields">
               <div className="agent-desktop-model-field">
                 <span>{t('agents.claudeDesktopMapping.model')}</span>
-                <AgentModelPicker models={models} value={entry.model} loading={modelLoading} error={modelError}
+                <AgentModelPicker models={claudeMappingModels} value={entry.model} loading={modelLoading} error={modelError}
                   allowCustomValue disabled={busy || loading || !activeStatus?.installed || !activeStatus.supportedPlatform}
                   onChange={(model) => updateDesktopEntry(index, { model, ...(isClaudeDesktopModel(model) ? { alias: '' } : {}) })}
                   onRefresh={refreshModels} />
@@ -2283,7 +2313,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         clearPendingChanges();
         if (selected === 'claude-code' || selected === 'claude-desktop') claudeModelMappingsDirtyRef.current[selected] = false;
         setOauthConfigurationDraft(null);
-        const refreshed = await invoke<AgentConfigStatus[]>('refresh_agent_config_statuses');
+        const refreshed = await invoke<AgentConfigStatus[]>('refresh_agent_config_statuses', { executableOverrides: executablePaths });
         setStatuses(refreshed);
         const current = refreshed.find((status) => status.id === selected)?.currentModel;
         setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next); return next; });

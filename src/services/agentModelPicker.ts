@@ -28,11 +28,23 @@ export function filterAgentModels(models: ModelOption[], search: string): ModelO
     .map((item) => item.model);
 }
 
+const aliasedSourceNames = (models: ModelOption[]) => {
+  const names = new Set<string>();
+  for (const model of models) {
+    if (!model.isAlias) continue;
+    const source = normalized(model.alias ?? '');
+    if (source) names.add(source);
+  }
+  return names;
+};
+
 export function filterAgentModelsByAlias(
   models: ModelOption[],
   aliasesOnly: boolean,
 ): ModelOption[] {
-  return models.filter((model) => Boolean(model.isAlias) === aliasesOnly);
+  if (aliasesOnly) return models.filter((model) => Boolean(model.isAlias));
+  const aliasedSources = aliasedSourceNames(models);
+  return models.filter((model) => !model.isAlias && !aliasedSources.has(normalized(model.name)));
 }
 
 export function resolveAgentModelForAliasMode(
@@ -42,7 +54,9 @@ export function resolveAgentModelForAliasMode(
 ): string {
   const candidates = filterAgentModelsByAlias(models, aliasesOnly);
   const selected = findAgentModel(models, current);
-  if (selected && Boolean(selected.isAlias) === aliasesOnly) return selected.name;
+  if (selected && candidates.some((candidate) => normalized(candidate.name) === normalized(selected.name))) {
+    return selected.name;
+  }
 
   if (selected && aliasesOnly) {
     const alias = candidates.find((candidate) => normalized(candidate.alias ?? '') === normalized(selected.name));

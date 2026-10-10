@@ -77,6 +77,58 @@ fn executable_directories_preserve_path_precedence_and_package_manager_locations
     fs::remove_dir_all(home).unwrap();
 }
 
+#[test]
+fn manual_executable_overrides_satisfy_the_agent_enable_check() {
+    let home = agent_test_home("manual-executable-enable");
+    let (cli_name, desktop_name) = if cfg!(target_os = "windows") {
+        ("opencode.exe", "OpenCode-2.0.26.exe")
+    } else {
+        ("opencode", "opencode-desktop-2.0.26")
+    };
+    let cli = home.join(cli_name);
+    let desktop = home.join(desktop_name);
+    fs::write(&cli, "cli fixture").unwrap();
+    fs::write(&desktop, "desktop fixture").unwrap();
+
+    let overrides = HashMap::from([
+        ("opencode".to_string(), path_to_string(&cli)),
+        ("opencode:app".to_string(), path_to_string(&desktop)),
+    ]);
+    let (cli_override, desktop_override) =
+        agent_executable_overrides(&overrides, AgentClient::OpenCode);
+    assert_eq!(cli_override, Some(cli.as_path()));
+    assert_eq!(desktop_override, Some(desktop.as_path()));
+
+    let desktop_only =
+        HashMap::from([("opencode:app".to_string(), path_to_string(&desktop))]);
+    assert!(
+        validate_agent_can_enable(AgentClient::OpenCode, &home, 8317, "test-key", Some(&desktop_only))
+            .is_ok(),
+        "a manually selected desktop application must satisfy the enable check"
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn manual_pi_executable_override_wins_over_automatic_detection() {
+    let home = agent_test_home("pi-manual-executable");
+    let cli_name = if cfg!(target_os = "windows") { "pi.exe" } else { "pi" };
+    let cli = home.join(cli_name);
+    fs::write(&cli, "pi fixture").unwrap();
+    let overrides = HashMap::from([(PI_AGENT_ID.to_string(), path_to_string(&cli))]);
+
+    assert_eq!(resolve_pi_executable(&home, Some(&overrides)), Some(cli.clone()));
+    assert_eq!(pi_executable_override(Some(&overrides)), Some(cli.as_path()));
+    assert!(pi_executable_override(Some(&HashMap::new())).is_none());
+
+    let missing = home.join("missing-pi");
+    let stale = HashMap::from([(PI_AGENT_ID.to_string(), path_to_string(&missing))]);
+    assert_ne!(resolve_pi_executable(&home, Some(&stale)), Some(missing.clone()));
+    // The raw override is passed through unfiltered; consumers ignore it when it is not a file.
+    assert_eq!(pi_executable_override(Some(&stale)), Some(missing.as_path()));
+    fs::remove_dir_all(home).unwrap();
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn windows_cli_search_skips_shell_stubs_and_finds_runnable_shims() {

@@ -60,7 +60,7 @@ fn claude_code_context_window_can_be_reduced_after_disabling_1m() {
         value["modelSettings"]["route-model"]["autoCompactWindow"],
         200_000
     );
-    assert_eq!(value["modelSettings"]["opus"]["autoCompactWindow"], 200_000);
+    assert!(value["modelSettings"].get("opus").is_none());
 }
 
 #[test]

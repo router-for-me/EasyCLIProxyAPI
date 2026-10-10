@@ -195,7 +195,8 @@ fn workbuddy_config_file_allows_cpa_connection_without_detected_application() {
         AgentClient::WorkBuddy,
         &home.0,
         8317,
-        "test-key"
+        "test-key",
+        None
     )
     .is_ok());
 

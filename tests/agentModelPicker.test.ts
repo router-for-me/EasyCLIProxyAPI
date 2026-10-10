@@ -67,21 +67,35 @@ describe('智能体模型选择器', () => {
     expect(findAgentModel(models, 'gpt-5.2-codex')?.name).toBe('gpt-5.2-codex');
   });
 
-  test('Claude Desktop 自定义映射只显示对应类型的模型', () => {
+  test('Claude 映射关闭时不显示已有别名的原模型，开启时只显示别名', () => {
     const mixedModels = [
       { name: 'gpt-original', alias: 'GPT Original', isAlias: false },
       { name: 'gpt-high', alias: 'gpt-original', isAlias: true },
+      { name: 'GPT-FAST', alias: 'GPT-ORIGINAL', isAlias: true },
       { name: 'claude-original' },
     ];
 
     expect(filterAgentModelsByAlias(mixedModels, false).map((model) => model.name))
-      .toEqual(['gpt-original', 'claude-original']);
+      .toEqual(['claude-original']);
     expect(filterAgentModelsByAlias(mixedModels, true).map((model) => model.name))
-      .toEqual(['gpt-high']);
+      .toEqual(['gpt-high', 'GPT-FAST']);
     expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-original', true)).toBe('gpt-high');
-    expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-high', false)).toBe('gpt-original');
+    expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-original', false)).toBe('claude-original');
+    expect(resolveAgentModelForAliasMode(mixedModels, 'gpt-high', false)).toBe('claude-original');
     expect(resolveAgentModelForAliasMode(mixedModels, 'claude-original', true)).toBe('gpt-high');
     expect(resolveAgentModelForAliasMode([], 'gpt-original', true)).toBe('');
+    expect(filterAgentModelsByAlias([
+      { name: 'gpt-original', isAlias: false },
+      { name: 'gpt-high', alias: 'gpt-original', isAlias: true },
+    ], false)).toEqual([]);
+    expect(resolveAgentModelForAliasMode([
+      { name: 'gpt-original', isAlias: false },
+      { name: 'gpt-high', alias: 'gpt-original', isAlias: true },
+    ], 'gpt-high', false)).toBe('');
+    expect(resolveAgentModelForAliasMode([
+      { name: 'gpt-original', isAlias: false },
+      { name: 'gpt-high', alias: 'gpt-original', isAlias: true },
+    ], 'gpt-original', false)).toBe('');
   });
 });
 

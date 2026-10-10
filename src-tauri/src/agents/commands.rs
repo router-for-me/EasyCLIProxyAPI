@@ -2,6 +2,37 @@ use super::*;
 use std::collections::HashMap;
 
 const AGENT_STATUS_DETECTION_CONCURRENCY: usize = 4;
+
+pub(crate) fn agent_executable_overrides(
+    executable_overrides: &HashMap<String, String>,
+    client: AgentClient,
+) -> (Option<&Path>, Option<&Path>) {
+    (
+        executable_overrides.get(client.id()).map(Path::new),
+        executable_overrides
+            .get(&format!("{}:app", client.id()))
+            .map(Path::new),
+    )
+}
+
+pub(crate) fn pi_executable_override(
+    executable_overrides: Option<&HashMap<String, String>>,
+) -> Option<&Path> {
+    executable_overrides
+        .and_then(|overrides| overrides.get(PI_AGENT_ID))
+        .map(Path::new)
+}
+
+pub(crate) fn resolve_pi_executable(
+    home: &Path,
+    executable_overrides: Option<&HashMap<String, String>>,
+) -> Option<PathBuf> {
+    pi_executable_override(executable_overrides)
+        .filter(|path| path.is_file())
+        .map(Path::to_path_buf)
+        .or_else(|| find_pi_executable(home))
+}
+
 static CODEX_CATALOG_SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static CODEX_CATALOG_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static CODEX_CATALOG_REFRESH: tokio::sync::Notify = tokio::sync::Notify::const_new();
@@ -64,9 +95,10 @@ pub(crate) fn inspect_agent_config_statuses_with_overrides(
                     };
                     let status = match target {
                         AgentStatusDetectionTarget::Client(client) => {
+                            let (executable_override, desktop_override) =
+                                agent_executable_overrides(executable_overrides, client);
                             inspect_agent_config_with_executables(client, home, config.port, api_key,
-                                executable_overrides.get(client.id()).map(Path::new),
-                                executable_overrides.get(&format!("{}:app", client.id())).map(Path::new))
+                                executable_override, desktop_override)
                         }
                         AgentStatusDetectionTarget::PiProvider => {
                             inspect_pi_provider_status_with_executable(home, config.port, api_key,
@@ -219,16 +251,22 @@ pub(crate) async fn install_pi_provider(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     cache: tauri::State<'_, AgentConfigStatusCache>,
     model: String,
+    executable_overrides: Option<HashMap<String, String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
-    let executable = find_pi_executable(&home);
+    let executable = resolve_pi_executable(&home, executable_overrides.as_ref());
     if executable.is_none()
-        && !inspect_pi_provider_status(&home, config.port, effective_agent_api_key(&config))
-            .config_exists
+        && !inspect_pi_provider_status_with_executable(
+            &home,
+            config.port,
+            effective_agent_api_key(&config),
+            pi_executable_override(executable_overrides.as_ref()),
+        )
+        .config_exists
     {
         return Err("Pi CLI and Pi configuration file were not detected".to_string());
     }
@@ -255,13 +293,14 @@ pub(crate) async fn update_pi_provider(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     cache: tauri::State<'_, AgentConfigStatusCache>,
     model: String,
+    executable_overrides: Option<HashMap<String, String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
-    let executable = find_pi_executable(&home)
+    let executable = resolve_pi_executable(&home, executable_overrides.as_ref())
         .ok_or_else(|| "Pi CLI was not detected. Install Pi and ensure the pi command is in PATH".to_string())?;
     let model = resolve_pi_default_model(&config, &model).await?;
     let port = config.port;
@@ -304,13 +343,14 @@ pub(crate) async fn repair_pi_provider(
 pub(crate) async fn uninstall_pi_provider(
     app: tauri::AppHandle,
     cache: tauri::State<'_, AgentConfigStatusCache>,
+    executable_overrides: Option<HashMap<String, String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to get user directory: {error}"))?;
-    let executable =
-        find_pi_executable(&home).ok_or_else(|| "Pi CLI was not detected. Install Pi first".to_string())?;
+    let executable = resolve_pi_executable(&home, executable_overrides.as_ref())
+        .ok_or_else(|| "Pi CLI was not detected. Install Pi first".to_string())?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         uninstall_pi_provider_inner(&home, &executable)
     })
@@ -1085,7 +1125,7 @@ pub(crate) fn resolve_claude_code_model_mappings(
         sonnet_1m: requested.sonnet_1m,
         haiku_1m: requested.haiku_1m,
         fable: resolve(if requested.fable.trim().is_empty() { &requested.sonnet } else { &requested.fable })?,
-        fable_1m: requested.fable_1m,
+        fable_1m: if requested.fable.trim().is_empty() { requested.sonnet_1m } else { requested.fable_1m },
         // 1M preferences select the upstream extended-context route. They do
         // not override the user's independent auto-compaction window.
         max_context_tokens: requested.max_context_tokens,
@@ -1117,6 +1157,7 @@ pub(crate) fn prepare_codex_agent_models(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_agent_config(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -1125,6 +1166,7 @@ pub(crate) async fn apply_agent_config(
     oauth_configuration: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    executable_overrides: Option<HashMap<String, String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let client = AgentClient::parse(&client)?;
     let home = app
@@ -1136,7 +1178,7 @@ pub(crate) async fn apply_agent_config(
     if client == AgentClient::Codex && oauth_configuration {
         validate_codex_oauth_login(&home)?;
     }
-    validate_agent_can_enable(client, &home, config.port, api_key)?;
+    validate_agent_can_enable(client, &home, config.port, api_key, executable_overrides.as_ref())?;
     let prepared = fetch_prepared_agent_models(client, &config).await?;
     let model = resolve_agent_configuration_model(
         client, &prepared.models, &model, claude_desktop_model_mappings.as_ref(),
@@ -1197,6 +1239,7 @@ pub(crate) async fn set_agent_config_enabled(
     force_restore: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    executable_overrides: Option<HashMap<String, String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let client = AgentClient::parse(&client)?;
     let home = app
@@ -1207,7 +1250,7 @@ pub(crate) async fn set_agent_config_enabled(
         let config = gui_config_state.snapshot()?;
         let port = config.port;
         let api_key = effective_agent_api_key(&config);
-        validate_agent_can_enable(client, &home, port, api_key)?;
+        validate_agent_can_enable(client, &home, port, api_key, executable_overrides.as_ref())?;
         let prepared = fetch_prepared_agent_models(client, &config).await?;
         let model = resolve_agent_configuration_model(
             client, &prepared.models, &model, claude_desktop_model_mappings.as_ref(),
@@ -1261,6 +1304,7 @@ pub(crate) async fn set_agent_config_enabled(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn update_agent_config(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -1269,6 +1313,7 @@ pub(crate) async fn update_agent_config(
     oauth_configuration: bool,
     claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    executable_overrides: Option<HashMap<String, String>>,
 ) -> Result<AgentConfigActionResult, String> {
     apply_agent_config(
         app,
@@ -1278,6 +1323,7 @@ pub(crate) async fn update_agent_config(
         oauth_configuration,
         claude_code_model_mappings,
         claude_desktop_model_mappings,
+        executable_overrides,
     ).await
 }
 
@@ -1286,6 +1332,7 @@ pub(crate) fn validate_agent_can_enable(
     home: &Path,
     port: u16,
     api_key: &str,
+    executable_overrides: Option<&HashMap<String, String>>,
 ) -> Result<(), String> {
     if !client.supported_platform() {
         return Err(format!(
@@ -1293,7 +1340,17 @@ pub(crate) fn validate_agent_can_enable(
             client.name()
         ));
     }
-    let detection = inspect_agent_config(client, home, port, api_key);
+    let (executable_override, desktop_override) = executable_overrides
+        .map(|overrides| agent_executable_overrides(overrides, client))
+        .unwrap_or((None, None));
+    let detection = inspect_agent_config_with_executables(
+        client,
+        home,
+        port,
+        api_key,
+        executable_override,
+        desktop_override,
+    );
     if !detection.installed && !detection.config_exists {
         return Err(format!("{} is not installed", client.name()));
     }

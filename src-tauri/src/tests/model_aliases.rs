@@ -213,6 +213,43 @@ fn alias_sources_exclude_blocked_providers_even_when_another_provider_serves_the
 }
 
 #[test]
+fn alias_sources_do_not_offer_entries_that_are_already_aliases() {
+    let input = r#"
+codex-api-key:
+  - name: active
+    models:
+      - name: gpt-test
+        thinking:
+          levels: [low, high]
+      - name: gpt-test
+        alias: gpt-test-high
+        thinking:
+          levels: [low, high]
+      - name: GPT-Test
+        alias: gpt-test-fast
+"#;
+    let available = test_agent_models(&["gpt-test", "gpt-test-high", "gpt-test-fast"]);
+    for capability in [
+        AliasSourceCapability::Base,
+        AliasSourceCapability::Reasoning,
+        AliasSourceCapability::Fast,
+    ] {
+        let sources = resolved_oauth_alias_sources(input, &[], &available, capability).unwrap();
+        assert_eq!(sources.len(), 1, "{capability:?}");
+        assert_eq!(sources[0].source.model, "gpt-test");
+        assert!(matches!(
+            sources[0].location,
+            ThinkingAliasSourceLocation::ConfigModel { model_index: 0, .. }
+        ));
+    }
+    let plain = resolved_oauth_alias_sources(input, &[], &available, AliasSourceCapability::Base).unwrap();
+    let created = add_model_alias_to_yaml(input, &plain[0], "gpt-test-again", "high", false).unwrap();
+    assert!(created.contains("alias: gpt-test-again"), "{created}");
+    let context = model_alias_edit_context(input, "gpt-test-high", &[]).unwrap();
+    assert_eq!(context.source.model, "gpt-test");
+}
+
+#[test]
 fn v8_alias_creation_uses_the_enabled_source_and_keeps_disabled_aliases_editable() {
     let input = r#"
 config-version: 8
