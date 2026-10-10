@@ -698,10 +698,10 @@ pub(crate) fn build_claude_agent_config(
     root.insert("autoCompactEnabled".into(), serde_json::Value::Bool(!mappings.disable_auto_compact));
     let mut model_windows = std::collections::BTreeMap::<String, u64>::new();
     for (model_id, window) in [
-        (&mappings.fable, if mappings.fable_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
-        (&mappings.opus, if mappings.opus_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
-        (&mappings.sonnet, if mappings.sonnet_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
-        (&mappings.haiku, if mappings.haiku_1m { CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW } else { mappings.max_context_tokens }),
+        (&mappings.fable, mappings.max_context_tokens),
+        (&mappings.opus, mappings.max_context_tokens),
+        (&mappings.sonnet, mappings.max_context_tokens),
+        (&mappings.haiku, mappings.max_context_tokens),
     ] {
         let model_id = strip_claude_code_context_suffix(model_id).trim();
         if model_id.is_empty() { continue; }
@@ -711,11 +711,7 @@ pub(crate) fn build_claude_agent_config(
     for model in [&mappings.startup_model, &mappings.subagent_model] {
         let Some(model) = model.as_deref().map(str::trim).filter(|value| !value.is_empty()) else { continue; };
         let model_id = strip_claude_code_context_suffix(model).trim();
-        let window = if model.to_ascii_lowercase().ends_with("[1m]") {
-            CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW
-        } else {
-            mappings.max_context_tokens
-        };
+        let window = mappings.max_context_tokens;
         let current = model_windows.entry(model_id.to_string()).or_default();
         *current = (*current).max(window);
     }

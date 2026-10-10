@@ -20,7 +20,7 @@ fn claude_code_explicit_model_inputs_replace_clear_and_round_trip() {
     assert_eq!(value["model"], "custom-startup[1m]");
     assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "custom-worker");
     assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "route-model");
-    assert_eq!(value["modelSettings"]["route-model"]["autoCompactWindow"], 1_000_000);
+    assert_eq!(value["modelSettings"]["route-model"]["autoCompactWindow"], 200_000);
     assert_eq!(value["model"], "custom-startup[1m]");
     fs::write(&path, &rendered).unwrap();
     let mut inspected = inspect_claude_code_model_mappings(&path).unwrap().unwrap();
@@ -55,7 +55,7 @@ fn claude_code_role_selection_survives_mapping_changes_without_global_effort_ove
         assert_eq!(value["model"], "sonnet");
         assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "haiku");
         assert_eq!(value["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], format!("{route}[1m]"));
-        assert_eq!(value["modelSettings"][route]["autoCompactWindow"], 1_000_000);
+        assert_eq!(value["modelSettings"][route]["autoCompactWindow"], 200_000);
         assert!(value["env"].get("CLAUDE_CODE_EFFORT_LEVEL").is_none());
         assert_eq!(value["model"], "sonnet");
     }
@@ -64,7 +64,7 @@ fn claude_code_role_selection_survives_mapping_changes_without_global_effort_ove
     let resolved = resolve_claude_code_model_mappings(
         AgentClient::ClaudeCode, &models, "route-a", Some(mappings),
     ).unwrap().unwrap();
-    assert_eq!(resolved.max_context_tokens, 1_000_000);
+    assert_eq!(resolved.max_context_tokens, 200_000);
     assert_eq!(resolved.startup_model.as_deref(), Some("route-a[1m]"));
 }
 
@@ -100,7 +100,11 @@ fn claude_agent_config_preserves_existing_fields() {
     assert_eq!(value["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "claude-test");
     assert_eq!(
         value["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"],
-        "claude-test (200K context)"
+        "claude-test"
+    );
+    assert_eq!(
+        value["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION"],
+        "Auto-compact window: 200K"
     );
     assert_eq!(value["model"], "claude-test");
 }
@@ -278,7 +282,7 @@ fn claude_code_role_mappings_drive_settings() {
     assert_eq!(value["autoCompactWindow"], 272_000);
     assert_eq!(
         value["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"],
-        "gpt-sonnet (272K context)"
+        "gpt-sonnet"
     );
 }
 
@@ -405,12 +409,13 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
     );
     assert_eq!(
         value["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"],
-        "Custom Pro (1M context)"
+        "Custom Pro"
     );
     assert_eq!(
         value["env"]["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"],
-        "Custom Pro (Fable mapping, 1M context)"
+        "Custom Pro · Fable"
     );
+    assert_eq!(value["env"]["ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION"], "1M enabled · Auto-compact window: 1M");
     assert_eq!(value["model"], "custom-pro[1m]");
 }
 

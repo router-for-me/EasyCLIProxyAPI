@@ -1069,14 +1069,6 @@ pub(crate) fn resolve_claude_code_model_mappings(
     if !(1..=100).contains(&requested.auto_compact_pct) {
         return Err("Claude Code compaction trigger percentage must be between 1 and 100".to_string());
     }
-    let explicit_1m = [&requested.startup_model, &requested.subagent_model]
-        .iter().any(|value| value.as_deref().is_some_and(|model|
-            model.trim().to_ascii_lowercase().ends_with("[1m]")));
-    let max_context_tokens = if requested.opus_1m || requested.sonnet_1m || requested.haiku_1m || requested.fable_1m || explicit_1m {
-        CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW
-    } else {
-        requested.max_context_tokens
-    };
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
     let normalize_override = |value: Option<String>| -> Result<Option<String>, String> {
@@ -1094,7 +1086,9 @@ pub(crate) fn resolve_claude_code_model_mappings(
         haiku_1m: requested.haiku_1m,
         fable: resolve(if requested.fable.trim().is_empty() { &requested.sonnet } else { &requested.fable })?,
         fable_1m: requested.fable_1m,
-        max_context_tokens,
+        // 1M preferences select the upstream extended-context route. They do
+        // not override the user's independent auto-compaction window.
+        max_context_tokens: requested.max_context_tokens,
         auto_compact_pct: requested.auto_compact_pct,
         disable_auto_compact: requested.disable_auto_compact,
         manage_default_model: requested.manage_default_model,

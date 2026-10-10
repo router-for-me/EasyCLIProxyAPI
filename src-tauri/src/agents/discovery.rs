@@ -3285,11 +3285,16 @@ pub(crate) fn claude_code_model_presentation(
         .or_else(|| claude_effective_context_window(models, model_name, enable_1m))
         .unwrap_or(DEFAULT_CLAUDE_CONTEXT_WINDOW);
     let context_label = format_context_window(context_window);
+    let extended = enable_1m || model_name.trim().to_ascii_lowercase().ends_with("[1m]");
     let name = match role {
-        Some(role) => format!("{display_name} ({role}, {context_label} context)"),
-        None => format!("{display_name} ({context_label} context)"),
+        Some(role) => format!("{display_name} · {role}"),
+        None => display_name.to_string(),
     };
-    let description = format!("CPA model {model_name} - {context_label} context window");
+    let description = if extended {
+        format!("1M enabled · Auto-compact window: {context_label}")
+    } else {
+        format!("Auto-compact window: {context_label}")
+    };
     (name, description)
 }
 
@@ -3302,28 +3307,28 @@ pub(crate) fn claude_code_model_presentation_environment(
         &mappings.opus,
         mappings.opus_1m,
         Some(mappings.max_context_tokens),
-        Some("Opus mapping"),
+        Some("Opus"),
     );
     let sonnet = claude_code_model_presentation(
         models,
         &mappings.sonnet,
         mappings.sonnet_1m,
         Some(mappings.max_context_tokens),
-        Some("Sonnet mapping"),
+        Some("Sonnet"),
     );
     let haiku = claude_code_model_presentation(
         models,
         &mappings.haiku,
         mappings.haiku_1m,
         Some(mappings.max_context_tokens),
-        Some("Haiku mapping"),
+        Some("Haiku"),
     );
     let fable = claude_code_model_presentation(
         models,
         if mappings.fable.is_empty() { &mappings.sonnet } else { &mappings.fable },
         mappings.fable_1m,
         Some(mappings.max_context_tokens),
-        Some("Fable mapping"),
+        Some("Fable"),
     );
     let custom = claude_code_model_presentation(
         models,

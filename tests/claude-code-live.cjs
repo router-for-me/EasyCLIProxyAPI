@@ -110,8 +110,8 @@ const runProcess = (program, args, options = {}) => new Promise(resolve => {
     { id: 'updated-role-mapping', mappings: mapping({ startupModel: 'sonnet', sonnet: modelA }),
       existingFrom: 'default-sonnet', expected: modelA, prompt: smokePrompt },
     { id: 'cli-model-override', mappings: mapping({}), expected: modelB, args: ['--model', 'sonnet'], prompt: smokePrompt },
-    { id: 'role-1m', mappings: mapping({ opus1m: true }), expected: modelA, context: 1000000, prompt: smokePrompt },
-    { id: 'direct-1m', mappings: mapping({ startupModel: `${modelA}[1m]` }), expected: modelA, context: 1000000, prompt: smokePrompt },
+    { id: 'role-1m', mappings: mapping({ opus1m: true, maxContextTokens: 1000000 }), expected: modelA, context: 1000000, prompt: smokePrompt },
+    { id: 'direct-1m', mappings: mapping({ startupModel: `${modelA}[1m]`, maxContextTokens: 1000000 }), expected: modelA, context: 1000000, prompt: smokePrompt },
     { id: 'after-disable-1m', mappings: mapping({}), existingFrom: 'role-1m', expected: modelA, context: 200000, prompt: smokePrompt },
     { id: 'compact-policy', mappings: mapping({ maxContextTokens: 300000, autoCompactPct: 75, disableAutoCompact: true }),
       expected: modelA, context: 300000, prompt: smokePrompt, debug: true },
@@ -122,7 +122,10 @@ const runProcess = (program, args, options = {}) => new Promise(resolve => {
     { id: 'subagent-inherit', mappings: mapping({}), expected: modelA, workerExpected: modelA, tools: 'Agent', prompt: workerPrompt },
     { id: 'subagent-pinned-role', mappings: mapping({ subagentModel: 'haiku' }), expected: modelA, workerExpected: modelB, tools: 'Agent', prompt: workerPrompt },
     { id: 'subagent-pinned-direct', mappings: mapping({ subagentModel: modelB }), expected: modelA, workerExpected: modelB, tools: 'Agent', prompt: workerPrompt },
-    { id: 'subagent-1m', mappings: mapping({ subagentModel: `${modelB}[1m]` }), expected: modelA, workerExpected: modelB, context: 1000000, tools: 'Agent', prompt: workerPrompt },
+    { id: 'subagent-1m', mappings: mapping({ subagentModel: `${modelB}[1m]`, maxContextTokens: 1000000 }), expected: modelA, workerExpected: modelB, context: 1000000, tools: 'Agent', prompt: workerPrompt },
+    // Enabling 1M keeps custom auto-compact windows: 400000 must survive into settings and runtime.
+    { id: 'compact-window-1m-400k', mappings: mapping({ opus1m: true, maxContextTokens: 400000, autoCompactPct: 75 }),
+      expected: modelA, context: 1000000, prompt: smokePrompt, debug: true, effectiveWindow: 380000 },
     { id: 'unavailable-custom-model', mappings: mapping({ startupModel: 'ezcpa-live-unavailable-model' }),
       expected: 'ezcpa-live-unavailable-model', expectedError: true, prompt: smokePrompt },
   ];
@@ -191,10 +194,14 @@ const runProcess = (program, args, options = {}) => new Promise(resolve => {
     check(mainRequests.length > 0, `No actual request for expected model ${test.expected}`);
     if (!test.expectedError) check(requests.every(request => request.status === 200), 'At least one actual request failed');
     if (test.context) check(Object.values(final?.modelUsage || {}).some(usage => usage.contextWindow === test.context), `Expected runtime context window ${test.context}`);
+    check(settings.autoCompactWindow === test.mappings.maxContextTokens,
+      `Expected written auto-compact window ${test.mappings.maxContextTokens}, got ${settings.autoCompactWindow}`);
     if (test.debug) {
       check(settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE === String(test.mappings.autoCompactPct), 'Compaction percentage was not persisted');
       check(test.mappings.disableAutoCompact ? autoCompactionChecks.length === 0 : autoCompactionChecks.length > 0,
         'Runtime auto-compaction check did not match the configured enabled state');
+      if (test.effectiveWindow) check(autoCompactionChecks.some(line => line.includes(`effectiveWindow=${test.effectiveWindow}`)),
+        `Expected runtime auto-compact window ${test.effectiveWindow}`);
     }
     if (test.fileTools) {
       check(toolUses.some(tool => tool.name === 'Read') && toolUses.some(tool => tool.name === 'Write'), 'Read/Write tools were not both executed');

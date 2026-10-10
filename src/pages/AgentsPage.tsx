@@ -37,6 +37,10 @@ import zcodeIcon from '../assets/icons/zcode.png';
 import workbuddyIcon from '../assets/icons/workbuddy.png';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import {
+  CLAUDE_CODE_DEFAULT_MAX_CONTEXT_TOKENS,
+  followClaudeCodeContextWindow,
+} from '../services/claudeCodeModels';
+import {
   filterAgentModelsByAlias,
   findAgentModel,
   resolveAgentModelForAliasMode,
@@ -182,7 +186,6 @@ const sameAgentFormValues = (left: AgentFormValues, right: AgentFormValues) => (
 );
 
 const CODEX_OAUTH_LOGIN_REQUIRED_ERROR = 'CODEX_OAUTH_LOGIN_REQUIRED';
-const DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS = 200_000;
 const DEFAULT_CLAUDE_AUTO_COMPACT_PCT = 90;
 
 const createClaudeModelMappings = (): ClaudeModelMappings => ({
@@ -194,7 +197,7 @@ const createClaudeModelMappings = (): ClaudeModelMappings => ({
   opus1m: false,
   sonnet1m: false,
   haiku1m: false,
-  maxContextTokens: DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+  maxContextTokens: CLAUDE_CODE_DEFAULT_MAX_CONTEXT_TOKENS,
   autoCompactPct: DEFAULT_CLAUDE_AUTO_COMPACT_PCT,
   disableAutoCompact: false,
   manageDefaultModel: true,
@@ -932,7 +935,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         haiku1m: Boolean(source.haiku1m),
         fable: findAgentModel(models, source.fable)?.name ?? '',
         fable1m: Boolean(source.fable1m),
-        maxContextTokens: source.maxContextTokens ?? DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+        maxContextTokens: source.maxContextTokens ?? CLAUDE_CODE_DEFAULT_MAX_CONTEXT_TOKENS,
         autoCompactPct: source.autoCompactPct ?? DEFAULT_CLAUDE_AUTO_COMPACT_PCT,
         disableAutoCompact: Boolean(source.disableAutoCompact),
         manageDefaultModel: source.manageDefaultModel !== false,
@@ -1108,7 +1111,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     const model = findAgentModel(models, value);
     if (!model || !isClaudeModelMappingClient) return;
     setModelSelectionError('');
-    editClaudeModelMappings((current) => ({ ...current, [role]: model.name }));
+    editClaudeModelMappings((current) => followClaudeCodeContextWindow(
+      { ...current, [role]: model.name }, current.maxContextTokens, selected === 'claude-code',
+    ));
   };
 
   const changeClaude1mPreference = (
@@ -1116,17 +1121,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     enabled: boolean,
   ) => {
     if (!isClaudeModelMappingClient) return;
-    editClaudeModelMappings((current) => {
-      const next = { ...current, [preference]: enabled };
-      if (selected === 'claude-code') {
-        const any1mEnabled = next.opus1m || next.sonnet1m || next.haiku1m || next.fable1m
-          || [next.startupModel, next.subagentModel].some(value => /\[1m\]$/i.test(value.trim()));
-        next.maxContextTokens = any1mEnabled
-          ? 1_000_000
-          : DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS;
-      }
-      return next;
-    });
+    editClaudeModelMappings((current) => followClaudeCodeContextWindow(
+      { ...current, [preference]: enabled }, current.maxContextTokens, selected === 'claude-code',
+    ));
   };
 
   const changeClaudeCodeRuntimeSetting = (
@@ -2127,16 +2124,15 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         startupModel={claudeModelMappingsDraft.startupModel}
                         subagentModel={claudeModelMappingsDraft.subagentModel}
                         disabled={busy || loading}
-                        onChange={(field, value) => editClaudeModelMappings((current) => ({
-                          ...current,
-                          [field]: value,
-                          maxContextTokens: /\[1m\]$/i.test(value.trim()) ? 1_000_000
-                            : /\[1m\]$/i.test(current[field].trim()) && current.maxContextTokens === 1_000_000
-                              && !current.opus1m && !current.sonnet1m && !current.haiku1m && !current.fable1m
-                              && !/\[1m\]$/i.test(current[field === 'startupModel' ? 'subagentModel' : 'startupModel'].trim())
-                              ? DEFAULT_CLAUDE_CODE_MAX_CONTEXT_TOKENS : current.maxContextTokens,
-                          [field === 'startupModel' ? 'manageDefaultModel' : 'manageSubagentModel']: value.trim().length > 0,
-                        }))}
+                        onChange={(field, value) => editClaudeModelMappings((current) => followClaudeCodeContextWindow(
+                          {
+                            ...current,
+                            [field]: value,
+                            [field === 'startupModel' ? 'manageDefaultModel' : 'manageSubagentModel']: value.trim().length > 0,
+                          },
+                          current.maxContextTokens,
+                          true,
+                        ))}
                       />
                   {modelError ? (
                     <div className="claude-code-model-error" role="status">
