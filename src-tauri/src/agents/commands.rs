@@ -1271,17 +1271,18 @@ pub(crate) async fn fetch_prepared_agent_models(
             copilot::enrich_vscode_context_windows(&mut models, &runtime_models)?;
         }
         if agent_uses_cpa_runtime_context_windows(client) {
-            if let Ok(mut runtime_models) = fetch_codex_runtime_models(config.port, api_key).await {
-                if let Ok(content) = fetch_management_config_yaml(config).await {
-                    let _ = codex_catalog::apply_configured_context_limits(
-                        &mut runtime_models,
-                        &content,
-                    );
-                }
-                codex_catalog::merge_runtime_context_windows(&mut models, &runtime_models);
-                if client == AgentClient::ZCode {
-                    codex_catalog::merge_zcode_reasoning_levels(&mut models, &runtime_models);
-                }
+            let (runtime_models, content) = tokio::join!(
+                fetch_codex_runtime_models(config.port, api_key),
+                fetch_management_config_yaml(config),
+            );
+            let runtime_models = runtime_models.unwrap_or_default();
+            let _ = enrich_harness_context_windows(
+                &mut models,
+                &runtime_models,
+                content.as_deref().ok(),
+            );
+            if client == AgentClient::ZCode {
+                codex_catalog::merge_zcode_reasoning_levels(&mut models, &runtime_models);
             }
         }
         if matches!(client, AgentClient::ClaudeCode | AgentClient::ClaudeDesktop) {
