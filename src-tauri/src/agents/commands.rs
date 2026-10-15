@@ -1271,10 +1271,17 @@ pub(crate) async fn fetch_prepared_agent_models(
             copilot::enrich_vscode_context_windows(&mut models, &runtime_models)?;
         }
         if agent_uses_cpa_runtime_context_windows(client) {
-            let runtime_models = fetch_codex_runtime_models(config.port, api_key).await?;
-            codex_catalog::merge_runtime_context_windows(&mut models, &runtime_models);
-            if client == AgentClient::ZCode {
-                codex_catalog::merge_zcode_reasoning_levels(&mut models, &runtime_models);
+            if let Ok(mut runtime_models) = fetch_codex_runtime_models(config.port, api_key).await {
+                if let Ok(content) = fetch_management_config_yaml(config).await {
+                    let _ = codex_catalog::apply_configured_context_limits(
+                        &mut runtime_models,
+                        &content,
+                    );
+                }
+                codex_catalog::merge_runtime_context_windows(&mut models, &runtime_models);
+                if client == AgentClient::ZCode {
+                    codex_catalog::merge_zcode_reasoning_levels(&mut models, &runtime_models);
+                }
             }
         }
         if matches!(client, AgentClient::ClaudeCode | AgentClient::ClaudeDesktop) {
@@ -1388,7 +1395,15 @@ pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
 pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> bool {
     matches!(
         client,
-        AgentClient::ZCode | AgentClient::WorkBuddy | AgentClient::KimiCode | AgentClient::GrokBuild
+        AgentClient::ZCode
+            | AgentClient::WorkBuddy
+            | AgentClient::KimiCode
+            | AgentClient::GrokBuild
+            | AgentClient::OpenClaw
+            | AgentClient::Hermes
+            | AgentClient::OpenCode
+            | AgentClient::ClaudeCode
+            | AgentClient::ClaudeDesktop
     )
 }
 
