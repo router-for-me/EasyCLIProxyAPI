@@ -124,6 +124,7 @@ pub(crate) fn enrich_vscode_context_windows(
     models: &mut [AgentModelOption],
     runtime_models: &[codex_catalog::CodexRuntimeModel],
 ) -> Result<(), String> {
+    codex_catalog::merge_runtime_context_windows(models, runtime_models);
     let prepared = prepare_codex_agent_models(runtime_models)?;
     for model in models {
         if let Some(source) = prepared.models.iter().find(|source| source.name.eq_ignore_ascii_case(&model.name)) {
@@ -174,6 +175,12 @@ pub(crate) fn build_copilot_config(
                     .unwrap_or(128_000);
                 // CustomEndpointModelConfig uses `vision` for image input;
                 // text is always supported. Unknown capabilities default to both.
+                let max_output_tokens = metadata
+                    .and_then(|m| m.harness_metadata.as_ref())
+                    .and_then(|meta| meta.get("maxTokens"))
+                    .and_then(Value::as_u64)
+                    .filter(|value| *value > 0)
+                    .unwrap_or(16_384);
                 let vision = metadata
                     .and_then(|m| m.input_modalities.as_ref())
                     .filter(|modalities| !modalities.is_empty())
@@ -184,7 +191,7 @@ pub(crate) fn build_copilot_config(
                     "url": format!("{}/chat/completions", base.trim_end_matches('/')),
                     "apiType": "chat-completions",
                     "toolCalling": true, "vision": vision,
-                    "contextWindow": context, "maxOutputTokens": 16_384_u64.min(context / 2)})
+                    "contextWindow": context, "maxOutputTokens": max_output_tokens.min(context / 2)})
             })
             .collect(),
     );
