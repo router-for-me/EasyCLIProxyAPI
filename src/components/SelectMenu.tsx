@@ -16,6 +16,7 @@ export type SelectMenuOption = {
   value: string;
   label: string;
   group?: string;
+  description?: string;
 };
 
 type MenuLayout = {
@@ -64,12 +65,16 @@ export function SelectMenu({
   onChange,
   ariaLabel,
   disabled = false,
+  size = 'default',
+  overlay = false,
 }: {
   value: string;
   options: SelectMenuOption[];
   onChange: (value: string) => void;
   ariaLabel: string;
   disabled?: boolean;
+  size?: 'default' | 'wide';
+  overlay?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -107,14 +112,16 @@ export function SelectMenu({
     const placeAbove = spaceBelow < contentHeight && spaceAbove > spaceBelow;
     const available = placeAbove ? spaceAbove : spaceBelow;
     const maxWidth = Math.max(edgeGap, window.innerWidth - edgeGap * 2);
-    const width = Math.min(320, maxWidth, contentWidth);
+    const width = size === 'wide'
+      ? Math.min(rect.width, maxWidth)
+      : Math.min(320, maxWidth, contentWidth);
     const height = Math.min(contentHeight, Math.max(available, Math.min(contentHeight, 36)));
     const maxLeft = Math.max(edgeGap, window.innerWidth - edgeGap - width);
     const left = Math.min(Math.max(edgeGap, rect.left), maxLeft);
     const desiredTop = placeAbove ? rect.top - triggerGap - height : rect.bottom + triggerGap;
     const top = Math.min(Math.max(edgeGap, desiredTop), Math.max(edgeGap, window.innerHeight - edgeGap - height));
     setLayout({ top, left, width, height });
-  }, [options.length]);
+  }, [options.length, size]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -193,7 +200,7 @@ export function SelectMenu({
   };
 
   return (
-    <div className={`select-menu ${open ? 'open' : ''}`} ref={rootRef}>
+    <div className={`select-menu ${size === 'wide' ? 'wide' : ''} ${open ? 'open' : ''}`} ref={rootRef}>
       <button
         type="button"
         className="select-menu-trigger"
@@ -212,7 +219,7 @@ export function SelectMenu({
         <div className="select-menu-theme-scope" ref={themeScopeRef}>
           <div
             ref={menuRef}
-            className="select-menu-dropdown"
+            className={`select-menu-dropdown${overlay ? ' overlay' : ''}`}
             data-theme-surface="overlay"
             style={layout
               ? { top: layout.top, left: layout.left, width: layout.width, height: layout.height }
@@ -231,12 +238,12 @@ export function SelectMenu({
                       role="option"
                       aria-selected={isSelected}
                       aria-label={option.group ? `${option.group}: ${option.label}` : undefined}
-                      className={`select-menu-option${isSelected ? ' selected' : ''}${index === activeIndex ? ' active' : ''}`}
+                      className={`select-menu-option${option.description ? ' has-description' : ''}${isSelected ? ' selected' : ''}${index === activeIndex ? ' active' : ''}`}
                       key={option.value || option.label}
                       onMouseEnter={() => setActiveIndex(index)}
                       onClick={() => choose(option.value)}
                     >
-                      <span title={option.label}>{option.label}</span>
+                      <span className="select-menu-option-copy"><span title={option.label}>{option.label}</span>{option.description ? <small>{option.description}</small> : null}</span>
                       {isSelected ? <Check size={15} aria-hidden /> : null}
                     </button>
                   </Fragment>

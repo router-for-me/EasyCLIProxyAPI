@@ -33,6 +33,19 @@
 .plugin-badge.active { color: var(--success-badge-text); background: var(--success-badge-bg); }
 .plugin-badge.warning { color: var(--amber-text); background: var(--theme-fff7e9); }
 .plugin-meta, .plugin-path { color: var(--text-tertiary); font-size: 12px; margin: 0; line-height: 1.7; overflow-wrap: anywhere; }
+.plugin-version-line { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 9px; margin: 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.plugin-translation { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.bulk-translate.active { border-color: rgba(116, 223, 172, 0.3); background: var(--ui-accent-soft); color: var(--primary-color); }
+.plugin-translation-line { margin-top: -4px; }
+.plugin-translation-trigger { display: inline-flex; align-items: center; gap: 5px; width: fit-content; min-height: 24px; padding: 2px 7px; border: 1px solid var(--border-color); border-radius: 5px; background: var(--bg-tertiary); color: var(--primary-color); font-size: 10.5px; line-height: 1.3; cursor: pointer; }
+.plugin-translation-trigger:hover:not(:disabled) { border-color: var(--text-tertiary); background: var(--bg-hover); }
+.plugin-translation-trigger:disabled { cursor: default; opacity: .55; }
+.plugin-translation-settings { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--border-color); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-tertiary); cursor: pointer; }
+.plugin-translation-settings:hover:not(:disabled) { border-color: var(--text-tertiary); color: var(--text-primary); }
+.plugin-translation-error { color: var(--error-color); font-size: 10.5px; line-height: 1.45; }
+.plugin-version-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border: 1px solid var(--border-color); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-tertiary); }
+.plugin-version-badge code { color: var(--text-secondary); font-family: ui-monospace, monospace; font-size: 10.5px; }
+.plugin-version-available { padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--amber-text) 22%, transparent); border-radius: 5px; background: color-mix(in srgb, var(--amber-text) 8%, transparent); color: var(--amber-text); font-family: ui-monospace, monospace; font-size: 10.5px; }
 .plugin-path { font-family: ui-monospace, monospace; font-size: 11px; }
 .plugin-local-card .plugin-path { padding: 8px 10px; border-radius: 6px; background: var(--bg-secondary); }
 .plugin-local-card .plugin-card-description { padding: 10px 12px; border-radius: 8px; background: var(--bg-secondary); color: var(--text-tertiary); font-size: 12px; }
@@ -42,6 +55,11 @@
 .plugin-card-actions button { font-size: 12px; min-height: 34px; }
 .plugins-page .plugin-card-actions > button { width: auto; }
 .plugin-card-actions .primary-button { margin-left: auto; }
+.plugin-local-card .plugin-card-actions { justify-content: flex-end; }
+.plugin-local-card .plugin-card-actions .primary-button,
+.plugin-local-card .plugin-card-actions .plugin-delete { margin-left: 0; }
+.plugins-page .plugin-store-card .plugin-card-actions .plugin-update-action { border-color: color-mix(in srgb, var(--amber-text) 34%, transparent); background: color-mix(in srgb, var(--amber-text) 12%, transparent); color: var(--amber-text); font-weight: 650; }
+.plugins-page .plugin-store-card .plugin-card-actions .plugin-update-action:hover { border-color: color-mix(in srgb, var(--amber-text) 48%, transparent); background: color-mix(in srgb, var(--amber-text) 18%, transparent); color: var(--amber-text); }
 .plugin-delete { margin-left: auto; color: var(--danger-color); }
 .plugin-menus { display: flex; flex-wrap: wrap; gap: 8px; }
 .plugin-menus button { font-size: 12px; }
@@ -96,6 +114,56 @@
 .plugin-install-repository span { user-select: text; }
 .plugin-install-body .plugin-field input { font-weight: normal; }
 .plugin-install-body .plugin-field code { font-weight: normal; line-height: 1.6; user-select: all; }
+.plugin-version-field { display: grid; gap: 8px; min-width: 0; }
+.plugin-version-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.plugin-version-heading label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.plugin-version-heading span { color: var(--text-tertiary); font-size: 11px; }
+.plugin-version-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-height: 18px; color: var(--text-tertiary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.plugin-version-loading { display: inline-flex; align-items: center; gap: 6px; }
+.plugin-version-error { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--amber-text) 20%, var(--border-color)); border-radius: 7px; background: color-mix(in srgb, var(--amber-text) 7%, transparent); color: var(--text-secondary); font-size: 11px; line-height: 1.55; }
+.plugin-version-error > span { min-width: 0; flex: 1; }
+.plugin-version-error .secondary-button { flex: none; min-height: 30px; padding: 4px 9px; font-size: 11px; }
+.plugin-update-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 9px 11px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--bg-tertiary); color: var(--text-tertiary); font-size: 10.5px; }
+.plugin-update-flow code { padding: 2px 6px; border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-family: ui-monospace, monospace; font-size: 10.5px; }
+.plugin-fixed-version { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-tertiary); color: var(--text-tertiary); font-size: 11px; }
+.plugin-fixed-version code { color: var(--text-primary); font-family: ui-monospace, monospace; font-size: 12px; }
+.plugin-release-panel { overflow: hidden; border: 1px solid var(--border-color); border-radius: 9px; background: var(--bg-tertiary); }
+.plugin-release-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-bottom: 1px solid var(--border-color); }
+.plugin-release-panel > header > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.plugin-release-panel > header svg { flex: none; color: var(--text-tertiary); }
+.plugin-release-panel h3 { margin: 0; font-size: 12px; font-weight: 650; }
+.plugin-release-link { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 5px; border: 0; border-radius: 4px; background: transparent; color: var(--text-tertiary); font-size: 10.5px; cursor: pointer; }
+.plugin-release-link:hover { background: var(--bg-hover); color: var(--text-primary); }
+.plugin-release-content { padding: 12px 13px 13px; }
+.plugin-release-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 10px; color: var(--text-tertiary); font-size: 10.5px; }
+.plugin-release-meta strong { color: var(--text-primary); font-family: ui-monospace, monospace; font-size: 11.5px; }
+.plugin-release-markdown { color: var(--text-secondary); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.plugin-release-markdown > :first-child { margin-top: 0; }
+.plugin-release-markdown > :last-child { margin-bottom: 0; }
+.plugin-release-markdown h4 { margin: 13px 0 6px; color: var(--text-primary); font-size: 12px; font-weight: 650; }
+.plugin-release-markdown .plugin-release-category { display: inline-flex; width: fit-content; padding: 2px 6px; border-radius: 4px; background: var(--bg-primary); color: var(--text-secondary); font-size: 10px; }
+.plugin-release-markdown ul, .plugin-release-markdown ol { display: grid; gap: 5px; margin: 0; padding-left: 18px; }
+.plugin-release-markdown li + li { margin-top: 0; }
+.plugin-release-markdown p { margin: 7px 0; }
+.plugin-release-markdown a { color: var(--primary-color); text-decoration: underline; text-underline-offset: 2px; }
+.plugin-release-markdown pre { padding: 9px; border-radius: 6px; background: var(--bg-primary); white-space: pre-wrap; }
+.plugin-release-markdown blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border-color); color: var(--text-tertiary); }
+.plugin-release-empty { margin: 0; padding: 12px 13px; color: var(--text-tertiary); font-size: 11.5px; }
+.plugin-release-panel > footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 7px 12px; padding: 8px 13px; border-top: 1px solid var(--border-color); color: var(--text-tertiary); font-size: 10.5px; }
+.plugin-downgrade-warning { padding: 11px 13px; font-size: 11.5px; line-height: 1.65; }
+.config-dialog.plugin-translation-dialog { display: flex; flex-direction: column; gap: 0; width: min(560px, 100%); height: auto; max-height: calc(100dvh - 40px); padding: 0; overflow: hidden; }
+.plugin-translation-dialog .config-dialog-heading { flex-shrink: 0; padding: 20px 22px; border-bottom: 1px solid var(--border-color); }
+.plugin-translation-dialog .config-dialog-heading h2 { display: flex; align-items: center; gap: 8px; font-size: 17px; }
+.plugin-translation-dialog .config-dialog-heading p { margin: 7px 0 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.55; }
+.plugin-translation-body { display: grid; gap: 14px; min-height: 0; overflow: auto; padding: 18px 22px; }
+.plugin-translation-notice { margin: 0; padding: 11px 12px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 11.5px; line-height: 1.65; }
+.plugin-translation-field { display: grid; gap: 7px; min-width: 0; }
+.plugin-translation-field > label { color: var(--text-secondary); font-size: 12px; font-weight: 650; }
+.plugin-translation-loading { display: inline-flex; align-items: center; gap: 7px; color: var(--text-tertiary); font-size: 11.5px; }
+.plugin-translation-empty { margin: 0; color: var(--error-color); font-size: 11.5px; line-height: 1.55; }
+.plugin-translation-preview { max-height: 126px; margin: 0; overflow: auto; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--bg-tertiary); color: var(--text-tertiary); font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.plugin-translation-footer { display: flex; justify-content: flex-end; gap: 9px; padding: 14px 22px; border-top: 1px solid var(--border-color); }
+.plugin-translation-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 88px; min-height: 38px; }
 .plugin-settings .plugin-field input { font-weight: normal; }
 .plugin-settings-actions > button { width: auto; min-width: 96px; }
 .plugin-field input:focus-visible, .plugin-field textarea:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }

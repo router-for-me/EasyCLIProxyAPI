@@ -235,7 +235,7 @@ export function createPluginMock(host: PluginMockHost, extraPages = 0, onWebview
     const pluginRequest = command === 'management_request' && (
       path === '/plugins' || path.startsWith('/plugins/') || path === '/config/plugins' || path.startsWith('/config/plugins/')
     );
-    if (!pluginRequest && command !== 'get_plugin_support' && command !== 'get_plugin_latest_releases' && !WEBVIEW_COMMANDS.has(command)) return { handled: false };
+    if (!pluginRequest && command !== 'get_plugin_support' && command !== 'get_plugin_latest_releases' && command !== 'get_plugin_releases' && !WEBVIEW_COMMANDS.has(command)) return { handled: false };
     if (host.scenario === 'error') throw new Error(`Browser Mock error scenario: ${command}`);
     if (!host.coreStatus.ready && (!WEBVIEW_COMMANDS.has(command) || command === 'show_plugin_webview')) {
       throw new Error('Browser Mock: the core is not ready');
@@ -250,6 +250,18 @@ export function createPluginMock(host: PluginMockHost, extraPages = 0, onWebview
         const entry = CATALOG.find(entry => entry.repository.replace(/^https:\/\/github\.com\//, '') === repository);
         return entry ? { repository, version: entry.version, error: null } : { repository, version: null, error: 'Invalid GitHub repository' };
       }));
+    }
+    if (command === 'get_plugin_releases') {
+      const repository = text(payload.repository);
+      const entry = CATALOG.find(entry => entry.repository.replace(/^https:\/\/github\.com\//, '') === repository);
+      if (!entry) throw new Error('Invalid GitHub repository');
+      return result([entry.version, '1.0.0'].filter((version, index, versions) => versions.indexOf(version) === index).map((version, index) => ({
+        version,
+        name: index === 0 ? entry.name : `Version ${version}`,
+        notes: index === 0 ? '## Added\n\n- Version selection and release notes preview.' : '## Fixed\n\n- Historical release notes.',
+        published_at: index === 0 ? '2026-10-18T08:00:00Z' : '2026-09-18T08:00:00Z',
+        prerelease: false,
+      })));
     }
     const method = text(request.method).toUpperCase();
     if (path === '/config/plugins' || path.startsWith('/config/plugins/')) return result(configRequest(method, path, request.body));

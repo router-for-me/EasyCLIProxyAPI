@@ -9,6 +9,7 @@ import {
   buildPluginConfigDraft, buildPluginConfigPatch, normalizePluginConfigFieldType,
   type PluginConfigDraft, type PluginDraftValue,
 } from '../services/pluginConfigDraft';
+import { formatPluginVersion } from '../services/pluginReleaseVersions';
 import './PluginConfigDialog.css';
 
 function customConfig(config: PluginConfigObject): PluginConfigObject {
@@ -153,7 +154,7 @@ export function PluginConfigDialog({ plugin, onClose, onSaved }: {
   const content = <div className="config-dialog-backdrop plugin-config-backdrop" onMouseDown={event => { if (event.currentTarget === event.target) close(); }}>
     <section ref={dialogRef} className="config-dialog plugin-config-dialog" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-busy={loading || saving}>
       <header className="config-dialog-heading">
-        <div><h2 id={`${id}-title`}><Settings2 size={20} aria-hidden="true" />{pt('title')}</h2><p>{plugin.metadata?.name || plugin.id}</p></div>
+        <div><h2 id={`${id}-title`}><Settings2 size={20} aria-hidden="true" />{pt('title')}</h2><p>{plugin.metadata?.name || plugin.id}{plugin.metadata?.version ? ` · ${formatPluginVersion(plugin.metadata.version)}` : ''}</p></div>
         <button type="button" className="icon-button quiet" disabled={saving} onClick={close} aria-label={t('common.close')}><X size={18} /></button>
       </header>
       <form onSubmit={event => { event.preventDefault(); void save(); }} noValidate>

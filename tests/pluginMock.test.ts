@@ -21,6 +21,12 @@ describe('browser plugin mock', () => {
       { repository, version: release.version, error: null },
       { repository: 'unknown/repository', version: null, error: 'Invalid GitHub repository' },
     ]);
+    expect(await runtime.invoke('get_plugin_releases', { repository })).toMatchObject([
+      { version: release.version, name: expect.any(String), notes: expect.stringContaining('Version selection'), prerelease: false },
+      { version: '1.0.0', notes: expect.stringContaining('Historical release notes') },
+    ]);
+    expect(await runtime.invoke('translate_plugin_text', { text: 'Version selection and release notes preview.', model: 'mock-model', targetLanguage: 'zh-CN' }))
+      .toContain('可选择安装版本');
     expect(await request(runtime, 'GET', '/plugins')).toMatchObject({
       plugins_enabled: true,
       plugins: [{ id: 'request-inspector', effective_enabled: true, menus: [{ menu: 'Inspector status' }, { menu: 'Sampled requests' }] }],
