@@ -6,17 +6,20 @@ import { useI18n } from '../i18n';
 import { pluginText } from '../i18n/plugins';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { useConfirmation } from '../components/ConfirmationDialog';
+import { PluginBulkTranslationToggle } from '../components/PluginBulkTranslationToggle';
 import { pluginsApi, pluginStoreApi, type PluginListEntry, type PluginListResponse, type PluginStoreEntry, type PluginStoreResponse } from '../services/plugins';
-import { buildPluginResourceRoute, collectPluginResourceEntries, getPluginTitle, isDefaultPluginStoreSource, getPluginRepositorySlug, notifyPluginResourcesChanged, type PluginResourceEntry } from '../services/pluginResources';
+import { buildPluginResourceRoute, collectPluginResourceEntries, getPluginTitle, notifyPluginResourcesChanged, type PluginResourceEntry } from '../services/pluginResources';
 import { getPluginStatus, isPluginInstalled } from '../services/pluginStatus';
-import { refreshPluginReleaseVersions } from '../services/pluginReleaseVersions';
+import { formatPluginVersion, refreshPluginReleaseVersions } from '../services/pluginReleaseVersions';
 import { waitForPluginInstall, waitForPluginToggle, type PluginActionStatus } from '../services/pluginPolling';
 import type { PluginStoreInstallResult } from '../services/plugins';
 import { PluginConfigDialog } from './PluginConfigDialog';
 import { PluginInstallDialog } from './PluginInstallDialog';
+import { PluginStoreCard } from './PluginStoreCard';
 import { PluginOAuthDialog } from './PluginOAuthDialog';
 import { GitHubTokenHint, isGitHubRateLimit } from './PluginRateLimitHint';
 import { PluginSettingsPanel } from './PluginSettingsPanel';
+import { pluginTextNeedsChinese } from '../services/pluginTranslation';
 import './PluginsPage.css';
 
 type Tab = 'installed' | 'store' | 'settings';
@@ -38,6 +41,7 @@ export function PluginsPage() {
   const [filter, setFilter] = useState('all');
   const [configPlugin, setConfigPlugin] = useState<PluginListEntry | null>(null);
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
+  const [bulkTranslate, setBulkTranslate] = useState(false);
   const [oauthPlugin, setOAuthPlugin] = useState<PluginListEntry | null>(null);
   const [restartRequired, setRestartRequired] = useState(false);
   const requests = useRef(0);
@@ -180,6 +184,7 @@ export function PluginsPage() {
   const plugins = (data?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.metadata?.name, plugin.metadata?.author]));
   const storePlugins = (store?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.name, plugin.description, plugin.author, ...plugin.tags]) && (filter === 'all' || (filter === 'installed' && plugin.installed) || (filter === 'updates' && plugin.updateAvailable)));
   const sourceErrors = (tab === 'installed' ? localUpdates : store)?.sourceErrors ?? [];
+  const translationCount = (store?.plugins ?? []).filter(entry => pluginTextNeedsChinese(entry.description, locale)).length;
   const locked = busy || loading || Boolean(configPlugin || installEntry || oauthPlugin);
 
   return <div className="plugins-page" role="region" aria-label={pt('title')}>
@@ -195,6 +200,7 @@ export function PluginsPage() {
         </div>
         {tab === 'store' && <select aria-label={pt('store')} value={filter} onChange={e => setFilter(e.target.value)}>{['all', 'installed', 'updates'].map(value => <option key={value} value={value}>{pt(value as 'all' | 'installed' | 'updates')}</option>)}</select>}
         </>}
+        {supported === true && tab === 'store' && translationCount > 0 && <PluginBulkTranslationToggle active={bulkTranslate} count={translationCount} disabled={locked || loading} onToggle={setBulkTranslate} />}
         {supported === true && <button type="button" className="secondary-button plugin-development-guide" disabled={locked} onClick={() => void installLocal()}><Download size={16} aria-hidden="true" />{pt('localInstall')}</button>}
         <button type="button" className="secondary-button plugin-development-guide" onClick={() => void invoke('open_external_url', { url: 'https://help.router-for.me/cn/plugin/development.html' }).catch(reason => { if (mounted.current) setError(message(reason)); })}><ExternalLink size={16} aria-hidden="true" />{pt('developmentGuide')}</button>
         <button className="secondary-button plugin-refresh" disabled={locked} onClick={() => void load(tabRef.current, true)}><RefreshCw size={16} aria-hidden="true" />{t('common.refresh')}</button>
@@ -212,37 +218,37 @@ export function PluginsPage() {
             const status = getPluginStatus(plugin, data?.pluginsEnabled ?? false);
             const installed = isPluginInstalled(plugin);
             const update = localUpdates?.plugins.find(entry => entry.id === plugin.id && entry.updateAvailable);
-            const meta = [update ? `${update.installedVersion} → ${update.version}` : plugin.metadata?.version, plugin.metadata?.author].filter(Boolean).join(' · ');
+            const versionLabel = formatPluginVersion(update?.installedVersion || plugin.metadata?.version || '');
+            const updateLabel = update ? `${update.installedVersion} → ${update.version}` : '';
+            const versionContent = updateLabel
+              ? <span className="plugin-version-available">{updateLabel}</span>
+              : versionLabel
+                ? <span className="plugin-version-badge"><span>{pt('version')}</span><code>{versionLabel}</code></span>
+                : null;
             const removeLabel = `${pt(installed ? 'remove' : 'removeConfig')} ${getPluginTitle(plugin)}`;
             return <article className="plugin-card plugin-local-card" key={plugin.id}>
             <div className="plugin-card-title"><span className="plugin-icon"><Puzzle size={23} /></span><div><h2>{getPluginTitle(plugin)}</h2>{getPluginTitle(plugin) !== plugin.id && <code>{plugin.id}</code>}</div><span className={`plugin-badge ${status === 'active' ? 'active' : status === 'missingFile' || status === 'notLoaded' ? 'warning' : ''}`}>{pt(status)}</span></div>
-            {meta && <p className="plugin-meta">{meta}</p>}{plugin.path && <p className="plugin-path" title={plugin.path}>{plugin.path}</p>}
+            {(versionContent || plugin.metadata?.author) && <p className="plugin-version-line">{versionContent}{plugin.metadata?.author && <span>{plugin.metadata.author}</span>}</p>}{plugin.path && <p className="plugin-path" title={plugin.path}>{plugin.path}</p>}
             {status === 'missingFile' && <p className="plugin-card-description">{pt('missingFileHint')}</p>}
             {status === 'notLoaded' && <p className="plugin-card-description">{pt('notLoadedHint')}</p>}
             {collectPluginResourceEntries([plugin]).length > 0 && <div className="plugin-menus">{collectPluginResourceEntries([plugin]).map(entry => <button key={entry.menuIndex} title={entry.description} className="secondary-button" disabled={locked} onClick={() => openResource(entry)}><ExternalLink size={14} />{entry.label}</button>)}</div>}
             <div className="plugin-card-actions">
-              {installed && update && <button className="primary-button" disabled={locked || (update.authRequired && !update.authConfigured)} onClick={() => setInstallEntry(update)}><Download size={15} />{pt(update.authRequired && !update.authConfigured ? 'authMissing' : 'update')}</button>}
             {plugin.effectiveEnabled && plugin.supportsOAuth && plugin.oauthProvider && <button className="secondary-button" disabled={locked} onClick={() => setOAuthPlugin(plugin)}><LogIn size={15} />{pt('oauth')}</button>}
               {installed ? <button className="secondary-button" disabled={locked} onClick={() => void toggle(plugin)}>{pt(plugin.enabled ? 'disabled' : 'enabled')}</button> : <button className="secondary-button" disabled={locked} onClick={() => { setSearch(plugin.id); setFilter('all'); setTab('store'); }}><Download size={15} />{pt('findInStore')}</button>}
               <button className="secondary-button" disabled={locked} onClick={() => setConfigPlugin(plugin)}><Settings2 size={15} />{pt('configure')}</button>
+              {installed && update && <button className="primary-button plugin-update-action" disabled={locked || (update.authRequired && !update.authConfigured)} onClick={() => setInstallEntry(update)}><Download size={15} />{pt(update.authRequired && !update.authConfigured ? 'authMissing' : 'update')}</button>}
               {status === 'notLoaded' && <button className="secondary-button" disabled={locked} onClick={() => void invoke('open_core_logs_directory').catch(reason => { if (mounted.current) setError(message(reason)); })}><Folder size={15} />{pt('openLogs')}</button>}
               <button className="icon-button quiet plugin-delete" disabled={locked} aria-label={removeLabel} title={removeLabel} onClick={() => void remove(plugin)}><Trash2 size={16} /></button>
             </div>
           </article>; })}</div> : <>
-            <div className="plugin-grid">{storePlugins.map(entry => <article className="plugin-card" key={entry.storeId}>
-              <div className="plugin-card-title"><span className="plugin-icon"><Puzzle size={23} /></span><div><h2>{entry.name || entry.id}</h2><code>{entry.id}</code></div><span className={`plugin-badge ${isDefaultPluginStoreSource(entry) ? 'active' : ''}`}>{pt(isDefaultPluginStoreSource(entry) ? 'officialStore' : 'additionalStore')}</span></div>
-              <p className="plugin-card-description">{entry.description}</p><p className="plugin-meta">{[entry.installedVersion && entry.updateAvailable ? `${entry.installedVersion} → ${entry.version}` : entry.installedVersion || entry.version, entry.author, entry.license].filter(Boolean).join(' · ')}</p><p className="plugin-meta">{pt('storeSource')}: {isDefaultPluginStoreSource(entry) ? pt('officialStore') : entry.sourceName || entry.sourceId}</p>
-              {entry.repository && <p className="plugin-meta plugin-repository" title={entry.repository}>{pt('repository')}: <span>{getPluginRepositorySlug(entry.repository) || entry.repository}</span></p>}
-              {entry.platforms.length > 0 && <p className="plugin-meta">{entry.platforms.map(platform => `${platform.goos}/${platform.goarch}`).join(' · ')}</p>}
-              <div className="plugin-card-actions">{entry.installed && <span className="plugin-badge">{pt(entry.updateAvailable ? 'updates' : 'installed')}</span>}<button className="primary-button" disabled={locked || (entry.authRequired && !entry.authConfigured)} onClick={() => setInstallEntry(entry)}><Download size={15} />{pt(entry.authRequired && !entry.authConfigured ? 'authMissing' : !entry.installed ? 'install' : entry.updateAvailable ? 'update' : 'reinstall')}</button></div>
-            </article>)}</div>
+            <div className="plugin-grid">{storePlugins.map(entry => <PluginStoreCard key={entry.storeId} entry={entry} locked={locked} bulkTranslate={bulkTranslate} onOpen={() => setInstallEntry(entry)} />)}</div>
           </>}
           {!loading && !error && (tab === 'installed' ? !plugins.length : !storePlugins.length) && <section className="plugin-empty"><Puzzle size={36} /><h2>{pt(search || filter !== 'all' ? 'noMatches' : 'empty')}</h2>{tab === 'installed' && !search && <><p>{pt('emptyHint')}</p><button className="primary-button" onClick={() => setTab('store')}>{pt('store')}</button></>}</section>}
         </>}
       </>
     </>}
     {configPlugin && <PluginConfigDialog plugin={configPlugin} onClose={() => setConfigPlugin(null)} onSaved={() => { notice.showNotice(pt('saved')); void load(); }} />}
-    {installEntry && <PluginInstallDialog key={installEntry.storeId} entry={installEntry} onClose={() => setInstallEntry(null)} onInstalled={installed} />}
+    {installEntry && <PluginInstallDialog key={installEntry.storeId} entry={installEntry} autoTranslate={bulkTranslate} onClose={() => setInstallEntry(null)} onInstalled={installed} />}
     {oauthPlugin && <PluginOAuthDialog plugin={oauthPlugin} onClose={() => setOAuthPlugin(null)} onCompleted={() => { notice.showNotice(pt('authorized')); void load(); }} />}
     {confirmationDialog}<FloatingNotice notice={notice.notice} onDismiss={notice.clearNotice} />
   </div>;

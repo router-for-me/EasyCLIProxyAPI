@@ -8,8 +8,9 @@ import {
   isOfficialRepository, resolvePluginAssetURL,
 } from '../src/services/pluginResources';
 import {
-  buildGitHubReleasesPageURL, isValidManualReleaseTag, supportsPluginVersionSelection,
-  isNewerPluginRelease, refreshPluginReleaseVersions,
+  buildGitHubReleasesPageURL, clearPluginReleaseCache, comparePluginReleaseVersions,
+  formatPluginVersion, isPluginReleaseDowngrade, isValidManualReleaseTag, loadPluginReleases,
+  supportsPluginVersionSelection, isNewerPluginRelease, refreshPluginReleaseVersions,
 } from '../src/services/pluginReleaseVersions';
 import { buildPluginConfigDraft, buildPluginConfigPatch } from '../src/services/pluginConfigDraft';
 import { getPluginStatus, isPluginInstalled } from '../src/services/pluginStatus';
@@ -248,6 +249,15 @@ describe('plugin normalization and resources', () => {
 });
 
 describe('plugin installation trust and versions', () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, 'window', { value: {}, writable: true, configurable: true });
+  });
+  afterEach(() => {
+    clearMocks();
+    Reflect.deleteProperty(globalThis, 'window');
+    clearPluginReleaseCache();
+  });
+
   it('matches core update comparisons for dotted releases and other tags', () => {
     expect(isNewerPluginRelease('v1.9.0', '1.10.0')).toBe(true);
     expect(isNewerPluginRelease('2.0.0', '1.9.0')).toBe(false);
@@ -278,6 +288,40 @@ describe('plugin installation trust and versions', () => {
     for (const version of ['', '../v1', 'v1/next', 'x'.repeat(129), 'v1?foo=bar']) expect(isValidManualReleaseTag(version)).toBe(false);
     expect(buildGitHubReleasesPageURL('router-for-me/sample.git')).toBe('https://github.com/router-for-me/sample/releases');
     expect(buildGitHubReleasesPageURL('https://evil.test/router-for-me/sample')).toBe('');
+  });
+
+  it('formats and compares selectable versions without treating unknown tags as downgrades', () => {
+    expect(formatPluginVersion('v1.2.3')).toBe('v1.2.3');
+    expect(formatPluginVersion('1.2.3')).toBe('v1.2.3');
+    expect(comparePluginReleaseVersions('v1.2.3', '1.2.3')).toBe(0);
+    expect(comparePluginReleaseVersions('1.9.0', '1.10.0')).toBe(-1);
+    expect(comparePluginReleaseVersions('2.0.0', '1.9.0')).toBe(1);
+    expect(isPluginReleaseDowngrade('2.0.0', '1.9.0')).toBe(true);
+    expect(isPluginReleaseDowngrade('2.0.0', 'nightly')).toBe(false);
+  });
+
+  it('loads release history with notes and caches a successful response', async () => {
+    const calls: string[] = [];
+    mockIPC((command, args) => {
+      expect(command).toBe('get_plugin_releases');
+      calls.push(String(args?.repository));
+      return [
+        { version: '3.0.0', name: 'Version 3', notes: '## Added\n- Version picker', published_at: '2026-10-18T08:00:00Z', prerelease: false },
+        { version: 'v2.0.0', name: 'Version 2', notes: '## Fixed\n- Notes', published_at: '2026-09-18T08:00:00Z', prerelease: true },
+        { version: '../unsafe', name: 'Unsafe', notes: 'ignored' },
+      ];
+    });
+    const releases = await loadPluginReleases('https://github.com/router-for-me/sample.git');
+    expect(releases).toEqual([
+      { version: '3.0.0', name: 'Version 3', notes: '## Added\n- Version picker', publishedAt: '2026-10-18T08:00:00Z', prerelease: false },
+      { version: '2.0.0', name: 'Version 2', notes: '## Fixed\n- Notes', publishedAt: '2026-09-18T08:00:00Z', prerelease: true },
+    ]);
+    expect(await loadPluginReleases('router-for-me/sample')).toEqual(releases);
+    expect(calls).toEqual(['router-for-me/sample']);
+    await expect(loadPluginReleases('https://evil.test/router-for-me/sample')).rejects.toThrow('Invalid GitHub repository');
+    mockIPC(() => []);
+    clearPluginReleaseCache();
+    await expect(loadPluginReleases('router-for-me/sample')).rejects.toThrow('No GitHub releases found');
   });
 });
 

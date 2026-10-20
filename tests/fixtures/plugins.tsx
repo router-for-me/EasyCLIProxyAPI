@@ -19,6 +19,7 @@ const state = {
   failNextList: false,
   failNextInstall: false,
   latestReleaseVersion: '3.0.0',
+  releaseListError: '',
   holdInstall: false,
   releaseInstall: null as null | (() => void),
   settings: {
@@ -94,7 +95,27 @@ mockIPC(async (command, args) => {
     return '/plugins/windows/amd64/local-demo-v1.0.0.dll';
   }
   if (command === 'get_plugin_support') return state.supported;
+  if (command === 'get_core_models') return [{ name: 'fixture-translator', displayName: 'Fixture Translator' }];
+  if (command === 'translate_plugin_text') return `中文翻译：${String(args?.text ?? '').slice(0, 180)}`;
   if (command === 'get_plugin_latest_releases') return (args?.repositories as string[]).map(repository => ({ repository, version: state.latestReleaseVersion, error: null }));
+  if (command === 'get_plugin_releases') {
+    if (state.releaseListError) throw new Error(state.releaseListError);
+    const repository = String(args?.repository ?? '');
+    const entry = storeEntries.find(candidate => candidate.repository === repository);
+    if (!entry) throw new Error('Invalid GitHub repository');
+    const latest = entry.id === 'sample..plugin' ? state.latestReleaseVersion : String(entry.version);
+    return [latest, entry.id === 'sample..plugin' ? '2.0.0' : '0.9.0', entry.id === 'sample..plugin' ? '1.0.0' : '0.8.0', entry.id === 'sample..plugin' ? '0.9.0' : '0.7.0']
+      .filter((version, index, versions) => versions.indexOf(version) === index)
+      .map((version, index) => ({
+        version,
+        name: index === 0 ? `${entry.name} ${version}` : `Version ${version}`,
+        notes: index === 0
+          ? '## Added\n\n- Select an install version.\n- Preview release notes before updating.'
+          : `## Fixed\n\n- Historical notes for ${version}.`,
+        published_at: index === 0 ? '2026-10-18T08:00:00Z' : '2026-09-18T08:00:00Z',
+        prerelease: version.includes('-'),
+      }));
+  }
   if (command === 'open_external_url' || command === 'restart_core_process') return null;
   if (command !== 'management_request') return null;
   const request = args?.request as Request;

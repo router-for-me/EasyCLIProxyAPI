@@ -28,6 +28,7 @@ mod plugins;
 mod privacy_mode;
 mod progress;
 mod provider_health;
+mod translation;
 #[cfg(any(
     target_os = "linux",
     target_os = "macos",
@@ -2860,6 +2861,8 @@ fn main() {
             plugin_webview::hide_plugin_webview,
             plugin_webview::close_plugin_webview,
             plugins::get_plugin_latest_releases,
+            plugins::get_plugin_releases,
+            translation::translate_plugin_text,
             provider_health::provider_health_probe,
             provider_health::get_core_models,
             provider_health::core_health_probe,

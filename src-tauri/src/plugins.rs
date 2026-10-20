@@ -4,6 +4,7 @@ use super::{
     GuiConfigFile, GuiConfigState,
 };
 use futures_util::StreamExt;
+use std::collections::HashSet;
 
 pub(crate) mod local_install;
 
@@ -14,12 +15,50 @@ pub(crate) struct PluginLatestRelease {
     error: Option<String>,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct PluginRelease {
+    version: String,
+    name: String,
+    notes: String,
+    published_at: Option<String>,
+    prerelease: bool,
+}
+
 #[tauri::command]
 pub(crate) async fn get_plugin_latest_releases(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     repositories: Vec<String>,
 ) -> Result<Vec<PluginLatestRelease>, String> {
-    let config = gui_config_state.snapshot()?;
+    let (client, token) = plugin_github_client(gui_config_state.inner()).await?;
+    let client = &client;
+    let token = token.as_deref();
+    Ok(futures_util::stream::iter(repositories)
+        .map(|repository| async move {
+            let result = fetch_plugin_release(client, &repository, token).await;
+            PluginLatestRelease {
+                repository,
+                version: result.as_ref().ok().cloned(),
+                error: result.err(),
+            }
+        })
+        .buffered(2)
+        .collect()
+        .await)
+}
+
+#[tauri::command]
+pub(crate) async fn get_plugin_releases(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    repository: String,
+) -> Result<Vec<PluginRelease>, String> {
+    let (client, token) = plugin_github_client(gui_config_state.inner()).await?;
+    fetch_plugin_releases(&client, &repository, token.as_deref()).await
+}
+
+async fn plugin_github_client(
+    state: &GuiConfigState,
+) -> Result<(reqwest::Client, Option<String>), String> {
+    let config = state.snapshot()?;
     let response = management_http_client()?
         .get(management_endpoint(&config, "config/server")?)
         .header("Authorization", management_authorization(&config)?)
@@ -36,20 +75,7 @@ pub(crate) async fn get_plugin_latest_releases(
         &config.proxy_url,
         "Failed to create GitHub client",
     )?;
-    let client = &client;
-    let token = token.as_deref();
-    Ok(futures_util::stream::iter(repositories)
-        .map(|repository| async move {
-            let result = fetch_plugin_release(client, &repository, token).await;
-            PluginLatestRelease {
-                repository,
-                version: result.as_ref().ok().cloned(),
-                error: result.err(),
-            }
-        })
-        .buffered(2)
-        .collect()
-        .await)
+    Ok((client, token))
 }
 
 async fn read_plugin_github_settings(
@@ -73,6 +99,18 @@ async fn fetch_plugin_release(
     read_plugin_release(response).await
 }
 
+async fn fetch_plugin_releases(
+    client: &reqwest::Client,
+    repository: &str,
+    token: Option<&str>,
+) -> Result<Vec<PluginRelease>, String> {
+    let response = plugin_releases_request(client, repository, token)?
+        .send()
+        .await
+        .map_err(|_| "Failed to fetch GitHub releases".to_string())?;
+    read_plugin_releases(response).await
+}
+
 fn plugin_github_token(
     settings: &serde_json::Value,
     environment: Option<String>,
@@ -92,18 +130,57 @@ fn plugin_release_request(
     repository: &str,
     token: Option<&str>,
 ) -> Result<reqwest::RequestBuilder, String> {
+    Ok(plugin_github_release_request(
+        client,
+        &plugin_release_url(repository)?,
+        token,
+    ))
+}
+
+fn plugin_releases_request(
+    client: &reqwest::Client,
+    repository: &str,
+    token: Option<&str>,
+) -> Result<reqwest::RequestBuilder, String> {
+    Ok(plugin_github_release_request(
+        client,
+        &plugin_releases_url(repository)?,
+        token,
+    ))
+}
+
+fn plugin_github_release_request(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
     let mut request = client
-        .get(plugin_release_url(repository)?)
+        .get(url)
         .header("User-Agent", "EasyCLIProxyAPI")
         .header("Accept", "application/vnd.github+json")
         .header("Cache-Control", "no-cache");
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
-    Ok(request)
+    request
 }
 
 fn plugin_release_url(repository: &str) -> Result<String, String> {
+    let repository = plugin_github_repository(repository)?;
+    Ok(format!(
+        "https://api.github.com/repos/{repository}/releases/latest"
+    ))
+}
+
+fn plugin_releases_url(repository: &str) -> Result<String, String> {
+    let repository = plugin_github_repository(repository)?;
+    Ok(format!(
+        "https://api.github.com/repos/{repository}/releases?per_page=30"
+    ))
+}
+
+fn plugin_github_repository(repository: &str) -> Result<&str, String> {
+    let repository = repository.trim();
     let parts: Vec<_> = repository.split('/').collect();
     if parts.len() != 2
         || parts.iter().any(|part| {
@@ -117,21 +194,33 @@ fn plugin_release_url(repository: &str) -> Result<String, String> {
     {
         return Err("Invalid GitHub repository".to_string());
     }
-    Ok(format!(
-        "https://api.github.com/repos/{repository}/releases/latest"
-    ))
+    Ok(repository)
 }
 
-async fn read_plugin_release(response: reqwest::Response) -> Result<String, String> {
-    let status = response.status();
-    if status.as_u16() == 429
-        || (status.as_u16() == 403
+fn normalized_plugin_release_tag(value: &str) -> Option<String> {
+    let tag = value.trim();
+    let tag = tag.strip_prefix(['v', 'V']).unwrap_or(tag);
+    (tag.bytes().next().is_some_and(|byte| byte.is_ascii_digit())
+        && tag.len() <= 128
+        && tag
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+')))
+    .then(|| tag.to_string())
+}
+
+fn plugin_release_rate_limited(response: &reqwest::Response) -> bool {
+    response.status().as_u16() == 429
+        || (response.status().as_u16() == 403
             && (response
                 .headers()
                 .get("x-ratelimit-remaining")
                 .is_some_and(|value| value == "0")
                 || response.headers().contains_key("retry-after")))
-    {
+}
+
+async fn read_plugin_release(response: reqwest::Response) -> Result<String, String> {
+    let status = response.status();
+    if plugin_release_rate_limited(&response) {
         return Err(format!("GitHub API rate limited ({status})"));
     }
     if !status.is_success() {
@@ -144,17 +233,87 @@ async fn read_plugin_release(response: reqwest::Response) -> Result<String, Stri
     value
         .get("tag_name")
         .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .map(|tag| tag.strip_prefix(['v', 'V']).unwrap_or(tag))
-        .filter(|tag| {
-            tag.bytes().next().is_some_and(|byte| byte.is_ascii_digit())
-                && tag.len() <= 128
-                && tag
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
-        })
-        .map(str::to_owned)
+        .and_then(normalized_plugin_release_tag)
         .ok_or_else(|| "Invalid GitHub release tag".to_string())
+}
+
+async fn read_plugin_releases(response: reqwest::Response) -> Result<Vec<PluginRelease>, String> {
+    let status = response.status();
+    if plugin_release_rate_limited(&response) {
+        return Err(format!("GitHub API rate limited ({status})"));
+    }
+    if !status.is_success() {
+        return Err(format!("Failed to fetch GitHub releases ({status})"));
+    }
+    let value: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| "Invalid GitHub releases response".to_string())?;
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "Invalid GitHub releases response".to_string())?;
+    let mut seen = HashSet::new();
+    let mut releases = Vec::new();
+    for entry in entries {
+        if entry.get("draft").and_then(serde_json::Value::as_bool) == Some(true) {
+            continue;
+        }
+        let Some(version) = entry
+            .get("tag_name")
+            .and_then(serde_json::Value::as_str)
+            .and_then(normalized_plugin_release_tag)
+        else {
+            continue;
+        };
+        if !seen.insert(version.clone()) {
+            continue;
+        }
+        let name = entry
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(|value| bounded_release_text(value, 200))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| version.clone());
+        let notes = entry
+            .get("body")
+            .and_then(serde_json::Value::as_str)
+            .map(|value| bounded_release_text(value, 40_000))
+            .unwrap_or_default();
+        let published_at = entry
+            .get("published_at")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        releases.push(PluginRelease {
+            version,
+            name,
+            notes,
+            published_at,
+            prerelease: entry
+                .get("prerelease")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        });
+        if releases.len() == 30 {
+            break;
+        }
+    }
+    if releases.is_empty() {
+        return Err("No GitHub releases found".to_string());
+    }
+    Ok(releases)
+}
+
+fn bounded_release_text(value: &str, max_chars: usize) -> String {
+    let value = value.trim();
+    if value.chars().count() <= max_chars {
+        value.to_string()
+    } else {
+        let mut bounded = value.chars().take(max_chars).collect::<String>();
+        bounded.push('…');
+        bounded
+    }
 }
 
 #[tauri::command]
@@ -307,6 +466,10 @@ mod tests {
             plugin_release_url("example/plugin").unwrap(),
             "https://api.github.com/repos/example/plugin/releases/latest"
         );
+        assert_eq!(
+            plugin_releases_url("example/plugin").unwrap(),
+            "https://api.github.com/repos/example/plugin/releases?per_page=30"
+        );
         for repository in [
             "",
             "../plugin",
@@ -318,6 +481,7 @@ mod tests {
             "example/%2e%2e",
         ] {
             assert!(plugin_release_url(repository).is_err());
+            assert!(plugin_releases_url(repository).is_err());
         }
     }
 
@@ -378,6 +542,66 @@ mod tests {
                 assert!(error.contains("GitHub API rate limited"));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn plugin_release_list_includes_notes_dates_and_prereleases() {
+        let response = reqwest::Response::from(
+            tauri::http::Response::builder()
+                .status(200)
+                .body(
+                    r###"[
+                        {"tag_name":"v3.0.0","name":"Version 3","body":"## Added\n- Version picker","published_at":"2026-10-18T08:00:00Z","draft":false,"prerelease":false},
+                        {"tag_name":"v2.1.0-rc.1","name":"","body":"","published_at":null,"draft":false,"prerelease":true},
+                        {"tag_name":"v2.0.0","name":"Draft release","body":"hidden","draft":true,"prerelease":false},
+                        {"tag_name":"v3.0.0","name":"Duplicate","body":"duplicate","draft":false,"prerelease":false}
+                    ]"###,
+                )
+                .unwrap(),
+        );
+        let releases = read_plugin_releases(response).await.unwrap();
+        assert_eq!(releases.len(), 2);
+        assert_eq!(releases[0].version, "3.0.0");
+        assert_eq!(releases[0].name, "Version 3");
+        assert_eq!(releases[0].notes, "## Added\n- Version picker");
+        assert_eq!(
+            releases[0].published_at.as_deref(),
+            Some("2026-10-18T08:00:00Z")
+        );
+        assert!(!releases[0].prerelease);
+        assert_eq!(releases[1].version, "2.1.0-rc.1");
+        assert_eq!(releases[1].name, "2.1.0-rc.1");
+        assert!(releases[1].notes.is_empty());
+        assert!(releases[1].prerelease);
+    }
+
+    #[tokio::test]
+    async fn plugin_release_list_rejects_invalid_payloads_and_empty_results() {
+        for body in [r#"{}"#, r#"[]"#] {
+            let response = reqwest::Response::from(
+                tauri::http::Response::builder()
+                    .status(200)
+                    .body(body)
+                    .unwrap(),
+            );
+            assert!(read_plugin_releases(response).await.is_err());
+        }
+        let response = reqwest::Response::from(
+            tauri::http::Response::builder()
+                .status(429)
+                .body("sensitive body")
+                .unwrap(),
+        );
+        let error = read_plugin_releases(response).await.unwrap_err();
+        assert!(error.contains("rate limited"));
+        assert!(!error.contains("sensitive body"));
+    }
+
+    #[test]
+    fn plugin_release_text_is_trimmed_and_bounded_on_character_boundaries() {
+        assert_eq!(bounded_release_text("  notes  ", 20), "notes");
+        assert_eq!(bounded_release_text("版本选择", 2), "版本…");
+        assert!(bounded_release_text(&"x".repeat(40_001), 40_000).ends_with('…'));
     }
 
     #[test]

@@ -940,6 +940,7 @@ const ERROR_SCENARIO_COMMANDS = new Set([
   'management_request',
   'get_usage_overview',
   'get_core_models',
+  'translate_plugin_text',
   'core_health_probe',
   'get_agent_config_statuses',
 ]);
@@ -1337,6 +1338,14 @@ export function createBrowserMockRuntime(
       case 'get_core_models': {
         if (!state.coreStatus.ready) throw new Error('Browser Mock: the core is not ready');
         return invoke('get_agent_models', {});
+      }
+      case 'translate_plugin_text': {
+        const text = readString(payload.text).trim();
+        if (!text) throw new Error('Translation text is empty');
+        if (text.includes('Inspect request metadata')) return '检查请求元数据，并在浏览器演示中调整采样。';
+        if (text.includes('Version selection and release notes preview')) return '## 新增\n\n- 可选择安装版本。\n- 更新前预览更新日志。';
+        if (text.includes('community demo plugin')) return '用于自定义响应标签的社区演示插件。';
+        return `中文译文：${text}`;
       }
       case 'get_agent_models': return [
         { name: 'gpt-5.2-codex', alias: 'codex-latest', displayName: 'GPT-5.2 Codex', isAlias: true, contextWindow: 272_000, inputModalities: ['text', 'image'] },
