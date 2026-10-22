@@ -9,6 +9,7 @@
   --usage-log-cache-read: #0f766e;
   --usage-log-cache-write: #b45309;
   --usage-log-response-model: #9a5808;
+  --usage-log-ultrafast: #7e22ce;
   --usage-log-duration-good: #16a34a;
   --usage-log-duration-warn: #d97706;
   --usage-log-duration-bad: #dc2626;
@@ -133,7 +134,8 @@
   white-space: nowrap;
 }
 
-.usage-request-log .usage-events-table .usage-model-badges > .usage-model-fast {
+.usage-request-log .usage-events-table .usage-model-badges > .usage-model-fast,
+.usage-request-log .usage-events-table .usage-model-badges > .usage-model-ultrafast {
   display: inline-block;
   width: fit-content;
   padding: 1px 5px;
@@ -144,6 +146,12 @@
   font-size: var(--font-size-caption);
   line-height: 1.4;
   white-space: nowrap;
+}
+
+.usage-request-log .usage-events-table .usage-model-badges > .usage-model-ultrafast {
+  border-color: color-mix(in srgb, var(--usage-log-ultrafast) 36%, transparent);
+  background: color-mix(in srgb, var(--usage-log-ultrafast) 10%, transparent);
+  color: var(--usage-log-ultrafast);
 }
 
 .usage-request-log .usage-events-table .usage-td-model > .usage-response-model {
@@ -460,6 +468,7 @@
   --usage-log-cache-read: #5eead4;
   --usage-log-cache-write: #fbbf24;
   --usage-log-response-model: #f0bc73;
+  --usage-log-ultrafast: #d8b4fe;
   --usage-log-duration-good: #4ade80;
   --usage-log-duration-warn: #fbbf24;
   --usage-log-duration-bad: #f87171;

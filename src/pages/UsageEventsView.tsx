@@ -16,6 +16,7 @@ import { formatDuration, formatUsageNumber } from '../services/usageNumber';
 import { Dialog } from '../components/Dialog';
 import { usageProviderDetails } from '../services/usageProvider';
 import { usageModelDetails } from '../services/usageModel';
+import { usageServiceTierDetails } from '../services/usageServiceTier';
 import { Select } from '../components/Select';
 
 const compactNumber = (value: number) => formatUsageNumber(value, getCurrentLocale());
@@ -326,7 +327,12 @@ function UsageEventCell({
     case 'model': {
       const model = usageModelDetails(record.model, record.alias, record.response_model);
       const effort = record.reasoning_effort || 'auto';
-      const fast = ['priority', 'fast'].includes(record.service_tier?.trim().toLowerCase() ?? '');
+      const serviceTier = usageServiceTierDetails(record.service_tier, record.response_service_tier);
+      const serviceTierTitle = [
+        `${t('usage.speedMode.requested')}: ${serviceTier.requested || t('usage.speedMode.unrecorded')}`,
+        `${t('usage.speedMode.response')}: ${serviceTier.response || t('usage.speedMode.unrecorded')}`,
+        t('usage.speedMode.requestHint'),
+      ].join('\n');
       const modelTitle = [
         `${t('usage.model.request')}: ${model.requested}`,
         model.showResolved ? `${t('usage.model.upstream')}: ${model.resolved}` : '',
@@ -334,13 +340,14 @@ function UsageEventCell({
         model.mismatch ? t('usage.model.mismatch') : '',
         model.showResponseInTooltip ? t('usage.model.responseHint') : '',
         `${t('usage.column.effort')}: ${effort}`,
+        serviceTierTitle,
       ].filter(Boolean).join('\n');
       return (
         <td className="usage-stacked-cell usage-td-model align-left" title={modelTitle}>
           <strong title={modelTitle}>{model.requested}</strong>
           <span className="usage-model-badges">
             <small className="usage-model-effort" title={effort}>{effort}</small>
-            {fast ? <small className="usage-model-fast" title={record.service_tier}>{t('usage.speedMode.fast')}</small> : null}
+            {serviceTier.badge ? <small className={`usage-model-${serviceTier.badge}`} title={serviceTierTitle}>{t(serviceTier.badge === 'ultrafast' ? 'usage.speedMode.ultrafast' : 'usage.speedMode.fast')}</small> : null}
           </span>
           {model.showResolved ? <small title={modelTitle}>{model.resolved}</small> : null}
           {model.mismatch ? (

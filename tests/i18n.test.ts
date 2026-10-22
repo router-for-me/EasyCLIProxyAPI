@@ -5,6 +5,18 @@ import { jaOverrides } from '../src/i18n/ja';
 import { pluginConfigText } from '../src/i18n/pluginConfig';
 
 describe('i18n', () => {
+  it('localizes requested and reported service tiers without changing the technical badge', () => {
+    for (const locale of supportedLocales) {
+      expect(translate(locale, 'usage.speedMode.ultrafast')).toBe('ultrafast');
+      expect(translate(locale, 'usage.speedMode.requested')).not.toBe('');
+      expect(translate(locale, 'usage.speedMode.response')).not.toBe('');
+      expect(translate(locale, 'usage.speedMode.requestHint')).not.toBe('');
+    }
+    expect(translate('zh-TW', 'usage.speedMode.requested')).toBe('請求服務檔位');
+    expect(translate('zh-TW', 'usage.speedMode.response')).toBe('響應服務檔位');
+    expect(translate('zh-TW', 'usage.speedMode.unrecorded')).toBe('未記錄');
+  });
+
   it('localizes the plugin discard confirmation in every language', () => {
     for (const [locale, cancel, confirm] of [
       ['zh-CN', '继续编辑', '放弃修改'], ['zh-TW', '繼續編輯', '放棄修改'],
