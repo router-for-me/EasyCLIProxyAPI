@@ -3285,6 +3285,7 @@ fn cost_for_price(model: &str, service_tier: &str, tokens: &CostTokens, price: &
     // must not suppress the service-tier multiplier on its short requests.
     let long_multiplier = if matches!(tier.as_str(), "priority" | "fast")
         && !is_model_family(model, "gpt-6")
+        && !is_model_family(model, "gpt-6.1")
     {
         1.0
     } else {
@@ -3601,6 +3602,7 @@ fn service_tier_multiplier(model: &str) -> f64 {
     if is_model_family(model, "gpt-5.5") {
         2.5
     } else if is_model_family(model, "gpt-6")
+        || is_model_family(model, "gpt-6.1")
         || is_model_family(model, "gpt-5.6")
         || is_model_family(model, "gpt-5.4")
         || is_model_family(model, "gpt-5.4-mini")
@@ -7206,6 +7208,13 @@ mod tests {
         assert!(
             (cost_for_price("gpt-6-sol", "fast", &long_tokens, &sol) - 7.68).abs() < 0.000001
         );
+        let sol_61 = official_model_price("gpt-6.1-sol").unwrap();
+        assert!(
+            (cost_for_price("gpt-6.1-sol", "fast", &short_tokens, &sol_61) - 24.0).abs() < 0.000001
+        );
+        assert!(
+            (cost_for_price("gpt-6.1-sol", "priority", &long_tokens, &sol_61) - 7.68).abs() < 0.000001
+        );
     }
 
     #[test]
@@ -7550,5 +7559,27 @@ mod tests {
         assert_eq!(cost_for_price("gpt-6-sol", "", &tokens, &price), 0.0);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bundled_price_catalog_covers_current_codex_and_claude_catalog_models() {
+        let prices = bundled_model_prices().unwrap();
+        for model in [
+            "gpt-6.1-sol",
+            "codex-auto-review",
+            "gemini-4-argon",
+            "gemini-4-argon-high",
+            "gemini-4-argon-medium",
+            "gemini-4-argon-low",
+            "gemini-3-flash",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+            "gpt-oss-120b-medium",
+        ] {
+            assert!(
+                resolve_model_price(model, "", &prices).is_some(),
+                "expected bundled pricing for {model}"
+            );
+        }
     }
 }
