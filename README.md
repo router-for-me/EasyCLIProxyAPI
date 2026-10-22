@@ -99,6 +99,9 @@ Refreshing **Local plugins** checks installed plugins for updates and shows an u
 Public GitHub releases are checked directly using the configured GitHub token or the app's `GITHUB_TOKEN` environment variable; auth-required entries keep the core's authentication flow.
 Refreshing the **Plugin store** only reloads the plugin list. Installation queries the latest release unless a version is selected.
 
+For plugin OAuth, empty model lists, quota capabilities and local version selection, see the
+[provider plugin troubleshooting guide](docs/plugin-provider-troubleshooting.md).
+
 ### Usage history and token analytics
 
 ![Usage history and token analytics](docs/screenshots/en/4.png)
