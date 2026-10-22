@@ -9,6 +9,10 @@ export type MessageVariables = Record<string, string | number>;
 
 export const zhTW: Record<MessageKey, string> = {
   ...createTraditionalMessages(zhCN),
+  'usage.speedMode.requested': '請求服務檔位',
+  'usage.speedMode.response': '響應服務檔位',
+  'usage.speedMode.unrecorded': '未記錄',
+  'usage.speedMode.requestHint': '標記表示請求檔位，不代表上游調度或計費已確認。',
   "app.theme.lightGroup": "淺色主題",
   "app.theme.darkGroup": "深色主題",
   'app.theme.triggerLabel': '外觀',

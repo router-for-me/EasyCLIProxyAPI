@@ -54,7 +54,7 @@ const record = (id: string, model: string, alias: string, response_model?: strin
 });
 
 // Keep these cases in a stable order; the browser test uses it to inspect each model cell.
-const records: UsageRecord[] = [
+const baseRecords: UsageRecord[] = [
   { ...record('differing', 'gpt-6-astra', 'astra', 'gpt-5.6-luna'), service_tier: 'priority' },
   { ...record('matching', 'gpt-6-sol', 'same-alias', 'gpt-6-sol'), service_tier: 'fast' },
   { ...record('snapshot-prefix', 'openai/gpt-4o-latest', 'gpt4o', 'gpt-4o-2024-08-06'), service_tier: 'default' },
@@ -65,6 +65,18 @@ const records: UsageRecord[] = [
   record('quoted', 'quoted-model', 'quoted-alias', 'model,"quoted"'),
   record('formula', 'formula-model', 'formula-alias', '=SUM(A1)'),
 ];
+
+const tierRecords: UsageRecord[] = [
+  { ...record('priority', 'gpt-6.1-sol', ''), service_tier: 'priority', response_service_tier: 'default' },
+  { ...record('fast', 'gpt-6.1-sol', ''), service_tier: 'fast', response_service_tier: 'fast' },
+  { ...record('ultrafast-default', 'gpt-6.1-sol', ''), reasoning_effort: 'xhigh', service_tier: 'ultrafast', response_service_tier: 'default' },
+  { ...record('ultrafast-confirmed', 'gpt-6-astra', ''), service_tier: 'ultrafast', response_service_tier: 'ultrafast' },
+  { ...record('normalized-ultrafast', 'gpt-6.1-sol', ''), service_tier: ' UltraFast ', response_service_tier: ' DEFAULT ' },
+  { ...record('response-only', 'gpt-6.1-sol', ''), service_tier: 'default', response_service_tier: 'ultrafast' },
+  { ...record('unknown-tier', 'gpt-6.1-sol', ''), service_tier: 'future-tier' },
+  record('legacy-tier', 'gpt-6.1-sol', ''),
+];
+const records = params.get('scenario') === 'service-tiers' ? tierRecords : baseRecords;
 
 mockIPC(async () => null);
 

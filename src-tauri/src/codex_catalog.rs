@@ -956,7 +956,7 @@ mod tests {
         let state = catalog_state().unwrap().read().unwrap();
         let sources = &state.sources;
         assert_eq!(sources.templates.len(), 10);
-        assert_eq!(sources.revision, 7);
+        assert_eq!(sources.revision, 8);
         let embedded: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
         assert!(embedded.get("fallback_model").is_none());
         let fallback: Value = serde_json::from_str(FALLBACK_MODEL_JSON).unwrap();
@@ -1235,6 +1235,48 @@ mod tests {
             );
             assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
         }
+    }
+
+    #[test]
+    fn embedded_ultrafast_tiers_survive_catalog_generation() {
+        let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
+        let runtime = runtime(serde_json::json!({"models": [
+            {"id": "gpt-6.1-sol"},
+            {"id": "gpt-6-astra"},
+            {"id": "gpt-6-luna"}
+        ]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let models = output_models(&catalog);
+
+        for slug in ["gpt-6.1-sol", "gpt-6-astra"] {
+            let model = models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap();
+            let template = &sources.templates[slug].value;
+            assert_eq!(model["service_tiers"], template["service_tiers"]);
+            assert_eq!(
+                model["additional_speed_tiers"],
+                serde_json::json!(["fast", "ultrafast"])
+            );
+            assert!(model["service_tiers"].as_array().unwrap().iter().any(|tier| {
+                tier["id"] == "ultrafast"
+                    && tier["name"] == "Ultrafast"
+                    && tier["description"].as_str().is_some_and(|text| !text.is_empty())
+            }));
+            assert_eq!(model["default_service_tier"], Value::Null);
+        }
+
+        let luna = models
+            .iter()
+            .find(|model| model["slug"] == "gpt-6-luna")
+            .unwrap();
+        assert_eq!(luna["additional_speed_tiers"], serde_json::json!(["fast"]));
+        assert!(luna["service_tiers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tier| tier["id"] != "ultrafast"));
     }
 
     #[test]
@@ -1529,7 +1571,10 @@ mod tests {
         assert_eq!(model["shell_type"], "shell_command");
         assert_eq!(model["supports_reasoning_effort_updates"], true);
         assert_eq!(model["default_service_tier"], Value::Null);
-        assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
+        assert_eq!(
+            model["additional_speed_tiers"],
+            serde_json::json!(["fast", "ultrafast"])
+        );
         assert_eq!(model["service_tiers"], template["service_tiers"]);
         assert_eq!(
             model["base_instructions"],
@@ -1561,7 +1606,10 @@ mod tests {
             ["low", "medium", "high", "xhigh", "max", "ultra"]
         );
         assert_eq!(model["default_service_tier"], Value::Null);
-        assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
+        assert_eq!(
+            model["additional_speed_tiers"],
+            serde_json::json!(["fast", "ultrafast"])
+        );
         assert_eq!(model["service_tiers"], template["service_tiers"]);
     }
 

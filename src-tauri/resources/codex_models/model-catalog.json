@@ -1,5 +1,5 @@
 {
-  "catalog_revision": 7,
+  "catalog_revision": 8,
   "models": [
     {
       "slug": "gpt-6.1-sol",
@@ -170,10 +170,16 @@
           "id": "priority",
           "name": "Fast",
           "description": "2x speed, increased usage"
+        },
+        {
+          "id": "ultrafast",
+          "name": "Ultrafast",
+          "description": "The fastest available responses for latency-sensitive work."
         }
       ],
       "additional_speed_tiers": [
-        "fast"
+        "fast",
+        "ultrafast"
       ],
       "supports_reasoning_summary_parameter": true,
       "supports_reasoning_summaries": true,
@@ -351,10 +357,16 @@
           "id": "priority",
           "name": "Fast",
           "description": "2x speed, increased usage"
+        },
+        {
+          "id": "ultrafast",
+          "name": "Ultrafast",
+          "description": "The fastest available responses for latency-sensitive work."
         }
       ],
       "additional_speed_tiers": [
-        "fast"
+        "fast",
+        "ultrafast"
       ],
       "supports_reasoning_summary_parameter": true,
       "supports_reasoning_summaries": true,
