@@ -5,9 +5,21 @@ import {
   primaryProviderHealthCredential,
   runProviderModelHealthChecks,
 } from '../src/services/providerHealthCheck';
-import { modelEndpointCandidates } from '../src/services/modelService';
+import { modelEndpointCandidates, type ModelProvider } from '../src/services/modelService';
 
 describe('API 接入健康检测', () => {
+  it.each([
+    ['openai', 'chat/completions'],
+    ['claude', 'messages'],
+    ['codex', 'responses'],
+  ] as const)('uses the base path when a %s endpoint has a trailing slash', (provider: ModelProvider, endpoint) => {
+    const base = 'https://relay.example/custom/v1';
+    const input = `${base}/${endpoint}/`;
+    expect(modelEndpointCandidates(provider, input)).toEqual([`${base}/models`]);
+    expect(buildProviderHealthProbe(provider, input, 'test-model', 'test-key').url)
+      .toBe(`${base}/${endpoint}`);
+  });
+
   it('取消后不派发剩余模型，也不更新已关闭的界面', async () => {
     const controller = new AbortController();
     const requested: string[] = [];
