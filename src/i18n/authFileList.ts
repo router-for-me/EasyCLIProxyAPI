@@ -1,5 +1,7 @@
 export const authFileListZhCN = {
   'quota.pluginCategory': '插件额度',
+  'quota.autoBalance': '按剩余额度自动均衡权重',
+  'quota.autoBalanceHint': '刷新额度时根据剩余比例自动更新凭证的 priority 与 weight',
   "authFiles.policy.title": "请求策略",
   "authFiles.policy.hint": "未设置时继承全局配置。错误规则按顺序优先生效，清空后恢复继承；正则使用 Go 语法。",
   "authFiles.operations.title": "批量管理",
@@ -43,6 +45,8 @@ export const authFileListZhCN = {
 
 export const authFileListEn: Record<keyof typeof authFileListZhCN, string> = {
   'quota.pluginCategory': 'Plugin quotas',
+  'quota.autoBalance': 'Auto-balance weights',
+  'quota.autoBalanceHint': 'Automatically update credential priority and weight based on remaining quota when refreshed',
   "authFiles.policy.title": "Request policies",
   "authFiles.policy.hint": "Unset values inherit global settings. Error rules run in order; clearing restores inheritance. Regex uses Go syntax.",
   "authFiles.operations.title": "Batch management",
@@ -86,6 +90,8 @@ export const authFileListEn: Record<keyof typeof authFileListZhCN, string> = {
 
 export const authFileListJa: Record<keyof typeof authFileListZhCN, string> = {
   'quota.pluginCategory': 'プラグイン割当量',
+  'quota.autoBalance': '残量に応じて重みを自動調整',
+  'quota.autoBalanceHint': 'クォータ更新時に残り割合に応じて認証情報の priority と weight を自動更新します',
   "authFiles.policy.title": "リクエストポリシー",
   "authFiles.policy.hint": "未設定は全体設定を継承します。ルールは順番に適用され、空にすると継承に戻ります。正規表現は Go 構文です。",
   "authFiles.operations.title": "一括管理",

@@ -30,6 +30,8 @@ export type QuotaRow = {
   label: string;
   remainingPercent: number | null;
   quotaAvailable?: boolean;
+  /** Limit applies to a subset of models or features rather than the whole account. */
+  scoped?: boolean;
   groupLabel?: string;
   groupDescription?: string;
   windowLabel?: string;
@@ -68,7 +70,9 @@ const endpointByProvider: Record<QuotaProvider, string> = {
   antigravity: 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
 };
 
-const CLAUDE_PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
+/** Claude windows that gate all proxy (OAuth app) traffic rather than specific models or products. */
+const ACCOUNT_WIDE_CLAUDE_WINDOWS = new Set(['five_hour', 'seven_day', 'seven_day_oauth_apps']);
+const CLAUDE_PROFILE_URL ='https://api.anthropic.com/api/oauth/profile';
 const XAI_WEEKLY_URL = 'https://cli-chat-proxy.grok.com/v1/billing?format=credits';
 const CODEX_RESET_CREDITS_URL =
   'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
@@ -307,6 +311,7 @@ const codexWindowRows = (value: Record<string, unknown>): QuotaRow[] => {
         ?? (reached && resetAtMs !== undefined ? 0 : null),
       reset: codexResetLabel(raw),
       resetAtMs,
+      ...(prefix ? { scoped: true } : {}),
     };
   }).filter((row): row is QuotaRow => row !== null);
 };
@@ -446,6 +451,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
           remainingPercent: remainingFromUsedPercent(raw.utilization),
           reset: absoluteResetLabel(raw.resets_at ?? raw.resetsAt),
           resetAtMs: quotaResetFor(raw, ['resets_at', 'resetsAt']),
+          ...(ACCOUNT_WIDE_CLAUDE_WINDOWS.has(key) ? {} : { scoped: true }),
         };
       })
       .filter((row): row is QuotaRow => row !== null);
@@ -454,6 +460,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
       remainingPercent: remainingFromUsedPercent(fable.percent),
       reset: absoluteResetLabel(fable.resets_at ?? fable.resetsAt),
       resetAtMs: quotaResetFor(fable, ['resets_at', 'resetsAt']),
+      scoped: true,
     });
     const extraUsage = isRecord(value.extra_usage)
       ? value.extra_usage
@@ -476,6 +483,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
         detail: usedLabel && limitLabel
           ? quotaText('quota.service.usedOf', { used: usedLabel, limit: limitLabel })
           : undefined,
+        scoped: true,
       });
     }
     return rows;

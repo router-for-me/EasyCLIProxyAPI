@@ -1,7 +1,15 @@
 import { Notice } from '../components/Notice';
 import { EmptyState } from '../components/EmptyState';
 import { SegmentedControl } from '../components/SegmentedControl';
+import { Switch } from '../components/Switch';
 import { commitFetchedQuota } from '../services/quotaEnrichment';
+import {
+  applyQuotaRoutingChange,
+  restoreQuotaRoutingOriginals,
+  subscribeQuotaRoutingChanges,
+  syncCredentialQuotaRouting,
+  useQuotaAutoBalance,
+} from '../services/quotaAutoBalance';
 import { ResetCreditExpiries } from '../components/ResetCreditExpiries';
 import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -64,7 +72,27 @@ export function QuotaPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [category, setCategory] = useState<'all' | QuotaDisplayProvider>('all');
+  const [autoBalance, setAutoBalance] = useQuotaAutoBalance();
   const querying = Object.values(quotas).some((quota) => quota.status === 'loading');
+
+  useEffect(() => subscribeQuotaRoutingChanges((name, fields) => {
+    setFiles((current) => applyQuotaRoutingChange(current, name, fields));
+  }), []);
+
+  const handleToggleAutoBalance = useCallback((enabled: boolean) => {
+    setAutoBalance(enabled);
+    if (!enabled) {
+      void restoreQuotaRoutingOriginals().catch((restoreError) => setError(String(restoreError)));
+      return;
+    }
+    const snapshot = getQuotaCacheSnapshot();
+    files.forEach((file) => {
+      const quota = snapshot[quotaKey(file)];
+      if (quota?.status === 'success') {
+        void syncCredentialQuotaRouting(file, quota).catch(() => {});
+      }
+    });
+  }, [files, setAutoBalance]);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -156,6 +184,13 @@ export function QuotaPage() {
         icon={<Gauge size={18} />}
         summary={t(files.length === 1 ? 'quota.queryableCredentials.one' : 'quota.queryableCredentials.other', { count: files.length })}
       >
+        <Switch
+          size="sm"
+          checked={autoBalance}
+          onChange={(event) => handleToggleAutoBalance(event.currentTarget.checked)}
+          label={t('quota.autoBalance')}
+          title={t('quota.autoBalanceHint')}
+        />
         <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || refreshing || querying}>
           {loading ? <RefreshCw size={16} className="spin" /> : <ListRestart size={16} />}{t('quota.readList')}
         </button>
