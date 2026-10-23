@@ -1,6 +1,7 @@
 import type { ThemeDefinition } from './types';
 
 export const graphite: ThemeDefinition = {
+  schemaVersion: 1,
   id: 'graphite-dark',
   nameKey: 'app.theme.graphite.name',
   descriptionKey: 'app.theme.graphite.description',

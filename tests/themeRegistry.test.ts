@@ -94,11 +94,16 @@ describe('theme registry and application', () => {
       expect(themeRegistry.resolveSystem('dark', { ...remembered, dark: id }).id).toBe('dark');
     }
   });
-  test('rejects collisions, reserved IDs, invalid native colors', () => {
+  test('rejects collisions, reserved IDs and invalid native colors but drops invalid tokens', () => {
     for (const theme of [
       { ...custom, id: 'dark' }, { ...custom, id: 'system' }, { ...custom, id: '../bad' },
-      { ...custom, windowBackground: '#11223344' }, { ...custom, tokens: { surface: 'url(bad)' } },
+      { ...custom, windowBackground: '#11223344' },
     ]) expect(() => createThemeRegistry([...themeRegistry.themes, theme as ThemeDefinition])).toThrow();
+    const issues: string[] = [];
+    const dropped = normalizeTheme({ ...custom, tokens: { surface: 'url(bad)', spacing: '8px', accent: '#abcdef' } },
+      (issue) => issues.push(`${issue.code}:${issue.field}`));
+    expect(dropped.tokens).toEqual({ accent: '#abcdef' });
+    expect(issues).toEqual(['invalid-token:surface', 'unknown-token:spacing']);
   });
   test('removed themes leave the picker and safely fall back for saved selections', () => {
     for (const id of ['mist-blue-light', 'rose-paper-light', 'cyberpunk-dark', 'pine-dark']) {
@@ -177,7 +182,7 @@ describe('theme registry and application', () => {
       expect(styles.size).toBe(1);
       apply(theme);
       expect(styles.size).toBe(1);
-      expect(body.style.backgroundColor).toBe(theme.windowBackground);
+      expect(body.style.backgroundColor).toBe(theme.backdrop ? '' : theme.windowBackground);
       apply(themeRegistry.resolve(defaultId));
       expect(styles.size).toBe(0);
       expect([...properties]).toEqual([['--unrelated', 'keep']]);

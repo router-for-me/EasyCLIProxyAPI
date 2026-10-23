@@ -1,22 +1,14 @@
 .config-page { gap: 20px; min-width: 0; }
-.config-settings-search { display: flex; align-items: center; gap: 8px; flex: 0 0 160px; box-sizing: border-box; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-card); color: var(--text-tertiary); }
+.config-settings-search { display: flex; align-items: center; gap: 8px; flex: 0 0 160px; box-sizing: border-box; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-tertiary); }
 .config-settings-search:focus-within { border-color: var(--primary-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent); }
 .config-settings-search > svg { flex: none; }
 .config-settings-search input { width: 100%; min-width: 0; min-height: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px; }
 .config-settings-search input::-webkit-search-cancel-button { display: none; }
 .config-settings-search button { flex: none; }
 .config-settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; min-width: 0; }
-.config-settings-topnav { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 10; min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--border-color); background: var(--theme-sticky-background, var(--bg-secondary)); }
-.config-settings-navigation.config-subpage-tabs { display: flex; flex-wrap: nowrap; gap: 4px; flex: 1 1 0; min-width: 0; width: auto; max-width: 100%; padding: 0; margin: 0; border: 0; background: none; border-radius: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; scroll-padding-inline: 4px; }
-.config-settings-navigation::-webkit-scrollbar { display: none; width: 0; height: 0; }
-.config-page .config-settings-navigation.config-subpage-tabs button { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; min-width: 0; width: auto; height: 34px; min-height: 34px; margin: 0; padding: 5px 8px; border: 1px solid transparent; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; background: transparent; color: var(--text-secondary); text-align: center; white-space: nowrap; font-size: 12px; line-height: 1.5; font-weight: 500; box-shadow: none; }
-.config-page .config-settings-navigation.config-subpage-tabs button:hover { background: var(--bg-hover); color: var(--text-primary); }
-.config-page .config-settings-navigation.config-subpage-tabs button.active { border-bottom-color: var(--primary-color); background: transparent; color: var(--primary-color); font-weight: 650; box-shadow: none; }
-.config-page .config-settings-navigation.config-subpage-tabs button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -3px; }
-.config-settings-navigation button > svg { flex: none; color: var(--text-tertiary); }
-.config-settings-navigation button.active > svg { color: var(--primary-color); }
-.config-settings-navigation button > span:not(.config-nav-dirty) { min-width: 0; }
-.config-nav-dirty { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: 50%; background: var(--primary-color); }
+.config-settings-topnav { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.config-page .config-subpage-tabs button { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; min-width: 0; }
+.config-nav-dirty { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: var(--radius-full); background: var(--primary-color); }
 .config-settings-content { min-width: 0; }
 /* Only flatten page sections. Dialogs may be rendered inside these sections. */
 .config-page .config-settings-cards > section,
@@ -29,7 +21,7 @@
 .config-page #config-template-panel > .template-config-section > .template-config-card {
   border: 0;
   border-bottom: 1px solid var(--border-color);
-  border-radius: 0;
+  border-radius: var(--radius-none);
   background: transparent;
   box-shadow: none;
 }
@@ -44,7 +36,7 @@
 .config-page .config-sensitive-words-grid > .config-sensitive-words-card {
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-none);
   background: transparent;
   box-shadow: none;
 }
@@ -80,7 +72,7 @@
 .config-search-results { min-width: 0; }
 .config-search-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .config-search-heading h2 { margin: 0; font-size: 19px; }
-.config-search-heading > span { padding: 3px 8px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 11px; color: var(--text-secondary); }
+.config-search-heading > span { padding: 3px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 11px; color: var(--text-secondary); }
 .config-search-result-list { display: grid; overflow: hidden; }
 .config-search-result-list > button { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 16px 18px; border: 0; background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; }
 .config-search-result-list > button + button { border-top: 1px solid var(--border-color); }
@@ -106,17 +98,14 @@
 .config-settings-content .config-software-setting-row { min-height: 66px; padding: 14px 16px; gap: 16px; }
 .settings-help { display: inline-flex; flex: none; vertical-align: middle; }
 .settings-help-trigger { flex: none; }
-.settings-help-popover { position: fixed; z-index: 1000; display: block; width: min(320px, calc(100vw - 24px)); max-height: min(360px, calc(100vh - 24px)); overflow-y: auto; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-card); box-shadow: 0 8px 28px rgba(0, 0, 0, .14); color: var(--text-secondary); font-size: 12px; font-weight: 400; line-height: 1.7; overflow-wrap: anywhere; }
+.settings-help-popover { position: fixed; z-index: 1000; display: block; width: min(320px, calc(100vw - 24px)); max-height: min(360px, calc(100vh - 24px)); overflow-y: auto; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); box-shadow: var(--settings-help-shadow); color: var(--text-secondary); font-size: 12px; font-weight: 400; line-height: 1.7; overflow-wrap: anywhere; }
 
 @media (max-width: 1150px) {
   .config-settings-layout { gap: 20px; }
-  .config-page .config-settings-navigation.config-subpage-tabs button { padding: 10px 8px; }
 }
 @media (max-width: 720px) {
   .config-page { gap: 20px; }
   .config-settings-search { flex-basis: auto; }
-  .config-settings-navigation button > svg { display: none; }
-  .config-page .config-settings-navigation.config-subpage-tabs button { padding: 10px 12px; }
   .config-settings-content .config-network-grid { grid-template-columns: minmax(0, 1fr); }
   .config-settings-content .config-network-section { padding: 16px; }
   .config-settings-content .config-network-field { min-height: 0; }
@@ -253,7 +242,7 @@
   padding: 0 0 10px;
   border: 0;
   border-bottom: 1px solid var(--border-color);
-  border-radius: 0;
+  border-radius: var(--radius-none);
   background: transparent;
   box-sizing: border-box;
 }
@@ -277,7 +266,7 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: 32px;
-    border-radius: 0;
+    border-radius: var(--radius-none);
   }
   .config-page .config-settings-content .config-software-setting-row {
     border: 0;
@@ -356,7 +345,7 @@
 }
 .config-page #config-template-panel > .template-config-section > .template-config-card:not([hidden]) {
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
   box-shadow: none;
 }
@@ -455,13 +444,13 @@
   grid-template-rows: auto;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border-color);
-  border-radius: 0;
+  border-radius: var(--radius-none);
 }
 .config-page .config-settings-content .config-diagnostics-setting {
   min-height: 48px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border-color);
-  border-radius: 0;
+  border-radius: var(--radius-none);
 }
 .config-page .config-settings-content .config-diagnostics-field {
   grid-template-columns: minmax(0, 1fr) minmax(0, 160px);
@@ -469,7 +458,7 @@
   min-height: 48px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border-color);
-  border-radius: 0;
+  border-radius: var(--radius-none);
 }
 .config-page .config-settings-content .config-proxy-heading { max-width: none; }
 .config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions) { margin-top: 16px; }
@@ -511,7 +500,6 @@
 }
 
 @media (max-width: 720px) {
-  .config-settings-topnav { flex-wrap: wrap; gap: 10px; }
-  .config-settings-navigation.config-subpage-tabs { flex-basis: 100%; }
+  .config-settings-topnav .config-subpage-tabs { flex-basis: 100%; }
   .config-settings-topnav .config-settings-search { flex: 1 1 100%; }
 }

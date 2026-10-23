@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react';
+import { requestRateColor } from '../services/authFileRequests';
 import { ResetCreditExpiries } from './ResetCreditExpiries';
 import { LoaderCircle, RefreshCw } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -39,7 +41,7 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
       ? new Intl.DateTimeFormat(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(row.resetAtMs)
       : reset;
     const tone = percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
-    return <div className={`credential-quota-row ${tone}`} key={`${row.label}-${index}`}>
+    return <div className={`credential-quota-row ${tone}`} style={percent === null ? undefined : { '--quota-color': requestRateColor(percent / 100) } as CSSProperties} key={`${row.label}-${index}`}>
       <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{row.quotaAvailable ? t('quota.service.antigravity.available') : percent === null ? '—' : `${Math.round(percent)}%`}</strong></div>
       <div className="credential-quota-track" role={percent === null ? undefined : 'progressbar'} aria-label={`${row.label} · ${t('authFiles.settings.quotaRemaining')}`}
         aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined}>

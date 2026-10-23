@@ -278,7 +278,7 @@ export function AgentModelPicker({
             ? { top: dropdownLayout.top, left: dropdownLayout.left, width: dropdownLayout.width, height: dropdownLayout.height }
             : { top: 0, left: 0, width: 0, height: 0, visibility: 'hidden' }}
         >
-          {!editable ? <div className="agent-model-search">
+          {!editable ? <div className="agent-model-search search-control" data-size="default">
             <Search size={15} aria-hidden />
             <input
               ref={searchRef}

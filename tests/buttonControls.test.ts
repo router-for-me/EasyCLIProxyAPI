@@ -7,7 +7,7 @@ import ts from 'typescript';
 const root = join(import.meta.dir, '..', 'src');
 const trunk = ['primary-button', 'secondary-button', 'danger-button', 'icon-button', 'compact-button', 'small-button', 'tiny-button', 'link-button'];
 const modifiers = new Set(['ghost', 'quiet', 'danger', 'muted', 'copied', 'active', 'selected', 'locked', 'open', 'disabled', 'is-hidden', 'is-expanded', 'has-accounts', 'highlight-save', 'spin', 'oauth', 'api']);
-const trunkFiles = ['styles.css', 'styles/ui-refinements.css', 'styles/workspace-white.css'];
+const trunkFiles = ['styles.css', 'styles/ui-refinements.css', 'styles/workspace-white.css', 'styles/theme-surfaces.css'];
 const trunkOverrides: Record<string, string> = {
   'styles/usage-subpages.css': 'Usage panels recolor secondary buttons with page tokens (usage-page-*); moves into semantic tokens in stage 2.',
 };
@@ -17,7 +17,6 @@ const allowedSelectors: Record<string, string> = {
 const rowButtons: Record<string, [number, string]> = {
   'components/WindowFrame.tsx': [2, 'Native window chrome uses caption button dimensions.'],
   'App.tsx': [2, 'Sidebar navigation items and language list rows (.nav-section, .sidebar-language-list).'],
-  'components/ThemeSelector.tsx': [3, 'Sidebar theme trigger, theme cards and menu actions (.theme-selector-*).'],
   'pages/EasyModePage.tsx': [1, 'Language menu items (.simple-mode-lang-menu).'],
   'pages/ThinkingAliasesPage.tsx': [3, 'Model list rows and effort options (.thinking-model-list, .thinking-effort-options).'],
   'pages/AgentClientList.tsx': [1, 'Client list rows (.agent-list-items).'],
@@ -35,9 +34,9 @@ const removed = [
 const exceptions: Record<string, string[]> = {
   'Native window caption controls use OS-sized chrome': ['window-controls', 'window-close'],
   'Tabs and SegmentedControl choices (1.3)': [
-    'routing-segmented', 'agent-subpage-tabs', 'oauth-subpage-tabs', 'config-subpage-tabs', 'usage-tabs', 'plugin-tabs', 'home-protocol-tabs', 'usage-analysis-metric',
+    'tabs-control', 'routing-segmented', 'agent-subpage-tabs', 'oauth-subpage-tabs', 'config-subpage-tabs', 'usage-tabs', 'plugin-tabs', 'home-protocol-tabs', 'usage-analysis-metric',
     'quota-category-filter', 'thinking-effort-options', 'agent-auth-segmented', 'agent-auth-segmented-button', 'simple-mode-api-platforms', 'simple-mode-api-platform',
-    'theme-selector-modes', 'config-settings-navigation',
+    'theme-selector-modes',
   ],
   'Sidebar and theme/language menus: navigation chrome with its own sidebar tokens': [
     'nav-section', 'sidebar-link', 'sidebar-contact', 'sidebar-easy-entry', 'sidebar-language-trigger', 'sidebar-language-list', 'sidebar-privacy-toggle', 'nav-plugin-toggle',

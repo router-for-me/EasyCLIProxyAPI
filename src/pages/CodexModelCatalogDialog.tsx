@@ -197,7 +197,7 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
 
       <div className="surface-section codex-catalog-body">
         <aside className="codex-catalog-sidebar">
-          <div className="codex-catalog-search">
+          <div className="codex-catalog-search search-control" data-size="default">
             <Search size={15} aria-hidden />
             <input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder={t('agents.catalog.search')} />
           </div>
@@ -252,7 +252,7 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
                 <label><span>{t('agents.catalog.percent')}</span><input type="number" min="1" max="100" value={Number.isFinite(activeModel.configuration.effective_context_window_percent) ? activeModel.configuration.effective_context_window_percent : ''} onChange={(event) => updateField('effective_context_window_percent', event.currentTarget.value ? Number(event.currentTarget.value) : Number.NaN)} /></label>
                 <label><span>{t('agents.catalog.compact')}</span><input type="number" min="1" placeholder={t('agents.catalog.automatic')} value={activeModel.configuration.auto_compact_token_limit ?? ''} onChange={(event) => updateField('auto_compact_token_limit', event.currentTarget.value ? Number(event.currentTarget.value) : null)} /></label>
 
-                <fieldset className="wide codex-catalog-choice-group">
+                <fieldset className="wide codex-catalog-choice-group surface-frame">
                   <legend>{t('agents.catalog.reasoning')}</legend>
                   <div className="codex-catalog-chips">
                     {codexReasoningEfforts.map((effort) => {
@@ -264,7 +264,7 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
 
                 <label><span>{t('agents.catalog.defaultReasoning')}</span><Select value={activeModel.configuration.default_reasoning_level ?? ''} onChange={(event) => updateField('default_reasoning_level', (event.currentTarget.value || null) as CodexReasoningEffort | null)}><option value="">{t('agents.catalog.clientDefault')}</option>{activeModel.configuration.supported_reasoning_levels.map((level) => <option key={level.effort} value={level.effort}>{level.effort}</option>)}</Select></label>
 
-                <fieldset className="codex-catalog-choice-group">
+                <fieldset className="codex-catalog-choice-group surface-frame">
                   <legend>{t('agents.catalog.modalities')}</legend>
                   <div className="codex-catalog-checkboxes">
                     {(['text', 'image'] as const).map((modality) => <label key={modality}><Checkbox checked={activeModel.configuration.input_modalities.includes(modality)} onChange={(event) => toggleModality(modality, event.currentTarget.checked)} />{t(`agents.catalog.${modality}`)}</label>)}

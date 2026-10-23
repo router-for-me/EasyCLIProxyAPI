@@ -69,8 +69,13 @@ describe('credential request statistics', () => {
   });
 
   it('maps failure, mixed and success rates onto the red-yellow-green scale', () => {
-    expect(requestRateColor(0)).toBe('rgb(239, 68, 68)');
-    expect(requestRateColor(0.5)).toBe('rgb(250, 204, 21)');
-    expect(requestRateColor(1)).toBe('rgb(34, 197, 94)');
+    expect(requestRateColor(0)).toBe('color-mix(in srgb, var(--theme-meter-low) 100%, var(--theme-meter-medium) 0%)');
+    expect(requestRateColor(0.5)).toBe('color-mix(in srgb, var(--theme-meter-medium) 100%, var(--theme-meter-high) 0%)');
+    expect(requestRateColor(-1)).toBe(requestRateColor(0));
+    expect(requestRateColor(2)).toBe(requestRateColor(1));
+    expect(requestRateColor(NaN)).toBe(requestRateColor(0));
+    expect(requestRateColor(0.25)).toContain('--theme-meter-low) 50%');
+    expect(requestRateColor(0.75)).toContain('--theme-meter-high) 50%');
+    expect(requestRateColor(1)).toBe('color-mix(in srgb, var(--theme-meter-medium) 0%, var(--theme-meter-high) 100%)');
   });
 });

@@ -15,6 +15,8 @@ export function HomeOverviewCards({ snapshot, loading, coreReady, onRefresh, act
   const usage = snapshot?.usage;
   const credentials = snapshot?.credentials;
   const rate = usage?.successRate;
+  const availability = credentials && credentials.total > 0 && credentials.unknown < credentials.total
+    ? credentials.available / credentials.total * 100 : null;
   const unavailable = (remote: boolean) => t(loading ? 'common.loading' : remote && !coreReady ? 'home.overview.offline' : 'home.overview.unavailable');
   const cards = [
     {
@@ -34,8 +36,8 @@ export function HomeOverviewCards({ snapshot, loading, coreReady, onRefresh, act
         + (credentials.unknown ? ` · ${t('home.overview.unknownCredentials', { count: credentials.unknown })}` : '') : unavailable(true),
       tone: credentials?.available ? 'success' : credentials?.unavailable ? 'warning' : 'neutral',
       error: snapshot?.errors.credentials,
-      percent: credentials && credentials.total > 0 && credentials.unknown < credentials.total
-        ? credentials.available / credentials.total * 100 : null,
+      percent: availability,
+      meterColor: availability === null ? undefined : requestRateColor(availability / 100),
       meterLabel: t('home.overview.credentialAvailability'),
     },
     {

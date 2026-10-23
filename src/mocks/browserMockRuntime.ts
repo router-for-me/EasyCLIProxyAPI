@@ -22,6 +22,7 @@ export type BrowserMockRuntime = {
 const SCENARIOS = new Set<BrowserMockScenario>(['running', 'stopped', 'empty', 'error']);
 const BUNDLED_CORE = { version: '7.3.15', assetName: 'CLIProxyAPI_7.3.15_windows_amd64.zip' };
 const MOCK_CUSTOM_THEME = {
+  schemaVersion: 1,
   id: 'harbor-dark',
   name: { en: 'Harbor', 'zh-CN': '港湾', ja: 'ハーバー' },
   description: { en: 'Deep teal surfaces with a sea-glass accent', 'zh-CN': '深青底色与海玻璃色点缀', ja: '深い青緑とシーグラスのアクセント' },
@@ -1010,7 +1011,14 @@ export function createBrowserMockRuntime(
       case 'detect_core_platform': return { os: 'windows', arch: 'x86_64', assetOs: 'windows', assetArch: 'amd64', archiveKind: 'zip' };
       case 'get_linux_system_theme': return 'light';
       case 'detect_window_material': return null;
-      case 'list_custom_themes': return { files: [{ fileName: 'harbor-dark.json', content: JSON.stringify(MOCK_CUSTOM_THEME) }], omitted: 0 };
+      case 'list_custom_themes': return { files: [
+        { folder: 'harbor-dark', content: JSON.stringify(MOCK_CUSTOM_THEME) },
+        { folder: 'harbor-image-dark', content: JSON.stringify({
+          ...MOCK_CUSTOM_THEME, id: 'harbor-image-dark',
+          name: { en: 'Harbor Image', 'zh-CN': '港湾·图片', 'zh-TW': '港灣·圖片', ja: 'ハーバー・画像' },
+          assets: { backdropImage: 'assets/harbor.png' },
+        }), backdropImage: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' },
+      ], omitted: 0 };
       case 'set_app_locale':
       case 'open_external_url':
       case 'open_oauth_url':

@@ -1,3 +1,4 @@
+@layer components {
 #browser-mock-toolbar {
   position: fixed;
   right: 12px;
@@ -89,4 +90,6 @@
 [data-mock-plugin-webview] code {
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
 }

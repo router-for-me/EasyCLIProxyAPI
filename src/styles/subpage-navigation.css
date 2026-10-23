@@ -1,0 +1,133 @@
+.tabs-control[data-variant='segmented'] {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  width: fit-content;
+  max-width: 100%;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-tertiary);
+  overflow-x: auto;
+}
+
+.tabs-control[data-variant='segmented'] > button {
+  flex: 0 0 auto;
+  width: auto;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  box-shadow: none;
+  white-space: nowrap;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.tabs-control[data-variant='segmented'] > button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tabs-control[data-variant='segmented'] > button.active {
+  background: var(--bg-card);
+  color: var(--primary-color);
+  box-shadow: var(--shadow-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.tabs-control[data-variant] > button:focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabs-control[data-variant] > button {
+    transition: none;
+  }
+}
+
+.app-shell:has(:is(.oauth-management-page, .usage-records-page, .config-page, .agents-page:not(.agents-page-embedded))) .content {
+  padding: clamp(12px, 1.5vw, 20px) clamp(12px, 1.5vw, 20px) 16px;
+}
+
+.oauth-management-page,
+.usage-records-page,
+.config-page .config-settings-layout {
+  gap: 16px;
+  align-content: start;
+}
+
+.oauth-management-page:has(.oauth-login-page),
+.usage-records-page .usage-topbar,
+.config-page .config-settings-topnav {
+  align-items: start;
+}
+
+.tabs-control.secondary-page-tabs {
+  display: inline-flex;
+  align-items: stretch;
+  flex: 0 1 auto;
+  gap: 4px;
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: var(--radius-none);
+  background: transparent;
+  box-shadow: none;
+  overflow-x: auto;
+}
+
+.tabs-control.secondary-page-tabs > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 38px;
+  min-height: 38px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-none);
+  background: transparent;
+  color: var(--text-tertiary);
+  box-shadow: none;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.5;
+  white-space: nowrap;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.tabs-control.secondary-page-tabs > button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.tabs-control.secondary-page-tabs > button.active {
+  margin-bottom: -1px;
+  border-bottom-color: var(--ui-accent);
+  background: transparent;
+  color: var(--text-primary);
+  box-shadow: none;
+  font-weight: var(--font-weight-semibold);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabs-control.secondary-page-tabs > button {
+    transition: none;
+  }
+}

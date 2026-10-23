@@ -1,16 +1,35 @@
 :root {
   --theme-overlay-surface: var(--bg-card);
-  --theme-scrim: #2d2a266b;
+  --theme-scrim: var(--scrim);
   --theme-scrollbar-thumb: color-mix(in srgb, var(--text-tertiary) 26%, transparent);
   --theme-scrollbar-hover: color-mix(in srgb, var(--text-tertiary) 42%, transparent);
-  --theme-control-thumb: #ffffff;
-}
-
-:root[data-theme='dark'] {
-  --theme-scrim: #030814a6;
-  --theme-control-thumb: #f8fafc;
+  --theme-control-thumb: var(--control-thumb);
 }
 
 option, optgroup {
   background-color: var(--theme-overlay-surface);
+}
+
+:where(.primary-button, .secondary-button, .danger-button, .icon-button),
+:where(.switch-track),
+:where(.app-dialog),
+:where(.config-dialog-text-input, .config-network-input, .select-control),
+:where([role='tablist']) {
+  border-width: var(--border-width);
+}
+
+body.table-col-resizing,
+body.table-col-resizing * {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.guide-focus-highlight {
+  position: relative;
+  z-index: 8995;
+  background: var(--color-surface);
+  box-shadow: 0 0 0 4px var(--ui-accent), 0 0 35px color-mix(in srgb, var(--ui-accent) 68%, transparent), var(--guide-highlight-shadow);
+  border-radius: var(--radius-lg);
+  pointer-events: auto;
+  animation: targetPulse 2.5s infinite alternate ease-in-out;
 }

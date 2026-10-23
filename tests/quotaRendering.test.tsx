@@ -10,6 +10,14 @@ const render = (quota: QuotaState, provider = 'codex') => renderToStaticMarkup(
 );
 
 describe('quota card rendering', () => {
+  it('keeps invalid percentages unknown instead of drawing a malformed meter', () => {
+    for (const remainingPercent of [NaN, Infinity, -Infinity]) {
+      const html = render({ status: 'success', rows: [{ label: 'Window', remainingPercent }] });
+      expect(html).not.toContain('real-quota-track');
+      expect(html).not.toContain('NaN');
+      expect(html).not.toContain('Infinity');
+    }
+  });
   it('当前适用次数为零时仍可重置，并保留额度详情', () => {
     const html = render({
       status: 'success', rows: [], resetCredits: 2, resetCreditsApplicable: 0,

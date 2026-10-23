@@ -515,7 +515,7 @@ export function CodexSessionContextEditor({ sessionId, onBack, onSessionUpdated 
               ))}
             </div>
 
-            <div className="context-search-box">
+            <div className="context-search-box search-control" data-size="compact">
               <Search size={14} />
               <input
                 type="text"

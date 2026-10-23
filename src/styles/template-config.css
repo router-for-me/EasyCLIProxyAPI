@@ -1,6 +1,7 @@
+@layer components {
 .template-config-section { display: grid; gap: 18px; min-width: 0; margin-top: 20px; }
 .template-config-section[hidden], .template-config-card[hidden] { display: none; }
-.template-config-card { min-width: 0; padding: 20px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-card); scroll-margin-top: 18px; transition: border-color 150ms ease, box-shadow 150ms ease; }
+.template-config-card { min-width: 0; padding: 20px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); scroll-margin-top: 18px; transition: border-color 150ms ease, box-shadow 150ms ease; }
 .template-config-card-dirty { border-color: color-mix(in srgb, var(--primary-color) 55%, var(--border-color)); box-shadow: inset 3px 0 0 var(--primary-color); }
 .template-config-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
 .template-config-heading-main { display: flex; align-items: center; gap: 6px; flex: 1 1 220px; min-width: 0; }
@@ -54,3 +55,5 @@
 }
 @media (prefers-reduced-motion: reduce) { .template-config-card { transition: none; } }
 .template-config-notice { gap: 12px; padding: 14px; }
+
+}

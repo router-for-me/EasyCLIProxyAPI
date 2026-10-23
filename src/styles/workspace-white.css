@@ -1,176 +1,165 @@
-/* Light-mode workspace surfaces. Keep the sidebar and semantic status colors separate. */
-:root:not([data-theme='dark']) {
-  --theme-faf9f5: var(--theme-soft-surface, #fff);
-  --bg-secondary: var(--theme-workspace-background, #fff);
+body,
+#root,
+.app-shell,
+.workspace,
+.workspace .content {
+  background: var(--color-workspace);
 }
 
-:root:not([data-theme='dark']),
-:root:not([data-theme='dark']) body,
-:root:not([data-theme='dark']) #root,
-:root:not([data-theme='dark']) .app-shell,
-:root:not([data-theme='dark']) .workspace,
-:root:not([data-theme='dark']) .workspace .content {
-  background: var(--theme-workspace-background, #fff);
+:is(.workspace, .config-dialog, .app-dialog:not(.core-health-dialog)) {
+  --bg-primary: var(--color-surface);
+  --bg-secondary: var(--color-workspace);
+  --bg-card: var(--color-surface);
+  --bg-tertiary: var(--workspace-soft-surface);
+  --bg-quinary: var(--workspace-soft-surface);
+  --bg-hover: var(--workspace-hover);
+  --border-color: var(--workspace-border);
+  --border-secondary: var(--workspace-border-subtle);
+  --text-secondary: var(--workspace-text-secondary);
+  --text-tertiary: var(--workspace-text-tertiary);
+  --text-quaternary: var(--workspace-text-muted);
 }
 
-:root:not([data-theme='dark']) :is(.workspace, .config-dialog, .app-dialog:not(.core-health-dialog)) {
-  --bg-primary: var(--theme-surface, #fff);
-  --bg-secondary: var(--theme-workspace-background, #fff);
-  --bg-card: var(--theme-surface, #fff);
-  --bg-tertiary: var(--theme-soft-surface, #fff);
-  --bg-quinary: var(--theme-soft-surface, #fff);
-  --bg-hover: var(--theme-hover-background, #fff);
-  --theme-f0ede6: var(--theme-soft-surface, #fff);
-  --theme-f0eee8: var(--theme-soft-surface, #fff);
-  --theme-f2efe8: var(--theme-soft-surface, #fff);
-  --theme-f2f0ea: var(--theme-soft-surface, #fff);
-  --theme-f4f1ea: var(--theme-soft-surface, #fff);
-  --theme-f4f2ec: var(--theme-soft-surface, #fff);
-  --theme-f6f2ec: var(--theme-soft-surface, #fff);
-  --theme-f8f5ee: var(--theme-soft-surface, #fff);
-  --theme-f8f5ef: var(--theme-soft-surface, #fff);
-  --theme-f8f6f1: var(--theme-soft-surface, #fff);
-  --theme-faf8f2: var(--theme-soft-surface, #fff);
-  --theme-faf8f4: var(--theme-soft-surface, #fff);
-  --theme-faf9f5: var(--theme-soft-surface, #fff);
-  --theme-fffdf8: var(--theme-surface, #fff);
-  --border-color: var(--theme-border, #dce3eb);
-  --border-secondary: var(--theme-border-subtle, #e5eaf0);
-  --text-secondary: var(--theme-text-secondary, #253449);
-  --text-tertiary: var(--theme-text-tertiary, #475569);
-  --text-quaternary: var(--theme-text-muted, #526174);
+:is(.config-dialog, .app-dialog:not(.core-health-dialog)) {
+  --surface-muted-bg: var(--theme-overlay-soft-surface, var(--surface-muted-dialog-bg));
 }
 
-:root:not([data-theme='dark']) :is(.workspace, .app-dialog) :is(
+:is(.workspace, .app-dialog) :is(
   .agent-model-section, .agent-auth-segmented, .routing-segmented,
-  .credential-quota, .usage-collector-state
+  .credential-quota
 ) {
-  background: var(--theme-surface, #fff);
-  border: 1px solid var(--border-color);
+  background: var(--color-surface);
+  border: 1px solid var(--workspace-border);
 }
 
-:root:not([data-theme='dark']) :is(.workspace, .app-dialog) :is(
-  .secondary-button:not(.danger, .ghost), .icon-button:not(.danger, .ghost), .agent-auth-segmented-button,
+:is(.workspace, .app-dialog) :is(
+  .secondary-button:not(.danger, .ghost, .copied), .agent-auth-segmented-button,
   .routing-segmented button,
   .usage-price-row-actions button
 ) {
-  background: var(--theme-surface, #fff);
-  color: var(--text-secondary);
-  border-color: var(--border-color);
+  background: var(--color-surface);
+  color: var(--workspace-button-secondary-text, var(--text-secondary));
+  border-color: var(--workspace-button-secondary-border, var(--border-color));
   box-shadow: none;
 }
 
-:root:not([data-theme='dark']) :is(.workspace, .app-dialog) :is(
+:is(.workspace, .app-dialog) .icon-button:not(.quiet, .danger, .ghost, .copied) {
+  background: var(--workspace-icon-button-bg, var(--color-surface));
+  color: var(--workspace-icon-button-color, var(--workspace-button-secondary-text, var(--text-secondary)));
+  border-color: var(--workspace-icon-button-border, var(--workspace-button-secondary-border, var(--border-color)));
+  box-shadow: none;
+}
+
+:is(.workspace, .app-dialog) .icon-button.quiet:not(.danger, .ghost, .copied) {
+  background: var(--color-surface);
+  color: var(--workspace-icon-button-quiet-color, var(--workspace-button-secondary-text, var(--text-secondary)));
+  border-color: var(--icon-button-quiet-border, var(--border-secondary));
+  box-shadow: none;
+}
+
+:is(.workspace, .app-dialog) :is(
   .agent-list-items button.active,
   .routing-segmented button.active
 ) {
-  background: var(--theme-surface, #fff);
-  border: 1px solid var(--ui-accent);
-  color: var(--ui-accent-strong);
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent-strong);
   box-shadow: none;
 }
 
-/* Client selection is a list state, so keep it visually lighter than a form control. */
-:root:not([data-theme='dark']) .workspace .agent-list-items button.active {
+.workspace .agent-list-items button.active {
   border: 1px solid transparent;
-  border-left: 3px solid var(--ui-accent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--ui-accent) 8%, var(--theme-surface, #fff));
-  color: var(--ui-accent-strong);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+  color: var(--color-accent-strong);
   box-shadow: none;
 }
 
-:root:not([data-theme='dark']) :is(.workspace, .app-dialog) :is(
-  .secondary-button:not(.danger, .ghost), .icon-button:not(.danger, .ghost), .agent-auth-segmented-button,
+:is(.workspace, .app-dialog) :is(
+  .secondary-button:not(.danger, .ghost, .copied), .icon-button:not(.danger, .ghost, .copied), .agent-auth-segmented-button,
   .routing-segmented button,
   .agent-list-items button, .usage-price-row-actions button
-):hover:not(:disabled) {
-  background: var(--theme-hover-background, #fff);
-  border-color: var(--ui-accent);
-  color: var(--ui-accent-strong);
+):hover:not(:disabled, .copied) {
+  background: var(--workspace-button-secondary-hover-bg);
+  border-color: var(--workspace-button-secondary-hover-border);
+  color: var(--workspace-button-secondary-hover-color);
 }
 
-/* Match the home protocol selection, including while hovered. */
-:root:not([data-theme='dark']) .workspace .agent-auth-segmented-button.active,
-:root:not([data-theme='dark']) .workspace .agent-auth-segmented-button.active:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card));
+.workspace .agent-auth-segmented-button.active,
+.workspace .agent-auth-segmented-button.active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
   border-color: transparent;
-  color: var(--ui-accent);
+  color: var(--color-accent);
   box-shadow: none;
 }
 
-:root:not([data-theme='dark']) .workspace .usage-analysis-metric button[aria-checked='true'],
-:root:not([data-theme='dark']) .workspace .usage-analysis-metric button[aria-checked='true']:hover {
-  background: color-mix(in srgb, var(--ui-accent) 10%, var(--bg-card));
+.workspace .usage-analysis-metric button[aria-checked='true'],
+.workspace .usage-analysis-metric button[aria-checked='true']:hover {
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
   border-color: transparent;
-  color: var(--ui-accent);
+  color: var(--color-accent);
   box-shadow: none;
 }
 
-:root:not([data-theme='dark']) .workspace .usage-tab-panel {
-  --bg-secondary: var(--theme-workspace-background, #fff);
+.workspace .usage-tab-panel {
+  --bg-secondary: var(--color-workspace);
 }
 
-:root:not([data-theme='dark']) .workspace :is(
+.workspace :is(
   .usage-records-page,
   .usage-tab-panel
 ) {
   background: transparent;
 }
 
-:root:not([data-theme='dark']) .workspace .usage-records-page .usage-events-panel {
-  background: var(--theme-surface, #fff);
-  border: 1px solid var(--border-color);
-  box-shadow: none;
-}
-
-:root:not([data-theme='dark']) .workspace .usage-records-page :is(
+.workspace .usage-records-page :is(
   .usage-filter-item,
   .usage-filter-toggle
 ) {
-  background: var(--theme-surface, #fff);
+  background: var(--color-surface);
   border-color: var(--border-color);
 }
 
-:root:not([data-theme='dark']) .workspace .usage-records-page
+.workspace .usage-records-page
   .usage-request-log .usage-events-table tbody tr td,
-:root:not([data-theme='dark']) .workspace .usage-records-page
+.workspace .usage-records-page
   .usage-request-log .usage-events-table tbody tr:nth-child(even) td {
-  background: var(--theme-surface, #fff);
+  background: var(--color-surface);
 }
 
-:root:not([data-theme='dark']) .workspace .usage-records-page
+.workspace .usage-records-page
   .usage-request-log .usage-events-table tbody tr:hover td {
-  background: var(--theme-hover-background, #f2fbf9);
+  background: var(--workspace-hover);
 }
 
-:root:not([data-theme='dark']) .workspace .usage-records-page
+.workspace .usage-records-page
   .usage-pricing-table :is(th, td) {
-  background: var(--theme-surface, #fff);
+  background: var(--color-surface);
 }
 
-:root:not([data-theme='dark']) .workspace .usage-records-page
+.workspace .usage-records-page
   .usage-pricing-table :is(th, td:first-child) {
-  background: var(--theme-sticky-background, var(--theme-surface, #fff));
+  background: var(--color-surface);
 }
 
-:root:not([data-theme='dark']) .workspace .usage-records-page
+.workspace .usage-records-page
   .usage-pricing-table tbody tr:hover td {
-  background: var(--theme-hover-background, #fff);
+  background: var(--workspace-hover);
 }
 
-:root:not([data-theme='dark']) .workspace .usage-records-page
+.workspace .usage-records-page
   .usage-pricing-table tbody tr:hover td:first-child {
-  background: var(--theme-sticky-hover-background, var(--theme-hover-background, #fff));
+  background: var(--workspace-hover);
 }
 
-:root:not([data-theme='dark']) .workspace .usage-records-page
+.workspace .usage-records-page
   .usage-collector-state {
-  background: var(--theme-surface, #fff);
-  border: 1px solid var(--border-color);
+  background: var(--usage-collector-bg);
+  border: var(--usage-collector-border);
+  border-color: var(--usage-collector-border-color, var(--workspace-border));
 }
 
-/* Empty tracks still need a visible outline after neutral surfaces become white. */
-:root:not([data-theme='dark']) .workspace .usage-model-bar-track {
-  box-shadow: inset 0 0 0 1px var(--border-color);
+.workspace .usage-model-bar-track {
+  box-shadow: var(--usage-model-bar-track-shadow);
 }

@@ -919,7 +919,7 @@ export function EasyModePage({
                       {oauthAuthorization?.provider === provider.id ? (
                         <div className="simple-mode-oauth-authorization">
                           {provider.id === "meta" ? <p className="oauth-hint">{t("oauth.metaHint")}</p> : null}
-                          <div className="oauth-auth-url-box">
+                          <div className="oauth-auth-url-box surface-sunken">
                             <div className="oauth-auth-url-label">{t("oauth.authorizationLink")}</div>
                             <div className="oauth-auth-url-value" title={oauthAuthorization.url}>{oauthAuthorization.url}</div>
                             <div className="oauth-auth-url-actions">

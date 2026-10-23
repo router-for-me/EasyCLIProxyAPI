@@ -16,7 +16,7 @@ import { createThemeApplicator, themeWindowMaterial } from './themes/applyTheme'
 import { cacheFirstPaint, firstPaint } from './themes/firstPaint';
 import type { PlatformWindowMaterial } from './themes/types';
 import { builtinThemes, createThemeRegistry, themeRegistry, type ThemeRegistry } from './themes/registry';
-import { parseCustomThemes } from './themes/customThemes';
+import { parseCustomThemes, type CustomThemeDiagnostic, type SkippedCustomTheme } from './themes/customThemes';
 
 export type { AppTheme, ThemePreference } from './themeController';
 
@@ -28,10 +28,16 @@ export function detectThemePreference(): ThemePreference {
   return preferences.get();
 }
 
-export type CustomThemeStatus = { loading: boolean; failed: boolean; skipped: readonly string[]; omitted: number };
+export type CustomThemeStatus = {
+  loading: boolean;
+  failed: boolean;
+  skipped: readonly SkippedCustomTheme[];
+  diagnostics: readonly CustomThemeDiagnostic[];
+  omitted: number;
+};
 
 let customRegistry = themeRegistry;
-let customStatus: CustomThemeStatus = { loading: false, failed: false, skipped: [], omitted: 0 };
+let customStatus: CustomThemeStatus = { loading: false, failed: false, skipped: [], diagnostics: [], omitted: 0 };
 let customLoads = 0;
 const customSubscribers = new Set<() => void>();
 
@@ -45,11 +51,11 @@ async function loadCustomThemes() {
   reportCustomThemes({ ...customStatus, loading: true });
   try {
     const { files, omitted } = await listCustomThemes();
-    const { themes, skipped } = parseCustomThemes(files);
+    const { themes, skipped, diagnostics } = parseCustomThemes(files);
     if (load !== customLoads) return;
     customRegistry = createThemeRegistry([...builtinThemes, ...themes]);
     controller?.setRegistry(customRegistry);
-    reportCustomThemes({ loading: false, failed: false, skipped, omitted });
+    reportCustomThemes({ loading: false, failed: false, skipped, diagnostics, omitted });
   } catch {
     if (load === customLoads) reportCustomThemes({ ...customStatus, loading: false, failed: true });
   }

@@ -38,7 +38,7 @@ export function AppReleaseNotes({ info, checking, failed, onOpenUrl }: Props) {
         : t('appUpdate.notes.notChecked');
 
   return (
-    <section className="app-release-notes" aria-labelledby={headingId}>
+    <section className="app-release-notes surface-panel" aria-labelledby={headingId}>
       <header className="app-release-notes-heading">
         <div>
           <FileText size={17} aria-hidden="true" />

@@ -147,44 +147,6 @@ Codex 的 **会话管理 → 编辑上下文（实验性）** 仅在点击某个
 - 查看 Provider 配额和账号可用状态。
 - 通过 macOS 菜单栏或 Windows 系统托盘保持软件在后台运行。
 
-## 自定义主题
-
-每个主题一个 `.json` 文件，放在应用数据目录的 `themes` 文件夹中：Windows 和 Linux 为程序所在目录，macOS 应用为 `~/Library/Application Support/com.cpa.gui/themes`（不以 `.app` 方式运行时为程序所在目录）。主题菜单底部的 **打开主题目录** 会创建并打开该目录，**重新加载** 无需重启即可应用改动。自定义主题按文件名顺序排在内置主题之后。最多读取 64 个文件，单个文件不超过 64 KB；无效文件会被跳过，并在主题菜单中显示文件名及超出上限的文件数。
-
-```json
-{
-  "id": "harbor-dark",
-  "name": { "en": "Harbor", "zh-CN": "港湾", "ja": "ハーバー" },
-  "description": "Deep teal surfaces with a sea-glass accent",
-  "appearance": "dark",
-  "windowBackground": "#0E1A1F",
-  "windowMaterial": "translucent",
-  "tokens": {
-    "workspaceBackground": "#0E1A1F",
-    "surface": "#14242B",
-    "textPrimary": "#E6F1F2",
-    "border": "#2A434C",
-    "accent": "#6FD3C1",
-    "accentContrast": "#0E1A1F",
-    "sidebarBackground": "#0B151A",
-    "windowMaterialWorkspaceOpacity": "72%",
-    "windowMaterialSidebarOpacity": "40%"
-  }
-}
-```
-
-- `id`（必填）：小写字母、数字和 `-`，以字母开头；不能与内置主题（`light`, `dark`, `warm-sand-light`, `graphite-dark`, `midnight-dark`, `sakura-light`）或其他自定义主题重复。
-- `name`（必填）和 `description`：字符串，或以 `en`、`zh-CN`、`zh-TW`、`ja` 为键的对象。
-- `appearance`（必填）：`light` 或 `dark`，决定主题出现在哪个分组。
-- `windowBackground`（必填）：`#RRGGBB`，页面绘制前原生窗口显示的颜色。
-- `tokens`（必填，可为空对象）：颜色 token 取值为 `#RRGGBB` 或 `#RRGGBBAA`，未填写的颜色使用默认亮色或暗色取值。下述不透明度 token 使用百分比。未知或已移除的 token 键会被忽略。
-- `backdrop`：可选的渐变背景，结构与内置的午夜蓝、樱语红粉主题相同。
-- `windowMaterial`：`solid`（默认）或 `translucent`。半透明主题会在侧边栏和工作区后面显示系统原生窗口材质：macOS 26 及以上为液态玻璃，更早的 macOS 为 vibrancy，Windows 11 为 Mica，Windows 10 1809 及以上为 Acrylic。Linux 和更早的 Windows 不支持材质，主题会按不透明主题原样显示，因此 `windowBackground` 和各项 token 仍需填写完整。显示材质时 `backdrop` 渐变不生效。
-- `tokens` 中可选的不透明度键：`windowMaterialWorkspaceOpacity`（工作区，默认 `"72%"`）、`windowMaterialSidebarOpacity`（侧栏，默认 `"40%"`）。取值为 `"0%"`（完全透明）到 `"100%"`（不透明）的百分比字符串，支持 `"37.5%"` 等小数。仅在系统支持材质且 `windowMaterial` 为 `translucent` 时生效；根节点、body 和外壳保持透明以显示原生材质。非法取值会跳过该文件。材质属于主题配置，没有独立设置项；内置主题仍保持不透明。
-- 允许出现 `$schema`（会被忽略）；其他任何字段都会使文件无效。
-
-可用的 token 键：`workspaceBackground`, `surface`, `softSurface`, `hoverBackground`, `textPrimary`, `textSecondary`, `textTertiary`, `textMuted`, `border`, `borderSubtle`, `borderStrong`, `borderHover`, `panelShadow`, `accent`, `accentStrong`, `accentSoft`, `accentContrast`, `accentShadow`, `primaryButtonBackground`, `primaryButtonHoverBackground`, `primaryButtonText`, `primaryButtonBorder`, `primaryButtonHoverBorder`, `controlActiveBackground`, `controlActiveThumb`, `focusRing`, `sidebarBackground`, `sidebarText`, `sidebarTextStrong`, `sidebarTextMuted`, `sidebarBorder`, `sidebarHover`, `sidebarSelected`, `sidebarSelectedBorder`, `sidebarSelectedShadow`, `popoverBackground`, `overlaySoftSurface`, `overlayHoverBackground`, `scrim`, `controlThumb`, `windowMaterialWorkspaceOpacity`, `windowMaterialSidebarOpacity`。
-
 ## 快速开始
 
 1. 前往 [GitHub Releases](https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest)

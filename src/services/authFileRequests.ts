@@ -59,12 +59,9 @@ export function authFileRequestStats(file: Record<string, unknown>): AuthFileReq
 }
 
 export function requestRateColor(rate: number): string {
-  const stops = [[239, 68, 68], [250, 204, 21], [34, 197, 94]];
-  const normalized = Math.max(0, Math.min(1, rate));
-  const segment = normalized < 0.5 ? 0 : 1;
-  const progress = segment === 0 ? normalized * 2 : (normalized - 0.5) * 2;
-  const color = stops[segment].map((value, index) =>
-    Math.round(value + (stops[segment + 1][index] - value) * progress),
-  );
-  return `rgb(${color.join(', ')})`;
+  const normalized = Number.isFinite(rate) ? Math.max(0, Math.min(1, rate)) : 0;
+  const start = normalized < 0.5 ? 'low' : 'medium';
+  const end = normalized < 0.5 ? 'medium' : 'high';
+  const weight = (normalized < 0.5 ? normalized * 2 : (normalized - 0.5) * 2) * 100;
+  return `color-mix(in srgb, var(--theme-meter-${start}) ${100 - weight}%, var(--theme-meter-${end}) ${weight}%)`;
 }

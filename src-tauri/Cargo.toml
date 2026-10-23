@@ -28,9 +28,9 @@ serde_yaml = "0.9"
 sha2 = "0.10"
 tar = "0.4"
 tauri = { version = "~2.12.4", features = ["macos-private-api", "tray-icon", "unstable"] }
-tauri-plugin-autostart = "2"
-tauri-plugin-dialog = "2.7.1"
-tauri-plugin-opener = "2"
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-opener = "2.7.2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "sync", "time"] }
 tokio-util = "0.7"
 toml = "0.8"

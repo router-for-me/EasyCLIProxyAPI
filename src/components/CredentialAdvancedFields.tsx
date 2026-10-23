@@ -130,7 +130,7 @@ export function CredentialAdvancedFields({
                   onClick={() => { setExpandedAlias((current) => current === index ? null : current !== null && current > index ? current - 1 : current); setField('model_aliases', aliases.filter((_, rowIndex) => rowIndex !== index)); }}><X size={15} /></button>
               </div>
             </div>
-            {expanded ? <div className="credential-alias-details">
+            {expanded ? <div className="credential-alias-details surface-sunken">
               <label className="credential-settings-field">
                 <span>{t('authFiles.settings.aliasDisplay')}</span>
                 <input value={textValue(row['display-name'])} disabled={disabled} autoComplete="off" spellCheck={false} onChange={(event) => updateAlias(index, { 'display-name': event.currentTarget.value.trim() ? event.currentTarget.value : undefined })} />

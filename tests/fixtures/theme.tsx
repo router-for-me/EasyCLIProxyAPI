@@ -19,18 +19,18 @@ let override: AppTheme | null = null;
 let appearance: AppTheme = system;
 const calls: { cmd: string; args: unknown }[] = [];
 const customTheme = (id: string, name: unknown, extra = {}) => JSON.stringify({
-  id, name, appearance: 'dark', windowBackground: '#0E1A1F', tokens: { workspaceBackground: '#0E1A1F', accent: '#6FD3C1' }, ...extra,
+  schemaVersion: 1, id, name, appearance: 'dark', windowBackground: '#0E1A1F', tokens: { workspaceBackground: '#0E1A1F', accent: '#6FD3C1' }, ...extra,
 });
 let customError = params.has('custom-error');
 let customOmitted = params.has('custom') ? 3 : 0;
 let customThemes = params.has('custom') ? [
-  { fileName: 'a-harbor.json', content: customTheme('harbor-dark', { en: 'Harbor', 'zh-CN': '港湾' }) },
-  { fileName: 'b-broken.json', content: '{' },
-  { fileName: 'c-duplicate.json', content: customTheme('dark', 'Shadow') },
-  { fileName: 'd-extra.json', content: customTheme('extra-dark', 'Extra', { order: 1 }) },
-  { fileName: 'e-large.json', content: null },
+  { folder: 'a-harbor', content: customTheme('harbor-dark', { en: 'Harbor', 'zh-CN': '港湾' }) },
+  { folder: 'b-broken', content: '{' },
+  { folder: 'c-duplicate', content: customTheme('dark', 'Shadow') },
+  { folder: 'd-extra', content: customTheme('extra-dark', 'Extra', { order: 1 }) },
+  { folder: 'e-large', content: null },
 ] : params.has('glass') ? [
-  { fileName: 'glass.json', content: customTheme('glass-dark', 'Glass', { windowMaterial: 'translucent' }) },
+  { folder: 'glass', content: customTheme('glass-dark', 'Glass', { windowMaterial: 'translucent' }) },
 ] : [];
 const notify = (theme: AppTheme) => emit('tauri://theme-changed', theme);
 mockWindows('main');

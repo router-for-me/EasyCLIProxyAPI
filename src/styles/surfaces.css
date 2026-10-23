@@ -1,7 +1,7 @@
 .panel,
 .surface-panel {
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border: var(--card-border-width) solid var(--border-color);
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
   box-shadow: var(--ui-panel-shadow);
 }
@@ -13,27 +13,48 @@
 
 :where(.surface-card),
 .panel.surface-card {
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border: var(--card-border-width) solid var(--border-color);
+  border-radius: var(--radius-lg);
   background: var(--bg-card);
   box-shadow: none;
 }
 
 :where(.surface-section) {
-  border: 1px solid var(--theme-e3e1db);
-  border-radius: 8px;
-  background: var(--theme-fffdf8);
+  border: var(--card-border-width) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: none;
 }
 
 :where(.surface-muted) {
-  background: var(--theme-faf9f5);
+  background: var(--surface-muted-bg);
 }
 
 :where(.surface-bare),
 .panel.surface-bare {
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-none);
   background: transparent;
+  box-shadow: none;
+}
+
+:where(.surface-frame) {
+  border: var(--card-border-width) solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+  box-shadow: none;
+}
+
+:where(.surface-dashed) {
+  border: var(--card-border-width) dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: none;
+}
+
+:where(.surface-sunken) {
+  border: var(--card-border-width) solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
   box-shadow: none;
 }

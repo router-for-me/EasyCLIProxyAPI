@@ -124,7 +124,7 @@ export function OAuthManagementPage() {
 
   return (
     <section className="page oauth-management-page">
-      <Tabs className="agent-subpage-tabs oauth-subpage-tabs" aria-label={t('oauth.tabs.label')} value={activeSubpage}
+      <Tabs className="oauth-subpage-tabs secondary-page-tabs" aria-label={t('oauth.tabs.label')} value={activeSubpage}
         onChange={subpage => { setAuthFilesProvider(undefined); setActiveSubpage(subpage); }}
         items={oauthSubpages.map(subpage => ({ value: subpage.id, id: `oauth-subpage-tab-${subpage.id}`, panelId: 'oauth-subpage-panel', label: t(subpage.labelKey) }))} />
 
@@ -532,19 +532,20 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
       </header>
 
       <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
-      <aside className="oauth-intro" aria-label={t('oauth.intro.title')}>
-        <span className="oauth-intro-icon" aria-hidden="true"><Info size={18} /></span>
-        <div className="oauth-intro-text">
-          <strong>{t('oauth.intro.title')}</strong>
-          <p>{t('oauth.intro.body')}</p>
-        </div>
-        {onOpenAuthFiles ? (
+      <Notice
+        tone="info"
+        variant="box"
+        className="oauth-intro"
+        title={t('oauth.intro.title')}
+        action={onOpenAuthFiles ? (
           <button type="button" className="secondary-button compact-button oauth-intro-action" onClick={() => onOpenAuthFiles()}>
             <FileKey size={15} aria-hidden="true" />
             {t('oauth.intro.viewFiles')}
           </button>
         ) : null}
-      </aside>
+      >
+        <p>{t('oauth.intro.body')}</p>
+      </Notice>
       <div className="oauth-grid">
         {oauthProviders.map((provider) => {
           const state = states[provider.id] ?? { status: 'idle' as const };
@@ -609,7 +610,7 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
                 ) : null}
                 <p className="oauth-hint">{t(provider.id === 'devin' ? 'oauth.devinHint' : provider.id === 'meta' ? 'oauth.metaHint' : 'oauth.hint')}</p>
                 {state.url ? (
-                  <div className="oauth-auth-url-box">
+                  <div className="oauth-auth-url-box surface-sunken">
                     <div className="oauth-auth-url-label">{t('oauth.authorizationLink')}</div>
                     <div className="oauth-auth-url-value" title={state.url}>{state.url}</div>
                     <div className="oauth-auth-url-actions">

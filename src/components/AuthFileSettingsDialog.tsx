@@ -1,7 +1,7 @@
 import { Notice } from './Notice';
 import { Checkbox } from './Checkbox';
 import { useEffect, useId, useRef, useState } from 'react';
-import { Check, LoaderCircle, Settings2, X } from 'lucide-react';
+import { Check, Search, LoaderCircle, Settings2, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { managementApi } from '../services/managementApi';
 import { loadAuthFileSettings, saveAuthFileSettings, type AuthFileSettingsDraft, type BooleanOverride } from '../services/authFileSettings';
@@ -130,11 +130,14 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
                   <textarea rows={3} value={draft.excluded_models} onChange={(event) => update('excluded_models', event.currentTarget.value)} spellCheck={false} placeholder={'gpt-example\nclaude-*'} />
                   <small>{t('authFiles.settings.excludedHint')}</small>
                 </label>
-                <details className="credential-settings-catalog">
+                <details className="credential-settings-catalog surface-frame">
                   <summary>{t('authFiles.settings.catalog', { count: models.length })}</summary>
                   {catalogLoading ? <p role="status">{t('common.loading')}</p> : null}
                   {catalogError ? <Notice tone="warn" variant="text" live={false}>{t('authFiles.settings.catalogError')}<small>{catalogError}</small></Notice> : null}
-                  <input aria-label={t('authFiles.settings.searchModels')} placeholder={t('authFiles.settings.searchModels')} value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
+                  <div className="search-control" data-size="default">
+                    <Search size={16} aria-hidden="true" />
+                    <input aria-label={t('authFiles.settings.searchModels')} placeholder={t('authFiles.settings.searchModels')} value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
+                  </div>
                   <div className="credential-settings-models">
                     {candidates.map((model) => {
                       const wildcard = rules.some((rule) => rule.includes('*') && modelMatchesRule(model.id, rule));

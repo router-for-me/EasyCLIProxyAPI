@@ -3,38 +3,30 @@ import { readFileSync } from 'node:fs';
 import postcss from 'postcss';
 
 const stylesheet = postcss.parse([
+  '../src/styles/tokens/base.css',
+  '../src/styles/tokens/semantic.css',
+  '../src/styles/tokens/components.css',
   '../src/styles.css',
   '../src/styles/feature-pages.css',
   '../src/styles/ui-refinements.css',
 ].map((file) => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n'));
 const aliases: Record<string, string> = {
-  '--theme-4b4742': '--text-secondary',
-  '--theme-59544d': '--text-secondary',
-  '--theme-5f5a53': '--text-secondary',
-  '--theme-655f57': '--text-secondary',
-  '--theme-6b655d': '--text-secondary',
-  '--theme-6d6760': '--text-secondary',
-  '--theme-6f6961': '--text-tertiary',
-  '--theme-716b61': '--text-tertiary',
-  '--theme-777067': '--text-tertiary',
-  '--theme-7a746c': '--text-tertiary',
-  '--theme-817b72': '--text-tertiary',
-  '--theme-817b73': '--text-tertiary',
-  '--theme-8a847c': '--text-quaternary',
-  '--theme-918a81': '--text-quaternary',
-  '--theme-9a938a': '--text-quaternary',
-  '--theme-9a958d': '--text-quaternary',
-  '--theme-9b958c': '--text-quaternary',
+  '--text-primary': '--color-text-primary',
+  '--text-secondary': '--color-text-secondary',
+  '--text-tertiary': '--color-text-tertiary',
+  '--text-quaternary': '--color-text-muted',
+  '--text-muted': '--color-text-tertiary',
 };
 const surfaces = [
-  '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-hover', '--bg-quinary', '--bg-card',
-  '--theme-faf9f5', '--theme-fffdf8', '--theme-f4f1ea', '--theme-f0eee8',
-  '--theme-eeece6', '--theme-ece8df', '--theme-e8e4dc', '--theme-dfdcd4',
-  '--theme-eef7f0', '--theme-fff1ee', '--theme-fff7e9', '--ui-accent-soft',
+  '--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-hover', '--bg-card',
+  '--color-surface', '--color-surface-subtle',
+  '--color-surface-hover', '--color-surface-active',
+  '--color-workspace', '--ui-accent-soft',
 ];
 const textTokens = [
   '--text-primary', '--text-secondary', '--text-tertiary', '--text-quaternary',
-  '--text-muted', '--text-placeholder', ...Object.keys(aliases),
+  '--text-muted', '--text-placeholder', '--color-text-primary', '--color-text-secondary',
+  '--color-text-tertiary', '--color-text-muted',
 ];
 type RGB = [number, number, number];
 
@@ -87,7 +79,7 @@ for (const theme of ['light', 'dark'] as const) {
     };
     const value = (token: string) => resolve(tokens[token], tokens);
 
-    it('uses semantic colors for legacy gray text instead of separate low-contrast values', () => {
+    it('uses semantic colors for legacy text variables instead of separate low-contrast values', () => {
       for (const [alias, semantic] of Object.entries(aliases)) {
         expect(tokens[alias]).toBe(`var(${semantic})`);
         expect(value(alias)).toBe(value(semantic));
@@ -112,10 +104,10 @@ for (const theme of ['light', 'dark'] as const) {
     it('preserves background layers and reserves lower contrast for disabled text', () => {
       expect(value('--bg-primary')).toBe(theme === 'light' ? '#ffffff' : '#141720');
       expect(value('--bg-card')).toBe(theme === 'light' ? '#ffffff' : '#141720');
-      expect(value('--bg-secondary')).toBe(theme === 'light' ? '#f6f7f5' : '#0b0d11');
+      expect(value('--bg-secondary')).toBe(theme === 'light' ? '#ffffff' : '#0b0d11');
       expect(value('--bg-tertiary')).toBe(theme === 'light' ? '#eff3f0' : '#1c212c');
       expect(value('--bg-hover')).toBe(theme === 'light' ? '#f6f8f6' : '#252b38');
-      expect(value('--theme-faf9f5')).toBe(theme === 'light' ? '#f6f7f5' : '#0b0d11');
+      expect(value('--color-surface-sunken')).toBe(theme === 'light' ? '#ffffff' : '#0b0d11');
       const background = color(value('--bg-card'));
       const hierarchy = ['primary', 'secondary', 'tertiary', 'quaternary', 'disabled']
         .map((role) => contrast(color(value(`--text-${role}`)), background));
@@ -142,4 +134,28 @@ it('does not fade interactive hidden-series labels or ordinary table hints', () 
   }
   expect(declarations('.usage-trend-legend-item.is-hidden')['text-decoration']).toBe('line-through');
   expect(declarations('.usage-trend-legend-item.is-hidden .usage-trend-swatch').opacity).toBe('0.38');
+});
+
+it('preserves the light semantic palette independently of workspace aliases', () => {
+  const tokens = declarations(':root');
+  for (const [name, expected] of Object.entries({
+    '--color-text-secondary': '#1e293b',
+    '--color-text-tertiary': '#334155',
+    '--color-text-muted': '#475569',
+    '--color-border-default': '#e2e8f0',
+    '--color-surface-subtle': '#eff3f0',
+    '--count-badge-bg': '#eff3f0',
+    '--info-color': '#0f766e',
+  })) expect(resolve(tokens[name], tokens)).toBe(expected);
+});
+
+it('preserves failure and danger button text semantics across light and dark themes', () => {
+  expect(declarations('.usage-token-context-metrics .tone-failed dd').color).toBe('var(--usage-result-failed-text)');
+  expect(declarations('.danger-button').color).toBe('var(--button-danger-soft-text)');
+  const lightTokens = declarations(':root');
+  const darkTokens = { ...declarations(':root'), ...declarations(":root[data-theme='dark']") };
+  expect(resolve(lightTokens['--usage-result-failed-text'], lightTokens)).toBe('#b91c1c');
+  expect(resolve(lightTokens['--button-danger-soft-text'], lightTokens)).toBe('#e11d48');
+  expect(resolve(darkTokens['--usage-result-failed-text'], darkTokens)).toBe('#f87171');
+  expect(resolve(darkTokens['--button-danger-soft-text'], darkTokens)).toBe('#fb7185');
 });

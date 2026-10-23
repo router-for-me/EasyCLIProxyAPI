@@ -1,24 +1,24 @@
 /* The request log is deliberately scoped away from the other usage tabs. */
 .usage-records-page .usage-request-log {
-  --usage-log-text: #24343b;
-  --usage-log-muted: #63767d;
-  --usage-log-line: #e8e8e8;
-  --usage-log-input: #2563eb;
-  --usage-log-output: #0f766e;
-  --usage-log-reasoning: #b45309;
-  --usage-log-cache-read: #0f766e;
-  --usage-log-cache-write: #b45309;
-  --usage-log-response-model: #9a5808;
-  --usage-log-duration-good: #16a34a;
-  --usage-log-duration-warn: #d97706;
-  --usage-log-duration-bad: #dc2626;
+    --usage-log-text: var(--request-log-text);
+  --usage-log-muted: var(--request-log-muted);
+  --usage-log-line: var(--request-log-line);
+  --usage-log-input: var(--request-log-input);
+  --usage-log-output: var(--request-log-output);
+  --usage-log-reasoning: var(--request-log-reasoning);
+  --usage-log-cache-read: var(--request-log-cache-read);
+  --usage-log-cache-write: var(--request-log-cache-write);
+  --usage-log-response-model: var(--request-log-response-model);
+  --usage-log-duration-good: var(--request-log-duration-good);
+  --usage-log-duration-warn: var(--request-log-duration-warn);
+  --usage-log-duration-bad: var(--request-log-duration-bad);
   display: flex;
   min-width: 0;
   min-height: 0;
   padding: 0;
   gap: 0;
   border: 1px solid var(--usage-log-line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--usage-log-text);
   box-shadow: none;
@@ -79,7 +79,7 @@
 }
 
 .usage-request-log .usage-events-table tbody tr:hover td {
-  background: var(--bg-hover) !important;
+  background: var(--bg-hover);
 }
 
 .usage-request-log .usage-th-total,
@@ -93,7 +93,7 @@
   max-width: 100%;
   padding: 1px 5px;
   border: 1px solid var(--usage-log-line);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   letter-spacing: .02em;
 }
 
@@ -138,7 +138,7 @@
   width: fit-content;
   padding: 1px 5px;
   border: 1px solid color-mix(in srgb, var(--ui-accent) 32%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--ui-accent-soft);
   color: var(--ui-accent-strong);
   font-size: var(--font-size-caption);
@@ -155,7 +155,7 @@
   margin-top: 3px;
   padding: 1px 5px;
   border: 1px solid color-mix(in srgb, var(--usage-log-response-model) 30%, transparent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--usage-log-response-model);
   font-size: var(--font-size-caption);
   line-height: 1.4;
@@ -268,7 +268,7 @@
   gap: 6px;
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-none);
   font-size: var(--font-size-meta);
   font-weight: 600;
   line-height: 1.35;
@@ -278,14 +278,14 @@
   display: inline-block;
   width: 5px;
   height: 5px;
-  border-radius: 1px;
+  border-radius: var(--radius-sm);
   background: currentColor;
   box-shadow: none;
 }
 
 .usage-request-log .usage-result.success {
   background: transparent;
-  color: #16756a;
+  color: var(--color-success-text);
 }
 
 .usage-request-log .usage-result.failed {
@@ -354,7 +354,7 @@
   margin-inline: auto;
   padding: 8px 12px;
   border-left: 3px solid var(--failure-badge-text);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--failure-badge-bg);
   color: var(--usage-log-text);
   font-family: var(--font-family-mono);
@@ -375,6 +375,11 @@
 .usage-request-log .usage-col-resizer:focus-visible::after {
   opacity: 1;
   background: var(--usage-log-muted);
+}
+
+.usage-request-log .usage-events-table th .usage-col-resizer:hover::after,
+.usage-request-log .usage-events-table th .usage-col-resizer.active::after {
+  background: var(--ui-accent);
 }
 
 .usage-request-log .usage-table-top-scrollbar {
@@ -440,7 +445,7 @@
   height: 32px;
   padding: 0 11px;
   border: 1px solid var(--usage-log-line);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--usage-log-text);
   font-size: 11px;
@@ -448,30 +453,6 @@
 
 .usage-request-log > .usage-empty {
   min-height: 220px;
-}
-
-:root[data-theme='dark'] .usage-records-page .usage-request-log {
-  --usage-log-text: #edece9;
-  --usage-log-muted: #aaa8a4;
-  --usage-log-line: #34363b;
-  --usage-log-input: #93c5fd;
-  --usage-log-output: #5eead4;
-  --usage-log-reasoning: #fbbf24;
-  --usage-log-cache-read: #5eead4;
-  --usage-log-cache-write: #fbbf24;
-  --usage-log-response-model: #f0bc73;
-  --usage-log-duration-good: #4ade80;
-  --usage-log-duration-warn: #fbbf24;
-  --usage-log-duration-bad: #f87171;
-  border-color: var(--usage-log-line);
-  background: var(--bg-card);
-  box-shadow: none;
-}
-
-:root[data-theme='dark'] .usage-request-log .usage-result.success {
-  border-color: #17664e;
-  background: transparent;
-  color: #6ee7b7;
 }
 
 @container workspace (max-width: 760px) {

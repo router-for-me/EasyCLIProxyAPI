@@ -1,6 +1,7 @@
 import type { ThemeDefinition } from './types';
 
 export const warmSand: ThemeDefinition = {
+  schemaVersion: 1,
   id: 'warm-sand-light',
   nameKey: 'app.theme.warmSand.name',
   descriptionKey: 'app.theme.warmSand.description',

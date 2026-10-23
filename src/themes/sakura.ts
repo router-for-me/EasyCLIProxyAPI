@@ -1,6 +1,7 @@
 import type { ThemeDefinition } from './types';
 
 export const sakura: ThemeDefinition = {
+  schemaVersion: 1,
   id: 'sakura-light',
   nameKey: 'app.theme.sakura.name',
   descriptionKey: 'app.theme.sakura.description',

@@ -518,7 +518,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
 
       <section className="panel surface-bare auth-files-panel real-auth-files-panel">
         <div className="auth-files-toolbar">
-          <div className="auth-files-search"><Search size={16} aria-hidden="true" />
+          <div className="auth-files-search search-control" data-size="compact"><Search size={16} aria-hidden="true" />
           <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder={t('authFiles.searchPlaceholder')} aria-label={t('authFiles.searchPlaceholder')} />
           </div>
           <div className="auth-files-filters">
@@ -576,7 +576,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
               const cooldownResetIndex = authFileCooldownResetIndex(file);
               const resettingCooldown = Boolean(cooldownResetIndex && cooldownResetting.has(cooldownResetIndex));
               return (
-                <article className={`auth-file-card ${disabled ? 'is-disabled' : ''}`} key={key} role="listitem" aria-label={identity || displayName}>
+                <article className={`auth-file-card surface-card ${disabled ? 'is-disabled' : ''}`} key={key} role="listitem" aria-label={identity || displayName}>
                   <div className="auth-credential-row">
                   <header className={`auth-card-header auth-list-cell ${identity ? '' : 'filename-only'}`}>
                     <img src={icon} alt="" data-provider={providerKey(file)} className={providerKey(file) === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} />
@@ -679,7 +679,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
             <button type="button" className="icon-button quiet" onClick={closeOauthModels} disabled={oauthModelSaving} title={t('common.close')} aria-label={t('common.close')}><X size={18} aria-hidden="true" /></button>
           </div>
 
-          <div className="model-discovery-search">
+          <div className="model-discovery-search search-control" data-size="default">
             <Search size={16} aria-hidden="true" />
             <input autoFocus value={oauthModelSearch} onChange={(event) => setOauthModelSearch(event.currentTarget.value)} placeholder={t('authFiles.models.search')} />
           </div>

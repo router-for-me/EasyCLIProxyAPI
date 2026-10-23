@@ -1,15 +1,20 @@
+:root[data-window-material] {
+  --workspace-surface: color-mix(in srgb, var(--color-workspace) var(--theme-window-material-workspace-opacity, 72%), transparent);
+  --sidebar-surface: color-mix(in srgb, var(--sidebar-bg) var(--theme-window-material-sidebar-opacity, 40%), transparent);
+}
+
 :root[data-window-material],
 :root[data-window-material] :is(body, #root, .immersive-window, .app-shell) {
-  background: transparent !important;
+  background: transparent;
 }
 
 :root[data-window-material] .immersive-window .window-titlebar,
 :root[data-window-material] .workspace {
-  background: color-mix(in srgb, var(--theme-faf9f5) var(--theme-window-material-workspace-opacity, 72%), transparent);
+  background: var(--workspace-surface);
 }
 
 :root[data-window-material] .sidebar {
-  background: color-mix(in srgb, var(--sidebar-bg) var(--theme-window-material-sidebar-opacity, 40%), transparent);
+  background: var(--sidebar-surface);
 }
 
 :root[data-window-material] .workspace .content {

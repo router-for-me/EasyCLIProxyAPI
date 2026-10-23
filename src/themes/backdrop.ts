@@ -1,4 +1,4 @@
-import type { ThemeBackdrop, ThemeGradient, ThemeGradientStop } from './types';
+import type { ThemeBackdrop, ThemeDefinition, ThemeGradient, ThemeGradientStop } from './types';
 
 const color = (value: unknown): value is string => typeof value === 'string' && /^#(?:[\da-f]{6}|[\da-f]{8})$/i.test(value);
 const numberInRange = (value: unknown, min: number, max: number): value is number =>
@@ -11,6 +11,7 @@ export function normalizeBackdrop(backdrop: ThemeBackdrop, id: string): ThemeBac
   if (!backdrop || !color(backdrop.sidebar) || !color(backdrop.panel)
     || (backdrop.inset !== undefined && !color(backdrop.inset))
     || (backdrop.hover !== undefined && !color(backdrop.hover))
+    || (backdrop.imagePosition !== undefined && !pair(backdrop.imagePosition, 0, 100))
     || !Array.isArray(backdrop.layers) || !numberInRange(backdrop.layers.length, 1, 4)) return invalid();
   const layers = backdrop.layers.map((layer): ThemeGradient => {
     if (!layer || !Array.isArray(layer.stops) || !numberInRange(layer.stops.length, 2, 8)) return invalid();
@@ -32,6 +33,7 @@ export function normalizeBackdrop(backdrop: ThemeBackdrop, id: string): ThemeBac
   return Object.freeze({ layers: Object.freeze(layers), sidebar: backdrop.sidebar, panel: backdrop.panel,
     ...(backdrop.inset === undefined ? {} : { inset: backdrop.inset }),
     ...(backdrop.hover === undefined ? {} : { hover: backdrop.hover }),
+    ...(backdrop.imagePosition === undefined ? {} : { imagePosition: Object.freeze([...backdrop.imagePosition]) as readonly [number, number] }),
   });
 }
 
@@ -42,4 +44,13 @@ export function backdropImage(backdrop: ThemeBackdrop): string {
       ? `linear-gradient(${layer.angle}deg, ${stops})`
       : `radial-gradient(ellipse ${layer.size[0]}% ${layer.size[1]}% at ${layer.center[0]}% ${layer.center[1]}%, ${stops})`;
   }).join(', ');
+}
+
+export function themeBackdropImage(theme: ThemeDefinition): string {
+  return [theme.backdrop ? backdropImage(theme.backdrop) : '',
+    theme.backdropImage ? `url("${theme.backdropImage}")` : ''].filter(Boolean).join(', ');
+}
+
+export function themeImagePosition(theme: ThemeDefinition): string {
+  return theme.backdrop?.imagePosition?.map(value => `${value}%`).join(' ') ?? 'center';
 }

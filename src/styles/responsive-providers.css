@@ -19,7 +19,7 @@
   height: 50px;
   min-height: 50px;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .api-access-page .provider-category-panel button.active {
@@ -44,7 +44,7 @@
   justify-self: center;
   min-width: 22px;
   padding: 2px 5px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-quaternary);
   font-size: 12px;
@@ -309,7 +309,7 @@
   }
 
   .auth-files-page .auth-files-toolbar select {
-    border-top: 1px solid var(--theme-e3e1db);
+    border-top: 1px solid var(--color-border-default);
     border-left: 0;
   }
 }

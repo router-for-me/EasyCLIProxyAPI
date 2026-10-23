@@ -1,3 +1,4 @@
+@layer components {
 .select-menu {
   position: relative;
   min-width: 0;
@@ -14,7 +15,7 @@
   min-height: 34px;
   padding: 0 10px 0 12px;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-primary);
   color: var(--text-primary);
   text-align: left;
@@ -63,15 +64,15 @@
   max-width: min(320px, calc(100vw - 24px));
   padding: 4px;
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg-card);
-  box-shadow: 0 14px 34px rgba(45, 42, 38, 0.18);
+  box-shadow: var(--shadow-popover);
 }
 
 .select-menu-list {
   min-height: 0;
   overflow: auto;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .select-menu-option {
@@ -83,7 +84,7 @@
   min-height: 32px;
   padding: 4px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-primary);
   text-align: left;
@@ -114,4 +115,6 @@
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   font-weight: 600;
+}
+
 }

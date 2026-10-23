@@ -1,0 +1,93 @@
+.select-control:not([multiple]):not([size]) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 30px 0 11px;
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 14px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+:where(select.select-control:not([multiple]):not([size])) {
+  height: 38px;
+}
+
+.auth-list-pagination select.select-control {
+  height: auto;
+}
+
+.theme-selector-filters .select-control,
+.usage-pricing-actions .select-control {
+  height: 38px;
+}
+
+.select-control:not([multiple]):not([size]):hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+}
+
+.select-control:not([multiple]):not([size]):focus {
+  border-color: var(--color-accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.select-control:not([multiple]):not([size]):disabled {
+  cursor: not-allowed;
+  border-color: var(--color-border-subtle);
+  background-color: var(--color-surface-hover);
+  color: var(--color-text-disabled);
+}
+
+@media (forced-colors: active) {
+  .select-control:not([multiple]):not([size]) {
+    appearance: auto;
+    -webkit-appearance: auto;
+    background-image: none;
+  }
+
+  .select-control:not([multiple]):not([size]):focus {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+}
+
+.usage-records-page .usage-filter-item select.select-control {
+  appearance: auto;
+  -webkit-appearance: auto;
+  padding: 0 18px 0 4px;
+  border: 0;
+  border-radius: var(--radius-none);
+  background: transparent;
+  box-shadow: none;
+}
+
+.usage-records-page .usage-filter-item:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.usage-records-page .usage-filter-item select.select-control:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .select-control:not([multiple]):not([size]) {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .usage-records-page .usage-filter-item:focus-within {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+}

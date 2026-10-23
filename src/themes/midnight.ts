@@ -1,6 +1,7 @@
 import type { ThemeDefinition } from './types';
 
 export const midnight: ThemeDefinition = {
+  schemaVersion: 1,
   id: 'midnight-dark',
   nameKey: 'app.theme.midnight.name',
   descriptionKey: 'app.theme.midnight.description',

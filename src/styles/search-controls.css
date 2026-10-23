@@ -1,0 +1,93 @@
+.search-control[data-size] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-width: 0;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: var(--border-width) solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+  outline: none;
+  box-shadow: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.search-control[data-size='compact'] {
+  height: 32px;
+  min-height: 32px;
+}
+
+.search-control[data-size]:focus-within {
+  border-color: var(--primary-color);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 14%, transparent);
+}
+
+.search-control[data-size] > svg {
+  position: static;
+  flex: none;
+  transform: none;
+  color: inherit;
+}
+
+.search-control[data-size] > input:not([type='checkbox']),
+.search-control[data-size] > input:focus-visible {
+  appearance: none;
+  flex: 1 1 0;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-none);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-meta);
+  line-height: normal;
+  outline: none;
+  box-shadow: none;
+}
+
+.search-control[data-size='compact'] > input:not([type='checkbox']) {
+  font-size: var(--font-size-caption);
+}
+
+.search-control[data-size] > input::-webkit-search-decoration,
+.search-control[data-size] > input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.search-control[data-size] > button {
+  flex: none;
+  margin: 0;
+}
+
+.search-control[data-size]:has(> input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.usage-pricing-search.search-control {
+  flex: 1 1 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-control[data-size] {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .search-control[data-size]:focus-within {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}

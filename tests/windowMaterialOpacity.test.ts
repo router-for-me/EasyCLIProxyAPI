@@ -14,7 +14,7 @@ describe('window material opacity tokens', () => {
         const definition = normalizeTheme({ ...base, tokens: { [key]: value } });
         expect(definition.tokens[key as keyof typeof themeOpacityTokenProperties]).toBe(value);
         const { order: _order, ...external } = definition;
-        const result = parseCustomThemes([{ fileName: 'glass.json', content: JSON.stringify(external) }]);
+        const result = parseCustomThemes([{ folder: 'glass', content: JSON.stringify(external) }]);
         expect(result.skipped).toEqual([]);
         expect(result.themes[0].tokens).toEqual(definition.tokens);
         const styles = new Map<string, string>();
@@ -32,11 +32,12 @@ describe('window material opacity tokens', () => {
       }
       for (const value of ['-1%', '100.1%', '50', '50 %', 'NaN%', 'Infinity%', '#ffffff', 'var(--x)', '', 50, null, [], {}]) {
         const definition = { ...base, tokens: { [key]: value } } as unknown as ThemeDefinition;
-        expect(() => normalizeTheme(definition)).toThrow('Invalid theme color');
+        expect(normalizeTheme(definition).tokens).toEqual({});
         const { order: _order, ...external } = definition;
-        expect(parseCustomThemes([{ fileName: 'bad.json', content: JSON.stringify(external) }])).toEqual({
-          themes: [], skipped: ['bad.json'],
-        });
+        const result = parseCustomThemes([{ folder: 'bad', content: JSON.stringify(external) }]);
+        expect(result.skipped).toEqual([]);
+        expect(result.themes[0].tokens).toEqual({});
+        expect(result.diagnostics).toEqual([{ folder: 'bad', issues: [{ field: key, code: 'invalid-token' }] }]);
       }
     });
   }

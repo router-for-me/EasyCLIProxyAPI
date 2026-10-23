@@ -38,7 +38,7 @@ export function ModelSelectionPanel({ models, selected, loading, onMove }: Model
             : query ? 'apiAccess.modelDialog.addResults' : 'apiAccess.modelDialog.addAll')}
         </button>
       </div>
-      <div className="model-transfer-search">
+      <div className="model-transfer-search search-control" data-size="default">
         <Search size={15} aria-hidden="true" />
         <input ref={searchRef} value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder={searchLabel} aria-label={searchLabel} />
         {search ? (

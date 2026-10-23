@@ -94,7 +94,7 @@ function VertexImportDialog({ onClose }: { onClose: () => void }) {
           <small>{t('oauth.vertex.locationHint')}</small>
         </label>
         {error ? <Notice tone="error" variant="text">{privacy.text(error)}</Notice> : null}
-        {result ? <div role="status" className="vertex-login-result">
+        {result ? <div role="status" className="vertex-login-result surface-sunken">
           <p><Check size={16} aria-hidden="true" />{t('oauth.vertex.success')}</p>
           <dl>
             <dt>{t('oauth.vertex.project')}</dt><dd>{privacy.identifier(result.projectId)}</dd>

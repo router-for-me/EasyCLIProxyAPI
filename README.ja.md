@@ -135,44 +135,6 @@ Codex の **セッション管理 → コンテキスト編集（実験的）** 
 - プロバイダーのクォータとアカウント利用状態を確認。
 - macOS メニューバーまたは Windows システムトレイからバックグラウンド動作を継続。
 
-## カスタムテーマ
-
-テーマ 1 つにつき 1 つの `.json` ファイルを、アプリデータディレクトリの `themes` フォルダに置きます。Windows と Linux では実行ファイルと同じディレクトリ、macOS アプリでは `~/Library/Application Support/com.cpa.gui/themes` です（`.app` 以外から実行した場合は実行ファイルと同じディレクトリ）。テーマメニュー下部の **テーマフォルダを開く** でフォルダを作成して開き、**再読み込み** で再起動せずに変更を反映できます。カスタムテーマはファイル名順に組み込みテーマの後へ並びます。読み込むのは最大 64 ファイル、1 ファイル 64 KB までです。無効なファイルはスキップされ、そのファイル名と上限を超えたファイル数がテーマメニューに表示されます。
-
-```json
-{
-  "id": "harbor-dark",
-  "name": { "en": "Harbor", "zh-CN": "港湾", "ja": "ハーバー" },
-  "description": "Deep teal surfaces with a sea-glass accent",
-  "appearance": "dark",
-  "windowBackground": "#0E1A1F",
-  "windowMaterial": "translucent",
-  "tokens": {
-    "workspaceBackground": "#0E1A1F",
-    "surface": "#14242B",
-    "textPrimary": "#E6F1F2",
-    "border": "#2A434C",
-    "accent": "#6FD3C1",
-    "accentContrast": "#0E1A1F",
-    "sidebarBackground": "#0B151A",
-    "windowMaterialWorkspaceOpacity": "72%",
-    "windowMaterialSidebarOpacity": "40%"
-  }
-}
-```
-
-- `id`（必須）：英小文字・数字・`-` で、先頭は英字。組み込みテーマ（`light`, `dark`, `warm-sand-light`, `graphite-dark`, `midnight-dark`, `sakura-light`）や他のカスタムテーマと重複できません。
-- `name`（必須）と `description`：文字列、または `en`・`zh-CN`・`zh-TW`・`ja` をキーとするオブジェクト。
-- `appearance`（必須）：`light` または `dark`。テーマが表示されるグループを決めます。
-- `windowBackground`（必須）：`#RRGGBB`。ページ描画前にネイティブウィンドウに表示される色です。
-- `tokens`（必須、空オブジェクト可）：色 token は `#RRGGBB` または `#RRGGBBAA`。省略した色は既定のライトまたはダークの値になります。以下の不透明度 token はパーセントで指定します。未知または削除済みの token キーは無視されます。
-- `backdrop`：任意のグラデーション背景。構造は組み込みのミッドナイトブルー、桜ピンクと同じです。
-- `windowMaterial`：`solid`（既定）または `translucent`。半透明テーマではサイドバーとワークスペースの背後にネイティブのウィンドウマテリアルが表示されます。macOS 26 以降は Liquid Glass、それ以前の macOS は vibrancy、Windows 11 は Mica、Windows 10 1809 以降は Acrylic です。Linux と古い Windows ではマテリアルがなく、不透明テーマとまったく同じ表示になるため、`windowBackground` とトークンは省略せずに指定してください。マテリアル表示中は `backdrop` は使われません。
-- `tokens` の任意の不透明度キー：`windowMaterialWorkspaceOpacity`（ワークスペース、既定 `"72%"`）、`windowMaterialSidebarOpacity`（サイドバー、既定 `"40%"`）。値は `"0%"`（完全に透明）から `"100%"`（不透明）のパーセント文字列で、`"37.5%"` のような小数も使えます。対応する OS で `windowMaterial` が `translucent` の場合のみ有効です。ルート、body、シェルはネイティブマテリアルを表示するため透明になります。不正な値を含むファイルはスキップされます。マテリアルはテーマの設定であり、独立した設定項目はありません。組み込みテーマは不透明のままです。
-- `$schema` は記述可能で無視されます。それ以外のフィールドがあるとファイルは無効になります。
-
-利用できる token キー：`workspaceBackground`, `surface`, `softSurface`, `hoverBackground`, `textPrimary`, `textSecondary`, `textTertiary`, `textMuted`, `border`, `borderSubtle`, `borderStrong`, `borderHover`, `panelShadow`, `accent`, `accentStrong`, `accentSoft`, `accentContrast`, `accentShadow`, `primaryButtonBackground`, `primaryButtonHoverBackground`, `primaryButtonText`, `primaryButtonBorder`, `primaryButtonHoverBorder`, `controlActiveBackground`, `controlActiveThumb`, `focusRing`, `sidebarBackground`, `sidebarText`, `sidebarTextStrong`, `sidebarTextMuted`, `sidebarBorder`, `sidebarHover`, `sidebarSelected`, `sidebarSelectedBorder`, `sidebarSelectedShadow`, `popoverBackground`, `overlaySoftSurface`, `overlayHoverBackground`, `scrim`, `controlThumb`, `windowMaterialWorkspaceOpacity`, `windowMaterialSidebarOpacity`。
-
 ## クイックスタート
 
 1. [GitHub Releases](https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest)

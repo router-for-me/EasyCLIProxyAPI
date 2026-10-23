@@ -1,3 +1,4 @@
+@layer components {
 .auth-file-health {
   --health-accent: var(--text-tertiary);
   grid-column: 2 / -1;
@@ -15,7 +16,7 @@
 .auth-file-health.detailed {
   border: 1px solid var(--border-color);
   border-left: 3px solid var(--health-accent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--health-accent) 4%, var(--bg-card));
 }
 
@@ -37,7 +38,7 @@
 .auth-health-summary:focus-visible {
   outline: 2px solid var(--primary-color);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .auth-health-icon { flex-shrink: 0; color: var(--health-accent); }
@@ -110,7 +111,7 @@
   grid-column: auto;
   border: 0;
   border-top: 1px solid var(--auth-border, var(--border-color));
-  border-radius: 0;
+  border-radius: var(--radius-none);
   background: transparent;
   font-size: 12px;
   line-height: 1.5;
@@ -158,4 +159,6 @@
   .auth-file-health-compact .auth-health-disclosure { position: absolute; top: 11px; right: 0; }
   .auth-file-health-compact > details[open] .auth-health-summary-content { flex-basis: auto; }
   .auth-file-health-compact > details[open] .auth-health-countdown { margin-left: auto; }
+}
+
 }

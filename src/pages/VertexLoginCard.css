@@ -1,3 +1,4 @@
+@layer components {
 .config-dialog.vertex-import-dialog {
   width: min(540px, 100%);
   height: auto;
@@ -11,20 +12,21 @@
 .vertex-import-form { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 20px; min-height: 0; }
 .vertex-import-body { display: grid; gap: 20px; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .vertex-import-actions { display: flex; justify-content: flex-end; gap: 10px;
-  padding-top: 16px; border-top: 1px solid var(--theme-e8e4dc); }
+  padding-top: 16px; border-top: 1px solid var(--color-border-subtle); }
 .vertex-login-field { display: grid; gap: 8px; min-width: 0; }
 .vertex-login-field input { width: 100%; min-width: 0; height: 40px; padding: 0 12px;
-  border: 1px solid var(--theme-d5d2cb); border-radius: 6px;
-  background: var(--theme-ffffff); color: var(--theme-2d2a26); font: inherit; }
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-surface); color: var(--color-text-primary); font: inherit; }
 .vertex-file-picker { display: flex; align-items: center; gap: 12px; min-width: 0;
-  padding: 14px; border: 1px dashed var(--theme-d5d2cb); border-radius: 8px; background: var(--theme-ffffff); }
+  padding: 14px; border: 1px dashed var(--color-border-strong); border-radius: var(--radius-md); background: var(--color-surface); }
 .vertex-file-picker button { flex-shrink: 0; }
 .vertex-file-picker span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vertex-login-field small { color: var(--text-secondary); }
-.vertex-login-result { overflow-wrap: anywhere; padding: 14px; border: 1px solid var(--theme-e8e4dc);
-  border-radius: 8px; background: var(--theme-f4f2ec); }
+.vertex-login-result { overflow-wrap: anywhere; padding: 14px; }
 .vertex-login-result > p { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-weight: 600; }
 .vertex-login-result dl { margin: 0; }
 .vertex-login-result dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; }
 .vertex-login-result dt { color: var(--text-secondary); }
 .vertex-login-result dd { margin: 0; }
+
+}

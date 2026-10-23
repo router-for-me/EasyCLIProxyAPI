@@ -509,7 +509,7 @@ export function VersionManagementPage() {
     <section className="page management-page version-management-page">
       <MessageNotice message={versionSourceError} onDismiss={() => setVersionSourceError('')} />
       <section className="surface-bare version-list">
-        <div className="version-source-row" aria-label={t('kernel.versions.downloadSource')}>
+        <div className="version-source-row surface-panel" aria-label={t('kernel.versions.downloadSource')}>
           <div className="version-source-copy">
             <strong>{t('kernel.versions.downloadSource')}</strong>
             <span>{t('kernel.versions.downloadSourceHint')}</span>
@@ -560,7 +560,7 @@ export function VersionManagementPage() {
 
         <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
         <div className="version-card-grid">
-        <article className="version-list-item app-module-card">
+        <article className="version-list-item app-module-card surface-panel">
           <div className="version-item-content">
             <div className="version-card-top">
               <h2>{t('kernel.versions.appCardTitle')}</h2>
@@ -627,7 +627,7 @@ export function VersionManagementPage() {
           </div>
         </article>
 
-        <article className="version-list-item core-module-card">
+        <article className="version-list-item core-module-card surface-panel">
           <div className="version-item-content">
             <div className="version-card-top">
               <h2>{t('kernel.versions.coreCardTitle')}</h2>

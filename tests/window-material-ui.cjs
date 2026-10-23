@@ -16,7 +16,7 @@ const base = process.env.THEME_TEST_URL || 'http://127.0.0.1:1422';
     })));
     const reload = async (tokens, windowMaterial = 'translucent') => {
       await page.evaluate(async ({ tokens, windowMaterial, appearance }) => {
-        window.themeFixture.setCustomThemes([{ fileName: 'glass.json', content: JSON.stringify({
+        window.themeFixture.setCustomThemes([{ folder: 'glass', content: JSON.stringify({
           id: 'glass-dark', name: 'Glass', appearance, windowBackground: '#0E1A1F', windowMaterial,
           tokens: { workspaceBackground: '#0E1A1F', accent: '#6FD3C1', ...tokens },
         }) }]);

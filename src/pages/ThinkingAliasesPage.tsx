@@ -574,7 +574,7 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
           <div className="thinking-alias-field thinking-model-field">
           <div className="config-field-label"><label htmlFor="thinking-model-search">{t('aliases.originalModel')}</label><SettingsHelp label={t('aliases.originalModel')}>{t('aliases.sourceHint')}</SettingsHelp></div>
           <div className="thinking-model-picker" ref={modelPickerRef}>
-            <div className="thinking-model-search">
+            <div className="thinking-model-search search-control" data-size="default">
               {loading ? <LoaderCircle size={15} className="spin" /> : <Search size={15} />}
               <input
                 id="thinking-model-search"

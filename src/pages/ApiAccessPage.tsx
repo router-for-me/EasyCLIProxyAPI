@@ -1616,7 +1616,7 @@ export function ApiAccessPage() {
               <h2 title={providerLabel(activeDefinition)}>{providerLabel(activeDefinition)}</h2>
               <span>{t(activeDefinition.openAi ? 'apiAccess.entries.summaryProviders' : 'apiAccess.entries.summaryKeys', { count: rows.length })}</span>
             </div>
-            <div className="management-toolbar compact-toolbar api-access-search">
+            <div className="management-toolbar compact-toolbar api-access-search search-control" data-size="default">
               <Search size={16} aria-hidden="true" />
               <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder={t('apiAccess.search')} aria-label={t('apiAccess.search')} />
             </div>
@@ -1875,7 +1875,7 @@ function ProviderHealthDialog({ row, onClose, keySelector }: ProviderHealthDialo
       </div>
 
       {keySelector}
-      <div className="model-discovery-search">
+      <div className="model-discovery-search search-control" data-size="default">
         <Search size={16} aria-hidden="true" />
         <input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder={t('apiAccess.health.search')} />
       </div>
@@ -2283,7 +2283,7 @@ export function ApiProviderDialog({
             onChange={(event) => { discoveryRequestRef.current += 1; setModelLoading(false); setDiscoveryKeyId(event.currentTarget.value); }}>
             {draft.groupKeys!.map((key, index) => <option value={key.id} key={key.id}>{t('apiAccess.entries.keyNumber', { number: index + 1 })} · {maskSecret(readString(key.value, 'api-key'))}</option>)}
           </Select></label> : null}
-          <div className={`model-config-summary ${configuredModels.length || hasModelExclusions ? 'has-models' : ''}`}>
+          <div className={`model-config-summary surface-dashed ${configuredModels.length || hasModelExclusions ? 'has-models' : ''}`}>
             <strong>{modelSummaryTitle}</strong>
             <span>{modelSummaryDetail}</span>
           </div>
@@ -2324,7 +2324,7 @@ export function ApiProviderDialog({
           </div>
           {modelError && !modelDiscoveryOpen ? <MessageNotice message={modelError} onDismiss={() => setModelError('')} /> : null}
         </div>
-        <details className="provider-advanced-settings">
+        <details className="provider-advanced-settings surface-sunken">
           <summary>{t('apiAccess.advanced')}</summary>
           <div className="provider-advanced-fields">
             <AdvancedSettingsGroup title={providerText('modelRules')}>
@@ -2336,7 +2336,7 @@ export function ApiProviderDialog({
               </label>
             ) : null}
         {activeCategory === 'openai-compatibility' ? (
-          <div className="thinking-level-config">
+          <div className="thinking-level-config surface-sunken">
             <div className="thinking-level-heading">
               <strong>{t('apiAccess.thinking.title')}</strong>
               <span>{t('apiAccess.thinking.description')}</span>
@@ -2388,7 +2388,7 @@ export function ApiProviderDialog({
               <small>{providerText('headersHint')}</small>
             </label>
             {!grouped && activeSection === 'claude-api-key' ? (
-              <div className="provider-cloak-settings">
+              <div className="provider-cloak-settings surface-dashed">
                 <label>
                   <span>{t('apiAccess.cloak.mode')}</span>
                   <Select value={draft.cloakMode ?? ''} onChange={(event) => updateTextField('cloakMode', event.currentTarget.value)}>

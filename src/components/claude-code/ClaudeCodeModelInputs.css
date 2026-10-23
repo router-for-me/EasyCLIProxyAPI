@@ -1,3 +1,4 @@
+@layer components {
 .claude-code-model-inputs,
 .claude-role-table {
   display: grid;
@@ -25,11 +26,11 @@
 
 .claude-role-table {
   padding-top: 16px;
-  border-top: 1px solid var(--theme-e3e1db);
+  border-top: 1px solid var(--color-border-default);
 }
 
 .claude-role-table > strong {
-  color: var(--theme-817b72);
+  color: var(--color-text-muted);
   font-size: var(--font-size-caption);
   font-weight: 500;
 }
@@ -46,7 +47,7 @@
 .claude-role-row > strong {
   font-size: var(--font-size-label);
   font-weight: 500;
-  color: var(--theme-5f5a53);
+  color: var(--color-text-secondary);
 }
 
 .claude-code-model-inputs .agent-model-trigger,
@@ -54,9 +55,9 @@
   min-height: 40px;
   height: auto;
   padding: 7px 11px;
-  border: 1px solid var(--theme-d5d2cb);
-  border-radius: 6px;
-  background: var(--theme-fff);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   font-weight: 400;
 }
 
@@ -64,7 +65,7 @@
 .claude-code-model-field .agent-model-trigger input { min-width: 0; width: 100%; }
 .claude-code-model-field > small {
   grid-column: 2;
-  color: var(--theme-817b72);
+  color: var(--color-text-muted);
   font-size: var(--font-size-caption);
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -76,16 +77,16 @@
   gap: 8px;
   white-space: nowrap;
   font-size: var(--font-size-caption);
-  color: var(--theme-5f5a53);
+  color: var(--color-text-secondary);
 }
 .claude-inline-context .switch-control input:focus-visible + .switch-track {
-  outline: 2px solid var(--theme-2d2a26);
+  outline: 2px solid var(--color-border-focus);
   outline-offset: 2px;
 }
 
 .claude-code-context-settings {
   margin-top: 4px;
-  border-top: 1px solid var(--theme-e3e1db);
+  border-top: 1px solid var(--color-border-default);
   padding-top: 12px;
 }
 .claude-code-context-settings summary {
@@ -102,3 +103,5 @@
   .claude-role-row > strong { grid-column: 1 / -1; }
 }
 .claude-code-model-error { gap: 12px; padding: 12px; }
+
+}

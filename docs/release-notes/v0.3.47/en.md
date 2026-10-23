@@ -2,8 +2,6 @@
 
 ## Added
 
-- Added custom JSON themes. Open the themes directory and reload themes from the appearance menu without restarting; invalid theme files are reported in the menu.
-- Custom themes can use native translucent materials: Mica / Acrylic on Windows and Liquid Glass / vibrancy on macOS, with separate sidebar and workspace opacity settings. Availability depends on the OS; built-in themes remain opaque.
 
 ## Improved
 
@@ -17,7 +15,7 @@
 - Fixed UI freezes after opening dialogs and black windows after restoring in affected Linux NVIDIA + Wayland environments by no longer forcing X11 preference there. Explicit user-selected graphics backends remain respected.
 - Fixed incorrect restored window positions and interface sizes on macOS setups with displays using different scaling factors.
 - Fixed floating notices showing page content through their backgrounds and making text difficult to read, including improved notice surfaces for translucent themes.
-- Custom theme loading now ignores unknown or removed color keys instead of rejecting the whole theme. Also fixed model-picker layering and Escape handling inside dialogs.
+- Fixed model-picker layering and Escape handling inside dialogs.
 
 ## Selected Previous Updates
 

@@ -37,7 +37,7 @@ it('distinguishes missing statistics, known zero counters, and an actual zero pe
 
   const failed = render({ success: 0, failed: 2, recent_requests: [{ time: '10:00-10:10', success: 0, failed: 2 }] });
   expect(failed).toContain('aria-label="Success rate 0%"');
-  expect(failed).toContain('background-color:rgb(239, 68, 68)');
+  expect(failed).toContain('background-color:color-mix(in srgb, var(--theme-meter-low) 100%, var(--theme-meter-medium) 0%)');
 });
 
 it('preserves existing full and compact layouts while making summary take precedence', () => {

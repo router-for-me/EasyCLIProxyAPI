@@ -1,0 +1,38 @@
+:root {
+  --palette-teal-600: #0f766e;
+
+  --palette-blue-600: #2563eb;
+  --palette-purple-500: #8b5cf6;
+  --radius-none: 0px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+  --border-width: 1px;
+  --card-border-width: 1px;
+  --shadow-xs: 0 1px 2px rgba(45, 42, 38, 0.08);
+  --shadow-sm: 0 1px 2px rgba(32, 42, 36, 0.06);
+  --shadow-md: 0 4px 16px rgba(45, 42, 38, 0.14);
+  --shadow-lg: 0 10px 28px rgba(45, 42, 38, 0.16);
+  --shadow-popover: 0 14px 34px rgba(45, 42, 38, 0.18);
+  --shadow-dialog: 0 24px 80px rgba(0, 0, 0, 0.25);
+  --shadow-spotlight: 0 0 0 9999px rgba(10, 14, 26, 0.72);
+
+  --font-size-caption: 12px;
+  --font-size-meta: 13px;
+  --font-size-label: 14px;
+  --font-size-body: 14px;
+  --font-size-section: 16px;
+  --font-size-panel-title: 18px;
+  --font-size-dialog-title: 20px;
+  --font-size-page-title: 24px;
+  --font-size-display: 28px;
+
+  --line-height-tight: 1.35;
+  --line-height-body: 1.6;
+  --line-height-relaxed: 1.7;
+}
+
+:root[data-theme='dark'] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+}

@@ -32,3 +32,15 @@ it('colors the success meter continuously from red through yellow to green', () 
   expect(render(95)).not.toContain('home-stat-card warning');
   expect(render(null)).not.toContain('--stat-color');
 });
+
+it('colors credential availability with the same scale and keeps unknown availability empty', () => {
+  for (const available of [0, 5, 10]) {
+    const data = { ...snapshot(null), credentials: { total: 10, available, unavailable: 10 - available, unknown: 0 } };
+    const html = renderToStaticMarkup(<I18nProvider><HomeOverviewCards snapshot={data} loading={false} coreReady onRefresh={() => {}} /></I18nProvider>);
+    expect(html).toContain(`--stat-color:${requestRateColor(available / 10)}`);
+  }
+  const data = { ...snapshot(null), credentials: { total: 10, available: 0, unavailable: 0, unknown: 10 } };
+  const html = renderToStaticMarkup(<I18nProvider><HomeOverviewCards snapshot={data} loading={false} coreReady onRefresh={() => {}} /></I18nProvider>);
+  expect(html).not.toContain('--stat-color');
+  expect(html).not.toContain('role="meter"');
+});

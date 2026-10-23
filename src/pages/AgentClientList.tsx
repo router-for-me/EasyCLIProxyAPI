@@ -148,7 +148,7 @@ export function AgentClientList<Id extends string>({
         </button>
       </header>
       <p id={descriptionId}>{t('agents.clients.description')}</p>
-      <div className="agent-client-search">
+      <div className="agent-client-search search-control" data-size="default">
         <Search size={16} aria-hidden="true" />
         <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)}
           placeholder={t('agents.clients.search')} aria-label={t('agents.clients.search')} />

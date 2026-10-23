@@ -56,7 +56,7 @@ export function AuthFileModelsDialog({ name, displayName = name, onClose }: Auth
         </div>
         <button type="button" className="icon-button quiet" onClick={onClose} title={t('common.close')} aria-label={t('common.close')}><X size={18} aria-hidden="true" /></button>
       </div>
-      <div className="model-discovery-search">
+      <div className="model-discovery-search search-control" data-size="default">
         <Search size={16} aria-hidden="true" />
         <input autoFocus value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder={t('authFiles.models.search')} />
       </div>

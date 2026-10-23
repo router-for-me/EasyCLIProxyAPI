@@ -200,12 +200,12 @@ export function PluginsPage() {
 
   return <div className="plugins-page" role="region" aria-label={pt('title')}>
     <div className="plugin-navigation">
-      {supported === true && <Tabs activation="manual" className="plugin-tabs" aria-label={pt('title')} value={tab} disabled={busy}
+      {supported === true && <Tabs variant="segmented" activation="manual" className="plugin-tabs" aria-label={pt('title')} value={tab} disabled={busy}
         onChange={value => { setTab(value); setSearch(''); setFilter('all'); }}
         items={(['installed', 'store', 'settings'] as const).map(value => ({ value, id: `plugin-tab-${value}`, panelId: 'plugin-tab-panel', label: pt(value === 'installed' ? 'local' : value) }))} />}
       <div className="plugin-toolbar">
         {supported === true && tab !== 'settings' && <>
-        <div className="plugin-search">
+        <div className="plugin-search search-control" data-size="default">
           <Search size={17} aria-hidden="true" />
           <input ref={searchRef} type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={pt('search')} aria-label={pt('search')} />
           <button type="button" className="icon-button quiet ghost tiny-button plugin-search-clear" disabled={!search} aria-label={t('common.clear')} title={t('common.clear')}
@@ -225,7 +225,7 @@ export function PluginsPage() {
       {restartRequired && <Notice tone="info" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={locked} onClick={async () => { if (await askConfirmation({ title: pt('restartButton'), message: pt('restartConfirm') })) void mutate(async () => { await restartCoreProcess(); if (mounted.current) setRestartRequired(false); }, pt('saved')); }}>{pt('restartButton')}</button>}>{pt('restart')}</Notice>}
       <>
         {tab === 'settings' ? <PluginSettingsPanel onSaved={() => { notice.showNotice(pt('saved')); void load(); }} globalControl={<label className="plugin-global-toggle"><Switch checked={data?.pluginsEnabled ?? false} disabled={locked || !data} onChange={e => { const enabled = e.target.checked; void mutate(() => pluginsApi.updateSettings({ enabled }), pt('saved')); }} />{pt('global')}</label>} /> : <>
-          {sourceErrors.length ? <details className="plugin-source-errors"><summary>{pt('sourceErrors')}</summary>{sourceErrors.map((entry, index) => <p key={index}>{entry.sourceName || entry.sourceId || entry.sourceUrl}: {entry.message}</p>)}{sourceErrors.some(entry => isGitHubRateLimit(entry.message)) ? <GitHubTokenHint /> : null}</details> : null}
+          {sourceErrors.length ? <details className="plugin-source-errors surface-frame"><summary>{pt('sourceErrors')}</summary>{sourceErrors.map((entry, index) => <p key={index}>{entry.sourceName || entry.sourceId || entry.sourceUrl}: {entry.message}</p>)}{sourceErrors.some(entry => isGitHubRateLimit(entry.message)) ? <GitHubTokenHint /> : null}</details> : null}
           {loading && <p className="plugin-loading" role="status">{t('common.loading')}…</p>}
           {tab === 'installed' ? <div className="plugin-grid">{plugins.map(plugin => {
             const status = getPluginStatus(plugin, data?.pluginsEnabled ?? false);

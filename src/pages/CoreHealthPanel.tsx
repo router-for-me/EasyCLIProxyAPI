@@ -129,7 +129,7 @@ export function CoreHealthPanel({
       </div>
 
       <div className="core-health-toolbar">
-        <label className="core-health-search"><Search size={15} aria-hidden="true" /><input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder={t('apiAccess.health.search')} aria-label={t('apiAccess.health.search')} /></label>
+        <label className="core-health-search search-control" data-size="default"><Search size={15} aria-hidden="true" /><input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder={t('apiAccess.health.search')} aria-label={t('apiAccess.health.search')} /></label>
       </div>
 
       <div className="core-health-overview" aria-live="polite">

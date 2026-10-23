@@ -1,3 +1,4 @@
+@layer components {
 .structured-list, .structured-map { display: grid; gap: 12px; min-width: 0; }
 .structured-list-item, .structured-map-item { padding: 14px; min-width: 0; }
 .structured-list-toolbar, .structured-map-key, .structured-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
@@ -24,9 +25,11 @@
 .structured-object .text-input, .structured-object .select-input,
 .structured-any > .text-input, .structured-any > .select-input {
   box-sizing: border-box; min-width: 0; width: 100%; padding: 9px 11px;
-  border: 1px solid var(--border-color); border-radius: 8px;
+  border: 1px solid var(--border-color); border-radius: var(--radius-md);
   background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 13px; line-height: 1.5;
 }
 .structured-list :is(input, select):focus-visible, .structured-map :is(input, select):focus-visible,
 .structured-object :is(input, select):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 .structured-list button, .structured-map button, .structured-object button { max-width: 100%; }
+
+}

@@ -1,3 +1,4 @@
+@layer components {
 .reset-credit-expiries {
   width: 100%;
   min-width: 0;
@@ -11,3 +12,5 @@
 .reset-credit-expiries li + li { border-top: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent); }
 .reset-credit-expiries li span { overflow-wrap: anywhere; }
 .credential-quota-dense .reset-credit-expiries { font-size: 10px; line-height: 1.4; }
+
+}

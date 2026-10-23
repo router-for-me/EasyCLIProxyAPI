@@ -36,7 +36,7 @@ export function ThemeExtensionFixture() {
       <div className="config-dialog"><div className="config-dialog-heading"><h2>Dialog</h2></div></div>
       <div className="surface-section surface-muted version-metric-tile"><span className="version-metric-label">Current version</span><strong className="version-metric-value">v1.0.0</strong></div>
       <footer className="app-release-notes-footer">Release notes footer</footer>
-      <section className="agent-core-setting-section agent-model-section">Model settings</section>
+      <section className="agent-core-setting-section agent-model-section surface-section">Model settings</section>
       <section className="surface-section surface-muted model-config-card">Model configuration</section>
     </main></div>
   </div>;

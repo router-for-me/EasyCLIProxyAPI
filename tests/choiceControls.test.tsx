@@ -31,6 +31,12 @@ const violations = (text: string, name: string) => {
 };
 
 describe('shared choice controls', () => {
+  it('exposes vertical navigation for settings categories', () => {
+    const html = renderToStaticMarkup(<Tabs items={items} value="one" onChange={() => {}} orientation="vertical" />);
+    expect(html).toContain('aria-orientation="vertical"');
+    expect(html).not.toContain('orientation="vertical" role');
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+  });
   it('classifies Windows choice owner paths like POSIX paths', () => {
     expect(isChoiceOwner('components\\Tabs.tsx')).toBe(true);
     expect(isChoiceOwner('components\\SegmentedControl.tsx')).toBe(true);

@@ -1,3 +1,4 @@
+@layer components {
 .auth-file-requests {
   grid-column: 2 / -1;
   display: grid;
@@ -48,7 +49,7 @@
   height: 14px;
   padding: 0;
   border: 0;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   background: var(--border-primary);
   cursor: pointer;
 }
@@ -88,10 +89,10 @@
   max-width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--border-color);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--text-secondary);
-  box-shadow: 0 4px 14px #0002;
+  box-shadow: var(--shadow-md);
   pointer-events: none;
   transform: translateX(-50%);
 }
@@ -208,4 +209,6 @@
   padding: 8px 10px;
   font-size: 11px;
   line-height: 1.5;
+}
+
 }

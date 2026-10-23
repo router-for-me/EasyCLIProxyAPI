@@ -1,3 +1,6 @@
+@layer components {
 .plugin-oauth-provider-status { grid-column: 1 / -1; }
 .plugin-oauth-provider-status button { display: inline-flex; align-items: center; gap: 8px; }
 .plugin-oauth-provider-status { gap: 12px; padding: 14px 16px; }
+
+}

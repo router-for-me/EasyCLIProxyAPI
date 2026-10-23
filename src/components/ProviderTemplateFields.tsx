@@ -50,7 +50,7 @@ export function ProviderErrorRules({ value, onChange, inherited }: { value: Valu
   const rules = Array.isArray(value[field]) ? value[field] as unknown[] : [];
   const set = (next: unknown) => onChange(changed(value, field, next));
   const actions = ['stop', 'stop-and-cooldown', 'continue', 'continue-and-cooldown'] as const;
-  return <details className="provider-template-section">
+  return <details className="provider-template-section surface-frame">
     <summary>{p('errors')}{value[field] != null ? ` · ${rules.length}` : ''}</summary>
     <p className="provider-group-hint">{p('errorsHint')}</p>
     <label className="provider-template-toggle"><Checkbox checked={value[field] != null} onChange={(event) => set(event.currentTarget.checked ? structuredClone(inherited ?? []) : undefined)} /><span>{p('configure')}</span></label>
@@ -58,7 +58,7 @@ export function ProviderErrorRules({ value, onChange, inherited }: { value: Valu
       {rules.map((raw, index) => {
         const rule = isRecord(raw) ? raw : {};
         const update = (next: Value) => set(rules.map((item, i) => i === index ? next : item));
-        return <fieldset key={index} className="provider-template-rule"><legend>{index + 1}</legend>
+        return <fieldset key={index} className="provider-template-rule surface-frame"><legend>{index + 1}</legend>
           <div className="provider-template-grid">
             <label><span>{p('status')}</span><input aria-label={p('status')} type="number" min="100" max="599" step="1" value={String(rule.status ?? '')} onChange={(event) => update({ ...rule, status: event.currentTarget.value === '' ? '' : Number(event.currentTarget.value) })} /></label>
             <label><span>{p('action')}</span><Select aria-label={p('action')} value={readString(rule, 'action')} onChange={(event) => update({ ...rule, action: event.currentTarget.value })}>
@@ -106,7 +106,7 @@ export function ProviderModelFields({ value, onChange, section, children }: { va
   const { locale } = useI18n();
   const thinking = isRecord(value.thinking) ? value.thinking : {};
   const setThinking = (next: Value) => onChange({ ...value, thinking: next });
-  return <details className="provider-template-section provider-model-options">
+  return <details className="provider-template-section provider-model-options surface-frame">
     <summary>{providerText('options', locale)}</summary>
     <p className="provider-group-hint">{providerText('modelHint', locale)}</p>
     <div className="provider-template-grid">

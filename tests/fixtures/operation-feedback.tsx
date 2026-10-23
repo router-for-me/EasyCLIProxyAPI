@@ -62,6 +62,7 @@ function Fixture() {
     <div data-testid="toolbar" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       <button onClick={() => first.showNotice('Saved', 'success')}>Success</button>
       <button onClick={() => first.showNotice('Failure '.repeat(120), 'error')}>Error</button>
+      <button onClick={() => first.showNotice('Saved settings for sample-credential-12345678-1234-1234-1234-123456789012.json', 'success')}>Wrapped</button>
       <button onClick={() => second.showNotice('Second result', 'info')}>Second</button>
       <button onClick={() => { first.clearNotice(); second.clearNotice(); setAgent(false); setQuota(false); }}>Clear</button>
       <button onClick={() => setAgent(true)}>Agent result</button>
