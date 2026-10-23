@@ -120,6 +120,19 @@ describe('plugin Management API', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('does not offer an older stable release over an installed prerelease', async () => {
+    mockIPC(() => [{ repository: 'example/sample', version: '1.9.0', error: null }]);
+    const store = normalizePluginStore({ plugins: [{
+      id: 'sample', source_id: 'official', repository: 'example/sample',
+      install_type: 'github-release', installed: true, installed_version: '2.0.0-rc.1',
+      install_source_status: 'matched',
+    }] });
+    const result = await refreshPluginReleaseVersions(store);
+    expect(result.plugins[0]).toMatchObject({
+      version: '1.9.0', installedVersion: '2.0.0-rc.1', updateAvailable: false,
+    });
+  });
+
   it('defaults only a missing configuration node and propagates transport, auth and endpoint errors', async () => {
     mockIPC(() => { throw 'Management API error (404): not_found'; });
     expect(await pluginsApi.getConfig('sample')).toEqual({});
@@ -253,7 +266,24 @@ describe('plugin installation trust and versions', () => {
     expect(isNewerPluginRelease('2.0.0', '1.9.0')).toBe(false);
     expect(isNewerPluginRelease('V1.0', '1.0.0')).toBe(false);
     expect(isNewerPluginRelease('', '1.0.0')).toBe(false);
-    expect(isNewerPluginRelease('1.0.0', '1.0.0-rc.1')).toBe(true);
+    expect(isNewerPluginRelease('1.0.0', '1.0.0-rc.1')).toBe(false);
+  });
+  it.each([
+    ['2.0.0-rc.1', '1.9.0', false],
+    ['1.0.0-rc.10', '1.0.0-rc.2', false],
+    ['1.0.0-rc.2', '1.0.0-rc.10', true],
+    ['1.0.0-rc.1', '1.0.0', true],
+    ['1.0.0+build.1', '1.0.0+build.2', false],
+    ['1.0.0-alpha.2', '1.0.0-alpha.1', false],
+    ['1.0.0-beta', '1.0.0-alpha.9', false],
+  ])('compares semantic release precedence: %s -> %s', (current, latest, expected) => {
+    expect(isNewerPluginRelease(current, latest)).toBe(expected);
+  });
+  it('preserves arbitrary-tag and short dotted-version comparisons', () => {
+    expect(isNewerPluginRelease('nightly-old', 'nightly-new')).toBe(true);
+    expect(isNewerPluginRelease('nightly', 'nightly')).toBe(false);
+    expect(isNewerPluginRelease('1.2', '1.3')).toBe(true);
+    expect(isNewerPluginRelease('1.3', '1.2')).toBe(false);
   });
   it('requires the official source and a canonical official GitHub repository', () => {
     for (const repository of ['router-for-me/sample', 'https://github.com/router-for-me/sample.git']) {

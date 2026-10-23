@@ -1,6 +1,7 @@
 import { buildRepositoryURL, getPluginRepositorySlug } from './pluginResources';
 import { invoke } from '@tauri-apps/api/core';
 import type { PluginStoreResponse } from './plugins';
+import { compareSemanticVersions } from './semanticVersion';
 
 export const supportsPluginVersionSelection = (installType: string): boolean =>
   installType.trim().toLowerCase() === 'github-release';
@@ -26,6 +27,8 @@ export function isNewerPluginRelease(installed: string, latest: string): boolean
   const current = installed.trim().replace(/^[vV]/, '');
   const next = latest.trim().replace(/^[vV]/, '');
   if (!current || !next || current === next) return false;
+  const semantic = compareSemanticVersions(next, current);
+  if (semantic !== null) return semantic > 0;
   if (!/^\d+(\.\d+)*$/.test(current) || !/^\d+(\.\d+)*$/.test(next)) return true;
   const a = current.split('.').map(Number);
   const b = next.split('.').map(Number);
