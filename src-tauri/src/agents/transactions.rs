@@ -1171,6 +1171,15 @@ pub(crate) fn text(bytes: Option<&[u8]>) -> Result<Option<&str>, String> {
         .transpose()
 }
 
+/// Parses JSON configuration, accepting JSON5 syntax (comments, trailing commas) as well.
+/// Strict JSON is tried first: the json5 (pest) parser needs about 80x the input size in memory,
+/// so a 64 MB generated Codex model catalog took more than 5 GB at every start.
+pub(crate) fn parse_json_or_json5(content: &str) -> Result<Value, String> {
+    serde_json::from_str::<Value>(content)
+        .or_else(|_| json5::from_str::<Value>(content))
+        .map_err(|e| e.to_string())
+}
+
 pub(crate) fn parse(path: &Path, content: Option<&str>) -> Result<Value, String> {
     let Some(content) = content else {
         return Ok(serde_json::json!({}));
@@ -1181,7 +1190,7 @@ pub(crate) fn parse(path: &Path, content: Option<&str>) -> Result<Value, String>
             .map_err(|e| e.to_string())
             .and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         Some("yaml" | "yml") => serde_norway::from_str::<Value>(content).map_err(|e| e.to_string()),
-        _ => json5::from_str::<Value>(content).map_err(|e| e.to_string()),
+        _ => parse_json_or_json5(content),
     };
     let value = result.map_err(|_| {
         format!(

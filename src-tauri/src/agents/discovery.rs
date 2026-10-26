@@ -1577,7 +1577,7 @@ pub(crate) fn agent_has_connection_evidence(
             )
             .map_err(|e| e.to_string())?,
             Some("yaml" | "yml") => serde_yaml::from_str(content).map_err(|e| e.to_string())?,
-            _ => json5::from_str(content).map_err(|e| e.to_string())?,
+            _ => super::transactions::parse_json_or_json5(content)?,
         };
         let provider_present = client != AgentClient::Codex
             && [
@@ -3587,7 +3587,8 @@ pub(crate) fn read_agent_json5_or_empty(
         return Ok(serde_json::json!({}));
     }
     let value: serde_json::Value =
-        json5::from_str(&content).map_err(|error| format!("Failed to parse {label}: {error}"))?;
+        super::transactions::parse_json_or_json5(&content)
+            .map_err(|error| format!("Failed to parse {label}: {error}"))?;
     if !value.is_object() {
         return Err(format!("{label} root must be an object"));
     }

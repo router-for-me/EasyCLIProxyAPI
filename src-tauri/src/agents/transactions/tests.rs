@@ -122,3 +122,24 @@ fn relocated_configuration_root_accepts_writes_but_nested_links_do_not() {
         "a nested configuration link targeting the temp root must stay rejected"
     );
 }
+
+#[test]
+fn parse_json_or_json5_reads_strict_json_and_json5() {
+    let strict = parse_json_or_json5(r#"{"models":[{"slug":"a","n":1}]}"#).unwrap();
+    assert_eq!(strict["models"][0]["slug"], "a");
+
+    let json5 = parse_json_or_json5("{\n  // comment\n  models: [{slug: 'b',},],\n}").unwrap();
+    assert_eq!(json5["models"][0]["slug"], "b");
+
+    assert!(parse_json_or_json5("{\"models\":").is_err());
+}
+
+#[test]
+fn parse_keeps_json5_config_files_working() {
+    let value = parse(
+        Path::new("opencode.jsonc"),
+        Some("{\n  // keep comments working\n  \"provider\": {\"cpa-gui\": {},},\n}"),
+    )
+    .unwrap();
+    assert!(value["provider"]["cpa-gui"].is_object());
+}
