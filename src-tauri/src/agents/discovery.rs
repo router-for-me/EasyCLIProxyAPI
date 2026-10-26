@@ -50,7 +50,7 @@ pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBu
         AgentClient::WorkBuddy => vec![workbuddy_home(home).join("models.json")],
         AgentClient::AntigravityCli => antigravity_config_paths(client, home),
         AgentClient::CopilotCli | AgentClient::VscodeCopilot => copilot_config_paths(client, home),
-        AgentClient::ZCode => vec![home.join(".zcode/v2").join(ZCODE_PROVIDER_CONFIG_FILE)],
+        AgentClient::ZCode => vec![zcode_config_directory(home).join(ZCODE_PROVIDER_CONFIG_FILE)],
         AgentClient::KimiCode => vec![kimi_code_home(home).join(KIMI_CODE_CONFIG_FILE)],
         AgentClient::GrokBuild => vec![grok_build_home(home).join(GROK_BUILD_CONFIG_FILE)],
         AgentClient::Omp => {
@@ -827,6 +827,35 @@ pub(crate) fn remove_pi_package(executable: &Path, home: &Path) -> Result<(), St
 
 pub(crate) fn codex_configuration_directory(home: &Path) -> PathBuf {
     agent_configuration_environment("CODEX_HOME").unwrap_or_else(|| home.join(".codex"))
+}
+
+// ZCode (v2.x+) lets users move its data directory; the chosen root is recorded
+// as `dataBaseDir` in ~/.zcode/v2/setting.json and the provider configuration
+// lives under `<dataBaseDir>/.zcode/v2/`. Fall back to the default location when
+// the setting is missing or unreadable.
+pub(crate) fn zcode_config_directory(home: &Path) -> PathBuf {
+    if let Some(custom) = agent_configuration_environment("ZCODE_HOME") {
+        return custom.join(".zcode/v2");
+    }
+    if let Some(custom) = zcode_data_base_dir(home) {
+        return custom.join(".zcode/v2");
+    }
+    home.join(".zcode/v2")
+}
+
+pub(crate) fn zcode_data_base_dir(home: &Path) -> Option<PathBuf> {
+    let settings_path = home.join(".zcode/v2").join("setting.json");
+    let content = fs::read_to_string(settings_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let raw = value.get("dataBaseDir")?.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(raw);
+    if !path.is_absolute() {
+        return None;
+    }
+    Some(path)
 }
 
 pub(crate) fn current_codex_oauth_configuration(home: &Path) -> Result<bool, String> {

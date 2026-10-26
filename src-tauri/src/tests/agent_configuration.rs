@@ -1257,6 +1257,54 @@ fn zcode_desktop_and_cli_share_the_provider_configuration() {
 }
 
 #[test]
+fn zcode_config_paths_follow_custom_data_base_dir() {
+    let home = agent_test_home("zcode-custom-data-dir");
+    let settings_dir = home.join(".zcode/v2");
+    fs::create_dir_all(&settings_dir).unwrap();
+    let custom_root = home.join("custom-zcode-data");
+    fs::write(
+        settings_dir.join("setting.json"),
+        serde_json::json!({ "dataBaseDir": custom_root.to_string_lossy() }).to_string(),
+    )
+    .unwrap();
+    let paths = agent_config_paths(AgentClient::ZCode, &home);
+    assert_eq!(paths.len(), 1);
+    assert_eq!(
+        paths[0],
+        custom_root.join(".zcode/v2/provider_config.json")
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn zcode_config_paths_fall_back_when_custom_dir_is_missing_or_invalid() {
+    let home = agent_test_home("zcode-custom-data-dir-fallback");
+    // No setting.json at all.
+    let paths = agent_config_paths(AgentClient::ZCode, &home);
+    assert_eq!(paths[0], home.join(".zcode/v2/provider_config.json"));
+
+    let settings_dir = home.join(".zcode/v2");
+    fs::create_dir_all(&settings_dir).unwrap();
+    // Relative or empty dataBaseDir values are ignored.
+    fs::write(
+        settings_dir.join("setting.json"),
+        serde_json::json!({ "dataBaseDir": "relative/path" }).to_string(),
+    )
+    .unwrap();
+    let paths = agent_config_paths(AgentClient::ZCode, &home);
+    assert_eq!(paths[0], home.join(".zcode/v2/provider_config.json"));
+
+    fs::write(
+        settings_dir.join("setting.json"),
+        serde_json::json!({ "dataBaseDir": "   " }).to_string(),
+    )
+    .unwrap();
+    let paths = agent_config_paths(AgentClient::ZCode, &home);
+    assert_eq!(paths[0], home.join(".zcode/v2/provider_config.json"));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn zcode_preserves_manual_model_rules_and_rejects_unknown_schema_versions() {
     let fixture: serde_json::Value = serde_json::from_str(
         include_str!("fixtures/zcode-provider-config-3.14.4.json"),

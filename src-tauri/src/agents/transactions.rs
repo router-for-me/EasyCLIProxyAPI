@@ -369,6 +369,12 @@ fn configuration_root_candidates(home: &Path) -> Vec<PathBuf> {
         home.join(".pi").join("agent"),
         home.join(".minimax"),
     ];
+    // ZCode may relocate its data directory; include the custom root so backups
+    // and restores cover the files CPA actually writes there.
+    if let Some(custom) = zcode_data_base_dir(home) {
+        roots.push(custom.join(".zcode"));
+        roots.push(custom.join(".zcode").join("v2"));
+    }
     if let Some(parent) = copilot_config_paths(AgentClient::VscodeCopilot, home)[0].parent() { roots.push(parent.to_path_buf()); }
     if let Some(parent) = copilot_config_paths(AgentClient::CopilotCli, home)[0].parent() { roots.push(parent.to_path_buf()); }
     #[cfg(target_os = "macos")]
