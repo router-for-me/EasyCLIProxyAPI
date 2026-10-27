@@ -422,7 +422,6 @@ const providerHealthIdentity = (row: ProviderRow) => [
   row.baseUrl,
   row.authIndex,
   row.apiKeys.join('\u0000'),
-  row.models.map((model) => model.name).join('\u0000'),
 ].join('\u0001');
 
 const providerModelType = (
