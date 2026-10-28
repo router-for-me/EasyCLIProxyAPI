@@ -1022,8 +1022,15 @@ pub(crate) async fn fetch_prepared_agent_models(
             copilot::enrich_vscode_context_windows(&mut models, &runtime_models)?;
         }
         if agent_uses_cpa_runtime_context_windows(client) {
-            let runtime_models = fetch_codex_runtime_models(config.port, api_key).await?;
-            codex_catalog::merge_runtime_context_windows(&mut models, &runtime_models);
+            let (runtime_models, content) = tokio::join!(
+                fetch_codex_runtime_models(config.port, api_key),
+                fetch_management_config_yaml(config),
+            );
+            let _ = enrich_harness_context_windows(
+                &mut models,
+                &runtime_models.unwrap_or_default(),
+                content.as_deref().ok(),
+            );
         }
         if matches!(client, AgentClient::ClaudeCode | AgentClient::ClaudeDesktop) {
             let content = fetch_management_config_yaml(config).await?;
@@ -1136,7 +1143,15 @@ pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
 pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> bool {
     matches!(
         client,
-        AgentClient::ZCode | AgentClient::WorkBuddy | AgentClient::KimiCode | AgentClient::GrokBuild
+        AgentClient::ZCode
+            | AgentClient::WorkBuddy
+            | AgentClient::KimiCode
+            | AgentClient::GrokBuild
+            | AgentClient::OpenClaw
+            | AgentClient::Hermes
+            | AgentClient::OpenCode
+            | AgentClient::ClaudeCode
+            | AgentClient::ClaudeDesktop
     )
 }
 
