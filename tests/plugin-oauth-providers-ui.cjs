@@ -36,7 +36,10 @@ const { createServer: createPortProbe } = require('node:net');
       await page.waitForFunction(() => window.pluginOAuthProvidersFixture.calls.some(call => call.cmd === 'get_plugin_support'));
       await page.waitForFunction(() => document.querySelector('.oauth-browser-picker select')?.disabled === false);
     };
-    const card = name => page.locator('.oauth-card').filter({ has: page.getByRole('heading', { name, exact: true }) });
+    // Built-in provider cards carry `.oauth-card`; plugin provider cards add `.plugin-oauth-card`.
+    const card = name => page.getByRole('heading', { name, exact: true }).locator('xpath=ancestor::section[1]');
+    const pluginCards = () => page.locator('.plugin-oauth-card');
+    const builtInCards = () => page.locator('.oauth-card:not(.plugin-oauth-card)');
     const calls = cmd => page.evaluate(command => window.pluginOAuthProvidersFixture.calls.filter(call => call.cmd === command), cmd);
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const screenshot = async (name, fullPage = true) => {
@@ -49,7 +52,8 @@ const { createServer: createPortProbe } = require('node:net');
     await open();
     await card('ZCode OAuth').waitFor();
     await card('CodeBuddy OAuth').waitFor();
-    assert.equal(await page.locator('.oauth-card').count(), 10, 'eight built-ins including Vertex plus two eligible plugin providers');
+    assert.equal(await builtInCards().count(), 8, 'eight built-ins including Vertex');
+    assert.equal(await pluginCards().count(), 2, 'two eligible plugin providers add their own cards');
     for (const name of ['Disabled provider', 'Unregistered provider', 'Non OAuth provider', 'Invalid provider', 'Missing provider', 'Duplicate ZCode', 'Duplicate Codex']) {
       assert.equal(await page.getByRole('heading', { name: `${name} OAuth`, exact: true }).count(), 0, `${name} must not become a provider card`);
     }
@@ -85,7 +89,8 @@ const { createServer: createPortProbe } = require('node:net');
     // Reloading provider metadata must expose newly installed plugins and remove disabled ones.
     await open('empty');
     await page.waitForFunction(() => window.pluginOAuthProvidersFixture.listCalls >= 1);
-    assert.equal(await page.locator('.oauth-card').count(), 8);
+    assert.equal(await builtInCards().count(), 8);
+    assert.equal(await pluginCards().count(), 0);
     await page.evaluate(() => {
       const fixture = window.pluginOAuthProvidersFixture;
       fixture.plugins = structuredClone(fixture.installedPlugins);
@@ -123,7 +128,7 @@ const { createServer: createPortProbe } = require('node:net');
     await card('CodeBuddy OAuth').waitFor({ state: 'detached' });
     await page.evaluate(() => window.pluginOAuthProvidersFixture.releaseList());
     await settle();
-    assert.equal(await page.locator('.oauth-card').count(), 8, 'stale provider response must be ignored');
+    assert.equal(await builtInCards().count(), 8, 'stale provider response must be ignored');
 
     // Refocusing the window discovers changes made outside this page.
     await page.evaluate(() => {
@@ -139,23 +144,23 @@ const { createServer: createPortProbe } = require('node:net');
     await open('pendingRegistration');
     await page.waitForFunction(() => window.pluginOAuthProvidersFixture.listCalls >= 1);
     await settle();
-    assert.equal(await card('ZCode OAuth').count(), 0, 'pending plugin is not ready for login');
+    assert.equal(await pluginCards().count(), 0, 'pending plugin is not ready for login');
     await page.evaluate(() => {
       const fixture = window.pluginOAuthProvidersFixture;
       fixture.plugins = [structuredClone(fixture.installedPlugins[0])];
     });
     await card('ZCode OAuth').waitFor();
     assert.ok(await page.evaluate(() => window.pluginOAuthProvidersFixture.listCalls > 1), 'registration must be refreshed automatically');
-    assert.equal(await page.locator('.oauth-card').count(), 9);
+    assert.equal(await pluginCards().count(), 1);
 
     await open('unsupported');
     await settle();
-    assert.equal(await page.locator('.oauth-card').count(), 8);
+    assert.equal(await builtInCards().count(), 8);
     assert.equal(await page.evaluate(() => window.pluginOAuthProvidersFixture.listCalls), 0, 'unsupported kernel must not request plugins');
     await open('listError');
     await page.waitForFunction(() => window.pluginOAuthProvidersFixture.listCalls > 0);
     await settle();
-    assert.equal(await page.locator('.oauth-card').count(), 8, 'plugin failure must leave built-in login available');
+    assert.equal(await builtInCards().count(), 8, 'plugin failure must leave built-in login available');
     assert.equal(await card('Codex OAuth').locator('.management-card-actions > .primary-button').isEnabled(), true);
 
     await page.setViewportSize({ width: 390, height: 844 });

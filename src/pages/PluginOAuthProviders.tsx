@@ -92,7 +92,7 @@ export function PluginOAuthProviders({ builtInProviderIds, browser = 'default' }
     {plugins.map(plugin => {
       const provider = plugin.oauthProvider!;
       const authorized = completed.has(provider);
-      return <section className="panel surface-panel oauth-card" key={provider}>
+      return <section className="panel surface-panel plugin-oauth-card" key={provider}>
         <div className="provider-title-row">
           <Puzzle className="provider-logo" size={40} aria-hidden="true" />
           <div>
@@ -100,7 +100,7 @@ export function PluginOAuthProviders({ builtInProviderIds, browser = 'default' }
             {authorized && <span className="state-pill success">{t('oauth.status.completed')}</span>}
           </div>
         </div>
-        <div className="oauth-card-body"><p className="oauth-hint">{pluginOAuthText('providerHint', locale)}</p></div>
+        <div className="oauth-card-body plugin-oauth-card-body"><p className="oauth-hint">{pluginOAuthText('providerHint', locale)}</p></div>
         <div className="button-row management-card-actions">
           <button type="button" className="primary-button" onClick={() => setSelectedProvider(provider)}>
             <LogIn size={16} aria-hidden="true" />{t(authorized ? 'oauth.loginAnother' : 'oauth.startLogin')}
