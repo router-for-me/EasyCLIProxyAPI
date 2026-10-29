@@ -1206,7 +1206,7 @@ export const providerRecordWithModelEnabledState = (
   if (!normalized) return stripResponseFields(record);
   const nextRecord = stripResponseFields(record);
   const excludedModels = Array.isArray(nextRecord['excluded-models'])
-    ? nextRecord['excluded-models'].map(String).filter((model) => model.trim() && model.trim() !== '*')
+    ? nextRecord['excluded-models'].map(String).filter((model) => model.trim())
     : [];
   const withoutModel = excludedModels.filter((model) => model.trim().toLowerCase() !== normalized);
   if (!enabled) withoutModel.push(modelName.trim());
