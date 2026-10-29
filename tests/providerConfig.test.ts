@@ -15,6 +15,8 @@ import {
   providerDragId,
   providerProxyDraftFromRecord,
   providerRecordWithDisabledState,
+  providerRecordWithModelEnabledState,
+  isModelExcluded,
   providerRemarkIdentity,
   providerRowsFromGroups,
   providerSectionOrder,
@@ -26,7 +28,29 @@ import {
 import { modelsFromRecord } from '../src/services/modelService';
 import { flattenV8ProviderGroups } from './fixtures/legacyProviderRecords';
 
-describe('shared-credential provider entries (#276)', () => {
+describe('model health availability toggles', () => {
+  it('preserves unrelated exclusions while disabling and re-enabling one model', () => {
+    const record = { 'api-key': 'key', 'excluded-models': ['manual-*', 'old-model'] };
+    expect(isModelExcluded(record, 'old-model')).toBe(true);
+    const disabled = providerRecordWithModelEnabledState(record, 'healthy-model', false);
+    expect(disabled['excluded-models']).toEqual(['manual-*', 'old-model', 'healthy-model']);
+    const enabled = providerRecordWithModelEnabledState(disabled, 'healthy-model', true);
+    expect(enabled['excluded-models']).toEqual(['manual-*', 'old-model']);
+  });
+
+  it('removes only exact model exclusion and ignores a provider-wide wildcard', () => {
+    const record = { 'excluded-models': ['*', 'healthy-model'] };
+    expect(providerRecordWithModelEnabledState(record, 'healthy-model', true)['excluded-models']).toBeUndefined();
+  });
+
+  it('does not mutate the input record', () => {
+    const record = { 'excluded-models': ['old-model'] };
+    providerRecordWithModelEnabledState(record, 'new-model', false);
+    expect(record['excluded-models']).toEqual(['old-model']);
+  });
+});
+
+describe('shared-credential provider entries (#276)', () => { 
   const first = {
     'api-key': 'shared-key',
     'base-url': 'https://claude.example.test',

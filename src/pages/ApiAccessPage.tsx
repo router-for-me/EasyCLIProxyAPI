@@ -1189,6 +1189,32 @@ export const reorderProviderRecords = (
   return next;
 };
 
+export const isModelExcluded = (record: Record<string, unknown>, modelName: string) => {
+  const normalized = modelName.trim().toLowerCase();
+  return Array.isArray(record['excluded-models']) && record['excluded-models'].some((rule) => {
+    const value = String(rule).trim();
+    return value === '*' || modelMatchesRule(modelName, value) || value.toLowerCase() === normalized;
+  });
+};
+
+export const providerRecordWithModelEnabledState = (
+  record: Record<string, unknown>,
+  modelName: string,
+  enabled: boolean,
+) => {
+  const normalized = modelName.trim().toLowerCase();
+  if (!normalized) return stripResponseFields(record);
+  const nextRecord = stripResponseFields(record);
+  const excludedModels = Array.isArray(nextRecord['excluded-models'])
+    ? nextRecord['excluded-models'].map(String).filter((model) => model.trim() && model.trim() !== '*')
+    : [];
+  const withoutModel = excludedModels.filter((model) => model.trim().toLowerCase() !== normalized);
+  if (!enabled) withoutModel.push(modelName.trim());
+  if (withoutModel.length > 0) nextRecord['excluded-models'] = withoutModel;
+  else delete nextRecord['excluded-models'];
+  return nextRecord;
+};
+
 export const providerRecordWithDisabledState = (
   section: ProviderSection,
   record: Record<string, unknown>,
@@ -1532,6 +1558,25 @@ export function ApiAccessPage() {
     }
   };
 
+  const toggleProviderModel = async (row: ProviderRow, modelName: string, enabled: boolean) => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const latestRows = await providerGroupsApi.get(row.section);
+      if (!row.source) throw new Error(t('apiAccess.error.stale'));
+      const nextRecord = providerRecordWithModelEnabledState(row.record, modelName, enabled);
+      const nextRows = updateProviderEntry(latestRows, row.source, row.record, nextRecord);
+      await providerGroupsApi.put(row.section, nextRows);
+      await persistEntryRemarks(row.section, latestRows, nextRows);
+      await loadProviders(false);
+    } catch (requestError) {
+      setNotice(requestErrorMessage(requestError), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleProvider = async (row: ProviderRow) => {
     setBusy(true);
     setError('');
@@ -1728,6 +1773,7 @@ export function ApiAccessPage() {
           key={providerHealthIdentity(healthDialogRow)}
           row={healthDialogRow}
           onClose={() => setHealthDialogRow(null)}
+          onModelToggle={(modelName, enabled) => void toggleProviderModel(healthDialogRow, modelName, enabled)}
         />
       ) : null}
       <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
@@ -1738,10 +1784,11 @@ export function ApiAccessPage() {
 type ProviderHealthDialogProps = {
   row: ProviderRow;
   onClose: () => void;
+  onModelToggle?: (modelName: string, enabled: boolean) => void;
   keySelector?: ReactNode;
 };
 
-function ProviderGroupHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
+function ProviderGroupHealthDialog({ row, onClose, onModelToggle }: ProviderHealthDialogProps) {
   const { t } = useI18n();
   const keys = providerGroupKeys(row.record);
   const [selected, setSelected] = useState(0);
@@ -1752,7 +1799,7 @@ function ProviderGroupHealthDialog({ row, onClose }: ProviderHealthDialogProps) 
     return { ...row, record, apiKey: readString(key, 'api-key'), apiKeys: [readString(key, 'api-key')],
       authIndex: readString(key, 'auth-index', 'authIndex'), models: modelsFromRecord(record.models) };
   }, [row, key]);
-  return <ProviderHealthDialog key={selected} row={effectiveRow} onClose={onClose} keySelector={keys.length ?
+  return <ProviderHealthDialog key={selected} row={effectiveRow} onClose={onClose} onModelToggle={onModelToggle} keySelector={keys.length ?
     <label className="provider-health-key-selector"><span>{t('apiAccess.groups.healthKey')}</span>
       <Select value={selected} onChange={(event) => setSelected(Number(event.currentTarget.value))}>
         {keys.map((entry, index) => <option key={index} value={index}>{t('apiAccess.groups.keyNumber', { number: index + 1 })} · {maskSecret(readString(entry, 'api-key'))}</option>)}
@@ -1761,7 +1808,7 @@ function ProviderGroupHealthDialog({ row, onClose }: ProviderHealthDialogProps) 
 
 type ProviderModelHealthState = { status: 'checking' } | ProviderModelHealthResult;
 
-function ProviderHealthDialog({ row, onClose, keySelector }: ProviderHealthDialogProps) {
+function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: ProviderHealthDialogProps) {
   const { t } = useI18n();
   const configuredModels = useMemo(
     () => mergeProviderHealthModels([], row.models),
@@ -1773,6 +1820,9 @@ function ProviderHealthDialog({ row, onClose, keySelector }: ProviderHealthDialo
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<Record<string, ProviderModelHealthState>>({});
   const [checkingAll, setCheckingAll] = useState(false);
+  const [modelEnabled, setModelEnabled] = useState<Record<string, boolean>>(() => Object.fromEntries(
+    configuredModels.map((model) => [model.name.toLowerCase(), !isModelExcluded(row.record, model.name)]),
+  ));
   const healthControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -1924,8 +1974,9 @@ function ProviderHealthDialog({ row, onClose, keySelector }: ProviderHealthDialo
             : checked?.responseLatencyMs !== undefined
               ? t('apiAccess.health.responseInline', { latency: checked.responseLatencyMs })
               : '';
+          const enabled = modelEnabled[model.name.toLowerCase()] ?? true;
           return (
-            <div className={`provider-health-model-row ${checked?.status === 'failed' ? 'failed' : ''}`} key={model.name}>
+            <div className={`provider-health-model-row ${checked?.status === 'failed' ? 'failed' : ''}${enabled ? '' : ' disabled'}`} key={model.name}>
               <div className="provider-health-model-name">
                 <strong title={model.name}>{model.name}</strong>
                 {error
@@ -1934,6 +1985,19 @@ function ProviderHealthDialog({ row, onClose, keySelector }: ProviderHealthDialo
                     ? <small title={model.alias || model.displayName}>{model.alias || model.displayName}</small>
                     : null}
               </div>
+              <label className="provider-health-toggle">
+                <span>{enabled ? t('apiAccess.status.enabled') : t('apiAccess.status.disabled')}</span>
+                <Switch
+                  checked={enabled}
+                  disabled={!onModelToggle || checkingAll || modelLoading}
+                  onChange={() => {
+                    const nextEnabled = !enabled;
+                    setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: nextEnabled }));
+                    onModelToggle?.(model.name, nextEnabled);
+                  }}
+                  aria-label={t('apiAccess.health.toggleAria', { model: model.name, action: enabled ? t('common.disable') : t('common.enable') })}
+                />
+              </label>
               <span
                 className={`state-pill provider-health-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : ''}`}
                 title={latencyTitle}

@@ -1919,6 +1919,7 @@ export const en: Record<MessageKey, string> = {
   'apiAccess.toggleAria': '{remark} connection {action} switch',
   'apiAccess.dragHandle': 'Drag to reorder {remark}; with a keyboard, press Space then use the arrow keys',
   'apiAccess.health.action': 'Health Check',
+  'apiAccess.health.toggleAria': '{model} {action} switch',
   'apiAccess.health.title': 'Model Health Check',
   'apiAccess.health.description': '{provider}',
   'apiAccess.health.warning': 'The check sends one minimal streaming request to each model, stops at the first output token or a verifiable successful terminal response, and may incur a small charge.',

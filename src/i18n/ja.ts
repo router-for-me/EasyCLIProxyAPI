@@ -1918,6 +1918,7 @@ export const jaOverrides = {
   'apiAccess.toggleAria': '{remark} 接続の{action}スイッチ',
   'apiAccess.dragHandle': '「{remark}」をドラッグして並べ替えます。キーボードでは Space の後に矢印キーを使用します',
   'apiAccess.health.action': 'ヘルスチェック',
+  'apiAccess.health.toggleAria': '{model}{action}スイッチ',
   'apiAccess.health.title': 'モデルヘルスチェック',
   'apiAccess.health.description': '{provider}',
   'apiAccess.health.warning': '各モデルへ最小限のストリーミングリクエストを 1 回送信し、最初の出力文字または検証可能な正常終了応答を受信した時点で停止します。少額の料金が発生する場合があります。',
