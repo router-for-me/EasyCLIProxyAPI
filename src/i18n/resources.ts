@@ -103,5 +103,9 @@ export const zhTW: Record<MessageKey, string> = {
   'home.runtime.unknownHint': '核心狀態未知，讀取成功前無法啟動或重新啟動。',
   'home.runtime.errorDetails': '錯誤詳細資訊',
   'home.runtime.installHint': '安裝核心後即可啟動；鎖定的頁面會在核心執行後開放。',
+  'agents.sessions.deleteOneDirectDescription': '將直接刪除「{title}」及其已知關聯記錄，不建立備份。此操作不提供介面內復原。',
+  'agents.sessions.deleteManyDirectDescription': '將直接刪除以下 {count} 個工作階段及其已知關聯記錄，不建立備份：{preview}{extra}',
+  'agents.sessions.deleteWithoutBackup': '直接刪除，不建立備份',
+  'agents.sessions.confirmDirectDelete': '直接刪除',
 };
 export const ja: Record<MessageKey, string> = jaOverrides;

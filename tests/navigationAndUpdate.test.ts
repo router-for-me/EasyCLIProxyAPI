@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { appUpdateIndicatorState } from '../src/appUpdateModel';
-import { canOpenAppPage, isAlwaysAvailablePage } from '../src/navigation';
+import { canOpenAppPage, isAlwaysAvailablePage, resetWorkspaceScroll } from '../src/navigation';
 import { oauthSubpages } from '../src/oauthNavigation';
 
 describe('简易模式、首页、配置与版本管理导航', () => {
@@ -48,5 +48,25 @@ describe('软件与内核更新导航提示点', () => {
 
   test('最新版或检查失败都不显示提示点', () => {
     expect(appUpdateIndicatorState(false, false, false)).toBeNull();
+  });
+});
+
+describe('resetWorkspaceScroll', () => {
+  test('resets scrollTop and scrollLeft on workspace and shell scroll containers', () => {
+    const workspace = { scrollTop: 420, scrollLeft: 18 } as unknown as HTMLElement;
+    const content = { scrollTop: 120, scrollLeft: 0 } as unknown as HTMLElement;
+    const fakeRoot = {
+      querySelectorAll(selector: string) {
+        if (selector === '.workspace') return [workspace];
+        if (selector === '.content') return [content];
+        return [];
+      },
+    } as unknown as ParentNode;
+
+    resetWorkspaceScroll(fakeRoot);
+    expect(workspace.scrollTop).toBe(0);
+    expect(workspace.scrollLeft).toBe(0);
+    expect(content.scrollTop).toBe(0);
+    expect(content.scrollLeft).toBe(0);
   });
 });

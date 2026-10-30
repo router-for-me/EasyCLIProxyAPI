@@ -145,9 +145,10 @@
 .usage-context-caption { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; color: var(--text-tertiary); font-size: 11px; }
 .usage-context-detail[open] .usage-context-caption svg { transform: rotate(180deg); }
 .usage-context-detail ul { display: grid; gap: 10px; margin: 12px 0 0; padding: 12px 0 0; border-top: 1px solid var(--border-secondary); list-style: none; }
-.usage-context-detail li { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; }
+.usage-context-detail li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; gap: 6px 10px; font-size: 11px; }
 .usage-context-detail li > span { overflow-wrap: anywhere; min-width: 0; }
-.usage-context-detail li > strong { flex: none; color: var(--text-secondary); font-weight: 500; }
+.usage-context-detail li > small { flex: none; color: var(--text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-context-detail li > strong { flex: none; color: var(--text-secondary); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .usage-analysis-empty {
   min-height: 200px;
   flex: 1 1 auto; }

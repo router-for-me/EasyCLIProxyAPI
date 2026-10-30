@@ -84,6 +84,8 @@ pub(crate) struct CodexSessionPage {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DeleteCodexSessionsRequest {
     session_ids: Vec<String>,
+    #[serde(default)]
+    skip_backup: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -223,7 +225,7 @@ pub(crate) async fn delete_codex_sessions(
         .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let codex_home = resolve_codex_home(&user_home);
     tauri::async_runtime::spawn_blocking(move || {
-        delete_codex_sessions_from_home(&codex_home, request.session_ids)
+        delete_codex_sessions_from_home_with_options(&codex_home, request.session_ids, request.skip_backup)
     })
     .await
     .map_err(|error| format!("Failed to delete Codex session task: {error}"))?
@@ -823,9 +825,18 @@ fn session_identity_key(value: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn delete_codex_sessions_from_home(
     codex_home: &Path,
     session_ids: Vec<String>,
+) -> Result<CodexSessionDeleteBatchResult, String> {
+    delete_codex_sessions_from_home_with_options(codex_home, session_ids, false)
+}
+
+fn delete_codex_sessions_from_home_with_options(
+    codex_home: &Path,
+    session_ids: Vec<String>,
+    skip_backup: bool,
 ) -> Result<CodexSessionDeleteBatchResult, String> {
     let _guard = CODEX_SESSION_WRITE_LOCK
         .lock()
@@ -853,7 +864,7 @@ fn delete_codex_sessions_from_home(
     }
     let mut results = Vec::new();
     for id in unique {
-        results.push(delete_one_session(codex_home, &database_paths, &id));
+        results.push(delete_one_session(codex_home, &database_paths, &id, skip_backup));
     }
     let deleted_count = results
         .iter()
@@ -871,6 +882,7 @@ fn delete_one_session(
     codex_home: &Path,
     database_paths: &[PathBuf],
     session_id: &str,
+    skip_backup: bool,
 ) -> CodexSessionDeleteResult {
     let outcome = (|| -> Result<CodexSessionDeleteResult, String> {
         let mut plans = Vec::new();
@@ -887,7 +899,11 @@ fn delete_one_session(
                 backup_path: None,
             });
         }
-        let backup_dir = create_delete_backup(codex_home, session_id, &plans)?;
+        let backup_dir = if skip_backup {
+            None
+        } else {
+            Some(create_delete_backup(codex_home, session_id, &plans)?)
+        };
         for (committed_databases, plan) in plans.iter().enumerate() {
             if let Err(error) = apply_database_delete_plan(plan, session_id) {
                 let status = if committed_databases > 0 {
@@ -901,7 +917,7 @@ fn delete_one_session(
                     message: format!(
                         "Committed {committed_databases} database transactions; deletion failed for the remaining databases: {error}"
                     ),
-                    backup_path: Some(backup_dir.to_string_lossy().to_string()),
+                    backup_path: backup_dir.as_ref().map(|dir| dir.to_string_lossy().to_string()),
                 });
             }
         }
@@ -946,7 +962,7 @@ fn delete_one_session(
             session_id: session_id.to_string(),
             status: status.to_string(),
             message,
-            backup_path: Some(backup_dir.to_string_lossy().to_string()),
+            backup_path: backup_dir.as_ref().map(|dir| dir.to_string_lossy().to_string()),
         })
     })();
     outcome.unwrap_or_else(|message| CodexSessionDeleteResult {
@@ -2622,6 +2638,25 @@ mod tests {
             0
         );
         drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deletion_without_backup_removes_rows_and_rollout_without_creating_backup_dir() {
+        let root = test_root("delete-no-backup");
+        let rollout = root.join("sessions/2026/rollout.jsonl");
+        fs::create_dir_all(rollout.parent().unwrap()).unwrap();
+        fs::write(&rollout, "session\n").unwrap();
+        create_threads_db(&root.join("state_5.sqlite"), &rollout);
+
+        let result =
+            delete_codex_sessions_from_home_with_options(&root, vec!["thread-1".to_string()], true)
+                .unwrap();
+        assert_eq!(result.deleted_count, 1);
+        assert_eq!(result.results[0].status, "deleted");
+        assert!(result.results[0].backup_path.is_none());
+        assert!(!rollout.exists());
+        assert!(!root.join("backups/cpa-codex-session-deletes").exists());
         fs::remove_dir_all(root).unwrap();
     }
 

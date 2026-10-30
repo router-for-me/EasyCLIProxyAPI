@@ -1,7 +1,7 @@
 import { Notice } from '../components/Notice';
 import { getOAuthStatus, startOAuthLogin, openOAuthUrl, submitOAuthCallback, listOAuthBrowsers } from '../services/oauth';
 import type { OAuthBrowserOption } from '../services/oauth';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ChevronRight,
   Check,
@@ -28,6 +28,7 @@ import { useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { oauthSubpages, type OAuthSubpage } from '../oauthNavigation';
+import { resetWorkspaceScroll } from '../navigation';
 import {
   changedOAuthAuthFileNames,
   groupOAuthAccountsByProvider,
@@ -119,9 +120,12 @@ export function OAuthManagementPage() {
   const [authFilesProvider, setAuthFilesProvider] = useState<string | undefined>();
   const openAuthFiles = useCallback((provider?: string) => {
     setAuthFilesProvider(provider);
+    resetWorkspaceScroll();
     setActiveSubpage('authFiles');
   }, []);
-
+  useLayoutEffect(() => {
+    resetWorkspaceScroll();
+  }, [activeSubpage]);
   return (
     <section className="page oauth-management-page">
       <Tabs className="oauth-subpage-tabs secondary-page-tabs" aria-label={t('oauth.tabs.label')} value={activeSubpage}

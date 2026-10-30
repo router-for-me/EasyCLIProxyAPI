@@ -45,6 +45,7 @@ type DeleteConfirmation = {
   ids: string[];
   title: string;
   description: string;
+  directDescription: string;
 };
 
 const PAGE_SIZE = 50;
@@ -53,6 +54,7 @@ let sessionViewCache = {
   offset: 0,
   selectionMode: false,
   selectedIds: new Set<string>(),
+  skipDeleteBackup: false,
 };
 
 function errorMessage(error: unknown): string {
@@ -68,6 +70,7 @@ export function CodexSessionsPanel() {
   const [selectionMode, setSelectionMode] = useState(() => sessionViewCache.selectionMode);
   const [selectedIds, setSelectedIds] = useState(() => new Set(sessionViewCache.selectedIds));
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
+  const [skipDeleteBackup, setSkipDeleteBackup] = useState(() => sessionViewCache.skipDeleteBackup);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [cleanupPreview, setCleanupPreview] = useState<SessionIndexCleanupPreview | null>(null);
   const [cleanupSelectedIds, setCleanupSelectedIds] = useState<Set<string>>(() => new Set());
@@ -94,8 +97,9 @@ export function CodexSessionsPanel() {
       offset: page?.offset ?? initialOffsetRef.current,
       selectionMode,
       selectedIds: new Set(selectedIds),
+      skipDeleteBackup,
     };
-  }, [page, selectionMode, selectedIds]);
+  }, [page, selectionMode, selectedIds, skipDeleteBackup]);
 
   const loadPage = useCallback(async (offset = 0, silent = false) => {
     if (!mountedRef.current) return null;
@@ -185,6 +189,13 @@ export function CodexSessionsPanel() {
             preview,
             extra: extra > 0 ? t('agents.sessions.deleteMore', { count: extra }) : '',
           }),
+      directDescription: targets.length === 1
+        ? t('agents.sessions.deleteOneDirectDescription', { title: preview })
+        : t('agents.sessions.deleteManyDirectDescription', {
+            count: targets.length,
+            preview,
+            extra: extra > 0 ? t('agents.sessions.deleteMore', { count: extra }) : '',
+          }),
     });
   };
 
@@ -196,7 +207,7 @@ export function CodexSessionsPanel() {
     setNotice(null);
     try {
       const result = await deleteCodexSessions({
-        request: { sessionIds: request.ids },
+        request: { sessionIds: request.ids, skipBackup: skipDeleteBackup },
       });
       const failed = result.results.filter((item) => !['deleted', 'partial'].includes(item.status));
       const partial = result.results.filter((item) => item.status === 'partial');
@@ -509,10 +520,14 @@ export function CodexSessionsPanel() {
       {deleteConfirmation ? (
         <Dialog alert className="config-dialog codex-session-dialog" labelledBy="codex-session-delete-title" onClose={() => setDeleteConfirmation(null)} closeDisabled={operation === 'delete'}>
           <div className="config-dialog-heading"><div><TriangleAlert size={19} /><h2 id="codex-session-delete-title">{deleteConfirmation.title}</h2></div></div>
-          <p>{deleteConfirmation.description}</p>
+          <p>{skipDeleteBackup ? deleteConfirmation.directDescription : deleteConfirmation.description}</p>
+          <label className="codex-session-delete-direct">
+            <Checkbox checked={skipDeleteBackup} onChange={(event) => setSkipDeleteBackup(event.currentTarget.checked)} />
+            <span>{t('agents.sessions.deleteWithoutBackup')}</span>
+          </label>
           <div className="config-dialog-actions two-actions">
             <button type="button" className="secondary-button" onClick={() => setDeleteConfirmation(null)}>{t('common.cancel')}</button>
-            <button type="button" className="danger-button" onClick={() => void confirmDelete()}><Trash2 size={15} />{t('agents.sessions.confirmDelete')}</button>
+            <button type="button" className="danger-button" onClick={() => void confirmDelete()}><Trash2 size={15} />{t(skipDeleteBackup ? 'agents.sessions.confirmDirectDelete' : 'agents.sessions.confirmDelete')}</button>
           </div>
         </Dialog>
       ) : null}

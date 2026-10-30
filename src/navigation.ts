@@ -19,3 +19,39 @@ export function requestAppNavigation(navigate: () => void) {
   });
   if (window.dispatchEvent(event)) navigate();
 }
+
+const SCROLL_CONTAINER_SELECTORS = [
+  '.immersive-window',
+  '.window-content',
+  '.app-shell',
+  '.workspace',
+  '.content',
+  '.agent-config-scroll-region',
+] as const;
+
+export function resetWorkspaceScroll(root: ParentNode | null = typeof document !== 'undefined' ? document : null) {
+  if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+    try {
+      window.scrollTo(0, 0);
+    } catch {
+      // Ignore non-scrolling window environments in tests.
+    }
+  }
+  if (typeof document !== 'undefined') {
+    if (document.documentElement) {
+      document.documentElement.scrollTop = 0;
+      document.documentElement.scrollLeft = 0;
+    }
+    if (document.body) {
+      document.body.scrollTop = 0;
+      document.body.scrollLeft = 0;
+    }
+  }
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  for (const selector of SCROLL_CONTAINER_SELECTORS) {
+    for (const element of root.querySelectorAll<HTMLElement>(selector)) {
+      element.scrollTop = 0;
+      element.scrollLeft = 0;
+    }
+  }
+}

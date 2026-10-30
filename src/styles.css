@@ -5822,6 +5822,8 @@ textarea:focus-visible {
 
 .codex-session-dialog {
   min-height: 210px;
+  max-height: min(560px, calc(100vh - 40px));
+  overflow: hidden;
 }
 
 .codex-session-dialog .config-dialog-heading > div,
@@ -5845,6 +5847,12 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.codex-session-dialog > p {
+  max-height: min(240px, calc(100vh - 250px));
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
 .codex-session-cleanup-dialog {
   width: min(580px, 100%);
   max-height: min(720px, calc(100vh - 40px));
@@ -5852,6 +5860,7 @@ textarea:focus-visible {
   overflow: hidden;
 }
 
+.codex-session-delete-direct,
 .codex-session-cleanup-select-all {
   display: flex;
   align-items: center;

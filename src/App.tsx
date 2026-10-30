@@ -10,7 +10,7 @@ import { closePluginWebview } from './services/pluginWebview';
 import { WindowFrame } from './components/WindowFrame';
 import { MessageNotice } from './appNotice';
 import { ThemeSelector } from './components/ThemeSelector';
-import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   Bot,
   Check,
@@ -59,7 +59,7 @@ import {
 import { languageOptions, useI18n } from './i18n';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
-import { canOpenAppPage, requestAppNavigation } from './navigation';
+import { canOpenAppPage, requestAppNavigation, resetWorkspaceScroll } from './navigation';
 import { useThemePreference } from './theme';
 import { usePrivacyMode } from './privacy';
 import { Dialog } from './components/Dialog';
@@ -201,9 +201,14 @@ function AppContent() {
   ].filter(Boolean).join(' · ');
   useEffect(() => {
     if (!canOpenAppPage(active, coreReady)) {
+      resetWorkspaceScroll();
       setActive('home');
     }
   }, [active, coreReady]);
+
+  useLayoutEffect(() => {
+    resetWorkspaceScroll();
+  }, [active]);
 
   useEffect(() => {
     if (!coreReady) void closePluginWebview().catch(() => undefined);
@@ -299,8 +304,15 @@ function AppContent() {
     if (!canOpenAppPage(pageId, coreReady)) {
       return;
     }
-    if (pageId !== active) requestAppNavigation(() => setActive(pageId));
-    else if (isPluginRoute(pageId)) setPluginReload((value) => value + 1);
+    if (pageId !== active) {
+      requestAppNavigation(() => {
+        resetWorkspaceScroll();
+        setActive(pageId);
+      });
+    } else if (isPluginRoute(pageId)) {
+      resetWorkspaceScroll();
+      setPluginReload((value) => value + 1);
+    }
   }, [active, coreReady]);
 
   useEffect(() => {

@@ -43,7 +43,7 @@ export function UsageAnalysisView({ analysis, overview, range }: {
       </div>
       <UsageActivityChart timeline={overview.timeline} range={range} />
       <section className="surface-card usage-analysis-context">
-        <CategorySummary title={t('usage.analysis.sources')} items={analysis.upstreams ?? []} />
+        <CategorySummary title={t('usage.analysis.sources')} items={analysis.upstreams ?? analysis.sources ?? []} />
         <CategorySummary title={t('usage.analysis.keys')} items={analysis.apiKeys} />
       </section>
     </div>
@@ -179,9 +179,10 @@ function CategorySummary({ title, items }: { title: string; items: UsageCategory
       <div className="usage-context-heading"><span>{title}</span><small>{t(items.length === 1 ? 'usage.analysis.categoryCountOne' : 'usage.analysis.categoryCount', { count: items.length })}</small></div>
       <strong title={first?.label}>{first?.label || '—'}</strong>
       <div className="usage-context-caption"><span>{items.length === 1 ? t('usage.analysis.singleCategory')
-        : first ? t('usage.analysis.leadingShare', { percent: formatNumber(total ? first.requests / total * 100 : 0, { maximumFractionDigits: 1 }) }) : '—'}</span><ChevronDown size={14} aria-hidden="true" /></div>
+        : first ? t('usage.analysis.leadingShare', { percent: formatNumber(total ? first.requests / total * 100 : 0, { maximumFractionDigits: 1 }) }) : '—'}{first ? ` · ${formatUsageNumber(first.tokens, locale)} ${t('usage.analysis.metricTokens')}` : ''}</span><ChevronDown size={14} aria-hidden="true" /></div>
     </summary>
     <ul>{ranked.map(item => <li key={item.key}><span title={item.label}>{item.label}</span>
+      <small className="usage-context-tokens" title={`${formatNumber(item.tokens)} ${t('usage.analysis.metricTokens')}`}>{`${formatUsageNumber(item.tokens, locale)} ${t('usage.analysis.metricTokens')}`}</small>
       <strong title={formatNumber(item.requests)}>{t('usage.analysis.requestCount', { count: formatUsageNumber(item.requests, locale) })}</strong></li>)}</ul>
   </details>;
 }

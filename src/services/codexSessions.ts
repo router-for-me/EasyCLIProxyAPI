@@ -13,7 +13,7 @@ export const openCodexSessionRollout = (args: { request: { sessionId: string; };
 export const listCodexSessions = (args: { request: { offset: number; limit: number; }; }): Promise<CodexSessionPage> =>
   invoke<CodexSessionPage>('list_codex_sessions', args);
 
-export const deleteCodexSessions = (args: { request: { sessionIds: string[]; }; }): Promise<CodexSessionDeleteBatchResult> =>
+export const deleteCodexSessions = (args: { request: { sessionIds: string[]; skipBackup?: boolean; }; }): Promise<CodexSessionDeleteBatchResult> =>
   invoke<CodexSessionDeleteBatchResult>('delete_codex_sessions', args);
 
 export const repairCodexSessionMetadata = (args?: { expectedProvider: string; }): Promise<CodexSessionRepairResult> =>

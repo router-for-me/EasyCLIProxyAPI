@@ -24,7 +24,7 @@ import {
 } from '../services/coreSettings';
 import type { CoreConfigSettings, CoreApiKey, SoftwareSettings, CloseBehavior, CoreTlsSettings } from '../services/coreSettings';
 import { CoolingToggle } from '../components/settings/CoolingToggle';
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { open } from '../services/platform';
 import {
   AlertCircle,
@@ -73,6 +73,7 @@ import {
   settingsCategories, settingsTemplateGroups,
   allSettingsTemplateGroups, settingsMessages, takeRequestedSettingField, type SettingsCategory,
 } from '../services/settingsNavigation';
+import { resetWorkspaceScroll } from '../navigation';
 import { Select } from '../components/Select';
 
 type ConfigAction =
@@ -220,6 +221,12 @@ export function ConfigPanelPage() {
         const details = target.closest<HTMLDetailsElement>('.template-config-custom') ?? target.querySelector<HTMLDetailsElement>('.template-config-custom');
         if (details) details.open = true;
         target.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        for (const ancestor of document.querySelectorAll<HTMLElement>('.immersive-window, .window-content, .app-shell')) {
+          ancestor.scrollTop = 0;
+          ancestor.scrollLeft = 0;
+        }
+        document.documentElement.scrollTop = 0;
+        document.body.scrollTop = 0;
         const control = target.querySelector<HTMLElement>('input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')
           ?? target.querySelector<HTMLElement>('.template-config-custom > summary');
         (control ?? target).focus({ preventScroll: true });
@@ -994,16 +1001,20 @@ export function ConfigPanelPage() {
   const keyMutationBusy = busyAction === 'add-key' || busyAction === 'update-key';
   const managementSecretBusy = busyAction === 'management-secret';
   const loggingSettingsBusy = busyAction === 'logging';
-  const activateConfigSubpage = (subpage: ConfigSubpage) => {
+  const activateConfigSubpage = (subpage: ConfigSubpage, preserveScroll = false) => {
     setSettingsSearch('');
+    if (!preserveScroll) resetWorkspaceScroll();
     setActiveSubpage(subpage);
     if (subpage === 'requests') {
       setSensitiveWordsVisited(true);
     }
     if (subpage === 'aliases') setAliasesVisited(true);
   };
+  useLayoutEffect(() => {
+    if (!pendingDestination) resetWorkspaceScroll();
+  }, [activeSubpage, pendingDestination]);
   const navigateToSetting = (destination: SettingDestination) => {
-    activateConfigSubpage(destination.category);
+    activateConfigSubpage(destination.category, true);
     setPendingDestination(destination);
   };
   useEffect(() => {
