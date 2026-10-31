@@ -3807,11 +3807,10 @@ pub(crate) fn build_zcode_agent_config(
         ensure_json_object_entry(properties, "inputFormat")
             .entry("supportsImage")
             .or_insert(serde_json::json!(true));
-        if let Some(context_window) = option.context_window {
+        let (inferred_cw, _, _, _, _) = infer_zcode_model_knowledge(&option.name);
+        if let Some(context_window) = option.context_window.or(inferred_cw) {
             properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
         } else if manual.is_none() {
-            // Smart rules inherit ZCode defaults; manual rules require a complete
-            // config, including contextWindow, even when CPA has no runtime limit.
             properties.remove("contextWindow");
         }
         if properties.is_empty() {

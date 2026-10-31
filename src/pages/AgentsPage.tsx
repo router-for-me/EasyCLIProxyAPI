@@ -2273,41 +2273,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </section>
               ) : null}
 
-              <section className="agent-core-setting-section agent-api-key-section surface-section">
-                <div className="agent-section-heading">
-                  <div><strong>{t('agents.apiKey.title')}</strong></div>
-                </div>
-                    <Select
-                      value={effectiveSelectedApiKey}
-                      disabled={busy || !canConfigureActiveClient}
-                      onChange={(event) => selectApiKey(event.currentTarget.value)}
-                    >
-                      {coreApiKeys.map((entry, index) => {
-                        const isDefault = index === 0;
-                        const label = entry.remark
-                          ? `${entry.remark} (${maskSecret(entry.apiKey)})${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`
-                          : `${maskSecret(entry.apiKey)}${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`;
-                        return (
-                          <option key={entry.apiKey} value={entry.apiKey}>
-                            {label}
-                          </option>
-                        );
-                      })}
-                      {configuredApiKey && !coreApiKeys.some((k) => k.apiKey === configuredApiKey) ? (
-                        <option value={configuredApiKey}>
-                          {maskSecret(configuredApiKey)} ({t('agents.apiKey.externalKey')})
-                        </option>
-                      ) : null}
-                      {coreApiKeys.length === 0 && !configuredApiKey ? (
-                        <option value="">{t('agents.apiKey.defaultUnset')}</option>
-                      ) : null}
-                    </Select>
-                    <span className="agent-model-hint">
-                      {coreApiKeys.length > 1
-                        ? t('agents.apiKey.hintMultiple', { count: coreApiKeys.length })
-                        : t('agents.apiKey.hint')}
-                    </span>
-              </section>
+
 
               <div className="agent-save-bar">
                 {configurationFeedback}
@@ -2337,6 +2303,57 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           ) : null}
           {activeSubpage === 'management' ? (
             <div id="agent-subpage-panel-management" role="tabpanel" aria-labelledby="agent-subpage-tab-management">
+              <div className="agent-management-sections" style={{ marginBottom: '16px' }}>
+                <section className="agent-management-row">
+                  <div>
+                    <h3>{t('agents.apiKey.title')}</h3>
+                    <p>
+                      {coreApiKeys.length > 1
+                        ? t('agents.apiKey.hintMultiple', { count: coreApiKeys.length })
+                        : t('agents.apiKey.hint')}
+                    </p>
+                  </div>
+                  <div className="agent-management-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ minWidth: '220px' }}>
+                      <Select
+                        value={effectiveSelectedApiKey}
+                        disabled={busy || !canConfigureActiveClient}
+                        onChange={(event) => selectApiKey(event.currentTarget.value)}
+                      >
+                        {coreApiKeys.map((entry, index) => {
+                          const isDefault = index === 0;
+                          const label = entry.remark
+                            ? `${entry.remark} (${maskSecret(entry.apiKey)})${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`
+                            : `${maskSecret(entry.apiKey)}${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`;
+                          return (
+                            <option key={entry.apiKey} value={entry.apiKey}>
+                              {label}
+                            </option>
+                          );
+                        })}
+                        {configuredApiKey && !coreApiKeys.some((k) => k.apiKey === configuredApiKey) ? (
+                          <option value={configuredApiKey}>
+                            {maskSecret(configuredApiKey)} ({t('agents.apiKey.externalKey')})
+                          </option>
+                        ) : null}
+                        {coreApiKeys.length === 0 && !configuredApiKey ? (
+                          <option value="">{t('agents.apiKey.defaultUnset')}</option>
+                        ) : null}
+                      </Select>
+                    </div>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={applySelectedConfiguration}
+                      disabled={busy || !canEnable || configurationWriteBlocked || !hasPendingChanges}
+                      style={{ height: '36px', padding: '0 14px', whiteSpace: 'nowrap' }}
+                    >
+                      {busyAction === 'apply' ? <LoaderCircle size={15} className="spin" /> : null}
+                      {configurationActionLabel}
+                    </button>
+                  </div>
+                </section>
+              </div>
               <AgentConfigManagementPanel pi={isPiClient} codex={selected === 'codex'} busyAction={busyAction}
                 codexApprovalModelControl={selected === 'codex' ? <CodexApprovalModelControl
                   disabled={busy || loading || hasPendingChanges || Boolean(activeStatus?.codexNativeOauth)}
