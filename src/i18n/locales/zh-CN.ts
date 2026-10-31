@@ -2220,6 +2220,11 @@ export const zhCN = {
   'quota.service.error.unrecognized': '上游返回了配额数据，但无法识别',
   'quota.service.error.codexResetOnly': '只有 Codex 凭据支持使用重置额度',
   'quota.service.error.missingConsumeAuthIndex': '缺少 auth-index，无法使用重置额度',
+  'agents.zcode.catalog.title': 'ZCode 模型列表与规则设置',
+  'agents.zcode.catalog.subtitle': '管理注入到 ZCode 的可见模型列表、排序以及上下文窗口和推理配置。',
+  'agents.zcode.catalog.saved': 'ZCode 模型列表与规则已保存并同步至 provider_config.json',
+  'agents.zcode.subagents.title': 'ZCode 子智能体设置',
+  'agents.zcode.subagents.description': '配置 ZCode 子智能体（Sub-agent）的默认模型、思考强度，以及各智能体的专属模型映射。',
 } as const;
 
 export type MessageKey = keyof typeof zhCN;

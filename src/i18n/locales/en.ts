@@ -2221,4 +2221,9 @@ export const en: Record<MessageKey, string> = {
   'quota.service.error.unrecognized': 'Upstream returned quota data in an unrecognized format',
   'quota.service.error.codexResetOnly': 'Only Codex credentials support reset credits',
   'quota.service.error.missingConsumeAuthIndex': 'Missing auth-index; the reset credit cannot be used',
+  'agents.zcode.catalog.title': 'ZCode Model List & Rules',
+  'agents.zcode.catalog.subtitle': 'Manage model list, ordering, context windows, and reasoning rules for ZCode.',
+  'agents.zcode.catalog.saved': 'ZCode model rules saved and synced to provider_config.json',
+  'agents.zcode.subagents.title': 'ZCode Sub-agent Configuration',
+  'agents.zcode.subagents.description': 'Configure default model, reasoning effort, and per-agent model mappings for ZCode sub-agents.',
 };
