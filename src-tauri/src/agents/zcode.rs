@@ -203,9 +203,8 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig) -> Value {
     properties.insert("supportsMidConversationSystem".into(), serde_json::json!(config.supports_mid_conversation_system));
 
     let mut option_specs = Map::new();
-    if let Some(mot) = config.max_output_tokens {
-        option_specs.insert("maxOutputTokens".into(), serde_json::json!({ "max": mot }));
-    }
+    let mot = config.max_output_tokens.unwrap_or(128_000);
+    option_specs.insert("maxOutputTokens".into(), serde_json::json!({ "max": mot }));
     if !config.reasoning_levels.is_empty() {
         let mut rl = Map::new();
         rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
