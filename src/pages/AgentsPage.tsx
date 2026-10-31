@@ -117,8 +117,6 @@ import { CodexRemoteCompactionSwitch } from './CodexRemoteCompactionSwitch';
 import { CodexProviderSwitch } from './CodexProviderSwitch';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
 import { CodexSubagentConfigDialog } from './CodexSubagentConfigDialog';
-import { ZCodeModelCatalogDialog } from './ZCodeModelCatalogDialog';
-import { ZCodeSubagentConfigDialog } from './ZCodeSubagentConfigDialog';
 import { DeepSeekHarnessCatalogDialog } from './DeepSeekHarnessCatalogDialog';
 import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
 import { AgentClientList } from './AgentClientList';
@@ -655,8 +653,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [launchDirectoryDialogOpen, setLaunchDirectoryDialogOpen] = useState(false);
   const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
   const [codexSubagentDialogOpen, setCodexSubagentDialogOpen] = useState(false);
-  const [zcodeCatalogDialogOpen, setZcodeCatalogDialogOpen] = useState(false);
-  const [zcodeSubagentDialogOpen, setZcodeSubagentDialogOpen] = useState(false);
   const [harnessCatalogDialogOpen, setHarnessCatalogDialogOpen] = useState(false);
   const [desktopHelpOpen, setDesktopHelpOpen] = useState(false);
   const [launchDirectory, setLaunchDirectory] = useState('');
@@ -1808,14 +1804,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setCodexSubagentDialogOpen(true)} disabled={busy}><Users size={16} />{t('agents.subagents.button')}</button>
   ) : null;
 
-  const zcodeCatalogButton = selected === 'zcode' ? (
-    <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setZcodeCatalogDialogOpen(true)} disabled={busy}><SlidersHorizontal size={16} />{t('agents.catalog.button')}</button>
-  ) : null;
-
-  const zcodeSubagentButton = selected === 'zcode' ? (
-    <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setZcodeSubagentDialogOpen(true)} disabled={busy}><Users size={16} />{t('agents.subagents.button')}</button>
-  ) : null;
-
   const harnessCatalogButton = isDeepSeekHarnessClient ? (
     <button type="button" className="secondary-button agent-codex-catalog-button"
       onClick={() => setHarnessCatalogDialogOpen(true)} disabled={busy || configurationWriteBlocked}>
@@ -1995,11 +1983,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   onChange={selectEmbeddedModel}
                   onRefresh={refreshModels}
                 />
-                {codexCatalogButton}{codexSubagentButton}{zcodeCatalogButton}{zcodeSubagentButton}{harnessCatalogButton}
+                {codexCatalogButton}{codexSubagentButton}{harnessCatalogButton}
                 {!isClaudeModelMappingClient && missingModelHint ? <span className="agent-model-hint" role="status">{missingModelHint}</span> : null}
               </div>}
 
-              {coreApiKeys.length > 1 ? (
+              {coreApiKeys.length > 1 && !(selected === 'codex' && oauthConfiguration) ? (
                 <div className="agent-minimal-field">
                   <label htmlFor="embedded-agent-api-key">{t('agents.apiKey.title')}</label>
                   <Select
@@ -2154,11 +2142,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       </div>
                     </div>
                   ) : null}
-                  {selected === 'zcode' ? (
-                    <div className="agent-codex-options">
-                      <div className="agent-codex-tool-buttons">{zcodeCatalogButton}{zcodeSubagentButton}</div>
-                    </div>
-                  ) : null}
                 </section>
               ) : null}
 
@@ -2273,7 +2256,47 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </section>
               ) : null}
 
-
+              <section className="agent-core-setting-section agent-api-key-section surface-section">
+                <div className="agent-section-heading">
+                  <div><strong>{t('agents.apiKey.title')}</strong></div>
+                </div>
+                {selected === 'codex' && oauthConfiguration ? (
+                  <p className="agent-model-hint">{t('agents.apiKey.oauthNotice')}</p>
+                ) : (
+                  <>
+                    <Select
+                      value={effectiveSelectedApiKey}
+                      disabled={busy || !canConfigureActiveClient}
+                      onChange={(event) => selectApiKey(event.currentTarget.value)}
+                    >
+                      {coreApiKeys.map((entry, index) => {
+                        const isDefault = index === 0;
+                        const label = entry.remark
+                          ? `${entry.remark} (${maskSecret(entry.apiKey)})${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`
+                          : `${maskSecret(entry.apiKey)}${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`;
+                        return (
+                          <option key={entry.apiKey} value={entry.apiKey}>
+                            {label}
+                          </option>
+                        );
+                      })}
+                      {configuredApiKey && !coreApiKeys.some((k) => k.apiKey === configuredApiKey) ? (
+                        <option value={configuredApiKey}>
+                          {maskSecret(configuredApiKey)} ({t('agents.apiKey.externalKey')})
+                        </option>
+                      ) : null}
+                      {coreApiKeys.length === 0 && !configuredApiKey ? (
+                        <option value="">{t('agents.apiKey.defaultUnset')}</option>
+                      ) : null}
+                    </Select>
+                    <span className="agent-model-hint">
+                      {coreApiKeys.length > 1
+                        ? t('agents.apiKey.hintMultiple', { count: coreApiKeys.length })
+                        : t('agents.apiKey.hint')}
+                    </span>
+                  </>
+                )}
+              </section>
 
               <div className="agent-save-bar">
                 {configurationFeedback}
@@ -2303,57 +2326,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           ) : null}
           {activeSubpage === 'management' ? (
             <div id="agent-subpage-panel-management" role="tabpanel" aria-labelledby="agent-subpage-tab-management">
-              <div className="agent-management-sections" style={{ marginBottom: '16px' }}>
-                <section className="agent-management-row">
-                  <div>
-                    <h3>{t('agents.apiKey.title')}</h3>
-                    <p>
-                      {coreApiKeys.length > 1
-                        ? t('agents.apiKey.hintMultiple', { count: coreApiKeys.length })
-                        : t('agents.apiKey.hint')}
-                    </p>
-                  </div>
-                  <div className="agent-management-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{ minWidth: '220px' }}>
-                      <Select
-                        value={effectiveSelectedApiKey}
-                        disabled={busy || !canConfigureActiveClient}
-                        onChange={(event) => selectApiKey(event.currentTarget.value)}
-                      >
-                        {coreApiKeys.map((entry, index) => {
-                          const isDefault = index === 0;
-                          const label = entry.remark
-                            ? `${entry.remark} (${maskSecret(entry.apiKey)})${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`
-                            : `${maskSecret(entry.apiKey)}${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`;
-                          return (
-                            <option key={entry.apiKey} value={entry.apiKey}>
-                              {label}
-                            </option>
-                          );
-                        })}
-                        {configuredApiKey && !coreApiKeys.some((k) => k.apiKey === configuredApiKey) ? (
-                          <option value={configuredApiKey}>
-                            {maskSecret(configuredApiKey)} ({t('agents.apiKey.externalKey')})
-                          </option>
-                        ) : null}
-                        {coreApiKeys.length === 0 && !configuredApiKey ? (
-                          <option value="">{t('agents.apiKey.defaultUnset')}</option>
-                        ) : null}
-                      </Select>
-                    </div>
-                    <button
-                      type="button"
-                      className="primary-button"
-                      onClick={applySelectedConfiguration}
-                      disabled={busy || !canEnable || configurationWriteBlocked || !hasPendingChanges}
-                      style={{ height: '36px', padding: '0 14px', whiteSpace: 'nowrap' }}
-                    >
-                      {busyAction === 'apply' ? <LoaderCircle size={15} className="spin" /> : null}
-                      {configurationActionLabel}
-                    </button>
-                  </div>
-                </section>
-              </div>
               <AgentConfigManagementPanel pi={isPiClient} codex={selected === 'codex'} busyAction={busyAction}
                 codexApprovalModelControl={selected === 'codex' ? <CodexApprovalModelControl
                   disabled={busy || loading || hasPendingChanges || Boolean(activeStatus?.codexNativeOauth)}
@@ -2438,14 +2410,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         />
       ) : null}
       {codexSubagentDialogOpen ? <CodexSubagentConfigDialog onClose={() => setCodexSubagentDialogOpen(false)} onSaved={() => undefined} /> : null}
-
-      {zcodeCatalogDialogOpen ? (
-        <ZCodeModelCatalogDialog
-          onClose={() => setZcodeCatalogDialogOpen(false)}
-          onSaved={() => void loadModels('zcode', selectedModel)}
-        />
-      ) : null}
-      {zcodeSubagentDialogOpen ? <ZCodeSubagentConfigDialog onClose={() => setZcodeSubagentDialogOpen(false)} onSaved={() => undefined} /> : null}
 
       {launchDirectoryDialogOpen ? (
         <Dialog
