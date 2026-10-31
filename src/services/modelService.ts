@@ -114,6 +114,7 @@ export function normalizeBaseUrl(value: string): string {
   parsed.hash = '';
   parsed.search = '';
   return parsed.toString()
+    .replace(/\/+$/, '')
     .replace(/\/(?:chat\/completions|messages|responses|generateContent)$/i, '')
     .replace(/\/+$/, '');
 }
