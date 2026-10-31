@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { LoaderCircle, RotateCcw, Search, SlidersHorizontal, X } from "lucide-react";
+import { LoaderCircle, Plus, RotateCcw, Search, SlidersHorizontal, X } from "lucide-react";
 import { Dialog } from "../components/Dialog";
 import { Switch } from "../components/Switch";
 import { Checkbox } from "../components/Checkbox";
@@ -11,6 +11,8 @@ import {
   type ZCodeCatalogEditorModel,
   type ZCodeCatalogEditorSnapshot,
 } from "../services/zcodeModelCatalog";
+
+const COMMON_REASONING_LEVELS = ["disabled", "enabled", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 export function ZCodeModelCatalogDialog({
   onClose,
@@ -29,6 +31,7 @@ export function ZCodeModelCatalogDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [customLevelInput, setCustomLevelInput] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,6 +80,78 @@ export function ZCodeModelCatalogDialog({
     setModels((prev) =>
       prev.map((m) => (m.id === selectedId ? { ...m, configuration: updater(m.configuration) } : m))
     );
+  };
+
+  const toggleSmartConfig = (enabled: boolean) => {
+    if (!selectedModel) return;
+    if (enabled) {
+      // Switch to smart config (isManual = false), restore defaults
+      setModels((prev) =>
+        prev.map((m) =>
+          m.id === selectedId
+            ? { ...m, configuration: { ...m.defaults, isManual: false } }
+            : m
+        )
+      );
+    } else {
+      // Switch to manual config (isManual = true), ensure full config fields are present
+      setModels((prev) =>
+        prev.map((m) => {
+          if (m.id !== selectedId) return m;
+          const current = m.configuration;
+          return {
+            ...m,
+            configuration: {
+              ...current,
+              isManual: true,
+              contextWindow: current.contextWindow ?? m.defaults.contextWindow ?? 1048576,
+              maxOutputTokens: current.maxOutputTokens ?? m.defaults.maxOutputTokens ?? 128000,
+              supportsImage: current.supportsImage ?? true,
+              supportsPdf: current.supportsPdf ?? false,
+              supportsVideo: current.supportsVideo ?? false,
+              supportsJsonSchemaOutput: current.supportsJsonSchemaOutput ?? true,
+              supportsNativeWebSearch: current.supportsNativeWebSearch ?? true,
+              supportsMidConversationSystem: current.supportsMidConversationSystem ?? true,
+              reasoningLevels: current.reasoningLevels.length
+                ? [...current.reasoningLevels]
+                : m.defaults.reasoningLevels.length
+                ? [...m.defaults.reasoningLevels]
+                : ["disabled", "enabled", "high"],
+              reasoningMap: current.reasoningMap ?? m.defaults.reasoningMap,
+            },
+          };
+        })
+      );
+    }
+  };
+
+  const toggleReasoningLevel = (level: string) => {
+    if (!selectedModel || !selectedModel.configuration.isManual) return;
+    updateSelectedConfig((prev) => {
+      const exists = prev.reasoningLevels.includes(level);
+      const nextLevels = exists
+        ? prev.reasoningLevels.filter((l) => l !== level)
+        : [...prev.reasoningLevels, level];
+      return { ...prev, reasoningLevels: nextLevels };
+    });
+  };
+
+  const addCustomReasoningLevel = () => {
+    const val = customLevelInput.trim();
+    if (!val || !selectedModel || !selectedModel.configuration.isManual) return;
+    updateSelectedConfig((prev) => {
+      if (prev.reasoningLevels.includes(val)) return prev;
+      return { ...prev, reasoningLevels: [...prev.reasoningLevels, val] };
+    });
+    setCustomLevelInput("");
+  };
+
+  const removeReasoningLevel = (level: string) => {
+    if (!selectedModel || !selectedModel.configuration.isManual) return;
+    updateSelectedConfig((prev) => ({
+      ...prev,
+      reasoningLevels: prev.reasoningLevels.filter((l) => l !== level),
+    }));
   };
 
   const restoreSelectedDefaults = () => {
@@ -136,7 +211,10 @@ export function ZCodeModelCatalogDialog({
             <Search size={15} aria-hidden />
             <input
               value={search}
-              onChange={(e) => setSearch(e.currentTarget.value)}
+              onChange={(e) => {
+                const val = e.currentTarget.value;
+                setSearch(val);
+              }}
               placeholder={t("agents.catalog.search") || "搜索模型 ID"}
             />
           </div>
@@ -167,7 +245,10 @@ export function ZCodeModelCatalogDialog({
                   <div onClick={(e) => e.stopPropagation()}>
                     <Switch
                       checked={model.enabled}
-                      onChange={(e) => toggleModelEnabled(model.id, e.currentTarget.checked)}
+                      onChange={(e) => {
+                        const checked = e.currentTarget.checked;
+                        toggleModelEnabled(model.id, checked);
+                      }}
                       title={model.enabled ? "在 ZCode 中启用" : "在 ZCode 中隐藏"}
                     />
                   </div>
@@ -187,20 +268,18 @@ export function ZCodeModelCatalogDialog({
                   <h3 style={{ margin: 0, fontSize: "16px" }}>{selectedModel.id}</h3>
                   <small style={{ opacity: 0.7 }}>
                     {selectedModel.configuration.isManual
-                      ? "手动自定义配置（已写入 manualProviderModelRules）"
-                      : "智能配置（跟随网关默认推断）"}
+                      ? "手动自定义配置（关闭智能配置，写入 manualProviderModelRules）"
+                      : "智能配置开启（继承网关默认推断，写入 providerModelRules）"}
                   </small>
                 </div>
                 <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" }}>
                   <span>智能配置</span>
                   <Switch
                     checked={!selectedModel.configuration.isManual}
-                    onChange={(e) =>
-                      updateSelectedConfig((prev) => ({
-                        ...prev,
-                        isManual: !e.currentTarget.checked,
-                      }))
-                    }
+                    onChange={(e) => {
+                      const smart = e.currentTarget.checked;
+                      toggleSmartConfig(smart);
+                    }}
                   />
                 </label>
               </div>
@@ -215,12 +294,13 @@ export function ZCodeModelCatalogDialog({
                     value={selectedModel.configuration.contextWindow ?? ""}
                     placeholder="例如 1048576"
                     disabled={!selectedModel.configuration.isManual}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const val = e.currentTarget.value;
                       updateSelectedConfig((prev) => ({
                         ...prev,
-                        contextWindow: e.currentTarget.value ? Number(e.currentTarget.value) : undefined,
-                      }))
-                    }
+                        contextWindow: val ? Number(val) : undefined,
+                      }));
+                    }}
                   />
                 </label>
 
@@ -233,100 +313,204 @@ export function ZCodeModelCatalogDialog({
                     value={selectedModel.configuration.maxOutputTokens ?? ""}
                     placeholder="留空使用默认 (例如 128000)"
                     disabled={!selectedModel.configuration.isManual}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const val = e.currentTarget.value;
                       updateSelectedConfig((prev) => ({
                         ...prev,
-                        maxOutputTokens: e.currentTarget.value ? Number(e.currentTarget.value) : undefined,
-                      }))
-                    }
+                        maxOutputTokens: val ? Number(val) : undefined,
+                      }));
+                    }}
                   />
                 </label>
               </div>
 
               <div style={{ borderTop: "1px solid var(--border-color, #e5e7eb)", paddingTop: "12px" }}>
-                <strong style={{ fontSize: "14px", display: "block", marginBottom: "8px" }}>输入模态与能力</strong>
+                <strong style={{ fontSize: "14px", display: "block", marginBottom: "8px" }}>输入模态与类型</strong>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", fontSize: "13px" }}>
                   <Checkbox checked disabled label="文本 (必需)" onChange={() => undefined} />
                   <Checkbox
                     checked={selectedModel.configuration.supportsImage}
                     disabled={!selectedModel.configuration.isManual}
                     label="图片 / 视觉"
-                    onChange={(e) =>
-                      updateSelectedConfig((prev) => ({ ...prev, supportsImage: e.currentTarget.checked }))
-                    }
+                    onChange={(e) => {
+                      const chk = e.currentTarget.checked;
+                      updateSelectedConfig((prev) => ({ ...prev, supportsImage: chk }));
+                    }}
                   />
                   <Checkbox
                     checked={selectedModel.configuration.supportsPdf}
                     disabled={!selectedModel.configuration.isManual}
                     label="PDF 文档"
-                    onChange={(e) =>
-                      updateSelectedConfig((prev) => ({ ...prev, supportsPdf: e.currentTarget.checked }))
-                    }
+                    onChange={(e) => {
+                      const chk = e.currentTarget.checked;
+                      updateSelectedConfig((prev) => ({ ...prev, supportsPdf: chk }));
+                    }}
                   />
                   <Checkbox
                     checked={selectedModel.configuration.supportsVideo}
                     disabled={!selectedModel.configuration.isManual}
                     label="视频"
-                    onChange={(e) =>
-                      updateSelectedConfig((prev) => ({ ...prev, supportsVideo: e.currentTarget.checked }))
-                    }
+                    onChange={(e) => {
+                      const chk = e.currentTarget.checked;
+                      updateSelectedConfig((prev) => ({ ...prev, supportsVideo: chk }));
+                    }}
                   />
                 </div>
               </div>
 
               <div style={{ borderTop: "1px solid var(--border-color, #e5e7eb)", paddingTop: "12px" }}>
-                <strong style={{ fontSize: "14px", display: "block", marginBottom: "8px" }}>高级特性支持</strong>
+                <strong style={{ fontSize: "14px", display: "block", marginBottom: "8px" }}>高级模型能力</strong>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", fontSize: "13px" }}>
                   <Checkbox
                     checked={selectedModel.configuration.supportsJsonSchemaOutput}
                     disabled={!selectedModel.configuration.isManual}
                     label="结构化输出 (JSON Schema)"
-                    onChange={(e) =>
-                      updateSelectedConfig((prev) => ({ ...prev, supportsJsonSchemaOutput: e.currentTarget.checked }))
-                    }
+                    onChange={(e) => {
+                      const chk = e.currentTarget.checked;
+                      updateSelectedConfig((prev) => ({ ...prev, supportsJsonSchemaOutput: chk }));
+                    }}
                   />
                   <Checkbox
                     checked={selectedModel.configuration.supportsNativeWebSearch}
                     disabled={!selectedModel.configuration.isManual}
                     label="原生联网搜索"
-                    onChange={(e) =>
-                      updateSelectedConfig((prev) => ({ ...prev, supportsNativeWebSearch: e.currentTarget.checked }))
-                    }
+                    onChange={(e) => {
+                      const chk = e.currentTarget.checked;
+                      updateSelectedConfig((prev) => ({ ...prev, supportsNativeWebSearch: chk }));
+                    }}
                   />
                   <Checkbox
                     checked={selectedModel.configuration.supportsMidConversationSystem}
                     disabled={!selectedModel.configuration.isManual}
                     label="对话中系统消息"
-                    onChange={(e) =>
-                      updateSelectedConfig((prev) => ({ ...prev, supportsMidConversationSystem: e.currentTarget.checked }))
-                    }
+                    onChange={(e) => {
+                      const chk = e.currentTarget.checked;
+                      updateSelectedConfig((prev) => ({ ...prev, supportsMidConversationSystem: chk }));
+                    }}
                   />
                 </div>
               </div>
 
               <div style={{ borderTop: "1px solid var(--border-color, #e5e7eb)", paddingTop: "12px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                   <strong style={{ fontSize: "14px" }}>思考等级 (reasoningLevel)</strong>
                 </div>
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
+
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
                   {selectedModel.configuration.reasoningLevels.length > 0 ? (
                     selectedModel.configuration.reasoningLevels.map((lvl: string) => (
                       <span
                         key={lvl}
                         style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
                           background: "var(--tag-bg, #f3f4f6)",
-                          padding: "2px 8px",
+                          padding: "3px 8px",
                           borderRadius: "4px",
                           fontSize: "12px",
                           border: "1px solid var(--border-color, #e5e7eb)",
                         }}
                       >
-                        {lvl}
+                        <strong>{lvl}</strong>
+                        {selectedModel.configuration.isManual ? (
+                          <button
+                            type="button"
+                            onClick={() => removeReasoningLevel(lvl)}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              cursor: "pointer",
+                              padding: 0,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              color: "var(--color-text-tertiary, #9ca3af)",
+                            }}
+                            title={`移除 ${lvl}`}
+                          >
+                            <X size={12} />
+                          </button>
+                        ) : null}
                       </span>
                     ))
                   ) : (
                     <span style={{ fontSize: "12px", opacity: 0.6 }}>无特定推理等级限制</span>
                   )}
+                </div>
+
+                {selectedModel.configuration.isManual ? (
+                  <div style={{ background: "var(--color-surface-hover, #fafafa)", padding: "10px 12px", borderRadius: "6px", border: "1px dashed var(--border-color, #d1d5db)" }}>
+                    <span style={{ fontSize: "12px", fontWeight: "bold", display: "block", marginBottom: "6px" }}>
+                      快捷增删常见思考等级:
+                    </span>
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px" }}>
+                      {COMMON_REASONING_LEVELS.map((lvl) => {
+                        const active = selectedModel.configuration.reasoningLevels.includes(lvl);
+                        return (
+                          <button
+                            type="button"
+                            key={lvl}
+                            onClick={() => toggleReasoningLevel(lvl)}
+                            className="secondary-button"
+                            style={{
+                              fontSize: "11px",
+                              padding: "2px 8px",
+                              height: "26px",
+                              background: active ? "var(--color-primary-subtle, #fef3c7)" : undefined,
+                              borderColor: active ? "var(--color-primary, #d97706)" : undefined,
+                              color: active ? "var(--color-primary, #d97706)" : undefined,
+                              fontWeight: active ? "bold" : "normal",
+                            }}
+                          >
+                            {active ? "✓ " : "+ "}
+                            {lvl}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <input
+                        type="text"
+                        value={customLevelInput}
+                        onChange={(e) => setCustomLevelInput(e.currentTarget.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addCustomReasoningLevel();
+                          }
+                        }}
+                        placeholder="输入自定义等级名称..."
+                        style={{ fontSize: "12px", padding: "4px 8px", width: "180px" }}
+                      />
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={addCustomReasoningLevel}
+                        style={{ fontSize: "12px", height: "28px", padding: "0 10px", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                      >
+                        <Plus size={13} />
+                        添加
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div style={{ marginTop: "12px" }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px" }}>
+                    <span style={{ opacity: 0.8 }}>推理参数映射 (map 表达式)</span>
+                    <textarea
+                      rows={2}
+                      value={selectedModel.configuration.reasoningMap ?? ""}
+                      placeholder={'reasoningLevel == "none" ? {"thinking": {"type": "disabled"}} : {"thinking": {"type": "adaptive"}, "output_config": {"effort": reasoningLevel}}'}
+                      disabled={!selectedModel.configuration.isManual}
+                      onChange={(e) => {
+                        const val = e.currentTarget.value;
+                        updateSelectedConfig((prev) => ({ ...prev, reasoningMap: val || undefined }));
+                      }}
+                      style={{ fontFamily: "monospace", fontSize: "11px", padding: "6px", resize: "vertical" }}
+                    />
+                  </label>
                 </div>
               </div>
 
