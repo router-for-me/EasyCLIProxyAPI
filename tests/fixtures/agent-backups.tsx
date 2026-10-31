@@ -1,14 +1,10 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
-import type { AgentSystemPromptEditorSnapshot } from '../../src/services/agentSystemPrompts';
 import { AgentsPage } from '../../src/pages/AgentsPage';
-import { createBrowserMockRuntime } from '../../src/mocks/browserMockRuntime';
 import { I18nProvider } from '../../src/i18n';
 import '../../src/styles/index.css';
 const params = new URLSearchParams(location.search);
-const launchRuntime = createBrowserMockRuntime('running');
-const savedPrompts = new Map<string, AgentSystemPromptEditorSnapshot>();
 if(params.has('reset-selections'))localStorage.removeItem('cpa-gui.agent-model-selections.v1');
 localStorage.setItem('easy-cli-proxy-api.locale',params.get('locale') || 'zh-CN');
 document.documentElement.dataset.theme = params.get('theme') || 'light';
@@ -19,7 +15,6 @@ let nativeOauth=params.has('native-oauth'); let nativeSwitchCount=0; let codexCl
 let openaiProvider=false;
 let remoteCompaction=false;
 let currentOauth=false; const currentMappings:Record<string,any>={};
-if(params.has('response-language'))currentMappings['claude-code']=JSON.parse(sessionStorage.getItem('fixture-response-language')||'null')??{opus:'gpt-one',sonnet:'gpt-one',haiku:'gpt-one',fable:'gpt-one',responseLanguage:params.get('response-language')||null};
 const claudeAliasLayoutModels = [
  {name:'gpt-6.1-sol-high-fast',alias:'gpt-6.1-sol',isAlias:true},
  {name:'gpt-6.1-sol',isAlias:true},
@@ -58,7 +53,6 @@ mockIPC(async (cmd,args:any) => {
    });
  }
  if((window as any).fixtureFailedCommands?.includes(cmd))throw new Error('模拟后台刷新失败');
- if(cmd==='get_agent_environment_options')return (window as any).fixtureEnvironmentOptions ?? {supported:false,defaultDirectory:'/home/user/.config',distributions:[]};
  if(cmd==='restart_codex_cli_daemon')return null;
  if(cmd==='plugin:event|listen') return 1;
  if(cmd==='plugin:event|unlisten'||cmd==='set_app_locale') return null;
@@ -124,7 +118,7 @@ mockIPC(async (cmd,args:any) => {
    return null;
  }
  if(cmd==='stop_deepseek_harness_process')return harnessStatus={running:false,pid:null,mode:null};
- if(cmd==='launch_agent')return launchRuntime.invoke(cmd,args);
+ if(cmd==='launch_agent')return null;
  if(cmd==='clear_codex_config') { currentModel=null; return []; }
  if(cmd==='set_agent_config_enabled' && !args.enabled) {
    if(params.has('fail-clear'))throw new Error('模拟清除失败，已回滚');
@@ -136,10 +130,7 @@ mockIPC(async (cmd,args:any) => {
  if(['update_agent_config','repair_pi_provider','install_pi_provider','update_pi_provider'].includes(cmd)) {
    count++;if(params.has('fail-apply')&&count===1)throw new Error('模拟配置写入失败');
    currentModel=args.model;currentOauth=!!args.oauthConfiguration;nativeOauth=false;codexClosed=false;
-   const previousLanguage=currentMappings[args.client]?.responseLanguage;
    currentMappings[args.client]=args.claudeCodeModelMappings??args.claudeDesktopModelMappings;
-   if(params.has('response-language')&&args.client==='claude-code')currentMappings[args.client]={...currentMappings[args.client],responseLanguage:currentMappings[args.client]?.responseLanguage===null?previousLanguage:currentMappings[args.client]?.responseLanguage||null};
-   if(params.has('response-language')&&args.client==='claude-code')sessionStorage.setItem('fixture-response-language',JSON.stringify(currentMappings[args.client]));
    return {outcome:count>1?'unchanged':'updated',model:currentModel,enabled:true,changedFiles:[],conflictFiles:[]};
  }
  if(cmd==='create_agent_config_backup') {
@@ -163,26 +154,6 @@ mockIPC(async (cmd,args:any) => {
    harnessProvider=args.request.provider;
    for(const m of args.request.models)harnessConfigurations[m.id]=m.configuration;
    harnessRevision++;return harnessSnapshot();
- }
- if(params.has('system-prompt-fixture')) {
-   if(cmd==='get_agent_system_prompt_editor') {
-     const snapshot=savedPrompts.get(args.client)??await launchRuntime.invoke(cmd,args);
-     return {...snapshot,coreTlsEnabled:params.has('tls')};
-   }
-   if(cmd==='save_agent_system_prompt_editor') {
-     if((window as any).fixtureFailPromptSave) throw new Error('Prompt save failed (fixture)');
-     const snapshot=await launchRuntime.invoke(cmd,args) as AgentSystemPromptEditorSnapshot;
-     savedPrompts.set(snapshot.client,snapshot);
-     return snapshot;
-   }
-   if(cmd==='get_codex_model_catalog_editor'||cmd==='save_codex_model_catalog_editor') return launchRuntime.invoke(cmd,args);
-   if(cmd==='get_zcode_subagent_config') return {defaultSubagentModel:null,defaultThoughtLevel:null,subagents:[{
-     name:'reviewer',description:'Reviews changes',filePath:'/home/fixture/reviewer.md',model:null,thoughtLevel:null,tools:[],systemPrompt:'Review the patch.'
-   }]};
-   if(cmd==='get_zcode_model_catalog_editor'||cmd==='save_zcode_model_catalog_editor') {
-     const defaults={supportsImage:false,supportsPdf:false,supportsVideo:false,supportsJsonSchemaOutput:false,supportsNativeWebSearch:false,supportsMidConversationSystem:false,reasoningLevels:['low'],isManual:false,systemPrompt:'Agent default'};
-     return {models:[{id:'gpt-one',enabled:true,defaults,configuration:{...defaults,contextWindow:10000,isManual:true,systemPrompt:'Keep this override'}}],modelOrder:['gpt-one'],configured:true};
-   }
  }
  if(cmd==='get_codex_model_catalog_editor') return {models:[],hiddenModels:[],customizations:{}};
  if(cmd==='check_codex_oauth_login') {

@@ -1,15 +1,8 @@
 import { Notice } from '../components/Notice';
 import { MessageNotice } from '../appNotice';
 import type { ReactNode } from 'react';
-import { AgentEnvironmentDirectory } from './AgentEnvironmentDirectory';
-import type { AgentClientId } from '../services/agents';
 import { AppWindow, FolderOpen, LoaderCircle, Play, RefreshCw, Square, Terminal, Trash2 } from 'lucide-react';
 import { useI18n } from '../i18n';
-import {
-  isTransientConnectBlockReason,
-  type AgentConnectBlockReason,
-  type TransientConnectBlockReason,
-} from '../services/agentConnectBlock';
 
 type LaunchTarget = { id: 'app' | 'cli'; label: string; detail: string };
 
@@ -92,74 +85,11 @@ export function AgentConfigurationFeedback({ pending, description, status = '' }
   </div>;
 }
 
-type ConnectBlockText = (key: string, vars?: Record<string, string | number>) => string;
-
-// Single source of the user-facing copy for each blocking cause, shared by the inline notice
-// and the save bar's reserved slot so both always read the same.
-export function connectBlockNoticeText(
-  reason: AgentConnectBlockReason,
-  t: ConnectBlockText,
-): string {
-  switch (reason) {
-    case 'unsupportedPlatform': return t('agents.connectBlock.unsupportedPlatform');
-    case 'clientUnavailable': return t('agents.executablePath.notDetected');
-    case 'configInvalid': return t('agents.modify.invalid');
-    case 'noModels': return t('agents.model.none');
-    case 'noModelSelected': return t('agents.model.select');
-    case 'modelSelectionGone': return t('agents.error.selectionGone');
-    case 'mappingIncomplete': return t('agents.connectBlock.mappingIncomplete');
-    case 'claudeCodeRuntimeInvalid': return t('agents.error.claudeCodeRuntimeSettingsInvalid');
-    case 'noPendingChanges': return t('agents.connectBlock.noPendingChanges');
-    default: return '';
-  }
-}
-
-export function AgentConnectBlockNotice({
-  id, reason, models, onOpenManagement, onTemplate, canTemplate, onRefreshModels,
-}: {
-  id?: string;
-  reason: AgentConnectBlockReason | null;
-  models: string[];
-  onOpenManagement?: () => void;
-  onTemplate?: () => void;
-  canTemplate?: boolean;
-  onRefreshModels?: () => void;
-}) {
-  const { t } = useI18n();
-  if (!reason || isTransientConnectBlockReason(reason)) return null;
-  const modelScopedReason = reason === 'noModels' || reason === 'modelSelectionGone'
-    || reason === 'mappingIncomplete';
-  const shownModels = models.slice(0, 5);
-  const extraModels = models.length - shownModels.length;
-  const modelList = modelScopedReason && models.length > 0
-    ? [t('agents.model.count', { count: models.length }), shownModels.join(', '),
-      extraModels > 0 ? t('agents.connectBlock.moreModels', { count: extraModels }) : '']
-      .filter(Boolean).join(' ').trim()
-    : '';
-  const actions = [
-    reason === 'configInvalid' && canTemplate && onTemplate
-      ? <button key="template" type="button" className="link-button" onClick={onTemplate}>{t('agents.modify.default')}</button>
-      : null,
-    (reason === 'configInvalid' || reason === 'clientUnavailable') && onOpenManagement
-      ? <button key="management" type="button" className="link-button" onClick={onOpenManagement}>{t('agents.executablePath.openManagement')}</button>
-      : null,
-    (reason === 'noModels' || reason === 'modelSelectionGone') && onRefreshModels
-      ? <button key="refresh" type="button" className="link-button" onClick={onRefreshModels}>{t('agents.model.refresh')}</button>
-      : null,
-  ].filter(Boolean);
-  return <Notice id={id} tone="warn" variant="text" className="agent-connect-block"
-    action={actions.length ? <div className="agent-connect-block-actions">{actions}</div> : undefined}>
-    <span>{connectBlockNoticeText(reason, t)}</span>
-    {modelList ? <span className="agent-connect-block-models">{modelList}</span> : null}
-  </Notice>;
-}
-
 export function AgentConfigManagementPanel({
   codexProviderControl, codexRemoteCompactionControl, codexApprovalModelControl,
   pi, codex, busyAction, canTemplate, canUpdatePi, canUninstallPi, pluginInstalled, pluginVersion, updateLabel,
   executablePath, onChooseExecutablePath, onClearExecutablePath, onBackup, onRestore, onTemplate, onClear, onUpdatePi, onUninstallPi, canClearIntegration, onClearIntegration,
   dualTargets, desktopExecutablePath, onChooseDesktopExecutablePath, onClearDesktopExecutablePath,
-  client, configDirectory, onSaveConfigDirectory, onChooseConfigDirectory,
 }: {
   codexProviderControl?: ReactNode;
   codexRemoteCompactionControl?: ReactNode;
@@ -172,13 +102,10 @@ export function AgentConfigManagementPanel({
   onBackup: () => void; onRestore: () => void; onTemplate: () => void; onClear: () => void;
   onUpdatePi: () => void; onUninstallPi: () => void;
   canClearIntegration: boolean; onClearIntegration: () => void;
-  client: AgentClientId; configDirectory: string; onSaveConfigDirectory: (directory: string) => void; onChooseConfigDirectory: () => void;
 }) {
   const { t } = useI18n();
   const busy = busyAction !== null;
   return <div className="agent-management-sections">
-    <AgentEnvironmentDirectory client={client} directory={configDirectory} busy={busy}
-      onSave={onSaveConfigDirectory} onBrowse={onChooseConfigDirectory} />
     <section className="agent-management-row">
       <div><h3>{t(dualTargets ? 'agents.executablePath.cliTitle' : 'agents.executablePath.title')}</h3><p>{t('agents.executablePath.description')}</p>
         {executablePath ? <small className="agent-path-value" title={executablePath}>{executablePath}</small> : null}</div>

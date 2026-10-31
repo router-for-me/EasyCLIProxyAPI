@@ -98,7 +98,7 @@ pub(crate) const OAUTH_ALIAS_CHANNELS: [OAuthAliasChannel; 9] = [
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OAuthModelDefinitions {
-    pub(crate) channel: String,
+    pub(crate) channel: OAuthAliasChannel,
     pub(crate) models: Vec<CodexModelDefinition>,
 }
 
@@ -151,20 +151,6 @@ pub(crate) fn normalize_oauth_alias_channel(value: &str) -> Option<&'static str>
     }
 }
 
-// Provider IDs discovered here must satisfy the same contract that OAuth
-// request submission enforces (management_api::normalize_oauth_request_provider
-// and normalize_management_oauth_provider): lowercase ASCII letters, digits and
-// the hyphen only. Discovery must not accept an id that submission would later
-// reject, otherwise the provider would be listed but unusable.
-pub(crate) fn normalize_oauth_model_provider(value: &str) -> Option<String> {
-    let value = value.trim().to_ascii_lowercase();
-    (!value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'))
-        .then_some(value)
-}
-
 pub(crate) async fn fetch_active_oauth_alias_channels(
     config: &GuiConfigFile,
 ) -> Result<std::collections::HashSet<String>, String> {
@@ -194,87 +180,19 @@ pub(crate) async fn fetch_active_oauth_alias_channels(
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false)
         })
-        .flat_map(|file| {
-            // oauth_provider is written by plugin-managed credentials; some
-            // providers only populate that field, so keep all three candidates.
-            ["provider", "oauth_provider", "type"]
+        .filter_map(|file| {
+            ["provider", "type"]
                 .into_iter()
-                .filter_map(|key| file.get(key).and_then(serde_json::Value::as_str))
-                .filter_map(|value| {
-                    normalize_oauth_alias_channel(value)
-                        .map(str::to_string)
-                        .or_else(|| normalize_oauth_model_provider(value))
+                .find_map(|key| {
+                    file.get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
                 })
+                .and_then(normalize_oauth_alias_channel)
         })
+        .map(str::to_string)
         .collect())
-}
-
-pub(crate) async fn discover_oauth_model_providers(config: &GuiConfigFile) -> Vec<String> {
-    let mut providers = OAUTH_ALIAS_CHANNELS
-        .iter()
-        .map(|channel| channel.key.to_string())
-        .collect::<Vec<_>>();
-    let mut discovered = BTreeSet::new();
-    if let Ok(active) = fetch_active_oauth_alias_channels(config).await {
-        providers.retain(|provider| active.contains(provider));
-        discovered.extend(active);
-    }
-    let plugins = async {
-        let response = management_http_client()?
-            .get(management_endpoint(config, "plugins")?)
-            .header("Authorization", management_authorization(config)?)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .await
-            .map_err(|error| error.to_string())?;
-        read_management_value(response).await
-    }.await;
-    if let Ok(payload) = plugins {
-        if payload.get("plugins_enabled").and_then(serde_json::Value::as_bool) != Some(false) {
-            for plugin in payload.get("plugins").and_then(serde_json::Value::as_array)
-                .into_iter().flatten()
-            {
-                let enabled = plugin.get("enabled").and_then(serde_json::Value::as_bool);
-                let effective_enabled = plugin.get("effective_enabled")
-                    .and_then(serde_json::Value::as_bool).or(enabled);
-                if enabled == Some(false) || effective_enabled != Some(true)
-                    || plugin.get("supports_oauth").and_then(serde_json::Value::as_bool) == Some(false)
-                {
-                    continue;
-                }
-                let declared = plugin.get("oauth_provider").and_then(serde_json::Value::as_str)
-                    .into_iter()
-                    .chain(plugin.get("oauth_providers").and_then(serde_json::Value::as_array)
-                        .into_iter().flatten().filter_map(serde_json::Value::as_str))
-                    .chain(plugin.get("oauth_provider_entries").and_then(serde_json::Value::as_array)
-                        .into_iter().flatten().filter_map(|entry| {
-                            entry.get("identifier").and_then(serde_json::Value::as_str)
-                        }));
-                discovered.extend(declared.filter_map(normalize_oauth_model_provider));
-            }
-        }
-    }
-    for provider in discovered {
-        if !providers.contains(&provider) {
-            providers.push(provider);
-        }
-    }
-    providers
-}
-
-// Resolution order: the built-in channel table wins for known channels, so their
-// behaviour is unchanged. For plugin channels there is no static entry, and
-// force-mapping is a channel-level flag in the kernel config: a channel's aliases
-// share one routing mode, so any entry that already asks for force-mapping
-// defines the mode for the whole channel.
-pub(crate) fn oauth_alias_force_mapping(root: &serde_norway::Mapping, channel: &str) -> bool {
-    oauth_alias_channel(channel).map(|details| details.force_mapping).unwrap_or_else(|| {
-        yaml_mapping_value(root, "oauth-model-alias")
-            .and_then(|aliases| aliases.get(channel))
-            .and_then(serde_norway::Value::as_sequence)
-            .into_iter().flatten()
-            .any(|model| model.get("force-mapping").and_then(serde_norway::Value::as_bool) == Some(true))
-    })
 }
 
 pub(crate) fn existing_thinking_alias_model_id(value: &str, label: &str) -> Result<String, String> {
@@ -394,23 +312,6 @@ fn normalize_v8_provider_record(
     if provider == "openai-compatibility" {
         record.remove(yaml_key("test-model"));
         record.remove(yaml_key("testModel"));
-        if let Some(proxy_url) = record.get(yaml_key("proxy-url")).cloned() {
-            let key_field = if record.contains_key(yaml_key("keys")) {
-                "keys"
-            } else {
-                "api-key-entries"
-            };
-            if let Some(keys) = record
-                .get_mut(yaml_key(key_field))
-                .and_then(serde_norway::Value::as_sequence_mut)
-            {
-                for key in keys.iter_mut().filter_map(serde_norway::Value::as_mapping_mut) {
-                    key.entry(yaml_key("proxy-url"))
-                        .or_insert_with(|| proxy_url.clone());
-                }
-                record.remove(yaml_key("proxy-url"));
-            }
-        }
     }
     if let Some(models) = record
         .get_mut(yaml_key("models"))
@@ -647,20 +548,7 @@ pub(crate) async fn put_management_config_value(
     path: &str,
     value: &serde_norway::Value,
 ) -> Result<(), String> {
-    let normalized = if path == "api-keys/openai-compatibility" {
-        let groups = value.as_sequence()
-            .ok_or("OpenAI compatibility provider groups must be an array")?;
-        Some(serde_norway::Value::Sequence(groups.iter().map(|group| {
-            let group = group.as_mapping()
-                .ok_or("Invalid OpenAI compatibility provider group")?;
-            Ok(serde_norway::Value::Mapping(normalize_v8_provider_record(
-                "openai-compatibility", group,
-            )))
-        }).collect::<Result<Vec<_>, String>>()?))
-    } else {
-        None
-    };
-    let value = serde_json::to_value(normalized.as_ref().unwrap_or(value))
+    let value = serde_json::to_value(value)
         .map_err(|error| format!("Failed to serialize kernel configuration value: {error}"))?;
     let client = management_http_client()?;
     let response = client
@@ -815,7 +703,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_codex_oauth_in_yaml(
     let codex_channel = oauth_alias_channel("codex")
         .ok_or_else(|| "Codex OAuth alias channel definition is missing".to_string())?;
     let definitions = [OAuthModelDefinitions {
-        channel: codex_channel.key.to_string(),
+        channel: codex_channel,
         models: codex_oauth_models.to_vec(),
     }];
     ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
@@ -856,9 +744,10 @@ pub(crate) fn assign_available_claude_desktop_aliases(
     if entries.is_empty() {
         return Ok(());
     }
-    let document = serde_norway::from_str::<serde_norway::Value>(content)
+    let document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let sources = document
+        .get()
         .as_mapping()
         .cloned()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -921,8 +810,9 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
     oauth_model_definitions: &[OAuthModelDefinitions],
     routes: [&str; 3],
 ) -> Result<String, String> {
-    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
+    let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
+    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -959,7 +849,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
         if *root == sources {
             return Ok(content.to_string());
         }
-        return render_updated_core_yaml(content, updated);
+        return render_updated_core_yaml(&mut document, updated);
     }
     for alias in managed_claude_desktop_aliases(&sources) {
         if !is_claude_desktop_route_id(&alias)
@@ -1004,7 +894,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
     if *root == sources {
         return Ok(content.to_string());
     }
-    render_updated_core_yaml(content, updated)
+    render_updated_core_yaml(&mut document, updated)
 }
 
 pub(crate) fn validate_claude_desktop_entries(
@@ -1099,8 +989,9 @@ pub(crate) fn managed_claude_desktop_aliases(root: &serde_norway::Mapping) -> Ve
 
 #[cfg(test)]
 pub(crate) fn remove_managed_claude_model_aliases_in_yaml(content: &str) -> Result<String, String> {
-    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
+    let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
+    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -1118,7 +1009,7 @@ pub(crate) fn remove_managed_claude_model_aliases_in_yaml(content: &str) -> Resu
     if !changed {
         return Ok(content.to_string());
     }
-    render_updated_core_yaml(content, updated)
+    render_updated_core_yaml(&mut document, updated)
 }
 
 pub(crate) fn remove_managed_claude_model_alias(
@@ -1382,16 +1273,11 @@ pub(crate) fn ensure_claude_desktop_model_alias(
         remove_existing_claude_model_alias(root, alias)?;
         append_managed_oauth_model_alias(
             root,
-            &definition.channel,
+            definition.channel.key,
             source_model,
             alias,
-            oauth_alias_force_mapping(sources, &definition.channel),
+            definition.channel.force_mapping,
         )?;
-        return Ok(());
-    }
-    if let Some(source) = resolve_claude_desktop_fallback_source(sources, source_model, alias)? {
-        remove_existing_claude_model_alias(root, alias)?;
-        append_claude_desktop_model_alias(root, source, alias)?;
         return Ok(());
     }
     Err(format!(
@@ -1501,81 +1387,6 @@ pub(crate) fn configured_provider_model_is_enabled(provider: &serde_norway::Mapp
         })
 }
 
-fn provider_family_matches_model(family: &str, model: &str) -> bool {
-    let lowered = model.trim().to_ascii_lowercase();
-    match family {
-        "claude" => {
-            is_claude_native_model_id(&lowered)
-                || lowered.contains("claude")
-                || lowered.contains("anthropic")
-        }
-        "codex" => {
-            lowered.starts_with("gpt")
-                || lowered.starts_with("o1")
-                || lowered.starts_with("o3")
-                || lowered.starts_with("o4")
-                || lowered.contains("openai")
-                || lowered.contains("chatgpt")
-        }
-        "xai" => lowered.contains("grok") || lowered.contains("xai"),
-        "gemini" | "vertex" | "interactions" => {
-            lowered.contains("gemini") || lowered.contains("learnlm")
-        }
-        "meta" => lowered.contains("llama") || lowered.contains("meta"),
-        _ => false,
-    }
-}
-
-fn resolve_claude_desktop_fallback_source(
-    root: &serde_norway::Mapping,
-    source_model: &str,
-    alias: &str,
-) -> Result<Option<ClaudeDesktopAliasSource>, String> {
-    let mut candidates: Vec<(usize, &'static str, usize)> = Vec::new();
-    for (section, family) in V8_PROVIDER_FAMILIES {
-        let Some(providers) = yaml_mapping_value(root, section) else {
-            continue;
-        };
-        let providers = providers
-            .as_sequence()
-            .ok_or_else(|| format!("{section} must be an array"))?;
-        for (provider_index, provider) in providers.iter().enumerate() {
-            let Some(provider) = provider.as_mapping() else {
-                continue;
-            };
-            if !configured_provider_model_is_enabled(provider, alias)
-                || !configured_provider_model_is_enabled(provider, source_model)
-            {
-                continue;
-            }
-            let priority = if provider_family_matches_model(family, source_model) {
-                0
-            } else if section == "openai-compatibility" {
-                1
-            } else {
-                2
-            };
-            candidates.push((priority, section, provider_index));
-        }
-    }
-
-    candidates.sort_by_key(|&(priority, _, _)| priority);
-
-    if let Some(&(_, section, provider_index)) = candidates.first() {
-        let mut model = serde_norway::Mapping::new();
-        model.insert(
-            yaml_key("name"),
-            serde_norway::Value::String(source_model.to_string()),
-        );
-        return Ok(Some(ClaudeDesktopAliasSource::Provider {
-            section,
-            provider_index,
-            model,
-        }));
-    }
-    Ok(None)
-}
-
 fn resolve_claude_desktop_alias_source(
     root: &serde_norway::Mapping,
     source_model: &str,
@@ -1653,7 +1464,7 @@ fn resolve_claude_desktop_alias_source(
                                 || id.eq_ignore_ascii_case(source_model))
                     });
                     let confirmed_oauth_source = oauth_model_definitions.iter().any(|definition| {
-                        definition.channel == channel && definition.models.iter()
+                        definition.channel.key == channel && definition.models.iter()
                             .any(|entry| entry.id.eq_ignore_ascii_case(&upstream))
                     });
                     if is_managed_claude_model_alias(model, &client)
@@ -1685,16 +1496,13 @@ fn append_claude_desktop_model_alias(
             provider_index,
             model,
         } => {
-            let provider = yaml_mapping_value_mut(root, section)
+            let models = yaml_mapping_value_mut(root, section)
                 .and_then(serde_norway::Value::as_sequence_mut)
                 .and_then(|providers| providers.get_mut(provider_index))
                 .and_then(serde_norway::Value::as_mapping_mut)
+                .and_then(|provider| yaml_mapping_value_mut(provider, "models"))
+                .and_then(serde_norway::Value::as_sequence_mut)
                 .ok_or("Model source configuration changed. Refresh and try again")?;
-            let models = provider
-                .entry(yaml_key("models"))
-                .or_insert_with(|| serde_norway::Value::Sequence(Vec::new()))
-                .as_sequence_mut()
-                .ok_or_else(|| format!("{section}.models must be an array"))?;
             (models, model)
         }
         ClaudeDesktopAliasSource::OAuth { channel, mut model } => {
@@ -1793,9 +1601,16 @@ pub(crate) async fn fetch_oauth_channel_model_definitions(
 pub(crate) async fn fetch_oauth_model_definitions(
     config: &GuiConfigFile,
 ) -> Vec<OAuthModelDefinitions> {
+    let active_channels = fetch_active_oauth_alias_channels(config).await.ok();
     let mut definitions = Vec::new();
-    for channel in discover_oauth_model_providers(config).await {
-        if let Ok(models) = fetch_oauth_channel_model_definitions(config, &channel).await {
+    for channel in OAUTH_ALIAS_CHANNELS {
+        if active_channels
+            .as_ref()
+            .is_some_and(|active| !active.contains(channel.key))
+        {
+            continue;
+        }
+        if let Ok(models) = fetch_oauth_channel_model_definitions(config, channel.key).await {
             definitions.push(OAuthModelDefinitions { channel, models });
         }
     }
@@ -1857,7 +1672,11 @@ pub(crate) fn codex_oauth_definition_set(
     definitions: &[CodexModelDefinition],
 ) -> Vec<OAuthModelDefinitions> {
     vec![OAuthModelDefinitions {
-        channel: "codex".to_string(),
+        channel: OAUTH_ALIAS_CHANNELS
+            .iter()
+            .copied()
+            .find(|channel| channel.key == "codex")
+            .expect("codex OAuth alias channel must exist"),
         models: definitions.to_vec(),
     }]
 }
@@ -1923,17 +1742,15 @@ pub(crate) fn resolved_oauth_alias_sources(
         .map(|source| source.source.model.to_ascii_lowercase())
         .collect::<std::collections::HashSet<_>>();
     for definition_set in definition_sets {
-        let channel = &definition_set.channel;
-        let details = oauth_alias_channel(channel);
+        let channel = definition_set.channel;
         let supports_capability = match capability {
             AliasSourceCapability::Base => true,
-            AliasSourceCapability::Reasoning => details.map(|details| details.supports_reasoning).unwrap_or(true),
-            AliasSourceCapability::Fast => details.is_some_and(|details| details.supports_fast),
+            AliasSourceCapability::Reasoning => channel.supports_reasoning,
+            AliasSourceCapability::Fast => channel.supports_fast,
         };
         if !supports_capability {
             continue;
         }
-        let (provider, kind, protocol) = oauth_alias_channel_details(channel);
         sources.extend(
             definition_set
                 .models
@@ -1942,23 +1759,23 @@ pub(crate) fn resolved_oauth_alias_sources(
                     (capability != AliasSourceCapability::Reasoning
                         || !definition.reasoning_levels.is_empty())
                         && thinking_alias_model_is_available(available_models, &definition.id)
-                        && (channel != "codex"
+                        && (channel.key != "codex"
                             || !configured_codex_api_models
                                 .contains(&definition.id.to_ascii_lowercase()))
                 })
                 .map(|definition| ResolvedThinkingAliasSource {
                     source: ThinkingAliasSource {
-                        id: format!("{kind}:{}", definition.id),
+                        id: format!("{}:{}", channel.kind, definition.id),
                         model: definition.id.clone(),
                         display_name: definition.display_name.clone(),
-                        provider: provider.clone(),
-                        kind: kind.clone(),
-                        protocol: protocol.clone(),
+                        provider: channel.provider.to_string(),
+                        kind: channel.kind.to_string(),
+                        protocol: channel.protocol.to_string(),
                         reasoning_levels: definition.reasoning_levels.clone(),
                     },
                     location: ThinkingAliasSourceLocation::Oauth {
-                        channel: channel.clone(),
-                        force_mapping: oauth_alias_force_mapping(root, channel),
+                        channel: channel.key,
+                        force_mapping: channel.force_mapping,
                     },
                 }),
         );
@@ -1977,7 +1794,7 @@ pub(crate) fn thinking_alias_model_is_available(
 
 pub(crate) fn alias_source_supports_fast(source: &ResolvedThinkingAliasSource) -> bool {
     match &source.location {
-        ThinkingAliasSourceLocation::Oauth { channel, .. } => channel == "codex",
+        ThinkingAliasSourceLocation::Oauth { channel, .. } => *channel == "codex",
         ThinkingAliasSourceLocation::ConfigModel { section, .. } => {
             matches!(*section, "codex-api-key" | "openai-compatibility")
         }
@@ -2660,8 +2477,9 @@ pub(crate) fn add_model_alias_with_tier_to_yaml(
     if fast && !alias_source_supports_fast(source) {
         return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
-    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
+    let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
+    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -2705,7 +2523,7 @@ pub(crate) fn add_model_alias_with_tier_to_yaml(
         append_alias_payload_override(root, alias, &source.source.protocol, params_mapping)?;
     }
 
-    render_updated_core_yaml(content, updated)
+    render_updated_core_yaml(&mut document, updated)
 }
 
 pub(crate) fn append_alias_payload_override(
@@ -2758,8 +2576,9 @@ pub(crate) fn add_speed_alias_to_yaml(
     if !alias_source_supports_fast(source) {
         return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
-    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
+    let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
+    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -2798,7 +2617,7 @@ pub(crate) fn add_speed_alias_to_yaml(
     );
     append_alias_payload_override(root, alias, &source.source.protocol, params_mapping)?;
 
-    render_updated_core_yaml(content, updated)
+    render_updated_core_yaml(&mut document, updated)
 }
 
 pub(crate) fn append_oauth_model_alias(
@@ -2959,8 +2778,9 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
     alias: &str,
     oauth_channel: Option<&str>,
 ) -> Result<String, String> {
-    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
+    let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
+    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -2976,7 +2796,7 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
     }
     let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
     remove_alias_payload_options(root, alias, &scope)?;
-    render_updated_core_yaml(content, updated)
+    render_updated_core_yaml(&mut document, updated)
 }
 
 #[cfg(test)]
@@ -2989,8 +2809,9 @@ pub(crate) fn remove_speed_alias_from_yaml_for_channel(
     alias: &str,
     oauth_channel: Option<&str>,
 ) -> Result<String, String> {
-    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
+    let mut document = yaml_serde_edit::YamlValue::parse(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
+    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -3004,7 +2825,7 @@ pub(crate) fn remove_speed_alias_from_yaml_for_channel(
     }
     let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
     remove_alias_payload_options(root, alias, &scope)?;
-    render_updated_core_yaml(content, updated)
+    render_updated_core_yaml(&mut document, updated)
 }
 
 pub(crate) fn remove_oauth_model_alias(
@@ -3318,106 +3139,23 @@ pub(crate) fn remove_alias_payload_options(
     Ok(())
 }
 
-/// The lossless editor refuses a document followed by content it cannot attach
-/// to it, while the kernel's own reader stops at the end of the document and
-/// ignores the rest. Keep that trailing text verbatim instead of failing the
-/// save: only the document is edited, the tail is appended back unchanged.
-fn split_trailing_undocumentable_yaml(content: &str) -> Option<(usize, &str)> {
-    const MARKER: &str = "Content after the document could not be parsed";
-    let parse = yaml_edit::Parse::parse_yaml(content);
-    let stray = parse
-        .positioned_errors()
-        .iter()
-        .find(|error| error.message.contains(MARKER))?;
-    // The reported range covers the stray tokens, not the whitespace and
-    // comments in front of them; walk back to the start of that line so the
-    // trailer is preserved byte for byte.
-    let mut offset = stray.range.start as usize;
-    while offset > 0 && !content.as_bytes()[offset - 1].eq(&b'\n') {
-        offset -= 1;
-    }
-    if offset == 0 || !content.is_char_boundary(offset) {
-        return None;
-    }
-    let tail = &content[offset..];
-    let head = &content[..offset];
-    if tail.trim().is_empty() || serde_norway::from_str::<serde_norway::Value>(head).is_err() {
-        return None;
-    }
-    Some((offset, tail))
-}
-
 pub(crate) fn render_updated_core_yaml(
-    content: &str,
+    document: &mut yaml_serde_edit::YamlValue,
     updated: serde_norway::Value,
 ) -> Result<String, String> {
-    let (content, trailing) = match split_trailing_undocumentable_yaml(content) {
-        Some((offset, tail)) => (&content[..offset], tail),
-        None => (content, ""),
-    };
-
-    let rendered = render_updated_core_yaml_document(content, updated)?;
-    Ok(format!("{rendered}{trailing}"))
-}
-
-fn render_updated_core_yaml_document(
-    content: &str,
-    updated: serde_norway::Value,
-) -> Result<String, String> {
-    let original = serde_norway::from_str::<serde_norway::Value>(content)
-        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
-    let prepared = normalize_nested_yaml_comment_indentation(content);
-    let file = prepared.parse::<yaml_edit::YamlFile>()
-        .map_err(|error| format!("Failed to parse editable kernel configuration: {error}"))?;
-    let document = file.document()
-        .ok_or_else(|| "Kernel configuration has no YAML document".to_string())?;
-    let root = document.as_mapping()
-        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
-    remove_deleted_yaml_mapping_values(&root, &original, &updated)?;
-    let mut prepared = file.to_string();
-    let mut original = serde_norway::from_str::<serde_norway::Value>(&prepared)
-        .map_err(|error| format!("Failed to parse editable kernel configuration: {error}"))?;
-    if original.is_null() && updated.as_mapping().is_some_and(|mapping| mapping.is_empty()) {
-        prepared.push_str("{}\n");
-        original = serde_norway::Value::Mapping(serde_norway::Mapping::new());
-    }
-    let rendered = render_yaml_value_changes(&prepared, &original, &updated)?;
-    let rendered = expand_top_level_flow_style_collections(&rendered, &updated)?;
+    document.set(updated);
+    let rendered = expand_top_level_flow_style_collections(&document.get_string(), document.get())?;
     let rendered = indent_indentationless_yaml_sequences(&rendered);
     let validated = serde_norway::from_str::<serde_norway::Value>(&rendered)
         .map_err(|error| format!("Failed to validate updated kernel configuration: {error}"))?;
-    if validated != updated {
-        let path = first_yaml_mismatch_path(&updated, &validated, &mut Vec::new())
+    if &validated != document.get() {
+        let path = first_yaml_mismatch_path(document.get(), &validated, &mut Vec::new())
             .unwrap_or_else(|| "<unknown>".to_string());
         return Err(format!(
             "Updated kernel configuration does not match the expected value (path: {path}); write rejected"
         ));
     }
     Ok(rendered)
-}
-
-fn remove_deleted_yaml_mapping_values(
-    mapping: &yaml_edit::Mapping,
-    original: &serde_norway::Value,
-    updated: &serde_norway::Value,
-) -> Result<(), String> {
-    let (Some(original), Some(updated)) = (original.as_mapping(), updated.as_mapping()) else {
-        return Ok(());
-    };
-    for (key, original_value) in original {
-        let key_name = key.as_str()
-            .ok_or_else(|| "Kernel configuration mapping keys must be strings".to_string())?;
-        if let Some(updated_value) = updated.get(key) {
-            if let Some(child) = mapping.get(key_name) {
-                if let Some(child) = child.as_mapping() {
-                    remove_deleted_yaml_mapping_values(child, original_value, updated_value)?;
-                }
-            }
-        } else {
-            mapping.remove(key_name);
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn expand_top_level_flow_style_collections(

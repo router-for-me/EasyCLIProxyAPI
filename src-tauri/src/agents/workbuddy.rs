@@ -7,9 +7,6 @@ mod tests;
 // WorkBuddy AI 5.5 reads models.json as either LanguageModel[] or { models, availableModels }.
 // Its chat selection is account/session-local; publishing a model must not rewrite that state.
 pub(crate) fn workbuddy_home(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("workbuddy") {
-        return directory;
-    }
     workbuddy_home_from_environment(
         home,
         agent_configuration_environment("WORKBUDDY_CONFIG_DIR").as_deref(),
@@ -214,7 +211,7 @@ fn workbuddy_models(value: &Value) -> &[Value] {
         .unwrap_or_default()
 }
 
-pub(crate) fn workbuddy_managed_model(value: &Value) -> bool {
+fn workbuddy_managed_model(value: &Value) -> bool {
     value.get("vendor").and_then(Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)
 }
 
@@ -307,31 +304,7 @@ fn update_workbuddy_model(
     model: &str,
     available_models: &[AgentModelOption],
 ) {
-    let metadata = available_models.iter().find(|m| m.name == model);
-    let catalog_alias = metadata
-        .and_then(|m| m.alias.as_deref())
-        .map(str::trim)
-        .filter(|alias| !alias.is_empty() && !alias.eq_ignore_ascii_case(model))
-        .map(str::to_string);
-    let desired_name = catalog_alias.unwrap_or_else(|| format!("CPA / {model}"));
-    let current_name = entry
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string);
-    match current_name {
-        // Preserve a user-customized display name; only replace the
-        // generated defaults (the literal "CPA" and bare model ids).
-        Some(current)
-            if current != "CPA"
-                && workbuddy_request_model(&current) != model
-                && current != desired_name =>
-        {
-            entry["name"] = json!(current);
-        }
-        _ => entry["name"] = json!(desired_name),
-    }
+    entry["name"] = json!("CPA");
     entry["vendor"] = json!(MANAGED_AGENT_PROVIDER_ID);
     entry["url"] = json!(format!(
         "{}/chat/completions",
@@ -342,14 +315,13 @@ fn update_workbuddy_model(
     entry["disabled"] = json!(false);
     // WorkBuddy prefixes local model IDs itself and removes that prefix before sending requests.
     entry["useCustomProtocol"] = json!(false);
-    if let Some(metadata) = metadata {
+    if let Some(metadata) = available_models.iter().find(|m| m.name == model) {
         if let Some(context) = metadata.context_window {
             entry["maxInputTokens"] = json!(context);
         }
         if let Some(input) = &metadata.input_modalities {
             entry["supportsImages"] = json!(input.iter().any(|s| s == "image"));
         }
-        super::configuration::update_workbuddy_reasoning_fields(entry, &metadata.reasoning_levels);
     }
 }
 
@@ -383,7 +355,7 @@ pub(crate) fn inspect_workbuddy_agent_config(
                 || a.iter()
                     .any(|v| v.as_str().map(workbuddy_request_model) == model)
         });
-    let expected_url = format!("{}/v1/chat/completions", agent_effective_loopback_origin("workbuddy", port));
+    let expected_url = format!("{}/v1/chat/completions", managed_core_loopback_origin(port));
     let configured = visible
         && managed.iter().all(|entry| {
             entry.get("url").and_then(Value::as_str) == Some(&expected_url)

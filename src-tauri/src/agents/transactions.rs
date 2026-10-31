@@ -375,12 +375,8 @@ fn configuration_root_candidates(home: &Path) -> Vec<PathBuf> {
         roots.push(custom.join(".zcode"));
         roots.push(custom.join(".zcode").join("v2"));
     }
-    if let Some(parent) = copilot_config_paths(AgentClient::VscodeCopilot, home)[0].parent() {
-        roots.push(parent.to_path_buf());
-    }
-    if let Some(parent) = copilot_config_paths(AgentClient::CopilotCli, home)[0].parent() {
-        roots.push(parent.to_path_buf());
-    }
+    if let Some(parent) = copilot_config_paths(AgentClient::VscodeCopilot, home)[0].parent() { roots.push(parent.to_path_buf()); }
+    if let Some(parent) = copilot_config_paths(AgentClient::CopilotCli, home)[0].parent() { roots.push(parent.to_path_buf()); }
     #[cfg(target_os = "macos")]
     {
         let support = home.join("Library/Application Support");
@@ -427,11 +423,6 @@ fn configuration_root_candidates(home: &Path) -> Vec<PathBuf> {
                 roots.push(path);
             }
         }
-    }
-    if let Ok(custom) = AGENT_CONFIG_DIRECTORIES
-        .try_with(|directories| directories.values().map(PathBuf::from).collect::<Vec<_>>())
-    {
-        roots.extend(custom);
     }
     roots
 }
@@ -864,9 +855,6 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
             _ => &[],
         };
         if let Some(object) = extensions.as_object_mut() {
-            if client == "claude-desktop" {
-                object.remove("behavesAs");
-            }
             if client == "codex" {
                 object.retain(|key, _| !codex_catalog::is_managed_model_field(key));
             }
@@ -1026,14 +1014,7 @@ fn validate_unmanaged_preserved(
         let mut value = value.clone();
         if client == "codex" && path.file_name().and_then(|v| v.to_str()) == Some("config.toml") {
             let rendered = render(path, &value)?;
-            let document = parse_codex_document(Some(&rendered), "Codex configuration")?;
-            if let Some(settings) = codex_selected_profile_settings(&document) {
-                let settings = parse(path, Some(&settings.to_string()))?;
-                if let (Some(root), Some(selected)) = (value.as_object_mut(), settings.as_object()) {
-                    root.extend(selected.clone());
-                }
-            }
-            if codex_uses_openai_proxy(&document) {
+            if codex_uses_openai_proxy(&parse_codex_document(Some(&rendered), "Codex configuration")?) {
                 if let Some(root) = value.as_object_mut() { root.remove("openai_base_url"); }
             }
         }

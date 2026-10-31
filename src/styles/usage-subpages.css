@@ -1,5 +1,5 @@
 /* Shared surfaces for usage subpages; the overview keeps its own chart palette. */
-.usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']):not([aria-labelledby='usage-tab-live-routing']),
+.usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']),
 .usage-price-sync-dialog,
 .usage-column-dialog {
   --usage-page-text: var(--usage-subpage-text);
@@ -142,25 +142,6 @@
   background: transparent;
 }
 
-.usage-records-page .usage-request-log .usage-table-wrap {
-  scrollbar-width: none;
-}
-
-.usage-records-page .usage-request-log .usage-table-wrap::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-.usage-records-page .usage-request-log .usage-table-wrap::-webkit-scrollbar:horizontal {
-  display: none;
-  height: 0;
-}
-
-.usage-records-page .usage-request-log .usage-table-top-scrollbar.is-hidden {
-  display: none;
-}
-
 .usage-records-page .usage-request-log .usage-events-table {
   border-collapse: separate;
   border-spacing: 0 10px;
@@ -195,9 +176,12 @@
   text-align: center;
 }
 
-.usage-records-page .usage-request-log .usage-events-table thead th:first-child,
+.usage-records-page .usage-request-log .usage-events-table thead th:first-child {
+  border-radius: var(--radius-lg) var(--radius-none) var(--radius-none) var(--radius-lg);
+}
+
 .usage-records-page .usage-request-log .usage-events-table thead th:last-child {
-  border-radius: var(--radius-none);
+  border-radius: var(--radius-none) var(--radius-lg) var(--radius-lg) var(--radius-none);
 }
 
 .usage-records-page .usage-request-log.usage-events-errors-expanded .usage-events-table td {

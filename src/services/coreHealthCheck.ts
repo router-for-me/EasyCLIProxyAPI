@@ -1,4 +1,3 @@
-import { remoteTargetRevision } from './remoteCpa';
 import { invoke } from '@tauri-apps/api/core';
 import {
   PROVIDER_HEALTH_CONCURRENCY,
@@ -17,15 +16,13 @@ export async function checkCoreModelHealth(model: string): Promise<CoreModelHeal
     const response = await invoke<{
       firstTokenLatencyMs?: number;
       responseLatencyMs: number;
-      budgetExhausted?: boolean;
-    }>('core_health_probe', { targetRevision: remoteTargetRevision(), model, timeoutMs: PROVIDER_HEALTH_TIMEOUT_MS });
+    }>('core_health_probe', { model, timeoutMs: PROVIDER_HEALTH_TIMEOUT_MS });
     const latency = (value: number | undefined) => Number.isFinite(value)
       ? Math.max(1, Math.round(value as number)) : undefined;
     return {
       model,
-      success: !response.budgetExhausted,
-      status: response.budgetExhausted ? 'budget-exhausted' : 'healthy',
-      ...(response.budgetExhausted ? { budgetExhausted: true } : {}),
+      success: true,
+      status: 'healthy',
       firstTokenLatencyMs: latency(response.firstTokenLatencyMs),
       responseLatencyMs: latency(response.responseLatencyMs),
     };

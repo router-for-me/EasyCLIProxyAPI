@@ -38,8 +38,7 @@
               "zh-CN",
               "zh-TW",
               "ja",
-              "en",
-              "ru"
+              "en"
             ]
           },
           "additionalProperties": {
@@ -65,8 +64,7 @@
               "zh-CN",
               "zh-TW",
               "ja",
-              "en",
-              "ru"
+              "en"
             ]
           },
           "additionalProperties": {

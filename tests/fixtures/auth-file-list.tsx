@@ -39,14 +39,6 @@ const files: Record<string, unknown>[] = Array.from({ length: displayCases ? 6 :
     retry_at: new Date(startedAt + 180000).toISOString(), remaining_seconds: 180, http_status: 429, backoff_level: 0 }] : [],
 }));
 
-if (params.has('duplicateNames')) files[0].name = files[1].name;
-if (params.has('invalidTags')) files.push(
-  { auth_index: 'nameless', provider: 'codex' },
-  { name: 42, auth_index: 'nonstring', provider: 'codex', tags: { invalid: true } },
-  { auth_index: 'nameless-tagged', provider: 'codex', tags: ['shared', 'noneditable'] },
-  { name: 'runtime.json', auth_index: 'runtime', provider: 'codex', runtime_only: true, tags: ['shared', 'noneditable'] },
-);
-
 updateQuotaCache(Object.fromEntries(files.map((file, index) => {
   if (smallList || (displayCases && index < 5)) return [quotaKey(file), { status: 'idle', rows: [] } satisfies QuotaState];
   const quota: QuotaState = {
@@ -75,7 +67,7 @@ updateQuotaCache(Object.fromEntries(files.map((file, index) => {
   return [quotaKey(file), quota];
 })));
 
-const state = { files, requests: [] as Request[], unhandled: [] as string[], reads: 0, failTagWrites: [] as string[] };
+const state = { files, requests: [] as Request[], unhandled: [] as string[], reads: 0 };
 (window as typeof window & { authFileListFixture: typeof state }).authFileListFixture = state;
 mockIPC(async (cmd, args) => {
   if (cmd === 'set_app_locale') return null;
@@ -87,18 +79,7 @@ mockIPC(async (cmd, args) => {
   state.requests.push(structuredClone(request));
   if (request.path === '/credentials' && request.method === 'GET') {
     state.reads += 1;
-    return { observed_at: new Date().toISOString(), files: structuredClone(state.files).map(({ tags, ...file }) => params.has('invalidTags') ? { ...file, tags } : file) };
-  }
-  if (request.path === '/credentials/download' && request.method === 'GET') {
-    return structuredClone(state.files.find(file => file.name === request.query?.name) ?? {});
-  }
-  if (request.path === '/credentials/models' && request.method === 'GET') return { models: [] };
-  if (request.path === '/credentials/fields' && request.method === 'PATCH') {
-    if (request.body?.tags && state.failTagWrites.includes(String(request.body.name))) throw new Error('Mock tag write failed');
-    const target = state.files.find(file => file.name === request.body?.name);
-    if (!target) throw new Error('Unknown credential');
-    Object.assign(target, request.body);
-    return { status: 'ok' };
+    return { observed_at: new Date().toISOString(), files: structuredClone(state.files) };
   }
   if (request.path === '/credentials/refresh' && request.method === 'POST') return { ok: true, auth: { access_token: 'fixture-secret-not-for-display' } };
   if (request.path === '/credentials/status' && request.method === 'PATCH') {

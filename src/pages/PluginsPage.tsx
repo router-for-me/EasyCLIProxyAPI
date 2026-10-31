@@ -16,9 +16,8 @@ import {
   type PluginStoreEntry,
   type PluginStoreResponse,
 } from "../services/plugins";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PluginLogo } from "../components/ProviderLogo";
-import { Check, Copy, Download, ExternalLink, Folder, LogIn, Puzzle, RefreshCw, Search, Settings2, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Download, ExternalLink, Folder, LogIn, Puzzle, RefreshCw, Search, Settings2, Trash2, X } from "lucide-react";
 import { useI18n } from "../i18n";
 import { pluginText } from "../i18n/plugins";
 import { FloatingNotice, useAppNotice } from "../appNotice";
@@ -27,46 +26,19 @@ import { buildPluginResourceRoute, collectPluginResourceEntries, getPluginTitle,
 import { getPluginStatus, isPluginInstalled } from "../services/pluginStatus";
 import { filterInstalledStorePlugins, refreshPluginReleaseVersions } from "../services/pluginReleaseVersions";
 import { waitForPluginInstall, waitForPluginToggle, type PluginActionStatus } from "../services/pluginPolling";
-import { getPluginStoreLocalizedDescription, type PluginStoreInstallResult } from "../services/plugins";
-import { getPluginRepositorySlug as repositorySlug } from "../services/pluginResources";
+import type { PluginStoreInstallResult } from "../services/plugins";
 import { PluginConfigDialog } from "./PluginConfigDialog";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import { PluginOAuthDialog } from "./PluginOAuthDialog";
 import { GitHubTokenHint, isGitHubRateLimit } from "./PluginRateLimitHint";
 import { PluginSettingsPanel } from "./PluginSettingsPanel";
-import { EcpaPluginsPage, TagFilterRow } from "./EcpaPluginsPage";
+import { Select } from "../components/Select";
 import "./PluginsPage.css";
 
-type Tab = "installed" | "store" | "ecpa" | "settings";
+type Tab = "installed" | "store" | "settings";
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-/** The same plugin can arrive from several hints; the first entry wins. */
-function dedupeStoreEntries(entries: PluginStoreEntry[]): PluginStoreEntry[] {
-  const seen = new Set<string>();
-  return entries.filter(entry => !seen.has(entry.id) && Boolean(seen.add(entry.id)));
-}
-
-/** Keeps a startup update visible even before the store resolves that plugin. */
-function knownUpdateEntry(store: PluginStoreResponse, id: string, version: string): PluginStoreEntry {
-  const found = store.plugins.find(entry => entry.id === id);
-  if (found) return { ...found, updateAvailable: true, version };
-  return {
-    storeId: id, sourceId: '', sourceName: '', sourceUrl: '', id, name: id, description: '',
-    author: '', version, repository: '', installType: '', authRequired: false, authConfigured: false,
-    platforms: [], logo: '', homepage: '', license: '', tags: [], locales: {},
-    installed: true, installedVersion: '', installedSourceId: '', installSourceStatus: 'matched',
-    path: '', configured: false, registered: false, enabled: false, effectiveEnabled: false,
-    updateAvailable: true,
-  };
-}
-
-export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, onPluginUpdatesResolved }: {
-  /** Plugins the sidebar already loaded, so startup updates show without a second check. */
-  discoveredPlugins?: PluginListEntry[];
-  /** Plugin ID → newer version found by the startup check. */
-  discoveredUpdates?: Record<string, string>;
-  onPluginUpdatesResolved?: (pluginIDs: string[]) => void;
-} = {}) {
+export function PluginsPage() {
   const { t, locale } = useI18n();
   const pt = (key: Parameters<typeof pluginText>[0]) => pluginText(key, locale);
   const [tab, setTab] = useState<Tab>("installed");
@@ -80,26 +52,6 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [filter, setFilter] = useState("all");
-  // Store tags are multi-select and share the featured page's one-line filter row.
-  const [storeTags, setStoreTags] = useState<string[]>([]);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copyStoreId = async (id: string) => {
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) await navigator.clipboard.writeText(id);
-    } catch {
-      // Clipboard writes can fail in non-secure or headless contexts.
-    }
-    setCopiedId(id);
-    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => {
-      setCopiedId(current => (current === id ? null : current));
-      copyTimerRef.current = null;
-    }, 1500);
-  };
-  useEffect(() => () => {
-    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current);
-  }, []);
   const [configPlugin, setConfigPlugin] = useState<PluginListEntry | null>(null);
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
   const [oauthPlugin, setOAuthPlugin] = useState<PluginListEntry | null>(null);
@@ -110,10 +62,6 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const notice = useAppNotice();
-  // Startup check targets stay listed even when the store copy of the plugin is absent.
-  const previousDiscovery = useRef<{ plugins: PluginListEntry[]; updates: Record<string, string> }>({
-    plugins: [], updates: {},
-  });
   const { askConfirmation, confirmationDialog } = useConfirmation();
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; ++requests.current; }; }, []);
@@ -161,38 +109,7 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
     } catch (reason) { if (mounted.current && revision === requests.current) setError(message(reason)); }
     finally { if (mounted.current && revision === requests.current) setLoading(false); }
   }, [locale, notice]);
-  useEffect(() => { if (tab !== "ecpa") void load(tab); }, [tab]);
-
-  // Reuse the startup check's targets so the plugin page shows them immediately.
-  useEffect(() => {
-    if (pending.current || !supported) return;
-    const previous = previousDiscovery.current;
-    const changed = discoveredPlugins.length !== previous.plugins.length
-      || discoveredPlugins.some((plugin, index) => plugin.id !== previous.plugins[index]?.id
-        || plugin.metadata?.version !== previous.plugins[index]?.metadata?.version)
-      || Object.values(discoveredUpdates).sort().join() !== Object.values(previous.updates).sort().join();
-    previousDiscovery.current = { plugins: discoveredPlugins, updates: discoveredUpdates };
-    if (!changed) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const nextStore = await pluginStoreApi.list();
-        if (cancelled || !mounted.current) return;
-        const known = Object.entries(discoveredUpdates).map(([id, version]) =>
-          knownUpdateEntry(nextStore, id, version));
-        const plugins = dedupeStoreEntries([
-          ...filterInstalledStorePlugins(nextStore, discoveredPlugins.filter(isPluginInstalled)).plugins,
-          ...known,
-        ]);
-        if (!plugins.length) return;
-        const updates = await refreshPluginReleaseVersions({ ...nextStore, plugins });
-        if (!cancelled && mounted.current) setLocalUpdates(updates);
-      } catch {
-        // The startup check stays silent; the plugin page reports its own errors.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [discoveredPlugins, discoveredUpdates, supported]);
+  useEffect(() => { void load(tab); }, [tab]);
 
   // Follow existing files for a bounded period after config writes. Missing
   // binaries cannot load by waiting, and the API does not report loading progress.
@@ -285,7 +202,6 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
   };
   const installed = async (result: PluginStoreInstallResult) => {
     ++requests.current;
-    onPluginUpdatesResolved?.([result.id]);
     setRestartRequired(previous => previous || result.restartRequired);
     setLocalUpdates(previous => previous ? {
       ...previous,
@@ -360,7 +276,6 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
       }
       if (mounted.current && anyRestart) setRestartRequired(true);
       if (mounted.current && completed.size > 0) {
-        onPluginUpdatesResolved?.([...completed.keys()]);
         setLocalUpdates(previous => previous ? {
           ...previous,
           plugins: previous.plugins.map(entry => completed.has(entry.id)
@@ -398,7 +313,6 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
     await mutate(async () => {
       const result = await pluginsApi.deletePlugin(plugin.id);
       if (mounted.current && result.restartRequired) setRestartRequired(true);
-      if (installed) onPluginUpdatesResolved?.([plugin.id]);
     }, pt(installed ? "removed" : "removedConfig"));
   };
   const installLocal = async () => {
@@ -429,73 +343,41 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
     && ["matched", "assumed"].includes(entry.installSourceStatus)
     && (!entry.authRequired || entry.authConfigured),
   );
-  // A tag that leaves the store must not keep filtering silently.
-  const storeAllTags = useMemo(() => {
-    const seen = new Set<string>();
-    for (const entry of store?.plugins ?? []) for (const tag of entry.tags) if (tag) seen.add(tag);
-    return Array.from(seen);
-  }, [store]);
-  useEffect(() => {
-    setStoreTags(current => {
-      const kept = current.filter(tag => storeAllTags.includes(tag));
-      return kept.length === current.length ? current : kept;
-    });
-  }, [storeAllTags]);
-  const storePlugins = (store?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.name, plugin.description, getPluginStoreLocalizedDescription(plugin, locale), plugin.author, ...plugin.tags])
-    && (filter === "all" || (filter === "installed" && plugin.installed) || (filter === "updates" && plugin.updateAvailable))
-    && (storeTags.length === 0 || storeTags.some(tag => plugin.tags.includes(tag))));
+  const storePlugins = (store?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.name, plugin.description, plugin.author, ...plugin.tags]) && (filter === "all" || (filter === "installed" && plugin.installed) || (filter === "updates" && plugin.updateAvailable)));
   const sourceErrors = (tab === "installed" ? localUpdates : store)?.sourceErrors ?? [];
   const locked = busy || loading || Boolean(configPlugin || installEntry || oauthPlugin);
 
   return <div className="plugins-page" role="region" aria-label={pt("title")}>
     <div className="plugin-navigation">
-      {supported !== null && <Tabs activation="manual" className="plugin-tabs secondary-page-tabs" aria-label={pt("title")} value={tab} disabled={busy}
-        onChange={value => { setTab(value); setSearch(""); setFilter("all"); setStoreTags([]); }}
-        items={(["installed", "store", "ecpa", "settings"] as const).map(value => ({ value, id: `plugin-tab-${value}`, panelId: "plugin-tab-panel", label: pt(value === "installed" ? "local" : value === "ecpa" ? "featured" : value) }))} />}
-      <div className="ecpa-plugins-controls plugin-toolbar">
-        {supported === true && tab !== "settings" && tab !== "ecpa" && <>
-        <div className="plugin-search search-control ecpa-plugin-search" data-size="default">
+      {supported === true && <Tabs variant="segmented" activation="manual" className="plugin-tabs" aria-label={pt("title")} value={tab} disabled={busy}
+        onChange={value => { setTab(value); setSearch(""); setFilter("all"); }}
+        items={(["installed", "store", "settings"] as const).map(value => ({ value, id: `plugin-tab-${value}`, panelId: "plugin-tab-panel", label: pt(value === "installed" ? "local" : value) }))} />}
+      <div className="plugin-toolbar">
+        {supported === true && tab !== "settings" && <>
+        <div className="plugin-search search-control" data-size="default">
           <Search size={17} aria-hidden="true" />
-          <input ref={searchRef} type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={tab === "store" ? t("ecpaPlugins.search") : pt("search")} aria-label={pt("search")} />
+          <input ref={searchRef} type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={pt("search")} aria-label={pt("search")} />
           <button type="button" className="icon-button quiet ghost tiny-button plugin-search-clear" disabled={!search} aria-label={t("common.clear")} title={t("common.clear")}
             onClick={() => { setSearch(""); searchRef.current?.focus(); }}><X size={15} aria-hidden="true" /></button>
         </div>
-        </>}
-        <div className="plugin-toolbar-actions">
-        {supported === true && tab === "installed" && <div className="plugin-toolbar-group">
+        {tab === "store" && <Select aria-label={pt("store")} value={filter} onChange={e => setFilter(e.target.value)}>{["all", "installed", "updates"].map(value => <option key={value} value={value}>{pt(value as "all" | "installed" | "updates")}</option>)}</Select>}
+        {tab === "installed" && <>
           <button type="button" className="secondary-button plugin-check-updates" disabled={locked || !installedPlugins.length} onClick={() => void load("installed", true, true)}><RefreshCw size={16} aria-hidden="true" />{pt("checkUpdates")}</button>
           <button type="button" className={`${updatablePlugins.length > 0 ? "primary-button" : "secondary-button"} plugin-update-all`} disabled={locked || !installedPlugins.length || (localUpdates !== null && updatablePlugins.length === 0)} onClick={() => void updateAll()}><Download size={16} aria-hidden="true" />{updatablePlugins.length > 0 ? `${pt("updateAll")} (${updatablePlugins.length})` : pt("updateAll")}</button>
-        </div>}
-        {tab !== "ecpa" && <div className="plugin-toolbar-group">
+        </>}
+        {tab === "store" && <button type="button" className="secondary-button plugin-check-updates" disabled={locked} onClick={() => void load("store", true, true)}><RefreshCw size={16} aria-hidden="true" />{pt("checkUpdates")}</button>}
+        </>}
+        {supported === true && <button type="button" className="secondary-button plugin-development-guide" disabled={locked} onClick={() => void installLocal()}><Download size={16} aria-hidden="true" />{pt("localInstall")}</button>}
         <button type="button" className="secondary-button plugin-development-guide" onClick={() => void openExternalUrl({ url: "https://help.router-for.me/cn/plugin/development.html" }).catch(reason => { if (mounted.current) setError(message(reason)); })}><ExternalLink size={16} aria-hidden="true" />{pt("developmentGuide")}</button>
-        {data && !data.pluginsEnabled ? <span className="plugin-disabled-hint" role="status" aria-label={pt("disabledHint")} title={pt("disabledHint")}>{pt("pluginsOff")}</span> : null}
         <button className="secondary-button plugin-refresh" disabled={locked} onClick={() => void load(tabRef.current, tabRef.current === "installed")}><RefreshCw size={16} aria-hidden="true" />{t("common.refresh")}</button>
-        </div>}
-        </div>
       </div>
     </div>
-    <div className="plugin-tab-panel" id="plugin-tab-panel" role={supported !== null ? "tabpanel" : undefined} aria-labelledby={supported !== null ? `plugin-tab-${tab}` : undefined}>
-    {tab !== "ecpa" && error && <Notice tone="error" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={busy || loading} onClick={() => void load(tabRef.current, tabRef.current === "installed")}>{pt("retry")}</button>}>{error}{isGitHubRateLimit(error) ? <GitHubTokenHint /> : null}</Notice>}
-    {tab === "ecpa" ? <EcpaPluginsPage /> : supported === false ? <EmptyState className="plugin-empty" icon={<Puzzle size={36} />}>{pt("unsupported")}</EmptyState> : supported === null ? <EmptyState className="plugin-empty" role="status">{loading ? t("common.loading") : pt("retry")}</EmptyState> : <>
+    <div className="plugin-tab-panel" id="plugin-tab-panel" role={supported === true ? "tabpanel" : undefined} aria-labelledby={supported === true ? `plugin-tab-${tab}` : undefined}>
+    {error && <Notice tone="error" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={busy || loading} onClick={() => void load(tabRef.current, tabRef.current === "installed")}>{pt("retry")}</button>}>{error}{isGitHubRateLimit(error) ? <GitHubTokenHint /> : null}</Notice>}
+    {supported === false ? <EmptyState className="plugin-empty" icon={<Puzzle size={36} />}>{pt("unsupported")}</EmptyState> : supported === null ? <EmptyState className="plugin-empty" role="status">{loading ? t("common.loading") : pt("retry")}</EmptyState> : <>
+      {data && !data.pluginsEnabled && <Notice tone="info" icon={false} className="plugin-banner">{pt("disabledHint")}</Notice>}
       {restartRequired && <Notice tone="info" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={locked} onClick={async () => { if (await askConfirmation({ title: pt("restartButton"), message: pt("restartConfirm") })) void mutate(async () => { await restartCoreProcess(); if (mounted.current) setRestartRequired(false); }, pt("saved")); }}>{pt("restartButton")}</button>}>{pt("restart")}</Notice>}
       <>
-        {tab !== "settings" && !loading && storeAllTags.length > 0 ? <div className="ecpa-results-bar plugin-store-results-bar">
-          <TagFilterRow
-            allTags={storeAllTags}
-            selectedTags={storeTags}
-            onToggle={tag => setStoreTags(current => current.includes(tag) ? current.filter(value => value !== tag) : [...current, tag])}
-            onClear={() => setStoreTags([])}
-            label={pt("tagFilter")}
-            allLabel={pt("tagAll")}
-            pickerLabel={pt("moreTags")}
-            clearLabel={pt("clearTags")}
-            emptyLabel={pt("noTags")}
-          />
-          <div className="ecpa-results-meta">
-            {(search || storeTags.length > 0) ? <button type="button" className="link-button muted ecpa-clear-filters" onClick={() => { setSearch(""); setStoreTags([]); }}>{pt("clearFilters")}</button> : null}
-            <span className="ecpa-results-count">{pt("resultCount").replace("{count}", String(tab === "store" ? storePlugins.length : plugins.length))}</span>
-          </div>
-        </div> : null}
         {tab === "settings" ? <PluginSettingsPanel onSaved={() => { notice.showNotice(pt("saved")); void load(); }} globalControl={<label className="plugin-global-toggle"><Switch checked={data?.pluginsEnabled ?? false} disabled={locked || !data} onChange={e => { const enabled = e.target.checked; void mutate(() => pluginsApi.updateSettings({ enabled }), pt("saved")); }} />{pt("global")}</label>} /> : <>
           {sourceErrors.length ? <details className="plugin-source-errors surface-frame"><summary>{pt("sourceErrors")}</summary>{sourceErrors.map((entry, index) => <p key={index}>{entry.sourceName || entry.sourceId || entry.sourceUrl}: {entry.message}</p>)}{sourceErrors.some(entry => isGitHubRateLimit(entry.message)) ? <GitHubTokenHint /> : null}</details> : null}
           {loading && <p className="plugin-loading" role="status">{t("common.loading")}…</p>}
@@ -511,11 +393,10 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
             const meta = [versionText, plugin.metadata?.author || storeEntry?.author].filter(Boolean).join(" · ");
             const removeLabel = `${pt(installed ? "remove" : "removeConfig")} ${getPluginTitle(plugin)}`;
             return <article className="surface-card plugin-card plugin-local-card" key={plugin.id}>
-            <div className="plugin-card-title"><span className="plugin-icon"><PluginLogo src={plugin.logo || plugin.metadata?.logo} size={23} className="plugin-logo" /></span><div><h2>{getPluginTitle(plugin)}</h2>{getPluginTitle(plugin) !== plugin.id && <code title={plugin.id}>{plugin.id}</code>}</div><span className={`plugin-badge ${status === "active" ? "active" : status === "missingFile" || status === "notLoaded" ? "warning" : ""}`}>{pt(status)}</span></div>
-            {!plugin.path && <p className="plugin-card-description">{pt("missingFileHint")}</p>}
+            <div className="plugin-card-title"><span className="plugin-icon"><Puzzle size={23} /></span><div><h2>{getPluginTitle(plugin)}</h2>{getPluginTitle(plugin) !== plugin.id && <code>{plugin.id}</code>}</div><span className={`plugin-badge ${status === "active" ? "active" : status === "missingFile" || status === "notLoaded" ? "warning" : ""}`}>{pt(status)}</span></div>
+            {meta && <p className="plugin-meta">{meta}</p>}
+            {plugin.path ? <p className="plugin-path">{plugin.path}</p> : <p className="plugin-card-description">{pt("missingFileHint")}</p>}
             {status === "notLoaded" && <p className="plugin-card-description">{pt("notLoadedHint")}</p>}
-            {meta && <p className="plugin-meta" title={meta}>{meta}</p>}
-            {plugin.path && <p className="plugin-path" title={plugin.path}>{plugin.path}</p>}
             {collectPluginResourceEntries([plugin]).length > 0 && <div className="plugin-menus">{collectPluginResourceEntries([plugin]).map(entry => <button key={entry.menuIndex} title={entry.description} className="secondary-button small-button" disabled={locked} onClick={() => openResource(entry)}><ExternalLink size={14} />{entry.label}</button>)}</div>}
             <div className="plugin-card-actions">
               {installed && (update
@@ -528,57 +409,15 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
               <button className="icon-button danger plugin-delete" disabled={locked} aria-label={removeLabel} title={removeLabel} onClick={() => void remove(plugin)}><Trash2 size={16} /></button>
             </div>
           </article>; })}</div> : <>
-            <div className="plugin-grid">{storePlugins.map(entry => {
-              const repository = repositorySlug(entry.repository);
-              const official = isDefaultPluginStoreSource(entry);
-              const updating = entry.installed && entry.updateAvailable;
-              return <article className="surface-card ecpa-plugin-card" key={entry.storeId} tabIndex={0}>
-                <div className="ecpa-plugin-card-title">
-                  <span className="ecpa-plugin-icon"><PluginLogo src={entry.logo} size={23} className="plugin-logo" /></span>
-                  <div>
-                    <h2>{entry.name || entry.id}</h2>
-                    <code title={entry.id}>{entry.id}</code>
-                  </div>
-                  {entry.version ? <span className="ecpa-plugin-version">{entry.installedVersion && updating ? `${entry.installedVersion} → ${entry.version}` : entry.version}</span> : null}
-                </div>
-                <p className="ecpa-plugin-description">{getPluginStoreLocalizedDescription(entry, locale)}</p>
-                <p className="ecpa-plugin-meta">
-                  {entry.author ? <span>{t("ecpaPlugins.author", { author: entry.author })}</span> : null}
-                  {entry.license ? <span>{t("ecpaPlugins.license", { license: entry.license })}</span> : null}
-                </p>
-                {entry.tags.length > 0 && <div className="ecpa-plugin-card-tags">{entry.tags.map(tag => <span key={tag} className="ecpa-plugin-card-tag">{tag}</span>)}</div>}
-                <div className="ecpa-plugin-card-actions">
-                  <button type="button" className="secondary-button compact-button" onClick={() => void copyStoreId(entry.id)}>
-                    {copiedId === entry.id ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-                    {pt(copiedId === entry.id ? "copied" : "copyId")}
-                  </button>
-                  <button type="button" className="secondary-button compact-button ecpa-repo-button"
-                    disabled={!repository}
-                    title={entry.repository || pt("repository")}
-                    onClick={() => void openExternalUrl({ url: `https://github.com/${repository}` }).catch(reason => { if (mounted.current) setError(message(reason)); })}>
-                    <ExternalLink size={15} aria-hidden="true" />
-                    {pt("openRepo")}
-                  </button>
-                  <span className="ecpa-plugin-action-slot">
-                    {entry.installed && !updating ? (
-                      <span className="ecpa-plugin-installed-badge">
-                        <Check size={13} aria-hidden="true" />
-                        {pt("installed")}
-                      </span>
-                    ) : (
-                      <button type="button" className="primary-button compact-button"
-                        disabled={locked || (entry.authRequired && !entry.authConfigured)}
-                        title={entry.authRequired && !entry.authConfigured ? pt("authMissing") : entry.repository}
-                        onClick={() => setInstallEntry(entry)}>
-                        {pt(entry.authRequired && !entry.authConfigured ? "authMissing" : updating ? "update" : entry.installed ? "reinstall" : "install")}
-                      </button>
-                    )}
-                  </span>
-                </div>
-              </article>;
-            })}</div>
+            <div className="plugin-grid">{storePlugins.map(entry => <article className="surface-card plugin-card" key={entry.storeId}>
+              <div className="plugin-card-title"><span className="plugin-icon"><Puzzle size={23} /></span><div><h2>{entry.name || entry.id}</h2><code>{entry.id}</code></div><span className={`plugin-badge ${isDefaultPluginStoreSource(entry) ? "active" : ""}`}>{pt(isDefaultPluginStoreSource(entry) ? "officialStore" : "additionalStore")}</span></div>
+              <p className="plugin-card-description">{entry.description}</p><p className="plugin-meta">{[entry.installedVersion && entry.updateAvailable ? `${entry.installedVersion} → ${entry.version}` : entry.installedVersion || entry.version, entry.author, entry.license].filter(Boolean).join(" · ")}</p><p className="plugin-meta">{pt("storeSource")}: {isDefaultPluginStoreSource(entry) ? pt("officialStore") : entry.sourceName || entry.sourceId}</p>
+              {entry.repository && <p className="plugin-meta plugin-repository" title={entry.repository}>{pt("repository")}: <span>{getPluginRepositorySlug(entry.repository) || entry.repository}</span></p>}
+              {entry.platforms.length > 0 && <p className="plugin-meta">{entry.platforms.map(platform => `${platform.goos}/${platform.goarch}`).join(" · ")}</p>}
+              <div className="plugin-card-actions">{entry.installed && <span className="plugin-badge">{pt(entry.updateAvailable ? "updates" : "installed")}</span>}<button className="primary-button compact-button" disabled={locked || (entry.authRequired && !entry.authConfigured)} onClick={() => setInstallEntry(entry)}><Download size={15} />{pt(entry.authRequired && !entry.authConfigured ? "authMissing" : !entry.installed ? "install" : entry.updateAvailable ? "update" : "reinstall")}</button></div>
+            </article>)}</div>
           </>}
-          {!loading && !error && (tab === "installed" ? !plugins.length : !storePlugins.length) && <EmptyState className="plugin-empty" icon={<Puzzle size={36} />} title={pt(search || filter !== "all" || storeTags.length > 0 ? "noMatches" : "empty")} action={tab === "installed" && !search ? <button className="primary-button" onClick={() => setTab("store")}>{pt("store")}</button> : undefined}>{tab === "installed" && !search ? pt("emptyHint") : null}</EmptyState>}
+          {!loading && !error && (tab === "installed" ? !plugins.length : !storePlugins.length) && <EmptyState className="plugin-empty" icon={<Puzzle size={36} />} title={pt(search || filter !== "all" ? "noMatches" : "empty")} action={tab === "installed" && !search ? <button className="primary-button" onClick={() => setTab("store")}>{pt("store")}</button> : undefined}>{tab === "installed" && !search ? pt("emptyHint") : null}</EmptyState>}
         </>}
       </>
     </>}

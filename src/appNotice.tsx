@@ -92,14 +92,13 @@ export function FloatingNotice(props: InlineNoticeProps) {
 
 function FloatingNoticeInstance({ notice, onDismiss, className }: InlineNoticeProps & { notice: AppNotice }) {
   const [dismissed, setDismissed] = useState(false);
-  const [closing, setClosing] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const entryRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const dismissRef = useRef(onDismiss);
   useEffect(() => { dismissRef.current = onDismiss; }, [onDismiss]);
-  const finishDismiss = useCallback(() => {
+  const dismiss = useCallback(() => {
     const entry = entryRef.current;
     if (entry?.contains(document.activeElement)) {
       const dialog = entry.closest('dialog, [role="dialog"], [role="alertdialog"]');
@@ -114,23 +113,14 @@ function FloatingNoticeInstance({ notice, onDismiss, className }: InlineNoticePr
     setDismissed(true);
     dismissRef.current?.();
   }, []);
-  const dismiss = useCallback(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) finishDismiss();
-    else setClosing(true);
-  }, [finishDismiss]);
   useEffect(() => {
-    if (!closing) return;
-    const timer = window.setTimeout(finishDismiss, 160);
-    return () => window.clearTimeout(timer);
-  }, [closing, finishDismiss]);
-  useEffect(() => {
-    if (dismissed || closing || hovered || focused || notice.tone !== 'success') return;
+    if (dismissed || hovered || focused || notice.tone !== 'success') return;
     const timer = window.setTimeout(dismiss, 6_000);
     return () => window.clearTimeout(timer);
-  }, [dismissed, closing, hovered, focused, notice.tone, dismiss]);
+  }, [dismissed, hovered, focused, notice.tone, dismiss]);
   if (dismissed) return null;
   return <NoticePortal>
-    <div ref={entryRef} className="app-notice-entry" data-closing={closing || undefined}
+    <div ref={entryRef} className="app-notice-entry"
       onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
       onFocusCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {

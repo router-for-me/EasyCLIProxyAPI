@@ -23,7 +23,20 @@ struct TemplatePlan {
 }
 
 pub(crate) fn build_codex_template_auth(home: &Path) -> Result<AgentFileUpdate, String> {
-    build_codex_auth_update(home, "", true)
+    let path = codex_configuration_directory(home).join("auth.json");
+    validate_codex_oauth_login_at(&path)?;
+    let current = read_agent_bytes(&path)?.ok_or(CODEX_OAUTH_LOGIN_REQUIRED_ERROR)?;
+    let value = parse(&path, text(Some(&current))?)?;
+    let mut target = serde_json::Map::new();
+    for key in ["auth_mode", "tokens", "last_refresh"] {
+        if let Some(value) = value.get(key) {
+            target.insert(key.into(), value.clone());
+        }
+    }
+    Ok(AgentFileUpdate {
+        path,
+        after: serde_json::to_string_pretty(&target).map_err(|_| "Failed to generate authentication template")?,
+    })
 }
 
 pub(crate) fn build_pi_template_updates(
@@ -39,7 +52,7 @@ pub(crate) fn build_pi_template_updates(
     Ok(vec![
         AgentFileUpdate {
             path: pi_provider_config_path(home),
-            after: build_pi_provider_config(None, &agent_effective_loopback_origin(PI_AGENT_ID, port), api_key)?,
+            after: build_pi_provider_config(None, &managed_core_loopback_origin(port), api_key)?,
         },
         AgentFileUpdate {
             path: pi_provider_settings_path(home),
@@ -79,9 +92,9 @@ pub(crate) fn agent_core_error(error: String) -> String {
         || normalized.contains("rollback failed")
         || normalized.contains("rollback both failed")
     {
-        format!("Kernel alias or agent configuration write failed, and rollback also failed. Check the current configuration: {error}")
+        "Kernel alias or agent configuration write failed, and rollback also failed. Check the current configuration".into()
     } else if normalized.contains("original configuration was restored") {
-        format!("Kernel alias or agent configuration write failed. Original configuration was restored. Check the connection and model mapping, then try again: {error}")
+        "Kernel alias or agent configuration write failed. Original configuration was restored. Check the connection and model mapping, then try again".into()
     } else if normalized.contains("configuration changed") {
         "Kernel configuration changed. Preview it again and retry".into()
     } else if normalized.contains("already used by another model") {
@@ -133,7 +146,8 @@ async fn prepare_template_plan(
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
     api_key: Option<&str>,
 ) -> Result<TemplatePlan, String> {
-    let mut paths = config_paths(client, home)?;
+    if client == "codex" { ensure_codex_cpa_mode(home)?; }
+    let paths = config_paths(client, home)?;
     let api_key = resolve_agent_api_key(config, api_key);
     let (model, mappings, before, after, core) = if client == PI_AGENT_ID {
         let model = resolve_pi_default_model(config, model).await?;
@@ -172,33 +186,19 @@ async fn prepare_template_plan(
             .lock()
             .map_err(|_| "Configuration file lock is poisoned")?;
         let before = config_images(&paths)?;
-        let (before, after) = if parsed == AgentClient::Codex {
-            let images = prepare_codex_cpa_configuration(home, config.port, api_key, &model,
-                AgentConfigurationOptions {
-                    models: &prepared.models,
-                    codex_catalog: prepared.codex_catalog.as_deref(),
-                    oauth_configuration,
-                    claude_code_model_mappings: None,
-                    claude_desktop_model_mappings: None,
-                })?;
-            paths = images.0.iter().map(|(path, _)| path.clone()).collect();
-            images
-        } else {
-            let updates = build_agent_template_updates(AgentDefaultConfiguration {
-                client: parsed,
-                home,
-                port: config.port,
-                api_key,
-                model: &model,
-                models: &prepared.models,
-                codex_catalog: prepared.codex_catalog.as_deref(),
-                oauth_configuration,
-                claude_code_model_mappings: code_mappings.as_ref(),
-                claude_desktop_model_mappings: mappings.as_ref(),
-            })?;
-            let after = prepare_config_updates(client, &paths, &before, &updates, true)?;
-            (before, after)
-        };
+        let updates = build_agent_template_updates(AgentDefaultConfiguration {
+            client: parsed,
+            home,
+            port: config.port,
+            api_key,
+            model: &model,
+            models: &prepared.models,
+            codex_catalog: prepared.codex_catalog.as_deref(),
+            oauth_configuration,
+            claude_code_model_mappings: code_mappings.as_ref(),
+            claude_desktop_model_mappings: mappings.as_ref(),
+        })?;
+        let after = prepare_config_updates(client, &paths, &before, &updates, true)?;
         (model, mappings, before, after, core)
     };
     let mapping_revision = mapping_revision(client, &paths)?;
@@ -275,37 +275,6 @@ async fn execute_template_plan(
 
 #[tauri::command]
 pub(crate) async fn preview_agent_config_template(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
-    app: tauri::AppHandle,
-    client: String,
-    model: String,
-    oauth_configuration: bool,
-    claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
-    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
-    api_key: Option<String>,
-    config_directories: Option<AgentConfigDirectories>,
-) -> Result<TemplatePreview, String> {
-    remote.agent_operation(target_revision, api_key.clone(), async move {
-    let directories = validate_agent_config_directories(config_directories)?;
-    AGENT_CONFIG_DIRECTORIES
-        .scope(directories, async move {
-            preview_agent_config_template_in_directories(
-                app,
-                client,
-                model,
-                oauth_configuration,
-                claude_code_model_mappings,
-                claude_desktop_model_mappings,
-                api_key,
-            )
-            .await
-        })
-        .await
-    }).await
-}
-
-pub(crate) async fn preview_agent_config_template_in_directories(
     app: tauri::AppHandle,
     client: String,
     model: String,
@@ -332,39 +301,6 @@ pub(crate) async fn preview_agent_config_template_in_directories(
 
 #[tauri::command]
 pub(crate) async fn apply_agent_config_template(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
-    app: tauri::AppHandle,
-    client: String,
-    model: String,
-    oauth_configuration: bool,
-    claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
-    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
-    revision: String,
-    api_key: Option<String>,
-    config_directories: Option<AgentConfigDirectories>,
-) -> Result<AgentConfigActionResult, String> {
-    remote.agent_operation(target_revision, api_key.clone(), async move {
-    let directories = validate_agent_config_directories(config_directories)?;
-    AGENT_CONFIG_DIRECTORIES
-        .scope(directories, async move {
-            apply_agent_config_template_in_directories(
-                app,
-                client,
-                model,
-                oauth_configuration,
-                claude_code_model_mappings,
-                claude_desktop_model_mappings,
-                revision,
-                api_key,
-            )
-            .await
-        })
-        .await
-    }).await
-}
-
-pub(crate) async fn apply_agent_config_template_in_directories(
     app: tauri::AppHandle,
     client: String,
     model: String,

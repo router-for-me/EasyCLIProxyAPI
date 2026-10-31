@@ -7,21 +7,6 @@ const models = [{ name: 'gpt-one' }, { name: 'gpt-two' }];
 const entry = { model: 'gpt-one', alias: 'claude-sonnet-4-6', context1m: false };
 
 describe('Claude Desktop custom models', () => {
-  test('reloads saved per-row context flags into the toggle state', () => {
-    const saved = {
-      opus: '', sonnet: 'model-a', haiku: '',
-      desktopModels: [
-        { model: 'model-a', alias: 'claude-opus-5', context1m: true },
-        { model: 'model-b', alias: 'claude-sonnet-5', context1m: false },
-        { model: 'model-c', alias: 'claude-haiku-4-5', context1m: false },
-      ],
-    };
-    const reloaded = desktopModelEntries(JSON.parse(JSON.stringify(saved)));
-    expect(reloaded).toEqual(saved.desktopModels);
-    expect(reloaded.map((row) => row.context1m)).toEqual([true, false, false]);
-    expect(reloaded[0]).not.toBe(saved.desktopModels[0]);
-  });
-
   test('migrates old slots without filling an empty configuration', () => {
     expect(desktopModelEntries(legacy)).toEqual([
       { model: 'gpt-one', alias: 'claude-opus-4-6', context1m: true },
@@ -123,19 +108,6 @@ describe('Claude Desktop custom models', () => {
     expect(desktopModelValidation([configured], available, [configured])).toBeNull();
     expect(desktopModelValidation([configured], available, [])).toBe('aliasExists');
     expect(desktopModelValidation([configured], [{ name: 'claude-opus-5', isAlias: false }], [configured])).toBe('aliasExists');
-  });
-
-  test('does not flag aliasExists when alias already points to entry model', () => {
-    const configured = { model: 'custom-upstream-model', alias: 'claude-sonnet-5', context1m: false };
-    const available = [{ name: 'claude-sonnet-5', isAlias: true, alias: 'custom-upstream-model' }];
-    expect(desktopAliasNotice(configured, [configured], available, [])).toBeNull();
-    expect(desktopModelValidation([configured], available, [])).toBeNull();
-  });
-
-  test('preserves custom model alias without spuriously appending -cc when mapped to the same model', () => {
-    const configured = { model: 'custom-upstream-model', alias: 'claude-sonnet-5', context1m: false };
-    const available = [{ name: 'claude-sonnet-5', isAlias: true, alias: 'custom-upstream-model' }];
-    expect(suffixCollidingDesktopAliases([configured], available, [])).toEqual([configured]);
   });
 
   test('tracks alias edits, row removal and context changes independently of legacy fields', () => {

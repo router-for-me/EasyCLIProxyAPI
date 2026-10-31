@@ -2,7 +2,6 @@ import './styles/layers.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { isTauri } from './services/platform';
-import { getCpaConnection } from './services/remoteCpa';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import App from './App';
 import { I18nProvider } from './i18n';
@@ -13,7 +12,6 @@ import './styles/index.css';
 import { initializeWindowActivity } from './services/windowActivity';
 
 async function bootstrap() {
-  const connection = await getCpaConnection().catch(() => undefined);
   await initializeWindowActivity();
   await Promise.all([initializeUsagePreferences(), initializeThemePreferences().then(() => initializeTheme()), initializePrivacyMode()]);
   if (import.meta.env.DEV && !isTauri()) {
@@ -26,9 +24,9 @@ async function bootstrap() {
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <I18nProvider syncNativeLocale={connection?.remoteActive === false}>
+      <I18nProvider>
         <AppErrorBoundary>
-          <App initialConnection={connection} />
+          <App />
         </AppErrorBoundary>
       </I18nProvider>
     </StrictMode>,

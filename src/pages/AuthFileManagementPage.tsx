@@ -1,9 +1,6 @@
 import { AuthFileBatchDialog } from '../components/AuthFileBatchDialog';
-import { CredentialTagManager } from '../components/CredentialTagManager';
 import { refreshCredential } from '../services/authFileOperations';
-import { mergeCredentialTags } from '../services/credentialTags';
 import { EmptyState } from '../components/EmptyState';
-import { CredentialCardActions } from '../components/CredentialCardActions';
 import { Checkbox } from '../components/Checkbox';
 import { commitFetchedQuota } from '../services/quotaEnrichment';
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -12,8 +9,6 @@ import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
 import { AuthFileQuotaPanel } from '../components/AuthFileQuotaPanel';
 import { AuthFileSettingsDialog } from '../components/AuthFileSettingsDialog';
 import { useQuotaReset } from '../components/useQuotaReset';
-import { CardLayoutGrid, CardLayoutSwitch, useCardLayout, useExpandedCards, useSettledHeights, type StackedColumns } from '../components/CardLayout';
-import { estimateCredentialCardHeight, lowestQuotaRow } from '../services/quotaLayout';
 import './AuthFileManagementPage.css';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { AuthFileModelsDialog } from '../components/AuthFileModelsDialog';
@@ -23,7 +18,6 @@ import { AuthFileUsageSummary } from '../components/AuthFileUsageSummary';
 import { Dialog } from '../components/Dialog';
 import {
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   FileDown,
@@ -68,8 +62,6 @@ import {
 import {
   authFileName,
   authFileIdentities,
-  countAuthFileTags,
-  normalizeAuthFileTags,
   authFileCooldownResetIndex,
   dedupeAuthFiles,
   isOAuthCredentialFile,
@@ -100,8 +92,6 @@ import {
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
 import { Select } from '../components/Select';
-import { PluginLogo, usePluginList } from '../components/ProviderLogo';
-import { findPluginLogo, resolveProviderIcon } from '../services/pluginLogos';
 
 type AuthFile = Record<string, unknown>;
 
@@ -136,9 +126,6 @@ const fileName = authFileName;
 const isRuntimeOnly = isRuntimeOnlyAuthFile;
 const hasQuota = (file: AuthFile) => Boolean(quotaProviderForFile(file));
 
-// Stacked matches .auth-file-card-grid (420px minimum, 12px gap); Compact packs narrower glance cards.
-const credentialColumns: StackedColumns = { stacked: { minWidth: 420, gap: 12 }, compact: { minWidth: 280, gap: 8 } };
-
 export function AuthFileManagementPage({ initialProvider }: { initialProvider?: string } = {}) {
   const { t } = useI18n();
   const privacy = usePrivacyMask();
@@ -151,16 +138,9 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
   }>({ files: [], receivedAtMs: 0 });
   const { files, receivedAtMs, observedAt } = fileSnapshot;
   const [filter, setFilter] = useState('');
-  const [tagFilter, setTagFilter] = useState('');
-  const [untaggedOnly, setUntaggedOnly] = useState(false);
-  const [tagManagerOpen, setTagManagerOpen] = useState(false);
-
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(() => new Set());
-  const [layout, setLayout] = useCardLayout('cpa-gui.auth-files-layout.v1');
-  const [openGlances, toggleGlance] = useExpandedCards();
-  const settledHeight = useSettledHeights();
   const [providerFilter, setProviderFilter] = useState(() => (
     initialProvider ? providerName({ provider: initialProvider }) : 'all'
   ));
@@ -168,7 +148,6 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
-  const [batchScope, setBatchScope] = useState<Set<string>>(new Set());
   const refreshPending = useRef(false);
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [cooldownResetting, setCooldownResetting] = useState<Set<string>>(() => new Set());
@@ -211,7 +190,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
     try {
       const payload = await managementApi.get('/credentials');
       if (!mountedRef.current || requestId !== fileRequestRef.current) return;
-      const nextFiles = sortAuthFilesByPriority(mergeCredentialTags(dedupeAuthFiles(responseList(payload, 'files'))));
+      const nextFiles = sortAuthFilesByPriority(dedupeAuthFiles(responseList(payload, 'files')));
       setFileSnapshot({ files: nextFiles, receivedAtMs: Date.now(), observedAt: readString(payload, 'observed_at') });
       const validQuotaKeys = new Set(nextFiles.map(quotaKey));
       pruneQuotaCache(validQuotaKeys);
@@ -332,7 +311,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
     setOauthModelSaving(true);
     setOauthModelError('');
     try {
-      await saveOAuthModelSettings(settings, oauthExcludedRules, managementApi, { syncCredentials: true });
+      await saveOAuthModelSettings(settings, oauthExcludedRules);
       showNotice(settings.target.scope === 'credential'
         ? { key: 'authFiles.models.credentialUpdated', variables: { name: shownNameFor(settings.target.name) } }
         : { key: 'authFiles.models.updated', variables: { provider: settings.target.label } });
@@ -362,8 +341,6 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
     );
   };
 
-  const plugins = usePluginList();
-
   useEffect(() => {
     mountedRef.current = true;
     void loadFiles();
@@ -378,14 +355,6 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
     [files],
   );
 
-  const tags = useMemo(() => [...new Set(files.flatMap(file => normalizeAuthFileTags(file.tags)))].sort((left, right) => left.localeCompare(right)), [files]);
-  const tagCounts = useMemo(() => countAuthFileTags(files), [files]);
-  const untaggedFilterValue = `untagged:${JSON.stringify(tags)}`;
-  useEffect(() => {
-    if (tagFilter && !tagCounts.has(tagFilter)) setTagFilter('');
-  }, [tagFilter, tagCounts]);
-  const tagIdentities = files.flatMap(authFileIdentities);
-
   const visibleFiles = useMemo(() => {
     const query = filter.trim().toLowerCase();
     return files.filter((file) => {
@@ -399,18 +368,18 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
         (statusFilter === 'problem' && !disabled && (['error', 'warning'].includes(authFileHealth(file).tone) || (Array.isArray(file.cooldowns) && file.cooldowns.length > 0)));
       const searchMatch =
         !query ||
-        [fileName(file), providerName(file), readString(file, 'email', 'account', 'label'), readString(file, 'note'), readString(file, 'prefix'), ...normalizeAuthFileTags(file.tags)]
+        [fileName(file), providerName(file), readString(file, 'email', 'account', 'label'), readString(file, 'note'), readString(file, 'prefix')]
           .join(' ')
           .toLowerCase()
           .includes(query);
-      return providerMatch && runtimeMatch && searchMatch && (untaggedOnly ? !normalizeAuthFileTags(file.tags).length : !tagFilter || normalizeAuthFileTags(file.tags).includes(tagFilter));
+      return providerMatch && runtimeMatch && searchMatch;
     });
-  }, [files, filter, providerFilter, statusFilter, tagFilter, untaggedOnly]);
+  }, [files, filter, providerFilter, statusFilter]);
 
   const pageCount = Math.max(1, Math.ceil(visibleFiles.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageFiles = visibleFiles.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  useEffect(() => setPage(1), [filter, providerFilter, statusFilter, tagFilter, untaggedOnly, pageSize]);
+  useEffect(() => setPage(1), [filter, providerFilter, statusFilter, pageSize]);
   useEffect(() => setPage((current) => Math.min(current, pageCount)), [pageCount]);
 
   const toggleDetails = (key: string) => setExpandedFiles((current) => {
@@ -539,8 +508,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
         <button type="button" className="secondary-button small-button" onClick={() => fileInputRef.current?.click()} disabled={busy}>
           <Import size={16} />{t('authFiles.import')}
         </button>
-        <button type="button" className="secondary-button small-button ghost" disabled={busy || loading} onClick={() => { setBatchScope(new Set(visibleFiles.map(quotaKey))); setBatchOpen(true); }}>{t('authFiles.operations.title')}</button>
-        <button type="button" className="secondary-button small-button" disabled={busy || loading} onClick={() => setTagManagerOpen(true)}>{t('authFiles.tags.manage')}</button>
+        <button type="button" className="secondary-button small-button ghost" disabled={busy || loading} onClick={() => setBatchOpen(true)}>{t('authFiles.operations.title')}</button>
         <input ref={fileInputRef} type="file" accept=".json,application/json" multiple hidden onChange={(event) => void handleUpload(event)} />
         </div>
       </header>
@@ -554,23 +522,6 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
           <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder={t('authFiles.searchPlaceholder')} aria-label={t('authFiles.searchPlaceholder')} />
           </div>
           <div className="auth-files-filters">
-          <Select value={untaggedOnly ? untaggedFilterValue : tagFilter} onChange={(event) => { setUntaggedOnly(event.currentTarget.selectedIndex === 1); setTagFilter(event.currentTarget.selectedIndex === 1 ? '' : event.currentTarget.value); }} aria-label={t('authFiles.tags.label')}>
-            <option value="">{t('authFiles.tags.all')}</option>
-            <option value={untaggedFilterValue}>{t('authFiles.tags.untagged')} ({files.filter(file => !normalizeAuthFileTags(file.tags).length).length})</option>
-            {tags.map(tag => <option key={tag} value={tag}>{privacy.text(tag, tagIdentities)} ({tagCounts.get(tag) ?? 0})</option>)}
-          </Select>
-          {tagFilter || untaggedOnly ? (
-            <button
-              type="button"
-              className="filter-chip auth-active-tag-badge"
-              onClick={() => { setTagFilter(''); setUntaggedOnly(false); }}
-              title={t("authFiles.tags.filterClear")}
-              aria-label={t("authFiles.tags.filterClear")}
-            >
-              <span>{untaggedOnly ? t('authFiles.tags.untagged') : privacy.text(tagFilter, tagIdentities)}</span>
-              <X size={12} aria-hidden="true" />
-            </button>
-          ) : null}
           <Select value={providerFilter} onChange={(event) => setProviderFilter(event.currentTarget.value)} aria-label={t('authFiles.filter.allProviders')}>
             <option value="all">{t('authFiles.filter.allProviders')}</option>
             {providers.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
@@ -583,7 +534,6 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
             <option value="runtime">{t('authFiles.filter.runtime')}</option>
           </Select>
           </div>
-          <CardLayoutSwitch className="auth-files-layout-control" value={layout} onChange={setLayout} />
         </div>
 
         {loading ? (
@@ -599,18 +549,11 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
             <span>{t('authFiles.list.quota')}</span>
             <span>{t('authFiles.list.actions')}</span>
           </div>
-          <CardLayoutGrid layout={layout} className="auth-file-card-grid" role="list" aria-label={t('authFiles.title')} columns={credentialColumns}
-            heights={pageFiles.map((file) => settledHeight(quotaKey(file), estimateCredentialCardHeight({
-              quota: quotas[quotaKey(file)] ?? idleQuota(),
-              tags: normalizeAuthFileTags(file.tags).length > 0,
-              cooldown: Boolean(normalizeAuthFileCooldowns(file.cooldowns, receivedAtMs, observedAt)?.records?.length),
-              expanded: expandedFiles.has(quotaKey(file)),
-              glance: layout === 'compact' && !openGlances.has(quotaKey(file)),
-            }), (quotas[quotaKey(file)] ?? idleQuota()).status === 'loading'))}>
+          <div className="auth-file-card-grid" role="list" aria-label={t('authFiles.title')}>
             {pageFiles.map((file) => {
               const name = fileName(file);
               const key = quotaKey(file);
-              const icon = resolveProviderIcon(providerKey(file), providerIcons, findPluginLogo(plugins, providerKey(file), readString(file, 'quota_plugin_id', 'quotaPluginId')));
+              const icon = providerIcons[providerKey(file)] ?? geminiIcon;
               const disabled = readBoolean(file, 'disabled');
               const priority = parseAuthFilePriority(file.priority) ?? 0;
               const identities = authFileIdentities(file);
@@ -626,52 +569,20 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
               const health = authFileHealth(file);
               const cooldownSnapshot = normalizeAuthFileCooldowns(file.cooldowns, receivedAtMs, observedAt);
               const hasCooldown = Boolean(cooldownSnapshot?.records?.length);
-              // A suspension is terminal, so it keeps its own strip even without
-              // cooldown data; its long prose belongs on that line, not in the badge.
-              const suspended = health.suspension !== undefined;
-              const showCooldown = hasCooldown || cooldownSnapshot?.records === null || suspended;
-              const statusLabel = hasCooldown && !health.disabled ? t('authFiles.list.cooling')
-                : health.label === 'authFiles.health.active' ? t('authFiles.list.available')
-                  : suspended ? t('authFiles.status.disabled') : t(health.label);
+              const showCooldown = hasCooldown || cooldownSnapshot?.records === null;
+              const statusLabel = hasCooldown && !health.disabled ? t('authFiles.list.cooling') : t(health.label === 'authFiles.health.active' ? 'authFiles.list.available' : health.label);
               const expanded = expandedFiles.has(key);
               const detailsId = `auth-file-details-${encodeURIComponent(key)}`;
               const cooldownResetIndex = authFileCooldownResetIndex(file);
               const resettingCooldown = Boolean(cooldownResetIndex && cooldownResetting.has(cooldownResetIndex));
-              const glance = layout === 'compact' && !openGlances.has(key);
-              const lowest = glance ? lowestQuotaRow(quota) : null;
               return (
-                <article className={`auth-file-card surface-card ${disabled ? 'is-disabled' : ''}`} key={key} role="listitem" aria-label={identity || displayName} data-glance={glance ? '' : undefined}>
+                <article className={`auth-file-card surface-card ${disabled ? 'is-disabled' : ''}`} key={key} role="listitem" aria-label={identity || displayName}>
                   <div className="auth-credential-row">
                   <header className={`auth-card-header auth-list-cell ${identity ? '' : 'filename-only'}`}>
-                    {icon.kind === 'builtin'
-                      ? <img src={icon.src} alt="" data-provider={providerKey(file)} className={providerKey(file) === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} />
-                      : <PluginLogo src={icon.kind === 'plugin' ? icon.src : ''} size={35} />}
+                    <img src={icon} alt="" data-provider={providerKey(file)} className={providerKey(file) === 'devin' ? 'provider-logo devin-logo' : 'provider-logo'} />
                     <div className="auth-card-identity">
                       <strong title={identity || displayName}>{identity || displayName}</strong>
-                      {glance ? <span className="auth-card-glance-line">{plan ? <span className="auth-card-glance-plan" title={plan}>{plan}</span> : null}{lowest ? <span title={`${lowest.label} · ${t('authFiles.settings.quotaRemaining')}`}>{lowest.label} {Math.round(Math.max(0, Math.min(100, lowest.remainingPercent ?? 0)))}%</span> : null}</span> : null}
                       <span className="auth-card-filename" title={displayName}>{identity ? displayName : providerName(file)}</span>
-                      {normalizeAuthFileTags(file.tags).length > 0 ? <div className="auth-card-tags-container">
-                        <div className="auth-file-tags" role="group" aria-label={t("authFiles.tags.label")}>
-                          {normalizeAuthFileTags(file.tags).map((tag) => (
-                            <button
-                              key={tag}
-                              type="button"
-                              className={`filter-chip auth-tag-chip ${tagFilter === tag ? "active" : ""}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setUntaggedOnly(false);
-                                setTagFilter((current) => (current === tag ? "" : tag));
-                              }}
-                              title={t(tagFilter === tag ? "authFiles.tags.filterClear" : "authFiles.tags.filterBy", {
-                                tag: privacy.text(tag, identities),
-                              })}
-                              aria-pressed={tagFilter === tag}
-                            >
-                              <span>{privacy.text(tag, identities)}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div> : null}
                       {isRuntimeOnly(file) ? <span className="auth-card-provider">{t('authFiles.runtime')}</span> : null}
                     </div>
                   </header>
@@ -682,10 +593,6 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                   <div className="auth-list-cell auth-list-status" data-label={t('authFiles.list.status')}>
                     <span className={`auth-status-badge ${hasCooldown && !health.disabled ? 'warning' : health.tone}`} title={statusLabel}>{statusLabel}</span>
                     <small>{t('authFiles.priority.button', { priority })}</small>
-                    {layout === 'compact' ? <button type="button" className="secondary-button tiny-button auth-card-glance-toggle" onClick={() => toggleGlance(key)} aria-expanded={!glance}
-                      aria-label={`${t(glance ? 'cardLayout.details.show' : 'cardLayout.details.hide')}: ${identity || displayName}`} title={t(glance ? 'cardLayout.details.show' : 'cardLayout.details.hide')}>
-                      <ChevronDown size={14} aria-hidden="true" />
-                    </button> : null}
                   </div>
                   <div className="auth-list-cell auth-list-recent" data-label={t('authFiles.list.recent')}><AuthFileRequestStatus file={file} compact /></div>
                   <div className="auth-list-cell auth-list-usage" data-label={t('authFiles.usage.title')}><AuthFileUsageSummary file={file} /></div>
@@ -693,15 +600,19 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                     {quotaProvider ? <AuthFileQuotaPanel compact dense quota={quota} file={file} disabled={busy || disabled} onRefresh={() => void refreshQuota(file)} onReset={quotaProvider === 'codex' || quotaProvider === 'claude' ? () => void resetQuota(file, quota) : undefined} /> : <span className="auth-list-muted">{t('authFiles.list.noQuota')}</span>}
                     <QuotaActionFeedback quota={quota} name={displayName} />
                   </div>
-                  <CredentialCardActions
-                    identity={identity || displayName} disabled={disabled} busy={busy} resettingCooldown={resettingCooldown}
-                    oauth={isOAuthCredentialFile(file)} runtimeOnly={isRuntimeOnly(file)} hasProvider={Boolean(providerKey(file))}
-                    canRefresh={Boolean(quotaProvider)} refreshing={quota.status === 'loading'} copied={copied === name}
-                    expanded={expanded} detailsId={detailsId}
-                    onRefresh={() => void refreshQuota(file)} onSettings={() => setSettingsName(name)}
-                    onExclusions={() => void openOauthModelSettings({ provider: providerKey(file), label: providerName(file), scope: 'credential', name })}
-                    onModels={() => setModelViewName(name)} onCopy={() => void copyName(name)} onDelete={() => void deleteFile(file)}
-                    onToggle={() => void toggleStatus(file)} onDetails={() => toggleDetails(key)} />
+                  <footer className="auth-card-actions auth-list-cell" data-label={t('authFiles.list.actions')}>
+                    <div className="auth-list-icon-actions">
+                      <button type="button" className="secondary-button small-button" onClick={() => void refreshQuota(file)} disabled={busy || disabled || !quotaProvider || quota.status === 'loading'} title={t('authFiles.quota.refresh')}><RefreshCw size={14} className={quota.status === 'loading' ? 'spin' : ''} aria-hidden="true" />{t('authFiles.action.refreshQuota')}</button>
+                      <button type="button" className="secondary-button small-button" onClick={() => setSettingsName(name)} disabled={busy || resettingCooldown || !isOAuthCredentialFile(file)} title={t(isOAuthCredentialFile(file) ? 'authFiles.settings.title' : 'authFiles.fileOnly')}>{t('authFiles.action.settings')}</button>
+                      <button type="button" className="secondary-button small-button" onClick={() => setModelViewName(name)} disabled={busy || !providerKey(file)} title={t('authFiles.models.viewTitle')}>{t('authFiles.action.models')}</button>
+                      <button type="button" className="secondary-button small-button" onClick={() => void copyName(name)} disabled={busy} title={t('authFiles.copyName')}>{copied === name ? <Check size={14} aria-hidden="true" /> : null}{t('authFiles.action.copy')}</button>
+                      <button type="button" className="danger-button small-button" onClick={() => void deleteFile(file)} disabled={busy || resettingCooldown || isRuntimeOnly(file)} title={t('common.delete')}>{t('common.delete')}</button>
+                    </div>
+                    <div className="auth-list-main-actions">
+                      <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`} role="switch" aria-checked={!disabled} aria-label={`${t(disabled ? 'common.enable' : 'common.disable')} ${identity || displayName}`} onClick={() => void toggleStatus(file)} disabled={busy || resettingCooldown || !isOAuthCredentialFile(file)} title={t(isOAuthCredentialFile(file) ? disabled ? 'common.enable' : 'common.disable' : 'authFiles.fileOnly')}>{t(disabled ? 'common.enable' : 'common.disable')}</button>
+                      <button type="button" className="secondary-button small-button auth-list-details-button" onClick={() => toggleDetails(key)} aria-expanded={expanded} aria-controls={detailsId}>{t(expanded ? 'authFiles.list.collapse' : 'authFiles.list.details')}</button>
+                    </div>
+                  </footer>
                   </div>
                   {showCooldown ? <AuthFileHealthStatus compact file={file} receivedAtMs={receivedAtMs} observedAt={observedAt}
                     resetting={resettingCooldown} resetDisabled={busy || loading}
@@ -722,7 +633,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                 </article>
               );
             })}
-          </CardLayoutGrid>
+          </div>
           </div>
         )}
         {!loading && visibleFiles.length > 0 && files.length > 10 ? <nav className="auth-list-pagination" aria-label={t('authFiles.title')}>
@@ -736,12 +647,8 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
       </section>
       {runtimeCount > 0 ? <p className="page-footnote">{t('authFiles.runtimeFootnote', { count: runtimeCount })}</p> : null}
 
-      {batchOpen ? <AuthFileBatchDialog files={files.filter(file => batchScope.has(quotaKey(file)))} onClose={() => setBatchOpen(false)} onChanged={() => loadFiles(false)} /> : null}
-      {tagManagerOpen ? <CredentialTagManager files={files} onClose={() => setTagManagerOpen(false)} onChanged={() => loadFiles(false)} onFilter={tag => {
-        setTagFilter(tag ?? ''); setUntaggedOnly(tag === null); setTagManagerOpen(false);
-      }} /> : null}
-      {settingsName ? <AuthFileSettingsDialog key={settingsName} name={settingsName} displayName={shownNameFor(settingsName)} provider={providerKey(files.find((file) => fileName(file) === settingsName) ?? {})}
-          existingTags={tags} existingTagCounts={tagCounts} onClose={() => { setSettingsName(null); void loadFiles(false); }} onSaved={() => {
+      {batchOpen ? <AuthFileBatchDialog files={visibleFiles} onClose={() => setBatchOpen(false)} onChanged={() => loadFiles(false)} /> : null}
+      {settingsName ? <AuthFileSettingsDialog key={settingsName} name={settingsName} displayName={shownNameFor(settingsName)} provider={providerKey(files.find((file) => fileName(file) === settingsName) ?? {})} onClose={() => setSettingsName(null)} onSaved={() => {
         showNotice({ key: 'authFiles.settings.updated', variables: { name: shownNameFor(settingsName) } });
         setSettingsName(null);
         void loadFiles(false);
@@ -768,7 +675,6 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                 </label>
               )}
               <span>{t(oauthModelTarget.scope === 'credential' ? 'authFiles.models.description' : 'authFiles.models.globalDescription', { provider: oauthModelTarget.label })}</span>
-              {oauthModelTarget.scope === 'provider' ? <small className="auth-model-sync-hint" style={{ display: 'block', marginTop: '4px', color: 'var(--text-tertiary)' }}>{t('authFiles.models.syncHint')}</small> : null}
             </div>
             <button type="button" className="icon-button quiet" onClick={closeOauthModels} disabled={oauthModelSaving} title={t('common.close')} aria-label={t('common.close')}><X size={18} aria-hidden="true" /></button>
           </div>

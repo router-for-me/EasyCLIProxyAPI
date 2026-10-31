@@ -26,10 +26,6 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   const name = privacy.credentialName(file);
   const error = privacy.text(quota.error ?? '');
   const compactLayout = compact || dense;
-  const visibleRows = compactLayout
-    ? quota.rows.filter((row, index) => index < 2 || row.kind === 'cloud-credits') : quota.rows;
-  const hiddenRows = compactLayout
-    ? quota.rows.filter((row, index) => index >= 2 && row.kind !== 'cloud-credits') : [];
   const showReset = Boolean(onReset && ((quota.resetCredits ?? 0) > 0 || hasPendingClaudeReset(file)));
   const accountCreditsLabel = quota.creditsUnlimited
     ? t('quota.creditUnlimited')
@@ -76,10 +72,10 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
       </div> : null}
       {quota.status === 'success' ? <>
         {quota.rows.length ? <>
-          <div className="credential-quota-rows">{visibleRows.map(renderRow)}</div>
-          {hiddenRows.length > 0 ? <details className="credential-quota-more">
-            <summary>{t('authFiles.health.details')} (+{hiddenRows.length})</summary>
-            <div className="credential-quota-rows">{hiddenRows.map(renderRow)}</div>
+          <div className="credential-quota-rows">{(compactLayout ? quota.rows.slice(0, 2) : quota.rows).map(renderRow)}</div>
+          {compactLayout && quota.rows.length > 2 ? <details className="credential-quota-more">
+            <summary>{t('authFiles.health.details')} (+{quota.rows.length - 2})</summary>
+            <div className="credential-quota-rows">{quota.rows.slice(2).map((row, index) => renderRow(row, index + 2))}</div>
           </details> : null}
         </> : <p className="credential-quota-empty">{t('authFiles.quota.empty')}</p>}
         {!dense ? <div className="credential-quota-footnotes">

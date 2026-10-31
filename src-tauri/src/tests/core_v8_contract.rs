@@ -184,7 +184,7 @@ async fn check_claude_model_routes(legacy_marker: Option<&str>) {
         api_keys: vec![GuiApiKeyEntry { key: "isolated-client-key".into(), remark: String::new() }],
         ..GuiConfigFile::default()
     };
-    let initial = "config-version: 8\nmanagement: {disable-control-panel: true, disable-auto-update-panel: true}\noauth:\n  providers:\n    antigravity:\n      sensitive-words-replace: {\"first: key\": \"val 1\", \"second key\": \"val 2\"}\n      antigravity-credits: true\napi-keys:\n  codex:\n    - name: test-upstream\n      base-url: http://127.0.0.1:1/v1\n      models: [{name: model-one}]\n      keys: [{api-key: upstream-test, weight: 2}]\n";
+    let initial = "config-version: 8\nmanagement: {disable-control-panel: true, disable-auto-update-panel: true}\napi-keys:\n  codex:\n    - name: test-upstream\n      base-url: http://127.0.0.1:1/v1\n      models: [{name: model-one}]\n      keys: [{api-key: upstream-test, weight: 2}]\n";
     let migrated;
     let initial = if let Some(marker) = legacy_marker {
         let legacy = format!("{marker}codex-api-key:\n  - api-key: upstream-test\n    base-url: http://127.0.0.1:1/v1\n    models: [{{name: model-one, alias: claude-sonnet-custom}}]\noauth-model-alias:\n  codex: [{{name: oauth-original, alias: claude-opus-legacy, fork: true}}]\npayload:\n  override:\n    - models: [{{name: claude-sonnet-custom, protocol: codex}}]\n      params: {{reasoning.effort: high, service_tier: priority}}\n");
@@ -224,23 +224,6 @@ async fn check_claude_model_routes(legacy_marker: Option<&str>) {
         assert_eq!(saved["requests"]["payload"], before["requests"]["payload"]);
     }
     assert_eq!(saved["api-keys"]["codex"][0]["keys"], before["api-keys"]["codex"][0]["keys"]);
-    assert_eq!(saved["oauth"]["providers"], before["oauth"]["providers"]);
-    if legacy_marker.is_none() {
-        assert_eq!(
-            saved["oauth"]["providers"]["antigravity"]["sensitive-words-replace"]["second key"],
-            "val 2"
-        );
-        assert_eq!(
-            saved["oauth"]["providers"]["antigravity"]["antigravity-credits"],
-            true
-        );
-        let persisted: serde_norway::Value =
-            serde_norway::from_str(&fs::read_to_string(&core.config).unwrap()).unwrap();
-        assert_eq!(
-            persisted["oauth"]["providers"]["antigravity"]["sensitive-words-replace"]["second key"],
-            "val 2"
-        );
-    }
     assert!(saved["api-keys"]["codex"][0]["models"].as_array().unwrap().iter()
         .any(|entry| entry["name"] == "model-one" && entry["alias"] == "claude-sonnet-custom"));
 
@@ -411,7 +394,6 @@ async fn v8_accepts_gui_settings_and_reloads_client_keys() {
         &CoreSensitiveWordsSettings {
             antigravity_sensitive_words: vec!["sample".into()],
             devin_sensitive_words: vec!["sample-devin".into()],
-            ..Default::default()
         },
     )
     .unwrap()
@@ -510,50 +492,6 @@ async fn v8_accepts_gui_settings_and_reloads_client_keys() {
     core.start().await;
     core.wait_for_client_key("client-two", 200).await;
     core.wait_for_client_key("client-one", 401).await;
-}
-
-#[tokio::test]
-#[ignore = "requires CPA_V8_TEST_CORE pointing to a v8 executable"]
-async fn three_v8_instances_keep_selected_queue_and_database_isolated() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let executable = fs::canonicalize(std::env::var_os("CPA_V8_TEST_CORE").unwrap()).unwrap();
-    let mut instances = Vec::new();
-    for index in 0..3 {
-        let bind = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = bind.local_addr().unwrap().port();
-        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let upstream_address = upstream.local_addr().unwrap();
-        let directory = agent_test_home(&format!("v8-contract-instance-{index}"));
-        let gui = GuiConfigFile { host: "127.0.0.1".into(), port, management_secret_key: "isolated-test-secret".into(), auth_dir: path_to_string(&directory.join("auth")), usage_statistics_enabled: true, ..GuiConfigFile::default() };
-        fs::create_dir_all(&gui.auth_dir).unwrap();
-        let mut core = TestCore { config: directory.join("config.yaml"), directory, child: None, executable: executable.clone(), origin: format!("http://127.0.0.1:{port}"), client: reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap() };
-        let initial = format!("remote-management: {{disable-control-panel: true, disable-auto-update-panel: true}}\nopenai-compatibility:\n  - name: fixture\n    base-url: http://{upstream_address}/v1\n    api-key-entries: [{{api-key: upstream-test}}]\n    models: [{{name: same-model, alias: same-model}}]\n");
-        fs::write(&core.config, apply_gui_managed_settings(&initial,&gui).unwrap()).unwrap();
-        drop(bind);
-        core.start().await;
-        let upstream_task = tokio::spawn(async move {
-            let (mut socket,_) = upstream.accept().await.unwrap();
-            let mut buf = [0;8192]; assert!(socket.read(&mut buf).await.unwrap()>0);
-            let body = serde_json::json!({"id":"fixture","object":"chat.completion","model":"same-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":index+1,"completion_tokens":1,"total_tokens":index+2}}).to_string();
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
-        });
-        core.client.post(format!("{}/v1/chat/completions",core.origin)).bearer_auth(&gui.api_keys[0].key).json(&serde_json::json!({"model":"same-model","messages":[{"role":"user","content":"test"}]})).send().await.unwrap().error_for_status().unwrap().bytes().await.unwrap();
-        upstream_task.await.unwrap();
-        let target = (index != 0).then(|| remote_cpa::Target::new(&core.origin,"isolated-test-secret").unwrap());
-        instances.push((core,gui,target));
-    }
-    let root = instances[0].0.directory.join("usage-records");
-    for (index,(_,gui,target)) in instances.iter().enumerate() {
-        assert_eq!(usage::fixture_usage_totals(&root,target.as_ref(),gui,false).await.unwrap(),(0,0));
-        let collected = tokio::time::timeout(Duration::from_secs(5),async {
-            loop { let totals = usage::fixture_usage_totals(&root,target.as_ref(),gui,true).await.unwrap(); if totals.0 > 0 { break totals; } tokio::time::sleep(Duration::from_millis(50)).await; }
-        }).await.unwrap();
-        assert_eq!(collected,(1,index as u64+2));
-    }
-    for (index,(core,gui,target)) in instances.iter_mut().enumerate() {
-        core.stop();
-        assert_eq!(usage::fixture_usage_totals(&root,target.as_ref(),gui,false).await.unwrap(),(1,index as u64+2));
-    }
 }
 
 #[tokio::test]

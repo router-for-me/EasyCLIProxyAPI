@@ -243,22 +243,6 @@ pub(crate) async fn execute_restore_plan(
 
 #[tauri::command]
 pub(crate) async fn preview_agent_config_backup(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
-    app: tauri::AppHandle,
-    client: String,
-    id: String,
-    config_directories: Option<AgentConfigDirectories>,
-) -> Result<BackupPreview, String> {
-    let directories = validate_agent_config_directories(config_directories)?;
-    remote.management_operation(target_revision, AGENT_CONFIG_DIRECTORIES
-        .scope(directories, async move {
-            preview_agent_config_backup_in_directories(app, client, id).await
-        })
-    ).await
-}
-
-pub(crate) async fn preview_agent_config_backup_in_directories(
     app: tauri::AppHandle,
     client: String,
     id: String,
@@ -272,23 +256,6 @@ pub(crate) async fn preview_agent_config_backup_in_directories(
 
 #[tauri::command]
 pub(crate) async fn restore_agent_config_backup(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
-    app: tauri::AppHandle,
-    client: String,
-    id: String,
-    revision: String,
-    config_directories: Option<AgentConfigDirectories>,
-) -> Result<AgentConfigActionResult, String> {
-    let directories = validate_agent_config_directories(config_directories)?;
-    remote.management_operation(target_revision, AGENT_CONFIG_DIRECTORIES
-        .scope(directories, async move {
-            restore_agent_config_backup_in_directories(app, client, id, revision).await
-        })
-    ).await
-}
-
-pub(crate) async fn restore_agent_config_backup_in_directories(
     app: tauri::AppHandle,
     client: String,
     id: String,

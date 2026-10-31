@@ -16,7 +16,6 @@ export type ProviderHealthProbe = {
 
 export type ProviderHealthProbeResult = {
   success: boolean;
-  budgetExhausted?: boolean;
   firstTokenLatencyMs?: number;
   responseLatencyMs?: number;
   error?: string;
@@ -26,7 +25,7 @@ export type ProviderHealthProbeResult = {
 
 export type ProviderModelHealthResult = ProviderHealthProbeResult & {
   model: string;
-  status: 'healthy' | 'failed' | 'budget-exhausted';
+  status: 'healthy' | 'failed';
 };
 
 export type ProviderHealthCheckOptions = {
@@ -225,7 +224,6 @@ export async function checkProviderHealthProbe(
     const response = await invoke<{
       firstTokenLatencyMs?: number;
       responseLatencyMs: number;
-      budgetExhausted?: boolean;
     }>('provider_health_probe', {
       request: {
         ...(['interactions', 'vertex', 'xai', 'meta'].includes(provider) ? { sourceProvider: provider } : {}),
@@ -247,8 +245,7 @@ export async function checkProviderHealthProbe(
       ? Math.max(1, Math.round(response.responseLatencyMs))
       : firstTokenLatencyMs;
     return {
-      success: !response.budgetExhausted,
-      ...(response.budgetExhausted ? { budgetExhausted: true } : {}),
+      success: true,
       ...(firstTokenLatencyMs === undefined ? {} : { firstTokenLatencyMs }),
       ...(responseLatencyMs === undefined ? {} : { responseLatencyMs }),
     };
@@ -279,7 +276,7 @@ export async function checkProviderModelHealth(
   return {
     ...result,
     model,
-    status: result.budgetExhausted ? 'budget-exhausted' : result.success ? 'healthy' : 'failed',
+    status: result.success ? 'healthy' : 'failed',
   };
 }
 

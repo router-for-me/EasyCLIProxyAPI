@@ -1,4 +1,3 @@
-import { remoteTargetRevision } from './remoteCpa';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentLocale, translate } from '../i18n';
 
@@ -26,7 +25,7 @@ async function optionalConfigValue(
 ): Promise<unknown> {
   try {
     return await invoke<unknown>('management_request', {
-      request: { targetRevision: remoteTargetRevision(), method: 'GET', path, query: normalizeQuery(options.query), timeoutMs: options.timeoutMs },
+      request: { method: 'GET', path, query: normalizeQuery(options.query), timeoutMs: options.timeoutMs },
     });
   } catch (error) {
     // Only an absent v8 config node is optional, not an unavailable endpoint or server.
@@ -58,7 +57,7 @@ async function request<T = ManagementJson>(
 ): Promise<T> {
   return invoke<T>('management_request', {
     request: {
-      targetRevision: remoteTargetRevision(), method,
+      method,
       path,
       query: normalizeQuery(options.query),
       body: options.body,
@@ -84,10 +83,9 @@ export const managementApi = {
     options: ManagementRequestOptions = {},
   ) => request<T>('DELETE', path, options),
   uploadAuthFile: async (file: File) => {
-    const targetRevision = remoteTargetRevision();
     const data = Array.from(new Uint8Array(await file.arrayBuffer()));
     return invoke<ManagementJson>('upload_auth_file', {
-      targetRevision, name: file.name,
+      name: file.name,
       data,
     });
   },

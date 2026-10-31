@@ -1,4 +1,4 @@
-import { invokeAgentCommand as invoke } from './agents';
+import { invoke } from '@tauri-apps/api/core';
 import type { MessageKey } from '../i18n/resources';
 
 export const codexReasoningEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
@@ -36,29 +36,9 @@ export type CodexCatalogEditorModel = {
 
 export type CodexCatalogEditorSnapshot = {
   defaultAutoReviewModel?: string | null;
-  defaultOrder?: string[];
   revision: string;
   models: CodexCatalogEditorModel[];
 };
-
-export function moveCodexModel<T>(models: T[], from: number, to: number): T[] {
-  if (from === to || from < 0 || to < 0 || from >= models.length || to >= models.length) return models;
-  const next = [...models];
-  const [moved] = next.splice(from, 1);
-  next.splice(to, 0, moved);
-  return next;
-}
-
-export function hasCodexModelOrderChanged(models: Array<{ slug: string }>, baseline: Array<{ slug: string }>): boolean {
-  return models.length !== baseline.length || models.some((model, index) => model.slug !== baseline[index]?.slug);
-}
-
-export function orderCodexModelsBySlugs<T extends { slug: string }>(models: T[], order: string[]): T[] {
-  if (!order.length) return models;
-  const rank = new Map(order.map((slug, index) => [slug, index]));
-  return [...models].sort((left, right) =>
-    (rank.get(left.slug) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right.slug) ?? Number.MAX_SAFE_INTEGER));
-}
 
 export function codexContextSourceHint(model: CodexCatalogEditorModel): MessageKey {
   if (model.configuration.context_window !== model.defaults.context_window
@@ -118,18 +98,6 @@ export function toggleCodexReasoningLevel(
     ? levels.has('medium') ? 'medium' : supported[0]?.effort ?? null
     : currentDefault;
   return { ...configuration, supported_reasoning_levels: supported, default_reasoning_level: nextDefault };
-}
-
-export function setCodexModelsVisibility(
-  models: CodexCatalogEditorModel[],
-  targetSlugs: Iterable<string>,
-  visibility: 'list' | 'hide',
-): CodexCatalogEditorModel[] {
-  const targets: Record<string, true> = Object.create(null);
-  for (const slug of targetSlugs) targets[slug] = true;
-  return models.map((model) => targets[model.slug] && model.configuration.visibility !== visibility
-    ? { ...model, configuration: { ...model.configuration, visibility } }
-    : model);
 }
 
 export function validateCodexModelConfiguration(configuration: CodexModelConfiguration): MessageKey | null {

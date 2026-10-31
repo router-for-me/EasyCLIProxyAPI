@@ -1,85 +1,4 @@
 @layer components {
-.config-dialog.credential-tag-manager {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: min(680px, 100%);
-  height: auto;
-  max-height: calc(100dvh - 32px);
-  min-width: 0;
-  overflow-y: auto;
-}
-.credential-tag-manager > * { flex-shrink: 0; }
-.credential-tag-manager > p { margin: 0; color: var(--text-secondary); }
-.credential-tag-manager input {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  min-height: 40px;
-  padding: 9px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font: inherit;
-}
-.credential-tag-manager input:hover { border-color: var(--border-hover); }
-.credential-tag-manager :is(input, button):focus-visible {
-  outline: 2px solid var(--primary-color);
-  outline-offset: 2px;
-  border-color: var(--primary-color);
-}
-.credential-tag-manager .filter-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-.credential-tag-manager .filter-chip:hover:not(:disabled) {
-  border-color: var(--primary-color);
-  background: var(--bg-hover);
-  color: var(--primary-color);
-}
-.credential-tag-manager .credential-tag-count {
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-.credential-tag-manager > .filter-chip { align-self: flex-start; }
-.credential-tag-manager-list { display: grid; gap: 8px; min-width: 0; }
-.credential-tag-manager-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border-color);
-}
-.credential-tag-manager-label { justify-self: start; min-width: 0; text-align: start; }
-.credential-tag-manager-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.credential-tag-manager-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; }
-.config-dialog.credential-tag-manager .credential-tag-manager-actions > button { flex: 0 0 auto; width: auto; padding: 6px 8px; font-size: var(--font-size-caption); }
-.credential-tag-manager-row:has(.credential-tag-rename) { grid-template-columns: minmax(0, 1fr); }
-.credential-tag-manager-row:has(.credential-tag-rename) .credential-tag-manager-actions { justify-content: flex-start; }
-.credential-tag-rename { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
-.credential-tag-rename input { flex: 1 1 160px; min-width: 0; }
-.credential-tag-rename small { flex-basis: 100%; color: var(--text-secondary); }
-@media (max-width: 540px) {
-  .credential-tag-manager-row { grid-template-columns: minmax(0, 1fr); }
-  .credential-tag-manager-actions { justify-content: flex-start; }
-}
 .auth-files-page {
   --auth-muted: var(--auth-file-muted);
   --auth-text: var(--auth-file-text);
@@ -105,69 +24,7 @@
 .auth-files-search > svg { flex: none; }
 .auth-files-page .auth-files-search input { width: 100%; min-width: 0; height: 32px; padding: 0; border: 0; outline: 0; box-shadow: none; background: transparent; color: var(--auth-text); font: inherit; font-size: 12px; }
 .auth-files-search input::placeholder { color: var(--auth-muted); }
-.auth-files-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.auth-card-tags-container {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  position: relative;
-}
-
-.auth-file-tags {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-}
-
-.auth-tag-chip.filter-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  max-width: 100%;
-  padding: 2px 7px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  line-height: 1.4;
-  cursor: pointer;
-  overflow-wrap: anywhere;
-  transition: all 0.15s ease;
-}
-
-.auth-tag-chip.filter-chip:hover {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-}
-
-.auth-tag-chip.filter-chip.active {
-  border-color: var(--primary-color);
-  background: var(--bg-secondary);
-  color: var(--primary-color);
-  font-weight: var(--font-weight-medium);
-}
-
-.auth-active-tag-badge.filter-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 8px;
-  height: 32px;
-  border: 1px solid var(--primary-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--primary-color);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.auth-active-tag-badge.filter-chip:hover {
-  background: var(--bg-secondary);
-}
-
+.auth-files-filters { display: flex; align-items: center; gap: 8px; }
 .auth-files-page .auth-files-toolbar .auth-files-filters select { appearance: none; -webkit-appearance: none; width: auto; min-width: 0; max-width: 100%; height: 32px; padding: 0 30px 0 11px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); outline: 0; box-shadow: none; background-color: var(--color-surface); background-image: var(--select-arrow); background-repeat: no-repeat; background-position: right 9px center; background-size: 14px; color: var(--color-text-primary); font: inherit; font-size: 12px; font-weight: 650; line-height: 30px; cursor: pointer; }
 .auth-files-page .auth-files-toolbar .auth-files-filters select::-ms-expand { display: none; }
 .auth-files-page .auth-files-toolbar .auth-files-filters select:hover { border-color: var(--border-hover); }
@@ -190,26 +47,8 @@
 .auth-file-card > .auth-credential-row { flex: 1 0 auto; grid-template-rows: auto auto auto auto 1fr auto; }
 /* An expanded cooldown list grows its card; do not stretch the neighbours' main rows with it. */
 .auth-file-card-grid:has(.auth-file-health-compact > details[open]) .auth-file-card > .auth-credential-row { flex: none; }
-/* Card layouts (components/CardLayout): only Even rows (the default) lines the action rows up across a row. */
-.auth-file-card-grid:not([data-layout='even']) .auth-file-card > .auth-credential-row { flex: none; }
-.auth-file-card-grid[data-layout='compact'] .auth-file-card { padding: 10px 12px; }
-/* Compact glance card: logo, name, plan and the lowest quota, with status; the rest opens from the toggle. */
-.auth-file-card[data-glance] > .auth-credential-row { grid-template-areas: "identity status"; grid-template-rows: auto; }
-.auth-file-card[data-glance] :is(.auth-list-plan, .auth-list-recent, .auth-list-usage, .auth-list-quota, .auth-card-actions, .auth-list-status small, .auth-card-filename, .auth-card-provider),
-.auth-file-card[data-glance] > :not(.auth-credential-row) { display: none; }
-.auth-file-card[data-glance] .auth-card-header .provider-logo { width: 28px; height: 28px; }
-.auth-file-card[data-glance] .auth-card-identity { gap: 4px; }
-.auth-card-glance-line { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--auth-muted); font-size: 12px; line-height: 18px; white-space: nowrap; }
-.auth-card-glance-line > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.auth-card-glance-line:empty { display: none; }
-.auth-card-glance-line > .auth-card-glance-plan { flex: none; max-width: 9em; text-transform: capitalize; }
-.auth-list-status .auth-card-glance-toggle { flex: none; width: auto; margin-top: 4px; }
-.auth-file-card[data-glance] .auth-list-status { flex-direction: row; align-items: center; gap: 6px; }
-.auth-file-card[data-glance] .auth-list-status .auth-card-glance-toggle { margin-top: 0; }
-.auth-file-card[data-glance] .auth-status-badge { padding: 1px 6px; font-size: 11px; }
-.auth-card-glance-toggle svg { transition: transform .15s ease; }
-.auth-card-glance-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
-.auth-files-toolbar .auth-files-layout-control { margin-left: auto; }
+/* The enable switch sits beside small buttons, so it uses their height instead of the 34px compact size. */
+.auth-list-main-actions .auth-card-toggle { min-height: auto; margin-top: 0; padding: 5px 10px; }
 .auth-card-header { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .auth-card-header .provider-logo { width: 35px; height: 35px; object-fit: contain; flex-shrink: 0; }
 [data-theme="dark"] .auth-card-header .provider-logo[data-provider="xai"] { filter: invert(1); }
@@ -250,49 +89,11 @@
 .auth-list-usage .auth-file-usage-metric.total svg { color: var(--auth-accent); background: color-mix(in srgb, var(--auth-accent) 9%, var(--bg-card)); }
 .auth-list-usage .auth-file-usage-metric strong { font-size: 13px; line-height: 1.2; font-weight: 750; }
 .auth-list-usage .auth-file-usage-scope { display: none; }
-.auth-card-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; gap: 5px; min-width: 0; padding-top: 10px; border-top: 1px solid var(--auth-border); }
-.auth-list-icon-actions { display: flex; align-items: center; justify-content: flex-start; flex-wrap: nowrap; flex: none; gap: 4px; min-width: 0; }
+.auth-card-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--auth-border); }
+.auth-list-icon-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-width: max-content; }
 .auth-list-icon-actions > button { flex: none; }
-.auth-list-main-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: nowrap; flex: none; gap: 5px; min-width: 0; margin-left: auto; padding-left: 0; border-left: 0; }
+.auth-list-main-actions { display: flex; align-items: center; justify-content: flex-end; flex: none; gap: 8px; margin-left: auto; padding-left: 0; border-left: 0; }
 .auth-list-details-button { min-width: 52px; }
-
-.auth-card-actions .small-button { width: auto; padding-inline: 5px; min-height: 30px; white-space: nowrap; }
-.auth-card-actions .auth-action-refresh { flex: none; width: 30px; padding: 0; justify-content: center; }
-.auth-card-more { position: relative; flex: none; }
-.auth-file-card:has(.auth-card-action-menu) { position: relative; z-index: 5; }
-.auth-card-action-menu {
-  position: absolute; z-index: 20; right: 0; top: calc(100% + 6px);
-  display: grid; min-width: 176px; width: max-content; max-width: min(260px, calc(100vw - 32px));
-  max-height: 200px; overflow-y: auto; padding: 5px; border: 1px solid var(--auth-border);
-  border-radius: var(--radius-md); background: var(--bg-card); box-shadow: var(--shadow-lg);
-}
-.auth-card-action-menu[data-upward='true'] { top: auto; bottom: calc(100% + 6px); }
-.auth-card-menu-item {
-  display: flex; align-items: center; gap: 9px; width: 100%; min-height: 36px; padding: 8px 10px;
-  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary);
-  font: inherit; font-size: 12px; text-align: start; cursor: pointer;
-}
-.auth-card-menu-item > svg { flex: none; }
-.auth-card-menu-item:hover:not(:disabled) { background: var(--bg-hover); }
-.auth-card-menu-item:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; background: var(--bg-hover); }
-.auth-card-menu-item:disabled { opacity: .5; cursor: not-allowed; }
-.auth-card-menu-delete { margin-top: 4px; border-top: 1px solid var(--auth-border); border-radius: var(--radius-none); color: var(--failure-badge-text); }
-/* Keep readable labels at the smallest supported card widths. */
-.auth-file-card { container-type: inline-size; }
-@container (max-width: 360px) {
-  .auth-card-actions, .auth-list-icon-actions, .auth-list-main-actions { gap: 3px; }
-  .auth-action-settings span { display: none; }
-  .auth-card-actions .auth-list-details-button { max-width: 110px; min-width: 0; padding-inline: 4px; }
-  .auth-card-actions .auth-card-more-trigger { gap: 2px; padding-inline: 2px; }
-  .auth-card-actions .auth-action-refresh { width: 28px; }
-  .auth-card-actions .auth-action-settings { width: 30px; padding: 0; justify-content: center; }
-}
-@media (max-width: 540px) {
-  .auth-card-actions, .auth-list-icon-actions, .auth-list-main-actions { gap: 3px; }
-  .auth-card-actions .small-button { padding-inline: 5px; }
-  .auth-card-actions .auth-card-more-trigger { padding-inline: 2px; gap: 2px; }
-  .auth-card-actions .auth-action-refresh { padding: 0; }
-}
 .auth-list-details { display: grid; gap: 12px; border-top: 1px solid var(--auth-border); padding: 12px 0; }
 .auth-list-details[hidden] { display: none; }
 .auth-list-details > .auth-file-requests-summary { max-width: 620px; }
@@ -413,6 +214,7 @@
 .auth-files-page .auth-card-actions {
   min-width: 0;
   max-width: 100%;
+  overflow: hidden;
 }
 .auth-files-page .auth-list-icon-actions,
 .auth-files-page .auth-list-main-actions {

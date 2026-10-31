@@ -1,4 +1,3 @@
-use crate::plugins::plugin_github_token;
 use super::support::*;
 use super::*;
 
@@ -18,168 +17,11 @@ fn release_atom_parser_reads_first_release_tag() {
 }
 
 #[test]
-fn app_update_modes_compare_independent_coordinates_but_only_update_the_installed_family() {
-    use crate::app_version_series::AppVersionBaselines;
-    let preview = "8.1.0-preview.20261103-1929";
-    let stable = "1.2.10";
-    for (family, package) in [("stable", stable), ("preview", preview)] {
-        let baselines = AppVersionBaselines::from_local(
-            Some(family),
-            Some(stable),
-            Some("20261103-1929"),
-            package,
-            None,
-        );
-        assert_eq!(baselines.stable.as_deref(), Some("v1.2.10"));
-        assert_eq!(baselines.preview.as_deref(), Some("20261103-1929"));
-        for (channel, candidate, newer) in [
-            ("stable", "1.2.11", true),
-            ("preview", "0.3.6-preview.20261104-1120", true),
-            ("stable", "1.2.9", false),
-            ("preview", "9.9.9-preview.20261102-1830", false),
-            ("stable", "1.2.10+repacked", false),
-            ("preview", "9.9.9-preview.20261103-1929", false),
-            ("stable", "1.2.11", true),
-        ] {
-            let result = app_update_availability(channel, &baselines, package, candidate);
-            assert_eq!(
-                result.comparison_newer, newer,
-                "{family}/{channel}/{candidate}"
-            );
-            assert_eq!(result.update_available, newer && family == channel);
-            assert_eq!(result.install_available, newer || family != channel);
-        }
-        assert_eq!(
-            app_update_availability("stable", &baselines, package, preview),
-            AppUpdateAvailability::default()
-        );
-        assert_eq!(
-            app_update_availability("preview", &baselines, package, stable),
-            AppUpdateAvailability::default()
-        );
-    }
-}
-
-#[test]
-fn app_update_legacy_unknown_coordinates_and_pinned_installs_remain_manual() {
-    use crate::app_version_series::{AppVersionBaselines, AppVersionSeries};
-    let preview = "8.1.0-preview.20261103-1929";
-    let stable = "1.2.10";
-    let legacy_preview = AppVersionBaselines::from_local(None, None, None, preview, Some(preview));
-    assert_eq!(legacy_preview.preview.as_deref(), Some("20261103-1929"));
-    assert_eq!(
-        legacy_preview.installed_series,
-        Some(AppVersionSeries::Preview)
-    );
-    assert!(legacy_preview.stable.is_none());
-    for (channel, candidate, newer, installable) in [
-        ("stable", stable, false, true),
-        (
-            "preview-20261102-1830",
-            "2.0.0-preview.20261102-1830",
-            false,
-            true,
-        ),
-        (
-            "preview-20261104-1830",
-            "2.0.0-preview.20261104-1830",
-            true,
-            true,
-        ),
-        ("preview-20261103-1929", preview, false, false),
-        ("preview-fix-login", "2.0.0-preview.dev", false, true),
-        ("preview", "2.0.0-preview.dev", false, false),
-    ] {
-        assert_eq!(
-            app_update_availability(channel, &legacy_preview, preview, candidate),
-            AppUpdateAvailability {
-                comparison_newer: newer,
-                update_available: false,
-                install_available: installable,
-            }
-        );
-    }
-
-    let legacy_stable = AppVersionBaselines::from_local(None, None, None, stable, Some(stable));
-    assert_eq!(legacy_stable.stable.as_deref(), Some("v1.2.10"));
-    assert_eq!(
-        legacy_stable.installed_series,
-        Some(AppVersionSeries::Stable)
-    );
-    assert!(legacy_stable.preview.is_none());
-    assert!(app_update_availability("preview", &legacy_stable, stable, preview).install_available);
-    for (family, reference, package, marker) in [
-        (None, None, stable, None),
-        (None, None, stable, Some("1.2.11")),
-        (None, None, "1.2.10-pr.4", Some(stable)),
-        (Some("unknown"), None, stable, Some(stable)),
-        (Some("stable"), Some("1.2.9"), stable, Some(stable)),
-    ] {
-        let baselines = AppVersionBaselines::from_local(family, reference, None, package, marker);
-        assert!(baselines.installed_series.is_none());
-        let result = app_update_availability("stable", &baselines, package, "1.2.11");
-        assert!(!result.update_available && !result.install_available);
-    }
-}
-
-#[test]
-fn app_update_validates_release_series_and_exact_preview_pin() {
-    use crate::app_version_series::AppVersionSeries::{Preview, Stable};
-    let preview = "8.1.0-preview.20261103-1929";
-    assert!(validate_app_release_series(
-        Preview,
-        Some("preview-20261103-1929"),
-        preview,
-        "preview-20261103-1929"
-    )
-    .is_ok());
-    assert!(validate_app_release_series(
-        Preview,
-        Some("preview-fix-login"),
-        preview,
-        "preview-fix-login"
-    )
-    .is_ok());
-    assert!(validate_app_release_series(
-        Preview,
-        Some("preview-fix-login"),
-        "8.1.0-preview.dev",
-        "preview-fix-login"
-    )
-    .is_ok());
-    assert!(validate_app_release_series(
-        Preview,
-        Some("preview-20261103-1929"),
-        "8.1.0-preview.dev",
-        "preview-20261103-1929"
-    )
-    .is_err());
-    assert!(validate_app_release_series(
-        Preview,
-        Some("preview-20261103-1930"),
-        preview,
-        "preview-20261103-1930"
-    )
-    .is_err());
-    assert!(validate_app_release_series(
-        Preview,
-        Some("preview-fix-login"),
-        preview,
-        "preview-20261103-1929"
-    )
-    .is_err());
-    assert!(
-        validate_app_release_series(Stable, None, preview, "v8.1.0-preview.20261103-1929").is_err()
-    );
-    assert!(validate_app_release_series(Stable, None, "8.1.0", "v8.1.0").is_ok());
-    assert!(validate_app_release_series(Stable, None, "8.1.0", "v8.2.0").is_err());
-    assert!(validate_app_release_series(
-        Preview,
-        Some("preview-fix-login"),
-        "8.1.0",
-        "preview-fix-login"
-    )
-    .is_err());
+fn app_update_comparison_uses_semantic_versions() {
+    assert!(is_app_update_available("v0.1.9", "v0.2.0").unwrap());
+    assert!(is_app_update_available("v0.2.0-beta.1", "v0.2.0").unwrap());
+    assert!(!is_app_update_available("v0.2.0", "v0.2.0").unwrap());
+    assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -599,7 +441,6 @@ fn portable_update_test_manifest(version: &str) -> PortableUpdateManifest {
         version: version.to_string(),
         published_at: "2026-07-24T00:00:00.000Z".to_string(),
         release_notes: HashMap::new(),
-        release_notes_history: serde_json::Value::Null,
         release_url: format!(
             "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/v{version}"
         ),
@@ -617,144 +458,6 @@ fn portable_update_test_manifest(version: &str) -> PortableUpdateManifest {
         .collect(),
         full_assets: None,
     }
-}
-
-#[test]
-fn skipped_release_notes_exclude_endpoints_and_sort_stable_versions() {
-    let history = serde_json::json!({
-        "1.1.0": { "en": "Already installed" },
-        "1.2.0": { "en": "Earlier release" },
-        "1.2.1-preview.1": { "en": "Preview" },
-        "1.2.9": { "en": "Before 1.2.10" },
-        "1.2.10": { "ja": "更新内容", "en": " " },
-        "1.2.11": "Unlocalized",
-        "1.3.0": { "en": "Target" },
-        "1.4.0": { "en": "Later release" },
-        "invalid": { "en": "Invalid version" },
-    });
-    let manifest: PortableUpdateManifest = serde_json::from_value(serde_json::json!({
-        "schemaVersion": 1,
-        "version": "1.3.0",
-        "publishedAt": "2026-07-24T00:00:00.000Z",
-        "releaseUrl": "https://example.com/release",
-        "assets": {},
-        "releaseNotesHistory": history,
-    }))
-    .unwrap();
-    let entries = skipped_release_notes(&manifest.release_notes_history, "v1.1.0", "v1.3.0");
-    let versions: Vec<_> = entries.iter().map(|entry| entry.version.as_str()).collect();
-    assert_eq!(versions, ["1.2.10", "1.2.9", "1.2.0"]);
-    assert_eq!(entries[0].release_notes.len(), 1);
-    assert_eq!(entries[0].release_notes["ja"], "更新内容");
-    for (current, target) in [
-        ("1.3.0", "1.3.0"),
-        ("1.2.11", "1.3.0"),
-        ("1.1.0", "1.3.0-preview"),
-    ] {
-        assert!(skipped_release_notes(&history, current, target).is_empty());
-    }
-    assert!(skipped_release_notes(&serde_json::Value::Null, "1.1.0", "1.3.0").is_empty());
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn proxy_ca_native_roots_connect_regression() {
-    if let Ok(proxy) = std::env::var("CPA_TLS_FIXTURE_PROXY") {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        runtime.block_on(async {
-            let check_client = build_http_client_with_proxy(
-                reqwest::Client::builder().timeout(Duration::from_secs(5)),
-                &proxy,
-                "fixture client",
-            ).unwrap();
-            let download_client = http_client(&proxy, &[]).unwrap();
-            let webpki_only = build_http_client_with_proxy(
-                reqwest::Client::builder().tls_built_in_native_certs(false)
-                    .timeout(Duration::from_secs(5)),
-                &proxy, "public roots fixture client",
-            ).unwrap();
-            let error = fetch_portable_update_manifest_url(&webpki_only, "https://update.test/manifest.json")
-                .await.unwrap_err();
-            assert!(error.contains("issuer is not trusted"), "{error}");
-            for client in [&check_client, &download_client] {
-                let manifest = fetch_portable_update_manifest_url(
-                    client, "https://update.test/manifest.json",
-                ).await.unwrap();
-                assert_eq!(manifest.version, "1.2.3");
-                let archive = client.get("https://update.test/archive").send().await
-                    .unwrap().error_for_status().unwrap().bytes().await.unwrap();
-                assert_eq!(archive.as_ref(), b"fixture archive");
-                for (host, expected) in [
-                    ("untrusted.test", "issuer is not trusted"),
-                    ("mismatch.test", "hostname mismatch"),
-                ] {
-                    let error = fetch_portable_update_manifest_url(
-                        client, &format!("https://private-user:private-password@{host}/secret-path?token=private-token"),
-                    ).await.unwrap_err();
-                    assert!(error.contains(expected), "{error}");
-                    for secret in ["private-user", "private-password", "secret-path", "private-token", host, "proxy-password"] {
-                        assert!(!error.contains(secret), "{error}");
-                    }
-                }
-                let port = std::env::var("CPA_TLS_FIXTURE_PLAIN").unwrap();
-                for host in ["localhost", "127.0.0.1"] {
-                    assert_eq!(client.get(format!("http://{host}:{port}/archive"))
-                        .send().await.unwrap().bytes().await.unwrap().as_ref(), b"fixture archive");
-                }
-                let ipv6_port = std::env::var("CPA_TLS_FIXTURE_IPV6").unwrap();
-                assert_eq!(client.get(format!("http://[::1]:{ipv6_port}/archive"))
-                    .send().await.unwrap().bytes().await.unwrap().as_ref(), b"fixture archive");
-            }
-            let tls_address = std::env::var("CPA_TLS_FIXTURE_TLS").unwrap().parse().unwrap();
-            let direct = build_http_client_with_proxy(
-                reqwest::Client::builder().resolve("update.test", tls_address)
-                    .timeout(Duration::from_secs(5)),
-                "", "direct fixture client",
-            ).unwrap();
-            direct.get(format!("https://update.test:{}/archive", tls_address.port()))
-                .send().await.unwrap().error_for_status().unwrap();
-            let failed_proxy = build_http_client_with_proxy(
-                reqwest::Client::builder().timeout(Duration::from_secs(5)),
-                &std::env::var("CPA_TLS_FIXTURE_FAILED_PROXY").unwrap(), "fixture client",
-            ).unwrap();
-            let error = fetch_portable_update_manifest_url(&failed_proxy, "https://update.test/manifest.json")
-                .await.unwrap_err();
-            assert!(error.contains("Proxy connection failed"), "{error}");
-            assert!(!error.contains("proxy-password"), "{error}");
-        });
-        return;
-    }
-    let manifest = portable_update_test_manifest("1.2.3");
-    let assets = manifest
-        .assets
-        .iter()
-        .map(|(name, asset)| {
-            (
-                name.clone(),
-                serde_json::json!({
-                    "url": asset.url, "sha256": asset.sha256, "sizeBytes": asset.size_bytes,
-                }),
-            )
-        })
-        .collect::<serde_json::Map<String, serde_json::Value>>();
-    let payload = serde_json::json!({
-        "schemaVersion": manifest.schema_version, "version": manifest.version,
-        "publishedAt": manifest.published_at, "releaseUrl": manifest.release_url,
-        "assets": assets,
-    });
-    let status = Command::new("python3")
-        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/proxy_ca.py"))
-        .arg(std::env::current_exe().unwrap())
-        .env("CPA_TLS_MANIFEST", payload.to_string())
-        .status()
-        .expect("Python 3 and OpenSSL are required for the isolated TLS fixture");
-    assert!(
-        status.success(),
-        "isolated TLS/CONNECT fixture failed: {status}"
-    );
 }
 
 #[test]
@@ -792,7 +495,7 @@ fn portable_update_manifest_uses_only_explicit_locale_release_notes() {
 }
 
 #[test]
-fn portable_update_manifest_validates_every_present_github_asset() {
+fn portable_update_manifest_requires_both_matching_github_assets() {
     let manifest = portable_update_test_manifest("1.2.3");
     assert!(validate_portable_update_manifest(&manifest).is_ok());
 
@@ -840,19 +543,9 @@ fn portable_update_manifest_validates_every_present_github_asset() {
     }
 
     let (platform, _, _) = portable_update_asset_platform().unwrap();
-    let mut empty = portable_update_test_manifest("1.2.3");
-    empty.assets.clear();
-    assert!(validate_portable_update_manifest(&empty).is_err());
-
-    let mut unknown_arch = portable_update_test_manifest("1.2.3");
-    let asset = unknown_arch
-        .assets
-        .remove(&format!("{platform}-aarch64"))
-        .unwrap();
-    unknown_arch
-        .assets
-        .insert(format!("{platform}-riscv64"), asset);
-    assert!(validate_portable_update_manifest(&unknown_arch).is_err());
+    let mut missing_arch = portable_update_test_manifest("1.2.3");
+    missing_arch.assets.remove(&format!("{platform}-aarch64"));
+    assert!(validate_portable_update_manifest(&missing_arch).is_err());
 
     let mut invalid_timestamp = portable_update_test_manifest("1.2.3");
     invalid_timestamp.published_at = "not-a-timestamp".to_string();
@@ -876,103 +569,6 @@ fn portable_update_manifest_validates_every_present_github_asset() {
         "{APP_RELEASE_DOWNLOAD_PREFIX}v9.9.9/EasyCLIProxyAPI-v1.2.3-{display}-amd64.{suffix}"
     );
     assert!(validate_portable_update_manifest(&mismatched_tag).is_err());
-
-    let mut preview_manifest = portable_update_test_manifest("0.3.6-preview");
-    preview_manifest.release_url =
-        "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/preview-20261104-1623".to_string();
-    for arch in ["amd64", "aarch64"] {
-        preview_manifest
-            .assets
-            .get_mut(&format!("{platform}-{arch}"))
-            .unwrap()
-            .url = format!(
-            "{APP_RELEASE_DOWNLOAD_PREFIX}preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-{display}-{arch}.{suffix}"
-        );
-    }
-    for arch in ["amd64", "aarch64"] {
-        let mut single_arch = preview_manifest.clone();
-        let key = format!("{platform}-{arch}");
-        single_arch.assets.retain(|name, _| name == &key);
-        assert!(validate_portable_update_manifest(&single_arch).is_ok());
-        single_arch.full_assets = Some(single_arch.assets.clone());
-        assert!(validate_portable_update_manifest(&single_arch).is_ok());
-
-        let mut bad_checksum = single_arch.clone();
-        bad_checksum.assets.get_mut(&key).unwrap().sha256 = "invalid".to_string();
-        assert!(validate_portable_update_manifest(&bad_checksum).is_err());
-        let mut wrong_arch = single_arch.clone();
-        let other_arch = if arch == "amd64" { "aarch64" } else { "amd64" };
-        wrong_arch.full_assets.as_mut().unwrap().get_mut(&key).unwrap().url =
-            preview_manifest.assets[&format!("{platform}-{other_arch}")].url.clone();
-        assert!(validate_portable_update_manifest(&wrong_arch).is_err());
-
-        let mut bad_fallback = single_arch;
-        bad_fallback
-            .full_assets
-            .as_mut()
-            .unwrap()
-            .get_mut(&key)
-            .unwrap()
-            .fallback_urls = vec!["https://untrusted.example.com/package.zip".into()];
-        assert!(validate_portable_update_manifest_for_repository(
-            &bad_fallback,
-            Some("mirror-owner/EasyCLIProxyAPI"),
-        ).is_err());
-    }
-}
-
-#[test]
-fn preview_channel_marker_is_not_a_release_tag() {
-    assert_eq!(
-        update_channel_tag("preview"),
-        Some(PREVIEW_CHANNEL_MARKER.to_string())
-    );
-    assert_eq!(normalize_update_channel("preview"), "preview");
-    // A deleted rolling tag must never be produced as a channel tag.
-    assert_ne!(update_channel_tag("preview").as_deref(), Some("only-preview"));
-}
-
-#[test]
-fn portable_update_asset_file_name_extracts_package_name() {
-    assert_eq!(
-        portable_update_asset_file_name(
-            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip"
-        ),
-        Some("EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip".to_string())
-    );
-    assert_eq!(
-        portable_update_asset_file_name(
-            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz"
-        ),
-        Some("EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz".to_string())
-    );
-}
-
-#[test]
-fn preview_url_whitelist_rejects_the_retired_rolling_tag() {
-    assert!(select_latest_preview_tag(&["preview-20261104-1623".to_string()]).is_some());
-    // Anything that is not a `v*` tag, a `preview-*` tag or a timestamp is not a
-    // preview release the client should trust.
-    assert!(select_latest_preview_tag(&["only-preview".to_string()]).is_none());
-}
-
-#[test]
-fn github_token_prefers_configured_setting_over_environment() {
-    let settings = serde_json::json!({ "github-token": "  configured-token  " });
-    assert_eq!(
-        plugin_github_token(&settings, Some("env-token".to_string())).as_deref(),
-        Some("configured-token")
-    );
-}
-
-#[test]
-fn github_token_falls_back_to_environment_and_ignores_blanks() {
-    let empty = serde_json::json!({ "github-token": "   " });
-    assert_eq!(
-        plugin_github_token(&empty, Some("env-token".to_string())).as_deref(),
-        Some("env-token")
-    );
-    assert_eq!(plugin_github_token(&empty, None), None);
 }
 
 #[test]
@@ -999,101 +595,10 @@ fn portable_update_asset_accepts_only_the_configured_gitcode_fallback() {
         Some("another-owner/EasyCLIProxyAPI"),
     )
     .is_err());
-
-    for fallback in [
-        gitcode_release_attachment_url("mirror-owner/EasyCLIProxyAPI", "v9.9.9", &filename),
-        gitcode_release_attachment_url("mirror-owner/EasyCLIProxyAPI", "v1.2.3", "wrong.zip"),
-        "https://untrusted.example.com/package.zip".to_string(),
-    ] {
-        asset.fallback_urls = vec![fallback];
-        assert!(validate_portable_update_asset_fallbacks_for_repository(
-            &asset,
-            "v1.2.3",
-            &[&filename],
-            Some("mirror-owner/EasyCLIProxyAPI"),
-        )
-        .is_err());
-    }
-
-    let fallback = gitcode_release_attachment_url(
-        "mirror-owner/EasyCLIProxyAPI",
-        "v1.2.3",
-        &filename,
-    );
-    asset.fallback_urls = vec![fallback.clone(), fallback];
-    assert!(validate_portable_update_asset_fallbacks_for_repository(
-        &asset,
-        "v1.2.3",
-        &[&filename],
-        Some("mirror-owner/EasyCLIProxyAPI"),
-    )
-    .is_err());
 }
 
 #[test]
-fn portable_update_unconfigured_fallbacks_are_accepted_but_never_downloaded() {
-    let mut asset = portable_update_test_asset("1.2.3", "amd64");
-    let (_, display, suffix) = portable_update_asset_platform().unwrap();
-    let filename = format!("EasyCLIProxyAPI-v1.2.3-{display}-amd64.{suffix}");
-    let fallback =
-        gitcode_release_attachment_url("mirror-owner/EasyCLIProxyAPI", "v1.2.3", &filename);
-    for fallbacks in [
-        vec![],
-        vec![fallback.clone()],
-        vec![fallback.clone(), fallback],
-        vec!["https://untrusted.example.com/package.zip".to_string()],
-        vec!["not a URL".to_string()],
-    ] {
-        asset.fallback_urls = fallbacks;
-        validate_portable_update_asset_fallbacks_for_repository(
-            &asset,
-            "v1.2.3",
-            &[&filename],
-            None,
-        )
-        .unwrap();
-
-        let mut manifest = portable_update_test_manifest("1.2.3");
-        for manifest_asset in manifest.assets.values_mut() {
-            manifest_asset.fallback_urls = asset.fallback_urls.clone();
-        }
-        manifest.full_assets = Some(manifest.assets.clone());
-        validate_portable_update_manifest_for_repository(&manifest, None).unwrap();
-
-        for source in [
-            VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-            VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
-            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
-            VersionDownloadCandidate::custom("https://mirror.example.com/"),
-        ] {
-            let result = portable_update_download_url_for_repository(&asset, &source, None);
-            if source.source == VersionDownloadSource::Gitcode {
-                assert!(result.is_err());
-            } else {
-                assert_eq!(
-                    result.unwrap(),
-                    version_source_url(&source, &asset.url),
-                    "{source:?}"
-                );
-            }
-        }
-
-        for invalid_primary in [
-            "https://untrusted.example.com/package.zip".to_string(),
-            asset.url.replace("v1.2.3/", "v9.9.9/"),
-        ] {
-            let mut invalid_manifest = manifest.clone();
-            invalid_manifest.assets.values_mut().next().unwrap().url = invalid_primary;
-            assert!(
-                validate_portable_update_manifest_for_repository(&invalid_manifest, None).is_err()
-            );
-        }
-    }
-}
-
-#[test]
-fn portable_update_download_uses_only_the_selected_source() {
+fn portable_update_download_order_respects_gitcode_preference() {
     let mut asset = portable_update_test_asset("1.2.3", "amd64");
     let (_, display, suffix) = portable_update_asset_platform().unwrap();
     let filename = format!("EasyCLIProxyAPI-v1.2.3-{display}-amd64.{suffix}");
@@ -1103,228 +608,101 @@ fn portable_update_download_uses_only_the_selected_source() {
         &filename,
     )];
 
-    let github_url = portable_update_download_url_for_repository(
+    let github_first = portable_update_download_urls(
         &asset,
         &VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-        Some("mirror-owner/EasyCLIProxyAPI"),
-    )
-    .unwrap();
-    assert_eq!(github_url, asset.url);
+    );
+    assert_eq!(update_download_source_name(&github_first[0]), "GitHub");
+    assert_eq!(update_download_source_name(&github_first[1]), "GitCode");
 
-    let gitcode_url = portable_update_download_url_for_repository(
+    let gitcode_first = portable_update_download_urls(
         &asset,
         &VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-        Some("mirror-owner/EasyCLIProxyAPI"),
-    )
-    .unwrap();
-    assert_eq!(gitcode_url, asset.fallback_urls[0]);
+    );
+    assert_eq!(update_download_source_name(&gitcode_first[0]), "GitCode");
+    assert_eq!(update_download_source_name(&gitcode_first[1]), "GitHub");
 
-    for source in [
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
-        VersionDownloadCandidate::custom("https://mirror.example.com/"),
-    ] {
-        assert_eq!(
-            portable_update_download_url_for_repository(
-                &asset,
-                &source,
-                Some("mirror-owner/EasyCLIProxyAPI"),
-            )
-            .unwrap(),
-            version_source_url(&source, &asset.url),
-        );
-    }
-    asset.fallback_urls.clear();
-    assert!(portable_update_download_url_for_repository(
+    let mirror_first = portable_update_download_urls(
         &asset,
-        &VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-        Some("mirror-owner/EasyCLIProxyAPI"),
-    )
-    .is_err());
+        &VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+    );
+    assert_eq!(
+        update_download_source_name(&mirror_first[0]),
+        "gh-proxy.com"
+    );
+    assert_eq!(update_download_source_name(&mirror_first[1]), "GitHub");
+    assert_eq!(update_download_source_name(&mirror_first[2]), "GitCode");
 }
 
 #[test]
-fn unavailable_selected_sources_fail_instead_of_using_github() {
-    assert!(validate_version_download_source(
-        &VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-        false,
-    )
-    .is_err());
-    assert!(validate_version_download_source(
-        &VersionDownloadCandidate::builtin(VersionDownloadSource::Custom),
-        true,
-    )
-    .is_err());
-    assert!(validate_version_download_source(
-        &VersionDownloadCandidate::custom("http://invalid.example.com/"),
-        true,
-    )
-    .is_err());
+fn version_detection_candidates_try_every_available_source_once() {
+    assert_eq!(
+        version_download_source_candidates(
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+            true,
+            &[],
+        ),
+        [
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+        ]
+    );
+    assert_eq!(
+        version_download_source_candidates(
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+            false,
+            &[],
+        ),
+        [
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+        ]
+    );
 }
 
 #[test]
-fn custom_mirror_urls_are_normalized() {
+fn custom_mirror_urls_are_normalized_and_join_the_fallback_chain() {
     assert_eq!(
         normalize_custom_download_mirror_url(" https://mirror.example.com/base ").unwrap(),
         "https://mirror.example.com/base/"
     );
     assert!(normalize_custom_download_mirror_url("http://mirror.example.com/").is_err());
     assert!(normalize_custom_download_mirror_url("https://mirror.example.com/?token=x").is_err());
+
+    let mirrors = vec![
+        "https://first.example.com/".to_string(),
+        "https://second.example.com/".to_string(),
+    ];
+    let candidates = version_download_source_candidates(
+        VersionDownloadCandidate::custom(&mirrors[1]),
+        true,
+        &mirrors,
+    );
+    assert_eq!(candidates[0], VersionDownloadCandidate::custom(&mirrors[1]));
+    assert_eq!(
+        candidates.last(),
+        Some(&VersionDownloadCandidate::custom(&mirrors[0]))
+    );
+    assert_eq!(
+        candidates
+            .iter()
+            .filter(|candidate| candidate.custom_url.is_some())
+            .count(),
+        2
+    );
 }
 
 #[test]
 fn custom_mirror_is_used_for_portable_update_downloads() {
     let asset = portable_update_test_asset("1.2.3", "amd64");
     let source = VersionDownloadCandidate::custom("https://mirror.example.com/");
-    let url = portable_update_download_url(&asset, &source).unwrap();
-    assert_eq!(url, format!("https://mirror.example.com/{}", asset.url));
-}
-
-// A local CONNECT proxy records every attempted origin. All remote traffic is
-// intercepted before TLS; no public source or real kernel is needed.
-async fn fixed_source_failure_regression(stall: bool) {
-    use std::sync::Arc;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let mut sources = vec![
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
-        VersionDownloadCandidate::custom("https://first.example.com/"),
-        VersionDownloadCandidate::custom("https://second.example.com/"),
-    ];
-    if configured_gitcode_gui_repository().is_some()
-        && configured_gitcode_core_repository().is_some()
-    {
-        sources.push(VersionDownloadCandidate::builtin(
-            VersionDownloadSource::Gitcode,
-        ));
-    }
-    for source in sources {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let recorded = requests.clone();
-        let server = tokio::spawn(async move {
-            loop {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let recorded = recorded.clone();
-                tokio::spawn(async move {
-                    let mut request = Vec::new();
-                    loop {
-                        let mut buffer = [0; 1024];
-                        let count = stream.read(&mut buffer).await.unwrap();
-                        if count == 0 {
-                            return;
-                        }
-                        request.extend_from_slice(&buffer[..count]);
-                        if request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-                    recorded.lock().unwrap().push(
-                        String::from_utf8(request)
-                            .unwrap()
-                            .lines()
-                            .next()
-                            .unwrap()
-                            .to_string(),
-                    );
-                    if stall {
-                        tokio::time::sleep(Duration::from_millis(300)).await;
-                    } else {
-                        let _ = stream.write_all(b"HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-                    }
-                });
-            }
-        });
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .proxy(reqwest::Proxy::all(format!("http://{address}")).unwrap())
-            .timeout(Duration::from_millis(100))
-            .build()
-            .unwrap();
-        let expected_host = if source.source == VersionDownloadSource::Gitcode {
-            "api.gitcode.com".to_string()
-        } else {
-            reqwest::Url::parse(&version_source_url(&source, APP_UPDATE_MANIFEST_URL))
-                .unwrap()
-                .host_str()
-                .unwrap()
-                .to_string()
-        };
-        let started = Instant::now();
-        // A second attempt must use exactly the same selection after failure.
-        for _ in 0..2 {
-            let before = requests.lock().unwrap().len();
-            let error = fetch_portable_update_manifest(&client, source.clone(), None)
-                .await
-                .expect_err("manifest check should fail");
-            assert!(error.contains(&source.display_name()), "{error}");
-            if stall {
-                assert!(error.contains("timed out"), "{error}");
-            }
-            assert_eq!(requests.lock().unwrap().len() - before, 1);
-            assert!(fetch_release(&client, None, source.clone()).await.is_err());
-            assert!(fetch_core_versions_from_source(
-                &client,
-                &source,
-                configured_gitcode_core_repository()
-            )
-            .await
-            .is_err());
-        }
-        // Atom/page and API/Atom alternatives stay within the selected source.
-        let requests = requests.lock().unwrap().clone();
-        let expected_count = if source.source == VersionDownloadSource::Gitcode {
-            6
-        } else {
-            10
-        };
-        assert_eq!(requests.len(), expected_count, "{requests:?}");
-        assert!(
-            requests.iter().all(|line| {
-                line == &format!("CONNECT {expected_host}:443 HTTP/1.1")
-                    || (source.source == VersionDownloadSource::Github
-                        && line == "CONNECT api.github.com:443 HTTP/1.1")
-            }),
-            "{requests:?}"
-        );
-        assert!(started.elapsed() < Duration::from_secs(5));
-        println!(
-            "fixed source {}: {} requests, {:?}, stall={stall}",
-            source.key(),
-            requests.len(),
-            started.elapsed()
-        );
-        server.abort();
-    }
-}
-
-#[tokio::test]
-async fn fixed_source_http_504_never_contacts_another_source() {
-    fixed_source_failure_regression(false).await;
-}
-
-#[tokio::test]
-async fn fixed_source_timeout_never_contacts_another_source() {
-    fixed_source_failure_regression(true).await;
-}
-
-#[tokio::test]
-async fn unavailable_gitcode_preview_does_not_contact_github() {
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let error = fetch_portable_update_manifest(
-        &client,
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-        Some("preview-20261104-1623"),
-    )
-    .await
-    .expect_err("GitCode does not provide preview releases");
-    assert!(
-        error.contains("selected GitCode source is not available"),
-        "{error}"
-    );
+    let urls = portable_update_download_urls(&asset, &source);
+    assert!(urls[0].starts_with("https://mirror.example.com/https://github.com/"));
+    assert_eq!(update_download_source_name(&urls[0]), "mirror.example.com");
+    assert_eq!(update_download_source_name(&urls[1]), "GitHub");
 }
 
 #[test]
@@ -1557,23 +935,6 @@ fn portable_update_zip_accepts_the_complete_release_package() {
         extracted.core_archive_name,
         Some("CLIProxyAPI_7.2.109_windows_amd64.zip".to_string())
     );
-    let app_dir = root.join("app");
-    fs::create_dir_all(app_dir.join("cpa-core")).unwrap();
-    fs::write(app_dir.join(CORE_VERSION_FILE), b"7.2.100\n").unwrap();
-    let executable = app_dir.join(PORTABLE_APP_BINARY);
-    fs::write(&executable, b"old executable").unwrap();
-    let work = root.join("EasyCLIProxyAPI-update-test");
-    let pending = PendingAppUpdate {
-        version: "1.2.3".into(),
-        asset: portable_update_test_asset("1.2.3", "amd64"),
-        arch: "amd64".into(),
-    };
-    let staged = crate::app_update::stage_portable_update(
-        &work, &valid_zip, &pending, executable.clone(), true,
-    ).unwrap();
-    staged.validate_cached(&executable).unwrap();
-    assert_eq!(fs::read(staged.staged_exe).unwrap(), b"new executable");
-    assert!(staged.preserve_core);
 
     let legacy_zip = root.join("legacy.zip");
     write_portable_update_zip(
@@ -1699,7 +1060,6 @@ fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
         ack_path: work_dir.join("update-started.ack"),
         work_dir,
         target_version: "1.2.3".to_string(),
-        preserve_core: false,
     };
 
     replace_portable_update_files(&descriptor).unwrap();
@@ -1829,7 +1189,6 @@ fn macos_update_descriptor_is_confined_to_the_app_and_temp_directories() {
         ack_path: work_dir.join("update-started.ack"),
         work_dir: work_dir.clone(),
         target_version: "1.2.3".to_string(),
-        preserve_core: false,
     };
     fs::create_dir_all(&work_dir).unwrap();
     let descriptor_path = work_dir.join("update-descriptor.json");
@@ -1867,7 +1226,7 @@ fn synthetic_release_uses_official_asset_names_and_urls() {
 }
 
 #[test]
-fn synthetic_core_release_ignores_gitcode_when_github_is_selected() {
+fn synthetic_core_release_uses_gitcode_as_download_fallback() {
     let repository = "lzt404/CLIProxyAPI";
     let release = release_from_tag_for_repositories(
         "7.2.80",
@@ -1887,10 +1246,14 @@ fn synthetic_core_release_ignores_gitcode_when_github_is_selected() {
             asset.browser_download_url,
             "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.80/CLIProxyAPI_7.2.80_windows_amd64.zip"
         );
+    assert_eq!(
+            asset.fallback_download_urls,
+            ["https://api.gitcode.com/api/v5/repos/lzt404/CLIProxyAPI/releases/v7.2.80/attach_files/CLIProxyAPI_7.2.80_windows_amd64.zip/download"]
+        );
 }
 
 #[test]
-fn gitcode_discovered_core_release_downloads_only_from_gitcode() {
+fn gitcode_discovered_core_release_downloads_from_gitcode_first() {
     let release = release_from_gitcode_tag("v7.2.80", "lzt404/CLIProxyAPI");
     let platform = CorePlatform {
         os: "linux".to_string(),
@@ -1905,10 +1268,14 @@ fn gitcode_discovered_core_release_downloads_only_from_gitcode() {
             asset.browser_download_url,
             "https://api.gitcode.com/api/v5/repos/lzt404/CLIProxyAPI/releases/v7.2.80/attach_files/CLIProxyAPI_7.2.80_linux_aarch64.tar.gz/download"
         );
+    assert_eq!(
+        asset.fallback_download_urls,
+        ["https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.80/CLIProxyAPI_7.2.80_linux_aarch64.tar.gz"]
+    );
 }
 
 #[test]
-fn github_proxy_core_release_uses_only_the_selected_proxy() {
+fn github_proxy_core_release_uses_proxy_then_official_and_gitcode() {
     let release = release_from_tag_for_repositories(
         "v7.2.80",
         Some("lzt404/CLIProxyAPI"),
@@ -1927,10 +1294,18 @@ fn github_proxy_core_release_uses_only_the_selected_proxy() {
         core_download_source_name(&asset.browser_download_url),
         "ghfast.top"
     );
+    assert_eq!(
+        core_download_source_name(&asset.fallback_download_urls[0]),
+        "GitHub"
+    );
+    assert_eq!(
+        core_download_source_name(&asset.fallback_download_urls[1]),
+        "GitCode"
+    );
 }
 
 #[test]
-fn core_download_url_uses_only_the_selected_source() {
+fn core_download_candidates_follow_the_complete_fallback_chain() {
     let release = release_from_tag_for_repositories(
         "v7.2.80",
         Some("lzt404/CLIProxyAPI"),
@@ -1944,61 +1319,41 @@ fn core_download_url_uses_only_the_selected_source() {
         archive_kind: "zip".to_string(),
     };
     let asset = select_release_asset(&release, &platform).unwrap();
-    for source in [
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
-        VersionDownloadCandidate::custom("https://mirror.example.com/"),
-    ] {
-        let url = core_download_url(
-            &release.tag_name,
-            asset,
-            &source,
-            Some("lzt404/CLIProxyAPI"),
-        )
-        .unwrap();
-        let expected = if source.source == VersionDownloadSource::Gitcode {
-            gitcode_release_attachment_url("lzt404/CLIProxyAPI", &release.tag_name, &asset.name)
-        } else {
-            version_source_url(&source, &asset.browser_download_url)
-        };
-        assert_eq!(url, expected);
-    }
-    assert!(core_download_url(
+    let custom_mirrors = vec!["https://mirror.example.com/".to_string()];
+    let candidates = core_download_candidates(
         &release.tag_name,
         asset,
-        &VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-        None,
-    )
-    .is_err());
-}
-
-#[test]
-#[ignore = "manual URL resolution performance check"]
-fn fixed_source_url_resolution_performance() {
-    let asset = portable_update_test_asset("1.2.3", "amd64");
-    let release = release_from_tag("7.2.80");
-    let core_asset = &release.assets[0];
-    for source in [
         VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
-        VersionDownloadCandidate::custom("https://mirror.example.com/"),
-    ] {
-        let started = Instant::now();
-        for _ in 0..25_000 {
-            std::hint::black_box(portable_update_download_url(&asset, &source).unwrap());
-            std::hint::black_box(
-                core_download_url(&release.tag_name, core_asset, &source, None).unwrap(),
-            );
-        }
-        println!(
-            "{}: 50000 URL resolutions in {:?}",
-            source.key(),
-            started.elapsed(),
-        );
-    }
+        Some("lzt404/CLIProxyAPI"),
+        &custom_mirrors,
+    );
+
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|(candidate, _)| candidate.key())
+            .collect::<Vec<_>>(),
+        [
+            "github",
+            "gitcode",
+            "gh-proxy",
+            "gh-fast",
+            "custom:https://mirror.example.com/",
+        ]
+    );
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|(_, url)| core_download_source_name(url))
+            .collect::<Vec<_>>(),
+        [
+            "GitHub",
+            "GitCode",
+            "gh-proxy.com",
+            "ghfast.top",
+            "mirror.example.com",
+        ]
+    );
 }
 
 #[test]
@@ -2024,182 +1379,4 @@ fn release_asset_names_cover_the_six_supported_gui_targets() {
             format!("CLIProxyAPI_7.2.83_{os}_{arch}.{archive_kind}")
         );
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn update_runtime_ack_rejects_gui_only_ack_and_times_out_without_deleting_backups() {
-    let root = agent_test_home("update-runtime-no-ack");
-    let backup = root.join("old-app");
-    fs::write(&backup, b"recoverable old app").unwrap();
-    let ack = root.join("update-started.ack");
-    // The old GUI setup acknowledgement is not runtime readiness.
-    fs::write(&ack, env!("CARGO_PKG_VERSION")).unwrap();
-    let mut child = Command::new("sleep").arg("30").spawn().unwrap();
-    let result = wait_for_update_runtime_ack(
-        &mut child,
-        &ack,
-        env!("CARGO_PKG_VERSION"),
-        Duration::from_millis(75),
-    );
-    child.kill().unwrap();
-    child.wait().unwrap();
-    assert!(result.unwrap_err().contains("Timed out"));
-    assert_eq!(fs::read(&backup).unwrap(), b"recoverable old app");
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn update_core_startup_failure_never_publishes_runtime_ack() {
-    let root = agent_test_home("update-runtime-core-failure");
-    let ack = root.join("update-started.ack");
-    let result = acknowledge_update_runtime_with_probe(&ack, true, || {
-        Err("forced core bind failure".to_string())
-    });
-    assert_eq!(result.unwrap_err(), "forced core bind failure");
-    assert!(!ack.exists());
-    assert!(!ack.with_extension("pending").exists());
-    // A probe without a kernel process cannot release a backup either.
-    assert!(acknowledge_update_runtime_with_probe(&ack, true, || Ok((0, 3))).is_err());
-    assert!(!ack.exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn update_runtime_ack_records_kernel_only_when_one_was_expected() {
-    let root = agent_test_home("update-runtime-core-optional");
-    let ack = root.join("update-started.ack");
-    // A fresh setup without credentials serves an empty model list.
-    acknowledge_update_runtime_with_probe(&ack, true, || Ok((42, 0))).unwrap();
-    let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&ack).unwrap()).unwrap();
-    assert_eq!(receipt["core"], serde_json::json!({"pid": 42, "model_count": 0}));
-    assert_eq!(receipt["gui_pid"], std::process::id());
-
-    acknowledge_update_runtime_with_probe(&ack, false, || -> Result<(u32, usize), String> {
-        panic!("the kernel must not be probed when it was not expected to start")
-    })
-    .unwrap();
-    let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&ack).unwrap()).unwrap();
-    assert!(receipt["core"].is_null());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[cfg(unix)]
-#[test]
-fn update_runtime_ack_is_bound_to_live_gui_pid_and_target_version() {
-    let root = agent_test_home("update-runtime-ack-binding");
-    let ack_path = root.join("update-started.ack");
-    let mut child = Command::new("sleep").arg("30").spawn().unwrap();
-    for (pid, version, core, accepted) in [
-        (child.id() + 1, "1.2.3", serde_json::json!({"pid": 42, "model_count": 1}), false),
-        (child.id(), "1.2.2", serde_json::json!({"pid": 42, "model_count": 1}), false),
-        (child.id(), "1.2.3", serde_json::json!({"pid": 0, "model_count": 1}), false),
-        (child.id(), "1.2.3", serde_json::json!({"pid": 42, "model_count": 0}), true),
-        (child.id(), "1.2.3", serde_json::Value::Null, true),
-    ] {
-        fs::write(
-            &ack_path,
-            serde_json::to_vec(&serde_json::json!({
-                "schema_version": 1, "version": version, "gui_pid": pid, "core": core,
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            wait_for_update_runtime_ack(&mut child, &ack_path, "1.2.3", Duration::ZERO).is_ok(),
-            accepted
-        );
-    }
-    child.kill().unwrap();
-    child.wait().unwrap();
-    assert!(
-        wait_for_update_runtime_ack(&mut child, &ack_path, "1.2.3", Duration::ZERO)
-            .unwrap_err()
-            .contains("exited")
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn timestamped_preview_versions_are_recognized() {
-    use crate::app_version_series::preview_version_stamp;
-    assert!(preview_version_stamp("v0.3.6-preview.20261106-1137").is_some());
-    assert!(preview_version_stamp("0.3.6-preview.20261106-1137").is_some());
-    for invalid in [
-        "v0.3.6",
-        "v0.3.6-preview-Linux-amd64",
-        "v0.3.6-dev",
-        "v0.3.6-preview.20261131-1137",
-        "v0.3.6-preview.20261106-2400",
-        "v0.3.6-preview.foo",
-    ] {
-        assert!(preview_version_stamp(invalid).is_none(), "{invalid}");
-    }
-}
-
-#[test]
-fn app_update_preservation_is_per_attempt_and_survives_download_refresh() {
-    let state = AppUpdateState::default();
-    state.start(CancellationToken::new()).unwrap();
-    assert!(!state.snapshot().preserve_core);
-    state.update_task(|task| task.preserve_core = true);
-    let pending = PendingAppUpdate {
-        version: "v1.2.3".to_string(),
-        asset: PortableUpdateAsset {
-            url: "https://example.test/app.zip".to_string(),
-            fallback_urls: Vec::new(),
-            sha256: "0".repeat(64),
-            size_bytes: 100,
-        },
-        arch: "amd64".to_string(),
-    };
-    state.start_download(&pending).unwrap();
-    assert!(state.snapshot().preserve_core);
-    state.finish("cancelled", None);
-    state.start(CancellationToken::new()).unwrap();
-    assert!(!state.snapshot().preserve_core);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn macos_update_helper_has_private_process_group() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let root = agent_test_home("update-helper-process-group");
-    let helper = root.join("helper");
-    fs::write(&helper, "#!/bin/sh\nexec /bin/sleep 30\n").unwrap();
-    fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
-    let descriptor = root.join("update-descriptor.json");
-    let mut command = portable_update_helper_command(&helper, &descriptor);
-    let mut child = command.spawn().unwrap();
-    let pid = child.id() as libc::pid_t;
-    let group = unsafe { libc::getpgid(pid) };
-    let parent_group = unsafe { libc::getpgrp() };
-    let running = child.try_wait().unwrap().is_none();
-    let _ = child.kill();
-    child.wait().unwrap();
-    fs::remove_dir_all(root).unwrap();
-
-    assert!(running);
-    assert_eq!(group, pid);
-    assert_ne!(group, parent_group);
-    assert_eq!(command.get_args().collect::<Vec<_>>(), vec![
-        std::ffi::OsStr::new("--portable-update-helper"), descriptor.as_os_str(),
-    ]);
-}
-
-#[test]
-fn app_update_display_overrides_only_a_config_snapshot() {
-    let mut saved = GuiConfigFile::default();
-    saved.update_channel = "preview-20261109-1316".to_string();
-    saved.auto_update.enabled = true;
-    saved.auto_update.update_app = true;
-    for series in ["stable", "preview", "stable"] {
-        let view = app_display_config(saved.clone(), series).unwrap();
-        assert_eq!(view.update_channel, series);
-        assert_eq!(view.auto_update, saved.auto_update);
-        assert_eq!(saved.update_channel, "preview-20261109-1316");
-    }
-    assert!(app_display_config(saved.clone(), "preview-20261109-1316").is_err());
-    assert!(app_display_config(saved, "unknown").is_err());
 }

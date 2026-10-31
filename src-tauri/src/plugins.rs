@@ -52,7 +52,7 @@ pub(crate) async fn get_plugin_latest_releases(
         .await)
 }
 
-pub(crate) async fn read_plugin_github_settings(
+async fn read_plugin_github_settings(
     response: reqwest::Response,
 ) -> Result<serde_json::Value, String> {
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -73,7 +73,7 @@ async fn fetch_plugin_release(
     read_plugin_release(response).await
 }
 
-pub(crate) fn plugin_github_token(
+fn plugin_github_token(
     settings: &serde_json::Value,
     environment: Option<String>,
 ) -> Option<String> {
@@ -159,11 +159,10 @@ async fn read_plugin_release(response: reqwest::Response) -> Result<String, Stri
 
 #[tauri::command]
 pub(crate) async fn get_plugin_support(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<bool, String> {
-    let response = crate::management_api::target_request(&remote, target_revision, &gui_config_state, reqwest::Method::GET, "plugins").await?.send().await.map_err(|error| error.to_string())?;
+    let config = gui_config_state.snapshot()?;
+    let response = request_plugins(&config).await?;
     read_plugin_support(response).await
 }
 

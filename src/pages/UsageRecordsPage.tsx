@@ -44,13 +44,11 @@ import {
   Wallet,
   Wrench,
   X,
-  Plus,
 } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
-import type { MessageKey } from '../i18n/resources';
 import { usePrivacyMask } from '../privacy';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
-import { calculateTokenComposition, getSpeedMode } from '../services/usageMetrics';
+import { calculateTokenComposition } from '../services/usageMetrics';
 import { formatDuration, formatUsageNumber } from '../services/usageNumber';
 import { Tabs } from '../components/Tabs';
 import {
@@ -74,38 +72,15 @@ import { SelectMenu } from '../components/SelectMenu';
 import { Dialog } from '../components/Dialog';
 import { UsageAnalysisView, type UsageAnalysis, type UsageCategory } from './UsageAnalysisView';
 import { Select } from '../components/Select';
-import { AgentUsageView } from './AgentUsageView';
-import {
-  clearAgentUsageHistory,
-  getAgentUsageStorage,
-  syncAgentUsage,
-  type AgentUsageStorage,
-} from '../services/agentUsage';
-import {
-  AGENT_USAGE_REFRESH_INTERVALS,
-  loadAgentUsageRefreshInterval,
-  saveAgentUsageRefreshInterval,
-  type AgentUsageRefreshInterval,
-} from '../services/agentUsagePreferences';
 
-const AGENT_INTERVAL_LABELS = {
-  0: 'usage.agentUsage.refreshFrequency.off',
-  300000: 'usage.agentUsage.refreshFrequency.5m',
-  900000: 'usage.agentUsage.refreshFrequency.15m',
-  1800000: 'usage.agentUsage.refreshFrequency.30m',
-  3600000: 'usage.agentUsage.refreshFrequency.1h',
-} as const;
-
-type UsageTab = 'overview' | 'live-routing' | 'analysis' | 'events' | 'pricing' | 'agent-usage' | 'data-management';
+type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
 
 const USAGE_TABS = [
   { value: 'overview', labelKey: 'usage.tab.overview' },
-  { value: 'live-routing', labelKey: 'routing.live' },
   { value: 'analysis', labelKey: 'usage.tab.analysis' },
   { value: 'events', labelKey: 'usage.tab.events' },
   { value: 'pricing', labelKey: 'usage.tab.pricing' },
-  { value: 'agent-usage', labelKey: 'usage.tab.agentUsage' },
   { value: 'data-management', labelKey: 'usage.tab.dataManagement' },
 ] as const;
 
@@ -132,33 +107,11 @@ const loadPageSize = (): number => {
   }
 };
 const emptyAnalysis: UsageAnalysis = { models: [], providers: [], sources: [], apiKeys: [] };
-const emptyOverview: UsageOverview = {
-  totalRequests: 0,
-  successCount: 0,
-  failureCount: 0,
-  canceledCount: 0,
-  successRate: 0,
-  inputTokens: 0,
-  outputTokens: 0,
-  reasoningTokens: 0,
-  cacheReadTokens: 0,
-  cacheCreationTokens: 0,
-  totalTokens: 0,
-  rpm: 0,
-  tpm: 0,
-  tps: 0,
-  tpsSampleCount: 0,
-  averageLatencyMs: 0,
-  cacheHitRate: 0,
-  estimatedCost: 0,
-  pricedRequests: 0,
-  timeline: [],
-};
 
 const loadTab = (): UsageTab => {
   try {
     const saved = usagePreferences.getItem(TAB_KEY);
-    return saved === 'live-routing' || saved === 'analysis' || saved === 'events' || saved === 'pricing' || saved === 'agent-usage' || saved === 'data-management'
+    return saved === 'analysis' || saved === 'events' || saved === 'pricing' || saved === 'data-management'
       ? saved
       : 'overview';
   } catch {
@@ -250,8 +203,6 @@ export function UsageRecordsPage() {
   const [optionsAnalysis, setOptionsAnalysis] = useState<UsageAnalysis>(emptyAnalysis);
   const [events, setEvents] = useState<UsageEventPage | null>(null);
   const [pricing, setPricing] = useState<UsagePricing | null>(null);
-  const [agentUsageRefreshKey, setAgentUsageRefreshKey] = useState(0);
-  const [agentUsageLoading, setAgentUsageLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const loadedFilterScopeKeyRef = useRef('');
@@ -315,15 +266,6 @@ export function UsageRecordsPage() {
       const requestId = ++requestIdRef.current;
       const { timeQuery, query } = buildQueries();
       if (!quiet) setLoading(true);
-      if (activeTab === 'agent-usage') {
-        setLoading(false);
-        try {
-          const nextStatus = await getUsageCollectorStatus();
-          if (requestId === requestIdRef.current) setStatus(nextStatus);
-        } catch {
-        }
-        return;
-      }
       try {
         const statusRequest = getUsageCollectorStatus();
         const filtersChanged = loadedFilterScopeKeyRef.current !== filterScopeKey;
@@ -333,11 +275,11 @@ export function UsageRecordsPage() {
         const optionsRequest = refreshOptions
           ? getUsageAnalysis({ query: timeQuery })
           : Promise.resolve(null);
-        if (activeTab === 'overview' || activeTab === 'live-routing') {
+        if (activeTab === 'overview') {
           const [nextStatus, nextOptions, nextOverview] = await Promise.all([
             statusRequest,
             optionsRequest,
-            getUsageOverview({ query, speedMode: getSpeedMode() }),
+            getUsageOverview({ query }),
           ]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
@@ -348,7 +290,7 @@ export function UsageRecordsPage() {
           const [nextStatus, nextOptions, nextOverview, nextAnalysis] = await Promise.all([
             statusRequest,
             optionsRequest,
-            getUsageOverview({ query, speedMode: getSpeedMode() }),
+            getUsageOverview({ query }),
             model || source || apiKeyHash || result !== 'all' || !refreshOptions
               ? getUsageAnalysis({ query })
               : optionsRequest.then((analysis) => analysis ?? emptyAnalysis),
@@ -448,7 +390,6 @@ export function UsageRecordsPage() {
   const collectorTone = status?.state === 'error' ? 'error' : status?.state === 'collecting' ? 'success' : '';
   const showInitialLoading =
     activeTab !== 'data-management' &&
-    activeTab !== 'agent-usage' &&
     !error &&
     loading &&
     ((activeTab === 'overview' && !overview) ||
@@ -559,7 +500,6 @@ export function UsageRecordsPage() {
             <strong>
               {status?.state === 'collecting'
                 ? t('usage.collector.collecting')
-                : status?.state === 'disabled' ? t('remote.usageDisabled')
                 : status?.state === 'error'
                 ? t('usage.collector.error')
                 : t('usage.collector.waiting')}
@@ -569,10 +509,8 @@ export function UsageRecordsPage() {
           <button
             type="button"
             className="icon-button quiet usage-refresh-btn"
-            onClick={() => activeTab === 'agent-usage'
-              ? setAgentUsageRefreshKey((current) => current + 1)
-              : void loadData(false)}
-            disabled={loading || agentUsageLoading}
+            onClick={() => void loadData(false)}
+            disabled={loading}
             title={t('usage.refresh')}
             aria-label={t('usage.refresh')}
           >
@@ -587,13 +525,12 @@ export function UsageRecordsPage() {
         role="tabpanel"
         aria-labelledby={`usage-tab-${activeTab}`}
       >
-      {activeTab !== 'data-management' && activeTab !== 'agent-usage' && activeTab !== 'live-routing' ? filterPanel : null}
+      {activeTab !== 'data-management' ? filterPanel : null}
 
       {showInitialLoading && activeTab !== 'events' ? (
         <EmptyState className="usage-initial-loading" icon={<Database size={22} />}>{t('usage.loading')}</EmptyState>
       ) : null}
 
-      {activeTab === 'live-routing' ? <RoutingPanel /> : null}
       {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
       {activeTab === 'analysis' && (analysis || overview) ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
       {activeTab === 'events' ? (
@@ -612,7 +549,6 @@ export function UsageRecordsPage() {
       {activeTab === 'pricing' && pricing ? (
         <PricingView pricing={pricing} query={buildQueries().query} onChanged={() => loadData(true)} />
       ) : null}
-      {activeTab === 'agent-usage' ? <AgentUsageView refreshKey={agentUsageRefreshKey} onLoadingChange={setAgentUsageLoading} /> : null}
       {activeTab === 'data-management' ? <UsageDataManagementView /> : null}
       </div>
     </section>
@@ -632,17 +568,6 @@ function UsageDataManagementView() {
   const [shrinkDraft, setShrinkDraft] = useState('');
   const [shrinking, setShrinking] = useState(false);
   const [storageNotice, setStorageNotice] = useState('');
-  const [agentStorage, setAgentStorage] = useState<AgentUsageStorage | null>(null);
-  const [agentSyncing, setAgentSyncing] = useState(false);
-  const [agentNotice, setAgentNotice] = useState('');
-  const [agentInterval, setAgentInterval] = useState<AgentUsageRefreshInterval>(loadAgentUsageRefreshInterval);
-
-  const changeAgentInterval = (value: string) => {
-    const next = Number(value) as AgentUsageRefreshInterval;
-    if (!AGENT_USAGE_REFRESH_INTERVALS.includes(next)) return;
-    setAgentInterval(next);
-    saveAgentUsageRefreshInterval(next);
-  };
 
   useEffect(() => {
     let disposed = false;
@@ -662,52 +587,6 @@ function UsageDataManagementView() {
       disposed = true;
     };
   }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    getAgentUsageStorage()
-      .then((next) => {
-        if (!disposed) setAgentStorage(next);
-      })
-      .catch(() => {});
-    return () => {
-      disposed = true;
-    };
-  }, []);
-
-  const syncAgentHistory = async () => {
-    setAgentSyncing(true);
-    setError('');
-    setAgentNotice('');
-    try {
-      await syncAgentUsage();
-      setAgentStorage(await getAgentUsageStorage());
-    } catch (requestError) {
-      setError(String(requestError));
-    } finally {
-      setAgentSyncing(false);
-    }
-  };
-
-  const clearAgentHistory = async () => {
-    const confirmed = await askConfirmation({
-      title: t('usage.dataManagement.agentStorageClearConfirmTitle'),
-      message: t('usage.dataManagement.agentStorageClearConfirm'),
-    });
-    if (!confirmed) return;
-    setAgentSyncing(true);
-    setError('');
-    setAgentNotice('');
-    try {
-      await clearAgentUsageHistory();
-      setAgentStorage(await getAgentUsageStorage());
-      setAgentNotice(t('usage.dataManagement.agentStorageCleared'));
-    } catch (requestError) {
-      setError(String(requestError));
-    } finally {
-      setAgentSyncing(false);
-    }
-  };
 
   const saveStorageLimit = async () => {
     const normalized = limitDraft.trim();
@@ -873,45 +752,6 @@ function UsageDataManagementView() {
 
       {storageNotice ? <MessageNotice tone="success" message={storageNotice} onDismiss={() => setStorageNotice('')} /> : null}
 
-      <div className="surface-card usage-data-management-action agent-usage-storage-action">
-        <div>
-          <strong>{t('usage.dataManagement.agentStorageTitle')}</strong>
-          <span>{t('usage.dataManagement.agentStorageDescription')}</span>
-          <small>
-            {[
-              agentStorage ? t('usage.dataManagement.agentStorageCurrent', {
-                size: formatStorageBytes(agentStorage.databaseSizeBytes),
-                daily: compactNumber(agentStorage.dailyRows),
-                hourly: compactNumber(agentStorage.hourlyRows),
-              }) : '',
-              agentStorage?.lastSyncAt
-                ? t('usage.dataManagement.agentStorageLastSync', {
-                  time: new Intl.DateTimeFormat(getCurrentLocale(), { dateStyle: 'short', timeStyle: 'short' }).format(new Date(agentStorage.lastSyncAt)),
-                })
-                : t('usage.dataManagement.agentStorageNeverSynced'),
-            ].filter(Boolean).join(' · ')}
-          </small>
-        </div>
-        <div className="usage-storage-limit-editor">
-          <label className="agent-usage-interval-setting">
-            <span>{t('usage.dataManagement.agentStorageInterval')}</span>
-            <Select value={agentInterval} onChange={(event) => changeAgentInterval(event.currentTarget.value)}>
-              {AGENT_USAGE_REFRESH_INTERVALS.map((interval) => (
-                <option key={interval} value={interval}>{t(AGENT_INTERVAL_LABELS[interval])}</option>
-              ))}
-            </Select>
-          </label>
-          <button type="button" className="primary-button" onClick={() => void syncAgentHistory()} disabled={agentSyncing}>
-            {agentSyncing ? t('usage.dataManagement.agentStorageSyncing') : t('usage.dataManagement.agentStorageSync')}
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void clearAgentHistory()} disabled={agentSyncing}>
-            {t('usage.dataManagement.agentStorageClear')}
-          </button>
-        </div>
-      </div>
-
-      {agentNotice ? <MessageNotice tone="success" message={agentNotice} onDismiss={() => setAgentNotice('')} /> : null}
-
       <div className="surface-card usage-data-management-action">
         <div>
           <strong>{t('usage.dataManagement.actionTitle')}</strong>
@@ -938,7 +778,7 @@ function UsageDataManagementView() {
   );
 }
 
-function UsageStatGrid({ overview }: { overview: UsageOverview }) {
+function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pick<UsageQuery, 'start' | 'end'> }) {
   const { t } = useI18n();
   const cards = [
     {
@@ -958,7 +798,7 @@ function UsageStatGrid({ overview }: { overview: UsageOverview }) {
       tone: 'speed',
       label: t('usage.stat.tps'),
       value: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
-      metaTitle: t(getSpeedMode() === 'total' ? 'usage.stat.performanceMetaTitleEndToEnd' : 'usage.stat.performanceMetaTitle', {
+      metaTitle: t('usage.stat.performanceMetaTitle', {
         tps: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
         samples: compactNumber(overview.tpsSampleCount),
         rpm: overview.rpm.toFixed(2),
@@ -1013,23 +853,15 @@ function UsageStatGrid({ overview }: { overview: UsageOverview }) {
   ];
 
   return (
-    <div className="surface-card usage-stat-grid">
-      {cards.map(({ key, tone, label, value, metaTitle }) => (
-        <article className={`panel usage-stat-card tone-${tone}`} key={key} title={metaTitle}>
-          <span className="usage-stat-card-label">{label}</span>
-          <strong className="usage-stat-card-value">{value}</strong>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pick<UsageQuery, 'start' | 'end'> }) {
-  const { t } = useI18n();
-
-  return (
     <div className="usage-overview-layout">
-      <UsageStatGrid overview={overview} />
+      <div className="surface-card usage-stat-grid">
+        {cards.map(({ key, tone, label, value, metaTitle }) => (
+          <article className={`panel usage-stat-card tone-${tone}`} key={key} title={metaTitle}>
+            <span className="usage-stat-card-label">{label}</span>
+            <strong className="usage-stat-card-value">{value}</strong>
+          </article>
+        ))}
+      </div>
       <UsageOverviewPanels>
         <section className="panel surface-card usage-trend-panel">
           <div className="usage-section-heading">
@@ -1551,38 +1383,7 @@ const parsePrice = (value: string) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
-/** Formats one per-million rate with the fixed four decimals the price list uses everywhere. */
-const formatRate = (value: number | undefined) => (Number.isFinite(value) ? `$${Number(value).toFixed(4)}` : '—');
-
-/**
- * What this model has actually cost so far, per 1K tokens. Both figures come from the backend:
- * `estimatedCost` is billed with the real long-context and service-tier rules, so dividing the
- * two keeps this label honest without restating those rules here.
- */
-const realisedUnitPrice = (cost: number, tokens: number) =>
-  (tokens > 0 && Number.isFinite(cost) ? formatMicroUsd((cost / tokens) * 1000) : null);
-
-/** Small amounts keep enough decimals to stay meaningful instead of collapsing to "$0.0000". */
-const formatMicroUsd = (amount: number) => {
-  if (!Number.isFinite(amount)) return '—';
-  const digits = amount >= 0.01 ? 4 : amount >= 0.0001 ? 6 : 8;
-  return `$${amount.toFixed(digits)}`;
-};
-
-/** The chip says where a price came from; an unpriced model gets a muted, low-emphasis one. */
-const priceStatus = (price: ModelPrice | null): 'manual' | 'synced' | 'unpriced' =>
-  !price ? 'unpriced' : price.source === 'manual' ? 'manual' : 'synced';
-
-/** True while the editor is creating a model that does not exist yet. */
-const emptyDraft = (draft: PriceDraft) => draft.model === '' && draft.prompt === '' && draft.completion === ''
-  && draft.cacheRead === '' && draft.cacheCreation === '';
-
-const RATE_FIELDS = [
-  { key: 'prompt', labelKey: 'usage.pricing.prompt', shortKey: 'usage.pricing.shortPrompt', required: true },
-  { key: 'completion', labelKey: 'usage.pricing.completion', shortKey: 'usage.pricing.shortCompletion', required: true },
-  { key: 'cacheRead', labelKey: 'usage.pricing.cacheRead', shortKey: 'usage.pricing.shortCacheRead', required: false },
-  { key: 'cacheCreation', labelKey: 'usage.pricing.cacheCreation', shortKey: 'usage.pricing.shortCacheCreation', required: false },
-] as const satisfies readonly { key: keyof PriceDraft; labelKey: MessageKey; shortKey: MessageKey; required: boolean }[];
+const priceUnit = (value: number | undefined) => (Number.isFinite(value) ? `$${Number(value).toFixed(4)}` : '—');
 
 function PricingView({
   pricing,
@@ -1608,18 +1409,11 @@ function PricingView({
   const [syncDrafts, setSyncDrafts] = useState<SyncPriceDraft[]>([]);
   const [syncError, setSyncError] = useState('');
   const { notice, revision, showNotice, clearNotice } = useAppNotice();
-  const modelInputRef = useRef<HTMLInputElement | null>(null);
 
-  const keyword = search.trim().toLowerCase();
-  const visibleRows = pricing.rows.filter((row) => !keyword || row.model.toLowerCase().includes(keyword));
-  const unpricedCount = pricing.rows.filter((row) => !row.price).length;
-  const coverageRatio = pricing.totalRequests > 0 ? Math.min(1, Math.max(0, pricing.pricedRequests / pricing.totalRequests)) : 0;
-
-  const creatingPrice = draft ? emptyDraft(draft) : false;
-  // Focus lands in the name field only for a brand-new model; existing rows keep the row's context.
-  useLayoutEffect(() => {
-    if (creatingPrice) modelInputRef.current?.focus();
-  }, [creatingPrice]);
+  const visibleRows = pricing.rows.filter((row) => {
+    const keyword = search.trim().toLowerCase();
+    return !keyword || row.model.toLowerCase().includes(keyword);
+  });
 
   const savePrice = async () => {
     if (!draft?.model.trim()) {
@@ -1660,7 +1454,6 @@ function PricingView({
     clearNotice();
     try {
       await deleteUsageModelPrice({ model });
-      setDraft((current) => (current?.model === model ? null : current));
       showNotice({ key: 'usage.pricing.deleted' });
       await onChanged();
     } catch (deleteError) {
@@ -1729,52 +1522,24 @@ function PricingView({
     setSyncDrafts((current) => current.map((item, currentIndex) => currentIndex === index ? { ...item, ...update } : item));
   };
 
-  const setAllSyncSelected = (selected: boolean) => {
-    setSyncDrafts((current) => current.map((item) => ({ ...item, selected })));
-  };
-
   const changeSyncSource = (source: 'models-dev' | 'litellm') => {
     setSyncSource(source);
     try { usagePreferences.setItem('cpa-gui.pricing-sync-source.v1', source); } catch {}
   };
-
-  const openEditor = (model: string, price: ModelPrice | null) => setDraft(priceDraftFor(model, price));
-
-  const previousPrice = draft ? draftPreviousPrice(draft, pricing.rows) : null;
-  const selectedSyncCount = syncDrafts.filter((item) => item.selected).length;
-  const allSyncSelected = syncDrafts.length > 0 && selectedSyncCount === syncDrafts.length;
 
   return (
     <section className="panel surface-card usage-pricing-panel">
       {confirmationDialog}
       <div className="usage-pricing-toolbar">
         <div className="usage-pricing-summary">
-          <span className="usage-pricing-summary-label">{t('usage.pricing.cost')}</span>
-          <strong className="usage-pricing-summary-value">{formatUsd(pricing.totalCost)}</strong>
-          <div className="usage-pricing-coverage">
-            <div
-              className="usage-pricing-coverage-track"
-              role="progressbar"
-              aria-label={t('usage.pricing.coverageLabel')}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(coverageRatio * 100)}
-              title={t('usage.pricing.coverageValue', {
-                priced: compactNumber(pricing.pricedRequests),
-                total: compactNumber(pricing.totalRequests),
-              })}
-            >
-              <span className="usage-pricing-coverage-fill" style={{ width: `${coverageRatio * 100}%` }} />
-            </div>
-            <span className="usage-pricing-coverage-text">
-              {t('usage.pricing.coverageValue', {
-                priced: compactNumber(pricing.pricedRequests),
-                total: compactNumber(pricing.totalRequests),
-              })}
-              {' · '}
-              {t('usage.pricing.savedPrices', { count: compactNumber(pricing.savedPrices) })}
-            </span>
-          </div>
+          <strong>{formatUsd(pricing.totalCost)}</strong>
+          <span>
+            {t('usage.pricing.coverage', {
+              priced: compactNumber(pricing.pricedRequests),
+              total: compactNumber(pricing.totalRequests),
+              saved: compactNumber(pricing.savedPrices),
+            })}
+          </span>
         </div>
         <div className="usage-pricing-actions">
           <div className="usage-pricing-action-group">
@@ -1787,25 +1552,17 @@ function PricingView({
                 aria-label={t('usage.pricing.search')}
               />
             </div>
-            <button type="button" className="secondary-button compact-button usage-pricing-add" onClick={() => setDraft(emptyPriceDraft())}>
-              <Plus size={14} aria-hidden="true" />
+            <button type="button" className="secondary-button compact-button" onClick={() => setDraft(emptyPriceDraft())}>
               {t('usage.pricing.add')}
             </button>
           </div>
-          <div className="usage-pricing-action-group usage-pricing-sync-group">
+          <div className="usage-pricing-action-group">
             <Select value={syncSource} onChange={(event) => changeSyncSource(event.currentTarget.value as 'models-dev' | 'litellm')} aria-label={t('usage.pricing.syncSource')}>
               <option value="models-dev">Models.dev</option>
               <option value="litellm">LiteLLM</option>
             </Select>
-            <button
-              type="button"
-              className="primary-button compact-button usage-pricing-sync-button"
-              disabled={syncing}
-              title={t('usage.pricing.syncHelp')}
-              onClick={() => void previewPrices()}
-            >
-              <RefreshCw size={14} aria-hidden="true" className={syncing ? 'usage-pricing-sync-spin' : undefined} />
-              {syncing ? t('usage.pricing.syncing') : t('usage.pricing.syncButton')}
+            <button type="button" className="primary-button compact-button" disabled={syncing} onClick={() => void previewPrices()}>
+              {syncing ? t('usage.pricing.syncing') : t('usage.pricing.sync')}
             </button>
           </div>
         </div>
@@ -1813,231 +1570,29 @@ function PricingView({
 
       <FloatingNotice key={revision} notice={notice} onDismiss={clearNotice} />
 
-      {unpricedCount > 0 && visibleRows.length > 0 ? (
-        <p className="usage-pricing-hint">{t('usage.pricing.unpriced')}</p>
-      ) : null}
-
-      {visibleRows.length ? (
-        <ul className="usage-pricing-list" aria-label={t('usage.tab.pricing')}>
-          {visibleRows.map((row) => {
-            const status = priceStatus(row.price);
-            return (
-              <li
-                key={row.model}
-                className="usage-pricing-card"
-                data-status={status}
-                tabIndex={0}
-                onClick={() => openEditor(row.model, row.price)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    openEditor(row.model, row.price);
-                  }
-                }}
-              >
-                <div className="usage-pricing-card-main">
-                  <div className="usage-pricing-identity">
-                    <strong className="usage-pricing-model" title={row.model}>{row.model}</strong>
-                    <span className={`usage-pricing-chip is-${status}`}>
-                      {status === 'manual'
-                        ? t('usage.pricing.statusManual')
-                        : status === 'synced'
-                          ? t('usage.pricing.statusSynced')
-                          : t('usage.pricing.statusUnpriced')}
-                    </span>
-                  </div>
-                  <div className="usage-pricing-identity-meta">
-                    <span>{t('usage.pricing.requests')} <b>{compactNumber(row.requests)}</b></span>
-                    <span>{compactNumber(row.totalTokens)} {t('usage.unit.tokens')}</span>
-                    {row.price && realisedUnitPrice(row.estimatedCost, row.totalTokens) ? (
-                      <span className="usage-pricing-unit-price">
-                        {t('usage.pricing.realisedRate', {
-                          rate: realisedUnitPrice(row.estimatedCost, row.totalTokens) as string,
-                        })}
-                      </span>
-                    ) : null}
-                    {status === 'synced' && row.price ? (
-                      <span className="usage-pricing-source" title={row.price.sourceModelId || row.price.source}>
-                        {t('usage.pricing.syncedFrom', { source: row.price.sourceModelId || row.price.source })}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                {row.price ? (
-                  <dl className="usage-pricing-rates">
-                    {RATE_FIELDS.map(({ key, labelKey, shortKey }) => (
-                      <div key={key} className="usage-pricing-rate" data-empty={row.price![key] <= 0}>
-                        <dt title={t(labelKey)}>
-                          {t(shortKey)}
-                          <small>{t('usage.pricing.perMillion')}</small>
-                        </dt>
-                        <dd>{formatRate(row.price![key])}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                ) : (
-                  <button
-                    type="button"
-                    className="secondary-button compact-button usage-pricing-set-price"
-                    onClick={(event) => { event.stopPropagation(); openEditor(row.model, null); }}
-                  >
-                    {t('usage.pricing.setPrice')}
-                  </button>
-                )}
-                <div className="usage-pricing-card-side">
-                  <div className="usage-pricing-cost" data-empty={!row.price}>
-                    <span>{t('usage.pricing.estimated')}</span>
-                    <strong>{row.price ? formatUsd(row.estimatedCost) : t('usage.pricing.unpriced')}</strong>
-                  </div>
-                  <div className="usage-price-row-actions">
-                    <button
-                      type="button"
-                      className="icon-button quiet"
-                      title={t('common.edit')}
-                      aria-label={`${t('common.edit')}: ${row.model}`}
-                      onClick={(event) => { event.stopPropagation(); openEditor(row.model, row.price); }}
-                    >
-                      <Pencil size={14} aria-hidden="true" />
-                    </button>
-                    {row.price?.source === 'manual' ? (
-                      <button
-                        type="button"
-                        className="icon-button danger"
-                        title={t('common.delete')}
-                        aria-label={`${t('common.delete')}: ${row.model}`}
-                        onClick={(event) => { event.stopPropagation(); void deletePrice(row.model); }}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : keyword ? (
-        <p className="usage-pricing-empty">{t('usage.pricing.noMatch', { keyword: search.trim() })}</p>
-      ) : (
-        <UsageEmpty />
-      )}
-
-      {draft ? (
-        <Dialog
-          className="usage-price-drawer-dialog"
-          backdropClassName="usage-price-drawer-backdrop"
-          labelledBy="usage-price-drawer-title"
-          dismissOnBackdrop
-          initialFocusRef={modelInputRef}
-          onClose={() => { if (!saving) setDraft(null); }}
-          closeDisabled={saving}
-        >
-          <header className="usage-price-drawer-header">
-            <div>
-              <h2 id="usage-price-drawer-title">
-                {creatingPrice ? t('usage.pricing.editorCreate') : t('usage.pricing.editorTitle')}
-              </h2>
-              <p>{t('usage.pricing.editorSubtitle')}</p>
-            </div>
-          </header>
-          <div className="usage-price-drawer-body">
-            <label className="usage-price-field">
-              <span>{t('usage.pricing.editorModel')}</span>
-              <input
-                ref={modelInputRef}
-                value={draft.model}
-                readOnly={!creatingPrice}
-                onChange={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
-                placeholder={t('usage.pricing.editorModelPlaceholder')}
-              />
-            </label>
-            <div className="usage-price-drawer-grid">
-              {RATE_FIELDS.map((field) => (
-                <label key={field.key} className="usage-price-field">
-                  <span>{t(field.labelKey)}</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.0001"
-                    inputMode="decimal"
-                    value={draft[field.key]}
-                    onChange={(event) => setDraft({ ...draft, [field.key]: event.currentTarget.value })}
-                    placeholder={field.required ? '0.0000' : t('usage.pricing.optional')}
-                  />
-                  {previousPrice ? (
-                    <small className="usage-price-previous">
-                      {t('usage.pricing.previous', { value: formatRate(previousPrice[field.key]) })}
-                    </small>
-                  ) : null}
-                </label>
-              ))}
-            </div>
-            <div className="usage-price-notes">
-              <p className="usage-price-cost-preview">
-                {t('usage.pricing.rateNote')}
-              </p>
-              <p className="usage-price-tier-note">
-                {t('usage.pricing.tierNote')}
-              </p>
-            </div>
-          </div>
-          <footer className="usage-price-drawer-footer">
-            {previousPrice ? (
-              <button type="button" className="secondary-button compact-button usage-price-drawer-delete" disabled={saving} onClick={() => void deletePrice(draft.model)}>
-                <Trash2 size={14} aria-hidden="true" />
-                {t('usage.pricing.deleteAction')}
-              </button>
-            ) : <span />}
-            <div className="usage-price-drawer-actions">
-              <button type="button" className="secondary-button compact-button" disabled={saving} onClick={() => setDraft(null)}>
-                {t('common.cancel')}
-              </button>
-              <button type="button" className="primary-button compact-button" disabled={saving} onClick={() => void savePrice()}>
-                {saving ? t('usage.pricing.saving') : t('common.save')}
-              </button>
-            </div>
-          </footer>
-        </Dialog>
-      ) : null}
-
       {syncPreview ? <Dialog className="usage-price-sync-dialog" labelledBy="usage-price-sync-title" onClose={() => setSyncPreview(null)} closeDisabled={applyingSync}>
-        <header className="usage-price-sync-header">
+        <div className="usage-price-sync-header">
           <div>
             <h2 id="usage-price-sync-title">{t('usage.pricing.syncPreview')}</h2>
             <a href={syncPreview?.sourceUrl} target="_blank" rel="noreferrer">{syncPreview?.source}</a>
           </div>
-          <div className="usage-price-sync-counts">
-            <span className="usage-price-sync-count is-matched">
-              <b>{syncDrafts.length}</b> {t('usage.pricing.matchedLabel')}
-            </span>
-            <span className="usage-price-sync-count is-unmatched">
-              <b>{syncPreview?.unmatched.length ?? 0}</b> {t('usage.pricing.unmatchedLabel')}
-            </span>
-          </div>
           <button type="button" className="icon-button quiet" aria-label={t('common.close')} disabled={applyingSync} onClick={() => setSyncPreview(null)}><X size={16} /></button>
-        </header>
+        </div>
         <p className="usage-price-sync-note">{t('usage.pricing.syncNote')}</p>
         <div className="usage-price-sync-controls">
-          <label className="usage-price-sync-selectall">
-            <Checkbox
-              checked={allSyncSelected}
-              disabled={applyingSync || syncDrafts.length === 0}
-              onChange={(event) => setAllSyncSelected(event.currentTarget.checked)}
-            />
-            <span>{t('usage.pricing.selectAll')}</span>
-          </label>
-          <button type="button" className="secondary-button compact-button" disabled={applyingSync || syncDrafts.length === 0} onClick={() => setAllSyncSelected(false)}>{t('usage.pricing.selectNone')}</button>
-          <span className="usage-price-sync-selected">{t('usage.pricing.bulkSelected', { selected: selectedSyncCount, matched: syncDrafts.length })}</span>
+          <span>{t('usage.pricing.syncCounts', { matched: syncDrafts.length, unmatched: syncPreview?.unmatched.length ?? 0 })}</span>
+          <button type="button" className="secondary-button" onClick={() => setSyncDrafts((current) => current.map((item) => ({ ...item, selected: true })))}>{t('usage.pricing.selectAll')}</button>
+          <button type="button" className="secondary-button" onClick={() => setSyncDrafts((current) => current.map((item) => ({ ...item, selected: false })))}>{t('usage.pricing.selectNone')}</button>
         </div>
         <div className="usage-price-sync-list">
           {syncDrafts.map((item, index) => (
-            <div className="usage-price-sync-row" key={item.price.model} data-selected={item.selected}>
+            <div className="usage-price-sync-row" key={item.price.model}>
               <label className="usage-price-sync-identity">
                 <Checkbox checked={item.selected} disabled={applyingSync} onChange={(event) => updateSyncDraft(index, { selected: event.currentTarget.checked })} />
-                <span><strong title={item.price.model}>{item.price.model}</strong><small>{item.price.sourceModelId}</small></span>
+                <span><strong>{item.price.model}</strong><small>{item.price.sourceModelId}</small></span>
               </label>
               {(['prompt', 'completion', 'cacheRead', 'cacheCreation'] as const).map((field) => (
-                <label key={field} className="usage-price-sync-field">
+                <label key={field}>
                   <span>{t(`usage.pricing.${field}`)}</span>
                   <input type="number" min="0" step="any" value={item[field]} disabled={applyingSync}
                     onChange={(event) => updateSyncDraft(index, { [field]: event.currentTarget.value })} />
@@ -2054,20 +1609,144 @@ function PricingView({
           </details>
         )}
         {syncError && <Notice tone="error" variant="text">{syncError}</Notice>}
-        <footer className="usage-price-sync-footer">
+        <div className="usage-price-sync-footer">
           <button type="button" className="secondary-button" disabled={applyingSync} onClick={() => setSyncPreview(null)}>{t('common.cancel')}</button>
-          <button type="button" className="primary-button" disabled={applyingSync || selectedSyncCount === 0} onClick={() => void applySyncPrices()}>
-            {applyingSync ? t('usage.pricing.saving') : t('usage.pricing.applySelected', { count: selectedSyncCount })}
+          <button type="button" className="primary-button" disabled={applyingSync || !syncDrafts.some((item) => item.selected)} onClick={() => void applySyncPrices()}>
+            {applyingSync ? t('usage.pricing.saving') : t('usage.pricing.applySelected', { count: syncDrafts.filter((item) => item.selected).length })}
           </button>
-        </footer>
+        </div>
       </Dialog> : null}
+
+      {draft ? (
+        <div className="surface-section usage-price-editor">
+          <label>
+            <span>{t('usage.pricing.model')}</span>
+            <input
+              value={draft.model}
+              onChange={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
+              placeholder="gpt-5.6-terra"
+            />
+          </label>
+          <label>
+            <span>{t('usage.pricing.prompt')}</span>
+            <input
+              type="number"
+              min="0"
+              step="0.0001"
+              value={draft.prompt}
+              onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            <span>{t('usage.pricing.completion')}</span>
+            <input
+              type="number"
+              min="0"
+              step="0.0001"
+              value={draft.completion}
+              onChange={(event) => setDraft({ ...draft, completion: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            <span>{t('usage.pricing.cacheRead')}</span>
+            <input
+              type="number"
+              min="0"
+              step="0.0001"
+              value={draft.cacheRead}
+              onChange={(event) => setDraft({ ...draft, cacheRead: event.currentTarget.value })}
+              placeholder={t('usage.pricing.optional')}
+            />
+          </label>
+          <label>
+            <span>{t('usage.pricing.cacheCreation')}</span>
+            <input
+              type="number"
+              min="0"
+              step="0.0001"
+              value={draft.cacheCreation}
+              onChange={(event) => setDraft({ ...draft, cacheCreation: event.currentTarget.value })}
+              placeholder={t('usage.pricing.optional')}
+            />
+          </label>
+          <div className="usage-price-editor-actions">
+            <button type="button" className="secondary-button compact-button" onClick={() => setDraft(null)}>
+              <X size={14} />
+              {t('common.cancel')}
+            </button>
+            <button type="button" className="primary-button compact-button" disabled={saving} onClick={() => void savePrice()}>
+              {saving ? t('usage.pricing.saving') : t('common.save')}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {visibleRows.length ? (
+        <div className="usage-table-wrap usage-pricing-table-wrap" tabIndex={0} role="region" aria-label={t('usage.tab.pricing')}>
+          <table className="usage-pricing-table">
+            <thead>
+              <tr>
+                <th>{t('usage.pricing.model')}</th>
+                <th>{t('usage.pricing.calls')}</th>
+                <th>{t('usage.unit.tokens')}</th>
+                <th>{t('usage.pricing.cost')}</th>
+                <th>{t('usage.pricing.prompt')}</th>
+                <th>{t('usage.pricing.completion')}</th>
+                <th>{t('usage.pricing.cacheRead')}</th>
+                <th>{t('usage.pricing.cacheCreation')}</th>
+                <th>{t('usage.pricing.actions')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((row) => (
+                <tr key={row.model}>
+                  <td>
+                    <strong title={row.model}>{row.model}</strong>
+                  </td>
+                  <td>{compactNumber(row.requests)}</td>
+                  <td>{compactNumber(row.totalTokens)}</td>
+                  <td>
+                    <strong>{row.price ? formatUsd(row.estimatedCost) : '—'}</strong>
+                  </td>
+                  <td>{row.price ? priceUnit(row.price.prompt) : '—'}</td>
+                  <td>{row.price ? priceUnit(row.price.completion) : '—'}</td>
+                  <td>{row.price ? priceUnit(row.price.cacheRead) : '—'}</td>
+                  <td>{row.price ? priceUnit(row.price.cacheCreation) : '—'}</td>
+                  <td>
+                    <div className="usage-price-row-actions">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title={t('common.edit')}
+                        aria-label={`${t('common.edit')}: ${row.model}`}
+                        onClick={() => setDraft(priceDraftFor(row.model, row.price))}
+                      >
+                        <Pencil size={14} aria-hidden="true" />
+                      </button>
+                      {row.price?.source === 'manual' ? (
+                        <button
+                          type="button"
+                          className="icon-button danger"
+                          title={t('common.delete')}
+                          aria-label={`${t('common.delete')}: ${row.model}`}
+                          onClick={() => void deletePrice(row.model)}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <UsageEmpty />
+      )}
     </section>
   );
 }
-
-/** The saved price behind the row being edited, so the drawer can show what changes. */
-const draftPreviousPrice = (draft: PriceDraft, rows: UsagePricing['rows']): ModelPrice | null =>
-  (draft.model ? rows.find((row) => row.model === draft.model)?.price ?? null : null);
 
 function UsageEmpty() {
   const { t } = useI18n();
@@ -2075,4 +1754,3 @@ function UsageEmpty() {
     <EmptyState className="usage-empty" icon={<TriangleAlert size={18} />}>{t('usage.empty')}</EmptyState>
   );
 }
-import { RoutingPanel } from '../components/routing/RoutingPanel';

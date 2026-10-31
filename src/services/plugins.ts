@@ -1,4 +1,3 @@
-import { remoteTargetRevision } from './remoteCpa';
 import { invoke } from '@tauri-apps/api/core';
 import { isRecord, managementApi } from './managementApi';
 
@@ -36,12 +35,6 @@ export interface PluginMenu {
   originalIndex?: number;
 }
 
-export interface PluginOAuthProviderEntry {
-  identifier: string;
-  name: string;
-  logo: string;
-}
-
 export interface PluginListEntry {
   id: string;
   path: string;
@@ -51,8 +44,6 @@ export interface PluginListEntry {
   effectiveEnabled: boolean;
   supportsOAuth: boolean;
   oauthProvider?: string;
-  oauthProviders?: string[];
-  oauthProviderEntries?: PluginOAuthProviderEntry[];
   supportsQuota: boolean;
   quotaProvider?: string;
   logo: string;
@@ -95,7 +86,6 @@ export interface PluginStoreEntry {
   homepage: string;
   license: string;
   tags: string[];
-  locales: Record<string, { name?: string; description?: string; author?: string; homepage?: string; license?: string; tags?: string[] }>;
   installed: boolean;
   installedVersion: string;
   installedSourceId: string;
@@ -157,32 +147,6 @@ const text = (value: unknown): string => typeof value === 'string' ? value.trim(
 const records = (value: unknown): Record<string, unknown>[] =>
   Array.isArray(value) ? value.filter(isRecord) : [];
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.map(text).filter(Boolean) : [];
-function locales(value: unknown): PluginStoreEntry['locales'] {
-  const result: PluginStoreEntry['locales'] = {};
-  if (!isRecord(value)) return result;
-  for (const [locale, entry] of Object.entries(value)) {
-    if (!isRecord(entry)) continue;
-    const parsed: PluginStoreEntry['locales'][string] = {};
-    for (const field of ['name', 'description', 'author', 'homepage', 'license'] as const) {
-      const parsedValue = text(entry[field]);
-      if (parsedValue) parsed[field] = parsedValue;
-    }
-    const tags = strings(entry.tags);
-    if (tags.length > 0) parsed.tags = tags;
-    if (Object.keys(parsed).length > 0) result[locale] = parsed;
-  }
-  return result;
-}
-
-export function getPluginStoreLocalizedDescription(entry: PluginStoreEntry, locale: string): string {
-  // Chinese variants share the zh-CN text; other locales must not borrow it.
-  const keys = locale === 'zh-TW' ? ['zh-TW', 'zh-CN'] : locale.startsWith('zh') ? [locale, 'zh-CN'] : [locale];
-  for (const key of keys) {
-    const description = entry.locales?.[key]?.description?.trim();
-    if (description) return description;
-  }
-  return entry.description;
-}
 
 function configFields(value: unknown): PluginConfigField[] {
   return records(value).filter((field) => text(field.name)).map((field) => ({
@@ -225,17 +189,7 @@ export function normalizePluginList(value: unknown): PluginListResponse {
         id: text(entry.id), path: text(entry.path), configured: entry.configured === true,
         registered: entry.registered === true, enabled: entry.enabled === true,
         effectiveEnabled: entry.effective_enabled === true,
-        supportsOAuth: entry.supports_oauth === true,
-        oauthProvider: providerKey(entry.oauth_provider),
-        oauthProviders: Array.isArray(entry.oauth_providers)
-          ? entry.oauth_providers.map(providerKey).filter((p): p is string => Boolean(p)) : undefined,
-        oauthProviderEntries: Array.isArray(entry.oauth_provider_entries)
-          ? entry.oauth_provider_entries.flatMap((item) => {
-              if (!isRecord(item)) return [];
-              const identifier = providerKey(item.identifier);
-              if (!identifier) return [];
-              return [{ identifier, name: text(item.name) || identifier, logo: text(item.logo) }];
-            }) : undefined,
+        supportsOAuth: entry.supports_oauth === true, oauthProvider: providerKey(entry.oauth_provider),
         supportsQuota: entry.supports_quota === true, quotaProvider: providerKey(entry.quota_provider),
         logo: text(entry.logo) || info?.logo || '',
         configFields: fields.length ? fields : info?.configFields ?? [],
@@ -270,7 +224,6 @@ export function normalizePluginStore(value: unknown): PluginStoreResponse {
         goos: text(platform.goos), goarch: text(platform.goarch),
       })),
       logo: text(entry.logo), homepage: text(entry.homepage), license: text(entry.license), tags: strings(entry.tags),
-      locales: locales(entry.locales),
       installed: entry.installed === true, installedVersion: text(entry.installed_version),
       installedSourceId: text(entry.installed_source_id), installSourceStatus: text(entry.install_source_status),
       path: text(entry.path), configured: entry.configured === true, registered: entry.registered === true,
@@ -378,7 +331,6 @@ export const pluginStoreApi = {
     ]);
     // Native request has a separate query field: source identity survives even
     // when multiple registries expose the same plugin ID.
-    const targetRevision = remoteTargetRevision();
     const signal = options.signal;
     signal?.throwIfAborted();
     const requestId = signal ? await invoke<string>('prepare_management_request') : undefined;
@@ -389,7 +341,7 @@ export const pluginStoreApi = {
       if (signal?.aborted) { cancel(); signal.throwIfAborted(); }
       const value = responseObject(await invoke<unknown>('management_request', {
         request: {
-          requestId, targetRevision,
+          requestId,
           method: 'POST', path: `/plugins/store/${pluginPathID(id)}/install`, query,
           body: version ? { version } : undefined, timeoutMs: 120_000,
         },
@@ -409,7 +361,7 @@ export const pluginStoreApi = {
 };
 
 export const getPluginSupport = (): Promise<boolean> =>
-  invoke<boolean>('get_plugin_support', { targetRevision: remoteTargetRevision() });
+  invoke<boolean>('get_plugin_support');
 
 export const installLocalPlugin = (source: string): Promise<string> =>
   invoke<string>('install_local_plugin', { source });

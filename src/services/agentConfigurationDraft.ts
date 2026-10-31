@@ -19,7 +19,6 @@ export type AgentConfigurationAction = 'apply' | 'update' | 'close';
 export type ClaudeModelMappingClientId = 'claude-code' | 'claude-desktop';
 
 export type AgentModelMappings = {
-  responseLanguage?: string | null;
   desktopModels?: import('./claudeDesktopModels').ClaudeDesktopModelMapping[];
   opus: string;
   sonnet: string;
@@ -81,8 +80,7 @@ export const sameAgentModelMappings = (
   && (left.manageDefaultModel ?? true) === (right.manageDefaultModel ?? true)
   && (left.manageSubagentModel ?? true) === (right.manageSubagentModel ?? true)
   && (left.startupModel ?? '') === (right.startupModel ?? '')
-  && (left.subagentModel ?? '') === (right.subagentModel ?? '')
-  && (left.responseLanguage ?? null) === (right.responseLanguage ?? null);
+  && (left.subagentModel ?? '') === (right.subagentModel ?? '');
 
 export const resolveAgentModelMappingsDraftSource = <T>(
   current: T,

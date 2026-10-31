@@ -17,8 +17,6 @@ import { DEVIN_QUOTA_DATA, DEVIN_QUOTA_HEADERS, DEVIN_QUOTA_URL, readDevinQuota 
 import { antigravityProjectFor, codexMetadataFor, isPaidXaiFile } from './quotaMetadata';
 import { quotaResetFor, quotaResetInstant } from './quotaTime';
 import { parseKimiPlanName, parseKimiQuotaUrl } from './kimiQuota';
-import { parseMetaQuotaPayload, type MetaQuotaData } from './metaQuota';
-import { callZaiQuota, isZaiProviderAlias, zaiMonitorOrigin, zaiQuotaRows } from './zaiQuota';
 import { getCurrentLocale, translate, type AppLocale } from '../i18n';
 
 const quotaText = (
@@ -27,10 +25,9 @@ const quotaText = (
 ) => translate(getCurrentLocale(), key, variables);
 
 export type AuthFile = Record<string, unknown>;
-export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin' | 'meta' | 'zai';
+export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin';
 export type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
 export type QuotaRow = {
-  kind?: 'cloud-credits';
   label: string;
   remainingPercent: number | null;
   quotaAvailable?: boolean;
@@ -64,12 +61,10 @@ export type QuotaState = {
 export const idleQuota = (): QuotaState => ({ status: 'idle', rows: [] });
 
 const endpointByProvider: Record<QuotaProvider, string> = {
-  meta: 'https://api.meta.ai/muse-code/key',
   devin: DEVIN_QUOTA_URL,
   claude: 'https://api.anthropic.com/api/oauth/usage',
   codex: 'https://chatgpt.com/backend-api/wham/usage',
   kimi: 'https://api.kimi.com/coding/v1/usages',
-  zai: 'https://api.z.ai/api/monitor/usage/quota/limit',
   xai: 'https://cli-chat-proxy.grok.com/v1/billing',
   antigravity: 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
 };
@@ -80,16 +75,10 @@ const CODEX_RESET_CREDITS_URL =
   'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
 const CODEX_RESET_CREDITS_CONSUME_URL =
   'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume';
-const CODEX_SUBSCRIPTION_URL = 'https://chatgpt.com/backend-api/subscriptions';
 const ANTIGRAVITY_CODE_ASSIST_URL =
   'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
 
 const headersByProvider: Record<QuotaProvider, Record<string, string>> = {
-  meta: {
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-    'x-api-version': '1.0.0',
-  },
   devin: DEVIN_QUOTA_HEADERS,
   claude: {
     Authorization: 'Bearer $TOKEN$',
@@ -102,7 +91,6 @@ const headersByProvider: Record<QuotaProvider, Record<string, string>> = {
     'User-Agent': 'codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)',
   },
   kimi: { Authorization: 'Bearer $TOKEN$' },
-  zai: { Authorization: 'Bearer $TOKEN$', Accept: 'application/json' },
   xai: {
     Authorization: 'Bearer $TOKEN$',
     'x-xai-token-auth': 'xai-grok-cli',
@@ -125,12 +113,9 @@ export const providerForFile = (file: AuthFile): QuotaProvider | null => {
   if (value === 'anthropic') return 'claude';
   if (value === 'anti-gravity') return 'antigravity';
   if (value === 'kimi-ai') return 'kimi';
-  if (value === 'muse') return 'meta';
-  if (isZaiProviderAlias(value)) return 'zai';
-  if (['claude', 'codex', 'kimi', 'xai', 'antigravity', 'devin', 'meta'].includes(value)) {
-    return value as QuotaProvider;
-  }
-  return zaiMonitorOrigin(readString(file, 'base_url', 'base-url', 'baseUrl')) ? 'zai' : null;
+  return ['claude', 'codex', 'kimi', 'xai', 'antigravity', 'devin'].includes(value)
+    ? (value as QuotaProvider)
+    : null;
 };
 
 export type QuotaDisplayProvider = QuotaProvider | 'plugin';
@@ -233,11 +218,6 @@ const relativeResetLabel = (value: unknown): string | undefined => {
   }
   return quotaText('quota.service.relative.minutes', { minutes });
 };
-
-export const formatClaudeDollars = (value: number | null) =>
-  value === null || !Number.isFinite(value)
-    ? undefined
-    : new Intl.NumberFormat(getCurrentLocale(), { style: 'currency', currency: 'USD' }).format(value);
 
 const formatUsdFromCents = (value: number | null) =>
   value === null
@@ -404,26 +384,7 @@ export const codexResetCreditDetailsFor = (
   };
 };
 
-const metaQuotaRows = (quota: MetaQuotaData): QuotaRow[] => quota.windows.map((window) => ({
-  label: window.id === 'weekly' ? quotaText('quota.service.weekly')
-    : window.durationMinutes === undefined ? quotaText('quota.service.meta.window')
-      : window.durationMinutes % 60 === 0
-        ? quotaText('quota.service.meta.windowHours', { hours: window.durationMinutes / 60 })
-        : quotaText('quota.service.meta.windowMinutes', { minutes: window.durationMinutes }),
-  remainingPercent: window.usedPercent === null ? null : 100 - window.usedPercent,
-  resetAtMs: quotaResetInstant(window.resetAt),
-}));
-
-export const quotaRowsFor = (
-  provider: QuotaProvider,
-  payload: unknown,
-  locale: AppLocale = getCurrentLocale(),
-): QuotaRow[] => {
-  if (provider === 'meta') {
-    const quota = parseMetaQuotaPayload(payload);
-    return quota ? metaQuotaRows(quota) : [];
-  }
-  if (provider === 'zai') return zaiQuotaRows(payload, locale);
+export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRow[] => {
   if (provider === 'devin') return readDevinQuota(payload).windows.map((window) => ({
     label: quotaText(window.id === 'daily' ? 'quota.service.daily' : 'quota.service.weekly'),
     remainingPercent: window.remainingPercent,
@@ -460,12 +421,6 @@ export const quotaRowsFor = (
   }
 
   if (provider === 'claude') {
-    const dollarFields = ['limit_dollars', 'used_dollars', 'remaining_dollars'];
-    const dollarWindows = Object.entries(value).filter(([key, raw]) =>
-      !['five_hour', 'seven_day', 'extra_usage', 'extraUsage'].includes(key) && isRecord(raw)
-      && (dollarFields.some((field) => numberValue(raw[field]) !== null)
-        || [...dollarFields, 'utilization', 'resets_at'].every((field) => Object.prototype.hasOwnProperty.call(raw, field))));
-    const dollarKeys = new Set(dollarWindows.map(([key]) => key));
     const labels: Record<string, string> = {
       five_hour: quotaText('quota.service.window.fiveHour'),
       seven_day: quotaText('quota.service.window.sevenDay'),
@@ -484,7 +439,7 @@ export const quotaRowsFor = (
       });
     const fable = fableCandidates.find((limit) => limit.is_active === true) ?? fableCandidates[0];
     const rows = Object.entries(labels)
-      .filter(([key]) => !dollarKeys.has(key) && (key !== 'iguana_necktie' || !fable))
+      .filter(([key]) => key !== 'iguana_necktie' || !fable)
       .map(([key]): QuotaRow | null => {
         const raw = value[key];
         if (!isRecord(raw) || !('utilization' in raw)) return null;
@@ -502,32 +457,6 @@ export const quotaRowsFor = (
       reset: absoluteResetLabel(fable.resets_at ?? fable.resetsAt),
       resetAtMs: quotaResetFor(fable, ['resets_at', 'resetsAt']),
     });
-    for (const [key, window] of dollarWindows) {
-      if (!isRecord(window)) continue;
-      const limit = numberValue(window.limit_dollars);
-      const used = numberValue(window.used_dollars);
-      const remaining = numberValue(window.remaining_dollars);
-      const utilization = numberValue(window.utilization);
-      const computedRemaining = limit !== null && limit > 0
-        ? remaining !== null ? remaining / limit * 100
-          : used !== null ? (limit - used) / limit * 100 : null
-        : null;
-      const details = [
-        used !== null ? quotaText('quota.service.cloud.used', { value: formatClaudeDollars(used)! }) : '',
-        limit !== null ? quotaText('quota.service.cloud.limit', { value: formatClaudeDollars(limit)! }) : '',
-        remaining !== null ? quotaText('quota.service.cloud.remaining', { value: formatClaudeDollars(remaining)! }) : '',
-      ].filter(Boolean);
-      rows.push({
-        label: quotaText('quota.service.cloud.label') + (key === 'iguana_necktie' ? '' : ` (${key})`),
-        kind: 'cloud-credits',
-        remainingPercent: clampPercent(computedRemaining)
-          ?? (utilization !== null && utilization >= 0 && utilization <= 100
-            ? remainingFromUsedPercent(utilization) : null),
-        reset: absoluteResetLabel(window.resets_at ?? window.resetsAt),
-        resetAtMs: quotaResetFor(window, ['resets_at', 'resetsAt']),
-        detail: details.join(' · ') || undefined,
-      });
-    }
     const extraUsage = isRecord(value.extra_usage)
       ? value.extra_usage
       : isRecord(value.extraUsage)
@@ -1043,18 +972,6 @@ const callCodexResetCredits = async (
   return codexResetCreditDetailsFor(payload);
 };
 
-const callCodexSubscription = async (authIndex: string, accountId: string, header: Record<string, string>): Promise<string | undefined> => {
-  const payload = await requestQuotaPayload(
-    authIndex,
-    `${CODEX_SUBSCRIPTION_URL}?account_id=${encodeURIComponent(accountId)}`,
-    header, 'GET', undefined, 8_000,
-  );
-  if (!isRecord(payload)) return undefined;
-  const raw = payload.active_until ?? payload.activeUntil;
-  const ms = quotaResetInstant(raw);
-  return ms === undefined ? undefined : new Date(ms).toISOString();
-};
-
 async function callKimiQuota(file: AuthFile): Promise<{ payload: unknown; plan?: string }> {
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
   if (!authIndex) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
@@ -1083,51 +1000,7 @@ async function callKimiQuota(file: AuthFile): Promise<{ payload: unknown; plan?:
   return { payload, plan };
 }
 
-async function callMetaQuota(file: AuthFile): Promise<QuotaState> {
-  const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
-  if (!authIndex) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
-  const generation = captureQuotaCacheGeneration();
-  const assertCurrent = () => {
-    if (captureQuotaCacheGeneration() !== generation) throw new Error(quotaText('quota.service.meta.staleRequest'));
-  };
-  let credential: unknown;
-  try {
-    if (!readString(file, 'name') || [file.runtimeOnly, file.runtime_only].some(value => value === true || value === 'true')) {
-      throw new Error();
-    }
-    credential = parseBody(await managementApi.get('/credentials/download', { name: file.name as string }));
-  } catch {
-    assertCurrent();
-    throw new Error(quotaText('quota.service.meta.credentialUnavailable'));
-  }
-  assertCurrent();
-  if (!isRecord(credential)) throw new Error(quotaText('quota.service.meta.credentialUnavailable'));
-  const dcaToken = typeof credential.dca_token === 'string' ? credential.dca_token.trim() : '';
-  if (!/^dca:[^\s]+$/.test(dcaToken)) throw new Error(quotaText('quota.service.meta.missingDcaToken'));
-  let response: Record<string, unknown>;
-  try {
-    response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
-      authIndex,
-      method: 'POST',
-      url: endpointByProvider.meta,
-      header: { ...headersByProvider.meta, Authorization: `Bearer ${dcaToken}` },
-      data: '{}',
-    });
-  } catch {
-    assertCurrent();
-    throw new Error(quotaText('quota.service.meta.requestFailed'));
-  }
-  assertCurrent();
-  const status = Number(response.status_code ?? response.statusCode ?? 0);
-  if (!(status >= 200 && status < 300)) {
-    throw new Error(`${quotaText('quota.service.meta.requestFailed')} (${Number.isFinite(status) ? status : 0})`);
-  }
-  const quota = parseMetaQuotaPayload(response.body ?? response.bodyText);
-  if (!quota) throw new Error(quotaText('quota.service.meta.invalidResponse'));
-  return { status: 'success', rows: metaQuotaRows(quota), plan: quota.plan, fetchedAt: Date.now() };
-}
-
-async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentLocale()): Promise<QuotaState> {
+async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
   if (quotaProviderForFile(file) === 'plugin') return loadPluginCredentialQuota(file);
   const provider = providerForFile(file);
   if (!provider) {
@@ -1139,20 +1012,18 @@ async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentL
   }
   try {
     if (booleanValue(file.disabled) === true) throw new Error(quotaText('quota.fileDisabled'));
-    if (provider === 'meta') return await callMetaQuota(file);
     const codexMetadata = provider === 'codex' ? codexMetadataFor(file) : undefined;
     const codexAccountId = codexMetadata?.accountId || '';
     const responseClock: { serverTimeOffsetMs?: number } = {};
     const kimi = provider === 'kimi' ? await callKimiQuota(file) : undefined;
-    const zai = provider === 'zai' ? await callZaiQuota(file, locale) : undefined;
-    const payloadPromise = zai ? Promise.resolve(zai.payload) : kimi ? Promise.resolve(kimi.payload) : provider === 'xai'
+    const payloadPromise = kimi ? Promise.resolve(kimi.payload) : provider === 'xai'
       ? callXaiQuota(file)
       : callUpstreamQuota(file, provider, codexAccountId, responseClock);
     const planPromise = provider === 'claude'
       ? loadClaudePlan(file)
       : provider === 'antigravity'
         ? loadAntigravityPlan(file)
-        : Promise.resolve(zai?.plan ?? kimi?.plan);
+        : Promise.resolve(kimi?.plan);
     let resetCreditsError: string | undefined;
     const resetCreditsPromise = provider === 'codex'
       ? callCodexResetCredits(file, codexAccountId).catch((error) => {
@@ -1165,19 +1036,13 @@ async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentL
         resetCreditsError = quotaText('quota.claude.readError');
         return undefined;
       }) : Promise.resolve(undefined);
-    const subscriptionPromise = provider === 'codex' && codexAccountId
-      ? callCodexSubscription(normalizeAuthIndex(file.auth_index ?? file.authIndex), codexAccountId,
-          { ...headersByProvider.codex, Accept: 'application/json' })
-          .catch(() => undefined)
-      : Promise.resolve(undefined);
-    const [payload, detectedPlan, resetCreditDetails, claudeResetGrants, liveSubscription] = await Promise.all([
+    const [payload, detectedPlan, resetCreditDetails, claudeResetGrants] = await Promise.all([
       payloadPromise,
       planPromise,
       resetCreditsPromise,
       claudeGrantsPromise,
-      subscriptionPromise,
     ]);
-    const rows = quotaRowsFor(provider, payload, locale);
+    const rows = quotaRowsFor(provider, payload);
     if (rows.length === 0) {
       return {
         status: 'error',
@@ -1201,8 +1066,7 @@ async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentL
       creditBalance: accountCredits.balance,
       creditsUnlimited: accountCredits.unlimited,
       subscriptionActiveUntil: provider === 'devin'
-        ? readDevinQuota(payload).subscriptionActiveUntil
-        : liveSubscription ?? codexMetadata?.subscriptionActiveUntil,
+        ? readDevinQuota(payload).subscriptionActiveUntil : codexMetadata?.subscriptionActiveUntil,
       claudeResetGrants,
       resetCreditsError,
       resetCreditsApplicable: provider === 'claude' ? undefined : usageCreditDetails.applicableAvailableCount
@@ -1256,7 +1120,7 @@ async function consumeCodexResetCreditSnapshot(file: AuthFile): Promise<QuotaSta
 const quotaRequests = new Map<string, Promise<QuotaState>>();
 const quotaMutationRequests = new Map<string, Promise<QuotaState>>();
 
-export function loadQuota(file: AuthFile, locale: AppLocale = getCurrentLocale()): Promise<QuotaState> {
+export function loadQuota(file: AuthFile): Promise<QuotaState> {
   const key = quotaKey(file);
   const reset = quotaMutationRequests.get(key);
   if (reset) return reset.catch((error): QuotaState => ({
@@ -1264,7 +1128,7 @@ export function loadQuota(file: AuthFile, locale: AppLocale = getCurrentLocale()
   }));
   const existing = quotaRequests.get(key);
   if (existing) return existing;
-  const request = loadQuotaSnapshot(file, locale).finally(() => {
+  const request = loadQuotaSnapshot(file).finally(() => {
     if (quotaRequests.get(key) === request) quotaRequests.delete(key);
   });
   quotaRequests.set(key, request);

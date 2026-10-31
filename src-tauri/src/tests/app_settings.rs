@@ -101,20 +101,6 @@ fn gui_field_edit_preserves_comments_and_unknown_configuration() {
 }
 
 #[test]
-fn app_update_channel_round_trips_through_gui_config_writes() {
-    let home = agent_test_home("app-version-channel");
-    let path = home.join("config.toml");
-    let mut config = GuiConfigFile::default();
-    for channel in ["stable", "preview", "preview-20261103-1929", "stable"] {
-        config.update_channel = channel.to_string();
-        write_gui_config_to_path(&config, &path).unwrap();
-        let loaded: GuiConfigFile = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(loaded.update_channel, channel);
-    }
-    fs::remove_dir_all(home).unwrap();
-}
-
-#[test]
 fn software_write_hash_suppresses_only_the_matching_file_content() {
     let home = agent_test_home("write-hash");
     let path = home.join("config.toml");
@@ -174,11 +160,6 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("request-retry = 3"));
     assert!(content.contains("max-retry-credentials = 0"));
     assert!(content.contains("max-retry-interval = 30"));
-    assert!(content.contains("transient-error-cooldown-seconds = -1"));
-    assert_eq!(
-        config.transient_error_cooldown_seconds,
-        DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS
-    );
     assert!(content.contains("streaming-bootstrap-retries = 0"));
 }
 
@@ -215,18 +196,14 @@ fn silent_start_defaults_off_and_requires_tray_support() {
         silent_start: true,
         ..GuiConfigFile::default()
     };
-    let desktop = cfg!(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows"
-    ));
-    assert_eq!(should_start_hidden_for_launch(&enabled, true), desktop);
     assert_eq!(
-        should_start_hidden_for_launch(&enabled, false),
-        desktop && !cfg!(target_os = "linux"),
-        "on Linux a launch from the app menu or a shortcut must show the window"
+        should_start_hidden(&enabled),
+        cfg!(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows"
+        ))
     );
-    assert!(!should_start_hidden_for_launch(&legacy, true));
 }
 
 #[test]
@@ -379,27 +356,9 @@ fn core_start_on_launch_defaults_on_and_can_be_disabled() {
 
     let disabled = GuiConfigFile {
         start_core_on_launch: false,
-        run_on_startup: false,
         ..GuiConfigFile::default()
     };
     assert!(!should_start_core_on_launch(&disabled));
-}
-
-#[test]
-fn core_start_on_launch_restores_previous_running_state() {
-    for start_core_on_launch in [false, true] {
-        for run_on_startup in [false, true] {
-            let config = GuiConfigFile {
-                start_core_on_launch,
-                run_on_startup,
-                ..GuiConfigFile::default()
-            };
-            assert_eq!(
-                should_start_core_on_launch(&config),
-                start_core_on_launch || run_on_startup
-            );
-        }
-    }
 }
 
 #[test]

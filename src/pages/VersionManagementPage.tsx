@@ -1,8 +1,7 @@
-import { onCoreInstallProgress, onConfigFilesChanged } from '../services/events';
+import { onCoreInstallProgress, onConfigFilesChanged, onVersionDownloadSourceChanged } from '../services/events';
 import { openExternalUrl } from '../services/appSettings';
 import {
   getVersionSourceSettings,
-  listCoreVersions,
   getCoreInstallTask,
   setDownloadSource,
   addCustomDownloadMirror,
@@ -18,12 +17,13 @@ import type {
   CoreInstallTask,
   CoreInstallResult,
   BundledCoreInfo,
-  CoreVersionOption,
 } from '../services/coreVersions';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { checkAppVersionDisplay, getAppVersionBaselines, type AppUpdateInfo, type AppVersionBaselines, type AppVersionSeries } from '../services/appUpdates';
+import { useEffect, useRef, useState } from 'react';
+import { getVersion } from '../services/platform';
 import {
   Download,
+  ExternalLink,
+  Info,
   RefreshCw,
   Package,
   Trash2,
@@ -36,10 +36,8 @@ import { useAppUpdate } from '../appUpdate';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
 import { AppReleaseNotes } from '../components/AppReleaseNotes';
-import { selectedRemoteEndpoint } from '../services/remoteCpa';
-import { AutoUpdatePanel } from '../components/AutoUpdatePanel';
 import { Dialog } from '../components/Dialog';
-import { SelectMenu, type SelectMenuOption } from '../components/SelectMenu';
+import { Select } from '../components/Select';
 
 export type { CoreInstallResult } from '../services/coreVersions';
 
@@ -68,29 +66,7 @@ function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof
 }
 
 export type MessageType = 'info' | 'success' | 'error';
-export const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
-export const APP_PREVIEW_RELEASES_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases?q=preview-&expanded=true';
-export const APP_RELEASE_TAG_BASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag';
-
-export function getAppReleaseUrl(channel = 'stable'): string {
-  const normalized = channel.trim();
-  if (normalized === 'preview') {
-    return APP_PREVIEW_RELEASES_URL;
-  }
-  if (normalized.startsWith('preview-')) {
-    return `${APP_RELEASE_TAG_BASE_URL}/${normalized}`;
-  }
-  return APP_RELEASE_URL;
-}
-
-export function resolveAppDownloadUrl(
-  info: Pick<AppUpdateInfo, 'downloadUrl' | 'releaseUrl' | 'updateChannel'> | null | undefined,
-  channel = 'stable',
-): string {
-  return info?.downloadUrl?.trim()
-    || info?.releaseUrl?.trim()
-    || getAppReleaseUrl(channel || info?.updateChannel || 'stable');
-}
+const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
 export const DEFAULT_VERSION_DOWNLOAD_SOURCE = 'github';
 const recordVersionManagementVisit = createVersionManagementVisitTracker();
 
@@ -99,26 +75,14 @@ export function displayAppVersion(version: string) {
   return resolvedVersion.startsWith('v') ? resolvedVersion : `v${resolvedVersion}`;
 }
 
-export function selectAppVersionComparison(
-  activeChannel: string,
-  baselines: AppVersionBaselines | null,
-  info: AppUpdateInfo | null,
-) {
-  const preview = activeChannel === 'preview' || activeChannel.startsWith('preview-');
-  const comparison = info?.updateChannel === activeChannel ? info : null;
-  return {
-    preview,
-    installed: (comparison?.installedSeries ?? baselines?.installedSeries) === (preview ? 'preview' : 'stable'),
-    current: comparison ? comparison.currentVersion : baselines?.[preview ? 'preview' : 'stable'] ?? null,
-    comparison,
-  };
-}
-
-export function VersionManagementPage({ displaySeries = 'stable' }: { displaySeries?: AppVersionSeries }) {
-  const external = Boolean(selectedRemoteEndpoint());
+export function VersionManagementPage() {
   const { t } = useI18n();
   const {
+    info: appUpdate,
+    error: appUpdateError,
+    checking: checkingAppUpdate,
     task: appUpdateTask,
+    check: checkAppUpdate,
     requestInstall: requestAppUpdate,
   } = useAppUpdate();
 
@@ -135,36 +99,14 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
     reset: resetLatest,
   } = useCoreUpdate();
 
-  const [appBaselines, setAppBaselines] = useState<AppVersionBaselines | null>(null);
-  const [appCheck, setAppCheck] = useState<{ series: AppVersionSeries; info: AppUpdateInfo | null; error: string } | null>(null);
-  const requestSequence = useRef(0);
-  const checkAppUpdate = useCallback(async () => {
-    const sequence = ++requestSequence.current;
-    setAppCheck(null);
-    try {
-      const info = await checkAppVersionDisplay(displaySeries);
-      if (sequence === requestSequence.current) setAppCheck({ series: displaySeries, info, error: '' });
-    } catch (error) {
-      if (sequence === requestSequence.current) setAppCheck({ series: displaySeries, info: null, error: String(error) });
-    }
-  }, [displaySeries]);
-  const activeCheck = appCheck?.series === displaySeries ? appCheck : null;
-  const checkingAppUpdate = activeCheck === null;
-  const appUpdateError = activeCheck?.error || '';
-  const { preview: appIsPreview, current: resolvedAppVersion, comparison: appUpdate } =
-    selectAppVersionComparison(displaySeries, appBaselines, activeCheck?.info ?? null);
+  const [installedAppVersion, setInstalledAppVersion] = useState('');
   const [bundledCore, setBundledCore] = useState<BundledCoreInfo | null>(null);
   const [bundledCoreError, setBundledCoreError] = useState('');
-  const [coreVersions, setCoreVersions] = useState<CoreVersionOption[]>([]);
-  const [coreVersionsLoading, setCoreVersionsLoading] = useState(false);
-  const [coreVersionsError, setCoreVersionsError] = useState('');
-  const [selectedCoreVersion, setSelectedCoreVersion] = useState('');
 
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<CoreInstallTask | null>(null);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [confirmUpdateOpen, setConfirmUpdateOpen] = useState(false);
-  const [confirmInstallVersion, setConfirmInstallVersion] = useState('');
   const [cancellingInstall, setCancellingInstall] = useState(false);
 
   const [versionSource, setVersionSource] = useState<VersionSourceSettings | null>(null);
@@ -246,20 +188,6 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
     } catch {}
   };
 
-  const loadCoreVersions = async () => {
-    setCoreVersionsLoading(true);
-    try {
-      const versions = await listCoreVersions();
-      setCoreVersions(versions);
-      setCoreVersionsError('');
-      setSelectedCoreVersion((current) => current || versions[0]?.version || '');
-    } catch (error) {
-      setCoreVersionsError(String(error));
-    } finally {
-      setCoreVersionsLoading(false);
-    }
-  };
-
   const updateVersionSource = async (source: VersionDownloadSource) => {
     setVersionSourceSaving(true);
     setVersionSourceError('');
@@ -267,7 +195,6 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
       const settings = await setDownloadSource({ source });
       setVersionSource(settings);
       resetLatest();
-      void loadCoreVersions();
       showNotice({ key: 'kernel.versions.sourceSwitched', variables: {
         source: downloadSourceLabel(settings.source, t),
       } }, 'info');
@@ -401,32 +328,31 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
     setCancellingInstall(false);
   };
 
-  const openAppRelease = async (url?: string) => {
-    const targetUrl = url || appUpdate?.releaseUrl || getAppReleaseUrl(displaySeries);
+  const openAppRelease = async (url = appUpdate?.releaseUrl || APP_RELEASE_URL) => {
     try {
-      await openExternalUrl({ url: targetUrl });
+      await openExternalUrl({ url });
     } catch (error) {
       showNotice({ key: 'kernel.error.openUpdate', variables: { error: String(error) } }, 'error');
     }
   };
 
   useEffect(() => {
-    void checkAppUpdate();
-    return () => { requestSequence.current += 1; };
-  }, [checkAppUpdate]);
-
-  useEffect(() => {
-    if (!external && recordVersionManagementVisit(pageVisitRef.current) && !checkingLatest) {
+    if (!recordVersionManagementVisit(pageVisitRef.current)) return;
+    if (!checkingAppUpdate && !appUpdateTask.running) {
+      void checkAppUpdate();
+    }
+    if (!checkingLatest) {
       void checkLatest();
     }
-  }, [checkLatest, checkingLatest]);
+  }, [appUpdateTask.running, checkAppUpdate, checkLatest, checkingAppUpdate, checkingLatest]);
 
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     let unlistenConfig: (() => void) | null = null;
+    let unlistenVersionSource: (() => void) | null = null;
 
-    if (!external) onCoreInstallProgress((event) => {
+    onCoreInstallProgress((event) => {
       const showTaskUi = manualInstallInProgressRef.current;
       applyInstallTask(event.payload, showTaskUi, showTaskUi);
       if (!event.payload.running) {
@@ -448,9 +374,21 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
       else unlistenConfig = stop;
     });
 
-    if (!external) { void loadInstallTask(); void loadCoreVersions(); }
+    void onVersionDownloadSourceChanged((event) => {
+      if (disposed) return;
+      setVersionSource(event.payload);
+      setVersionSourceError('');
+      showNotice({ key: 'kernel.versions.sourceAutoSwitched', variables: {
+        source: downloadSourceLabel(event.payload.source, t),
+      } }, 'info');
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlistenVersionSource = stop;
+    });
+
+    loadInstallTask();
     void loadVersionSourceSettings();
-    if (!external) void detectBundledCore()
+    void detectBundledCore()
       .then((info) => {
         if (!disposed) setBundledCore(info);
       })
@@ -458,9 +396,9 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
         if (!disposed) setBundledCoreError(String(error));
       });
 
-    void getAppVersionBaselines()
-      .then((versions) => {
-        if (!disposed) setAppBaselines(versions);
+    void getVersion()
+      .then((version) => {
+        if (!disposed) setInstalledAppVersion(version);
       })
       .catch(() => undefined);
 
@@ -468,6 +406,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
       disposed = true;
       unlisten?.();
       unlistenConfig?.();
+      unlistenVersionSource?.();
     };
   }, []);
 
@@ -478,39 +417,25 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
   const busy = checkingLatest || installing || coreProcessBusy;
   const installDisabled = installing || coreProcessBusy;
 
-  const currentAppVersion = resolvedAppVersion
-    ? (appIsPreview ? resolvedAppVersion : displayAppVersion(resolvedAppVersion))
-    : t(appBaselines || appUpdate ? 'appUpdate.baselineUnknown' : 'common.detecting');
-  const latestPackageVersion = appUpdate?.latestVersion ? displayAppVersion(appUpdate.latestVersion) : '';
-  const latestAppVersion = appUpdate?.latestSeriesVersion
-    ? (appIsPreview ? appUpdate.latestSeriesVersion : displayAppVersion(appUpdate.latestSeriesVersion))
-    : '';
+  const resolvedAppVersion = appUpdate?.currentVersion || installedAppVersion;
+  const currentAppVersion = resolvedAppVersion ? displayAppVersion(resolvedAppVersion) : t('common.detecting');
+  const latestAppVersion = appUpdate?.latestVersion ? displayAppVersion(appUpdate.latestVersion) : '';
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
-  const showInstallNow = !external && Boolean(appUpdate?.installAvailable && appUpdate.autoUpdateSupported);
-  const appActionCount = showInstallNow ? 3 : 2;
-  const appDownloadLabel = t(appIsPreview ? 'appUpdate.downloadPreview' : 'appUpdate.downloadStable');
-  const appDownloadTitle = latestPackageVersion
-    ? [
-        t('appUpdate.downloadTitle', { version: latestPackageVersion }),
-        appUpdate?.downloadFileName,
-      ].filter(Boolean).join(' · ')
-    : appDownloadLabel;
-  const appUnsupportedReason = localizeAppUpdateUnsupportedReason(appUpdate?.unsupportedReason, t);
   const appVersionStatusLabel: string | null = appUpdateTask.running
     ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
     : appUpdateError
       ? t('kernel.update.failed')
       : appHasUpdate
         ? t('appUpdate.available', { version: latestAppVersion })
-        : checkingAppUpdate
+        : checkingAppUpdate || !appUpdate
           ? t('appUpdate.phase.checking')
           : null;
   const appVersionStatusTone = appUpdateError
     ? 'error'
     : appUpdateTask.running || checkingAppUpdate || !appUpdate
       ? 'info'
-      : appHasUpdate ? 'update' : 'neutral';
+      : 'update';
 
   const coreVersionStatusTone = installing || progress?.running
     ? 'info'
@@ -580,34 +505,6 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
     setVersionSourceError('');
   };
 
-  const downloadSourceOptions: SelectMenuOption[] = [
-    { value: 'github', label: t('kernel.versions.source.github') },
-    ...(versionSource?.gitcodeAvailable !== false
-      ? [{ value: 'gitcode', label: t('kernel.versions.source.gitcode') }]
-      : [{ value: 'gitcode', label: t('kernel.versions.source.gitcode'), disabled: true }]),
-    { value: 'gh-proxy', label: t('kernel.versions.source.ghProxy') },
-    { value: 'gh-fast', label: t('kernel.versions.source.ghFast') },
-    ...(versionSource?.customMirrors.map((url) => ({
-      value: `custom:${url}`,
-      label: downloadSourceLabel(`custom:${url}`, t),
-    })) ?? []),
-  ];
-
-  const coreVersionOptions: SelectMenuOption[] = coreVersions.length === 0
-    ? [
-        {
-          value: '',
-          label: coreVersionsLoading
-            ? t('kernel.versions.loadingVersions')
-            : t('kernel.versions.noVersions'),
-          disabled: true,
-        },
-      ]
-    : coreVersions.map((version) => ({
-        value: version.version,
-        label: `${version.version}${version.prerelease ? ` · ${t('kernel.versions.prerelease')}` : ''}`,
-      }));
-
   return (
     <section className="page management-page version-management-page">
       <MessageNotice message={versionSourceError} onDismiss={() => setVersionSourceError('')} />
@@ -621,23 +518,36 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
             ) : null}
           </div>
           <div className="version-source-control">
-            <SelectMenu
-              className="version-source-select"
-              value={versionSource?.source ?? DEFAULT_VERSION_DOWNLOAD_SOURCE}
-              disabled={
-                external || !versionSource
-                || versionSourceSaving
-                || appUpdateTask.running
-                || installing
-              }
-              ariaLabel={t('kernel.versions.downloadSource')}
-              onChange={(value) => void updateVersionSource(value as VersionDownloadSource)}
-              options={downloadSourceOptions}
-            />
+            <label>
+              <span className="sr-only">{t('kernel.versions.downloadSource')}</span>
+              <Select
+                value={versionSource?.source ?? DEFAULT_VERSION_DOWNLOAD_SOURCE}
+                disabled={
+                  !versionSource
+                  || versionSourceSaving
+                  || appUpdateTask.running
+                  || installing
+                }
+                aria-label={t('kernel.versions.downloadSource')}
+                onChange={(event) => void updateVersionSource(event.currentTarget.value as VersionDownloadSource)}
+              >
+                <option value="github">{t('kernel.versions.source.github')}</option>
+                <option value="gitcode" disabled={!versionSource?.gitcodeAvailable}>
+                  {t('kernel.versions.source.gitcode')}
+                </option>
+                <option value="gh-proxy">{t('kernel.versions.source.ghProxy')}</option>
+                <option value="gh-fast">{t('kernel.versions.source.ghFast')}</option>
+                {versionSource?.customMirrors.map((url) => (
+                  <option key={url} value={`custom:${url}`}>
+                    {downloadSourceLabel(`custom:${url}`, t)}
+                  </option>
+                ))}
+              </Select>
+            </label>
             <button
               type="button"
               className="primary-button version-source-add-button"
-              disabled={external || versionSourceSaving || appUpdateTask.running || installing}
+              disabled={versionSourceSaving || appUpdateTask.running || installing}
               onClick={() => {
                 setVersionSourceError('');
                 setCustomMirrorDialogOpen(true);
@@ -669,25 +579,21 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
                 <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
                 <dd className="version-metric-value">
-                  {latestAppVersion || (checkingAppUpdate
-                    ? t('appUpdate.checking')
-                    : appUpdateError
-                      ? t('kernel.update.failed')
-                      : t('common.detecting'))}
+                  {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
                 </dd>
               </div>
             </dl>
 
-            <div className="app-version-info-section">
-              <MessageNotice message={appUpdateError} />
-              <AutoUpdatePanel hostOnly={external}
-                embedded
-                appUnavailableHint={external ? t('remote.autoUpdateHost') : appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? t('appUpdate.manualFallback')) : undefined}
-              />
-            </div>
+            <MessageNotice message={appUpdateError} />
+            {!appUpdate?.autoUpdateSupported ? (
+              <div className="version-alert-banner neutral">
+                <Info size={14} />
+                <span>{t('appUpdate.manualFallback')}</span>
+              </div>
+            ) : null}
           </div>
 
-          <div className={`version-card-actions app-actions actions-count-${appActionCount}${showInstallNow ? ' has-install-now' : ''}`}>
+          <div className="version-card-actions">
             <button
               type="button"
               className="secondary-button"
@@ -698,12 +604,12 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               <span>{checkingAppUpdate ? t('appUpdate.checking') : t('appUpdate.check')}</span>
             </button>
 
-            {showInstallNow ? (
+            {appHasUpdate && appUpdate?.autoUpdateSupported ? (
               <button
                 type="button"
                 className="primary-button"
-                disabled={appUpdateTask.running || checkingAppUpdate}
-                onClick={() => { if (appUpdate) requestAppUpdate(appUpdate); }}
+                disabled={appUpdateTask.running}
+                onClick={requestAppUpdate}
               >
                 <Download size={15} aria-hidden="true" />
                 <span>{t('appUpdate.installNow')}</span>
@@ -712,12 +618,11 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
 
             <button
               type="button"
-              className={appUpdate?.autoUpdateSupported ? 'secondary-button' : 'primary-button'}
-              title={appDownloadTitle}
-              onClick={() => void openAppRelease(resolveAppDownloadUrl(appUpdate, displaySeries))}
+              className={appHasUpdate && !appUpdate?.autoUpdateSupported ? 'primary-button' : 'secondary-button'}
+              onClick={() => void openAppRelease()}
             >
-              <Download size={15} aria-hidden="true" />
-              <span>{appDownloadLabel}</span>
+              <ExternalLink size={15} aria-hidden="true" />
+              <span>{t('appUpdate.openRelease')}</span>
             </button>
           </div>
         </article>
@@ -726,7 +631,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
           <div className="version-item-content">
             <div className="version-card-top">
               <h2>{t('kernel.versions.coreCardTitle')}</h2>
-              {!external && coreVersionStatusLabel ? (
+              {coreVersionStatusLabel ? (
                 <span className={`version-row-status ${coreVersionStatusTone}`} title={coreVersionStatusLabel}>
                   {coreVersionStatusLabel}
                 </span>
@@ -736,8 +641,8 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
             <dl className="version-metrics-comparison">
               <div className="surface-section surface-muted version-metric-tile">
                 <dt className="version-metric-label">{t('kernel.versions.current')}</dt>
-                <dd className="version-metric-value" title={currentVersion || t(external ? 'common.unavailable' : 'kernel.status.notInstalled')}>
-                  {currentVersion || t(external ? 'common.unavailable' : 'kernel.status.notInstalled')}
+                <dd className="version-metric-value" title={currentVersion || t('kernel.status.notInstalled')}>
+                  {currentVersion || t('kernel.status.notInstalled')}
                 </dd>
               </div>
               <div className={`surface-section surface-muted version-metric-tile ${coreHasUpdate ? 'has-update' : ''}`}>
@@ -748,50 +653,17 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               </div>
             </dl>
 
-            {external && <p>{t('remote.versionHost')}</p>}
-            <div className="core-version-picker">
-              {latestError ? <MessageNotice message={latestError} /> : null}
-              <div className="core-version-picker-label">
-                <span>{t('kernel.versions.chooseVersion')}</span>
-              </div>
-              <div className="core-version-picker-row">
-                <div className="core-version-select-wrap">
-                  <SelectMenu
-                    className="core-version-select"
-                    value={selectedCoreVersion}
-                    disabled={coreVersionsLoading || busy || coreVersions.length === 0}
-                    ariaLabel={t('kernel.versions.chooseVersion')}
-                    onChange={setSelectedCoreVersion}
-                    options={coreVersionOptions}
-                    maxDropdownHeight={280}
-                  />
-                </div>
-                <button
-                  type="button"
-                  className="secondary-button core-version-install-btn"
-                  disabled={!selectedCoreVersion || busy}
-                  onClick={() => {
-                    setConfirmInstallVersion(selectedCoreVersion);
-                    setConfirmUpdateOpen(false);
-                  }}
-                >
-                  <Download size={15} aria-hidden="true" />
-                  <span>{t('kernel.versions.installSelected')}</span>
-                </button>
-              </div>
-              {coreVersionsError ? <MessageNotice message={coreVersionsError} /> : null}
-            </div>
+            {latestError ? (
+              <MessageNotice message={latestError} />
+            ) : null}
           </div>
 
           <div className="version-card-actions core-actions">
             <button
               type="button"
               className="secondary-button"
-              disabled={external || busy}
-              onClick={() => {
-                void checkLatest(true);
-                void loadCoreVersions();
-              }}
+              disabled={busy}
+              onClick={() => void checkLatest(true)}
             >
               <RefreshCw size={15} className={checkingLatest ? 'spin' : ''} aria-hidden="true" />
               <span>{checkingLatest ? t('kernel.update.checking') : t('kernel.versions.check')}</span>
@@ -801,11 +673,8 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               type="button"
               className={latestVersion && (!coreInstalled || coreHasUpdate) ? 'primary-button' : 'secondary-button'}
               title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
-              disabled={external || !latestVersion || busy}
-              onClick={() => {
-                setConfirmInstallVersion(latestVersion);
-                setConfirmUpdateOpen(true);
-              }}
+              disabled={!latestVersion || busy}
+              onClick={() => setConfirmUpdateOpen(true)}
             >
               <Download size={15} aria-hidden="true" />
               <span>{!coreInstalled ? t('kernel.versions.installLatestMissing') : t('kernel.versions.installLatest')}</span>
@@ -916,15 +785,12 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
         </Dialog>
       ) : null}
 
-      {confirmUpdateOpen || confirmInstallVersion ? (
+      {confirmUpdateOpen ? (
         <Dialog
           className="install-dialog app-update-dialog"
           backdropClassName="install-dialog-backdrop app-update-dialog-backdrop"
           labelledBy="core-update-confirm-title"
-          onClose={() => {
-            setConfirmUpdateOpen(false);
-            setConfirmInstallVersion('');
-          }}
+          onClose={() => setConfirmUpdateOpen(false)}
         >
           <div className="install-dialog-heading">
             <span className="install-dialog-eyebrow">{t('kernel.dialog.install')}</span>
@@ -934,17 +800,14 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
           </div>
 
           <p className="app-update-confirm-copy">
-            {t('kernel.versions.stopAndConfirmDescription', { version: confirmInstallVersion })}
+            {t('kernel.versions.stopAndConfirmDescription', { version: latestVersion })}
           </p>
 
           <div className="app-update-dialog-actions">
             <button
               type="button"
               className="secondary-button"
-              onClick={() => {
-                setConfirmUpdateOpen(false);
-                setConfirmInstallVersion('');
-              }}
+              onClick={() => setConfirmUpdateOpen(false)}
             >
               {t('common.cancel')}
             </button>
@@ -952,10 +815,8 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               type="button"
               className="primary-button"
               onClick={() => {
-                const version = confirmInstallVersion;
                 setConfirmUpdateOpen(false);
-                setConfirmInstallVersion('');
-                void installCore({ kind: 'release', version });
+                void installCore({ kind: 'release', version: latestVersion });
               }}
             >
               <Download size={15} aria-hidden="true" />
@@ -1028,21 +889,6 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
 
     </section>
   );
-}
-
-function localizeAppUpdateUnsupportedReason(
-  reason: string | null | undefined,
-  t: ReturnType<typeof useI18n>['t'],
-): string | null {
-  const trimmed = reason?.trim();
-  if (!trimmed) return null;
-  if (trimmed === 'This application is not a portable version that supports automatic upgrades. Manually download the first supported version') {
-    return t('appUpdate.unsupported.notPortable');
-  }
-  if (trimmed === 'The update manifest does not include the current platform or architecture') {
-    return t('appUpdate.unsupported.platformArch');
-  }
-  return trimmed;
 }
 
 function localizeInstallPhase(

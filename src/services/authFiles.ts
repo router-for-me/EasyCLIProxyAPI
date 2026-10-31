@@ -1,21 +1,8 @@
 import { isRecord, managementApi, readBoolean, readString } from './managementApi';
 import { getCurrentLocale, translate } from '../i18n';
-import { normalizeAuthFileTags } from './credentialTags';
-export { normalizeAuthFileTags } from './credentialTags';
 
 export type AuthFileRecord = Record<string, unknown>;
 export type AuthFileSnapshot = Map<string, string>;
-
-export const countAuthFileTags = (files: AuthFileRecord[]): Map<string, number> => {
-  const counts = new Map<string, number>();
-  for (const file of files) {
-    for (const tag of normalizeAuthFileTags(file.tags)) {
-      counts.set(tag, (counts.get(tag) ?? 0) + 1);
-    }
-  }
-  return counts;
-};
-
 
 export type AuthFileCooldownResetResponse = {
   status: 'ok';
@@ -128,8 +115,6 @@ export const oauthModelProvidersFromAuthFiles = (files: AuthFileRecord[]): strin
 
 export type OAuthAccountSummary = {
   name: string;
-  /** Credential provider stored by the core, used to filter credential files. */
-  provider: string;
   label: string;
   disabled: boolean;
   tone?: 'warning' | 'error';
@@ -143,11 +128,7 @@ export const groupOAuthAccountsByProvider = (files: AuthFileRecord[]): Map<strin
   dedupeAuthFiles(files).filter(isOAuthCredentialFile).forEach((file) => {
     const provider = authFileProvider(file);
     if (!provider) return;
-    // Plugins may expose several OAuth entries backed by one credential provider
-    // (for example doubao and dola). Prefer the entry recorded with the credential
-    // so each login card lists only the accounts created through that entry.
-    const entry = normalizeOAuthProvider(readString(file, 'oauth_provider') || provider);
-    const accounts = grouped.get(entry) ?? [];
+    const accounts = grouped.get(provider) ?? [];
     const status = readString(file, 'status').toLowerCase();
     const hasCooldown = Array.isArray(file.cooldowns) && file.cooldowns.length > 0;
     const tone: 'warning' | 'error' | undefined =
@@ -158,19 +139,12 @@ export const groupOAuthAccountsByProvider = (files: AuthFileRecord[]): Map<strin
           : undefined;
     accounts.push({
       name: readString(file, 'name'),
-      provider,
-      label: readString(file, 'email', 'account', 'account_id', 'accountId', 'label') || authFileName(file),
+      label: readString(file, 'email', 'account', 'label') || authFileName(file),
       disabled: readBoolean(file, 'disabled'),
       ...(tone ? { tone } : {}),
       identities: authFileIdentities(file),
     });
-    grouped.set(entry, accounts);
-    // Keep the credential-provider bucket for hosts that group by provider alone.
-    if (entry !== provider) {
-      const providerAccounts = grouped.get(provider) ?? [];
-      providerAccounts.push(accounts[accounts.length - 1]);
-      grouped.set(provider, providerAccounts);
-    }
+    grouped.set(provider, accounts);
   });
   return grouped;
 };
@@ -253,7 +227,7 @@ const mergeDuplicateAuthFiles = (entries: AuthFileRecord[]) => {
   sorted.slice(1).forEach((entry) => {
     Object.entries(entry).forEach(([key, value]) => {
       if (authFileSourceFields.has(key)) return;
-      if ((key === 'cooldowns' || key === 'tags') && Object.prototype.hasOwnProperty.call(merged, key)) return;
+      if (key === 'cooldowns' && Object.prototype.hasOwnProperty.call(merged, key)) return;
       if (!hasMeaningfulValue(merged[key]) && hasMeaningfulValue(value)) merged[key] = value;
     });
   });

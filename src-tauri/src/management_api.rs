@@ -101,7 +101,6 @@ struct OAuthStatusApiResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManagementRequest {
-    target_revision: Option<u32>,
     request_id: Option<String>,
     method: String,
     path: String,
@@ -124,12 +123,11 @@ where
 
 #[tauri::command]
 pub(crate) async fn management_request(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     request: ManagementRequest,
 ) -> Result<serde_json::Value, String> {
     let id = request.request_id.clone();
-    cancellable_management_request(id, management_request_inner(gui_config_state, remote, request)).await
+    cancellable_management_request(id, management_request_inner(gui_config_state, request)).await
 }
 
 async fn cancellable_management_request(
@@ -160,9 +158,9 @@ async fn cancellable_management_request(
 
 async fn management_request_inner(
     gui_config_state: tauri::State<'_, GuiConfigState>,
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
     request: ManagementRequest,
 ) -> Result<serde_json::Value, String> {
+    let config = gui_config_state.snapshot()?;
     let method = match request.method.trim().to_ascii_uppercase().as_str() {
         "GET" => reqwest::Method::GET,
         "POST" => reqwest::Method::POST,
@@ -176,7 +174,10 @@ async fn management_request_inner(
         return Err("Invalid management API path".to_string());
     }
 
-    let mut builder = target_request(&remote, request.target_revision, &gui_config_state, method, path).await?;
+    let client = management_http_client()?;
+    let mut builder = client
+        .request(method, management_endpoint(&config, path)?)
+        .header("Authorization", management_authorization(&config)?);
     if let Some(timeout_ms) = request.timeout_ms {
         let max_timeout = if path == "/credentials/refresh" { 300_000 } else { 120_000 };
         builder = builder.timeout(Duration::from_millis(timeout_ms.clamp(1_000, max_timeout)));
@@ -193,15 +194,6 @@ async fn management_request_inner(
         .await
         .map_err(|err| format_management_request_error("Management API request failed", &err))?;
     read_management_value(response).await
-}
-
-pub(crate) async fn target_request(remote: &crate::remote_cpa::RemoteCpaState, revision: Option<u32>, gui: &GuiConfigState, method: reqwest::Method, path: &str) -> Result<reqwest::RequestBuilder, String> {
-    if revision.is_some() || remote.is_remote().await || remote.remote_launch {
-        return remote.workspace_request(method, path, revision.ok_or("CPA target changed")?).await;
-    }
-    let config = gui.snapshot()?;
-    Ok(management_http_client()?.request(method, management_endpoint(&config, path)?)
-        .header("Authorization", management_authorization(&config)?))
 }
 
 fn management_request_body(
@@ -221,8 +213,6 @@ fn management_request_body(
 
 #[tauri::command]
 pub(crate) async fn import_vertex_credential(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     name: String,
     data: Vec<u8>,
@@ -232,6 +222,7 @@ pub(crate) async fn import_vertex_credential(
     if name.is_empty() || !name.to_ascii_lowercase().ends_with(".json") {
         return Err("Credential filename must end with .json".to_string());
     }
+    let config = gui_config_state.snapshot()?;
     let part = reqwest::multipart::Part::bytes(data)
         .file_name(name.to_owned())
         .mime_str("application/json")
@@ -240,7 +231,9 @@ pub(crate) async fn import_vertex_credential(
     if let Some(location) = location.filter(|value| !value.trim().is_empty()) {
         form = form.text("location", location.trim().to_owned());
     }
-    let response = target_request(&remote, target_revision, &gui_config_state, reqwest::Method::POST, "oauth/import").await?
+    let response = management_http_client()?
+        .post(management_endpoint(&config, "oauth/import")?)
+        .header("Authorization", management_authorization(&config)?)
         .query(&[("provider", "vertex")])
         .multipart(form)
         .send()
@@ -251,8 +244,6 @@ pub(crate) async fn import_vertex_credential(
 
 #[tauri::command]
 pub(crate) async fn upload_auth_file(
-    target_revision: Option<u32>,
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     name: String,
     data: Vec<u8>,
@@ -262,16 +253,13 @@ pub(crate) async fn upload_auth_file(
         return Err("Credential filename must end with .json".to_string());
     }
 
-    let builder = if target_revision.is_some() || remote.is_remote().await || remote.remote_launch {
-        remote.workspace_request(reqwest::Method::POST, "credentials", target_revision.ok_or("CPA target changed")?).await?
-    } else {
-        let config = gui_config_state.snapshot()?;
-        management_http_client()?.post(management_endpoint(&config, "credentials")?)
-            .header("Authorization", management_authorization(&config)?)
-    };
+    let config = gui_config_state.snapshot()?;
+    let client = management_http_client()?;
     let mut query = HashMap::new();
     query.insert("name".to_string(), name);
-    let response = builder
+    let response = client
+        .post(management_endpoint(&config, "credentials")?)
+        .header("Authorization", management_authorization(&config)?)
         .query(&query)
         .header("Content-Type", "application/json")
         .body(data)
@@ -328,32 +316,22 @@ pub(crate) fn open_directory_in_file_manager(path: &Path) -> Result<(), String> 
 
 #[tauri::command]
 pub(crate) async fn start_oauth_login(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     provider: String,
     browser: Option<String>,
     plugin_provider: Option<bool>,
 ) -> Result<OAuthStartResult, String> {
-    if target_revision.is_none() && !remote.is_remote().await { super::network_proxy::prepare_oauth(&app).await; }
-    let plugin_request = plugin_provider.unwrap_or(false);
-    let provider_key = normalize_oauth_request_provider(&provider, plugin_request)?;
-    let browser_preference = browser
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("default");
-    let mut request = target_request(&remote, target_revision, &gui_config_state, reqwest::Method::GET, "oauth/auth-url").await?;
+    super::network_proxy::prepare_oauth(&app).await;
+    let config = gui_config_state.snapshot()?;
+    let provider_key = normalize_oauth_request_provider(&provider, plugin_provider.unwrap_or(false))?;
+    let client = management_http_client()?;
+    let mut request = client
+        .get(management_endpoint(&config, "oauth/auth-url")?)
+        .header("Authorization", management_authorization(&config)?);
     request = request.query(&[("provider", provider_key.as_str())]);
     if management_oauth_uses_webui_callback(&provider_key) {
         request = request.query(&[("is_webui", "true")]);
-    }
-    if plugin_request {
-        request = request.query(&[("browser", browser_preference)]);
-        if browser_preference == "none" {
-            request = request.query(&[("auto_open", "false")]);
-        }
     }
     let response = request
         .send()
@@ -361,17 +339,9 @@ pub(crate) async fn start_oauth_login(
         .map_err(|err| format_management_request_error("Failed to request OAuth login URL", &err))?;
     let payload = read_management_json::<OAuthStartApiResponse>(response).await?;
     let mut result = normalize_oauth_start_response(payload)?;
-    // A plugin that owns the login page already opened the selected browser; the
-    // returned resource URL must not be opened a second time.
-    let plugin_owns_flow = plugin_request
-        && result.url.contains("/v0/resource/plugins/");
-    if plugin_owns_flow {
-        result.opened = true;
-    } else {
-        match open_oauth_url_inner(&app, &result.url, browser.as_deref()) {
-            Ok(()) => result.opened = true,
-            Err(error) => result.open_error = Some(error),
-        }
+    match open_oauth_url_inner(&app, &result.url, browser.as_deref()) {
+        Ok(()) => result.opened = true,
+        Err(error) => result.open_error = Some(error),
     }
     Ok(result)
 }
@@ -413,8 +383,6 @@ fn normalize_oauth_start_response(payload: OAuthStartApiResponse) -> Result<OAut
 
 #[tauri::command]
 pub(crate) async fn get_oauth_status(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     state: String,
 ) -> Result<OAuthStatusResult, String> {
@@ -422,7 +390,11 @@ pub(crate) async fn get_oauth_status(
     if state.is_empty() {
         return Err("OAuth state cannot be empty".to_string());
     }
-    let response = target_request(&remote, target_revision, &gui_config_state, reqwest::Method::GET, "oauth/status").await?
+    let config = gui_config_state.snapshot()?;
+    let client = management_http_client()?;
+    let response = client
+        .get(management_endpoint(&config, "oauth/status")?)
+        .header("Authorization", management_authorization(&config)?)
         .query(&[("state", state)])
         .send()
         .await
@@ -445,8 +417,6 @@ pub(crate) async fn get_oauth_status(
 
 #[tauri::command]
 pub(crate) async fn submit_oauth_callback(
-    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
-    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     provider: String,
     redirect_url: String,
@@ -456,12 +426,16 @@ pub(crate) async fn submit_oauth_callback(
     if redirect_url.is_empty() {
         return Err("Callback URL cannot be empty".to_string());
     }
+    let config = gui_config_state.snapshot()?;
     let provider_key = normalize_oauth_request_provider(&provider, plugin_provider.unwrap_or(false))?;
+    let client = management_http_client()?;
     let body = serde_json::json!({
         "provider": provider_key,
         "redirect_url": redirect_url,
     });
-    let response = target_request(&remote, target_revision, &gui_config_state, reqwest::Method::POST, "oauth/callback").await?
+    let response = client
+        .post(management_endpoint(&config, "oauth/callback")?)
+        .header("Authorization", management_authorization(&config)?)
         .json(&body)
         .send()
         .await
@@ -478,9 +452,6 @@ pub(crate) async fn submit_oauth_callback(
 }
 
 pub(crate) fn management_http_client() -> Result<reqwest::Client, String> {
-    if crate::remote_cpa::AGENT_ORIGIN.try_with(|_| ()).is_ok() {
-        return reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(30)).build().map_err(|error| error.to_string());
-    }
     static CLIENT: LazyLock<Result<reqwest::Client, String>> = LazyLock::new(|| {
         reqwest::Client::builder()
             .no_proxy()
@@ -537,7 +508,6 @@ pub(crate) fn management_endpoint(config: &GuiConfigFile, path: &str) -> Result<
         return Err("Invalid kernel port".to_string());
     }
     let path = path.trim_start_matches('/');
-    if let Ok(origin) = crate::remote_cpa::AGENT_ORIGIN.try_with(Clone::clone) { return Ok(format!("{origin}/v8/management/{path}")); }
     let origin = core_origin(
         &config.host,
         config.port,
@@ -546,7 +516,7 @@ pub(crate) fn management_endpoint(config: &GuiConfigFile, path: &str) -> Result<
     Ok(format!("{origin}/v8/management/{path}"))
 }
 
-pub(crate) fn normalize_oauth_request_provider(provider: &str, plugin_provider: bool) -> Result<String, String> {
+fn normalize_oauth_request_provider(provider: &str, plugin_provider: bool) -> Result<String, String> {
     if !plugin_provider {
         return normalize_management_oauth_provider(provider);
     }

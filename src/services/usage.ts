@@ -1,8 +1,4 @@
-import type { GenerationSpeedMode } from './usageMetrics';
-import { invoke as nativeInvoke } from '@tauri-apps/api/core';
-import { selectedTargetRevision } from './remoteCpa';
-export const invokeUsage = <T>(command: string, args?: Record<string, unknown>) => nativeInvoke<T>(command, { ...args, targetRevision: selectedTargetRevision() });
-const invoke = invokeUsage;
+import { invoke } from '@tauri-apps/api/core';
 import type { UsageTimelinePoint } from './usageTrend';
 
 export type UsageEventPage = {
@@ -16,15 +12,11 @@ export type UsageEventPage = {
 export type UsageRecord = {
   id: string;
   row_id: string;
-  request_id?: string;
   timestamp: string;
   latency_ms: number;
   ttft_ms: number | null;
   source: string;
   source_display: string;
-  auth_index?: string;
-  /** Allowlisted product id derived from the inbound request UA; self-reported, not verified. */
-  client_agent?: string | null;
   failed: boolean;
   canceled: boolean;
   failure_status: number;
@@ -68,7 +60,7 @@ export type UsageEventQuery = {
 };
 
 export type CollectorStatus = {
-  state: 'waiting-core' | 'disabled' | 'collecting' | 'error';
+  state: 'waiting-core' | 'collecting' | 'error';
   message: string;
   lastCollectedAt: string | null;
   totalRecords: number;
@@ -201,8 +193,8 @@ export const getUsageCollectorStatus = (): Promise<CollectorStatus> =>
 export const getUsageAnalysis = (args: { query: UsageQuery }): Promise<UsageAnalysis> =>
   invoke<UsageAnalysis>('get_usage_analysis', args);
 
-export const getUsageOverview = (args: { query: UsageQuery; speedMode?: GenerationSpeedMode }): Promise<UsageOverview> =>
-  invoke<UsageOverview>('get_usage_overview', { query: { ...args.query, speed_mode: args.speedMode } });
+export const getUsageOverview = (args: { query: UsageQuery }): Promise<UsageOverview> =>
+  invoke<UsageOverview>('get_usage_overview', args);
 
 export const getUsagePricing = (args: { query: UsageQuery }): Promise<UsagePricing> =>
   invoke<UsagePricing>('get_usage_pricing', args);

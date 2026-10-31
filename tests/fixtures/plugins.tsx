@@ -21,8 +21,6 @@ const state = {
   latestReleaseVersion: '3.0.0',
   holdInstall: false,
   releaseInstall: null as null | (() => void),
-  holdStore: false,
-  releaseStore: null as null | (() => void),
   settings: {
     enabled: true, dir: 'plugins', 'store-sources': ['https://registry.example.test/plugins.json'],
     'store-auth': [{ host: 'registry.example.test', 'token-env': 'PLUGIN_FIXTURE_TOKEN' }],
@@ -83,53 +81,6 @@ if (params.has('foreign-source')) storeEntries.unshift({ ...storeEntries[0], sou
   repository: 'foreign/sample', install_source_status: 'different',
 });
 
-const ECPA_SOURCE_URL = 'https://raw.githubusercontent.com/stark-shadow/ecpa-plugins-store/main/registry.json';
-if (params.has('ecpa')) {
-  localStorage.setItem('ecpa.registry.cache', JSON.stringify({
-    fetchedAt: Date.now(),
-    payload: {
-      schema_version: 1,
-      plugins: [
-        { id: 'aistudio2api', name: 'AIStudio2API', description: 'Expose Google AI Studio models through an OpenAI-compatible endpoint.',
-          author: 'jianli9158', version: '1.2.0', repository: 'jianli9158/cpa-plugin-aistudio2api', license: 'MIT',
-          tags: ['api', 'gemini'], install: { type: 'github-release' },
-          locales: { 'zh-CN': { description: '通过 OpenAI 兼容接口对外提供 Google AI Studio 模型。' } } },
-        { id: 'quota-snapshot', name: 'Quota Snapshot', description: 'Snapshot provider quota usage into a daily report.',
-          author: 'cxy2730', version: '0.4.1', repository: 'cxy2730/cpa-plugin-quota-snapshot', license: 'Apache-2.0',
-          tags: ['quota'], install: { type: 'github-release' } },
-        { id: 'theme-forge', name: 'Theme Forge', description: 'Preview and package custom interface themes.',
-          author: 'jianli9158', version: '2.0.0', repository: 'jianli9158/cpa-plugin-theme-forge', license: 'MIT',
-          tags: ['theme', 'ui'], install: { type: 'github-release' } },
-        { id: 'broken-pipe', name: 'Broken Pipe', description: 'A draft entry that is still missing its repository link.',
-          author: 'lzt404', version: '', repository: '', license: '', tags: ['experimental'] },
-      ],
-    },
-  }));
-}
-// The page registers the ECPA source itself; the store then serves these entries.
-const addEcpaStoreEntries = () => {
-  if (storeEntries.some(entry => entry.source_url === ECPA_SOURCE_URL)) return;
-  storeEntries.push(
-    { id: 'aistudio2api', name: 'AIStudio2API', source_id: 'ecpa', source_name: 'ECPA Featured',
-      source_url: ECPA_SOURCE_URL, repository: 'jianli9158/cpa-plugin-aistudio2api', version: '1.2.0',
-      install_type: 'github-release', installed: false },
-    { id: 'quota-snapshot', name: 'Quota Snapshot', source_id: 'ecpa', source_name: 'ECPA Featured',
-      source_url: ECPA_SOURCE_URL, repository: 'cxy2730/cpa-plugin-quota-snapshot', version: '0.4.1',
-      install_type: 'github-release', installed: true, installed_version: '0.3.0',
-      install_source_status: 'matched' },
-  );
-};
-if (params.has('ecpa-registered')) {
-  state.settings['store-sources'].push(ECPA_SOURCE_URL);
-  addEcpaStoreEntries();
-}
-// `ecpa-fail` drops every cached registry copy and rejects the read, so the featured
-// tab has nothing to render unless it falls back to a built-in list.
-if (params.has('ecpa-fail')) {
-  localStorage.removeItem('ecpa.registry.cache');
-  globalThis.fetch = () => Promise.reject(new Error('Fixture registry unavailable'));
-}
-
 mockIPC(async (command, args) => {
   state.commands.push({ command, args });
   if (command === 'prepare_management_request') return `install-${state.commands.length}`;
@@ -143,13 +94,7 @@ mockIPC(async (command, args) => {
     return '/plugins/windows/amd64/local-demo-v1.0.0.dll';
   }
   if (command === 'get_plugin_support') return state.supported;
-  if (command === 'get_plugin_latest_releases') {
-    return (args?.repositories as string[]).map(repository => ({
-      repository,
-      version: repository.includes('quota-snapshot') ? '0.4.1' : state.latestReleaseVersion,
-      error: null,
-    }));
-  }
+  if (command === 'get_plugin_latest_releases') return (args?.repositories as string[]).map(repository => ({ repository, version: state.latestReleaseVersion, error: null }));
   if (command === 'open_external_url' || command === 'restart_core_process') return null;
   if (command !== 'management_request') return null;
   const request = args?.request as Request;
@@ -165,20 +110,13 @@ mockIPC(async (command, args) => {
       })),
     };
   }
-  if (request.path === '/plugins/store' && request.method === 'GET') {
-    if (state.holdStore) await new Promise<void>(resolve => { state.releaseStore = resolve; });
-    return {
-      plugins_enabled: state.settings.enabled, plugins_dir: state.settings.dir, plugins: storeEntries,
-      source_errors: [{ source_id: 'offline', source_name: 'Offline source', message: 'Fixture registry unavailable' }],
-    };
-  }
+  if (request.path === '/plugins/store' && request.method === 'GET') return {
+    plugins_enabled: state.settings.enabled, plugins_dir: state.settings.dir, plugins: storeEntries,
+    source_errors: [{ source_id: 'offline', source_name: 'Offline source', message: 'Fixture registry unavailable' }],
+  };
   if (request.path === '/config/plugins') {
     if (request.method === 'GET') return structuredClone(state.settings);
-    if (request.method === 'PATCH') {
-      Object.assign(state.settings, request.body);
-      if (state.settings['store-sources'].includes(ECPA_SOURCE_URL)) addEcpaStoreEntries();
-      return { status: 'ok' };
-    }
+    if (request.method === 'PATCH') { Object.assign(state.settings, request.body); return { status: 'ok' }; }
   }
   const configMatch = /^\/config\/plugins\/configs\/([^/]+)(\/enabled)?$/.exec(request.path);
   if (configMatch) {

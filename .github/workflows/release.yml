@@ -1,7 +1,7 @@
 name: Build portable releases
 
 run-name: >-
-  ${{ github.event_name == 'pull_request' && 'PR test build' || 'Portable release' }} ${{ github.event.pull_request.number || (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag || github.ref_name }}
+  ${{ github.event_name == 'pull_request' && 'PR test build' || github.event_name == 'push' && github.ref_type == 'branch' && 'Warm build caches' || 'Portable release' }} ${{ github.event.pull_request.number || (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag || github.ref_name }}
 
 on:
   workflow_call:
@@ -15,7 +15,7 @@ on:
         required: true
         type: string
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -29,11 +29,9 @@ on:
         type: boolean
   push:
     branches:
-      - preview
+      - main
     tags:
       - 'v*'
-      - 'only-preview'
-      - 'preview-*'
 
 concurrency:
   group: portable-${{ github.ref }}-${{ inputs.preview && inputs.source_sha || (github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref_type == 'branch' && 'cache' || 'release') }}
@@ -45,18 +43,12 @@ permissions:
 jobs:
   version:
     name: Resolve app version
-    if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'Roomen'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
-      release_family: ${{ steps.resolve.outputs.release_family }}
-      build_matrix: ${{ steps.matrix.outputs.matrix }}
-      is_preview: ${{ steps.matrix.outputs.is_preview }}
-      stable_series_version: ${{ steps.resolve.outputs.stable_series_version }}
-      preview_series_version: ${{ steps.resolve.outputs.preview_series_version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -68,142 +60,76 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          MANUAL_PRERELEASE: ${{ inputs.prerelease }}
           MIAOMIAO_PREVIEW: ${{ inputs.preview }}
-          EVENT_NAME: ${{ github.event_name }}
-          REF_TYPE: ${{ github.ref_type }}
-          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
           source_version="$(node scripts/version.mjs)"
           release_tag="$REQUESTED_VERSION"
-          event_name="${EVENT_NAME:-${GITHUB_EVENT_NAME:-}}"
-          ref_type="${REF_TYPE:-${GITHUB_REF_TYPE:-}}"
-          ref_name="${REF_NAME:-${GITHUB_REF_NAME:-}}"
-
-          is_preview_run=false
-          if [[ "$event_name" == "push" && "$ref_type" == "branch" && "$ref_name" == "preview" ]]; then
-            is_preview_run=true
-          elif [[ "$ref_type" == "tag" && "$ref_name" == preview-* ]]; then
-            is_preview_run=true
-          elif [[ "$release_tag" == preview-* ]]; then
-            is_preview_run=true
-          fi
-
           if [[ "$MIAOMIAO_PREVIEW" == "true" ]]; then
             base_version="${source_version%%[-+]*}"
             release_tag="v${base_version}-miaomiao.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
-            version="$(node scripts/version.mjs "${release_tag#v}")"
-          elif [[ "$event_name" == "pull_request" ]]; then
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             # Replace any existing prerelease/build suffix for an unambiguous test version.
             base_version="${source_version%%[-+]*}"
             release_tag="v${base_version}-pr.${PR_NUMBER}.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
-            version="$(node scripts/version.mjs "${release_tag#v}")"
-          elif [[ "$is_preview_run" == "true" ]]; then
-            base_version="${source_version%%[-+]*}"
-            # A supplied timestamp identifies the exact source ref and authored notes.
-            if [[ "$release_tag" =~ ^preview-([0-9]{8}-[0-9]{4})$ ]]; then
-              preview_stamp="${BASH_REMATCH[1]}"
-            else
-              preview_stamp="$(node scripts/preview-tag.mjs --stamp)"
-              release_tag="preview-${preview_stamp}"
-            fi
-            version="${base_version}-preview.${preview_stamp}"
           elif [ -z "$release_tag" ]; then
             release_tag="v$source_version"
-            version="$source_version"
           else
-            # Custom release tag supplied
-            # If it's a valid semver or v<semver>, parse with scripts/version.mjs
-            # If it's a tag like 'only-preview' (not semver), use source_version with preview suffix for binary package version
-            tag_version="${release_tag#v}"
-            if node scripts/version.mjs "$tag_version" >/dev/null 2>&1; then
-              version="$(node scripts/version.mjs "$tag_version")"
-              case "$release_tag" in
-                v*) ;;
-                *) release_tag="v$release_tag" ;;
-              esac
-            else
-              base_version="${source_version%%[-+]*}"
-              version="${base_version}-preview.$(date -u +%Y%m%d)-$(date -u +%H%M)"
-            fi
+            case "$release_tag" in
+              v*) ;;
+              *) release_tag="v$release_tag" ;;
+            esac
           fi
 
-          # A published package carries its own release identity plus the other series'
-          # source-pinned reference. Neither reference changes the package version.
-          release_family=unknown
-          stable_series_version=""
-          preview_series_version=""
-          if [[ "$version" =~ -preview($|[.+]) ]]; then
-            release_family=preview
-            if [[ "$version" =~ -preview\.([0-9]{8}-[0-9]{4})$ ]]; then
-              preview_series_version="${BASH_REMATCH[1]}"
-            fi
-            stable_series_version="$(node scripts/app-version-anchors.mjs stable)"
-          elif [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
-            { [[ "$ref_type" == "tag" ]] ||
-              [[ "$event_name" == "workflow_dispatch" && -n "$REQUESTED_VERSION" && "${MANUAL_PRERELEASE:-true}" == "false" ]]; }; then
-            release_family=stable
-            stable_series_version="$version"
-            preview_series_version="$(node scripts/app-version-anchors.mjs preview)"
-          fi
-          echo "release_family=$release_family" >> "$GITHUB_OUTPUT"
-          echo "stable_series_version=$stable_series_version" >> "$GITHUB_OUTPUT"
-          echo "preview_series_version=$preview_series_version" >> "$GITHUB_OUTPUT"
+          version="$(node scripts/version.mjs "${release_tag#v}")"
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
-      - name: Resolve build matrix
-        id: matrix
-        env:
-          RESOLVED_VERSION: ${{ steps.resolve.outputs.version }}
-          EVENT_NAME: ${{ github.event_name }}
-          MIAOMIAO_PREVIEW: ${{ inputs.preview }}
-        run: node scripts/release-matrix.mjs >> "$GITHUB_OUTPUT"
-
-  frontend:
-    name: Build shared frontend
-    needs: version
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.source_sha || github.sha }}
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - uses: actions/cache@v5
-        with:
-          path: ~/.bun/install/cache
-          key: bun-frontend-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-frontend-1.3.14-
-      - name: Build frontend
-        run: |
-          bun install --frozen-lockfile
-          bun run build
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-frontend
-          path: dist
-          if-no-files-found: error
-          retention-days: 1
 
   build:
     name: Build ${{ matrix.os }}-${{ matrix.arch }}
-    needs: [version, frontend]
+    needs: version
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.version.outputs.build_matrix) }}
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            os: linux
+            display_os: Linux
+            arch: amd64
+            suffix: tar.gz
+          - runner: ubuntu-22.04-arm
+            os: linux
+            display_os: Linux
+            arch: aarch64
+            suffix: tar.gz
+          - runner: macos-15-intel
+            os: darwin
+            display_os: Darwin
+            arch: amd64
+            suffix: dmg
+          - runner: macos-15
+            os: darwin
+            display_os: Darwin
+            arch: aarch64
+            suffix: dmg
+          - runner: windows-2025
+            os: windows
+            display_os: Windows
+            arch: amd64
+            suffix: zip
+          - runner: windows-11-arm
+            os: windows
+            display_os: Windows
+            arch: aarch64
+            suffix: zip
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      RUST_TARGET: ${{ matrix.rust_target || '' }}
-      TAURI_RELEASE_DIR: ${{ matrix.rust_target && format('src-tauri/target/{0}/release', matrix.rust_target) || 'src-tauri/target/release' }}
-      PACKAGE_RELEASE: ${{ inputs.preview || github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'preview') }}
+      PACKAGE_RELEASE: ${{ inputs.preview || github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -213,33 +139,21 @@ jobs:
         with:
           bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@1.97.0
-        with:
-          targets: ${{ matrix.rust_target || '' }}
       - name: Restore Bun packages
         id: bun-cache
         uses: actions/cache/restore@v5
         with:
           path: ~/.bun/install/cache
-          key: bun-${{ matrix.runner }}-${{ matrix.arch }}-1.3.14-${{ hashFiles('bun.lock') }}
+          key: bun-${{ matrix.runner }}-1.3.14-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            bun-${{ matrix.runner }}-${{ matrix.arch }}-1.3.14-
+            bun-${{ matrix.runner }}-1.3.14-
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.runner }}-${{ matrix.arch }}
+          key: ${{ matrix.runner }}
           workspaces: src-tauri -> target
           cache-workspace-crates: true
-          save-if: ${{ github.event_name != 'pull_request' }}
-      - name: Sync bundled core version
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITCODE_CORE_REPOSITORY: ${{ vars.GITCODE_CORE_REPOSITORY }}
-          # Set the CORE_VERSION_PIN repository variable to freeze the bundled kernel
-          # for a release, for example while an upstream tag is missing a platform.
-          CORE_VERSION_PIN: ${{ vars.CORE_VERSION_PIN }}
-        # A release tag builds the kernel pinned in core-version.txt; branch builds
-        # keep following the upstream latest release.
-        run: node scripts/update-bundled-core.mjs ${{ github.ref_type == 'tag' && '--freeze' || '' }}
+          save-if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - name: Restore bundled core archive
         id: core-cache
         uses: actions/cache/restore@v5
@@ -260,58 +174,32 @@ jobs:
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf mold
-          echo 'RUSTFLAGS=-C link-arg=-fuse-ld=mold' >> "$GITHUB_ENV"
-      - name: Disable Spotlight indexing
-        if: matrix.os == 'darwin'
-        run: sudo mdutil -a -i off || true
-      - name: Exclude CI build directories from Windows Defender
-        if: matrix.os == 'windows'
-        shell: pwsh
-        run: |
-          $paths = @($env:GITHUB_WORKSPACE, (Join-Path $env:USERPROFILE '.cargo'))
-          if ($env:CARGO_HOME) { $paths += $env:CARGO_HOME }
-          try {
-            Add-MpPreference -ExclusionPath ($paths | Select-Object -Unique) -ErrorAction Stop
-          } catch {
-            Write-Warning "Defender exclusions are unavailable: $_"
-          }
-      - uses: actions/download-artifact@v8
-        with:
-          name: release-frontend
-          path: dist
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - name: Build GUI
         env:
-          ECPA_RELEASE_FAMILY: ${{ needs.version.outputs.release_family }}
-          ECPA_STABLE_SERIES_VERSION: ${{ needs.version.outputs.stable_series_version || 'unknown' }}
-          ECPA_PREVIEW_SERIES_VERSION: ${{ needs.version.outputs.preview_series_version || 'unknown' }}
           GITCODE_GUI_REPOSITORY: ${{ vars.GITCODE_GUI_REPOSITORY }}
           GITCODE_CORE_REPOSITORY: ${{ vars.GITCODE_CORE_REPOSITORY }}
         run: |
-          target_args=()
-          if [ -n "$RUST_TARGET" ]; then
-            target_args=(--target "$RUST_TARGET")
-          fi
-          bunx --package @tauri-apps/cli@2.12.3 tauri build --no-bundle \
-            --config '{"build":{"beforeBuildCommand":""}}' "${target_args[@]}"
+          bun install --frozen-lockfile
+          bun tauri build --no-bundle
         shell: bash
       - name: Prepare portable directory
         run: >-
           node scripts/portable.mjs
-          --binary "$TAURI_RELEASE_DIR/cpa-gui${{ matrix.os == 'windows' && '.exe' || '' }}"
+          --binary "src-tauri/target/release/cpa-gui${{ matrix.os == 'windows' && '.exe' || '' }}"
           --output "release/${{ steps.package.outputs.stem }}"
           --os "${{ matrix.os }}"
           --arch "${{ matrix.arch }}"
           --download true
         shell: bash
       - name: Save Bun packages
-        if: ${{ github.event_name != 'pull_request' && steps.bun-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.bun-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: ~/.bun/install/cache
           key: ${{ steps.bun-cache.outputs.cache-primary-key }}
       - name: Save bundled core archive
-        if: ${{ github.event_name != 'pull_request' && steps.core-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.core-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: cpa-core
@@ -336,7 +224,7 @@ jobs:
           unsigned_core_archive="$RUNNER_TEMP/unsigned-core-${{ matrix.arch }}.tar.gz"
           core_archive=""
           staging_dir="$RUNNER_TEMP/easycli-dmg-staging"
-          bundle_dir="$TAURI_RELEASE_DIR/bundle"
+          bundle_dir="src-tauri/target/release/bundle"
           output_dmg="${{ steps.package.outputs.stem }}.dmg"
           keychain_list="$(security list-keychains -d user)"
           existing_keychains=()
@@ -395,12 +283,10 @@ jobs:
 
           cp "release/${{ steps.package.outputs.stem }}/portable-app.json" portable-app.json
 
-          # Sign the app with Tauri; notarize and staple only the final DMG.
+          # Build the notarized app with Tauri, then create the DMG with hdiutil.
           # Tauri's generated create-dmg script is unreliable on GitHub's macOS runners.
           env -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD \
-            -u APPLE_ID -u APPLE_PASSWORD -u APPLE_API_KEY -u APPLE_API_ISSUER -u APPLE_API_KEY_PATH \
-            bunx --package @tauri-apps/cli@2.12.3 tauri bundle --bundles app --ci \
-              --target "$RUST_TARGET" --config src-tauri/tauri.dmg.conf.json
+            bun tauri bundle --bundles app --ci --config src-tauri/tauri.dmg.conf.json
 
           app_path="$bundle_dir/macos/EasyCLIProxyAPI.app"
           resources_dir="$app_path/Contents/Resources"
@@ -413,7 +299,12 @@ jobs:
           mkdir -p "$staging_dir"
           ditto "$app_path" "$staging_dir/EasyCLIProxyAPI.app"
           ln -s /Applications "$staging_dir/Applications"
-          bash scripts/create-macos-dmg.sh "$staging_dir" "$output_dmg"
+          hdiutil create \
+            -volname "EasyCLIProxyAPI" \
+            -srcfolder "$staging_dir" \
+            -format UDZO \
+            -ov \
+            "$output_dmg"
           codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$keychain_path" "$output_dmg"
           xcrun notarytool submit "$output_dmg" \
             --apple-id "$APPLE_ID" \
@@ -456,15 +347,19 @@ jobs:
         run: |
           set -euo pipefail
           cp "release/${{ steps.package.outputs.stem }}/portable-app.json" portable-app.json
-          bunx --package @tauri-apps/cli@2.12.3 tauri bundle --bundles app --ci \
-            --target "$RUST_TARGET" --config src-tauri/tauri.dmg.conf.json
-          app_path="$TAURI_RELEASE_DIR/bundle/macos/EasyCLIProxyAPI.app"
+          bun tauri bundle --bundles app --ci --config src-tauri/tauri.dmg.conf.json
+          app_path="src-tauri/target/release/bundle/macos/EasyCLIProxyAPI.app"
           test -d "$app_path"
           staging_dir="$(mktemp -d "$RUNNER_TEMP/easycli-pr-dmg.XXXXXX")"
           trap 'rm -rf "$staging_dir"' EXIT
           ditto "$app_path" "$staging_dir/EasyCLIProxyAPI.app"
           ln -s /Applications "$staging_dir/Applications"
-          bash scripts/create-macos-dmg.sh "$staging_dir" "${{ steps.package.outputs.stem }}.dmg"
+          hdiutil create \
+            -volname "EasyCLIProxyAPI" \
+            -srcfolder "$staging_dir" \
+            -format UDZO \
+            -ov \
+            "${{ steps.package.outputs.stem }}.dmg"
       - name: Archive Linux release
         if: env.PACKAGE_RELEASE == 'true' && matrix.os == 'linux'
         run: tar -czf "${{ steps.package.outputs.stem }}.tar.gz" -C release "${{ steps.package.outputs.stem }}"
@@ -494,7 +389,7 @@ jobs:
     name: Publish GitHub release
     if: >-
       !inputs.preview && github.event_name != 'pull_request'
-      && (startsWith(github.ref, 'refs/tags/') || inputs.release_tag != '' || github.ref == 'refs/heads/preview')
+      && (startsWith(github.ref, 'refs/tags/') || inputs.release_tag != '')
     needs:
       - version
       - build
@@ -509,7 +404,6 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
-          pattern: EasyCLIProxyAPI-*
           merge-multiple: true
       - name: Prepare shared release notes
         shell: bash
@@ -525,27 +419,15 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
-          IS_PREVIEW: ${{ needs.version.outputs.is_preview }}
         run: |
           set -euo pipefail
-          if ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1 \
-            && [ "$RELEASE_TAG" != "only-preview" ] \
-            && [[ "$RELEASE_TAG" != preview-* ]]; then
-            echo "Skipping portable update manifests for non-semver release tag: $RELEASE_TAG"
-            exit 0
-          fi
-          platforms=(windows linux darwin)
-          if [[ "$IS_PREVIEW" == "true" ]]; then
-            platforms=(windows)
-          fi
-          for platform in "${platforms[@]}"; do
+          for platform in windows linux darwin; do
             node scripts/manifest.mjs \
               --directory artifacts \
               --platform "$platform" \
               --repository "${{ github.repository }}" \
               --gitcode-repository "${{ vars.GITCODE_GUI_REPOSITORY }}" \
               --tag "$RELEASE_TAG" \
-              --version "${{ needs.version.outputs.version }}" \
               --release-notes "$RUNNER_TEMP/easycli-release-notes.json"
           done
       - name: Publish release
@@ -558,27 +440,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          is_unique_preview=false
-          if [[ "$RELEASE_TAG" =~ ^preview-[0-9]{8}-[0-9]{4}$ ]]; then
-            is_unique_preview=true
-          fi
-
-          if node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1; then
-            case "$RELEASE_TAG" in
-              v*) ;;
-              *) RELEASE_TAG="v$RELEASE_TAG" ;;
-            esac
-          fi
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) RELEASE_TAG="v$RELEASE_TAG" ;;
+          esac
 
           prerelease="$MANUAL_PRERELEASE"
           release_args=(--title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/easycli-release-notes.md")
-          if [[ "$is_unique_preview" == "true" ]]; then
-            prerelease=true
-            release_args+=(--target "$GITHUB_SHA" --latest=false)
-          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             if [[ "$RELEASE_TAG" == *-* ]]; then
-              prerelease=true
-            elif ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1; then
               prerelease=true
             else
               prerelease=false
@@ -590,49 +460,11 @@ jobs:
             release_args+=(--prerelease)
           fi
 
-          if [[ "$GITHUB_REF_TYPE" != "tag" && "$is_unique_preview" != "true" ]]; then
-            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$RELEASE_TAG" \
-              -f sha="$GITHUB_SHA" -F force=true 2>/dev/null || true
-          fi
-
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" artifacts/* --clobber
-            edit_args=(--title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/easycli-release-notes.md")
-            if [[ "$prerelease" == "true" ]]; then
-              edit_args+=(--prerelease)
-            fi
-            if [[ "$is_unique_preview" == "true" ]]; then
-              edit_args+=(--latest=false)
-            fi
-            gh release edit "$RELEASE_TAG" "${edit_args[@]}"
-
-            if [[ "$is_unique_preview" == "true" ]]; then
-              gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" \
-                --jq '.assets[] | [.id, .name] | @tsv' 2>/dev/null > "$RUNNER_TEMP/preview-assets.tsv" || true
-              if [ -s "$RUNNER_TEMP/preview-assets.tsv" ]; then
-                while IFS=$'\t' read -r asset_id asset_name; do
-                  if [ ! -f "artifacts/$asset_name" ]; then
-                    gh api --method DELETE "repos/$GH_REPO/releases/assets/$asset_id" || true
-                  fi
-                done < "$RUNNER_TEMP/preview-assets.tsv"
-              fi
-            fi
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/easycli-release-notes.md"
           else
             gh release create "$RELEASE_TAG" "${release_args[@]}" artifacts/*
-          fi
-
-          # Publishing an explicit tag must not remove unrelated releases.
-          if [[ "$is_unique_preview" == "true" && "$GITHUB_REF_TYPE" != "tag" ]]; then
-            older_tags="$(gh release list --limit 200 --json tagName --jq '.[].tagName' 2>/dev/null \
-              | grep -E '^preview-[0-9]{8}-[0-9]{4}$' \
-              | sort -r \
-              | tail -n +9 || true)"
-            if [ -n "$older_tags" ]; then
-              while IFS= read -r old_tag; do
-                [ -n "$old_tag" ] || continue
-                gh release delete "$old_tag" --cleanup-tag --yes
-              done <<< "$older_tags"
-            fi
           fi
 
   publish-preview:
@@ -651,7 +483,6 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
-          pattern: EasyCLIProxyAPI-*
           merge-multiple: true
       - name: Publish latest successful branch head
         shell: bash
@@ -670,9 +501,20 @@ jobs:
             exit 0
           fi
 
-          # The rolling Preview uses the same Windows x64-only build contract.
-          packages=("artifacts/EasyCLIProxyAPI-v${APP_VERSION}-Windows-amd64.zip")
-          test -s "${packages[0]}"
+          # Check the complete matrix before changing the rolling release.
+          packages=()
+          for platform in Windows Linux Darwin; do
+            case "$platform" in
+              Windows) suffix=zip ;;
+              Linux) suffix=tar.gz ;;
+              Darwin) suffix=dmg ;;
+            esac
+            for arch in amd64 aarch64; do
+              package="artifacts/EasyCLIProxyAPI-v${APP_VERSION}-${platform}-${arch}.${suffix}"
+              test -s "$package"
+              packages+=("$package")
+            done
+          done
 
           notes="$RUNNER_TEMP/miaomiao-preview.md"
           cat > "$notes" <<EOF
@@ -682,7 +524,7 @@ jobs:
           Commit: https://github.com/${GH_REPO}/commit/${SOURCE_SHA}
           Build: https://github.com/${GH_REPO}/actions/runs/${GITHUB_RUN_ID}
 
-          Download the Windows x64 package below.
+          Download the package for your system below. macOS packages are signed and notarized.
           EOF
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then

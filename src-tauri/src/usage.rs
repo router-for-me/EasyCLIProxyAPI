@@ -1,4 +1,3 @@
-mod client_agent;
 mod resp;
 mod sources;
 mod token;
@@ -33,8 +32,7 @@ use tokio_util::sync::CancellationToken;
 use self::{
     resp::{pull_usage_queue, UsageSubscription},
     token::{
-        normalize as normalize_keeper_tokens, ClampedTokenFields, TokenBreakdownValues,
-        TokenQuality, TokenValues as KeeperTokenValues,
+        normalize as normalize_keeper_tokens, ClampedTokenFields, TokenValues as KeeperTokenValues,
     },
 };
 
@@ -84,14 +82,8 @@ const LITELLM_PRICE_SYNC_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const MODEL_PRICE_SYNC_MAX_BYTES: usize = 16 * 1024 * 1024;
 const MODEL_PRICE_SYNC_ATTEMPTS: usize = 2;
-const MODEL_CAPABILITY_SYNC_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 const USAGE_DISPLAY_MODEL_SQL: &str =
     "COALESCE(NULLIF(TRIM(alias), ''), NULLIF(TRIM(model), ''), 'unknown')";
-
-tokio::task_local! { pub(crate) static USAGE_TARGET: Option<crate::remote_cpa::Target>; }
-static COLLECTOR_SLOT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-fn usage_target() -> Option<crate::remote_cpa::Target> { USAGE_TARGET.try_with(Clone::clone).ok().flatten() }
 
 static USAGE_QUERY_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
@@ -100,14 +92,13 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
-    let target = usage_target();
     let permit = USAGE_QUERY_SLOTS
         .acquire()
         .await
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let _permit = permit;
-        USAGE_TARGET.sync_scope(target, || { if usage_target().is_some() { initialize_usage_storage()?; } task() })
+        task()
     })
     .await
     .map_err(|error| format!("Usage records background task failed: {error}"))?
@@ -119,7 +110,7 @@ pub(crate) struct UsageCollectorState {
 
 struct UsageCollectorInner {
     token: Option<CancellationToken>,
-    statuses: HashMap<Option<String>, UsageCollectorStatus>,
+    status: UsageCollectorStatus,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,7 +161,7 @@ impl Default for UsageCollectorState {
         Self {
             inner: Mutex::new(UsageCollectorInner {
                 token: None,
-                statuses: HashMap::new(),
+                status: UsageCollectorStatus::waiting(),
             }),
         }
     }
@@ -253,14 +244,7 @@ pub(crate) struct UsageRecord {
     client_ip: Option<String>,
     #[serde(default, skip_serializing)]
     x_forwarded_for: Option<String>,
-    #[serde(
-        default,
-        rename(serialize = "client_agent"),
-        alias = "client_agent",
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "client_agent::serialize",
-        deserialize_with = "client_agent::deserialize"
-    )]
+    #[serde(default, skip_serializing)]
     user_agent: Option<String>,
     #[serde(default)]
     reasoning_effort: String,
@@ -314,8 +298,6 @@ struct LegacyUsageInboxFile {
 
 #[derive(Clone, Default, Deserialize)]
 pub(crate) struct UsageQuery {
-    #[serde(default)]
-    speed_mode: Option<String>,
     #[serde(default)]
     start: Option<String>,
     #[serde(default)]
@@ -387,30 +369,14 @@ pub(crate) struct UsageStorageSettings {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelPrice {
     model: String,
-    pub(crate) prompt: f64,
-    pub(crate) completion: f64,
-    pub(crate) cache_read: f64,
-    pub(crate) cache_creation: f64,
+    prompt: f64,
+    completion: f64,
+    cache_read: f64,
+    cache_creation: f64,
     prompt_configured: bool,
     completion_configured: bool,
     cache_read_configured: bool,
     cache_creation_configured: bool,
-    source: String,
-    source_model_id: String,
-    updated_at_ms: i64,
-}
-
-/// Authoritative model capabilities imported from external catalogs (models.dev,
-/// LiteLLM). The Codex client catalog clones its default template onto every model
-/// it does not know, which advertises `context_window = 500000` for custom
-/// openai-compatibility providers; these entries replace that placeholder.
-#[derive(Clone, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ModelCapabilities {
-    pub(crate) model: String,
-    pub(crate) context_window: Option<u64>,
-    pub(crate) max_output_tokens: Option<u64>,
-    pub(crate) input_modalities: Vec<String>,
     source: String,
     source_model_id: String,
     updated_at_ms: i64,
@@ -590,20 +556,21 @@ impl UsageCollectorState {
 
     fn set_status(&self, status: UsageCollectorStatus) {
         if let Ok(mut inner) = self.inner.lock() {
-            inner.statuses.insert(usage_target().map(|target| target.usage_id()), status);
+            inner.status = status;
         }
     }
 
     fn set_total_records(&self, total_records: u64) {
         if let Ok(mut inner) = self.inner.lock() {
-            inner.statuses.entry(usage_target().map(|target| target.usage_id())).or_insert_with(UsageCollectorStatus::waiting).total_records = total_records;
+            inner.status.total_records = total_records;
         }
     }
 
     fn apply_record_changes(&self, inserted: usize, deleted: u64) {
         if let Ok(mut inner) = self.inner.lock() {
-            let status = inner.statuses.entry(usage_target().map(|target| target.usage_id())).or_insert_with(UsageCollectorStatus::waiting);
-            status.total_records = status.total_records
+            inner.status.total_records = inner
+                .status
+                .total_records
                 .saturating_add(inserted as u64)
                 .saturating_sub(deleted);
         }
@@ -612,20 +579,15 @@ impl UsageCollectorState {
     fn status(&self) -> Result<UsageCollectorStatus, String> {
         self.inner
             .lock()
-            .map(|inner| inner.statuses.get(&usage_target().map(|target| target.usage_id())).cloned().unwrap_or_else(UsageCollectorStatus::waiting))
+            .map(|inner| inner.status.clone())
             .map_err(|_| "Usage collection status lock is poisoned".to_string())
     }
 }
 
 pub(crate) fn initialize_usage_storage() -> Result<(), String> {
     let root = usage_root_dir()?;
-    static READY: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
-    let mut ready = READY.lock().map_err(|_| "Usage initialization lock unavailable")?;
-    if ready.contains(&root) && root.join(USAGE_DATABASE_FILE).is_file() { return Ok(()); }
-    if usage_target().is_none() { migrate_legacy_usage_storage(&root)?; }
-    initialize_usage_storage_at(&root)?;
-    ready.insert(root);
-    Ok(())
+    migrate_legacy_usage_storage(&root)?;
+    initialize_usage_storage_at(&root)
 }
 
 #[cfg(target_os = "macos")]
@@ -705,67 +667,59 @@ fn initialize_usage_storage_at(root: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(crate) async fn repair_usage_cache_records(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, ) -> Result<UsageRepairResult, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        run_usage_task(|| repair_usage_cache_records_at(&usage_root_dir()?)).await
-    }).await
+pub(crate) async fn repair_usage_cache_records() -> Result<UsageRepairResult, String> {
+    run_usage_task(|| repair_usage_cache_records_at(&usage_root_dir()?)).await
 }
 
 #[tauri::command]
-pub(crate) async fn get_usage_storage_settings(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, ) -> Result<UsageStorageSettings, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        run_usage_task(|| {
-            let root = usage_root_dir()?;
-            let connection = open_usage_database_at(&root)?;
-            load_usage_storage_settings(&connection, &root, 0)
-        })
-        .await
-    }).await
+pub(crate) async fn get_usage_storage_settings() -> Result<UsageStorageSettings, String> {
+    run_usage_task(|| {
+        let root = usage_root_dir()?;
+        let connection = open_usage_database_at(&root)?;
+        load_usage_storage_settings(&connection, &root, 0)
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn save_usage_storage_settings(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, app: tauri::AppHandle,
-    max_database_size_mb: u64,) -> Result<UsageStorageSettings, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        let settings = run_usage_task(move || {
-            let root = usage_root_dir()?;
-            let connection = open_usage_database_at(&root)?;
-            save_usage_database_limit(&connection, max_database_size_mb)?;
-            let deleted = enforce_usage_database_limit(&connection)?;
-            load_usage_storage_settings(&connection, &root, deleted)
-        })
-        .await?;
-        app.state::<UsageCollectorState>()
-            .set_total_records(settings.total_records);
-        if settings.deleted_records > 0 {
-            emit_usage_updated(&app, Local::now().to_rfc3339());
-        }
-        Ok(settings)
-    }).await
+pub(crate) async fn save_usage_storage_settings(
+    app: tauri::AppHandle,
+    max_database_size_mb: u64,
+) -> Result<UsageStorageSettings, String> {
+    let settings = run_usage_task(move || {
+        let root = usage_root_dir()?;
+        let connection = open_usage_database_at(&root)?;
+        save_usage_database_limit(&connection, max_database_size_mb)?;
+        let deleted = enforce_usage_database_limit(&connection)?;
+        load_usage_storage_settings(&connection, &root, deleted)
+    })
+    .await?;
+    app.state::<UsageCollectorState>()
+        .set_total_records(settings.total_records);
+    if settings.deleted_records > 0 {
+        emit_usage_updated(&app, Local::now().to_rfc3339());
+    }
+    Ok(settings)
 }
 
 #[tauri::command]
-pub(crate) async fn shrink_usage_database(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, app: tauri::AppHandle,
-    target_database_size_mb: u64,) -> Result<UsageStorageSettings, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        let settings = run_usage_task(move || {
-            let root = usage_root_dir()?;
-            let connection = open_usage_database_at(&root)?;
-            let deleted = shrink_usage_database_to_mb(&connection, target_database_size_mb)?;
-            load_usage_storage_settings(&connection, &root, deleted)
-        })
-        .await?;
-        app.state::<UsageCollectorState>()
-            .set_total_records(settings.total_records);
-        if settings.deleted_records > 0 {
-            emit_usage_updated(&app, Local::now().to_rfc3339());
-        }
-        Ok(settings)
-    }).await
+pub(crate) async fn shrink_usage_database(
+    app: tauri::AppHandle,
+    target_database_size_mb: u64,
+) -> Result<UsageStorageSettings, String> {
+    let settings = run_usage_task(move || {
+        let root = usage_root_dir()?;
+        let connection = open_usage_database_at(&root)?;
+        let deleted = shrink_usage_database_to_mb(&connection, target_database_size_mb)?;
+        load_usage_storage_settings(&connection, &root, deleted)
+    })
+    .await?;
+    app.state::<UsageCollectorState>()
+        .set_total_records(settings.total_records);
+    if settings.deleted_records > 0 {
+        emit_usage_updated(&app, Local::now().to_rfc3339());
+    }
+    Ok(settings)
 }
 
 fn repair_usage_cache_records_at(root: &Path) -> Result<UsageRepairResult, String> {
@@ -1382,16 +1336,6 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
                 source_model_id TEXT NOT NULL DEFAULT '',
                 updated_at_ms INTEGER NOT NULL DEFAULT 0
             );
-
-            CREATE TABLE IF NOT EXISTS model_capabilities (
-                model TEXT PRIMARY KEY NOT NULL,
-                context_window INTEGER,
-                max_output_tokens INTEGER,
-                input_modalities TEXT NOT NULL DEFAULT '',
-                source TEXT NOT NULL DEFAULT '',
-                source_model_id TEXT NOT NULL DEFAULT '',
-                updated_at_ms INTEGER NOT NULL DEFAULT 0
-            );
             "#,
         )
         .map_err(|error| format!("Failed to initialize SQLite usage records schema: {error}"))?;
@@ -1515,7 +1459,7 @@ fn backfill_usage_failure_details(connection: &Connection) -> Result<(), String>
     Ok(())
 }
 
-pub(crate) fn open_usage_database() -> Result<Connection, String> {
+fn open_usage_database() -> Result<Connection, String> {
     open_usage_database_at(&usage_root_dir()?)
 }
 
@@ -1885,79 +1829,15 @@ fn redis_pull_can_try_legacy_queue(error: &str) -> bool {
 
 pub(crate) fn start_usage_collector(app: tauri::AppHandle) {
     let state = app.state::<UsageCollectorState>();
-
+    if let Ok(total_records) = total_usage_records() {
+        state.set_total_records(total_records);
+    }
     let Some(token) = state.start() else {
         return;
     };
     tauri::async_runtime::spawn_blocking(move || {
-        tauri::async_runtime::block_on(async move {
-            let _serial = COLLECTOR_SLOT.lock().await;
-            if token.is_cancelled() { return; }
-            let target = match app.state::<crate::remote_cpa::RemoteCpaState>().usage_target(None).await {
-                Ok(target) => target, Err(error) => { set_collector_error(&app, error); return; }
-            };
-            if token.is_cancelled() { return; }
-            USAGE_TARGET.scope(target.clone(), async move {
-                if let Err(error) = initialize_usage_storage() { set_collector_error(&app, error); return; }
-                let state = app.state::<UsageCollectorState>();
-                state.set_status(UsageCollectorStatus::waiting());
-                state.set_total_records(total_usage_records().unwrap_or(0));
-                if let Some(target) = target { collect_external(&app, &target, token).await; }
-                else { usage_collector_loop(app, token).await; }
-            }).await;
-        });
+        tauri::async_runtime::block_on(usage_collector_loop(app, token));
     });
-}
-
-pub(crate) fn switch_collector(app: &tauri::AppHandle) {
-    stop_usage_collector(app);
-    start_usage_collector(app.clone());
-}
-
-async fn collect_external_batch(root: &Path, target: &crate::remote_cpa::Target, config: &GuiConfigFile) -> Result<(UsagePersistOutcome, u64), String> {
-    let batch = target.request(reqwest::Method::GET, "observability/usage/queue").map_err(|_| "Invalid usage endpoint")?
-        .query(&[("count", USAGE_INBOX_PROCESS_LIMIT)]).send().await.map_err(|_| "Cannot reach selected CPA")?
-        .error_for_status().map_err(|error| format!("Usage queue: HTTP {:?}", error.status()))?
-        .json::<Vec<Value>>().await.map_err(|_| "Invalid usage queue response")?;
-    let delay = if batch.len() >= USAGE_INBOX_PROCESS_LIMIT { 0 } else if batch.is_empty() { 3 } else { 1 };
-    let saved = persist_queue_items_from_source(root, HTTP_USAGE_QUEUE_SOURCE, batch, config)?;
-    Ok((saved, delay))
-}
-
-async fn collect_external(app: &tauri::AppHandle, target: &crate::remote_cpa::Target, token: CancellationToken) {
-    let root = match usage_root_dir() { Ok(root) => root, Err(error) => { set_collector_error(app, error); return; } };
-    let config = GuiConfigFile::default();
-    let mut housekeeping = tokio::time::Instant::now();
-    let mut check_enabled = tokio::time::Instant::now();
-    let mut enabled = true;
-    while !token.is_cancelled() {
-        let result: Result<u64, String> = async {
-            if tokio::time::Instant::now() >= housekeeping {
-                let mut connection = open_usage_database_at(&root)?;
-                let recovered = process_usage_inbox(&mut connection, &config)?;
-                cleanup_usage_inbox(&connection, Local::now())?;
-                if recovered.inserted > 0 { publish_collected_records(app, recovered, "Recovered queued events"); }
-                housekeeping = tokio::time::Instant::now() + Duration::from_secs(3600);
-            }
-            if tokio::time::Instant::now() >= check_enabled {
-                let response = target.request(reqwest::Method::GET, "config/observability/usage/usage-statistics-enabled").map_err(|_| "Invalid usage endpoint")?.send().await.map_err(|_| "Cannot reach selected CPA")?;
-                enabled = if response.status() == reqwest::StatusCode::NOT_FOUND {
-                    if response.json::<Value>().await.ok().is_some_and(|body| body["error"] == "not_found") { false }
-                    else { return Err("Usage settings API unavailable on this CPA".into()); }
-                } else {
-                    response.error_for_status().map_err(|error| format!("Usage settings: HTTP {:?}", error.status()))?.json::<bool>().await.map_err(|_| "Invalid usage setting")?
-                };
-                check_enabled = tokio::time::Instant::now() + Duration::from_secs(10);
-            }
-            if !enabled { set_collector_status(app, "disabled", "Usage statistics disabled on selected CPA", None); return Ok(3); }
-            if token.is_cancelled() { return Ok(0); }
-            let (outcome, delay) = collect_external_batch(&root, target, &config).await?;
-            if !token.is_cancelled() { publish_collected_records(app, outcome, "Collecting from selected CPA"); }
-            Ok(delay)
-        }.await;
-        let delay = result.unwrap_or_else(|error| { if !token.is_cancelled() { set_collector_error(app, error); } 5 });
-        wait_or_cancel(&token, delay).await;
-    }
 }
 
 pub(crate) fn stop_usage_collector(app: &tauri::AppHandle) {
@@ -1982,7 +1862,6 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
     let mut next_inbox_recovery_at = tokio::time::Instant::now();
     let mut next_core_check_at = tokio::time::Instant::now();
     let mut core_ready = false;
-    let mut idle_polls = 0u32;
     loop {
         if token.is_cancelled() {
             return;
@@ -2047,11 +1926,7 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
             core_ready = current_core_status(Some(process_state.inner()), Some(config.port))
                 .map(|status| status.ready)
                 .unwrap_or(false);
-            // A ready kernel rarely changes state and this probe opens a TCP
-            // connection every time. Keep it quick while starting or stopped so
-            // recovery stays prompt, then settle on the UI's own 10s cadence.
-            let delay = if core_ready { 10 } else { 2 };
-            next_core_check_at = tokio::time::Instant::now() + Duration::from_secs(delay);
+            next_core_check_at = tokio::time::Instant::now() + Duration::from_secs(2);
         }
         if !core_ready {
             subscription = None;
@@ -2169,11 +2044,9 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
                     None,
                 );
                 retry_seconds = 1;
-                idle_polls = idle_polls.saturating_add(1);
-                wait_or_cancel(&token, idle_poll_seconds(idle_polls)).await;
+                wait_or_cancel(&token, 1).await;
             }
             Ok(batch) => {
-                idle_polls = 0;
                 let source_label = collector_source_label(&batch.source);
                 match persist_raw_usage_messages_from_source(
                     &root,
@@ -2294,23 +2167,11 @@ pub(crate) fn persist_local_usage_event(
             );
         }
     }
-    initialize_usage_storage()?;
     let config = app.state::<GuiConfigState>().snapshot()?;
     let root = usage_root_dir()?;
     let outcome = persist_queue_items_from_source(&root, collector_source, vec![value], &config)?;
     publish_collected_records(app, outcome, "Saved desktop health check usage record");
     Ok(outcome.inserted)
-}
-
-/// Idle polling in HTTP compatibility mode: pick a burst up immediately, then
-/// settle at 3s while the queue stays empty. A live subscription is event-driven
-/// and never reaches this path.
-fn idle_poll_seconds(consecutive_empty: u32) -> u64 {
-    match consecutive_empty {
-        0 | 1 => 1,
-        2 => 2,
-        _ => 3,
-    }
 }
 
 async fn wait_or_cancel(token: &CancellationToken, seconds: u64) {
@@ -2858,12 +2719,10 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
     let cache_creation_tokens = token_u64(tokens_object, "cache_creation_tokens");
     let raw_cached_tokens =
         token_u64(tokens_object, "cached_tokens").max(token_u64(tokens_object, "cache_tokens"));
-    let token_breakdown = parse_token_breakdown(object, tokens_object, cache_read_present);
     let normalized_tokens = normalize_keeper_tokens(
         &executor_type,
         &provider,
         &auth_type,
-        token_breakdown,
         KeeperTokenValues {
             input: token_u64(tokens_object, "input_tokens"),
             output: token_u64(tokens_object, "output_tokens"),
@@ -3092,33 +2951,22 @@ fn add_text_filter(
 }
 
 #[tauri::command]
-pub(crate) async fn get_usage_collector_status(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, state: tauri::State<'_, UsageCollectorState>,) -> Result<UsageCollectorStatus, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        state.status()
-    }).await
+pub(crate) fn get_usage_collector_status(
+    state: tauri::State<'_, UsageCollectorState>,
+) -> Result<UsageCollectorStatus, String> {
+    state.status()
 }
 
 #[tauri::command]
-pub(crate) async fn get_usage_overview(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, query: UsageQuery) -> Result<UsageOverview, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        run_usage_task(move || load_usage_overview(&open_usage_database()?, &query)).await
-    }).await
+pub(crate) async fn get_usage_overview(query: UsageQuery) -> Result<UsageOverview, String> {
+    run_usage_task(move || load_usage_overview(&open_usage_database()?, &query)).await
 }
-
-const TPS_MIN_GENERATION_MS: i64 = 100;
 
 fn load_usage_overview(
     connection: &Connection,
     query: &UsageQuery,
 ) -> Result<UsageOverview, String> {
     let filter = build_usage_filter(query);
-    let (speed_predicate, speed_duration) = if query.speed_mode.as_deref() == Some("ttft") {
-        (format!("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND ttft_ms IS NOT NULL AND ttft_ms > 0 AND latency_ms > ttft_ms AND latency_ms - ttft_ms >= {TPS_MIN_GENERATION_MS}"), "latency_ms - ttft_ms")
-    } else {
-        ("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND latency_ms > 0".to_string(), "latency_ms")
-    };
     let summary_sql = format!(
         r#"
         SELECT
@@ -3133,12 +2981,23 @@ fn load_usage_overview(
             COALESCE(SUM(cache_creation_tokens), 0),
             COALESCE(SUM(total_tokens), 0),
             COALESCE(SUM(latency_ms), 0),
-            COALESCE(
-                SUM(CASE WHEN {speed_predicate} THEN output_tokens END) * 1000.0
-                / NULLIF(SUM(CASE WHEN {speed_predicate} THEN {speed_duration} END), 0),
-                0.0
-            ),
-            COALESCE(SUM(CASE WHEN {speed_predicate} THEN 1 ELSE 0 END), 0),
+            COALESCE(AVG(CASE
+                WHEN generate != 0
+                 AND failed = 0
+                 AND canceled = 0
+                 AND output_tokens > 0
+                 AND latency_ms > 0
+                THEN output_tokens * 1000.0 / latency_ms
+            END), 0.0),
+            COALESCE(SUM(CASE
+                WHEN generate != 0
+                 AND failed = 0
+                 AND canceled = 0
+                 AND output_tokens > 0
+                 AND latency_ms > 0
+                THEN 1
+                ELSE 0
+            END), 0),
             MIN(timestamp_ms),
             MAX(timestamp_ms)
         FROM usage_events{}
@@ -3642,302 +3501,6 @@ fn parse_litellm_prices(content: &str, updated_at_ms: i64) -> Result<Vec<ModelPr
     Ok(prices)
 }
 
-fn parse_models_dev_capabilities(
-    content: &str,
-    updated_at_ms: i64,
-) -> Result<Vec<ModelCapabilities>, String> {
-    let catalog: Value = serde_json::from_str(content)
-        .map_err(|error| format!("Failed to parse models.dev capabilities: {error}"))?;
-    let providers = catalog
-        .as_object()
-        .ok_or("Invalid models.dev capabilities catalog format")?;
-    let mut capabilities = Vec::new();
-    for (provider, entry) in providers {
-        let Some(models) = entry.get("models").and_then(Value::as_object) else {
-            continue;
-        };
-        for (model_id, model) in models {
-            let limit = model.get("limit");
-            let context_window = limit
-                .and_then(|limit| limit.get("context"))
-                .and_then(Value::as_u64)
-                .filter(|value| *value > 0);
-            let max_output_tokens = limit
-                .and_then(|limit| limit.get("output"))
-                .and_then(Value::as_u64)
-                .filter(|value| *value > 0);
-            let input_modalities = model
-                .get("modalities")
-                .and_then(|modalities| modalities.get("input"))
-                .and_then(Value::as_array)
-                .map(|values| {
-                    values
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            if context_window.is_none()
-                && max_output_tokens.is_none()
-                && input_modalities.is_empty()
-            {
-                continue;
-            }
-            capabilities.push(ModelCapabilities {
-                model: model_id.trim().to_string(),
-                context_window,
-                max_output_tokens,
-                input_modalities,
-                source: "models.dev".to_string(),
-                source_model_id: format!("{provider}/{model_id}"),
-                updated_at_ms,
-            });
-        }
-    }
-    if capabilities.is_empty() {
-        return Err("models.dev has no available model capabilities".to_string());
-    }
-    Ok(capabilities)
-}
-
-fn parse_litellm_capabilities(
-    content: &str,
-    updated_at_ms: i64,
-) -> Result<Vec<ModelCapabilities>, String> {
-    let catalog: Value = serde_json::from_str(content)
-        .map_err(|error| format!("Failed to parse LiteLLM capabilities: {error}"))?;
-    let models = catalog.as_object().ok_or("Invalid LiteLLM capabilities catalog format")?;
-    let mut capabilities = Vec::new();
-    for (model_id, entry) in models {
-        let context_window = entry.get("max_input_tokens").and_then(Value::as_u64).filter(|value| *value > 0);
-        let max_output_tokens = entry.get("max_output_tokens").and_then(Value::as_u64).filter(|value| *value > 0);
-        let mut input_modalities = vec!["text".to_string()];
-        if entry.get("supports_vision").and_then(Value::as_bool) == Some(true) {
-            input_modalities.push("image".to_string());
-        }
-        if entry.get("supports_audio_input").and_then(Value::as_bool) == Some(true) {
-            input_modalities.push("audio".to_string());
-        }
-        if context_window.is_none() && max_output_tokens.is_none() {
-            continue;
-        }
-        capabilities.push(ModelCapabilities {
-            model: model_id.trim().to_string(),
-            context_window,
-            max_output_tokens,
-            input_modalities,
-            source: "litellm-sync".to_string(),
-            source_model_id: model_id.trim().to_string(),
-            updated_at_ms,
-        });
-    }
-    if capabilities.is_empty() {
-        return Err("LiteLLM has no available model capabilities".to_string());
-    }
-    Ok(capabilities)
-}
-
-fn upsert_model_capabilities(
-    connection: &Connection,
-    capabilities: &[ModelCapabilities],
-) -> Result<(), String> {
-    for capability in capabilities {
-        let model = capability.model.trim();
-        if model.is_empty() {
-            continue;
-        }
-        connection
-            .execute(
-                r#"
-                INSERT INTO model_capabilities (
-                    model, context_window, max_output_tokens, input_modalities,
-                    source, source_model_id, updated_at_ms
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                ON CONFLICT(model) DO UPDATE SET
-                    context_window = excluded.context_window,
-                    max_output_tokens = excluded.max_output_tokens,
-                    input_modalities = excluded.input_modalities,
-                    source = excluded.source,
-                    source_model_id = excluded.source_model_id,
-                    updated_at_ms = excluded.updated_at_ms
-                "#,
-                params![
-                    model,
-                    capability.context_window,
-                    capability.max_output_tokens,
-                    capability.input_modalities.join(","),
-                    capability.source,
-                    capability.source_model_id,
-                    capability.updated_at_ms,
-                ],
-            )
-            .map_err(|error| format!("Failed to save model capabilities: {error}"))?;
-    }
-    Ok(())
-}
-
-pub(crate) fn load_model_capabilities(
-    connection: &Connection,
-) -> Result<Vec<ModelCapabilities>, String> {
-    let mut statement = connection
-        .prepare(
-            r#"
-            SELECT model, context_window, max_output_tokens, input_modalities,
-                   source, source_model_id, updated_at_ms
-            FROM model_capabilities
-            "#,
-        )
-        .map_err(|error| format!("Failed to read model capabilities: {error}"))?;
-    let rows = statement
-        .query_map([], |row| {
-            let modalities: String = row.get(3).unwrap_or_default();
-            Ok(ModelCapabilities {
-                model: row.get(0)?,
-                context_window: row.get(1).ok(),
-                max_output_tokens: row.get(2).ok(),
-                input_modalities: modalities
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-                    .collect(),
-                source: row.get(4).unwrap_or_default(),
-                source_model_id: row.get(5).unwrap_or_default(),
-                updated_at_ms: row.get(6).unwrap_or_default(),
-            })
-        })
-        .map_err(|error| format!("Failed to read model capabilities: {error}"))?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Failed to read model capabilities: {error}"))
-}
-
-pub(crate) fn find_model_capabilities<'a>(
-    capabilities: &'a [ModelCapabilities],
-    model: &str,
-) -> Option<&'a ModelCapabilities> {
-    let model = model.trim();
-    if model.is_empty() {
-        return None;
-    }
-    if let Some(entry) = capabilities
-        .iter()
-        .find(|entry| entry.model.eq_ignore_ascii_case(model))
-    {
-        return Some(entry);
-    }
-    let tail = canonical_model_tail(model);
-    let exact_tail = capabilities
-        .iter()
-        .filter(|entry| canonical_model_tail(&entry.model) == tail)
-        .collect::<Vec<_>>();
-    if exact_tail.len() == 1 {
-        return Some(exact_tail[0]);
-    }
-    // Dated and provider-prefixed variants (deepseek-v4.1-flash-1017,
-    // xopdeepseekv4flash0731) inherit the base catalog entry.
-    let normalized_tail = normalized_model_tail(model);
-    capabilities
-        .iter()
-        .filter_map(|entry| {
-            let key_tail = normalized_model_tail(&entry.model);
-            if key_tail.is_empty() {
-                return None;
-            }
-            (normalized_tail.starts_with(&format!("{key_tail}-"))
-                || normalized_tail.starts_with(&format!("{key_tail}.")))
-            .then_some((key_tail.len(), entry))
-        })
-        .max_by_key(|(length, _)| *length)
-        .map(|(_, entry)| entry)
-}
-
-/// Loads the external catalog once per operation, without reading request history.
-pub(crate) fn load_model_capabilities_snapshot() -> Vec<ModelCapabilities> {
-    let Ok(connection) = open_usage_database() else {
-        return Vec::new();
-    };
-    load_model_capabilities(&connection).unwrap_or_default()
-}
-
-pub(crate) async fn refresh_model_capabilities_catalog() -> Result<usize, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("EasyCLIProxyAPI/0.2.97")
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|error| format!("Failed to create capability synchronization client: {error}"))?;
-    let now = Local::now().timestamp_millis();
-    let mut imported = Vec::new();
-    let mut failures = Vec::new();
-    for (source_name, source_url, models_dev) in [
-        ("Models.dev", MODEL_PRICE_SYNC_URL, true),
-        ("LiteLLM", LITELLM_PRICE_SYNC_URL, false),
-    ] {
-        match fetch_model_price_catalog(&client, source_name, source_url).await {
-            Ok(content) => {
-                let parsed = if models_dev {
-                    parse_models_dev_capabilities(&content, now)
-                } else {
-                    parse_litellm_capabilities(&content, now)
-                };
-                match parsed {
-                    Ok(capabilities) => imported.extend(capabilities),
-                    Err(error) => failures.push(error),
-                }
-            }
-            Err(error) => failures.push(error),
-        }
-    }
-    if imported.is_empty() {
-        return Err(if failures.is_empty() {
-            "No external model capability catalog is available".to_string()
-        } else {
-            failures.join("; ")
-        });
-    }
-    let imported_count = imported.len();
-    run_usage_task(move || {
-        let mut connection = open_usage_database()?;
-        let transaction = connection
-            .transaction()
-            .map_err(|error| format!("Failed to begin saving model capabilities: {error}"))?;
-        upsert_model_capabilities(&transaction, &imported)?;
-        transaction
-            .commit()
-            .map_err(|error| format!("Failed to commit model capabilities: {error}"))?;
-        Ok(imported_count)
-    })
-    .await
-}
-
-/// Refreshes the external capability catalog at most once per day. Failures are
-/// non-fatal: the local catalog simply keeps whatever it imported last time.
-pub(crate) async fn ensure_model_capabilities_catalog() -> Result<(), String> {
-    let stale = run_usage_task(|| {
-        let connection = open_usage_database()?;
-        let latest: Option<i64> = connection
-            .query_row(
-                "SELECT MAX(updated_at_ms) FROM model_capabilities",
-                [],
-                |row| row.get::<_, Option<i64>>(0),
-            )
-            .optional()
-            .map_err(|error| format!("Failed to read model capability catalog age: {error}"))?
-            .flatten();
-        Ok(latest.is_none_or(|latest| {
-            latest < Local::now().timestamp_millis() - MODEL_CAPABILITY_SYNC_MAX_AGE_MS
-        }))
-    })
-    .await?;
-    if stale {
-        refresh_model_capabilities_catalog().await?;
-    }
-    Ok(())
-}
-
 fn find_model_price<'a>(
     prices: &'a HashMap<String, ModelPrice>,
     model: &str,
@@ -4161,11 +3724,8 @@ fn upsert_model_price(connection: &Connection, price: &ModelPrice) -> Result<(),
 }
 
 #[tauri::command]
-pub(crate) async fn get_usage_pricing(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, query: UsageQuery) -> Result<UsagePricing, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        run_usage_task(move || load_usage_pricing(&open_usage_database()?, &query)).await
-    }).await
+pub(crate) async fn get_usage_pricing(query: UsageQuery) -> Result<UsagePricing, String> {
+    run_usage_task(move || load_usage_pricing(&open_usage_database()?, &query)).await
 }
 
 fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<UsagePricing, String> {
@@ -4240,33 +3800,27 @@ fn load_usage_pricing(connection: &Connection, query: &UsageQuery) -> Result<Usa
 }
 
 #[tauri::command]
-pub(crate) async fn save_usage_model_price(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, mut price: ModelPrice) -> Result<(), String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        price.model = price.model.trim().to_string();
-        price.source = "manual".to_string();
-        price.source_model_id.clear();
-        price.updated_at_ms = Local::now().timestamp_millis();
-        run_usage_task(move || upsert_model_price(&open_usage_database()?, &price)).await
-    }).await
+pub(crate) async fn save_usage_model_price(mut price: ModelPrice) -> Result<(), String> {
+    price.model = price.model.trim().to_string();
+    price.source = "manual".to_string();
+    price.source_model_id.clear();
+    price.updated_at_ms = Local::now().timestamp_millis();
+    run_usage_task(move || upsert_model_price(&open_usage_database()?, &price)).await
 }
 
 #[tauri::command]
-pub(crate) async fn delete_usage_model_price(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, model: String) -> Result<(), String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        run_usage_task(move || {
-            let connection = open_usage_database()?;
-            connection
-                .execute(
-                    "DELETE FROM model_prices WHERE model = ?1 COLLATE NOCASE",
-                    params![model.trim()],
-                )
-                .map_err(|error| format!("Failed to delete model pricing: {error}"))?;
-            Ok(())
-        })
-        .await
-    }).await
+pub(crate) async fn delete_usage_model_price(model: String) -> Result<(), String> {
+    run_usage_task(move || {
+        let connection = open_usage_database()?;
+        connection
+            .execute(
+                "DELETE FROM model_prices WHERE model = ?1 COLLATE NOCASE",
+                params![model.trim()],
+            )
+            .map_err(|error| format!("Failed to delete model pricing: {error}"))?;
+        Ok(())
+    })
+    .await
 }
 
 fn sync_price_for_model<'a>(model: &str, prices: &'a [ModelPrice]) -> Option<&'a ModelPrice> {
@@ -4429,81 +3983,77 @@ async fn fetch_model_price_catalog(
 }
 
 #[tauri::command]
-pub(crate) async fn preview_usage_model_prices(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, query: UsageQuery,
+pub(crate) async fn preview_usage_model_prices(
+    query: UsageQuery,
     source: String,
-    gui_config_state: tauri::State<'_, GuiConfigState>,) -> Result<ModelPriceSyncPreview, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        let (source_name, source_url) = match source.as_str() {
-            "models-dev" => ("Models.dev", MODEL_PRICE_SYNC_URL),
-            "litellm" => ("LiteLLM", LITELLM_PRICE_SYNC_URL),
-            _ => return Err("Unsupported pricing source".to_string()),
-        };
-        let config = gui_config_state.snapshot()?;
-        let client_builder = reqwest::Client::builder()
-            .user_agent("EasyCLIProxyAPI/0.2.97")
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(60));
-        let proxy_url = config.proxy_url.trim();
-        let client = apply_configured_proxy(client_builder, proxy_url)
-            .map_err(|error| format!("Failed to configure pricing synchronization proxy: {error}"))?
-            .build()
-            .map_err(|error| format!("Failed to create pricing synchronization client: {error}"))?;
-        let content = fetch_model_price_catalog(&client, source_name, source_url).await?;
-        let now = Local::now().timestamp_millis();
-        let remote_prices = if source == "models-dev" {
-            parse_models_dev_prices(&content, now)?
-        } else {
-            parse_litellm_prices(&content, now)?
-        };
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<ModelPriceSyncPreview, String> {
+    let (source_name, source_url) = match source.as_str() {
+        "models-dev" => ("Models.dev", MODEL_PRICE_SYNC_URL),
+        "litellm" => ("LiteLLM", LITELLM_PRICE_SYNC_URL),
+        _ => return Err("Unsupported pricing source".to_string()),
+    };
+    let config = gui_config_state.snapshot()?;
+    let client_builder = reqwest::Client::builder()
+        .user_agent("EasyCLIProxyAPI/0.2.97")
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(60));
+    let proxy_url = config.proxy_url.trim();
+    let client = apply_configured_proxy(client_builder, proxy_url)
+        .map_err(|error| format!("Failed to configure pricing synchronization proxy: {error}"))?
+        .build()
+        .map_err(|error| format!("Failed to create pricing synchronization client: {error}"))?;
+    let content = fetch_model_price_catalog(&client, source_name, source_url).await?;
+    let now = Local::now().timestamp_millis();
+    let remote_prices = if source == "models-dev" {
+        parse_models_dev_prices(&content, now)?
+    } else {
+        parse_litellm_prices(&content, now)?
+    };
 
-        run_usage_task(move || {
-            let connection = open_usage_database()?;
-            let models = collect_price_preview_models(&connection, &query)?;
-            Ok(build_model_price_preview(
-                &models,
-                &remote_prices,
-                source_name,
-                source_url,
-            ))
-        })
-        .await
-    }).await
+    run_usage_task(move || {
+        let connection = open_usage_database()?;
+        let models = collect_price_preview_models(&connection, &query)?;
+        Ok(build_model_price_preview(
+            &models,
+            &remote_prices,
+            source_name,
+            source_url,
+        ))
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) async fn apply_usage_model_prices(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, prices: Vec<ModelPrice>) -> Result<ModelPriceSyncResult, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        let mut seen = std::collections::HashSet::new();
-        for price in &prices {
-            validate_model_price(price)?;
-            if !matches!(price.source.as_str(), "models.dev" | "litellm-sync")
-                || price.source_model_id.trim().is_empty()
-            {
-                return Err("Invalid pricing synchronization source".to_string());
-            }
-            if !seen.insert(price.model.to_ascii_lowercase()) {
-                return Err(format!("Duplicate model pricing: {}", price.model));
-            }
+pub(crate) async fn apply_usage_model_prices(prices: Vec<ModelPrice>) -> Result<ModelPriceSyncResult, String> {
+    let mut seen = std::collections::HashSet::new();
+    for price in &prices {
+        validate_model_price(price)?;
+        if !matches!(price.source.as_str(), "models.dev" | "litellm-sync")
+            || price.source_model_id.trim().is_empty()
+        {
+            return Err("Invalid pricing synchronization source".to_string());
         }
-        run_usage_task(move || {
-            let mut connection = open_usage_database()?;
-            let transaction = connection
-                .transaction()
-                .map_err(|error| format!("Failed to begin saving model pricing: {error}"))?;
-            for mut price in prices.iter().cloned() {
-                price.model = price.model.trim().to_string();
-                price.updated_at_ms = Local::now().timestamp_millis();
-                upsert_model_price(&transaction, &price)?;
-            }
-            transaction
-                .commit()
-                .map_err(|error| format!("Failed to commit model pricing: {error}"))?;
-            Ok(ModelPriceSyncResult { imported: prices.len() })
-        })
-        .await
-    }).await
+        if !seen.insert(price.model.to_ascii_lowercase()) {
+            return Err(format!("Duplicate model pricing: {}", price.model));
+        }
+    }
+    run_usage_task(move || {
+        let mut connection = open_usage_database()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("Failed to begin saving model pricing: {error}"))?;
+        for mut price in prices.iter().cloned() {
+            price.model = price.model.trim().to_string();
+            price.updated_at_ms = Local::now().timestamp_millis();
+            upsert_model_price(&transaction, &price)?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("Failed to commit model pricing: {error}"))?;
+        Ok(ModelPriceSyncResult { imported: prices.len() })
+    })
+    .await
 }
 
 fn canonical_model_tail(value: &str) -> String {
@@ -4513,7 +4063,7 @@ fn canonical_model_tail(value: &str) -> String {
         .collect()
 }
 
-pub(crate) fn normalized_model_tail(value: &str) -> String {
+fn normalized_model_tail(value: &str) -> String {
     value
         .trim()
         .rsplit('/')
@@ -4523,19 +4073,18 @@ pub(crate) fn normalized_model_tail(value: &str) -> String {
 }
 
 #[tauri::command]
-pub(crate) async fn get_usage_analysis(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, query: UsageQuery,
-    gui_config_state: tauri::State<'_, GuiConfigState>,) -> Result<UsageAnalysis, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        let config = if usage_target().is_some() { GuiConfigFile::default() } else { gui_config_state.snapshot()? };
-        let metadata = sources::fetch(&config).await;
-        run_usage_task(move || {
-            let connection = open_usage_database()?;
-            let registry = sources::resolve(&connection, metadata)?;
-            let mut analysis = load_usage_analysis_with_notes(&connection, &query, &config, &HashMap::new())?;
-            sources::apply_analysis(&mut analysis, &registry);
-            Ok(analysis)
-        }).await
+pub(crate) async fn get_usage_analysis(
+    query: UsageQuery,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<UsageAnalysis, String> {
+    let config = gui_config_state.snapshot()?;
+    let metadata = sources::fetch(&config).await;
+    run_usage_task(move || {
+        let connection = open_usage_database()?;
+        let registry = sources::resolve(&connection, metadata)?;
+        let mut analysis = load_usage_analysis_with_notes(&connection, &query, &config, &HashMap::new())?;
+        sources::apply_analysis(&mut analysis, &registry);
+        Ok(analysis)
     }).await
 }
 
@@ -4815,13 +4364,10 @@ fn load_api_key_categories(
 
 
 #[tauri::command]
-pub(crate) async fn save_usage_events_export(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, path: String, contents: String) -> Result<(), String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        tauri::async_runtime::spawn_blocking(move || write_usage_events_export(&path, &contents))
-            .await
-            .map_err(|error| format!("Failed to save usage export: {error}"))?
-    }).await
+pub(crate) async fn save_usage_events_export(path: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || write_usage_events_export(&path, &contents))
+        .await
+        .map_err(|error| format!("Failed to save usage export: {error}"))?
 }
 
 fn write_usage_events_export(path: &str, contents: &str) -> Result<(), String> {
@@ -4924,19 +4470,18 @@ mod save_usage_events_export_tests {
 }
 
 #[tauri::command]
-pub(crate) async fn get_usage_events(remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>, target_revision: u32, query: UsageQuery,
-    gui_config_state: tauri::State<'_, GuiConfigState>,) -> Result<UsageEventPage, String> {
-    let target = remote.usage_target(Some(target_revision)).await?;
-    USAGE_TARGET.scope(target, async move {
-        let config = if usage_target().is_some() { GuiConfigFile::default() } else { gui_config_state.snapshot()? };
-        let metadata = sources::fetch(&config).await;
-        run_usage_task(move || {
-            let connection = open_usage_database()?;
-            let registry = sources::resolve(&connection, metadata)?;
-            let mut events = load_usage_events_with_notes(&connection, &query, &config, &HashMap::new())?;
-            sources::apply_events(&mut events, &registry, &config);
-            Ok(events)
-        }).await
+pub(crate) async fn get_usage_events(
+    query: UsageQuery,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<UsageEventPage, String> {
+    let config = gui_config_state.snapshot()?;
+    let metadata = sources::fetch(&config).await;
+    run_usage_task(move || {
+        let connection = open_usage_database()?;
+        let registry = sources::resolve(&connection, metadata)?;
+        let mut events = load_usage_events_with_notes(&connection, &query, &config, &HashMap::new())?;
+        sources::apply_events(&mut events, &registry, &config);
+        Ok(events)
     }).await
 }
 
@@ -5089,50 +4634,7 @@ fn query_window_minutes(query: &UsageQuery, first: Option<i64>, last: Option<i64
 }
 
 fn usage_root_dir() -> Result<PathBuf, String> {
-    Ok(database_root(core_base_dir()?.join(USAGE_DIR_NAME), usage_target().as_ref()))
-}
-
-fn database_root(root: PathBuf, target: Option<&crate::remote_cpa::Target>) -> PathBuf {
-    match target { Some(target) => root.join("instances").join(target.usage_id()), None => root }
-}
-
-#[cfg(test)]
-pub(crate) async fn fixture_usage_totals(base: &Path, external: Option<&crate::remote_cpa::Target>, config: &GuiConfigFile, collect: bool) -> Result<(u64, u64), String> {
-    let root = database_root(base.to_owned(), external);
-    initialize_usage_storage_at(&root)?;
-    if collect {
-        if let Some(target) = external { collect_external_batch(&root, target, config).await?; }
-        else { persist_queue_items_from_source(&root, HTTP_USAGE_QUEUE_SOURCE, fetch_usage_queue(config).await?, config)?; }
-    }
-    let overview = load_usage_overview(&open_usage_database_at(&root)?, &UsageQuery::default())?;
-    Ok((overview.total_requests, overview.total_tokens))
-}
-
-pub(crate) fn usage_database_path() -> Result<PathBuf, String> {
-    Ok(usage_root_dir()?.join(USAGE_DATABASE_FILE))
-}
-
-pub(crate) fn load_agent_usage_prices() -> HashMap<String, ModelPrice> {
-    let prices = usage_database_path()
-        .ok()
-        .filter(|path| path.is_file())
-        .and_then(|path| {
-            Connection::open_with_flags(
-                path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )
-            .ok()
-        })
-        .and_then(|connection| load_model_prices(&connection).ok());
-    prices.unwrap_or_else(|| bundled_model_prices().unwrap_or_default())
-}
-
-pub(crate) fn resolve_agent_usage_price<'a>(
-    prices: &'a HashMap<String, ModelPrice>,
-    model: &str,
-) -> Option<&'a ModelPrice> {
-    find_model_price(prices, model)
+    Ok(core_base_dir()?.join(USAGE_DIR_NAME))
 }
 
 fn record_local_hour(record: &UsageRecord) -> String {
@@ -5198,95 +4700,6 @@ fn optional_u64_field(object: &serde_json::Map<String, Value>, key: &str) -> Opt
                 .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()))
         })
     })
-}
-
-/// Reads the core's schema-v2 `token_breakdown` for a usage record.
-///
-/// The breakdown is protocol-agnostic: `input` already splits cache reads and
-/// cache writes, and `output` already splits reasoning. It is only accepted when
-/// it is a well-formed partition; otherwise `None` is returned and the flat
-/// legacy fields are normalized per executor type as before.
-///
-/// Each field of the partition has to be present. Here a zero is a real
-/// measurement, so a field the core omitted cannot be read as zero; treating an
-/// absent value as one would fabricate the very figure being verified.
-fn parse_token_breakdown(
-    object: &serde_json::Map<String, Value>,
-    tokens_object: Option<&serde_json::Map<String, Value>>,
-    cache_read_present: bool,
-) -> Option<TokenBreakdownValues> {
-    let value = object.get("token_breakdown")?;
-    let breakdown = value.as_object()?;
-    if breakdown.get("schema_version").and_then(Value::as_u64) != Some(2) {
-        return None;
-    }
-    let quality = TokenQuality::parse(breakdown.get("quality").and_then(Value::as_str));
-    if quality == TokenQuality::Unknown {
-        return None;
-    }
-    let input = breakdown.get("input")?.as_object()?;
-    let output = breakdown.get("output")?.as_object()?;
-    let field = |scope: &serde_json::Map<String, Value>, key: &str| -> Option<u64> {
-        scope.get(key)?.as_u64()
-    };
-    let parsed = TokenBreakdownValues {
-        input_total: field(input, "total_tokens")?,
-        uncached: field(input, "uncached_tokens")?,
-        cache_read: field(input, "cache_read_tokens")?,
-        cache_write: field(input, "cache_write_tokens")?,
-        output_total: field(output, "total_tokens")?,
-        non_reasoning: field(output, "non_reasoning_tokens")?,
-        reasoning: field(output, "reasoning_tokens")?,
-        total: field(breakdown, "total_tokens")?,
-        unclassified: field(breakdown, "unclassified_tokens")?,
-        quality,
-    };
-    let raw = RawTokenCounts {
-        input: token_u64(tokens_object, "input_tokens"),
-        output: token_u64(tokens_object, "output_tokens"),
-        reasoning: token_u64(tokens_object, "reasoning_tokens"),
-        cache_read: token_u64(tokens_object, "cache_read_tokens"),
-        cache_read_present,
-        cache_creation: token_u64(tokens_object, "cache_creation_tokens"),
-        total: token_u64(tokens_object, "total_tokens"),
-    };
-    if !breakdown_matches_raw(parsed, raw) {
-        return None;
-    }
-    Some(parsed)
-}
-
-/// The core reports vendors in two dialects: one where `input_tokens` already
-/// contains the cache buckets, and one where it does not. Likewise `output_tokens`
-/// may or may not include reasoning. The flat counts are therefore checked
-/// against either reading, and a partition that agrees with neither is dropped
-/// instead of being trusted on its own say-so.
-#[derive(Clone, Copy, Default)]
-struct RawTokenCounts {
-    input: u64,
-    output: u64,
-    reasoning: u64,
-    cache_read: u64,
-    cache_read_present: bool,
-    cache_creation: u64,
-    total: u64,
-}
-
-fn breakdown_matches_raw(breakdown: TokenBreakdownValues, raw: RawTokenCounts) -> bool {
-    let raw_consistent = raw.total == 0 || raw.total == breakdown.total;
-    let input_consistent = raw.input == breakdown.input_total || raw.input == breakdown.uncached;
-    let output_consistent =
-        raw.output == breakdown.output_total || raw.output == breakdown.non_reasoning;
-    let reasoning_consistent = raw.reasoning == breakdown.reasoning;
-    let cache_read_consistent = !(raw.cache_read_present || raw.cache_read != 0)
-        || raw.cache_read == breakdown.cache_read;
-    let cache_write_consistent = raw.cache_creation == breakdown.cache_write;
-    raw_consistent
-        && input_consistent
-        && output_consistent
-        && reasoning_consistent
-        && cache_read_consistent
-        && cache_write_consistent
 }
 
 fn token_u64(object: Option<&serde_json::Map<String, Value>>, key: &str) -> u64 {
@@ -5644,50 +5057,6 @@ mod tests {
         assert_eq!(state.status().unwrap().total_records, 0);
     }
 
-    #[tokio::test]
-    async fn selected_instance_pulls_into_its_own_persistent_database() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let directory = test_root("instance-isolation");
-        let base = directory.join("usage-records");
-        let gui = GuiConfigFile::default();
-        let event = |id: &str| serde_json::json!({"request_id":id,"model":"shared-model","generate":true,"tokens":{"total_tokens":3}});
-        let local = database_root(base.clone(), None);
-        initialize_usage_storage_at(&local).unwrap();
-        persist_queue_items_from_source(&local, "local", vec![event("built-in")], &gui).unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}",listener.local_addr().unwrap());
-        let fixture = tokio::spawn(async move {
-            for (id, request_id) in [("first", "first-1"), ("second", "second-1"), ("first", "first-2")] {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut buffer = [0; 4096]; let size = socket.read(&mut buffer).await.unwrap();
-                let headers = std::str::from_utf8(&buffer[..size]).unwrap();
-                assert!(headers.starts_with(&format!("GET /{id}/v8/management/observability/usage/queue?count=")));
-                assert!(headers.contains(&format!("authorization: Bearer key-{id}")));
-                let body = serde_json::json!([event(request_id)]).to_string();
-                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
-            }
-        });
-        let first = crate::remote_cpa::Target::new(&format!("{origin}/first"),"key-first").unwrap();
-        let second = crate::remote_cpa::Target::new(&format!("{origin}/second"),"key-second").unwrap();
-        for instance in [&first,&second,&first] {
-            let root = database_root(base.clone(),Some(instance));
-            initialize_usage_storage_at(&root).unwrap();
-            collect_external_batch(&root,instance,&gui).await.unwrap();
-        }
-        fixture.await.unwrap();
-        let other = database_root(base.clone(),Some(&second));
-        { let connection = open_usage_database_at(&other).unwrap(); save_usage_database_limit(&connection, 9).unwrap(); shrink_usage_database_to_mb(&connection,1).unwrap(); }
-        for (target,id) in [(None,"built-in"),(Some(&first),"first"),(Some(&second),"second")] {
-            let connection = open_usage_database_at(&database_root(base.clone(),target)).unwrap();
-            let keys = connection.prepare("SELECT event_key FROM usage_events ORDER BY id").unwrap().query_map([], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
-            let expected = match id { "first" => vec!["first-1", "first-2"], "second" => vec!["second-1"], _ => vec!["built-in"] };
-            assert_eq!(keys, expected);
-            assert_eq!(load_usage_overview(&connection,&UsageQuery::default()).unwrap().total_requests as usize, expected.len());
-            assert_eq!(load_usage_database_limit(&connection).unwrap(), if id == "second" {9} else {0});
-        }
-        fs::remove_dir_all(directory).unwrap();
-    }
-
     fn test_root(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "cpa-gui-usage-{name}-{}-{}",
@@ -5696,133 +5065,6 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
-    }
-
-    #[test]
-    fn models_dev_capabilities_capture_context_output_and_modalities() {
-        let catalog = serde_json::json!({
-            "scnet-token-plan": {
-                "api": "https://api.scnet.cn/api/llm/v1",
-                "models": {
-                    "GLM-5.3-Flash": {
-                        "limit": {"context": 1000000, "output": 131072},
-                        "modalities": {"input": ["text", "image", "video", "pdf"], "output": ["text"]},
-                        "reasoning": true
-                    },
-                    "no-limits": {"cost": {"input": 0}}
-                }
-            },
-            "empty-provider": {"models": {}}
-        });
-        let capabilities = parse_models_dev_capabilities(&catalog.to_string(), 42).unwrap();
-        assert_eq!(capabilities.len(), 1);
-        let entry = &capabilities[0];
-        assert_eq!(entry.model, "GLM-5.3-Flash");
-        assert_eq!(entry.context_window, Some(1_000_000));
-        assert_eq!(entry.max_output_tokens, Some(131_072));
-        assert_eq!(entry.input_modalities, vec!["text", "image", "video", "pdf"]);
-        assert_eq!(entry.source, "models.dev");
-        assert_eq!(entry.source_model_id, "scnet-token-plan/GLM-5.3-Flash");
-        assert_eq!(entry.updated_at_ms, 42);
-    }
-
-    #[test]
-    fn litellm_capabilities_capture_context_and_vision() {
-        let catalog = serde_json::json!({
-            "gpt-6-sol": {"max_input_tokens": 272000, "max_output_tokens": 64000, "supports_vision": true},
-            "text-only": {"max_input_tokens": 128000},
-            "unusable": {"mode": "embedding"}
-        });
-        let capabilities = parse_litellm_capabilities(&catalog.to_string(), 7).unwrap();
-        assert_eq!(capabilities.len(), 2);
-        let vision = capabilities.iter().find(|entry| entry.model == "gpt-6-sol").unwrap();
-        assert_eq!(vision.context_window, Some(272_000));
-        assert_eq!(vision.max_output_tokens, Some(64_000));
-        assert_eq!(vision.input_modalities, vec!["text", "image"]);
-        assert_eq!(vision.source, "litellm-sync");
-        let text_only = capabilities.iter().find(|entry| entry.model == "text-only").unwrap();
-        assert_eq!(text_only.context_window, Some(128_000));
-        assert_eq!(text_only.max_output_tokens, None);
-        assert_eq!(text_only.input_modalities, vec!["text"]);
-    }
-
-    #[test]
-    fn model_capabilities_match_case_insensitively_and_dated_variants() {
-        let capabilities = vec![
-            ModelCapabilities {
-                model: "GLM-5.3-Flash".to_string(),
-                context_window: Some(1_000_000),
-                ..ModelCapabilities::default()
-            },
-            ModelCapabilities {
-                model: "DeepSeek-V4.1-Flash".to_string(),
-                context_window: Some(1_000_000),
-                ..ModelCapabilities::default()
-            },
-        ];
-        // Exact match.
-        assert_eq!(
-            find_model_capabilities(&capabilities, "GLM-5.3-Flash").unwrap().context_window,
-            Some(1_000_000)
-        );
-        // Case-insensitive match, as used by the 超算 provider alias.
-        assert!(find_model_capabilities(&capabilities, "glm-5.3-flash").is_some());
-        // Dated variants inherit the base catalog entry.
-        assert!(find_model_capabilities(&capabilities, "deepseek-v4.1-flash-1017").is_some());
-        // Unknown models stay unknown so the caller keeps its own fallback.
-        assert!(find_model_capabilities(&capabilities, "SCNet-Max").is_none());
-        assert!(find_model_capabilities(&capabilities, "  ").is_none());
-    }
-
-    #[test]
-    fn model_capabilities_round_trip_through_sqlite() {
-        let root = test_root("model-capabilities");
-        let connection = open_test_database(&root);
-        upsert_model_capabilities(
-            &connection,
-            &[
-                ModelCapabilities {
-                    model: "GLM-5.3-Flash".to_string(),
-                    context_window: Some(1_000_000),
-                    max_output_tokens: Some(131_072),
-                    input_modalities: vec!["text".to_string(), "image".to_string()],
-                    source: "models.dev".to_string(),
-                    source_model_id: "scnet-token-plan/GLM-5.3-Flash".to_string(),
-                    updated_at_ms: 11,
-                },
-                ModelCapabilities {
-                    model: " ".to_string(),
-                    context_window: Some(1),
-                    ..ModelCapabilities::default()
-                },
-            ],
-        )
-        .unwrap();
-        let loaded = load_model_capabilities(&connection).unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].model, "GLM-5.3-Flash");
-        assert_eq!(loaded[0].context_window, Some(1_000_000));
-        assert_eq!(loaded[0].max_output_tokens, Some(131_072));
-        assert_eq!(loaded[0].input_modalities, vec!["text", "image"]);
-
-        // A refresh overwrites the previous entry instead of duplicating it.
-        upsert_model_capabilities(
-            &connection,
-            &[ModelCapabilities {
-                model: "GLM-5.3-Flash".to_string(),
-                context_window: Some(2_000_000),
-                source: "litellm-sync".to_string(),
-                updated_at_ms: 22,
-                ..ModelCapabilities::default()
-            }],
-        )
-        .unwrap();
-        let reloaded = load_model_capabilities(&connection).unwrap();
-        assert_eq!(reloaded.len(), 1);
-        assert_eq!(reloaded[0].context_window, Some(2_000_000));
-        assert_eq!(reloaded[0].source, "litellm-sync");
-        drop(connection);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -5971,160 +5213,6 @@ mod tests {
         assert_eq!(settings.deleted_records, outcome.deleted);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn plugin_executor_record_uses_token_breakdown_end_to_end() {
-        // Shape taken from issue #652: plugin executor, Claude protocol, write-only cache.
-        let record: Value = serde_json::from_str(
-            r#"{
-                "request_id": "issue-652-probe",
-                "timestamp": "2026-11-15T23:50:49Z",
-                "executor_type": "executorAdapter",
-                "provider": "example-plugin",
-                "auth_type": "oauth",
-                "model": "claude-sonnet-4-5",
-                "tokens": {
-                    "input_tokens": 15,
-                    "output_tokens": 4,
-                    "cached_tokens": 1000,
-                    "cache_read_tokens": 0,
-                    "cache_creation_tokens": 1000,
-                    "total_tokens": 1019
-                },
-                "accounting_version": 2,
-                "token_breakdown": {
-                    "schema_version": 2,
-                    "quality": "complete",
-                    "total_tokens": 1019,
-                    "input": {
-                        "total_tokens": 1015,
-                        "uncached_tokens": 15,
-                        "cache_read_tokens": 0,
-                        "cache_write_tokens": 1000
-                    },
-                    "output": {
-                        "total_tokens": 4,
-                        "non_reasoning_tokens": 4,
-                        "reasoning_tokens": 0
-                    },
-                    "unclassified_tokens": 0
-                }
-            }"#,
-        )
-        .unwrap();
-
-        let object = record.as_object().unwrap();
-        let tokens_object = object.get("tokens").and_then(Value::as_object);
-        let parsed = parse_token_breakdown(object, tokens_object, true)
-            .expect("a complete, self-consistent partition must be read");
-        assert_eq!(parsed.input_total, 1015);
-        assert_eq!(parsed.uncached, 15);
-        assert_eq!(parsed.cache_read, 0);
-        assert_eq!(parsed.cache_write, 1000);
-        assert_eq!(parsed.output_total, 4);
-        assert_eq!(parsed.reasoning, 0);
-        assert_eq!(parsed.total, 1019);
-        assert_eq!(parsed.quality, TokenQuality::Complete);
-    }
-
-    #[test]
-    fn breakdown_that_contradicts_raw_counts_is_rejected() {
-        // The partition sums correctly but claims a different total than the record.
-        let record: Value = serde_json::from_str(
-            r#"{
-                "tokens": {
-                    "input_tokens": 15,
-                    "output_tokens": 4,
-                    "cache_read_tokens": 0,
-                    "cache_creation_tokens": 1000,
-                    "total_tokens": 1019
-                },
-                "token_breakdown": {
-                    "schema_version": 2,
-                    "quality": "complete",
-                    "total_tokens": 5000,
-                    "input": {
-                        "total_tokens": 1015,
-                        "uncached_tokens": 15,
-                        "cache_read_tokens": 0,
-                        "cache_write_tokens": 1000
-                    },
-                    "output": {"total_tokens": 4, "non_reasoning_tokens": 4, "reasoning_tokens": 0},
-                    "unclassified_tokens": 0
-                }
-            }"#,
-        )
-        .unwrap();
-        let object = record.as_object().unwrap();
-        let tokens_object = object.get("tokens").and_then(Value::as_object);
-        assert!(parse_token_breakdown(object, tokens_object, true).is_none());
-    }
-
-    #[test]
-    fn missing_breakdown_bucket_is_rejected() {
-        // An omitted bucket is not a measured zero.
-        let record: Value = serde_json::from_str(
-            r#"{
-                "tokens": {"input_tokens": 15, "output_tokens": 4, "total_tokens": 1019},
-                "token_breakdown": {
-                    "schema_version": 2,
-                    "quality": "complete",
-                    "total_tokens": 1019,
-                    "input": {
-                        "total_tokens": 1015,
-                        "uncached_tokens": 15,
-                        "cache_read_tokens": 0
-                    },
-                    "output": {"total_tokens": 4, "non_reasoning_tokens": 4, "reasoning_tokens": 0},
-                    "unclassified_tokens": 0
-                }
-            }"#,
-        )
-        .unwrap();
-        let object = record.as_object().unwrap();
-        let tokens_object = object.get("tokens").and_then(Value::as_object);
-        assert!(parse_token_breakdown(object, tokens_object, true).is_none());
-    }
-
-    #[test]
-    fn inconsistent_quality_breakdown_is_rejected() {
-        let record: Value = serde_json::from_str(
-            r#"{
-                "tokens": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 10},
-                "token_breakdown": {
-                    "schema_version": 2,
-                    "quality": "inconsistent",
-                    "total_tokens": 10,
-                    "input": {"total_tokens": 0, "uncached_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0},
-                    "output": {"total_tokens": 0, "non_reasoning_tokens": 0, "reasoning_tokens": 0},
-                    "unclassified_tokens": 10
-                }
-            }"#,
-        )
-        .unwrap();
-        let object = record.as_object().unwrap();
-        assert!(parse_token_breakdown(object, None, false).is_none());
-    }
-
-    #[test]
-    fn unknown_schema_version_breakdown_is_rejected() {
-        let record: Value = serde_json::from_str(
-            r#"{
-                "tokens": {"input_tokens": 10, "output_tokens": 0, "total_tokens": 10},
-                "token_breakdown": {
-                    "schema_version": 3,
-                    "quality": "complete",
-                    "total_tokens": 10,
-                    "input": {"total_tokens": 10, "uncached_tokens": 10, "cache_read_tokens": 0, "cache_write_tokens": 0},
-                    "output": {"total_tokens": 0, "non_reasoning_tokens": 0, "reasoning_tokens": 0},
-                    "unclassified_tokens": 0
-                }
-            }"#,
-        )
-        .unwrap();
-        let object = record.as_object().unwrap();
-        assert!(parse_token_breakdown(object, None, false).is_none());
     }
 
     #[test]
@@ -6579,7 +5667,6 @@ mod tests {
             api_access_remarks: Vec::new(),
             management_secret_key: "123456".to_string(),
             debug: false,
-            update_channel: "stable".to_string(),
             commercial_mode: false,
             logging_to_file: false,
             logs_max_total_size_mb: crate::DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
@@ -6602,10 +5689,7 @@ mod tests {
             request_retry: crate::DEFAULT_REQUEST_RETRY,
             max_retry_credentials: crate::DEFAULT_MAX_RETRY_CREDENTIALS,
             max_retry_interval: crate::DEFAULT_MAX_RETRY_INTERVAL,
-            transient_error_cooldown_seconds: crate::DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: crate::DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
-            reverse_proxy: None,
-            auto_update: crate::auto_update::AutoUpdateSettings::default(),
         };
         let record = normalize_usage_record(
             serde_json::json!({
@@ -6632,75 +5716,6 @@ mod tests {
         assert_eq!(record.tokens.total_tokens, 30);
         assert_eq!(record.tokens.cache_read_tokens, 5);
         assert!(!record.api_key_hash.is_empty());
-    }
-
-    #[test]
-    fn client_agent_queue_sqlite_ui_and_export_roundtrip_keep_only_safe_identity() {
-        let root = test_root("client-agent-roundtrip");
-        let mut connection = open_test_database(&root);
-        let config = GuiConfigFile::default();
-        let raw = "OpenClaw/2026.11.19 (/home/private; person@example.test; token=private-value)";
-        let record = normalize_usage_record(
-            serde_json::json!({
-                "request_id": "client-agent-roundtrip", "timestamp": "2026-11-19T08:00:00Z",
-                "user_agent": raw, "client_ip": "192.0.2.1", "x_forwarded_for": "192.0.2.2",
-                "model": "claude-test", "provider": "codex"
-            }),
-            &config,
-        )
-        .unwrap();
-        insert_usage_records(&mut connection, &[record]).unwrap();
-        let stored: String = connection
-            .query_row("SELECT user_agent FROM usage_events LIMIT 1", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(stored, raw);
-        let page = load_usage_events(&connection, &UsageQuery::default(), &config).unwrap();
-        drop(connection);
-        let value = serde_json::to_value(&page.items[0]).unwrap();
-        assert_eq!(value["client_agent"], "openclaw");
-        for key in ["user_agent", "client_ip", "x_forwarded_for"] {
-            assert!(value.get(key).is_none());
-        }
-        let text = value.to_string();
-        for private in [
-            "/home/private",
-            "person@example.test",
-            "private-value",
-            "192.0.2.",
-        ] {
-            assert!(!text.contains(private));
-        }
-        let sdk = normalize_usage_record(serde_json::json!({"request_id": "sdk", "user_agent": "python-httpx/0.28 token=secret"}), &config).unwrap();
-        assert_eq!(serde_json::to_value(sdk).unwrap()["client_agent"], "other");
-        let missing = normalize_usage_record(serde_json::json!({"request_id": "legacy", "provider": "codex", "model": "claude-code"}), &config).unwrap();
-        assert!(serde_json::to_value(missing)
-            .unwrap()
-            .get("client_agent")
-            .is_none());
-        let injected = normalize_usage_record(
-            serde_json::json!({"request_id": "not-header", "client_agent": "openclaw"}),
-            &config,
-        )
-        .unwrap();
-        assert!(serde_json::to_value(injected)
-            .unwrap()
-            .get("client_agent")
-            .is_none());
-        let imported: UsageRecord = serde_json::from_value(value).unwrap();
-        assert_eq!(
-            serde_json::to_value(imported).unwrap()["client_agent"],
-            "openclaw"
-        );
-        let mut legacy = serde_json::to_value(&page.items[0]).unwrap();
-        legacy.as_object_mut().unwrap().remove("client_agent");
-        let legacy: UsageRecord = serde_json::from_value(legacy).unwrap();
-        assert!(serde_json::to_value(legacy)
-            .unwrap()
-            .get("client_agent")
-            .is_none());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -8019,168 +7034,69 @@ mod tests {
     }
 
     #[test]
-    fn overview_tps_uses_weighted_generation_window() {
+    fn overview_tps_averages_request_speeds_without_requiring_ttft() {
         let root = test_root("tps-overview");
         let mut connection = open_test_database(&root);
 
         let mut first = sample_record("tps-1", "2026-07-17T20:30:00+08:00", "gpt-a");
-        first.latency_ms = 3_000;
-        first.ttft_ms = Some(1_000);
-        first.tokens.output_tokens = 500;
+        first.latency_ms = 1_000;
+        first.ttft_ms = Some(200);
+        first.tokens.output_tokens = 80;
 
         let mut second = sample_record("tps-2", "2026-07-17T20:31:00+08:00", "gpt-a");
-        second.latency_ms = 5_000;
-        second.ttft_ms = Some(4_000);
-        second.tokens.output_tokens = 50;
+        second.latency_ms = 2_000;
+        second.ttft_ms = Some(1_000);
+        second.tokens.output_tokens = 20;
 
-        let mut exact_window = sample_record("tps-3", "2026-07-17T20:32:00+08:00", "gpt-a");
-        exact_window.latency_ms = 2_000;
-        exact_window.ttft_ms = Some(1_900);
-        exact_window.tokens.output_tokens = 500;
-
-        let mut short_output = sample_record("tps-4", "2026-07-17T20:33:00+08:00", "gpt-a");
-        short_output.latency_ms = 2_000;
-        short_output.ttft_ms = Some(1_000);
-        short_output.tokens.output_tokens = 99;
-
-        let mut missing_ttft = sample_record("tps-5", "2026-07-17T20:34:00+08:00", "gpt-a");
-        missing_ttft.latency_ms = 3_000;
+        let mut missing_ttft = sample_record("tps-3", "2026-07-17T20:32:00+08:00", "gpt-a");
+        missing_ttft.latency_ms = 500;
         missing_ttft.ttft_ms = None;
-        missing_ttft.tokens.output_tokens = 500;
+        missing_ttft.tokens.output_tokens = 100;
 
-        let mut short_window = sample_record("tps-6", "2026-07-17T20:35:00+08:00", "gpt-a");
-        short_window.latency_ms = 1_050;
-        short_window.ttft_ms = Some(1_000);
-        short_window.tokens.output_tokens = 200;
+        let mut equal_latency = sample_record("tps-4", "2026-07-17T20:33:00+08:00", "gpt-a");
+        equal_latency.latency_ms = 500;
+        equal_latency.ttft_ms = Some(500);
+        equal_latency.tokens.output_tokens = 100;
 
-        let mut failed = sample_record("tps-7", "2026-07-17T20:36:00+08:00", "gpt-a");
+        let mut failed = sample_record("tps-5", "2026-07-17T20:34:00+08:00", "gpt-a");
         failed.failed = true;
-        failed.latency_ms = 3_000;
-        failed.ttft_ms = Some(1_000);
-        failed.tokens.output_tokens = 500;
+        failed.tokens.output_tokens = 100;
 
-        let mut canceled = sample_record("tps-8", "2026-07-17T20:37:00+08:00", "gpt-a");
+        let mut canceled = sample_record("tps-6", "2026-07-17T20:35:00+08:00", "gpt-a");
         canceled.canceled = true;
-        canceled.latency_ms = 3_000;
-        canceled.ttft_ms = Some(1_000);
-        canceled.tokens.output_tokens = 500;
+        canceled.tokens.output_tokens = 100;
 
-        let mut non_generation = sample_record("tps-9", "2026-07-17T20:38:00+08:00", "gpt-a");
+        let mut non_generation = sample_record("tps-7", "2026-07-17T20:36:00+08:00", "gpt-a");
         non_generation.generate = false;
-        non_generation.latency_ms = 3_000;
-        non_generation.ttft_ms = Some(1_000);
-        non_generation.tokens.output_tokens = 500;
+        non_generation.tokens.output_tokens = 100;
 
-        let mut zero_ttft = sample_record("tps-10", "2026-07-17T20:39:00+08:00", "gpt-a");
-        zero_ttft.latency_ms = 1_000;
-        zero_ttft.ttft_ms = Some(0);
-        zero_ttft.tokens.output_tokens = 10;
+        let mut zero_latency = sample_record("tps-8", "2026-07-17T20:37:00+08:00", "gpt-a");
+        zero_latency.latency_ms = 0;
+        zero_latency.tokens.output_tokens = 100;
+
+        let mut no_output = sample_record("tps-9", "2026-07-17T20:38:00+08:00", "gpt-a");
+        no_output.tokens.output_tokens = 0;
 
         insert_usage_records(
             &mut connection,
             &[
                 first,
                 second,
-                exact_window,
-                short_output,
                 missing_ttft,
-                short_window,
+                equal_latency,
                 failed,
                 canceled,
                 non_generation,
-                zero_ttft,
+                zero_latency,
+                no_output,
             ],
         )
         .unwrap();
 
-        let overview = load_usage_overview(&connection, &UsageQuery {
-            speed_mode: Some("ttft".to_string()),
-            ..UsageQuery::default()
-        }).unwrap();
+        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
 
-        // Sum output tokens over the sum of eligible TTFT-subtracted windows.
-        // Small outputs count; missing/zero TTFT and windows below 100 ms do not.
-        let expected = (500.0 + 50.0 + 500.0 + 99.0) * 1000.0 / (2_000.0 + 1_000.0 + 100.0 + 1_000.0);
-        assert!((overview.tps - expected).abs() < 1e-9);
+        assert_eq!(overview.tps, (80.0 + 10.0 + 200.0 + 200.0) / 4.0);
         assert_eq!(overview.tps_sample_count, 4);
-
-        let total = load_usage_overview(&connection, &UsageQuery {
-            speed_mode: Some("total".to_string()),
-            ..UsageQuery::default()
-        }).unwrap();
-        let expected_total = (500.0 + 50.0 + 500.0 + 99.0 + 500.0 + 200.0 + 10.0) * 1000.0
-            / (3_000.0 + 5_000.0 + 2_000.0 + 2_000.0 + 3_000.0 + 1_050.0 + 1_000.0);
-        assert!((total.tps - expected_total).abs() < 1e-9);
-        assert_eq!(total.tps_sample_count, 7);
-
-        let default = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
-        assert!((default.tps - expected_total).abs() < 1e-9);
-        assert_eq!(default.tps_sample_count, 7);
-        drop(connection);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn overview_tps_total_uses_whole_latency() {
-        let root = test_root("tps-total-latency");
-        let mut connection = open_test_database(&root);
-        let mut record = sample_record("total", "2026-07-17T20:30:00+08:00", "gpt-a");
-        record.latency_ms = 2_000;
-        record.ttft_ms = Some(1_500);
-        record.tokens.output_tokens = 10;
-        insert_usage_records(&mut connection, &[record]).unwrap();
-        let overview = load_usage_overview(&connection, &UsageQuery {
-            speed_mode: Some("total".to_string()),
-            ..UsageQuery::default()
-        }).unwrap();
-        assert_eq!(overview.tps, 5.0);
-        assert_eq!(overview.tps_sample_count, 1);
-        drop(connection);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn overview_tps_excludes_failed_records_with_output() {
-        let root = test_root("tps-failed-excluded");
-        let mut connection = open_test_database(&root);
-
-        let mut failed = sample_record("tps-failed", "2026-07-17T20:30:00+08:00", "gpt-a");
-        failed.failed = true;
-        failed.latency_ms = 500;
-        failed.tokens.output_tokens = 100;
-
-        insert_usage_records(&mut connection, &[failed]).unwrap();
-
-        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
-
-        assert_eq!(overview.tps, 0.0);
-        assert_eq!(overview.tps_sample_count, 0);
-        drop(connection);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn overview_tps_excludes_zero_output_or_zero_latency() {
-        let root = test_root("tps-excluded");
-        let mut connection = open_test_database(&root);
-
-        let mut no_output = sample_record("tps-no-output", "2026-07-17T20:30:00+08:00", "gpt-a");
-        no_output.latency_ms = 500;
-        no_output.failed = false;
-        no_output.tokens.output_tokens = 0;
-
-        let mut zero_latency =
-            sample_record("tps-zero-latency", "2026-07-17T20:31:00+08:00", "gpt-a");
-        zero_latency.latency_ms = 0;
-        zero_latency.failed = false;
-        zero_latency.tokens.output_tokens = 100;
-
-        insert_usage_records(&mut connection, &[no_output, zero_latency]).unwrap();
-
-        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
-
-        assert_eq!(overview.tps, 0.0);
-        assert_eq!(overview.tps_sample_count, 0);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
@@ -8634,18 +7550,5 @@ mod tests {
         assert_eq!(cost_for_price("gpt-6-sol", "", &tokens, &price), 0.0);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[cfg(test)]
-mod idle_poll_tests {
-    use super::idle_poll_seconds;
-
-    #[test]
-    fn idle_poll_backs_off_and_caps_at_three_seconds() {
-        assert_eq!(idle_poll_seconds(1), 1);
-        assert_eq!(idle_poll_seconds(2), 2);
-        assert_eq!(idle_poll_seconds(3), 3);
-        assert_eq!(idle_poll_seconds(u32::MAX), 3);
     }
 }

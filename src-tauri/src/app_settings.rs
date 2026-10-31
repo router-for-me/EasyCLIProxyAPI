@@ -172,44 +172,25 @@ pub(crate) fn resolve_api_access_remark(
         }
     }
 
-    let api_key_hashes = query
-        .locator
-        .api_keys
-        .iter()
-        .filter_map(|key| api_access_key_hash(key))
-        .collect::<Vec<_>>();
-    if api_key_hashes.is_empty() {
+    let Some((_, api_key_hashes)) =
+        api_access_locator_identity(&query.provider_section, &query.locator)
+    else {
         return Ok(String::new());
-    }
-
-    if let Some(remark) = api_key_hashes.iter().find_map(|hash| {
-        config
-            .api_access_remarks
-            .iter()
-            .find(|entry| {
+    };
+    Ok(api_key_hashes
+        .iter()
+        .find_map(|hash| {
+            config.api_access_remarks.iter().find(|entry| {
                 entry.provider_section == query.provider_section
+                    && entry.record_hash.is_empty()
                     && entry.api_key_hash == *hash
-                    && !entry.remark.trim().is_empty()
             })
-            .map(|entry| entry.remark.clone())
-    }) {
-        return Ok(remark);
-    }
-
-    if let Some(remark) = api_key_hashes.iter().find_map(|hash| {
-        config
-            .api_access_remarks
-            .iter()
-            .find(|entry| entry.api_key_hash == *hash && !entry.remark.trim().is_empty())
-            .map(|entry| entry.remark.clone())
-    }) {
-        return Ok(remark);
-    }
-
-    Ok(String::new())
+        })
+        .map(|entry| entry.remark.clone())
+        .unwrap_or_default())
 }
 
-pub(crate) fn apply_api_access_remark_update(
+fn apply_api_access_remark_update(
     config: &mut GuiConfigFile,
     update: ApiAccessRemarkUpdate,
 ) -> Result<(), String> {
@@ -858,43 +839,6 @@ pub(crate) fn software_settings(
     })
 }
 
-pub(crate) fn desktop_preferences_only() -> Result<GuiConfigFile, String> {
-    let path = gui_config_path()?;
-    let legacy = legacy_gui_config_path()?;
-    let saved: GuiConfigFile = if path.is_file() {
-        toml::from_str(&fs::read_to_string(path).map_err(|e| e.to_string())?).map_err(|_| "Invalid desktop settings")?
-    } else if legacy.is_file() {
-        serde_yaml::from_str(&fs::read_to_string(legacy).map_err(|e| e.to_string())?).map_err(|_| "Invalid legacy desktop settings")?
-    } else { GuiConfigFile::default() };
-    Ok(GuiConfigFile { close_behavior: saved.close_behavior, start_core_on_launch: saved.start_core_on_launch, silent_start: saved.silent_start, default_terminal: saved.default_terminal, ..Default::default() })
-}
-
-fn write_desktop_preferences(state: &GuiConfigState, settings: &SoftwareSettingsInput, terminal: &str) -> Result<GuiConfigFile, String> {
-    let path = gui_config_path()?;
-    let legacy = legacy_gui_config_path()?;
-    let mut current = state.inner.lock().map_err(|_| "Desktop settings lock unavailable")?;
-    if !path.is_file() && legacy.is_file() {
-        let mut document: serde_norway::Value = serde_norway::from_str(&fs::read_to_string(&legacy).map_err(|e| e.to_string())?).map_err(|_| "Invalid legacy desktop settings")?;
-        document["close-behavior"] = settings.close_behavior.as_str().into();
-        document["start-core-on-launch"] = settings.start_core_on_launch.into();
-        document["silent-start"] = settings.silent_start_enabled.into();
-        document["default-terminal"] = terminal.into();
-        write_bytes_atomically(&legacy, serde_norway::to_string(&document).map_err(|e| e.to_string())?.as_bytes())?;
-    } else {
-        let mut document = if path.is_file() { fs::read_to_string(&path).map_err(|e| e.to_string())?.parse::<toml_edit::Document>().map_err(|_| "Invalid desktop settings")? } else { toml_edit::Document::new() };
-        document["close-behavior"] = toml_edit::value(settings.close_behavior.as_str());
-        document["start-core-on-launch"] = toml_edit::value(settings.start_core_on_launch);
-        document["silent-start"] = toml_edit::value(settings.silent_start_enabled);
-        document["default-terminal"] = toml_edit::value(terminal);
-        write_bytes_atomically(&path, document.to_string().as_bytes())?;
-    }
-    current.close_behavior = settings.close_behavior;
-    current.start_core_on_launch = settings.start_core_on_launch;
-    current.silent_start = settings.silent_start_enabled;
-    current.default_terminal = terminal.to_owned();
-    Ok(current.clone())
-}
-
 #[tauri::command]
 pub(crate) fn get_software_settings(
     app: tauri::AppHandle,
@@ -926,15 +870,12 @@ pub(crate) fn save_software_settings(
     {
         previous_config
     } else {
-        let result = if app.state::<remote_cpa::RemoteCpaState>().external_dispatch.load(Ordering::Acquire) {
-            write_desktop_preferences(gui_config_state.inner(), &settings, &default_terminal)
-        } else { gui_config_state.set_software_preferences(
+        match gui_config_state.set_software_preferences(
             settings.close_behavior,
             settings.start_core_on_launch,
             settings.silent_start_enabled,
             default_terminal.clone(),
-        ) };
-        match result {
+        ) {
             Ok(config) => config,
             Err(error) => {
                 let rollback_error = autostart_changed

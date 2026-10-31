@@ -7,7 +7,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,7 +15,6 @@ import {
 import { Download, RefreshCw } from 'lucide-react';
 import { getCurrentLocale, translate, useI18n } from './i18n';
 import { Dialog } from './components/Dialog';
-import { Checkbox } from './components/Checkbox';
 
 export type { AppUpdateInfo } from './services/appUpdates';
 
@@ -29,14 +27,13 @@ type AppUpdateContextValue = {
   task: AppUpdateTask;
   error: string;
   checking: boolean;
-  installOffer: AppUpdateInfo | null;
   confirmOpen: boolean;
   hasUpdate: boolean;
   processing: boolean;
   check: () => Promise<void>;
-  requestInstall: (offer: AppUpdateInfo) => void;
+  requestInstall: () => void;
   dismissConfirm: () => void;
-  install: (preserveCore?: boolean) => Promise<void>;
+  install: () => Promise<void>;
   cancel: () => Promise<void>;
 };
 
@@ -53,23 +50,19 @@ const idleTask: AppUpdateTask = {
 
 const AppUpdateContext = createContext<AppUpdateContextValue | null>(null);
 
-export function AppUpdateProvider({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
+export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [info, setInfo] = useState<AppUpdateInfo | null>(null);
   const [task, setTask] = useState<AppUpdateTask>(idleTask);
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
-  const [installOffer, setInstallOffer] = useState<AppUpdateInfo | null>(null);
-  const confirmOpen = installOffer !== null;
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const startupCheckStarted = useRef(false);
-  const checkSequence = useRef(0);
 
   const check = useCallback(async () => {
-    const sequence = ++checkSequence.current;
     setChecking(true);
     setError('');
     try {
       const result = await checkAppUpdate();
-      if (sequence !== checkSequence.current) return;
       setInfo(result);
       setTask((current) => (
         current.running
@@ -82,16 +75,14 @@ export function AppUpdateProvider({ children, enabled = true }: { children: Reac
             }
       ));
     } catch (nextError) {
-      if (sequence !== checkSequence.current) return;
       setInfo(null);
       setError(String(nextError));
     } finally {
-      if (sequence === checkSequence.current) setChecking(false);
+      setChecking(false);
     }
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
     let disposed = false;
     let stopListening: (() => void) | undefined;
 
@@ -122,18 +113,17 @@ export function AppUpdateProvider({ children, enabled = true }: { children: Reac
       disposed = true;
       stopListening?.();
     };
-  }, [enabled]);
+  }, []);
 
-  const install = useCallback(async (preserveCore = false) => {
-    setInstallOffer(null);
-    if (!installOffer?.installAvailable || !installOffer.autoUpdateSupported) return;
+  const install = useCallback(async () => {
+    setConfirmOpen(false);
     setError('');
     try {
-      await startAppUpdate(preserveCore, installOffer.updateChannel, installOffer.latestVersion);
+      await startAppUpdate();
     } catch (nextError) {
       setError(String(nextError));
     }
-  }, [installOffer]);
+  }, []);
 
   const cancel = useCallback(async () => {
     setError('');
@@ -149,16 +139,15 @@ export function AppUpdateProvider({ children, enabled = true }: { children: Reac
     task,
     error,
     checking,
-    installOffer,
     confirmOpen,
     hasUpdate: Boolean(info?.updateAvailable),
     processing: task.running,
     check,
-    requestInstall: (offer) => setInstallOffer(offer),
-    dismissConfirm: () => setInstallOffer(null),
+    requestInstall: () => setConfirmOpen(true),
+    dismissConfirm: () => setConfirmOpen(false),
     install,
     cancel,
-  }), [cancel, check, checking, confirmOpen, error, info, install, installOffer, task]);
+  }), [cancel, check, checking, confirmOpen, error, info, install, task]);
 
   return <AppUpdateContext.Provider value={value}>{children}</AppUpdateContext.Provider>;
 }
@@ -172,7 +161,7 @@ export function useAppUpdate() {
 export function AppUpdateDialog() {
   const { t } = useI18n();
   const {
-    installOffer: info,
+    info,
     task,
     error,
     confirmOpen,
@@ -180,11 +169,6 @@ export function AppUpdateDialog() {
     install,
     cancel,
   } = useAppUpdate();
-  const [restartCore, setRestartCore] = useState(true);
-  useLayoutEffect(() => {
-    if (confirmOpen) setRestartCore(true);
-  }, [confirmOpen]);
-  const preserveCore = info?.preserveCoreSupported === true && !restartCore;
   if (!confirmOpen && !task.running) return null;
 
   const percent = task.percent ?? (
@@ -214,24 +198,18 @@ export function AppUpdateDialog() {
           <p className="app-update-confirm-copy">
             {t('appUpdate.confirmDescription', { version: info?.latestVersion ?? '' })}
           </p>
-          <Checkbox checked={!preserveCore} onChange={event => setRestartCore(event.target.checked)}
-            disabled={!info?.preserveCoreSupported} label={t('appUpdate.restartCore')} aria-describedby="app-update-core-hint" />
-          <p id="app-update-core-hint" className="app-update-confirm-copy">
-            {t(!info?.preserveCoreSupported ? 'appUpdate.restartRequired' : preserveCore ? 'appUpdate.preserveCoreHint' : 'appUpdate.restartCoreHint')}
-          </p>
           <div className="app-update-dialog-actions">
             <button type="button" className="secondary-button" onClick={dismissConfirm}>
               {t('common.cancel')}
             </button>
-            <button type="button" className="primary-button" onClick={() => void install(preserveCore)}>
+            <button type="button" className="primary-button" onClick={() => void install()}>
               <Download size={15} aria-hidden="true" />
-              {t(preserveCore ? 'appUpdate.installOnly' : 'appUpdate.installNow')}
+              {t('appUpdate.installNow')}
             </button>
           </div>
         </>
       ) : (
         <>
-          <p className="app-update-confirm-copy">{t(task.preserveCore ? 'appUpdate.preserveCoreHint' : 'appUpdate.restartCoreHint')}</p>
           <div className="install-dialog-phase">
             <span>{t('kernel.dialog.phase')}</span>
             <strong>{phaseLabel}</strong>

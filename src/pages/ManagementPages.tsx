@@ -44,7 +44,6 @@ import { PluginOAuthProviders } from './PluginOAuthProviders';
 import { notifyPluginResourcesChanged, PLUGIN_RESOURCES_REFRESH_EVENT } from '../services/pluginResources';
 import { VertexLoginCard } from './VertexLoginCard';
 import { Select } from '../components/Select';
-import { AcpAccessPage } from './AcpAccessPage';
 
 type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'devin' | 'meta';
 type OAuthFlowStatus = 'idle' | 'waiting' | 'success' | 'error';
@@ -136,7 +135,6 @@ export function OAuthManagementPage() {
         aria-labelledby={`oauth-subpage-tab-${activeSubpage}`}
       >
         {activeSubpage === 'login' ? <OAuthLoginPage onOpenAuthFiles={openAuthFiles} /> : null}
-        {activeSubpage === 'acp' ? <AcpAccessPage /> : null}
         {activeSubpage === 'authFiles' ? (
           <AuthFileManagementPage key={authFilesProvider ?? 'all'} initialProvider={authFilesProvider} />
         ) : null}
@@ -681,8 +679,7 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
         <VertexLoginCard />
         <PluginOAuthProviders
           builtInProviderIds={[...BUILTIN_OAUTH_PROVIDER_IDS, 'vertex']}
-          browser={selectedBrowser || 'default'}
-          onOpenAuthFiles={onOpenAuthFiles}
+          browser={selectedBrowser === NO_AUTO_OPEN_BROWSER_ID ? 'default' : selectedBrowser || 'default'}
         />
       </div>
     </section>

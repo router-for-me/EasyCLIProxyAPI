@@ -43,8 +43,6 @@ pub(crate) fn show_main_window_on_main_thread(app_handle: &tauri::AppHandle) {
     if window.is_minimized().unwrap_or(false) {
         if let Err(error) = window.unminimize() {
             eprintln!("Failed to restore the main window: {error}");
-        } else {
-            crate::window_activity::sync(app_handle);
         }
     }
     if let Err(error) = window.set_focus() {
@@ -408,8 +406,6 @@ impl WindowsTrayState {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn show_windows_main_window(app_handle: &tauri::AppHandle) {
-    #[cfg(windows)]
-    crate::webview_recovery::request(app_handle);
     let Some(window) = main_window(app_handle) else {
         return;
     };
@@ -420,8 +416,6 @@ pub(crate) fn show_windows_main_window(app_handle: &tauri::AppHandle) {
     if window.is_minimized().unwrap_or(false) {
         if let Err(error) = window.unminimize() {
             eprintln!("Failed to restore the main window: {error}");
-        } else {
-            crate::window_activity::sync(app_handle);
         }
     }
     if let Err(error) = window.set_focus() {

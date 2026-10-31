@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import { ZAI_CODING_PLAN_BASE_URL, ZAI_CODING_PLAN_BASE_URL_CN } from '../src/services/zaiQuota';
 import {
   apiAccessRemarkLocatorFromRecord,
   applyProviderRemarkIdentity,
@@ -16,9 +15,6 @@ import {
   providerDragId,
   providerProxyDraftFromRecord,
   providerRecordWithDisabledState,
-  providerRecordWithModelEnabledState,
-  providerSupportsModelExclusions,
-  isModelExcluded,
   providerRemarkIdentity,
   providerRowsFromGroups,
   providerSectionOrder,
@@ -30,45 +26,7 @@ import {
 import { modelsFromRecord } from '../src/services/modelService';
 import { flattenV8ProviderGroups } from './fixtures/legacyProviderRecords';
 
-describe('model health availability toggles', () => {
-  it('preserves unrelated exclusions while disabling and re-enabling one model', () => {
-    const record = { 'api-key': 'key', 'excluded-models': ['manual-*', 'old-model'] };
-    expect(isModelExcluded(record, 'old-model')).toBe(true);
-    const disabled = providerRecordWithModelEnabledState('codex-api-key', record, 'healthy-model', false);
-    expect(disabled?.['excluded-models']).toEqual(['manual-*', 'old-model', 'healthy-model']);
-    const enabled = providerRecordWithModelEnabledState('codex-api-key', disabled!, 'healthy-model', true);
-    expect(enabled?.['excluded-models']).toEqual(['manual-*', 'old-model']);
-  });
-
-  it('removes only exact model exclusion and ignores a provider-wide wildcard', () => {
-    const record = { 'excluded-models': ['*', 'healthy-model'] };
-    expect(providerRecordWithModelEnabledState('codex-api-key', record, 'healthy-model', true)?.['excluded-models']).toEqual(['*']);
-  });
-
-  it('does not mutate the input record', () => {
-    const record = { 'excluded-models': ['old-model'] };
-    providerRecordWithModelEnabledState('codex-api-key', record, 'new-model', false);
-    expect(record['excluded-models']).toEqual(['old-model']);
-  });
-
-  it('does not write exclusions for OpenAI-compatible providers', () => {
-    expect(providerSupportsModelExclusions('openai-compatibility')).toBe(false);
-    expect(providerRecordWithModelEnabledState(
-      'openai-compatibility',
-      { models: [{ name: 'compat-model' }] },
-      'compat-model',
-      false,
-    )).toBeNull();
-  });
-
-  it('keeps model toggles for API providers that support excluded-models', () => {
-    for (const section of ['codex-api-key', 'claude-api-key', 'gemini-api-key', 'vertex-api-key', 'xai-api-key', 'meta-api-key'] as const) {
-      expect(providerSupportsModelExclusions(section)).toBe(true);
-    }
-  });
-});
-
-describe('shared-credential provider entries (#276)', () => { 
+describe('shared-credential provider entries (#276)', () => {
   const first = {
     'api-key': 'shared-key',
     'base-url': 'https://claude.example.test',
@@ -324,7 +282,6 @@ describe('API 接入配置合并', () => {
     expect(providerSectionOrder).toEqual([
       'codex-api-key',
       'openai-compatibility',
-      'zai',
       'deepseek',
       'claude-api-key',
       'gemini-api-key',
@@ -398,22 +355,6 @@ describe('API 接入配置合并', () => {
     expect(providerCategoryMatchesRecord('codex-api-key', codexRecord, 'codex-api-key')).toBe(false);
     expect(providerCategoryMatchesRecord('deepseek', legacyRecord, 'openai-compatibility')).toBe(false);
     expect(providerCategoryMatchesRecord('openai-compatibility', legacyRecord, 'openai-compatibility')).toBe(true);
-  });
-
-  it('z.ai Coding Plan 预填国际编码接口，并按主机从 OpenAI 兼容列表中分开', () => {
-    const draft = applyProviderRemarkIdentity('zai', createProviderDraft('zai'));
-    expect(draft.name).toBe('z.ai');
-    expect(draft.baseUrl).toBe(ZAI_CODING_PLAN_BASE_URL);
-    const global = { name: 'z.ai', 'base-url': ZAI_CODING_PLAN_BASE_URL };
-    const mainland = { name: 'glm-cn', 'base-url': `${ZAI_CODING_PLAN_BASE_URL_CN}/` };
-    const other = { name: 'relay', 'base-url': 'https://relay.example/v1' };
-    expect(providerCategoryMatchesRecord('zai', global, 'openai-compatibility')).toBe(true);
-    expect(providerCategoryMatchesRecord('openai-compatibility', global, 'openai-compatibility')).toBe(false);
-    expect(providerCategoryMatchesRecord('zai', mainland, 'openai-compatibility')).toBe(true);
-    expect(providerCategoryMatchesRecord('zai', other, 'openai-compatibility')).toBe(false);
-    expect(providerCategoryMatchesRecord('openai-compatibility', other, 'openai-compatibility')).toBe(true);
-    expect(providerRowsFromGroups('openai-compatibility', [global, other]).map((row) => row.category))
-      .toEqual(['zai', 'openai-compatibility']);
   });
 
   it('OpenAI 兼容接入把选定思考等级写入全部开放模型', () => {

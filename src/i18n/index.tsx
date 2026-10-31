@@ -1,8 +1,8 @@
 import { setAppLocale } from '../services/appSettings';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { en, ja, ru, zhCN, zhTW, type MessageKey, type MessageVariables } from './resources';
+import { en, ja, zhCN, zhTW, type MessageKey, type MessageVariables } from './resources';
 
-export type AppLocale = 'zh-CN' | 'zh-TW' | 'ja' | 'en' | 'ru';
+export type AppLocale = 'zh-CN' | 'zh-TW' | 'ja' | 'en';
 
 export const languageOptions: ReadonlyArray<{
   value: AppLocale;
@@ -12,27 +12,21 @@ export const languageOptions: ReadonlyArray<{
   { value: 'zh-TW', nativeLabel: '繁體中文' },
   { value: 'ja', nativeLabel: '日本語' },
   { value: 'en', nativeLabel: 'English' },
-  { value: 'ru', nativeLabel: 'Русский' },
 ];
 
 const STORAGE_KEY = 'easy-cli-proxy-api.locale';
-const resources = { 'zh-CN': zhCN, 'zh-TW': zhTW, ja, en, ru } as const;
+const resources = { 'zh-CN': zhCN, 'zh-TW': zhTW, ja, en } as const;
 let currentLocale: AppLocale = 'en';
 
-export const supportedLocales: readonly AppLocale[] = ['zh-CN', 'zh-TW', 'ja', 'en', 'ru'];
+export const supportedLocales: readonly AppLocale[] = ['zh-CN', 'zh-TW', 'ja', 'en'];
 
 export function getCurrentLocale(): AppLocale {
   return currentLocale;
 }
 
-export function setCurrentLocale(locale: AppLocale): void {
-  currentLocale = normalizeLocale(locale);
-}
-
 export function normalizeLocale(value: string | null | undefined): AppLocale {
   const normalized = value?.trim().toLowerCase() ?? '';
   if (normalized.startsWith('ja')) return 'ja';
-  if (normalized.startsWith('ru')) return 'ru';
   if (
     normalized === 'zh-tw'
     || normalized === 'zh-hk'
@@ -74,9 +68,9 @@ type I18nContextValue = {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-export function I18nProvider({ children, syncNativeLocale = true }: { children: ReactNode; syncNativeLocale?: boolean }) {
+export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, updateLocale] = useState<AppLocale>(detectInitialLocale);
-  setCurrentLocale(locale);
+  currentLocale = locale;
 
   const setLocale = useCallback((nextLocale: AppLocale) => {
     updateLocale(normalizeLocale(nextLocale));
@@ -89,10 +83,10 @@ export function I18nProvider({ children, syncNativeLocale = true }: { children: 
       window.localStorage.setItem(STORAGE_KEY, locale);
     } catch {
     }
-    if (syncNativeLocale) void setAppLocale({ locale }).catch((error) => {
+    void setAppLocale({ locale }).catch((error) => {
       console.warn('Failed to synchronize the app locale with the native shell', error);
     });
-  }, [locale, syncNativeLocale]);
+  }, [locale]);
 
   const t = useCallback(
     (key: MessageKey, variables?: MessageVariables) => translate(locale, key, variables),
