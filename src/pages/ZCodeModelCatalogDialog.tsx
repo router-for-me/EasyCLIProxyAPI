@@ -176,6 +176,7 @@ export function ZCodeModelCatalogDialog({
       setModelOrder(next.modelOrder);
       setNotice(t("agents.zcode.catalog.saved") || "ZCode 模型设置已保存并同步至 provider_config.json");
       await onSaved();
+      onClose();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -218,7 +219,7 @@ export function ZCodeModelCatalogDialog({
               placeholder={t("agents.catalog.search") || "搜索模型 ID"}
             />
           </div>
-          <div className="codex-catalog-models" role="listbox">
+          <div className="codex-catalog-models" role="listbox" style={{ overflowX: "hidden", overflowY: "auto", scrollbarWidth: "thin" }}>
             {loading ? (
               <div className="codex-catalog-state">
                 <LoaderCircle size={18} className="spin" />
@@ -229,11 +230,24 @@ export function ZCodeModelCatalogDialog({
                 <div
                   key={model.id}
                   className={`codex-catalog-item ${model.id === selectedId ? "active" : ""}`}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", cursor: "pointer" }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "8px 10px",
+                    cursor: "pointer",
+                    minWidth: 0,
+                    width: "100%",
+                    boxSizing: "border-box",
+                    borderRadius: "6px",
+                    background: model.id === selectedId ? "var(--ui-accent-soft, rgba(0,0,0,0.06))" : undefined,
+                  }}
                   onClick={() => setSelectedId(model.id)}
                 >
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                    <strong style={{ display: "block", fontSize: "13px" }}>{model.id}</strong>
+                  <div style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: "8px" }}>
+                    <strong style={{ display: "block", fontSize: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {model.id}
+                    </strong>
                     <div style={{ display: "flex", gap: "6px", marginTop: "3px", fontSize: "11px", opacity: 0.8 }}>
                       {model.configuration.contextWindow ? (
                         <span>{Math.round(model.configuration.contextWindow / 1024)}K</span>
@@ -242,8 +256,9 @@ export function ZCodeModelCatalogDialog({
                       {model.configuration.isManual ? <span style={{ color: "var(--color-primary, #d97706)" }}>已自定义</span> : null}
                     </div>
                   </div>
-                  <div onClick={(e) => e.stopPropagation()}>
+                  <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                     <Switch
+                      size="sm"
                       checked={model.enabled}
                       onChange={(e) => {
                         const checked = e.currentTarget.checked;
