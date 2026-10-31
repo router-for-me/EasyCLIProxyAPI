@@ -4637,6 +4637,10 @@ fn usage_root_dir() -> Result<PathBuf, String> {
     Ok(core_base_dir()?.join(USAGE_DIR_NAME))
 }
 
+pub(crate) fn usage_database_path() -> Result<PathBuf, String> {
+    Ok(usage_root_dir()?.join(USAGE_DATABASE_FILE))
+}
+
 fn record_local_hour(record: &UsageRecord) -> String {
     local_hour_from_timestamp(&record.timestamp)
         .unwrap_or_else(|| Local::now().format("%Y-%m-%d-%H").to_string())

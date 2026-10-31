@@ -72,8 +72,9 @@ import { SelectMenu } from '../components/SelectMenu';
 import { Dialog } from '../components/Dialog';
 import { UsageAnalysisView, type UsageAnalysis, type UsageCategory } from './UsageAnalysisView';
 import { Select } from '../components/Select';
+import { AgentUsageView } from './AgentUsageView';
 
-type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'data-management';
+type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'agent-usage' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
 
 const USAGE_TABS = [
@@ -81,6 +82,7 @@ const USAGE_TABS = [
   { value: 'analysis', labelKey: 'usage.tab.analysis' },
   { value: 'events', labelKey: 'usage.tab.events' },
   { value: 'pricing', labelKey: 'usage.tab.pricing' },
+  { value: 'agent-usage', labelKey: 'usage.tab.agentUsage' },
   { value: 'data-management', labelKey: 'usage.tab.dataManagement' },
 ] as const;
 
@@ -111,7 +113,7 @@ const emptyAnalysis: UsageAnalysis = { models: [], providers: [], sources: [], a
 const loadTab = (): UsageTab => {
   try {
     const saved = usagePreferences.getItem(TAB_KEY);
-    return saved === 'analysis' || saved === 'events' || saved === 'pricing' || saved === 'data-management'
+    return saved === 'analysis' || saved === 'events' || saved === 'pricing' || saved === 'agent-usage' || saved === 'data-management'
       ? saved
       : 'overview';
   } catch {
@@ -203,6 +205,8 @@ export function UsageRecordsPage() {
   const [optionsAnalysis, setOptionsAnalysis] = useState<UsageAnalysis>(emptyAnalysis);
   const [events, setEvents] = useState<UsageEventPage | null>(null);
   const [pricing, setPricing] = useState<UsagePricing | null>(null);
+  const [agentUsageRefreshKey, setAgentUsageRefreshKey] = useState(0);
+  const [agentUsageLoading, setAgentUsageLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const loadedFilterScopeKeyRef = useRef('');
@@ -266,6 +270,10 @@ export function UsageRecordsPage() {
       const requestId = ++requestIdRef.current;
       const { timeQuery, query } = buildQueries();
       if (!quiet) setLoading(true);
+      if (activeTab === 'agent-usage') {
+        setLoading(false);
+        return;
+      }
       try {
         const statusRequest = getUsageCollectorStatus();
         const filtersChanged = loadedFilterScopeKeyRef.current !== filterScopeKey;
@@ -390,6 +398,7 @@ export function UsageRecordsPage() {
   const collectorTone = status?.state === 'error' ? 'error' : status?.state === 'collecting' ? 'success' : '';
   const showInitialLoading =
     activeTab !== 'data-management' &&
+    activeTab !== 'agent-usage' &&
     !error &&
     loading &&
     ((activeTab === 'overview' && !overview) ||
@@ -509,8 +518,10 @@ export function UsageRecordsPage() {
           <button
             type="button"
             className="icon-button quiet usage-refresh-btn"
-            onClick={() => void loadData(false)}
-            disabled={loading}
+            onClick={() => activeTab === 'agent-usage'
+              ? setAgentUsageRefreshKey((current) => current + 1)
+              : void loadData(false)}
+            disabled={loading || agentUsageLoading}
             title={t('usage.refresh')}
             aria-label={t('usage.refresh')}
           >
@@ -525,7 +536,7 @@ export function UsageRecordsPage() {
         role="tabpanel"
         aria-labelledby={`usage-tab-${activeTab}`}
       >
-      {activeTab !== 'data-management' ? filterPanel : null}
+      {activeTab !== 'data-management' && activeTab !== 'agent-usage' ? filterPanel : null}
 
       {showInitialLoading && activeTab !== 'events' ? (
         <EmptyState className="usage-initial-loading" icon={<Database size={22} />}>{t('usage.loading')}</EmptyState>
@@ -549,6 +560,7 @@ export function UsageRecordsPage() {
       {activeTab === 'pricing' && pricing ? (
         <PricingView pricing={pricing} query={buildQueries().query} onChanged={() => loadData(true)} />
       ) : null}
+      {activeTab === 'agent-usage' ? <AgentUsageView refreshKey={agentUsageRefreshKey} onLoadingChange={setAgentUsageLoading} /> : null}
       {activeTab === 'data-management' ? <UsageDataManagementView /> : null}
       </div>
     </section>

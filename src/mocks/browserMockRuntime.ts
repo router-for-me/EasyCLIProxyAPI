@@ -1067,6 +1067,37 @@ export function createBrowserMockRuntime(
         return clone(state.coreStatus);
       }
       case 'get_usage_view_preferences': return clone(usageViewPreferences);
+      case 'get_agent_usage': return state.coreStatus.installed && scenario !== 'empty'
+        ? {
+            schemaVersion: 1,
+            generatedAt: new Date().toISOString(),
+            sources: [{
+              source: 'codex',
+              status: 'ok',
+              error: '',
+              daily: [{
+                date: new Date().toISOString().slice(0, 10),
+                inputTokens: 12_400,
+                outputTokens: 4_800,
+                cacheCreationTokens: 0,
+                cacheReadTokens: 1_200,
+                reasoningOutputTokens: 800,
+                totalTokens: 19_200,
+                costUSD: 0,
+                models: [{
+                  model: 'gpt-5.2-codex',
+                  inputTokens: 12_400,
+                  outputTokens: 4_800,
+                  cacheCreationTokens: 0,
+                  cacheReadTokens: 1_200,
+                  reasoningOutputTokens: 800,
+                  totalTokens: 19_200,
+                  costUSD: null,
+                }],
+              }],
+            }],
+          }
+        : { schemaVersion: 1, generatedAt: new Date().toISOString(), sources: [] };
       case 'save_usage_view_preferences': {
         const values = asObject(payload.values);
         if (!payload.values || typeof payload.values !== 'object' || Array.isArray(payload.values) || Object.keys(values).length > 100

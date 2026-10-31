@@ -7436,6 +7436,15 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.usage-tab-panel {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 4px;
+  scrollbar-gutter: stable;
+}
+
 .usage-collector-state {
   display: inline-flex;
   align-items: center;

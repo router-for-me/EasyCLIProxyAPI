@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agents;
+mod agent_usage;
 mod app_settings;
 mod app_update;
 mod claude_catalog;
@@ -2812,6 +2813,7 @@ fn main() {
             get_gui_settings,
             get_usage_view_preferences,
             save_usage_view_preferences,
+            agent_usage::get_agent_usage,
             resolve_api_access_remarks,
             save_api_access_remark,
             set_app_locale,
