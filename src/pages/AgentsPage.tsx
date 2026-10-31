@@ -117,6 +117,8 @@ import { CodexRemoteCompactionSwitch } from './CodexRemoteCompactionSwitch';
 import { CodexProviderSwitch } from './CodexProviderSwitch';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
 import { CodexSubagentConfigDialog } from './CodexSubagentConfigDialog';
+import { ZCodeModelCatalogDialog } from './ZCodeModelCatalogDialog';
+import { ZCodeSubagentConfigDialog } from './ZCodeSubagentConfigDialog';
 import { DeepSeekHarnessCatalogDialog } from './DeepSeekHarnessCatalogDialog';
 import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
 import { AgentClientList } from './AgentClientList';
@@ -653,6 +655,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [launchDirectoryDialogOpen, setLaunchDirectoryDialogOpen] = useState(false);
   const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
   const [codexSubagentDialogOpen, setCodexSubagentDialogOpen] = useState(false);
+  const [zcodeCatalogDialogOpen, setZcodeCatalogDialogOpen] = useState(false);
+  const [zcodeSubagentDialogOpen, setZcodeSubagentDialogOpen] = useState(false);
   const [harnessCatalogDialogOpen, setHarnessCatalogDialogOpen] = useState(false);
   const [desktopHelpOpen, setDesktopHelpOpen] = useState(false);
   const [launchDirectory, setLaunchDirectory] = useState('');
@@ -1804,6 +1808,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setCodexSubagentDialogOpen(true)} disabled={busy}><Users size={16} />{t('agents.subagents.button')}</button>
   ) : null;
 
+  const zcodeCatalogButton = selected === 'zcode' ? (
+    <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setZcodeCatalogDialogOpen(true)} disabled={busy}><SlidersHorizontal size={16} />{t('agents.catalog.button')}</button>
+  ) : null;
+
+  const zcodeSubagentButton = selected === 'zcode' ? (
+    <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setZcodeSubagentDialogOpen(true)} disabled={busy}><Users size={16} />{t('agents.subagents.button')}</button>
+  ) : null;
+
   const harnessCatalogButton = isDeepSeekHarnessClient ? (
     <button type="button" className="secondary-button agent-codex-catalog-button"
       onClick={() => setHarnessCatalogDialogOpen(true)} disabled={busy || configurationWriteBlocked}>
@@ -1983,7 +1995,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   onChange={selectEmbeddedModel}
                   onRefresh={refreshModels}
                 />
-                {codexCatalogButton}{codexSubagentButton}{harnessCatalogButton}
+                {codexCatalogButton}{codexSubagentButton}{zcodeCatalogButton}{zcodeSubagentButton}{harnessCatalogButton}
                 {!isClaudeModelMappingClient && missingModelHint ? <span className="agent-model-hint" role="status">{missingModelHint}</span> : null}
               </div>}
 
@@ -2140,6 +2152,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                           <div><dt>{t('agents.modify.authOAuth')}</dt><dd>{t('agents.modify.authOAuthHint')}</dd></div>
                         </dl>
                       </div>
+                    </div>
+                  ) : null}
+                  {selected === 'zcode' ? (
+                    <div className="agent-codex-options">
+                      <div className="agent-codex-tool-buttons">{zcodeCatalogButton}{zcodeSubagentButton}</div>
                     </div>
                   ) : null}
                 </section>
@@ -2404,6 +2421,14 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         />
       ) : null}
       {codexSubagentDialogOpen ? <CodexSubagentConfigDialog onClose={() => setCodexSubagentDialogOpen(false)} onSaved={() => undefined} /> : null}
+
+      {zcodeCatalogDialogOpen ? (
+        <ZCodeModelCatalogDialog
+          onClose={() => setZcodeCatalogDialogOpen(false)}
+          onSaved={() => void loadModels('zcode', selectedModel)}
+        />
+      ) : null}
+      {zcodeSubagentDialogOpen ? <ZCodeSubagentConfigDialog onClose={() => setZcodeSubagentDialogOpen(false)} onSaved={() => undefined} /> : null}
 
       {launchDirectoryDialogOpen ? (
         <Dialog

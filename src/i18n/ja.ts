@@ -2221,4 +2221,9 @@ export const jaOverrides = {
   'quota.service.error.unrecognized': '上流からクォータデータが返されましたが、形式を認識できません',
   'quota.service.error.codexResetOnly': 'リセットクォータを使用できるのは Codex 認証情報のみです',
   'quota.service.error.missingConsumeAuthIndex': 'auth-index がないためリセットクォータを使用できません',
+  'agents.zcode.catalog.title': 'ZCode モデルリストとルール設定',
+  'agents.zcode.catalog.subtitle': 'ZCode に提供するモデルリスト、順序、コンテキスト長、推论設定を管理します。',
+  'agents.zcode.catalog.saved': 'ZCode モデル設定が保存され、provider_config.json に同期されました',
+  'agents.zcode.subagents.title': 'ZCode サブエージェント設定',
+  'agents.zcode.subagents.description': 'ZCode サブエージェントのデフォルトモデル、推論強度、およびモデル割り当てを設定します。',
 } satisfies Record<MessageKey, string>;
