@@ -122,8 +122,15 @@ export function AgentModelPicker({
     const left = Math.min(Math.max(bounds.left, rect.left), Math.max(bounds.left, bounds.right - width));
     const desiredTop = placeAbove ? rect.top - triggerGap - height : rect.bottom + triggerGap;
     const top = Math.min(Math.max(bounds.top, desiredTop), Math.max(bounds.top, bounds.bottom - height));
+    const offsetParent = ! root.closest('[role="dialog"], [role="alertdialog"]') && menuRef.current?.offsetParent instanceof HTMLElement
+      ? menuRef.current.offsetParent
+      : null;
+    const parentRect = offsetParent?.getBoundingClientRect();
+    const parentStyle = offsetParent ? getComputedStyle(offsetParent) : null;
+    const offsetX = parentRect ? parentRect.left + (Number.parseFloat(parentStyle?.borderLeftWidth ?? '0') || 0) : 0;
+    const offsetY = parentRect ? parentRect.top + (Number.parseFloat(parentStyle?.borderTopWidth ?? '0') || 0) : 0;
 
-    setDropdownLayout({ top, left, width, height });
+    setDropdownLayout({ top: top - offsetY, left: left - offsetX, width, height });
   }, []);
 
   useLayoutEffect(() => {
