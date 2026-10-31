@@ -1987,7 +1987,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 {!isClaudeModelMappingClient && missingModelHint ? <span className="agent-model-hint" role="status">{missingModelHint}</span> : null}
               </div>}
 
-              {coreApiKeys.length > 1 && !(selected === 'codex' && oauthConfiguration) ? (
+              {coreApiKeys.length > 1 ? (
                 <div className="agent-minimal-field">
                   <label htmlFor="embedded-agent-api-key">{t('agents.apiKey.title')}</label>
                   <Select
@@ -2260,10 +2260,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 <div className="agent-section-heading">
                   <div><strong>{t('agents.apiKey.title')}</strong></div>
                 </div>
-                {selected === 'codex' && oauthConfiguration ? (
-                  <p className="agent-model-hint">{t('agents.apiKey.oauthNotice')}</p>
-                ) : (
-                  <>
                     <Select
                       value={effectiveSelectedApiKey}
                       disabled={busy || !canConfigureActiveClient}
@@ -2294,8 +2290,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         ? t('agents.apiKey.hintMultiple', { count: coreApiKeys.length })
                         : t('agents.apiKey.hint')}
                     </span>
-                  </>
-                )}
               </section>
 
               <div className="agent-save-bar">
