@@ -83,6 +83,9 @@ API 接入页面按照协议或 Provider 管理上游 API 凭证和服务地址�
 公开 GitHub 发布版本会直接查询，优先使用已配置的 GitHub 令牌，未配置时使用应用的 `GITHUB_TOKEN` 环境变量；需要认证的条目继续使用内核的认证流程。
 **插件商店**的刷新只重新获取插件列表。安装时会查询最新版本，除非手动指定版本。
 
+插件 OAuth、模型列表为空、额度能力与本地版本选择的检查方法，见
+[提供方插件接入排障说明](docs/plugin-provider-troubleshooting.md#中文速查)。
+
 ### 使用记录与 Token 统计
 
 ![使用记录与 Token 统计](docs/screenshots/zh-CN/4.png)
