@@ -1,3 +1,90 @@
+
+pub(crate) fn infer_zcode_model_knowledge(model_id: &str) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
+    let lower = model_id.to_ascii_lowercase();
+
+    // 1. Gemini: 1M context, 128K output, vision, pdf
+    if lower.contains("gemini") {
+        return (Some(1_048_576), Some(128_000), true, true, vec!["disabled".into(), "enabled".into(), "high".into()]);
+    }
+
+    // 2. GLM 5.x / 4.x
+    if lower.contains("glm-5") || lower.contains("xopglm5") {
+        return (Some(1_000_000), Some(128_000), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into(), "max".into()]);
+    }
+    if lower.contains("glm-4-flash") {
+        return (Some(128_000), Some(16_384), true, false, vec!["disabled".into()]);
+    }
+    if lower.contains("glm-4") {
+        return (Some(200_000), Some(131_072), true, false, vec!["disabled".into()]);
+    }
+
+    // 3. Kimi / Moonshot
+    if lower.contains("kimi-k3") || lower.contains("k3-1") {
+        return (Some(1_048_576), Some(131_072), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into(), "max".into()]);
+    }
+    if lower.contains("kimi-k2") {
+        return (Some(262_144), Some(98_304), true, false, vec!["disabled".into()]);
+    }
+    if lower.contains("moonshot") {
+        return (Some(131_072), Some(32_000), true, false, vec!["disabled".into()]);
+    }
+
+    // 4. Qwen
+    if lower.contains("qwen3.8") || lower.contains("qwen3.7") {
+        return (Some(1_000_000), Some(131_072), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into()]);
+    }
+    if lower.contains("qwen3") {
+        return (Some(262_144), Some(65_536), true, false, vec!["disabled".into(), "enabled".into()]);
+    }
+    if lower.contains("qwen") {
+        return (Some(131_072), Some(32_768), true, false, vec!["disabled".into()]);
+    }
+
+    // 5. DeepSeek
+    if lower.contains("deepseek-v4") || lower.contains("xopdeepseekv4") {
+        return (Some(1_000_000), Some(384_000), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into()]);
+    }
+    if lower.contains("deepseek") {
+        return (Some(128_000), Some(64_000), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "high".into()]);
+    }
+
+    // 6. Step
+    if lower.contains("step-5") || lower.contains("step-3.7") {
+        return (Some(1_000_000), Some(128_000), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into(), "max".into()]);
+    }
+    if lower.contains("step") {
+        return (Some(128_000), Some(64_000), true, false, vec!["disabled".into()]);
+    }
+
+    // 7. Spark
+    if lower.contains("spark") {
+        return (Some(128_000), Some(32_768), true, false, vec!["disabled".into()]);
+    }
+
+    // 8. MiniMax
+    if lower.contains("minimax-m3") || lower.contains("minimax-3") {
+        return (Some(1_000_000), Some(128_000), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into()]);
+    }
+    if lower.contains("minimax") {
+        return (Some(204_800), Some(32_000), true, false, vec!["disabled".into()]);
+    }
+
+    // 9. Claude
+    if lower.contains("claude-3") {
+        return (Some(200_000), Some(64_000), true, true, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into()]);
+    }
+
+    // 10. OpenAI / GPT
+    if lower.contains("o1") || lower.contains("o3") {
+        return (Some(200_000), Some(64_000), true, false, vec!["low".into(), "medium".into(), "high".into()]);
+    }
+    if lower.contains("gpt-4") || lower.contains("gpt-5") {
+        return (Some(128_000), Some(16_384), true, false, vec!["disabled".into()]);
+    }
+
+    (Some(128_000), Some(32_000), true, false, vec!["disabled".into()])
+}
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
@@ -219,26 +306,29 @@ pub(crate) fn zcode_editor_snapshot(
 
     for option in available_models {
         seen_ids.insert(option.name.clone());
+        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) = infer_zcode_model_knowledge(&option.name);
+
         let default_config = ZCodeModelConfig {
-            context_window: option.context_window,
-            max_output_tokens: None,
-            supports_image: true,
-            supports_pdf: false,
+            context_window: option.context_window.or(inferred_cw),
+            max_output_tokens: inferred_mot,
+            supports_image: inferred_img,
+            supports_pdf: inferred_pdf,
             supports_video: false,
             supports_json_schema_output: true,
             supports_native_web_search: true,
             supports_mid_conversation_system: true,
-            reasoning_levels: option.reasoning_levels.clone(),
-            reasoning_map: if option.reasoning_levels.is_empty() { None } else { Some(ZCODE_CPA_REASONING_MAP.to_string()) },
+            reasoning_levels: if option.reasoning_levels.is_empty() { inferred_rl } else { option.reasoning_levels.clone() },
+            reasoning_map: Some(ZCODE_CPA_REASONING_MAP.to_string()),
             is_manual: false,
         };
 
         let configuration = if let Some(manual_rule) = manual_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(manual_rule);
             let (rl, map) = parse_zcode_rule_reasoning(manual_rule);
+            let effective_cw = if cw == Some(500000) { default_config.context_window } else { cw.or(default_config.context_window) };
             ZCodeModelConfig {
-                context_window: cw.or(default_config.context_window),
-                max_output_tokens: mot,
+                context_window: effective_cw,
+                max_output_tokens: mot.or(default_config.max_output_tokens),
                 supports_image: img,
                 supports_pdf: pdf,
                 supports_video: vid,
@@ -252,9 +342,10 @@ pub(crate) fn zcode_editor_snapshot(
         } else if let Some(prov_rule) = provider_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(prov_rule);
             let (rl, map) = parse_zcode_rule_reasoning(prov_rule);
+            let effective_cw = if cw == Some(500000) { default_config.context_window } else { cw.or(default_config.context_window) };
             ZCodeModelConfig {
-                context_window: cw.or(default_config.context_window),
-                max_output_tokens: mot,
+                context_window: effective_cw,
+                max_output_tokens: mot.or(default_config.max_output_tokens),
                 supports_image: img,
                 supports_pdf: pdf,
                 supports_video: vid,
