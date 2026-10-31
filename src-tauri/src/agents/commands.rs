@@ -95,6 +95,7 @@ pub(crate) fn inspect_agent_config_statuses_with_overrides(
             let queue = &queue;
             let results = &results;
             let home = &home;
+            let candidate_keys = &candidate_keys;
             workers.push(scope.spawn(move || -> Result<(), String> {
                 loop {
                     let next = queue
