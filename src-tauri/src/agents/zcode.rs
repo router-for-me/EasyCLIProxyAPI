@@ -56,9 +56,9 @@ pub(crate) fn infer_zcode_model_knowledge(model_id: &str) -> (Option<u64>, Optio
         return (Some(128_000), Some(64_000), true, false, vec!["disabled".into()]);
     }
 
-    // 7. Spark
+    // 7. Spark (Spark X2.6 / 4.0 Ultra supports 1M context)
     if lower.contains("spark") {
-        return (Some(128_000), Some(32_768), true, false, vec!["disabled".into()]);
+        return (Some(1_000_000), Some(128_000), true, false, vec!["disabled".into(), "enabled".into()]);
     }
 
     // 8. MiniMax
@@ -193,9 +193,6 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig) -> Value {
     if let Some(cw) = config.context_window {
         properties.insert("contextWindow".into(), serde_json::json!(cw));
     }
-    if let Some(mot) = config.max_output_tokens {
-        properties.insert("maxOutputTokens".into(), serde_json::json!({ "max": mot }));
-    }
     properties.insert("inputFormat".into(), serde_json::json!({
         "supportsImage": config.supports_image,
         "supportsPdf": config.supports_pdf,
@@ -206,6 +203,9 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig) -> Value {
     properties.insert("supportsMidConversationSystem".into(), serde_json::json!(config.supports_mid_conversation_system));
 
     let mut option_specs = Map::new();
+    if let Some(mot) = config.max_output_tokens {
+        option_specs.insert("maxOutputTokens".into(), serde_json::json!({ "max": mot }));
+    }
     if !config.reasoning_levels.is_empty() {
         let mut rl = Map::new();
         rl.insert("values".into(), serde_json::json!(config.reasoning_levels));

@@ -3807,11 +3807,16 @@ pub(crate) fn build_zcode_agent_config(
         ensure_json_object_entry(properties, "inputFormat")
             .entry("supportsImage")
             .or_insert(serde_json::json!(true));
-        let (inferred_cw, _, _, _, _) = infer_zcode_model_knowledge(&option.name);
+        let (inferred_cw, inferred_mot, _, _, _) = infer_zcode_model_knowledge(&option.name);
+        properties.remove("maxOutputTokens");
         if let Some(context_window) = option.context_window.or(inferred_cw) {
             properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
         } else if manual.is_none() {
             properties.remove("contextWindow");
+        }
+        if let Some(mot) = inferred_mot {
+            let specs = ensure_json_object_entry(ensure_json_object_entry(entry, "config"), "optionSpecs");
+            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
         }
         if properties.is_empty() {
             entry.get_mut("config").and_then(serde_json::Value::as_object_mut)
