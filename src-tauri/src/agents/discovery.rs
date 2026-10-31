@@ -572,6 +572,7 @@ pub(crate) fn inspect_pi_provider_status_with_executable(
         )
         .into(),
         current_model: current_model.clone(),
+        current_api_key: if configured { Some(api_key.to_string()) } else { None },
         oauth_configuration: false,
         codex_native_oauth: false,
         codex_openai_provider: false,
@@ -1305,6 +1306,7 @@ pub(crate) fn inspect_agent_config_with_executables(
         )
         .into(),
         current_model: current_model.clone(),
+        current_api_key: if configured { Some(api_key.to_string()) } else { None },
         oauth_configuration,
         codex_native_oauth: client == AgentClient::Codex
             && codex_native_oauth_enabled(home).unwrap_or(false),

@@ -3803,26 +3803,25 @@ pub(crate) fn build_zcode_agent_config(
         let entry = rule.as_object_mut().ok_or("ZCode model rule must be an object")?;
         entry.insert("providerId".to_string(), serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
         entry.insert("modelId".to_string(), serde_json::json!(option.name));
-        let properties = ensure_json_object_entry(ensure_json_object_entry(entry, "config"), "properties");
-        ensure_json_object_entry(properties, "inputFormat")
-            .entry("supportsImage")
-            .or_insert(serde_json::json!(true));
-        if let Some(context_window) = option.context_window {
-            properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
-        } else if manual.is_none() {
-            // Smart rules inherit ZCode defaults; manual rules require a complete
-            // config, including contextWindow, even when CPA has no runtime limit.
-            properties.remove("contextWindow");
+        let (inferred_cw, inferred_mot, _, _, _) = infer_zcode_model_knowledge(&option.name);
+        let config_obj = ensure_json_object_entry(entry, "config");
+        {
+            let properties = ensure_json_object_entry(config_obj, "properties");
+            ensure_json_object_entry(properties, "inputFormat")
+                .entry("supportsImage")
+                .or_insert(serde_json::json!(true));
+            properties.remove("maxOutputTokens");
+            if let Some(context_window) = option.context_window.or(inferred_cw) {
+                properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
+            } else if manual.is_none() {
+                properties.remove("contextWindow");
+            }
         }
-        if properties.is_empty() {
-            entry.get_mut("config").and_then(serde_json::Value::as_object_mut)
-                .expect("ZCode model config was created").remove("properties");
+        let specs = ensure_json_object_entry(config_obj, "optionSpecs");
+        if let Some(mot) = inferred_mot {
+            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
         }
         if !option.reasoning_levels.is_empty() {
-            let specs = ensure_json_object_entry(ensure_json_object_entry(entry, "config"), "optionSpecs");
-            // Respect explicit native/manual options, including an intentional null.
-            // Smart defaults for unknown IDs otherwise expose only an on/off switch
-            // with a no-op map. CPA accepts effort through the Messages API.
             let generated = manual.is_none() && specs.get("reasoningLevel")
                 .and_then(|spec| spec.get("map")).and_then(serde_json::Value::as_str)
                 == Some(ZCODE_CPA_REASONING_MAP);

@@ -1721,6 +1721,18 @@ pub(crate) fn effective_agent_api_key(config: &GuiConfigFile) -> &str {
         .unwrap_or(DEFAULT_API_KEY)
 }
 
+pub(crate) fn resolve_agent_api_key<'a>(
+    config: &'a GuiConfigFile,
+    requested_key: Option<&'a str>,
+) -> &'a str {
+    if let Some(requested) = requested_key.map(str::trim).filter(|k| !k.is_empty()) {
+        if config.api_keys.iter().any(|entry| entry.key.trim() == requested) {
+            return requested;
+        }
+    }
+    effective_agent_api_key(config)
+}
+
 pub(crate) fn merge_core_api_keys_with_gui_metadata(
     existing: &[GuiApiKeyEntry],
     core_api_keys: &[String],

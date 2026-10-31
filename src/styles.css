@@ -6429,6 +6429,99 @@ textarea:focus-visible {
   overflow: auto;
 }
 
+.zcode-subagent-dialog {
+  display: flex !important;
+  flex-direction: column !important;
+  width: min(780px, calc(100vw - 32px)) !important;
+  height: fit-content !important;
+  max-height: min(780px, calc(100vh - 40px)) !important;
+  margin: auto !important;
+  padding: 22px 24px 18px !important;
+  overflow: hidden !important;
+  gap: 16px !important;
+}
+
+.zcode-subagent-dialog .config-dialog-heading {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 16px !important;
+  flex-shrink: 0 !important;
+}
+
+.zcode-subagent-dialog .config-dialog-heading > div {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+  min-width: 0 !important;
+  flex: 1 !important;
+}
+
+.zcode-subagent-dialog .config-dialog-heading h2 {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+}
+
+.zcode-subagent-dialog .config-dialog-heading p {
+  white-space: normal !important;
+  margin: 0 !important;
+  color: var(--color-text-tertiary) !important;
+  font-size: var(--font-size-label) !important;
+}
+
+.zcode-subagent-body {
+  flex: 1 !important;
+  overflow-y: auto !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+  padding-right: 4px !important;
+}
+
+.codex-catalog-models,
+.codex-catalog-editor,
+.zcode-subagent-body,
+.zcode-subagent-dialog {
+  scrollbar-width: thin !important;
+  scrollbar-color: var(--color-border-strong, #cbd5e1) transparent !important;
+}
+
+.codex-catalog-models::-webkit-scrollbar,
+.codex-catalog-editor::-webkit-scrollbar,
+.zcode-subagent-body::-webkit-scrollbar,
+.zcode-subagent-dialog::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+
+.codex-catalog-models::-webkit-scrollbar-track,
+.codex-catalog-editor::-webkit-scrollbar-track,
+.zcode-subagent-body::-webkit-scrollbar-track,
+.zcode-subagent-dialog::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.codex-catalog-models::-webkit-scrollbar-thumb,
+.codex-catalog-editor::-webkit-scrollbar-thumb,
+.zcode-subagent-body::-webkit-scrollbar-thumb,
+.zcode-subagent-dialog::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong, #cbd5e1) !important;
+  border-radius: 4px !important;
+}
+
+.codex-catalog-models::-webkit-scrollbar-thumb:hover,
+.codex-catalog-editor::-webkit-scrollbar-thumb:hover,
+.zcode-subagent-body::-webkit-scrollbar-thumb:hover,
+.zcode-subagent-dialog::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary, #94a3b8) !important;
+}
+
+.codex-catalog-models {
+  overflow-x: hidden !important;
+}
+
 .codex-subagent-fields {
   display: grid;
   gap: 14px;

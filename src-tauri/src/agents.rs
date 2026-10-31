@@ -14,6 +14,7 @@ mod transactions;
 mod workbuddy;
 mod antigravity;
 mod copilot;
+mod zcode;
 #[cfg(target_os = "windows")]
 mod windows_probe;
 pub(crate) use backups::*;
@@ -30,5 +31,6 @@ pub(crate) use transactions::*;
 pub(crate) use workbuddy::*;
 pub(crate) use antigravity::*;
 pub(crate) use copilot::*;
+pub(crate) use zcode::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows_probe::*;

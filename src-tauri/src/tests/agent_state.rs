@@ -210,6 +210,29 @@ fn agent_api_key_uses_first_configured_key_and_falls_back_when_empty() {
 }
 
 #[test]
+fn resolve_agent_api_key_selects_matching_or_falls_back() {
+    let config = GuiConfigFile {
+        api_keys: vec![
+            GuiApiKeyEntry {
+                key: "primary-key".to_string(),
+                remark: "Primary".to_string(),
+            },
+            GuiApiKeyEntry {
+                key: "secondary-key".to_string(),
+                remark: "Secondary".to_string(),
+            },
+        ],
+        ..GuiConfigFile::default()
+    };
+
+    assert_eq!(resolve_agent_api_key(&config, Some("secondary-key")), "secondary-key");
+    assert_eq!(resolve_agent_api_key(&config, Some("  primary-key  ")), "primary-key");
+    assert_eq!(resolve_agent_api_key(&config, Some("unknown-key")), "primary-key");
+    assert_eq!(resolve_agent_api_key(&config, None), "primary-key");
+    assert_eq!(resolve_agent_api_key(&config, Some("")), "primary-key");
+}
+
+#[test]
 fn codex_oauth_requires_auth_json_with_tokens() {
     let home = agent_test_home("codex-oauth-login");
     let auth_path = home.join("auth.json");

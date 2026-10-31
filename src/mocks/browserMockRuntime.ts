@@ -270,6 +270,7 @@ function createAgentStatuses() {
     connectionState: id === 'openclaw' ? 'not-configured' : 'configured',
     configurationSynchronized: true,
     currentModel: id.startsWith('claude') ? 'claude-sonnet-4-6' : 'gpt-5.2-codex',
+    currentApiKey: 'mock-key-1',
     oauthConfiguration: id === 'codex',
     codexNativeOauth: false,
     codexOpenaiProvider: false,
