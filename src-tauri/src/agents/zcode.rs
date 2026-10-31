@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use super::*;
-use crate::core_config::GuiConfigFile;
 use crate::GuiConfigState;
 
 pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
@@ -403,28 +402,35 @@ pub(crate) fn save_zcode_editor(
         rules.push(managed);
     }
 
-    let model_rules_sec = ensure_json_object_entry(config, "modelConfigRules");
-    let provider_model_rules = model_rules_sec
-        .entry("providerModelRules")
-        .or_insert_with(|| serde_json::json!([]))
-        .as_array_mut()
-        .ok_or("providerModelRules must be an array")?;
-    provider_model_rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID));
-
-    let manual_model_rules = model_rules_sec
-        .entry("manualProviderModelRules")
-        .or_insert_with(|| serde_json::json!([]))
-        .as_array_mut()
-        .ok_or("manualProviderModelRules must be an array")?;
-    manual_model_rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID));
-
+    let mut new_provider_rules = Vec::new();
+    let mut new_manual_rules = Vec::new();
     for model in &request.models {
         let rule_obj = build_zcode_rule_object(&model.id, &model.configuration);
         if model.configuration.is_manual {
-            manual_model_rules.push(rule_obj);
+            new_manual_rules.push(rule_obj);
         } else {
-            provider_model_rules.push(rule_obj);
+            new_provider_rules.push(rule_obj);
         }
+    }
+
+    let model_rules_sec = ensure_json_object_entry(config, "modelConfigRules");
+    {
+        let provider_model_rules = model_rules_sec
+            .entry("providerModelRules")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or("providerModelRules must be an array")?;
+        provider_model_rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID));
+        provider_model_rules.extend(new_provider_rules);
+    }
+    {
+        let manual_model_rules = model_rules_sec
+            .entry("manualProviderModelRules")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .ok_or("manualProviderModelRules must be an array")?;
+        manual_model_rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID));
+        manual_model_rules.extend(new_manual_rules);
     }
 
     let rendered = render_agent_json(root, "ZCode provider configuration")?;
@@ -671,7 +677,7 @@ pub(crate) async fn get_zcode_model_catalog_editor(
     let _guard = crate::AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "Agent configuration file lock is poisoned")?;
-    zcode_editor_snapshot(&home, &models)
+    zcode_editor_snapshot(&home, &models.models)
 }
 
 #[tauri::command]
@@ -686,7 +692,7 @@ pub(crate) async fn save_zcode_model_catalog_editor(
     let _guard = crate::AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "Agent configuration file lock is poisoned")?;
-    save_zcode_editor(&home, &models, request)
+    save_zcode_editor(&home, &models.models, request)
 }
 
 #[tauri::command]
