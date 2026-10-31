@@ -89,13 +89,14 @@ pub(crate) fn inspect_agent_config_statuses_with_overrides(
     ];
     let queue = Mutex::new(targets.into_iter().enumerate());
     let results = Mutex::new(vec![None; targets.len()]);
+    let candidate_keys = candidate_keys.as_slice();
     thread::scope(|scope| {
         let mut workers = Vec::with_capacity(AGENT_STATUS_DETECTION_CONCURRENCY);
         for _ in 0..AGENT_STATUS_DETECTION_CONCURRENCY {
             let queue = &queue;
             let results = &results;
             let home = &home;
-            let candidate_keys = &candidate_keys;
+            let candidate_keys = candidate_keys;
             workers.push(scope.spawn(move || -> Result<(), String> {
                 loop {
                     let next = queue
@@ -112,8 +113,8 @@ pub(crate) fn inspect_agent_config_statuses_with_overrides(
                             let mut status = inspect_agent_config_with_executables(client, home, config.port, api_key,
                                 executable_override, desktop_override);
                             if !status.configured && candidate_keys.len() > 1 {
-                                for candidate in &candidate_keys {
-                                    if *candidate == api_key {
+                                for &candidate in candidate_keys {
+                                    if candidate == api_key {
                                         continue;
                                     }
                                     let alt = inspect_agent_config_with_executables(client, home, config.port, candidate,
@@ -130,8 +131,8 @@ pub(crate) fn inspect_agent_config_statuses_with_overrides(
                             let mut status = inspect_pi_provider_status_with_executable(home, config.port, api_key,
                                 executable_overrides.get(PI_AGENT_ID).map(Path::new));
                             if !status.configured && candidate_keys.len() > 1 {
-                                for candidate in &candidate_keys {
-                                    if *candidate == api_key {
+                                for &candidate in candidate_keys {
+                                    if candidate == api_key {
                                         continue;
                                     }
                                     let alt = inspect_pi_provider_status_with_executable(home, config.port, candidate,
