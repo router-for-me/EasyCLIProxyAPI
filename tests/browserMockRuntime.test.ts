@@ -94,6 +94,13 @@ describe('browser mock runtime', () => {
     expect(await createBrowserMockRuntime('running', undefined, 1).invoke('get_core_status')).toMatchObject({ ready: true });
   });
 
+  test('lists selectable core versions for downgrade support', async () => {
+    const runtime = createBrowserMockRuntime('running');
+    const versions = await runtime.invoke('list_core_versions') as Array<{ version: string; assetName: string }>;
+    expect(versions.map((item) => item.version)).toEqual(['7.3.16', '7.3.15', '7.3.14']);
+    expect(versions[1].assetName).toBe('CLIProxyAPI_7.3.15_windows_amd64.zip');
+  });
+
   for (const scenario of ['running', 'empty'] as const) {
     test(`installs the bundled version independently of the latest release (${scenario})`, async () => {
       const runtime = createBrowserMockRuntime(scenario);

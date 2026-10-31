@@ -517,6 +517,11 @@ function createState(scenario: BrowserMockScenario) {
       message: null,
     },
     coreLatest: { version: '7.3.16', assetName: 'CLIProxyAPI_7.3.16_windows_amd64.zip' },
+    coreVersions: [
+      { version: '7.3.16', assetName: 'CLIProxyAPI_7.3.16_windows_amd64.zip', prerelease: false },
+      { version: '7.3.15', assetName: 'CLIProxyAPI_7.3.15_windows_amd64.zip', prerelease: false },
+      { version: '7.3.14', assetName: 'CLIProxyAPI_7.3.14_windows_amd64.zip', prerelease: false },
+    ],
     coreInstallTask: {
       running: false,
       cancellable: false,
@@ -1195,6 +1200,7 @@ export function createBrowserMockRuntime(
         return null;
       }
       case 'check_latest_core': return clone(state.coreLatest);
+      case 'list_core_versions': return clone(state.coreVersions);
       case 'get_core_install_task': return clone(state.coreInstallTask);
       case 'install_core_version':
       case 'install_bundled_core': {

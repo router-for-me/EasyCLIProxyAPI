@@ -702,6 +702,31 @@ textarea:focus-visible {
   color: var(--color-success-text);
 }
 
+.core-version-selector {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.core-version-selector label {
+  display: grid;
+  min-width: 220px;
+  flex: 1 1 220px;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+}
+
+.core-version-selector select {
+  width: 100%;
+}
+
+.core-version-selector button {
+  flex: 0 1 auto;
+}
+
 .version-card-actions {
   display: flex;
   flex-wrap: wrap;

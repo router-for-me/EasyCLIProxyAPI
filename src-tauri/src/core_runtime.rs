@@ -169,6 +169,61 @@ pub(crate) async fn check_latest_core(
     })
 }
 
+#[derive(Debug, Deserialize)]
+struct GithubReleaseVersion {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+}
+
+#[tauri::command]
+pub(crate) async fn list_core_versions(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<Vec<CoreVersionOption>, String> {
+    let platform = current_core_platform()?;
+    let config = gui_config_state.snapshot()?;
+    let client = http_client(&config.proxy_url, &config.custom_download_mirrors)?;
+    let source = config.selected_download_candidate();
+    let url = version_source_url(&source, CORE_RELEASES_API_URL);
+    let releases = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .header(reqwest::header::USER_AGENT, USER_AGENT)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to query CPA kernel versions: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Failed to read CPA kernel versions: {error}"))?
+        .json::<Vec<GithubReleaseVersion>>()
+        .await
+        .map_err(|error| format!("Failed to parse CPA kernel versions: {error}"))?;
+
+    let mut versions = Vec::new();
+    for release in releases {
+        if release.draft {
+            continue;
+        }
+        let Ok(parsed) = semver::Version::parse(release.tag_name.trim().trim_start_matches('v')) else {
+            continue;
+        };
+        let version = normalize_version(&parsed.to_string());
+        versions.push(CoreVersionOption {
+            asset_name: core_release_asset_name(&version, &platform),
+            version,
+            prerelease: release.prerelease,
+        });
+    }
+    versions.sort_by(|left, right| {
+        let left_version = semver::Version::parse(left.version.trim_start_matches('v')).ok();
+        let right_version = semver::Version::parse(right.version.trim_start_matches('v')).ok();
+        right_version.cmp(&left_version)
+    });
+    versions.dedup_by(|left, right| left.version == right.version);
+    Ok(versions)
+}
+
 #[tauri::command]
 pub(crate) fn detect_bundled_core() -> Result<Option<BundledCoreInfo>, String> {
     bundled_core_archive().map(|value| value.map(|(info, _)| info))

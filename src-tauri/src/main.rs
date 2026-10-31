@@ -112,6 +112,8 @@ const RELEASE_PAGE_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/rel
 const RELEASE_ATOM_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/releases.atom";
 const RELEASE_DOWNLOAD_PREFIX: &str =
     "https://github.com/router-for-me/CLIProxyAPI/releases/download/";
+const CORE_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases?per_page=100";
 #[cfg(windows)]
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-windows.json";
 #[cfg(target_os = "linux")]
@@ -446,6 +448,14 @@ struct CoreStatus {
 struct CoreLatest {
     version: String,
     asset_name: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoreVersionOption {
+    version: String,
+    asset_name: String,
+    prerelease: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -2926,6 +2936,7 @@ fn main() {
             start_app_update,
             cancel_app_update,
             check_latest_core,
+            core_runtime::list_core_versions,
             detect_bundled_core,
             install_core_version,
             install_bundled_core,

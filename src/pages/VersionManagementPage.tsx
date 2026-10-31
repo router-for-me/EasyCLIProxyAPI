@@ -2,6 +2,7 @@ import { onCoreInstallProgress, onConfigFilesChanged, onVersionDownloadSourceCha
 import { openExternalUrl } from '../services/appSettings';
 import {
   getVersionSourceSettings,
+  listCoreVersions,
   getCoreInstallTask,
   setDownloadSource,
   addCustomDownloadMirror,
@@ -17,6 +18,7 @@ import type {
   CoreInstallTask,
   CoreInstallResult,
   BundledCoreInfo,
+  CoreVersionOption,
 } from '../services/coreVersions';
 import { useEffect, useRef, useState } from 'react';
 import { getVersion } from '../services/platform';
@@ -102,11 +104,16 @@ export function VersionManagementPage() {
   const [installedAppVersion, setInstalledAppVersion] = useState('');
   const [bundledCore, setBundledCore] = useState<BundledCoreInfo | null>(null);
   const [bundledCoreError, setBundledCoreError] = useState('');
+  const [coreVersions, setCoreVersions] = useState<CoreVersionOption[]>([]);
+  const [coreVersionsLoading, setCoreVersionsLoading] = useState(false);
+  const [coreVersionsError, setCoreVersionsError] = useState('');
+  const [selectedCoreVersion, setSelectedCoreVersion] = useState('');
 
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<CoreInstallTask | null>(null);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [confirmUpdateOpen, setConfirmUpdateOpen] = useState(false);
+  const [confirmInstallVersion, setConfirmInstallVersion] = useState('');
   const [cancellingInstall, setCancellingInstall] = useState(false);
 
   const [versionSource, setVersionSource] = useState<VersionSourceSettings | null>(null);
@@ -188,6 +195,20 @@ export function VersionManagementPage() {
     } catch {}
   };
 
+  const loadCoreVersions = async () => {
+    setCoreVersionsLoading(true);
+    try {
+      const versions = await listCoreVersions();
+      setCoreVersions(versions);
+      setCoreVersionsError('');
+      setSelectedCoreVersion((current) => current || versions[0]?.version || '');
+    } catch (error) {
+      setCoreVersionsError(String(error));
+    } finally {
+      setCoreVersionsLoading(false);
+    }
+  };
+
   const updateVersionSource = async (source: VersionDownloadSource) => {
     setVersionSourceSaving(true);
     setVersionSourceError('');
@@ -195,6 +216,7 @@ export function VersionManagementPage() {
       const settings = await setDownloadSource({ source });
       setVersionSource(settings);
       resetLatest();
+      void loadCoreVersions();
       showNotice({ key: 'kernel.versions.sourceSwitched', variables: {
         source: downloadSourceLabel(settings.source, t),
       } }, 'info');
@@ -387,6 +409,7 @@ export function VersionManagementPage() {
     });
 
     loadInstallTask();
+    void loadCoreVersions();
     void loadVersionSourceSettings();
     void detectBundledCore()
       .then((info) => {
@@ -656,6 +679,37 @@ export function VersionManagementPage() {
             {latestError ? (
               <MessageNotice message={latestError} />
             ) : null}
+            <div className="core-version-selector">
+              <label>
+                <span>{t('kernel.versions.chooseVersion')}</span>
+                <Select
+                  value={selectedCoreVersion}
+                  disabled={coreVersionsLoading || busy || coreVersions.length === 0}
+                  aria-label={t('kernel.versions.chooseVersion')}
+                  onChange={(event) => setSelectedCoreVersion(event.currentTarget.value)}
+                >
+                  {coreVersions.length === 0 ? <option value="">{coreVersionsLoading ? t('kernel.versions.loadingVersions') : t('kernel.versions.noVersions')}</option> : null}
+                  {coreVersions.map((version) => (
+                    <option key={version.version} value={version.version}>
+                      {version.version}{version.prerelease ? ` · ${t('kernel.versions.prerelease')}` : ''}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={!selectedCoreVersion || busy}
+                onClick={() => {
+                  setConfirmInstallVersion(selectedCoreVersion);
+                  setConfirmUpdateOpen(false);
+                }}
+              >
+                <Download size={15} aria-hidden="true" />
+                <span>{t('kernel.versions.installSelected')}</span>
+              </button>
+            </div>
+            {coreVersionsError ? <MessageNotice message={coreVersionsError} /> : null}
           </div>
 
           <div className="version-card-actions core-actions">
@@ -663,7 +717,10 @@ export function VersionManagementPage() {
               type="button"
               className="secondary-button"
               disabled={busy}
-              onClick={() => void checkLatest(true)}
+              onClick={() => {
+                void checkLatest(true);
+                void loadCoreVersions();
+              }}
             >
               <RefreshCw size={15} className={checkingLatest ? 'spin' : ''} aria-hidden="true" />
               <span>{checkingLatest ? t('kernel.update.checking') : t('kernel.versions.check')}</span>
@@ -674,7 +731,10 @@ export function VersionManagementPage() {
               className={latestVersion && (!coreInstalled || coreHasUpdate) ? 'primary-button' : 'secondary-button'}
               title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
               disabled={!latestVersion || busy}
-              onClick={() => setConfirmUpdateOpen(true)}
+              onClick={() => {
+                setConfirmInstallVersion(latestVersion);
+                setConfirmUpdateOpen(true);
+              }}
             >
               <Download size={15} aria-hidden="true" />
               <span>{!coreInstalled ? t('kernel.versions.installLatestMissing') : t('kernel.versions.installLatest')}</span>
@@ -785,12 +845,15 @@ export function VersionManagementPage() {
         </Dialog>
       ) : null}
 
-      {confirmUpdateOpen ? (
+      {confirmUpdateOpen || confirmInstallVersion ? (
         <Dialog
           className="install-dialog app-update-dialog"
           backdropClassName="install-dialog-backdrop app-update-dialog-backdrop"
           labelledBy="core-update-confirm-title"
-          onClose={() => setConfirmUpdateOpen(false)}
+          onClose={() => {
+            setConfirmUpdateOpen(false);
+            setConfirmInstallVersion('');
+          }}
         >
           <div className="install-dialog-heading">
             <span className="install-dialog-eyebrow">{t('kernel.dialog.install')}</span>
@@ -800,14 +863,17 @@ export function VersionManagementPage() {
           </div>
 
           <p className="app-update-confirm-copy">
-            {t('kernel.versions.stopAndConfirmDescription', { version: latestVersion })}
+            {t('kernel.versions.stopAndConfirmDescription', { version: confirmInstallVersion })}
           </p>
 
           <div className="app-update-dialog-actions">
             <button
               type="button"
               className="secondary-button"
-              onClick={() => setConfirmUpdateOpen(false)}
+              onClick={() => {
+                setConfirmUpdateOpen(false);
+                setConfirmInstallVersion('');
+              }}
             >
               {t('common.cancel')}
             </button>
@@ -815,8 +881,10 @@ export function VersionManagementPage() {
               type="button"
               className="primary-button"
               onClick={() => {
+                const version = confirmInstallVersion;
                 setConfirmUpdateOpen(false);
-                void installCore({ kind: 'release', version: latestVersion });
+                setConfirmInstallVersion('');
+                void installCore({ kind: 'release', version });
               }}
             >
               <Download size={15} aria-hidden="true" />
