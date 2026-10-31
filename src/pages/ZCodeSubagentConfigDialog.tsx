@@ -106,15 +106,35 @@ export function ZCodeSubagentConfigDialog({
       closeDisabled={saving}
       dismissOnBackdrop
     >
-      <header className="config-dialog-heading">
-        <div>
-          <h2 id="zcode-subagent-title">
-            <Users size={18} style={{ display: "inline", verticalAlign: "middle", marginRight: 8 }} />
-            {t("agents.zcode.subagents.title") || "ZCode 子智能体设置"}
+      <header
+        className="config-dialog-heading"
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "16px",
+          paddingBottom: "12px",
+          borderBottom: "1px solid var(--border-color, #e5e7eb)",
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 id="zcode-subagent-title" style={{ margin: 0, fontSize: "17px", display: "flex", alignItems: "center", gap: "8px", whiteSpace: "normal" }}>
+            <Users size={18} style={{ flexShrink: 0 }} />
+            <span>{t("agents.zcode.subagents.title") || "ZCode 子智能体设置"}</span>
           </h2>
-          <p>{t("agents.zcode.subagents.description") || "配置 ZCode 子智能体（Sub-agent）的默认模型、思考强度，以及各智能体的专属模型映射。"}</p>
+          <p style={{ margin: "6px 0 0", fontSize: "13px", color: "var(--color-text-tertiary, #6b7280)", lineHeight: "1.4", whiteSpace: "normal" }}>
+            {t("agents.zcode.subagents.description") || "配置 ZCode 子智能体（Sub-agent）的全局默认模型与思考强度，以及为各子智能体分配独立的 CPA 模型。"}
+          </p>
         </div>
-        <button type="button" className="icon-button quiet" onClick={onClose} disabled={saving} aria-label={t("common.close")}>
+        <button
+          type="button"
+          className="icon-button quiet"
+          onClick={onClose}
+          disabled={saving}
+          aria-label={t("common.close")}
+          style={{ flexShrink: 0, marginTop: "-2px" }}
+        >
           <X size={18} aria-hidden="true" />
         </button>
       </header>
@@ -141,8 +161,31 @@ export function ZCodeSubagentConfigDialog({
           {loadError || null}
         </EmptyState>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "18px", padding: "16px 20px", maxHeight: "65vh", overflowY: "auto" }}>
-          <section className="surface-section" style={{ padding: "14px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+        <div
+          className="zcode-subagent-body"
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            overflowX: "hidden",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "16px",
+            padding: "16px 2px 8px",
+          }}
+        >
+          <section
+            className="surface-section"
+            style={{
+              padding: "16px",
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "16px",
+              borderRadius: "8px",
+              border: "1px solid var(--border-color, #e5e7eb)",
+              background: "var(--color-surface, #ffffff)",
+            }}
+          >
             <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
               <strong>全局默认子智能体模型</strong>
               <Select value={defaultModel} onChange={(e) => setDefaultModel(e.currentTarget.value)}>
@@ -180,7 +223,7 @@ export function ZCodeSubagentConfigDialog({
                 placeholder="搜索智能体名称..."
                 value={search}
                 onChange={(e) => setSearch(e.currentTarget.value)}
-                style={{ fontSize: "12px", padding: "4px 8px", width: "160px" }}
+                style={{ fontSize: "12px", padding: "5px 10px", width: "180px", borderRadius: "4px", border: "1px solid var(--border-color, #d1d5db)" }}
               />
             </div>
 
@@ -193,19 +236,23 @@ export function ZCodeSubagentConfigDialog({
                       key={sub.filePath}
                       className="surface-section"
                       style={{
-                        padding: "12px 14px",
+                        padding: "12px 16px",
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
                         gap: "14px",
-                        borderRadius: "6px",
+                        borderRadius: "8px",
+                        border: "1px solid var(--border-color, #e5e7eb)",
+                        background: "var(--color-surface, #ffffff)",
                       }}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                           <strong style={{ fontSize: "13px" }}>{sub.name}</strong>
                           {sub.tools.length > 0 ? (
-                            <span style={{ fontSize: "11px", opacity: 0.75 }}>[{sub.tools.slice(0, 3).join(", ")}{sub.tools.length > 3 ? "..." : ""}]</span>
+                            <span style={{ fontSize: "11px", opacity: 0.75, background: "var(--tag-bg, #f3f4f6)", padding: "1px 6px", borderRadius: "3px" }}>
+                              [{sub.tools.slice(0, 3).join(", ")}{sub.tools.length > 3 ? "..." : ""}]
+                            </span>
                           ) : null}
                         </div>
                         {sub.description ? (
@@ -222,7 +269,7 @@ export function ZCodeSubagentConfigDialog({
                             const val = e.currentTarget.value ? `cpa-gui/${e.currentTarget.value}` : "";
                             updateSubagentModel(sub.filePath, val);
                           }}
-                          style={{ minWidth: "150px", fontSize: "12px" }}
+                          style={{ minWidth: "160px", fontSize: "12px" }}
                         >
                           <option value="">继承默认</option>
                           {models.map((m) => (
@@ -235,7 +282,7 @@ export function ZCodeSubagentConfigDialog({
                         <Select
                           value={sub.thoughtLevel ?? ""}
                           onChange={(e) => updateSubagentThoughtLevel(sub.filePath, e.currentTarget.value)}
-                          style={{ minWidth: "100px", fontSize: "12px" }}
+                          style={{ minWidth: "110px", fontSize: "12px" }}
                         >
                           {thoughtLevelOptions.map((opt) => (
                             <option key={opt.value} value={opt.value}>
@@ -248,7 +295,7 @@ export function ZCodeSubagentConfigDialog({
                   );
                 })
               ) : (
-                <div style={{ textAlign: "center", padding: "20px", opacity: 0.6, fontSize: "13px" }}>
+                <div style={{ textAlign: "center", padding: "24px", opacity: 0.6, fontSize: "13px" }}>
                   未发现匹配的子智能体文件
                 </div>
               )}
@@ -259,7 +306,17 @@ export function ZCodeSubagentConfigDialog({
 
       <MessageNotice tone="error" message={error} />
 
-      <footer className="config-dialog-actions" style={{ display: "flex", justifyContent: "flex-end", gap: "10px", padding: "14px 20px" }}>
+      <footer
+        className="config-dialog-actions"
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: "10px",
+          paddingTop: "14px",
+          borderTop: "1px solid var(--border-color, #e5e7eb)",
+          flexShrink: 0,
+        }}
+      >
         <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>
           {t("common.cancel")}
         </button>
