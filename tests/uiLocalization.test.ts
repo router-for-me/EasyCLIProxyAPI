@@ -15,7 +15,6 @@ const technicalText = new Set([
   'headers',
   'ms',
   'note',
-  'tags',
   'Models.dev',
   'LiteLLM',
 ]);
@@ -27,17 +26,11 @@ const technicalPlaceholders = new Set([
   'socks5://127.0.0.1:1080',
 ]);
 
-const ignoredComponentFiles = new Set([
-  'CopilotPluginStatus.tsx',
-  'ZCodeSubagentConfigDialog.tsx',
-  'ZCodeModelCatalogDialog.tsx',
-]);
-
 function componentFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) return entry.name === 'i18n' ? [] : componentFiles(path);
-    return entry.name.endsWith('.tsx') && !ignoredComponentFiles.has(entry.name) ? [path] : [];
+    return entry.name.endsWith('.tsx') ? [path] : [];
   });
 }
 
@@ -71,7 +64,7 @@ describe('UI localization boundaries', () => {
     if (modelCase) inspectEffort(modelCase);
     expect(displayedExpressions).toContain('effort');
     expect(titleExpressions).toContain('{effort}');
-    expect(source.getText()).toContain("const effort = model.effort || 'auto'");
+    expect(source.getText()).toContain("const effort = record.reasoning_effort || 'auto'");
     expect(source.getText()).not.toContain("case 'effort'");
   });
 

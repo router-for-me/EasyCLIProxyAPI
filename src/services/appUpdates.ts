@@ -7,21 +7,14 @@ export type AppUpdateInfo = {
   updateAvailable: boolean;
   releaseUrl: string;
   releaseNotes: Partial<Record<AppLocale, string>> | null;
-  skippedReleaseNotes?: { version: string; releaseNotes: Partial<Record<AppLocale, string>> }[];
   publishedAt: string;
-  currentBuildAt: string | null;
   autoUpdateSupported: boolean;
-  preserveCoreSupported?: boolean;
-  downloadUrl: string | null;
-  downloadFileName: string | null;
   downloadSizeBytes: number | null;
   unsupportedReason: string | null;
-  updateChannel: string;
 };
 
 export type AppUpdateTask = {
   running: boolean;
-  preserveCore?: boolean;
   cancellable: boolean;
   phase: AppUpdatePhase;
   targetVersion: string | null;
@@ -50,17 +43,8 @@ export const checkAppUpdate = (): Promise<AppUpdateInfo> =>
 export const getAppUpdateTask = (): Promise<AppUpdateTask> =>
   invoke<AppUpdateTask>('get_app_update_task');
 
-export const startAppUpdate = (preserveCore = false): Promise<void> =>
-  invoke<void>('start_app_update', { preserveCore });
+export const startAppUpdate = (): Promise<void> =>
+  invoke<void>('start_app_update');
 
 export const cancelAppUpdate = (): Promise<void> =>
   invoke<void>('cancel_app_update');
-
-export const getUpdateChannel = (): Promise<string> =>
-  invoke<string>('get_update_channel');
-
-export const listUpdateChannels = (): Promise<string[]> =>
-  invoke<string[]>('list_update_channels');
-
-export const setUpdateChannel = (channel: string): Promise<string> =>
-  invoke<string>('set_update_channel', { channel });

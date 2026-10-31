@@ -443,28 +443,8 @@ pub(crate) fn matching_desktop_mappings(
 ) -> Option<ClaudeDesktopModelMappings> {
     let raw = read_agent_bytes(&desktop_mapping_path(paths).ok()?).ok()??;
     let state: DesktopMappingState = serde_json::from_slice(&raw).ok()?;
-    if state.version != 1 {
-        return None;
-    }
-    if Some(state.profile_models_hash) == profile_models_hash(images) {
-        return Some(state.mappings);
-    }
-    let entries = state.mappings.desktop_models.as_ref()?;
-    validate_claude_desktop_entries(entries).ok()?;
-    let (path, bytes) = images.get(2)?;
-    let profile = parse(path, text(bytes.as_deref()).ok()?).ok()?;
-    let models = profile.get("inferenceModels")?.as_array()?;
-    (entries.len() == models.len()
-        && entries.iter().zip(models).all(|(entry, model)| {
-            model.get("name").and_then(Value::as_str) == Some(entry.model_id())
-                && model.get("labelOverride").and_then(Value::as_str)
-                    == Some(entry.source_or_alias())
-                && model.get("supports1m").and_then(Value::as_bool).unwrap_or(false)
-                    == entry.context_1m
-                && model.get("prefer1m").and_then(Value::as_bool).unwrap_or(false)
-                    == entry.context_1m
-        }))
-    .then_some(state.mappings)
+    (state.version == 1 && Some(state.profile_models_hash) == profile_models_hash(images))
+        .then_some(state.mappings)
 }
 
 pub(crate) fn current_desktop_mappings(home: &Path) -> Option<ClaudeDesktopModelMappings> {
@@ -488,17 +468,6 @@ pub(crate) fn mapping_revision(client: &str, paths: &[PathBuf]) -> Result<String
 pub(crate) fn create_agent_config_backup(
     app: tauri::AppHandle,
     client: String,
-    config_directories: Option<AgentConfigDirectories>,
-) -> Result<BackupSummary, String> {
-    let directories = validate_agent_config_directories(config_directories)?;
-    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
-        create_agent_config_backup_in_directories(app, client)
-    })
-}
-
-pub(crate) fn create_agent_config_backup_in_directories(
-    app: tauri::AppHandle,
-    client: String,
 ) -> Result<BackupSummary, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
@@ -511,17 +480,6 @@ pub(crate) fn create_agent_config_backup_in_directories(
 pub(crate) fn list_agent_config_backups(
     app: tauri::AppHandle,
     client: String,
-    config_directories: Option<AgentConfigDirectories>,
-) -> Result<BackupList, String> {
-    let directories = validate_agent_config_directories(config_directories)?;
-    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
-        list_agent_config_backups_in_directories(app, client)
-    })
-}
-
-pub(crate) fn list_agent_config_backups_in_directories(
-    app: tauri::AppHandle,
-    client: String,
 ) -> Result<BackupList, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
@@ -532,18 +490,6 @@ pub(crate) fn list_agent_config_backups_in_directories(
 
 #[tauri::command]
 pub(crate) fn delete_agent_config_backup(
-    app: tauri::AppHandle,
-    client: String,
-    id: String,
-    config_directories: Option<AgentConfigDirectories>,
-) -> Result<(), String> {
-    let directories = validate_agent_config_directories(config_directories)?;
-    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
-        delete_agent_config_backup_in_directories(app, client, id)
-    })
-}
-
-pub(crate) fn delete_agent_config_backup_in_directories(
     app: tauri::AppHandle,
     client: String,
     id: String,

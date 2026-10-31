@@ -1,8 +1,5 @@
-import { readAgentConfigDirectories, writeAgentConfigDirectories } from '../services/agentConfigDirectories';
-import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
 import { pollWhileActive } from '../services/windowActivity';
 import { Notice } from '../components/Notice';
-import { isTransientConnectBlockReason, resolveAgentConnectBlockReason } from '../services/agentConnectBlock';
 import { Tabs } from '../components/Tabs';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { Switch } from '../components/Switch';
@@ -64,7 +61,6 @@ import {
   Bot,
   Check,
   ChevronDown,
-  FileText,
   LoaderCircle,
   SlidersHorizontal,
   Users,
@@ -121,18 +117,14 @@ import { CodexRemoteCompactionSwitch } from './CodexRemoteCompactionSwitch';
 import { CodexProviderSwitch } from './CodexProviderSwitch';
 import { CodexModelCatalogDialog } from './CodexModelCatalogDialog';
 import { CodexSubagentConfigDialog } from './CodexSubagentConfigDialog';
-import { ZCodeModelCatalogDialog } from './ZCodeModelCatalogDialog';
-import { ZCodeSubagentConfigDialog } from './ZCodeSubagentConfigDialog';
 import { DeepSeekHarnessCatalogDialog } from './DeepSeekHarnessCatalogDialog';
-import { AgentSystemPromptDialog } from './AgentSystemPromptDialog';
 import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
 import { AgentClientList } from './AgentClientList';
-import { AgentConfigManagementPanel, AgentConfigurationFeedback, AgentConnectBlockNotice, AgentRunControls, connectBlockNoticeText } from './AgentControls';
+import { AgentConfigManagementPanel, AgentConfigurationFeedback, AgentRunControls } from './AgentControls';
 import { Dialog } from '../components/Dialog';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { requestAppNavigation } from '../navigation';
 import { Select } from '../components/Select';
-import { ClaudeResponseLanguage } from './ClaudeResponseLanguage';
 
 const setupErrors: Record<string, MessageKey> = {
   COPILOT_SETUP_REQUIRED: 'agents.copilotSetup.required',
@@ -595,7 +587,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const setLaunchError = (launchError: string) => updateViewState({ launchError });
   const [statuses, setStatuses] = useState<AgentConfigStatus[]>(() => agentStatusesCache ?? []);
   const [executablePaths, setExecutablePaths] = useState(() => readAgentExecutablePaths());
-  const [configDirectories, setConfigDirectories] = useState(readAgentConfigDirectories);
   const [modelData, setModelData] = useState(() => ({
     client: selected, models: agentModelsCache[selected] ?? [],
   }));
@@ -660,17 +651,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [clearError, setClearError] = useState('');
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [launchDirectoryDialogOpen, setLaunchDirectoryDialogOpen] = useState(false);
-  const [customArgumentDrafts, setCustomArgumentDrafts] = useState<Partial<Record<AgentClientId, string>>>({});
-  const customArguments = customArgumentDrafts[selected] ?? '';
-  const parsedCustomArguments = parseAgentLaunchArguments(customArguments);
-  const customArgumentConflict = selected === 'deepseek-harness' && parsedCustomArguments !== null && hasDeepSeekArgumentConflict(parsedCustomArguments);
-  const customArgumentsInvalid = parsedCustomArguments === null || customArgumentConflict;
   const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
   const [codexSubagentDialogOpen, setCodexSubagentDialogOpen] = useState(false);
-  const [zcodeCatalogDialogOpen, setZcodeCatalogDialogOpen] = useState(false);
-  const [zcodeSubagentDialogOpen, setZcodeSubagentDialogOpen] = useState(false);
   const [harnessCatalogDialogOpen, setHarnessCatalogDialogOpen] = useState(false);
-  const [systemPromptDialogOpen, setSystemPromptDialogOpen] = useState(false);
   const [desktopHelpOpen, setDesktopHelpOpen] = useState(false);
   const [launchDirectory, setLaunchDirectory] = useState('');
   const [launchDirectoryTarget, setLaunchDirectoryTarget] = useState<AgentLaunchTarget | null>(null);
@@ -906,14 +889,9 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     () => filterAgentModelsByAlias(models, claudeCustomMapping),
     [claudeCustomMapping, models],
   );
-  const fallbackApplied = useMemo(
-    () => models.filter((m) => m.isAlias && m.alias).map((m) => ({ model: m.alias!, alias: m.name, context1m: false })),
-    [models],
-  );
   const desktopEntries = claudeModelMappingsDraft.desktopModels ?? desktopModelEntries(claudeModelMappingsDraft);
   const appliedDesktopEntries = activeStatus?.claudeDesktopModelMappings
-    ? desktopModelEntries(activeStatus.claudeDesktopModelMappings)
-    : fallbackApplied;
+    ? desktopModelEntries(activeStatus.claudeDesktopModelMappings) : [];
   const resolvedDesktopEntries = suffixCollidingDesktopAliases(desktopEntries, models, appliedDesktopEntries);
   const desktopValidation = desktopModelValidation(resolvedDesktopEntries, models, appliedDesktopEntries);
 
@@ -1003,7 +981,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         manageSubagentModel: source.manageSubagentModel !== false,
         startupModel: source.startupModel?.trim() || 'opus',
         subagentModel: source.subagentModel ?? '',
-        responseLanguage: source.responseLanguage ?? null,
       };
       return sameAgentModelMappings(currentClientDraft, next)
         ? current
@@ -1068,8 +1045,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     activeStatus?.supportedPlatform
       && (activeStatus.installed || activeStatus.configExists),
   );
-  // canEnable stays the write-readiness gate used by template/update actions; the
-  // blocked-reason model below additionally covers busy/loading/invalid config.
   const canEnable = Boolean(
     canConfigureActiveClient
       && !modelLoading
@@ -1077,33 +1052,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         ? claudeMappingsReady && claudeCodeRuntimeSettingsReady
         : selectedModelOption),
   );
-  const connectBlockInput = {
-    busy,
-    loading,
-    hasStatus: Boolean(activeStatus),
-    supportedPlatform: Boolean(activeStatus?.supportedPlatform),
-    installed: Boolean(activeStatus?.installed),
-    configExists: Boolean(activeStatus?.configExists),
-    connectionInvalid: connectionState === 'invalid',
-    modelLoading,
-    modelCount: models.length,
-    hasSavedModelSelection: Boolean(savedSelectedModel),
-    // A saved model that exists in the catalog is still a valid selection for clients that
-    // keep the applied model out of the picker; only a missing catalog entry is gone.
-    hasSelectedModel: Boolean(savedSelectedModel && (selectedModelOption || isClaudeModelMappingClient)),
-    claudeMappingClient: isClaudeModelMappingClient,
-    claudeMappingsReady,
-    claudeRuntimeSettingsReady: claudeCodeRuntimeSettingsReady,
-  };
-  const connectBlockReason = resolveAgentConnectBlockReason(connectBlockInput);
-  const connectDisabled = connectBlockReason !== null;
-  // The management apply row additionally needs an edited setting to write.
-  const connectApplyBlockReason = resolveAgentConnectBlockReason({
-    ...connectBlockInput,
-    requirePendingChanges: true,
-    hasPendingChanges,
-  });
-  const connectApplyDisabled = connectApplyBlockReason !== null;
   const activeLaunchTargets = activeStatus?.launchTargets ?? [];
   const launchEnabled = Boolean(
     activeStatus?.supportedPlatform
@@ -1296,7 +1244,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     resolved.disableAutoCompact = claudeModelMappingsDraft.disableAutoCompact;
     resolved.startupModel = claudeModelMappingsDraft.startupModel.trim() || 'opus';
     resolved.subagentModel = claudeModelMappingsDraft.subagentModel.trim();
-    resolved.responseLanguage = claudeModelMappingsDraft.responseLanguage ?? null;
     resolved.manageDefaultModel = resolved.startupModel.length > 0;
     resolved.manageSubagentModel = resolved.subagentModel.length > 0;
     return resolved;
@@ -1597,37 +1544,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     }
   };
 
-  const saveConfigDirectory = async (directory: string) => {
-    const previous = configDirectories;
-    const next = { ...previous };
-    if (directory.trim()) next[selected] = directory.trim();
-    else delete next[selected];
-    setBusyAction('directory');
-    setConfigurationError('');
-    try {
-      writeAgentConfigDirectories(next);
-      ++statusRequestRef.current;
-      const refreshed = await refreshAgentConfigStatuses({ executableOverrides: executablePaths });
-      setConfigDirectories(next);
-      setStatuses(refreshed);
-      setConfigurationNotice(t('agents.configDirectory.saved'));
-    } catch (requestError) {
-      try { writeAgentConfigDirectories(previous); } catch { }
-      setConfigurationError(String(requestError));
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const chooseConfigDirectory = async () => {
-    try {
-      const directory = await open({ directory: true, multiple: false, title: t('agents.configDirectory.title') });
-      if (typeof directory === 'string') await saveConfigDirectory(directory);
-    } catch (requestError) {
-      setConfigurationError(String(requestError));
-    }
-  };
-
   const chooseExecutablePath = async (desktop = false) => {
     try {
       const selectedPath = await open({ directory: false, multiple: false, title: t('agents.executablePath.dialogTitle') });
@@ -1678,7 +1594,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         desktopExecutablePath: executablePaths[`${selected}:app`] ?? null,
         workingDirectory,
         deepseekHarnessOptions: deepSeekHarnessOptions,
-        ...(target.id === 'cli' && customArguments ? { customArguments } : {}),
       });
       if (selected === 'deepseek-harness') {
         await loadDeepSeekHarnessProcessStatus();
@@ -1796,7 +1711,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
   const launchFromDirectoryDialog = async () => {
     if (!launchDirectoryTarget) return;
-    if (launchDirectoryTarget.id === 'cli' && customArgumentsInvalid) return;
     const workingDirectory = launchDirectory.trim();
     if (!workingDirectory) {
       setLaunchDirectoryError(t('agents.launchDirectory.directoryRequired'));
@@ -1890,33 +1804,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setCodexSubagentDialogOpen(true)} disabled={busy}><Users size={16} />{t('agents.subagents.button')}</button>
   ) : null;
 
-  const zcodeCatalogButton = selected === 'zcode' ? (
-    <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setZcodeCatalogDialogOpen(true)} disabled={busy}><SlidersHorizontal size={16} />{t('agents.catalog.button')}</button>
-  ) : null;
-
-  const zcodeSubagentButton = selected === 'zcode' ? (
-    <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setZcodeSubagentDialogOpen(true)} disabled={busy}><Users size={16} />{t('agents.subagents.button')}</button>
-  ) : null;
-
   const harnessCatalogButton = isDeepSeekHarnessClient ? (
     <button type="button" className="secondary-button agent-codex-catalog-button"
       onClick={() => setHarnessCatalogDialogOpen(true)} disabled={busy || configurationWriteBlocked}>
       <SlidersHorizontal size={16} />{t('agents.harness.button')}
     </button>
-  ) : null;
-
-  const systemPromptSetting = selected !== 'codex' ? (
-    <section className="agent-system-prompt-setting surface-section" aria-labelledby="agent-system-prompt-setting-title">
-      <div>
-        <h3 id="agent-system-prompt-setting-title">{t('agents.systemPrompt.button')}</h3>
-        <p>{t('agents.systemPrompt.subtitle')}</p>
-      </div>
-      <button type="button" className="secondary-button" aria-haspopup="dialog" disabled={busy}
-        onClick={() => setSystemPromptDialogOpen(true)}>
-        <FileText size={16} aria-hidden="true" />
-        {t('agents.systemPrompt.edit')}
-      </button>
-    </section>
   ) : null;
 
   const closeConfigurationButton = canCloseConfiguration ? (
@@ -1929,34 +1821,12 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </button>
   ) : null;
 
-  // The blocked reason repeats the invalid-config guidance in its own notice.
   const configurationFeedback = <AgentConfigurationFeedback pending={hasPendingChanges}
     status={modelLoading || !activeStatus ? t('agents.modify.checking')
       : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState') : ''}
-    description={connectBlockReason === 'configInvalid' ? '' : modificationDescription} />;
+    description={modificationDescription} />;
   const setupErrorKey = selected === 'vscode-copilot' ? copilotSetupErrorKey(configurationError) : undefined;
   const configurationErrorMessage = (setupErrorKey ? t(setupErrorKey) : configurationError) || (!nativeOauth ? modelSelectionError || (selected === 'claude-code' ? '' : modelError) : '');
-  const connectBlockNoticeId = useId();
-  const modelNames = models.map((model) => model.name);
-  const connectBlockVisible = connectBlockReason !== null
-    && !isTransientConnectBlockReason(connectBlockReason);
-  // The notice renders once at the page level so the save bar keeps its layout when a
-  // reason appears; each save bar reserves a full-width slot to expose the same copy on hover.
-  // The management subpage additionally requires an edited setting before writing, so it
-  // reuses the page-level notice whenever the pending-change state is the only blocker.
-  const shownBlockReason = activeSubpage === 'management' && connectApplyBlockReason === 'noPendingChanges'
-    && connectBlockReason === null ? connectApplyBlockReason : connectBlockReason;
-  const shownBlockVisible = shownBlockReason !== null
-    && !isTransientConnectBlockReason(shownBlockReason);
-  const shownBlockReasonText = shownBlockVisible && shownBlockReason
-    ? connectBlockNoticeText(shownBlockReason, t) : '';
-  const connectBlockNotice = shownBlockVisible
-    ? <AgentConnectBlockNotice id={connectBlockNoticeId} reason={shownBlockReason} models={modelNames}
-      canTemplate={canEnable && !nativeOauth}
-      onTemplate={() => void openDefaultConfirmation()}
-      onOpenManagement={() => setActiveSubpage('management')}
-      onRefreshModels={refreshModels} />
-    : null;
 
   const editDesktopEntries = (entries: ClaudeDesktopModelMapping[]) => {
     setModelSelectionError('');
@@ -1999,8 +1869,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               <div className="agent-desktop-model-field">
                 <span>{t('agents.claudeDesktopMapping.model')}</span>
                 <AgentModelPicker models={claudeMappingModels} value={entry.model} loading={modelLoading} error={modelError}
-                  allowCustomValue disabled={busy || loading || !canConfigureActiveClient}
-                  onChange={(model) => updateDesktopEntry(index, { model, ...(isClaudeDesktopModel(model) && !entry.alias.trim() ? { alias: '' } : {}) })}
+                  allowCustomValue disabled={busy || loading || !activeStatus?.installed || !activeStatus.supportedPlatform}
+                  onChange={(model) => updateDesktopEntry(index, { model, ...(isClaudeDesktopModel(model) ? { alias: '' } : {}) })}
                   onRefresh={refreshModels} />
               </div>
               <div className="agent-desktop-model-field">
@@ -2008,7 +1878,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 <AgentModelPicker
                   models={claudeDesktopAliasSuggestions.filter((alias) => !resolvedDesktopEntries.some((other, i) => i !== index && other.model.trim() && desktopModelId(other).toLowerCase() === alias))
                     .map((name) => ({ name, alias: t('agents.claudeDesktopMapping.suggestedAlias') }))}
-                  value={desktopEntries[index].alias} loading={false} error="" disabled={busy || loading}
+                  value={entry.alias} loading={false} error="" disabled={busy || loading}
                   editable={{ label: t('agents.claudeDesktopMapping.alias'),
                     placeholder: t(isClaude ? 'agents.claudeDesktopMapping.claudeDefault' : 'agents.claudeDesktopMapping.noRename'), maxLength: 128 }}
                   onChange={(alias) => updateDesktopEntry(index, { alias })} />
@@ -2082,7 +1952,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             <Tabs className="agent-subpage-tabs secondary-page-tabs" aria-label={t('agents.tabs.label')} value={activeSubpage} onChange={setActiveSubpage} disabled={busy}
               items={availableSubpages.map(subpage => ({ value: subpage.id, id: `agent-subpage-tab-${subpage.id}`, panelId: `agent-subpage-panel-${subpage.id}`, label: t(subpage.labelKey) }))} />
           ) : null}
-          {connectBlockNotice}
           <div className="agent-config-scroll-region">
           {embedded && selected === 'vscode-copilot' && activeSubpage === 'core' && activeStatus ? (
             <CopilotPluginStatus installed={activeStatus.pluginInstalled} version={activeStatus.pluginVersion} />
@@ -2102,7 +1971,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
                 <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
                 {activeStatus && !activeStatus.installed ? <Notice tone="warn" variant="text" className="agent-detection-help" action={<button type="button" className="link-button" onClick={() => setActiveSubpage('management')}>{t('agents.executablePath.openManagement')}</button>}>{t('agents.executablePath.notDetected')}</Notice> : null}
-              {systemPromptSetting}
               {selected === 'claude-desktop' ? desktopModelEditor : <div className="agent-minimal-field">
                 <label htmlFor="embedded-agent-model">{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</label>
                 <AgentModelPicker
@@ -2115,27 +1983,46 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   onChange={selectEmbeddedModel}
                   onRefresh={refreshModels}
                 />
-                {codexCatalogButton}{codexSubagentButton}{zcodeCatalogButton}{zcodeSubagentButton}{harnessCatalogButton}
+                {codexCatalogButton}{codexSubagentButton}{harnessCatalogButton}
                 {!isClaudeModelMappingClient && missingModelHint ? <span className="agent-model-hint" role="status">{missingModelHint}</span> : null}
               </div>}
 
-
+              {coreApiKeys.length > 1 && !(selected === 'codex' && oauthConfiguration) ? (
+                <div className="agent-minimal-field">
+                  <label htmlFor="embedded-agent-api-key">{t('agents.apiKey.title')}</label>
+                  <Select
+                    id="embedded-agent-api-key"
+                    value={effectiveSelectedApiKey}
+                    disabled={busy || !canConfigureActiveClient}
+                    onChange={(event) => selectApiKey(event.currentTarget.value)}
+                  >
+                    {coreApiKeys.map((entry, index) => {
+                      const isDefault = index === 0;
+                      const label = entry.remark
+                        ? `${entry.remark} (${maskSecret(entry.apiKey)})${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`
+                        : `${maskSecret(entry.apiKey)}${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`;
+                      return (
+                        <option key={entry.apiKey} value={entry.apiKey}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </Select>
+                </div>
+              ) : null}
 
               {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
 
 
               <div className="agent-save-bar">
                 {configurationFeedback}
-                {shownBlockVisible ? <span className="agent-connect-block-slot" title={shownBlockReasonText} aria-hidden="true" /> : null}
                 <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
                   {closeConfigurationButton}
                   <button
                     type="button"
                     className="primary-button"
                     onClick={applySelectedConfiguration}
-                    disabled={connectDisabled}
-                    title={connectDisabled && shownBlockReasonText ? shownBlockReasonText : undefined}
-                    aria-describedby={connectBlockNotice ? connectBlockNoticeId : undefined}
+                    disabled={busy || !canEnable || configurationWriteBlocked}
                   >
                     {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
                     {isPiClient
@@ -2205,7 +2092,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
               {activeStatus && !activeStatus.installed ? <Notice tone="warn" variant="text" className="agent-detection-help" action={<button type="button" className="link-button" onClick={() => setActiveSubpage('management')}>{t('agents.executablePath.openManagement')}</button>}>{t('agents.executablePath.notDetected')}</Notice> : null}
-              {systemPromptSetting}
 
               {!isClaudeModelMappingClient ? (
                 <section className="agent-core-setting-section agent-model-section surface-section">
@@ -2225,11 +2111,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   {modelHint ? <span className="agent-model-hint agent-model-status" title={modelHint} aria-live="polite">{modelHint}</span> : null}
                   {missingModelHint ? <span className="agent-model-hint" role="status">{missingModelHint}</span> : null}
                   {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
-                  {isDeepSeekHarnessClient ? (
-                    <div className="agent-codex-options">
-                      <div className="agent-codex-tool-buttons">{harnessCatalogButton}</div>
-                    </div>
-                  ) : null}
+                  {harnessCatalogButton}
                   {selected === 'codex' ? (
                     <div className="agent-codex-options">
                       <div className="agent-auth-method">
@@ -2243,7 +2125,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         </div>
                         <SegmentedControl id="agent-connection-method" className="agent-auth-segmented" aria-labelledby="agent-connection-method-label"
                           aria-describedby={connectionHelpOpen ? "agent-signin-hint" : undefined} value={oauthConfiguration ? 'oauth' : 'apikey'}
-                          disabled={busy || loading || modelLoading} buttonClassName="agent-auth-segmented-button"
+                          disabled={busy || loading || modelLoading || activeStatus?.codexOpenaiProvider} buttonClassName="agent-auth-segmented-button"
                           onChange={value => { if ((value === 'oauth') !== Boolean(oauthConfiguration)) void changeOauthConfiguration(value === 'oauth'); }}
                           items={[
                             { value: 'apikey', label: t('agents.modify.authApiKey') },
@@ -2258,11 +2140,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                           <div><dt>{t('agents.modify.authOAuth')}</dt><dd>{t('agents.modify.authOAuthHint')}</dd></div>
                         </dl>
                       </div>
-                    </div>
-                  ) : null}
-                  {selected === 'zcode' ? (
-                    <div className="agent-codex-options">
-                      <div className="agent-codex-tool-buttons agent-codex-tool-buttons-row">{zcodeCatalogButton}{zcodeSubagentButton}</div>
                     </div>
                   ) : null}
                 </section>
@@ -2288,11 +2165,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       </label>
                     </div>
                   </div>
-                  <ClaudeResponseLanguage
-                    value={claudeModelMappingsDraft.responseLanguage}
-                    disabled={busy || loading}
-                    onChange={(responseLanguage) => editClaudeModelMappings((current) => ({ ...current, responseLanguage }))}
-                  />
                   <ClaudeCodeModelInputs
                         routes={claudeModelMappingsDraft}
                         models={models}
@@ -2384,17 +2256,54 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 </section>
               ) : null}
 
-
+              <section className="agent-core-setting-section agent-api-key-section surface-section">
+                <div className="agent-section-heading">
+                  <div><strong>{t('agents.apiKey.title')}</strong></div>
+                </div>
+                {selected === 'codex' && oauthConfiguration ? (
+                  <p className="agent-model-hint">{t('agents.apiKey.oauthNotice')}</p>
+                ) : (
+                  <>
+                    <Select
+                      value={effectiveSelectedApiKey}
+                      disabled={busy || !canConfigureActiveClient}
+                      onChange={(event) => selectApiKey(event.currentTarget.value)}
+                    >
+                      {coreApiKeys.map((entry, index) => {
+                        const isDefault = index === 0;
+                        const label = entry.remark
+                          ? `${entry.remark} (${maskSecret(entry.apiKey)})${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`
+                          : `${maskSecret(entry.apiKey)}${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`;
+                        return (
+                          <option key={entry.apiKey} value={entry.apiKey}>
+                            {label}
+                          </option>
+                        );
+                      })}
+                      {configuredApiKey && !coreApiKeys.some((k) => k.apiKey === configuredApiKey) ? (
+                        <option value={configuredApiKey}>
+                          {maskSecret(configuredApiKey)} ({t('agents.apiKey.externalKey')})
+                        </option>
+                      ) : null}
+                      {coreApiKeys.length === 0 && !configuredApiKey ? (
+                        <option value="">{t('agents.apiKey.defaultUnset')}</option>
+                      ) : null}
+                    </Select>
+                    <span className="agent-model-hint">
+                      {coreApiKeys.length > 1
+                        ? t('agents.apiKey.hintMultiple', { count: coreApiKeys.length })
+                        : t('agents.apiKey.hint')}
+                    </span>
+                  </>
+                )}
+              </section>
 
               <div className="agent-save-bar">
                 {configurationFeedback}
-                {shownBlockVisible ? <span className="agent-connect-block-slot" title={shownBlockReasonText} aria-hidden="true" /> : null}
                   <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
                   {closeConfigurationButton}
                   <button type="button" className="primary-button" onClick={applySelectedConfiguration}
-                    disabled={connectDisabled}
-                    title={connectDisabled && shownBlockReasonText ? shownBlockReasonText : undefined}
-                    aria-describedby={connectBlockNotice ? connectBlockNoticeId : undefined}
+                    disabled={busy || !canEnable || configurationWriteBlocked}
                   >
                     {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
                     {isPiClient && !activeStatus?.pluginInstalled ? t('agents.pi.install') : configurationActionLabel}
@@ -2417,59 +2326,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           ) : null}
           {activeSubpage === 'management' ? (
             <div id="agent-subpage-panel-management" role="tabpanel" aria-labelledby="agent-subpage-tab-management">
-              <div className="agent-management-sections" style={{ marginBottom: '16px' }}>
-                <section className="agent-management-row">
-                  <div>
-                    <h3>{t('agents.apiKey.title')}</h3>
-                    <p>
-                      {coreApiKeys.length > 1
-                        ? t('agents.apiKey.hintMultiple', { count: coreApiKeys.length })
-                        : t('agents.apiKey.hint')}
-                    </p>
-                  </div>
-                  <div className="agent-management-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{ minWidth: '220px' }}>
-                      <Select
-                        value={effectiveSelectedApiKey}
-                        disabled={busy || !canConfigureActiveClient}
-                        onChange={(event) => selectApiKey(event.currentTarget.value)}
-                      >
-                        {coreApiKeys.map((entry, index) => {
-                          const isDefault = index === 0;
-                          const label = entry.remark
-                            ? `${entry.remark} (${maskSecret(entry.apiKey)})${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`
-                            : `${maskSecret(entry.apiKey)}${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`;
-                          return (
-                            <option key={entry.apiKey} value={entry.apiKey}>
-                              {label}
-                            </option>
-                          );
-                        })}
-                        {configuredApiKey && !coreApiKeys.some((k) => k.apiKey === configuredApiKey) ? (
-                          <option value={configuredApiKey}>
-                            {maskSecret(configuredApiKey)} ({t('agents.apiKey.externalKey')})
-                          </option>
-                        ) : null}
-                        {coreApiKeys.length === 0 && !configuredApiKey ? (
-                          <option value="">{t('agents.apiKey.defaultUnset')}</option>
-                        ) : null}
-                      </Select>
-                    </div>
-                    <button
-                      type="button"
-                      className="primary-button"
-                      onClick={applySelectedConfiguration}
-                      disabled={connectApplyDisabled}
-                      style={{ height: '36px', padding: '0 14px', whiteSpace: 'nowrap' }}
-                      title={connectApplyDisabled ? shownBlockReasonText || undefined : undefined}
-                      aria-describedby={shownBlockVisible ? connectBlockNoticeId : undefined}
-                    >
-                      {busyAction === 'apply' ? <LoaderCircle size={15} className="spin" /> : null}
-                      {configurationActionLabel}
-                    </button>
-                  </div>
-                </section>
-              </div>
               <AgentConfigManagementPanel pi={isPiClient} codex={selected === 'codex'} busyAction={busyAction}
                 codexApprovalModelControl={selected === 'codex' ? <CodexApprovalModelControl
                   disabled={busy || loading || hasPendingChanges || Boolean(activeStatus?.codexNativeOauth)}
@@ -2496,8 +2352,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     await reloadStatusesAfterAction();
                   }}
                 /> : null}
-                key={selected} client={selected} configDirectory={configDirectories[selected] ?? ''}
-                onSaveConfigDirectory={directory => void saveConfigDirectory(directory)} onChooseConfigDirectory={() => void chooseConfigDirectory()}
                 executablePath={executablePaths[selected] ?? ''} onChooseExecutablePath={() => void chooseExecutablePath()}
                 onClearExecutablePath={() => clearExecutablePath()}
                 dualTargets={hasIndependentCliAndApp} desktopExecutablePath={executablePaths[`${selected}:app`] ?? ''}
@@ -2556,23 +2410,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         />
       ) : null}
       {codexSubagentDialogOpen ? <CodexSubagentConfigDialog onClose={() => setCodexSubagentDialogOpen(false)} onSaved={() => undefined} /> : null}
-
-      {zcodeCatalogDialogOpen ? (
-        <ZCodeModelCatalogDialog
-          onClose={() => setZcodeCatalogDialogOpen(false)}
-          onSaved={async () => { await loadModels('zcode', selectedModel); await loadStatuses(true); }}
-        />
-      ) : null}
-      {zcodeSubagentDialogOpen ? <ZCodeSubagentConfigDialog onClose={() => setZcodeSubagentDialogOpen(false)} onSaved={() => undefined} /> : null}
-      {systemPromptDialogOpen && selected !== 'codex' ? (
-        <AgentSystemPromptDialog
-          key={selected}
-          client={selected}
-          clientName={activeDefinition.name}
-          onClose={() => setSystemPromptDialogOpen(false)}
-          onSaved={async () => { await loadStatuses(true); }}
-        />
-      ) : null}
 
       {launchDirectoryDialogOpen ? (
         <Dialog
@@ -2766,28 +2603,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               </div>
             </div>
           ) : null}
-          {launchDirectoryTarget?.id === 'cli' ? (
-            <div className="agent-custom-arguments surface-section surface-muted">
-              <label className="config-dialog-field" htmlFor="agent-custom-arguments">
-                <span>{t('agents.customArguments.label')}</span>
-                <textarea id="agent-custom-arguments" className="config-dialog-text-input" rows={3}
-                  value={customArguments} disabled={busy} spellCheck={false} autoComplete="off"
-                  aria-describedby={`agent-custom-arguments-help${customArgumentsInvalid ? ' agent-custom-arguments-error' : ''}`}
-                  aria-invalid={customArgumentsInvalid}
-                  onChange={(event) => {
-                    const value = event.currentTarget.value;
-                    setCustomArgumentDrafts((current) => ({ ...current, [selected]: value }));
-                  }} />
-              </label>
-              <p id="agent-custom-arguments-help">{t('agents.customArguments.summary')}</p>
-              <details>
-                <summary>{t('agents.customArguments.details')}</summary>
-                <p>{t('agents.customArguments.help')}</p>
-              </details>
-              {isDeepSeekHarnessClient ? <p>{t('agents.customArguments.deepseek')}</p> : null}
-              {customArgumentsInvalid ? <p id="agent-custom-arguments-error" role="alert">{t(customArgumentConflict ? 'agents.customArguments.conflict' : 'agents.customArguments.error')}</p> : null}
-            </div>
-          ) : null}
           {launchDirectoryError ? (
             <MessageNotice message={launchDirectoryError} onDismiss={() => setLaunchDirectoryError('')} />
           ) : null}
@@ -2807,7 +2622,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               type="button"
               className="primary-button"
               onClick={() => void launchFromDirectoryDialog()}
-              disabled={busy || !launchDirectory.trim() || !launchDirectoryTarget || (launchDirectoryTarget.id === 'cli' && customArgumentsInvalid)}
+              disabled={busy || !launchDirectory.trim() || !launchDirectoryTarget}
             >
               {busyAction === 'launch' || busyAction === 'launch-cli'
                 ? <LoaderCircle size={16} className="spin" />

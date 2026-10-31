@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { releaseNotesBody, resolveReleaseNotes, resolveReleaseNotesHistory, validateReleaseNotes } from '../scripts/release-notes.mjs';
+import { releaseNotesBody, resolveReleaseNotes, validateReleaseNotes } from '../scripts/release-notes.mjs';
 
 async function withNotesRoot(run: (root: string, directory: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), 'easycli-release-notes-'));
@@ -18,46 +18,19 @@ async function withNotesRoot(run: (root: string, directory: string) => Promise<v
 }
 
 describe('localized release notes publication', () => {
-  test('keeps only nine skipped releases, newest by version rather than directory name', () => withNotesRoot(async (root) => {
-    for (const patch of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
-      const directory = join(root, 'docs', 'release-notes', `v1.2.${patch}`);
-      await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, 'en.md'), `Notes for 1.2.${patch}`);
-    }
-    const history = await resolveReleaseNotesHistory({ root, tag: 'v1.2.12' });
-    expect(Object.keys(history)).toEqual([
-      '1.2.11', '1.2.10', '1.2.9', '1.2.8', '1.2.7', '1.2.6', '1.2.5', '1.2.4', '1.2.3',
-    ]);
-  }));
-
-  test('caps the serialized UTF-8 history without truncating Markdown or skipping over the cutoff', () => withNotesRoot(async (root) => {
-    const latestText = '新'.repeat(30_000);
-    for (const [version, text] of [['1.2.3', 'old'], ['1.2.4', '旧'.repeat(15_000)], ['1.2.5', latestText]]) {
-      const directory = join(root, 'docs', 'release-notes', `v${version}`);
-      await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, 'zh-CN.md'), text);
-    }
-    const history = await resolveReleaseNotesHistory({ root, tag: 'v1.2.6' });
-    expect(history).toEqual({ '1.2.5': { 'zh-CN': `${latestText}\n` } });
-    expect(Buffer.byteLength(JSON.stringify({ releaseNotesHistory: history }, null, 2))).toBeLessThanOrEqual(128 * 1024);
-    expect(await resolveReleaseNotesHistory({ root, tag: 'preview-20261119-1200' })).toEqual({});
-  }));
-
   test('keeps each authored translation under its exact locale', () => withNotesRoot(async (root, directory) => {
     const translations = {
       'zh-CN': '## 新增\n\n- 更新说明。\n',
+      'zh-TW': '## 新增\n\n- 更新說明。\n',
       en: '## Added\n\n- Release notes.\n',
-      ru: '## Добавлено\n\n- Примечания к выпуску.\n',
+      ja: '## 新機能\n\n- 更新内容。\n',
     };
     for (const [locale, body] of Object.entries(translations)) {
       await writeFile(join(directory, locale + '.md'), body);
     }
     expect(await resolveReleaseNotes({ root, tag: '1.2.3' })).toEqual(translations);
     const body = releaseNotesBody(translations);
-    // The GitHub Release body stays English then Simplified Chinese; Russian reaches
-    // users through the portable update manifest instead.
-    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN'].trim()}\n`);
-    expect(body).not.toContain('Примечания');
+    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN']}`);
   }));
 
   test('never copies another language into a missing or blank translation', () => withNotesRoot(async (root, directory) => {
@@ -65,25 +38,9 @@ describe('localized release notes publication', () => {
     await writeFile(join(directory, 'en.md'), ' \n');
     const notes = await resolveReleaseNotes({ root, tag: 'v1.2.3' });
     expect(notes).toEqual({ 'zh-CN': '## 新增\n\n- 中文独有正文。\n' });
-    const body = releaseNotesBody(notes);
-    expect(body).toBe(`# 简体中文\n\n## 新增\n\n- 中文独有正文。\n`);
-    expect(body).not.toContain('English');
-    expect(body).not.toContain('Release notes for this version are not available');
-  }));
-
-  test('publishes the GitHub Release body in English then Simplified Chinese order', () => {
-    const all = {
-      'zh-CN': 'A\n', en: 'C\n', ru: 'R\n',
-    };
-    expect(releaseNotesBody(all)).toBe('# English\n\nC\n\n---\n\n# 简体中文\n\nA\n');
-    expect(releaseNotesBody({ en: 'only\n' })).toBe('# English\n\nonly\n');
-  });
-
-  test('carries Russian notes in the manifest without borrowing another language', () => withNotesRoot(async (root, directory) => {
-    await writeFile(join(directory, 'ru.md'), '## Добавлено\n\n- Только русский текст.\n');
-    expect(await resolveReleaseNotes({ root, tag: '1.2.3' })).toEqual({
-      ru: '## Добавлено\n\n- Только русский текст.\n',
-    });
+    const englishSection = releaseNotesBody(notes).split('# English\n\n')[1].split('\n\n---\n\n')[0].trim();
+    expect(englishSection).toBe('Release notes for this version are not available in English.');
+    expect(englishSection).not.toContain('中文独有正文');
   }));
 
   test('missing versions and legacy flat files produce no translations', () => withNotesRoot(async (root) => {
@@ -96,38 +53,17 @@ describe('localized release notes publication', () => {
   test('validates localized maps without requiring every translation', () => {
     expect(() => validateReleaseNotes({})).not.toThrow();
     expect(() => validateReleaseNotes({ en: 'English only' })).not.toThrow();
-    expect(() => validateReleaseNotes({ ru: 'Только русский' })).not.toThrow();
     for (const invalid of ['Legacy text', null, [], { en: 123 }, { ja: ' ' }, { fr: 'Other language' }]) {
       expect(() => validateReleaseNotes(invalid)).toThrow();
     }
   });
 
-  test('keeps every authored locale in the manifest while the Release body stays English then Simplified Chinese', () => withNotesRoot(async (root, directory) => {
-    const translations = {
-      'zh-CN': '## 新增\n\n- 简体中文说明。\n',
-      'zh-TW': '## 新增\n\n- 繁體中文說明。\n',
-      ja: '## 追加\n\n- 日本語の説明。\n',
-      en: '## Added\n\n- English notes.\n',
-      ru: '## Добавлено\n\n- Русские примечания.\n',
-    };
-    for (const [locale, body] of Object.entries(translations)) {
-      await writeFile(join(directory, locale + '.md'), body);
-    }
-    expect(Object.keys(await resolveReleaseNotes({ root, tag: '1.2.3' })).sort())
-      .toEqual(['en', 'ja', 'ru', 'zh-CN', 'zh-TW']);
-    const body = releaseNotesBody(translations);
-    expect(body).toContain(translations.en.trim());
-    expect(body).toContain(translations['zh-CN'].trim());
-    expect(body).not.toContain(translations['zh-TW'].trim());
-    expect(body).not.toContain(translations.ja.trim());
-    expect(body).not.toContain(translations.ru.trim());
-  }));
-
   test('CLI preserves all translations in JSON and publishes only English then Chinese in the Release body', () => withNotesRoot(async (root, directory) => {
     const translations = {
       'zh-CN': '## 新增\n\n- 更新说明。\n',
+      'zh-TW': '## 新增\n\n- 更新說明。\n',
       en: '## Added\n\n- Release notes.\n',
-      ru: '## Добавлено\n\n- Примечания к выпуску.\n',
+      ja: '## 新機能\n\n- 更新内容。\n',
     };
     for (const [locale, body] of Object.entries(translations)) {
       await writeFile(join(directory, locale + '.md'), body);
@@ -143,33 +79,10 @@ describe('localized release notes publication', () => {
     const notes = JSON.parse(await readFile(jsonPath, 'utf8'));
     expect(notes).toEqual(translations);
     const body = await readFile(bodyPath, 'utf8');
-    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN'].trim()}\n`);
+    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN']}`);
   }));
 
   test('rejects tags that could escape the release notes directory', () => withNotesRoot(async (root) => {
     await expect(resolveReleaseNotes({ root, tag: '../../README' })).rejects.toThrow('Invalid release tag');
-  }));
-
-  test('supports non-semver preview tags like only-preview', () => withNotesRoot(async (root) => {
-    expect(await resolveReleaseNotes({ root, tag: 'only-preview' })).toEqual({});
-    const previewDir = join(root, 'docs', 'release-notes', 'only-preview');
-    await mkdir(previewDir, { recursive: true });
-    await writeFile(join(previewDir, 'en.md'), '## Preview\n\n- Preview notes.\n');
-    expect(await resolveReleaseNotes({ root, tag: 'only-preview' })).toEqual({
-      en: '## Preview\n\n- Preview notes.\n',
-    });
-  }));
-
-  test('CLI supports non-semver preview tags like only-preview', () => withNotesRoot(async (root) => {
-    const script = fileURLToPath(new URL('../scripts/release-notes.mjs', import.meta.url));
-    const jsonPath = join(root, 'notes.json');
-    const bodyPath = join(root, 'notes.md');
-    const result = spawnSync('node', [script, '--tag', 'only-preview', '--output', jsonPath, '--body-output', bodyPath], {
-      cwd: root, encoding: 'utf8',
-    });
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe('');
-    expect(JSON.parse(await readFile(jsonPath, 'utf8'))).toEqual({});
-    expect(await readFile(bodyPath, 'utf8')).toContain('Release notes for this version are not available in English.');
   }));
 });

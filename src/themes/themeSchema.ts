@@ -7,7 +7,7 @@ const themeLabel = {
     {
       type: 'object',
       minProperties: 1,
-      propertyNames: { enum: ['zh-CN', 'zh-TW', 'ja', 'en', 'ru'] },
+      propertyNames: { enum: ['zh-CN', 'zh-TW', 'ja', 'en'] },
       additionalProperties: { type: 'string', minLength: 1, maxLength: 80 },
     },
   ],

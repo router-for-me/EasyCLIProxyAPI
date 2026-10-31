@@ -45,15 +45,6 @@
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
-  scroll-padding-inline: 24px;
-  overscroll-behavior-x: contain;
-}
-
-@media (max-width: 700px) {
-  .app-notice-stack {
-    right: 16px;
-    width: min(480px, calc(100vw - 32px));
-  }
 }
 
 .usage-tabs button,
@@ -130,10 +121,6 @@
 .usage-storage-limit-editor button {
   flex: none;
   white-space: nowrap;
-}
-
-.usage-tab-panel > .live-routing-panel {
-  flex: none;
 }
 
 @container workspace (min-width: 600px) {

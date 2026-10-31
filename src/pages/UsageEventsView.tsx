@@ -11,12 +11,12 @@ import { FloatingNotice, useAppNotice } from '../appNotice';
 import { getCurrentLocale, useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
 import type { MessageKey } from '../i18n/resources';
-import { formatCacheReadRate, formatGenerationSpeed, getSpeedMode, setSpeedMode, type GenerationSpeedMode } from '../services/usageMetrics';
-import { Select } from '../components/Select';
+import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatDuration, formatUsageNumber } from '../services/usageNumber';
 import { Dialog } from '../components/Dialog';
 import { usageProviderDetails } from '../services/usageProvider';
 import { usageModelDetails } from '../services/usageModel';
+import { Select } from '../components/Select';
 
 const compactNumber = (value: number) => formatUsageNumber(value, getCurrentLocale());
 const compactDuration = (value: number) => formatDuration(value, getCurrentLocale());
@@ -109,6 +109,11 @@ export const getInitialVisibleColumns = (): EventColumnKey[] => {
           return true;
         });
         if (savedKeys.length > 0) {
+          const oldDefault = ['time', 'model', 'provider', 'result', 'total', 'cache', 'latency', 'speed', 'cost'];
+          const previousDefault = ['time', 'model', 'source', 'result', 'total', 'cache', 'latency', 'speed', 'cost'];
+          if ([oldDefault, previousDefault].some(defaults => savedKeys.length === defaults.length && savedKeys.every((key, index) => key === defaults[index]))) {
+            return [...DEFAULT_EVENT_VISIBLE_COLUMNS];
+          }
           return savedKeys;
         }
       }
@@ -180,7 +185,7 @@ function TableTopScrollbar({
   tableWrapRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
-  const trackRef = useRef<HTMLTableElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const scrollbar = scrollbarRef.current;
@@ -188,6 +193,9 @@ function TableTopScrollbar({
     const tableWrap = tableWrapRef.current;
     if (!scrollbar || !track || !tableWrap) return;
 
+    // Remember the positions we applied, rather than locking a whole frame.
+    // This ignores delayed programmatic/vertical scroll events without dropping
+    // newer drag or trackpad input on either surface.
     let lastScrollbarLeft = scrollbar.scrollLeft;
     let lastTableLeft = tableWrap.scrollLeft;
 
@@ -207,14 +215,15 @@ function TableTopScrollbar({
       lastScrollbarLeft = scrollbar.scrollLeft;
     };
 
-    // The track is a real table whose width is viewport + horizontal overflow,
-    // so the native scroller reports no scrollbar once the content fits.
     const updateLayout = () => {
-      const clientWidth = scrollbar.clientWidth;
-      const maxScroll = Math.max(0, tableWrap.scrollWidth - tableWrap.clientWidth);
+      const clientWidth = tableWrap.clientWidth;
+      const maxScroll = Math.max(0, tableWrap.scrollWidth - clientWidth);
       const left = Math.min(tableWrap.scrollLeft, maxScroll);
-      track.style.width = `${clientWidth + maxScroll}px`;
-      scrollbar.classList.toggle('is-hidden', maxScroll <= 0);
+
+      // Commit the range before the position. A deferred React width update can
+      // clamp the thumb to its old range and then rewind the table via scroll.
+      scrollbar.classList.toggle('is-hidden', maxScroll <= 1);
+      track.style.width = `${(scrollbar.clientWidth || clientWidth) + maxScroll}px`;
       tableWrap.scrollLeft = left;
       scrollbar.scrollLeft = left;
       lastTableLeft = tableWrap.scrollLeft;
@@ -228,6 +237,7 @@ function TableTopScrollbar({
     const resizeObserver = new ResizeObserver(updateLayout);
     resizeObserver.observe(tableWrap);
     resizeObserver.observe(scrollbar);
+    // Column resizing changes the table's width without resizing its viewport.
     if (tableWrap.firstElementChild) resizeObserver.observe(tableWrap.firstElementChild);
 
     return () => {
@@ -243,9 +253,7 @@ function TableTopScrollbar({
       className="usage-table-top-scrollbar"
       aria-hidden="true"
     >
-      <table ref={trackRef} style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
-        <tbody><tr><td style={{ padding: 0, height: '1px' }} /></tr></tbody>
-      </table>
+      <div ref={trackRef} style={{ height: '1px' }} />
     </div>
   );
 }
@@ -295,7 +303,6 @@ function UsageEventCell({
   noRemarkLabel,
   showDate,
   compact,
-  speedMode = "total",
   onCopyError,
 }: {
   record: UsageRecord;
@@ -303,7 +310,6 @@ function UsageEventCell({
   noRemarkLabel: string;
   showDate?: boolean;
   compact?: boolean;
-  speedMode?: GenerationSpeedMode;
   onCopyError: (detail: string) => void;
 }) {
   const { t, formatDate } = useI18n();
@@ -318,8 +324,8 @@ function UsageEventCell({
         </td>
       );
     case 'model': {
-      const model = usageModelDetails(record.model, record.alias, record.response_model, record.reasoning_effort);
-      const effort = model.effort || 'auto';
+      const model = usageModelDetails(record.model, record.alias, record.response_model);
+      const effort = record.reasoning_effort || 'auto';
       const tier = record.service_tier?.trim().toLowerCase() ?? '';
       const fast = ['priority', 'fast', 'ultrafast'].includes(tier);
       const modelTitle = [
@@ -444,15 +450,10 @@ function UsageEventCell({
       );
     }
     case 'speed': {
-        const value =
-          record.failed || record.canceled
-            ? '—'
-            : formatGenerationSpeed({
-                outputTokens: record.tokens.output_tokens,
-                latencyMs: record.latency_ms,
-                ttftMs: record.ttft_ms,
-                mode: speedMode,
-              });
+      const value = formatGenerationSpeed({
+        outputTokens: record.tokens.output_tokens,
+        latencyMs: record.latency_ms,
+      });
       return <td className="usage-td-speed align-left" title={value === '—' ? undefined : value}>{value}</td>;
     }
   }
@@ -481,8 +482,6 @@ export function EventsView({
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
   const [collapseErrors, setCollapseErrors] = useState(getInitialCollapseErrors);
   const [draftCollapseErrors, setDraftCollapseErrors] = useState(collapseErrors);
-  const [speedMode, setCurrentSpeedMode] = useState<GenerationSpeedMode>(getSpeedMode);
-  const [draftSpeedMode, setDraftSpeedMode] = useState<GenerationSpeedMode>(getSpeedMode);
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -526,7 +525,6 @@ export function EventsView({
   const openColumnSettings = () => {
     setDraftVisibleColumnKeys(visibleColumnKeys);
     setDraftCollapseErrors(collapseErrors);
-    setDraftSpeedMode(speedMode);
     setColumnSettingsOpen(true);
   };
 
@@ -550,8 +548,6 @@ export function EventsView({
       usagePreferences.setItem(EVENT_COLLAPSE_ERRORS_KEY, draftCollapseErrors ? '1' : '0');
     } catch {}
     setCollapseErrors(draftCollapseErrors);
-    setSpeedMode(draftSpeedMode);
-    setCurrentSpeedMode(draftSpeedMode);
     setColumnSettingsOpen(false);
   };
 
@@ -765,7 +761,6 @@ export function EventsView({
                           noRemarkLabel={noRemarkLabel}
                           showDate={showDate}
                           compact={isCompactDefault}
-                            speedMode={speedMode}
                           onCopyError={(detail) => void copyError(detail)}
                         />
                       ))}
@@ -860,7 +855,6 @@ export function EventsView({
           <p className="usage-column-dialog-description">
             {t('usage.events.columnSettingsDescription')}
           </p>
-          <div className="usage-column-dialog-controls">
           <label className="usage-error-collapse-setting">
             <span>
               <strong>{t('usage.events.collapseErrors')}</strong>
@@ -868,21 +862,6 @@ export function EventsView({
             </span>
             <Switch checked={draftCollapseErrors} aria-label={t('usage.events.collapseErrors')} onChange={(event) => setDraftCollapseErrors(event.currentTarget.checked)} />
           </label>
-            <div className="usage-error-collapse-setting">
-              <span>
-                <strong>{t('usage.events.speedMode')}</strong>
-                <small>{t('usage.events.speedModeHint')}</small>
-              </span>
-              <Select
-                value={draftSpeedMode}
-                onChange={(event) => setDraftSpeedMode(event.currentTarget.value as GenerationSpeedMode)}
-                aria-label={t('usage.events.speedMode')}
-              >
-                <option value="total">{t('usage.events.speedModeTotal')}</option>
-                <option value="ttft">{t('usage.events.speedModeTtft')}</option>
-              </Select>
-            </div>
-          </div>
           <div className="usage-column-options">
             {EVENT_COLUMNS.map((column) => {
               const checked = draftVisibleColumnKeys.includes(column.key);

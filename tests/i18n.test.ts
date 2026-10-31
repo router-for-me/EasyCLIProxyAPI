@@ -1,105 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { languageOptions, normalizeLocale, supportedLocales, translate } from '../src/i18n';
-import { en, ja, ru, zhCN, zhTW, type MessageKey } from '../src/i18n/resources';
+import { en, ja, zhCN, zhTW, type MessageKey } from '../src/i18n/resources';
 import { jaOverrides } from '../src/i18n/ja';
-import { mcpSkillsText } from '../src/i18n/mcpSkills';
 import { pluginConfigText } from '../src/i18n/pluginConfig';
 
 describe('i18n', () => {
-  it('localizes agent system prompt editor controls in every locale', () => {
-    for (const locale of supportedLocales) {
-      for (const key of [
-        'agents.systemPrompt.button',
-        'agents.systemPrompt.title',
-        'agents.systemPrompt.subtitle',
-        'agents.systemPrompt.subtitle.uncaptured',
-        'agents.systemPrompt.source.uncaptured',
-        'agents.systemPrompt.overrideInactive',
-        'agents.systemPrompt.inheritedOverride',
-        'agents.systemPrompt.fieldHintUncaptured',
-        'agents.systemPrompt.overridesEnabled',
-        'agents.systemPrompt.overridesEnabledHint',
-        'agents.systemPrompt.pendingPause',
-        'agents.systemPrompt.pendingEnable',
-        'agents.systemPrompt.overridesPaused',
-        'agents.systemPrompt.claudeTlsNotice',
-        'agents.systemPrompt.edit',
-        'agents.systemPrompt.codexEntry',
-        'agents.systemPrompt.codexFieldHint',
-        'agents.systemPrompt.scope',
-        'agents.systemPrompt.defaultTarget',
-        'agents.systemPrompt.modelScopeHint',
-        'agents.systemPrompt.mode.replace',
-        'agents.systemPrompt.preserveDynamic',
-        'agents.systemPrompt.resetDefault',
-        'agents.systemPrompt.resetModel',
-        'agents.systemPrompt.resetHint',
-        'agents.systemPrompt.resetAll',
-        'agents.systemPrompt.saved',
-        'agents.systemPrompt.zcodeCatalogHint',
-      ] as const) {
-        expect(translate(locale, key, { name: 'ZCode' })).not.toBe(key);
-        expect(translate(locale, key, { name: 'ZCode' })).not.toBe('');
-      }
-    }
-    expect(translate('zh-CN', 'agents.systemPrompt.button')).toBe('系统提示词');
-    expect(translate('zh-TW', 'agents.systemPrompt.button')).toBe('系統提示詞');
-    expect(translate('en', 'agents.systemPrompt.button')).toBe('System prompt');
-  });
-  it('localizes the probe-budget state, explanation and summary in every locale', () => {
-    for (const locale of supportedLocales) {
-      for (const key of [
-        'apiAccess.health.budgetExhausted',
-        'apiAccess.health.budgetExhaustedDetail',
-        'apiAccess.health.budgetSummary',
-      ] as const) {
-        expect(translate(locale, key, { count: 2 })).not.toBe(key);
-        expect(translate(locale, key, { count: 2 })).not.toBe('');
-      }
-      expect(translate(locale, 'apiAccess.health.budgetSummary', { count: 2 })).toContain('2');
-    }
-    expect(translate('en', 'apiAccess.health.budgetExhausted')).toBe('Probe budget exhausted');
-    expect(translate('zh-CN', 'apiAccess.health.budgetExhausted')).toBe('探测预算耗尽');
-    expect(translate('zh-TW', 'apiAccess.health.budgetExhausted')).toBe('探測預算耗盡');
-  });
-
-  it('localizes credential tag controls in every language', () => {
-    for (const [locale, label] of [['en', 'Tags'], ['zh-CN', '标签'], ['zh-TW', '標籤'], ['ja', 'タグ']] as const) {
-      expect(translate(locale, 'authFiles.tags.label')).toBe(label);
-      for (const key of [
-        'authFiles.tags.all',
-        'authFiles.tags.placeholder',
-        'authFiles.tags.hint',
-        'authFiles.tags.selectGroup',
-        'authFiles.tags.selectAllInGroup',
-        'authFiles.tags.filterBy',
-        'authFiles.tags.filterClear',
-        'authFiles.tags.add',
-        'authFiles.tags.addTag',
-        'authFiles.tags.removeTag',
-        'authFiles.tags.addAnother',
-        'authFiles.tags.inputPlaceholder',
-        'authFiles.tags.poolLabel',
-        'authFiles.tags.addFromPool',
-        'authFiles.tags.manageQuick',
-        'authFiles.tags.quickEditTitle',
-        'authFiles.tags.batchSectionTitle',
-        'authFiles.tags.batchAdd',
-        'authFiles.tags.batchRemove',
-        'authFiles.tags.batchAddPlaceholder',
-        'authFiles.tags.selectTagToRemove',
-        'authFiles.tags.batchAddSuccess',
-        'authFiles.tags.batchRemoveSuccess',
-        'authFiles.tags.noSelectedTags',
-        'authFiles.operations.clearSelection',
-        'authFiles.operations.selectedSummary',
-      ] as const) {
-        expect(translate(locale, key)).not.toBe(key);
-        expect(translate(locale, key)).not.toBe('');
-      }
-    }
-  });
-
   it('localizes the plugin discard confirmation in every language', () => {
     for (const [locale, cancel, confirm] of [
       ['zh-CN', '继续编辑', '放弃修改'], ['zh-TW', '繼續編輯', '放棄修改'],
@@ -176,7 +81,6 @@ describe('i18n', () => {
       { value: 'zh-TW', nativeLabel: '繁體中文' },
       { value: 'ja', nativeLabel: '日本語' },
       { value: 'en', nativeLabel: 'English' },
-      { value: 'ru', nativeLabel: 'Русский' },
     ]);
   });
 
@@ -192,7 +96,7 @@ describe('i18n', () => {
     const variables = (message: string) => [...new Set(
       [...message.matchAll(/\{(\w+)\}/g)].map((match) => match[1]),
     )].sort();
-    for (const [locale, messages] of Object.entries({ en, ru, ja, zhTW })) {
+    for (const [locale, messages] of Object.entries({ en, ja, zhTW })) {
       const mismatches = (Object.keys(zhCN) as MessageKey[]).filter((key) =>
         !messages[key].trim()
         || JSON.stringify(variables(messages[key])) !== JSON.stringify(variables(zhCN[key])),
@@ -202,20 +106,7 @@ describe('i18n', () => {
   });
 
   it('does not include untranslated Chinese prose in English messages', () => {
-    expect(
-      Object.entries(en).filter(([key, message]) => key !== 'app.theme.anime.name' && /\p{Script=Han}/u.test(message)),
-    ).toEqual([]);
-  });
-
-  it('uses MCP与Skills in zh-CN navigation and MCP page title while preserving en/ja/zh-TW', () => {
-    expect(translate('zh-CN', 'app.nav.mcpSkills')).toBe('MCP与Skills');
-    expect(mcpSkillsText('title', 'zh-CN')).toBe('MCP与Skills');
-    expect(translate('en', 'app.nav.mcpSkills')).toBe('MCP & Skills');
-    expect(mcpSkillsText('title', 'en')).toBe('MCP & Skills');
-    expect(translate('ja', 'app.nav.mcpSkills')).toBe('MCP & スキル');
-    expect(mcpSkillsText('title', 'ja')).toBe('MCP & スキル');
-    expect(translate('zh-TW', 'app.nav.mcpSkills')).toBe('MCP 與技能');
-    expect(mcpSkillsText('title', 'zh-TW')).toBe('MCP 與技能');
+    expect(Object.entries(en).filter(([, message]) => /\p{Script=Han}/u.test(message))).toEqual([]);
   });
 
   it('names the actual add action in the empty API access prompt', () => {
@@ -263,7 +154,7 @@ describe('i18n', () => {
       ] as const) {
         expect(translate(locale, key)).toContain('Base URL');
       }
-      expect(translate(locale, 'usage.stat.tokens')).toMatch(/tokens?|токен/i);
+      expect(translate(locale, 'usage.stat.tokens')).toMatch(/tokens?/i);
     }
   });
 });

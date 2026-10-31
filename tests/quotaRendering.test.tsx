@@ -32,20 +32,6 @@ describe('quota card rendering', () => {
     expect(html).not.toContain('Subscription expires:');
   });
 
-  it('does not draw the credit summary box when there is nothing to show in it', () => {
-    const rows = [{ label: 'Window', remainingPercent: 50 }];
-    for (const provider of ['claude', 'codex']) {
-      expect(render({ status: 'success', rows }, provider)).not.toContain('quota-reset-credit-summary');
-      // A failed reset-credit lookup is reported as a floating notice, not inside the card.
-      expect(render({ status: 'success', rows, resetCreditsError: 'Unable to read reset grants' }, provider))
-        .not.toContain('quota-reset-credit-summary');
-    }
-    expect(render({ status: 'success', rows, creditBalance: '0' })).toContain('quota-reset-credit-summary');
-    expect(render({ status: 'success', rows, creditsUnlimited: true })).toContain('quota-reset-credit-summary');
-    expect(render({ status: 'success', rows, resetCreditExpiries: ['2030-10-10T00:00:00Z'] }, 'claude'))
-      .toContain('quota-reset-credit-summary');
-  });
-
   it.each(['error', 'refresh-error'] as const)('重置结果为 %s 时仍可再次点击重置', (status) => {
     const html = render({
       status: 'success', rows: [], resetCredits: 2,
@@ -83,7 +69,7 @@ describe('quota card rendering', () => {
       monthly: { config: { monthlyLimit: 10000, used: 2500 } },
     }) }, 'xai');
     expect(html).toContain('SuperGrok Heavy');
-    expect(html).toContain('Weekly limit');
+    expect(html).toContain('Weekly quota');
     expect(html).toContain('Prepaid balance');
     expect(html).toContain('$2.50');
     expect(html.match(/75% remaining/g)).toHaveLength(1);
@@ -99,35 +85,5 @@ describe('quota card rendering', () => {
     const html = render({ status: 'error', rows: [], error: 'free account cannot access quota' }, 'kimi');
     expect(html).toContain('quota-card-error');
     expect(html).not.toContain('app-notice-entry');
-  });
-
-  it('renders credential note on quota cards and shows edit trigger when onSaveNote is provided', () => {
-    const withNote = renderToStaticMarkup(
-      <I18nProvider>
-        <QuotaCard
-          file={{ name: 'codex-team.json', provider: 'codex', note: 'Team Account A' }}
-          quota={{ status: 'success', rows: [] }}
-          onRefresh={() => {}}
-          onSaveNote={() => {}}
-        />
-      </I18nProvider>,
-    );
-    expect(withNote).toContain('quota-account-note');
-    expect(withNote).toContain('Team Account A');
-    expect(withNote).toContain('quota-note-edit');
-    expect(withNote).toContain('Edit note');
-
-    const withoutNote = renderToStaticMarkup(
-      <I18nProvider>
-        <QuotaCard
-          file={{ name: 'codex-empty.json', provider: 'codex' }}
-          quota={{ status: 'success', rows: [] }}
-          onRefresh={() => {}}
-          onSaveNote={() => {}}
-        />
-      </I18nProvider>,
-    );
-    expect(withoutNote).not.toContain('quota-account-note');
-    expect(withoutNote).toContain('Add note');
   });
 });

@@ -237,17 +237,9 @@ pub(crate) async fn fetch_deepseek_harness_models(
         fetch_management_config_yaml(config),
     );
     let mut models = models?;
-    let runtime = match runtime {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            eprintln!("DeepSeek Harness reasoning metadata unavailable, using model defaults: {error}");
-            Vec::new()
-        }
-    };
-    codex_catalog::merge_runtime_reasoning_levels(&mut models, &runtime);
     enrich_harness_context_windows(
         &mut models,
-        &runtime,
+        &runtime.unwrap_or_default(),
         configuration.as_deref().ok(),
     )?;
     Ok(models)
@@ -631,7 +623,7 @@ pub(crate) fn prepare_deepseek_harness_configuration(
     };
     let settings = build_deepseek_harness_catalog_settings(
         existing_text,
-        &format!("{}/v1", agent_effective_loopback_origin("deepseek-harness", port)),
+        &format!("{}/v1", managed_core_loopback_origin(port)),
         selected,
         models,
         &mut state,
@@ -700,7 +692,7 @@ fn harness_editor_from_images(
             configuration: state.models.get(&model.name).cloned().unwrap_or_default(),
         })
         .collect::<Vec<_>>();
-    let base_url = format!("{}/v1", agent_effective_loopback_origin("deepseek-harness", port));
+    let base_url = format!("{}/v1", managed_core_loopback_origin(port));
     let revision = sha256_bytes(
         &serde_json::to_vec(&(image_revision(before), &models, &base_url))
             .map_err(|_| "Failed to generate DSH configuration version")?,
@@ -791,7 +783,7 @@ pub(crate) fn save_harness_editor(
         };
         let settings = render_harness_profiles(
             existing_text,
-            &format!("{}/v1", agent_effective_loopback_origin("deepseek-harness", port)),
+            &format!("{}/v1", managed_core_loopback_origin(port)),
             models,
             &mut state,
         )?;

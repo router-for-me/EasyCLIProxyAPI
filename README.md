@@ -49,8 +49,6 @@ available for manual checks. Re-rendering the page does not trigger another chec
 sources does not trigger a check, and reopening the page preserves the saved source. Checks do not
 automatically download or install updates.
 
-**Version Management** also shows application release notes in the current interface language. Stable update manifests include available historical notes, so when upgrading across stable releases the page shows up to 9 skipped stable releases newer than the installed version and older than the target, newest first, for a maximum of 10 notes including the target. The serialized history is limited to 128 KiB of UTF-8, excluding the target notes. The target release notes remain visible after upgrading. Preview builds and legacy manifests without history show only the target release notes. Older clients that do not support history show only the target notes until upgraded. Notes are shown only in the current language; if that translation is unavailable, the page reports that notes are unavailable instead of falling back to another language. Authors maintain per-version Markdown files in [`docs/release-notes/`](docs/release-notes/README.md) for Simplified Chinese, Traditional Chinese, English, and Japanese. CI includes available translations in the update manifest; the GitHub Release body shows English followed by Simplified Chinese.
-
 ### OAuth account authorization
 
 ![OAuth account authorization](docs/screenshots/en/2.png)
@@ -131,12 +129,6 @@ For supported clients, the application can synchronize the available model catal
 default model, back up the original configuration before applying managed settings, and restore the
 previous configuration.
 
-In **Agents → Management → Configuration directory**, enter or browse to the directory containing
-the client's configuration files, such as `.claude` or `.codex` (not the home directory).
-Windows also accepts WSL UNC paths such as `\\wsl$\Ubuntu\home\user\.claude` and
-`\\wsl.localhost\Ubuntu\home\user\.codex`. Each client remembers its own directory; clearing it
-restores the default. This setting changes configuration access, not how executables are launched.
-
 Antigravity CLI connects through CPA's Gemini-compatible API. Launch the CLI from CPA to supply its endpoint and API key for that process. Running `agy` directly requires setting those environment variables yourself.
 
 Codex **Session Management → Edit Context (Experimental)** reads messages only after a session is selected.
@@ -164,16 +156,7 @@ Manually renamed files without a session ID in their filename or a database path
 
 ## Upgrading
 
-Optional [background downloads and updates on the next launch](docs/automatic-updates.md)
-can be configured in **Version Management**. They are disabled by default.
-
-Behind an enterprise proxy, administrators should install the corporate root CA
-in the OS trust store, not disable TLS validation. See
-[enterprise proxy certificates and regression testing](docs/enterprise-proxy.md).
-
 Every Windows release publishes both the complete ZIP and the legacy `update` ZIP. This keeps in-app updates available to older clients that have not migrated yet, while newer clients use the complete package so the bundled core can be updated too.
-
-**Version Management** asks whether to restart the core when updating ECPA. Restarting remains the default. On Windows and macOS, clear **Restart the core as well** to keep the current core and agents connected directly to it running while ECPA restarts. The newly bundled core is deferred until a manual core update; it is not installed automatically on the next launch. ECPA-hosted proxy connections and the managed DeepSeek Harness still stop when the GUI restarts. Linux currently requires a core restart and disables this choice.
 
 Current Windows, Linux, and macOS release packages support in-app automatic updates. Linux replaces the portable application files while preserving runtime data, and macOS replaces the signed application bundle. Each platform waits for the new version to confirm a successful launch and rolls back automatically if startup fails. The installation directory must be writable by the current user.
 

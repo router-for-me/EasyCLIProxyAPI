@@ -26,7 +26,7 @@ pub(crate) struct CodexRuntimeModel {
     context_source: &'static str,
     input_modalities: Option<Vec<String>>,
     default_reasoning_level: Option<String>,
-    reasoning_levels: Option<Vec<String>>,
+    reasoning_levels: Vec<String>,
     hidden: bool,
 }
 
@@ -222,7 +222,6 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
             optional_string(value, &["default_reasoning_level", "defaultReasoningLevel"])
                 .map(|value| value.to_ascii_lowercase())
                 .filter(|value| is_allowed_reasoning_level(value));
-        let reasoning_levels = parse_reasoning_levels(value);
         let hidden = optional_string(value, &["visibility"])
             .is_some_and(|value| value.eq_ignore_ascii_case("hide"));
 
@@ -239,7 +238,16 @@ pub(crate) fn parse_runtime_models(payload: &Value) -> Result<Vec<CodexRuntimeMo
             },
             input_modalities: input_modalities.clone(),
             default_reasoning_level: default_reasoning_level.clone(),
-            reasoning_levels: reasoning_levels.clone(),
+            reasoning_levels: value.get("supported_reasoning_levels")
+                .and_then(Value::as_array)
+                .into_iter().flatten()
+                .filter_map(|level| level.as_str().or_else(|| level.get("effort")?.as_str()))
+                .map(|level| level.trim().to_ascii_lowercase())
+                .filter(|level| is_allowed_reasoning_level(level))
+                .fold(Vec::new(), |mut levels, level| {
+                    if !levels.contains(&level) { levels.push(level); }
+                    levels
+                }),
             hidden,
         };
 
@@ -299,7 +307,7 @@ pub(crate) fn merge_runtime_context_windows(
     }
 }
 
-pub(crate) fn merge_runtime_reasoning_levels(
+pub(crate) fn merge_zcode_reasoning_levels(
     models: &mut [AgentModelOption],
     runtime_models: &[CodexRuntimeModel],
 ) {
@@ -307,107 +315,7 @@ pub(crate) fn merge_runtime_reasoning_levels(
         if let Some(runtime) = runtime_models.iter()
             .find(|runtime| runtime.slug.eq_ignore_ascii_case(&model.name))
         {
-            model.reasoning_levels = runtime.reasoning_levels.clone().unwrap_or_default();
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn merge_zcode_reasoning_levels(
-    models: &mut [AgentModelOption],
-    runtime_models: &[CodexRuntimeModel],
-) {
-    merge_runtime_reasoning_levels(models, runtime_models);
-}
-
-/// The Codex client catalog clones its default template onto every model it does
-/// not know, so custom openai-compatibility providers inherit this context window
-/// instead of their real limit.
-pub(crate) const CPA_RUNTIME_CONTEXT_PLACEHOLDER: u64 = 500_000;
-
-/// Replaces unknown context windows with authoritative values imported from the
-/// external model capability catalog (models.dev / LiteLLM).
-pub(crate) fn merge_external_model_capabilities(models: &mut [AgentModelOption]) {
-    let Ok(connection) = crate::usage::open_usage_database() else {
-        return;
-    };
-    let Ok(capabilities) = crate::usage::load_model_capabilities(&connection) else {
-        return;
-    };
-    apply_model_capabilities(models, &capabilities);
-}
-
-pub(crate) fn apply_model_capabilities(
-    models: &mut [AgentModelOption],
-    capabilities: &[crate::usage::ModelCapabilities],
-) {
-    for model in models.iter_mut() {
-        let unknown = model
-            .context_window
-            .is_none_or(|context_window| context_window == CPA_RUNTIME_CONTEXT_PLACEHOLDER);
-        if !unknown {
-            continue;
-        }
-        let Some(capabilities) = crate::usage::find_model_capabilities(capabilities, &model.name)
-        else {
-            continue;
-        };
-        if let Some(context_window) = capabilities.context_window {
-            model.context_window = Some(context_window);
-        }
-        if model.input_modalities.is_none() && !capabilities.input_modalities.is_empty() {
-            model.input_modalities = Some(capabilities.input_modalities.clone());
-        }
-    }
-}
-
-/// Fills metadata gaps in the public model list from the Codex client catalog
-/// served by the core (`/v1/models?client_version=`).
-///
-/// The public `/v1/models` list only carries IDs for OAuth-backed models, so
-/// without this merge every non-template model (Antigravity, Claude, Gemini,
-/// Kimi, ...) is written to Codex with the fallback context window and
-/// reasoning levels. Public IDs stay authoritative; the client catalog only
-/// supplies the missing context window, modalities and reasoning metadata for
-/// a slug that exists in both lists.
-pub(crate) fn merge_codex_client_metadata(
-    public_models: &mut [CodexRuntimeModel],
-    client_models: &[CodexRuntimeModel],
-) {
-    if client_models.is_empty() {
-        return;
-    }
-    let by_slug = client_models
-        .iter()
-        .map(|model| (normalize_id(&model.slug), model))
-        .collect::<HashMap<_, _>>();
-    for model in public_models {
-        let Some(client) = by_slug.get(&normalize_id(&model.slug)) else {
-            continue;
-        };
-        if model.context_window.or(model.max_context_window).is_none() {
-            if let Some(context_window) = client.context_window.or(client.max_context_window) {
-                model.context_window = Some(context_window);
-                model.max_context_window = Some(
-                    client
-                        .max_context_window
-                        .unwrap_or(context_window)
-                        .max(context_window),
-                );
-                model.context_source = "client";
-            }
-        }
-        if model.description.is_none() {
-            model.description = client.description.clone();
-        }
-        if model.input_modalities.is_none() {
-            model.input_modalities = client.input_modalities.clone();
-        }
-        if model.reasoning_levels.is_none() {
-            model.reasoning_levels = client.reasoning_levels.clone();
-        }
-        if model.default_reasoning_level.is_none() {
-            model.default_reasoning_level = client.default_reasoning_level.clone();
+            model.reasoning_levels = runtime.reasoning_levels.clone();
         }
     }
 }
@@ -693,26 +601,6 @@ fn prepare_catalog_with_customizations(
         },
     );
 
-    if !customizations.model_order().is_empty() {
-        let rank: std::collections::HashMap<String, usize> = customizations
-            .model_order()
-            .iter()
-            .enumerate()
-            .map(|(index, slug)| (slug.clone(), index))
-            .collect();
-        entries.sort_by_key(|entry| {
-            rank.get(&normalize_id(&string_value(&entry.value, "slug")))
-                .copied()
-                .unwrap_or(usize::MAX)
-        });
-        for (position, entry) in entries.iter_mut().enumerate() {
-            entry.value.insert(
-                "priority".to_string(),
-                Value::Number((position as i64 + 1).into()),
-            );
-        }
-    }
-
     let models = entries
         .iter()
         .map(|entry| AgentModelOption {
@@ -846,65 +734,14 @@ fn apply_runtime_metadata(model: &mut Map<String, Value>, runtime: &CodexRuntime
         );
     }
 
-    apply_runtime_reasoning_levels(model, runtime);
-
     if runtime.hidden {
         model.insert("visibility".to_string(), Value::String("hide".to_string()));
     }
 }
 
-/// Restricts the fallback reasoning levels to the ones the core reports for the
-/// model. Levels missing from the fallback template are never added, so an
-/// untrusted runtime cannot grant capabilities; it can only narrow them. A
-/// default level outside a non-empty narrowed list is replaced by the first
-/// kept level. An explicit empty list or empty intersection clears the default.
-fn apply_runtime_reasoning_levels(model: &mut Map<String, Value>, runtime: &CodexRuntimeModel) {
-    let Some(levels) = runtime.reasoning_levels.as_ref() else {
-        return;
-    };
-    let supported = model
-        .get("supported_reasoning_levels")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|level| {
-            level
-                .get("effort")
-                .and_then(Value::as_str)
-                .map(|effort| effort.trim().to_ascii_lowercase())
-                .is_some_and(|effort| levels.contains(&effort))
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    if supported.is_empty() {
-        model.insert("supported_reasoning_levels".to_string(), Value::Array(Vec::new()));
-        model.insert("default_reasoning_level".to_string(), Value::Null);
-        return;
-    }
-    let kept = supported
-        .iter()
-        .filter_map(|level| level.get("effort").and_then(Value::as_str))
-        .map(|effort| effort.trim().to_ascii_lowercase())
-        .collect::<Vec<_>>();
-    let default_level = runtime
-        .default_reasoning_level
-        .clone()
-        .filter(|level| kept.contains(level))
-        .or_else(|| {
-            model
-                .get("default_reasoning_level")
-                .and_then(Value::as_str)
-                .map(str::to_ascii_lowercase)
-                .filter(|level| kept.contains(level))
-        })
-        .unwrap_or_else(|| kept[0].clone());
-    model.insert("supported_reasoning_levels".to_string(), Value::Array(supported));
-    model.insert("default_reasoning_level".to_string(), Value::String(default_level));
-}
-
 fn disable_fallback_capabilities(model: &mut Map<String, Value>) {
     model.insert("prefer_websockets".to_string(), Value::Bool(false));
-    model.insert("supports_search_tool".to_string(), Value::Bool(true));
+    model.insert("supports_search_tool".to_string(), Value::Bool(false));
     model.insert(
         "web_search_tool_type".to_string(),
         Value::String("text".to_string()),
@@ -1050,30 +887,6 @@ fn normalize_id(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-pub(crate) fn parse_reasoning_levels(value: &Value) -> Option<Vec<String>> {
-    let raw = value
-        .get("supported_reasoning_levels")
-        .or_else(|| value.get("supportedReasoningLevels"))
-        .or_else(|| value.get("reasoning_levels"))
-        .or_else(|| value.get("reasoningLevels"))
-        .and_then(Value::as_array)?;
-    let mut seen = HashSet::new();
-    let levels = raw
-        .iter()
-        .filter_map(|level| {
-            level
-                .as_str()
-                .or_else(|| level.get("effort").and_then(Value::as_str))
-                .or_else(|| level.get("level").and_then(Value::as_str))
-        })
-        .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .filter(|level| is_allowed_reasoning_level(level))
-        .filter(|level| seen.insert(level.clone()))
-        .collect::<Vec<_>>();
-    Some(levels)
-}
-
 fn is_allowed_reasoning_level(level: &str) -> bool {
     matches!(
         level,
@@ -1084,45 +897,6 @@ fn is_allowed_reasoning_level(level: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn external_capabilities_replace_the_codex_default_template_placeholder() {
-        let mut entry = crate::usage::ModelCapabilities::default();
-        entry.model = "GLM-5.3-Flash".to_string();
-        entry.context_window = Some(1_000_000);
-        entry.input_modalities = vec!["text".to_string(), "image".to_string()];
-        let capabilities = vec![entry];
-        let option = |name: &str, context_window: Option<u64>| AgentModelOption {
-            name: name.to_string(),
-            alias: None,
-            is_alias: false,
-            context_window,
-            input_modalities: None,
-            harness_metadata: None,
-            reasoning_levels: Vec::new(),
-        };
-        let mut models = vec![
-            // Placeholder cloned from the Codex client catalog default template.
-            option("GLM-5.3-Flash", Some(CPA_RUNTIME_CONTEXT_PLACEHOLDER)),
-            // A real runtime value must survive untouched.
-            option("gemini-3.8-flash", Some(1_048_576)),
-            // Models missing from the external catalog keep the placeholder.
-            option("SCNet-Max", Some(CPA_RUNTIME_CONTEXT_PLACEHOLDER)),
-            // A missing context window is also filled when the catalog knows it.
-            option("glm-5.3-flash", None),
-        ];
-
-        apply_model_capabilities(&mut models, &capabilities);
-
-        assert_eq!(models[0].context_window, Some(1_000_000));
-        assert_eq!(
-            models[0].input_modalities,
-            Some(vec!["text".to_string(), "image".to_string()])
-        );
-        assert_eq!(models[1].context_window, Some(1_048_576));
-        assert_eq!(models[2].context_window, Some(CPA_RUNTIME_CONTEXT_PLACEHOLDER));
-        assert_eq!(models[3].context_window, Some(1_000_000));
-    }
 
     fn reasoning_efforts(model: &Map<String, Value>) -> Vec<String> {
         model
@@ -1225,8 +999,8 @@ mod tests {
         validate_embedded_catalog().unwrap();
         let state = catalog_state().unwrap().read().unwrap();
         let sources = &state.sources;
-        assert_eq!(sources.templates.len(), 12);
-        assert_eq!(sources.revision, 9);
+        assert_eq!(sources.templates.len(), 11);
+        assert_eq!(sources.revision, 8);
         let embedded: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
         assert!(embedded.get("fallback_model").is_none());
         let fallback: Value = serde_json::from_str(FALLBACK_MODEL_JSON).unwrap();
@@ -1252,7 +1026,6 @@ mod tests {
         assert_eq!(sources.fallback["visibility"], "none");
         assert_eq!(sources.fallback["default_reasoning_summary"], "auto");
         assert_eq!(sources.fallback["supports_parallel_tool_calls"], false);
-        assert_eq!(sources.fallback["supports_search_tool"], true);
         assert_eq!(sources.fallback["truncation_policy"]["mode"], "bytes");
 
         let official_slugs = [
@@ -1266,7 +1039,6 @@ mod tests {
             "gpt-5.6-terra",
             "gpt-5.6-luna",
             "gpt-5.5",
-            "gpt-oss-120b-medium",
             "codex-auto-review",
         ];
         assert!(official_slugs
@@ -1684,7 +1456,7 @@ mod tests {
             assert!(sources.template_for_slug(slug).is_none(), "{slug}");
             let runtime = runtime(serde_json::json!({"data":[{"id":slug}]}));
             let models = output_models(&prepare_catalog_with_sources(&runtime, &sources).unwrap());
-            assert_eq!(models[0]["supports_search_tool"], true);
+            assert_eq!(models[0]["supports_search_tool"], false);
         }
     }
 
@@ -1871,7 +1643,7 @@ mod tests {
             model["base_instructions"],
             "You are Codex, a model-neutral coding agent."
         );
-        assert_eq!(model["supports_search_tool"], true);
+        assert_eq!(model["supports_search_tool"], false);
         assert_eq!(
             model["service_tiers"],
             serde_json::json!([{
@@ -1923,7 +1695,7 @@ mod tests {
             "include_skills_usage_instructions": false,
             "include_plugin_usage_instructions": false,
             "include_apps_usage_instructions": false,
-            "supports_search_tool": true,
+            "supports_search_tool": false,
             "use_responses_lite": false,
             "guardian": null,
             "node_repl_auto_review_required": false,
@@ -2081,203 +1853,5 @@ mod tests {
         )
         .is_err());
         assert!(prepare_catalog_with_sources(&[], &test_sources()).is_err());
-    }
-
-    #[test]
-    fn client_catalog_fills_metadata_gaps_for_public_oauth_models() {
-        let mut public = parse_public_models(&serde_json::json!({"data": [
-            {"id": "gemini-4-argon-high", "object": "model"},
-            {"id": "gpt-6.1-sol", "object": "model", "context_window": 500_000}
-        ]}))
-        .unwrap();
-        let client = runtime(serde_json::json!({"models": [
-            {
-                "slug": "gemini-4-argon-high",
-                "description": "Gemini 4 Argon",
-                "context_window": 1_048_576,
-                "max_context_window": 1_048_576,
-                "input_modalities": ["text", "image"],
-                "supported_reasoning_levels": [
-                    {"effort": "low", "description": "Low"},
-                    {"effort": "medium", "description": "Medium"},
-                    {"effort": "high", "description": "High"}
-                ],
-                "default_reasoning_level": "medium"
-            },
-            {"slug": "gpt-6.1-sol", "context_window": 1, "max_context_window": 1}
-        ]}));
-
-        merge_codex_client_metadata(&mut public, &client);
-
-        let argon = &public[0];
-        assert_eq!(argon.slug, "gemini-4-argon-high");
-        assert_eq!(argon.context_window, Some(1_048_576));
-        assert_eq!(argon.max_context_window, Some(1_048_576));
-        assert_eq!(argon.context_source, "client");
-        assert_eq!(argon.description.as_deref(), Some("Gemini 4 Argon"));
-        assert_eq!(
-            argon.input_modalities.as_deref(),
-            Some(&["text".to_string(), "image".to_string()][..])
-        );
-        assert_eq!(
-            argon.reasoning_levels.as_deref(),
-            Some(&["low".to_string(), "medium".to_string(), "high".to_string()][..])
-        );
-        assert_eq!(argon.default_reasoning_level.as_deref(), Some("medium"));
-
-        assert_eq!(public[1].context_window, Some(500_000));
-    }
-
-    #[test]
-    fn configured_context_limits_override_client_catalog_metadata() {
-        let mut public = parse_public_models(&serde_json::json!({"data": [
-            {"id": "gemini-4-argon-high", "object": "model"}
-        ]}))
-        .unwrap();
-        let client = runtime(serde_json::json!({"models": [
-            {"slug": "gemini-4-argon-high", "context_window": 1_048_576, "max_context_window": 1_048_576}
-        ]}));
-        merge_codex_client_metadata(&mut public, &client);
-        apply_configured_context_limits(
-            &mut public,
-            "codex-api-key:\n  - models:\n      - name: gemini-4-argon-high\n        max-context-length: 200000\n",
-        )
-        .unwrap();
-        assert_eq!(public[0].context_window, Some(200_000));
-        assert_eq!(public[0].context_source, "configuration");
-    }
-
-    #[test]
-    fn fallback_uses_runtime_reasoning_levels_and_context_window() {
-        let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
-        let mut public = parse_public_models(&serde_json::json!({"data": [
-            {"id": "gemini-4-argon-high", "object": "model"}
-        ]}))
-        .unwrap();
-        let client = runtime(serde_json::json!({"models": [{
-            "slug": "gemini-4-argon-high",
-            "context_window": 1_048_576,
-            "max_context_window": 1_048_576,
-            "supported_reasoning_levels": [
-                {"effort": "low", "description": "Low"},
-                {"effort": "medium", "description": "Medium"},
-                {"effort": "high", "description": "High"}
-            ],
-            "default_reasoning_level": "medium"
-        }]}));
-        merge_codex_client_metadata(&mut public, &client);
-
-        let catalog = prepare_catalog_with_sources(&public, &sources).unwrap();
-        let model = &output_models(&catalog)[0];
-        assert_eq!(model["slug"], "gemini-4-argon-high");
-        assert_eq!(model["context_window"], 1_048_576);
-        assert_eq!(model["max_context_window"], 1_048_576);
-        assert_eq!(reasoning_efforts(model), ["low", "medium", "high"]);
-        assert_eq!(model["default_reasoning_level"], "medium");
-        let fallback_descriptions = sources.fallback["supported_reasoning_levels"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|level| level["effort"] == "high")
-            .map(|level| level["description"].clone())
-            .unwrap();
-        let high = model["supported_reasoning_levels"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|level| level["effort"] == "high")
-            .unwrap();
-        assert_eq!(high["description"], fallback_descriptions);
-    }
-
-    #[test]
-    fn third_party_models_default_to_tool_search_without_touching_official_templates() {
-        let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
-        let mut models: Vec<Value> = sources
-            .templates
-            .keys()
-            .map(|slug| serde_json::json!({"id":slug}))
-            .collect();
-        models.extend([
-            serde_json::json!({"id":"third-party-model", "supports_search_tool":false}),
-            serde_json::json!({"id":"vendor/third-party-model"}),
-        ]);
-        let runtime = runtime(serde_json::json!({"models":models}));
-        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
-        for model in output_models(&catalog) {
-            let slug = model["slug"].as_str().unwrap();
-            if let Some(template) = sources.template_for_slug(slug) {
-                assert_eq!(
-                    model.get("supports_search_tool"),
-                    template.value.get("supports_search_tool"),
-                    "{slug}"
-                );
-            } else {
-                assert_eq!(model["supports_search_tool"], true, "{slug}");
-            }
-        }
-    }
-
-    #[test]
-    fn fallback_templates_without_a_tool_search_field_default_to_enabled() {
-        let mut sources = test_sources();
-        sources.fallback.remove("supports_search_tool");
-        let runtime = runtime(serde_json::json!({"models":[{"id":"C"}]}));
-        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
-        let model = &output_models(&catalog)[0];
-        assert_eq!(model["supports_search_tool"], true);
-    }
-
-    #[test]
-    fn fallback_only_narrows_template_reasoning_levels() {
-        let mut sources = test_sources();
-        sources.fallback.insert(
-            "default_reasoning_level".to_string(),
-            serde_json::json!("medium"),
-        );
-        sources.fallback.insert(
-            "supported_reasoning_levels".to_string(),
-            serde_json::json!([
-                {"effort": "low", "description": "Low"},
-                {"effort": "medium", "description": "Medium"},
-                {"effort": "high", "description": "High"}
-            ]),
-        );
-
-        let narrowed = runtime(serde_json::json!({"models": [{
-            "id": "limited",
-            "supported_reasoning_levels": ["high", "xhigh"],
-            "default_reasoning_level": "medium"
-        }]}));
-        let catalog = prepare_catalog_with_sources(&narrowed, &sources).unwrap();
-        let model = &output_models(&catalog)[0];
-        assert_eq!(reasoning_efforts(model), ["high"]);
-        assert_eq!(model["default_reasoning_level"], "high");
-
-        let disjoint = runtime(serde_json::json!({"models": [{
-            "id": "disjoint",
-            "supported_reasoning_levels": ["ultra"]
-        }]}));
-        let catalog = prepare_catalog_with_sources(&disjoint, &sources).unwrap();
-        let model = &output_models(&catalog)[0];
-        assert!(reasoning_efforts(model).is_empty());
-        assert_eq!(model["default_reasoning_level"], Value::Null);
-
-        let absent = runtime(serde_json::json!({"models": [{
-            "id": "absent"
-        }]}));
-        let catalog = prepare_catalog_with_sources(&absent, &sources).unwrap();
-        let model = &output_models(&catalog)[0];
-        assert_eq!(reasoning_efforts(model), ["low", "medium", "high"]);
-        assert_eq!(model["default_reasoning_level"], "medium");
-
-        let empty = runtime(serde_json::json!({"models": [{
-            "id": "empty",
-            "supported_reasoning_levels": []
-        }]}));
-        let catalog = prepare_catalog_with_sources(&empty, &sources).unwrap();
-        let model = &output_models(&catalog)[0];
-        assert!(reasoning_efforts(model).is_empty());
-        assert_eq!(model["default_reasoning_level"], Value::Null);
     }
 }

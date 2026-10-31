@@ -18,9 +18,7 @@ export function resolveQuotaPluginId(plugins: PluginListEntry[], provider: strin
   const candidates = plugins.filter(plugin => plugin.registered && plugin.supportsQuota);
   return (candidates.find(plugin => normalize(plugin.quotaProvider) === target)
     ?? candidates.find(plugin => normalize(plugin.id) === target)
-    ?? candidates.find(plugin => normalize(plugin.oauthProvider) === target
-      || plugin.oauthProviders?.some(p => normalize(p) === target)
-      || plugin.oauthProviderEntries?.some(e => normalize(e.identifier) === target))
+    ?? candidates.find(plugin => normalize(plugin.oauthProvider) === target)
     ?? (candidates.length === 1 ? candidates[0] : undefined))?.id;
 }
 

@@ -1,21 +1,6 @@
-import { usagePreferences } from './usagePreferences';
-
-export type GenerationSpeedMode = 'total' | 'ttft';
-
-export const EVENT_SPEED_MODE_KEY = 'cpa-gui.usage-events-speed-mode.v1';
-
-export const getSpeedMode = (): GenerationSpeedMode =>
-  usagePreferences.getItem(EVENT_SPEED_MODE_KEY) === 'ttft' ? 'ttft' : 'total';
-
-export const setSpeedMode = (mode: GenerationSpeedMode): void => {
-  usagePreferences.setItem(EVENT_SPEED_MODE_KEY, mode);
-};
-
-export type GenerationSpeedInput = {
+type GenerationSpeedInput = {
   outputTokens: number;
   latencyMs: number;
-  ttftMs?: number | null;
-  mode?: GenerationSpeedMode;
 };
 
 type CacheReadRateInput = {
@@ -51,19 +36,9 @@ export const calculateTokenComposition = (tokens: {
   return { total, segments, cacheShare: total > 0 ? cacheRead / total * 100 : 0 };
 };
 
-/** Require a 100 ms TTFT-subtracted window to guard against transport bursts. */
-export const SPEED_MIN_GENERATION_MS = 100;
-
-/** Speed eligibility matches keeper: positive output and latency, plus a positive
- * TTFT below latency in ttft mode. The default is the total/end-to-end window
- * covering the whole request latency; ttft mode is opt-in and additionally
- * applies a 100 ms floor on the TTFT-subtracted window to guard against
- * transport bursts. Neither mode has a minimum output-token count. */
 export const calculateGenerationSpeed = ({
   outputTokens,
   latencyMs,
-  ttftMs,
-  mode = 'total',
 }: GenerationSpeedInput): number | null => {
   if (
     !Number.isFinite(outputTokens) ||
@@ -74,16 +49,7 @@ export const calculateGenerationSpeed = ({
     return null;
   }
 
-  let durationMs = latencyMs;
-  if (mode === 'ttft') {
-    if (ttftMs == null || !Number.isFinite(ttftMs) || ttftMs <= 0 || ttftMs >= latencyMs) {
-      return null;
-    }
-    durationMs = latencyMs - ttftMs;
-    if (durationMs < SPEED_MIN_GENERATION_MS) return null;
-  }
-
-  const speed = outputTokens / (durationMs / 1_000);
+  const speed = outputTokens / (latencyMs / 1_000);
   return Number.isFinite(speed) && speed > 0 ? speed : null;
 };
 
@@ -106,5 +72,5 @@ export const calculateCacheReadRate = ({
 
 export const formatCacheReadRate = (input: CacheReadRateInput): string => {
   const rate = calculateCacheReadRate(input);
-  return rate === null ? '—' : rate.toFixed(2) + '%';
+  return rate === null ? '—' : `${rate.toFixed(2)}%`;
 };

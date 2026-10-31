@@ -10,13 +10,6 @@ const text = (provider: string, key: string, label: TemplateText, placeholder?: 
   ({ path: providerPath(provider, key), type: 'string', label, placeholder });
 const number = (provider: string, key: string, label: TemplateText, defaultValue: number, max?: number): TemplateConfigField =>
   ({ path: providerPath(provider, key), type: 'number', label, defaultValue, min: 0, max });
-const upstreamPath = (provider: string, key: string) => ['upstream', provider, ...key.split('.')];
-const upstreamFlag = (provider: string, key: string, label: TemplateText, defaultValue = false, description?: TemplateText): TemplateConfigField =>
-  ({ path: upstreamPath(provider, key), type: 'boolean', label, defaultValue, description });
-const upstreamNumber = (provider: string, key: string, label: TemplateText, defaultValue: number, max?: number, description?: TemplateText): TemplateConfigField =>
-  ({ path: upstreamPath(provider, key), type: 'number', label, defaultValue, min: 0, max, description });
-const upstreamText = (provider: string, key: string, label: TemplateText, placeholder?: string): TemplateConfigField =>
-  ({ path: upstreamPath(provider, key), type: 'string', label, placeholder });
 
 export const oauthAliasShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
   name: { ...nonemptyText, label: T('上游模型', 'Upstream model', '上流モデル') },
@@ -40,50 +33,6 @@ export const iceServersShape: ConfigShape = { type: 'array', item: { type: 'obje
   credential: { ...textShape(T('TURN 密钥', 'TURN credential', 'TURN 認証情報')), secret: true },
 } } };
 
-const controlChars = /[\u0000-\u001f\u007f-\u009f]/;
-export const sensitivePatternsShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
-  pattern: { ...nonemptyText, label: T('正则表达式 (RE2)', 'Regular expression (RE2)', '正規表現 (RE2)'),
-    validate: value => typeof value === 'string' && Boolean(value.trim()) && !controlChars.test(value) ? null
-      : T('请输入不含控制字符的非空表达式', 'Enter a non-empty pattern without control characters', '制御文字を含まない、空でない式を入力してください') },
-  replacement: { ...textShape(T('替换文本', 'Replacement', '置換テキスト')),
-    validate: value => typeof value === 'string' && !controlChars.test(value) ? null
-      : T('替换文本不能包含控制字符', 'Replacement must not contain control characters', '置換テキストに制御文字は使用できません'),
-    hint: T('留空表示删除匹配内容。', 'Leave empty to delete matches.', '空欄にすると一致部分を削除します。') },
-} } };
-
-// Mirrors the core's duration parser: it accepts the ns/us/ms/s/m/h units in any
-// order with an optional sign, while a non-positive window simply means disabled.
-const tosPauseParts = /([+-]?)([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)/g;
-const tosPauseScale: Record<string, number> = { ns: 1e-6, us: 1e-3, 'µs': 1e-3, 'μs': 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6 };
-// The core stores durations as int64 nanoseconds, so a value past that bound is
-// not a duration it can represent; reject it here instead of saving a value the
-// core would silently read as "disabled".
-const tosPauseMaxMillis = Number(9223372036854775807n) / 1e6;
-const tosPauseMillis = (value: string): number | null => {
-  const body = value.replace(/^[+-]/, '');
-  if (!body) return null;
-  let end = 0;
-  let total = 0;
-  for (const part of body.matchAll(tosPauseParts)) {
-    if (part.index !== end) return null;
-    total += Number(part[2]) * tosPauseScale[part[3]];
-    if (!Number.isFinite(total) || total > tosPauseMaxMillis) return null;
-    end = part.index + part[0].length;
-  }
-  return end === body.length && end > 0 ? total : null;
-};
-const tosPauseValidate = (value: unknown): TemplateText | null => {
-  if (typeof value !== 'string') return T('请输入时长或留空关闭。', 'Enter a duration, or leave empty to disable.', '期間を入力するか、空欄で無効にします。');
-  const trimmed = value.trim();
-  if (trimmed === '') return null;
-  if (controlChars.test(trimmed)) return T('时长不能包含控制字符。', 'The duration must not contain control characters.', '期間に制御文字は使用できません。');
-  if (/^(?:0|off|false|none|disabled)$/i.test(trimmed)) return null;
-  // Any parseable duration is saved as typed: a zero or negative value simply
-  // means the pause stays off, so the UI must not reject what the core accepts.
-  return tosPauseMillis(trimmed) !== null ? null
-    : T('留空表示关闭；也可填 6h、30m、1us 等内核支持的时长，或 0 / off / false / none / disabled。', 'Leave empty to disable, or enter a core duration such as 6h, 30m or 1us, or 0 / off / false / none / disabled.', '空欄で無効。6h、30m、1us などコアが対応する期間、または 0 / off / false / none / disabled を入力してください。');
-};
-
 export const oauthTemplateGroups: TemplateConfigGroup[] = [
   { id: 'oauth-common', title: T('OAuth 通用设置', 'OAuth settings', 'OAuth 設定'), fields: [
     { path: ['oauth', 'auth-dir'], type: 'string', directory: true, restart: true, defaultValue: '~/.cli-proxy-api',
@@ -101,12 +50,6 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
       structuredField(['oauth', 'request-scoped-errors'], T('上游错误处理', 'Upstream error rules', '上流エラールール'), { type: 'map', item: errorRulesShape }),
     ] },
   { id: 'oauth-codex', title: T('Codex OAuth 行为', 'Codex OAuth behavior', 'Codex OAuth の動作'), fields: [
-    upstreamFlag('codex', 'upstream-request-compression', T('压缩 Codex 上游请求体', 'Compress upstream Codex requests', '上流 Codex リクエストを圧縮'), false,
-      T('向上游 Codex 发送请求时压缩请求体。', 'Compress request bodies sent to upstream Codex.', '上流の Codex に送信するリクエスト本文を圧縮します。')),
-    upstreamNumber('codex', 'upstream-request-compression-min-bytes', T('压缩最小请求体 (字节)', 'Compression minimum bytes', '圧縮の最小サイズ (バイト)'), 0, undefined,
-      T('仅压缩超过该字节数的上游请求体，0 沿用默认。', 'Only compress upstream request bodies larger than this many bytes (0 uses default).', 'このバイト数を超える上流リクエスト本文のみ圧縮します（0 で既定値）。')),
-    upstreamFlag('codex', 'websocket-compression', T('启用 Codex WebSocket 压缩', 'Enable Codex WebSocket compression', 'Codex WebSocket 圧縮を有効化'), false,
-      T('在与上游 Codex 建立 WebSocket 连接时启用压缩扩展。', 'Enable compression extensions for WebSocket connections to upstream Codex.', '上流 Codex との WebSocket 接続で圧縮拡張を有効化します。')),
     flag('codex', 'response-steering', T('双向 WebSocket 引导（实验性）', 'Full-duplex response steering (experimental)', '双方向レスポンス制御（実験的）')),
     flag('codex', 'disable-codex-cloaking', T('禁用 Codex 客户端伪装', 'Disable Codex client cloaking', 'Codex 偽装を無効化')),
     flag('codex', 'stream-bootstrap-buffering', T('缓冲流式启动事件', 'Buffer stream bootstrap events', 'ストリーム開始イベントをバッファー'), false,
@@ -140,21 +83,11 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
       structuredField(providerPath('codex', 'live-media-relay.ice-servers'), T('STUN / TURN 服务器', 'STUN / TURN servers', 'STUN / TURN サーバー'), iceServersShape),
     ] },
   { id: 'oauth-claude', title: T('Claude OAuth 行为', 'Claude OAuth behavior', 'Claude OAuth の動作'), fields: [
-    upstreamFlag('claude', 'tool-search', T('启用 Claude 原生工具搜索', 'Enable Claude native tool search', 'Claude ネイティブツール検索を有効化'), false,
-      T('启用 Claude 上游原生客户端工具搜索能力。', 'Enable native client tool search for Claude upstream requests.', 'Claude 上流リクエストでネイティブクライアントツール検索を有効化します。')),
-    upstreamNumber('claude', 'session-date-pin-days', T('伪装当前日期锁定天数', 'Cloaked date pin duration (days)', '偽装日付の固定期間 (日)'), 0, undefined,
-      T('会话中锁定的伪装系统日期天数，0 表示不锁定。', 'Number of days to pin cloaked system date within a session (0 disables pinning).', 'セッション内で偽装システム日付を固定する日数（0 で無効）。')),
-    upstreamFlag('claude', 'disable-cloaking-model-list', T('模型列表返回原始 ID', 'Return original model IDs in list', 'モデル一覧で元の ID を返す'), false,
-      T('在模型列表中直接返回上游原始模型 ID，不进行伪装。', 'Return upstream original model IDs directly in model lists without cloaking.', 'モデル一覧で偽装を行わず、上流の元のモデル ID を返します。')),
     flag('claude', 'model-level-cooling', T('仅冷却发生限额的模型', 'Limit cooldown to the affected model', '対象モデルのみクールダウン')),
     flag('claude', 'disable-claude-cloak-mode', T('禁用 Claude 请求伪装', 'Disable Claude request cloaking', 'Claude リクエストの偽装を無効化')),
+    flag('claude', 'claude-code.disable-cloaking-model-list', T('返回原始模型列表', 'Return original model IDs', '元のモデル ID を返す')),
     ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン')], ['os', T('操作系统', 'Operating system', 'OS')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン')]].map(([key, label]) => text('claude', `header-defaults.${key}`, label as TemplateText)),
     flag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定')),
-  ] },
-  { id: 'oauth-claude-headers', title: T('Claude 上游请求头默认值', 'Claude upstream header defaults', 'Claude 上流の既定ヘッダー'),
-    description: T('作用于 upstream.claude 的默认请求头，与凭据级 header-defaults 相互独立。', 'Default headers for upstream.claude, configured independently of credential-level header-defaults.', 'upstream.claude に適用する既定ヘッダーで、認証情報レベルの header-defaults とは独立しています。'), fields: [
-    ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン')], ['os', T('操作系统', 'Operating system', 'OS')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン')]].map(([key, label]) => upstreamText('claude', `header-defaults.${key}`, label as TemplateText)),
-    upstreamFlag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定')),
   ] },
   { id: 'oauth-others', title: T('其他 OAuth 上游', 'Other OAuth providers', 'その他の OAuth プロバイダー'), fields: [
     flag('aistudio', 'ws-auth', T('AI Studio WebSocket 身份验证', 'AI Studio WebSocket authentication', 'AI Studio WebSocket 認証'), true),
@@ -165,16 +98,5 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
     flag('antigravity', 'connection-pool.enabled', T('启用 Antigravity 连接池', 'Enable Antigravity connection pooling', 'Antigravity 接続プールを有効化')),
     { ...text('antigravity', 'connection-pool.idle-conn-timeout', T('空闲连接超时（上限 210s）', 'Idle connection timeout (maximum 210s)', 'アイドル接続のタイムアウト（最大 210s）'), '30s'), validate: value => typeof value === 'string' && /^(?:\d+(?:\.\d+)?(?:ms|s|m))+$/.test(value) ? null : T('请输入有效时长', 'Enter a valid duration', '有効な時間を入力してください') },
     number('antigravity', 'connection-pool.max-idle-conns-per-host', T('每个主机的最大空闲连接', 'Maximum idle connections per host', 'ホストごとの最大アイドル接続数'), 2),
-    { ...text('antigravity', 'tos-pause-window', T('TOS 保护暂停时长', 'Protective TOS pause window', 'TOS 保護一時停止の期間'), '6h'),
-      validate: tosPauseValidate,
-      description: T('内核 8.0.72 起支持；默认关闭，仅当内核返回 403 TOS_VIOLATION 时触发，瞬时 429 不会触发。设置后首次触发会暂停整组 Antigravity 凭据，例如 6h。', 'Supported since core 8.0.72 and off by default. It triggers only on an upstream 403 TOS_VIOLATION, never on transient 429s. When set, the first such response pauses the whole Antigravity pool, for example 6h.', 'コア 8.0.72 以降で対応。既定では無効で、上流の 403 TOS_VIOLATION でのみ作動し、一時的な 429 では作動しません。設定すると最初の検出時に Antigravity プール全体を 6h など停止します。') },
-    structuredField(providerPath('antigravity', 'sensitive-patterns-replace'), T('敏感词正则替换', 'Sensitive-pattern replacements', '敏感語の正規表現置換'), sensitivePatternsShape,
-      T('按顺序执行的 Go RE2 正则替换，用于改写系统提示中的可识别内容；替换文本留空即删除匹配内容。', 'Ordered Go RE2 replacement rules applied to system prompts; an empty replacement deletes the matched text.', 'システムプロンプトに順番に適用する Go RE2 置換ルールです。置換テキストが空の場合は一致部分を削除します。')),
-  ] },
-  { id: 'oauth-filters', title: T('上游敏感词过滤', 'Provider sensitive-word filters', 'プロバイダーの敏感語フィルター'), fields: [
-    { path: providerPath('antigravity', 'sensitive-words'), type: 'string-list', label: T('Antigravity 敏感词', 'Antigravity sensitive words', 'Antigravity の敏感語'),
-      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。') },
-    { path: providerPath('devin', 'sensitive-words'), type: 'string-list', label: T('Devin 敏感词', 'Devin sensitive words', 'Devin の敏感語'),
-      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。') },
   ] },
 ];

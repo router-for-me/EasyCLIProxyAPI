@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { I18nProvider } from '../../src/i18n';
 import { UsageRecordsPage } from '../../src/pages/UsageRecordsPage';
-import { initializeWindowActivity } from '../../src/services/windowActivity';
 import '../../src/styles/index.css';
 
 const params = new URLSearchParams(location.search);
@@ -152,7 +151,6 @@ mockIPC(async (cmd, args) => {
   throw new Error(`Unhandled fixture command: ${cmd}`);
 });
 
-void initializeWindowActivity();
 createRoot(document.getElementById('root')!).render(
   <I18nProvider>
     <div className="app-shell">

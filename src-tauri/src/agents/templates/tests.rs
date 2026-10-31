@@ -1,70 +1,18 @@
 use super::*;
 
-#[tokio::test]
-async fn codex_template_uses_the_same_recoverable_auth_transaction_as_apply() {
-    let home = crate::unique_test_temp_path("cpa-codex-template");
-    let directory = home.join(".codex");
-    fs::create_dir_all(&directory).unwrap();
-    fs::write(directory.join("auth.json"), r#"{"auth_mode":"apikey","OPENAI_API_KEY":"old","tokens":{"access_token":"synthetic-access","refresh_token":"synthetic-refresh"},"custom":"keep"}"#).unwrap();
-    fs::write(directory.join("config.toml"), "forced_login_method = \"api\"\ncli_auth_credentials_store = \"auto\"\n[model_providers.third]\nbase_url = \"https://third.example/v1\"\n").unwrap();
-    for oauth in [true, false, true, true] {
-        let catalog = r#"{"models":[{"slug":"synthetic-model"}]}"#;
-        let (before, after) = prepare_codex_cpa_configuration(&home, 8317, "synthetic-cpa-key", "synthetic-model",
-            AgentConfigurationOptions {
-                models: &[], codex_catalog: Some(catalog), oauth_configuration: oauth,
-                claude_code_model_mappings: None, claude_desktop_model_mappings: None,
-            }).unwrap();
-        let paths = before.iter().map(|(path, _)| path.clone()).collect();
-        let plan = TemplatePlan {
-            client: "codex".into(), paths, before, after, mappings: None,
-            mapping_revision: String::new(), model: "synthetic-model".into(), core: None,
-            preview: TemplatePreview { revision: "reviewed".into(), files: Vec::new() },
-        };
-        execute_template_plan(&GuiConfigFile::default(), plan, "reviewed").await.unwrap();
-        let auth: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("auth.json")).unwrap()).unwrap();
-        assert_eq!(auth["auth_mode"], if oauth { "chatgpt" } else { "apikey" });
-        assert_eq!(auth["custom"], "keep");
-        assert!(inspect_codex_agent_config(&directory.join("config.toml"), 8317, "synthetic-cpa-key").unwrap().0);
-        let normalized = build_codex_template_auth(&home).unwrap();
-        let normalized: serde_json::Value = serde_json::from_str(&normalized.after).unwrap();
-        assert_eq!(normalized["auth_mode"], "chatgpt");
-        assert_eq!(normalized["tokens"]["refresh_token"], "synthetic-refresh");
-    }
-    close_codex_configuration(&home).unwrap();
-    let restored = fs::read_to_string(directory.join("config.toml")).unwrap();
-    assert!(restored.contains("\"auto\""));
-    assert!(restored.contains("https://third.example/v1"));
-    fs::remove_dir_all(home).unwrap();
-}
-
 #[test]
 fn core_failure_messages_expose_outcomes_without_secret_source_text() {
     for detail in [
         "YAML source: key: secret-token",
         "Original configuration restored secret-token",
+        "Automatic restoration failed secret-token",
         "Configuration changed secret-token",
     ] {
         let rendered = agent_core_error(detail.into());
         assert!(!rendered.contains("secret-token"));
-    }
-}
-
-#[test]
-fn core_write_failure_messages_preserve_the_underlying_cause() {
-    for (detail, expected) in [
-        (
-            "Save failed. Original configuration was restored; you can retry: Management API error (500): write_failed",
-            "Original configuration was restored",
-        ),
-        (
-            "Save failed: Permission denied; automatic restoration failed: file is locked",
-            "rollback also failed",
-        ),
-    ] {
-        let rendered = agent_core_error(detail.into());
-        assert!(rendered.starts_with("Kernel alias or agent configuration write failed"));
-        assert!(rendered.contains(expected), "{rendered}");
-        assert!(rendered.ends_with(detail), "{rendered}");
+        if detail.contains("Automatic restoration failed") {
+            assert!(rendered.contains("rollback also failed"));
+        }
     }
 }
 

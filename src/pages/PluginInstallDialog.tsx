@@ -10,11 +10,10 @@ import { buildRepositoryURL, getPluginConfirmToken, isOfficialPlugin, isDefaultP
 import { isValidManualReleaseTag, supportsPluginVersionSelection } from '../services/pluginReleaseVersions';
 import { GitHubTokenHint, isGitHubRateLimit } from './PluginRateLimitHint';
 
-export function PluginInstallDialog({ entry, onClose, onInstalled, onError }: {
+export function PluginInstallDialog({ entry, onClose, onInstalled }: {
   entry: PluginStoreEntry;
   onClose: () => void;
   onInstalled: (result: PluginStoreInstallResult) => void | Promise<void>;
-  onError?: (message: string) => void;
 }) {
   const { t, locale } = useI18n();
   const pt = (key: Parameters<typeof pluginText>[0]) => pluginText(key, locale);
@@ -48,11 +47,7 @@ export function PluginInstallDialog({ entry, onClose, onInstalled, onError }: {
       const result = await pluginStoreApi.install(entry.id, { sourceId: entry.sourceId, version: canSelectVersion ? version.trim() : undefined, signal: request.signal });
       if (mounted.current && !request.signal.aborted) await onInstalled(result);
     } catch (reason) {
-      if (mounted.current && !request.signal.aborted) {
-        const message = reason instanceof Error ? reason.message : String(reason);
-        setError(message);
-        onError?.(message);
-      }
+      if (mounted.current && !request.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason));
     } finally { controller.current = null; pending.current = false; if (mounted.current) setBusy(false); }
   };
   return (

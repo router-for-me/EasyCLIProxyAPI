@@ -52,8 +52,6 @@ import metaIcon from '../assets/icons/meta.svg';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import vertexIcon from '../assets/icons/vertex.svg';
 import grokIcon from '../assets/icons/grok.svg';
-import zaiIcon from '../assets/icons/zai.svg';
-import { isZaiCodingPlanRecord, ZAI_CODING_PLAN_BASE_URL } from '../services/zaiQuota';
 import {
   isRecord,
   managementApi,
@@ -103,7 +101,7 @@ import { Select } from '../components/Select';
 
 export type { ProviderSection } from '../services/apiAccessRemarks';
 
-export type ProviderCategory = ProviderSection | 'deepseek' | 'zai';
+export type ProviderCategory = ProviderSection | 'deepseek';
 
 export const OPENAI_THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 export { DEEPSEEK_BASE_URL };
@@ -259,14 +257,6 @@ const providerDefinitions: ProviderDefinition[] = [
     openAi: true,
   },
   {
-    id: 'zai',
-    section: 'openai-compatibility',
-    responseKey: 'openai-compatibility',
-    labelKey: 'apiAccess.provider.zai',
-    icon: zaiIcon,
-    openAi: true,
-  },
-  {
     id: 'deepseek',
     section: 'codex-api-key',
     responseKey: 'codex-api-key',
@@ -342,11 +332,8 @@ export const providerCategoryMatchesRecord = (
   if (category === 'codex-api-key') {
     return section === 'codex-api-key' && !isDeepSeekRecord(record);
   }
-  if (category === 'zai') {
-    return section === 'openai-compatibility' && isZaiCodingPlanRecord(record);
-  }
   if (category === 'openai-compatibility') {
-    return section === 'openai-compatibility' && !isZaiCodingPlanRecord(record);
+    return section === 'openai-compatibility';
   }
   return true;
 };
@@ -394,7 +381,6 @@ const rowFromRecord = (
 export const providerRowsFromGroups = (section: ProviderSection, groups: Record<string, unknown>[]): ProviderRow[] =>
   providerEntries(section, groups).map(({ record, source }, index) => {
     const deepSeek = section === 'codex-api-key' && (isDeepSeekRecord(record) || isDeepSeekRecord(source.group));
-    const zai = section === 'openai-compatibility' && (isZaiCodingPlanRecord(record) || isZaiCodingPlanRecord(source.group));
     const row = rowFromRecord(section, record, index);
     const key = source.keyIndex !== undefined && Array.isArray(source.group.keys)
       ? source.group.keys[source.keyIndex]
@@ -402,7 +388,7 @@ export const providerRowsFromGroups = (section: ProviderSection, groups: Record<
     return {
       ...row,
       source,
-      category: deepSeek ? 'deepseek' : zai ? 'zai' : section,
+      category: deepSeek ? 'deepseek' : section,
       name: deepSeek ? 'DeepSeek' : row.name,
       disabled: isRecord(key) ? providerKeyIsDisabled(source.group, key) : row.disabled,
     };
@@ -778,14 +764,7 @@ const emptyProviderDraft = (): ProviderDraft => ({
 
 export const createProviderDraft = (category: ProviderCategory): ProviderDraft => {
   const draft = emptyProviderDraft();
-  if (category === 'openai-compatibility' || category === 'zai') {
-    return {
-      ...draft,
-      ...(category === 'zai' ? { name: 'z.ai', baseUrl: ZAI_CODING_PLAN_BASE_URL } : {}),
-      thinkingLevels: [],
-      thinkingLevelsEdited: false,
-    };
-  }
+  if (category === 'openai-compatibility') return { ...draft, thinkingLevels: [], thinkingLevelsEdited: false };
   if (category !== 'deepseek') return draft;
   return {
     ...draft,
@@ -800,8 +779,6 @@ export const applyProviderRemarkIdentity = (
   draft: ProviderDraft,
 ): ProviderDraft => draft.groupKeys ? draft : category === 'deepseek'
   ? { ...draft, name: draft.name.trim() || 'DeepSeek' }
-  : category === 'zai'
-    ? { ...draft, name: draft.name.trim() || 'z.ai', baseUrl: draft.baseUrl.trim() || ZAI_CODING_PLAN_BASE_URL }
   : definitionFor(category).openAi
     ? { ...draft, name: draft.remark.trim() }
     : draft;
@@ -1212,36 +1189,6 @@ export const reorderProviderRecords = (
   return next;
 };
 
-export const isModelExcluded = (record: Record<string, unknown>, modelName: string) => {
-  const normalized = modelName.trim().toLowerCase();
-  return Array.isArray(record['excluded-models']) && record['excluded-models'].some((rule) => {
-    const value = String(rule).trim();
-    return value === '*' || modelMatchesRule(modelName, value) || value.toLowerCase() === normalized;
-  });
-};
-
-export const providerSupportsModelExclusions = (section: ProviderSection) => !definitionFor(section).openAi;
-
-export const providerRecordWithModelEnabledState = (
-  section: ProviderSection,
-  record: Record<string, unknown>,
-  modelName: string,
-  enabled: boolean,
-) => {
-  if (!providerSupportsModelExclusions(section)) return null;
-  const normalized = modelName.trim().toLowerCase();
-  if (!normalized) return stripResponseFields(record);
-  const nextRecord = stripResponseFields(record);
-  const excludedModels = Array.isArray(nextRecord['excluded-models'])
-    ? nextRecord['excluded-models'].map(String).filter((model) => model.trim())
-    : [];
-  const withoutModel = excludedModels.filter((model) => model.trim().toLowerCase() !== normalized);
-  if (!enabled) withoutModel.push(modelName.trim());
-  if (withoutModel.length > 0) nextRecord['excluded-models'] = withoutModel;
-  else delete nextRecord['excluded-models'];
-  return nextRecord;
-};
-
 export const providerRecordWithDisabledState = (
   section: ProviderSection,
   record: Record<string, unknown>,
@@ -1585,27 +1532,6 @@ export function ApiAccessPage() {
     }
   };
 
-  const toggleProviderModel = async (row: ProviderRow, modelName: string, enabled: boolean) => {
-    setBusy(true);
-    setError('');
-    setNotice('');
-    try {
-      const latestRows = await providerGroupsApi.get(row.section);
-      if (!row.source) throw new Error(t('apiAccess.error.stale'));
-      const nextRecord = providerRecordWithModelEnabledState(row.section, row.record, modelName, enabled);
-      if (!nextRecord) return;
-      const nextRows = updateProviderEntry(latestRows, row.source, row.record, nextRecord);
-      await providerGroupsApi.put(row.section, nextRows);
-      await persistEntryRemarks(row.section, latestRows, nextRows);
-      await loadProviders(false);
-    } catch (requestError) {
-      setNotice(requestErrorMessage(requestError), 'error');
-      throw requestError;
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const toggleProvider = async (row: ProviderRow) => {
     setBusy(true);
     setError('');
@@ -1802,9 +1728,6 @@ export function ApiAccessPage() {
           key={providerHealthIdentity(healthDialogRow)}
           row={healthDialogRow}
           onClose={() => setHealthDialogRow(null)}
-          onModelToggle={providerSupportsModelExclusions(healthDialogRow.section)
-            ? (modelName, enabled) => toggleProviderModel(healthDialogRow, modelName, enabled)
-            : undefined}
         />
       ) : null}
       <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
@@ -1815,11 +1738,10 @@ export function ApiAccessPage() {
 type ProviderHealthDialogProps = {
   row: ProviderRow;
   onClose: () => void;
-  onModelToggle?: (modelName: string, enabled: boolean) => Promise<void>;
   keySelector?: ReactNode;
 };
 
-function ProviderGroupHealthDialog({ row, onClose, onModelToggle }: ProviderHealthDialogProps) {
+function ProviderGroupHealthDialog({ row, onClose }: ProviderHealthDialogProps) {
   const { t } = useI18n();
   const keys = providerGroupKeys(row.record);
   const [selected, setSelected] = useState(0);
@@ -1830,7 +1752,7 @@ function ProviderGroupHealthDialog({ row, onClose, onModelToggle }: ProviderHeal
     return { ...row, record, apiKey: readString(key, 'api-key'), apiKeys: [readString(key, 'api-key')],
       authIndex: readString(key, 'auth-index', 'authIndex'), models: modelsFromRecord(record.models) };
   }, [row, key]);
-  return <ProviderHealthDialog key={selected} row={effectiveRow} onClose={onClose} onModelToggle={onModelToggle} keySelector={keys.length ?
+  return <ProviderHealthDialog key={selected} row={effectiveRow} onClose={onClose} keySelector={keys.length ?
     <label className="provider-health-key-selector"><span>{t('apiAccess.groups.healthKey')}</span>
       <Select value={selected} onChange={(event) => setSelected(Number(event.currentTarget.value))}>
         {keys.map((entry, index) => <option key={index} value={index}>{t('apiAccess.groups.keyNumber', { number: index + 1 })} · {maskSecret(readString(entry, 'api-key'))}</option>)}
@@ -1839,7 +1761,7 @@ function ProviderGroupHealthDialog({ row, onClose, onModelToggle }: ProviderHeal
 
 type ProviderModelHealthState = { status: 'checking' } | ProviderModelHealthResult;
 
-function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: ProviderHealthDialogProps) {
+function ProviderHealthDialog({ row, onClose, keySelector }: ProviderHealthDialogProps) {
   const { t } = useI18n();
   const configuredModels = useMemo(
     () => mergeProviderHealthModels([], row.models),
@@ -1851,9 +1773,6 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<Record<string, ProviderModelHealthState>>({});
   const [checkingAll, setCheckingAll] = useState(false);
-  const [modelEnabled, setModelEnabled] = useState<Record<string, boolean>>(() => Object.fromEntries(
-    configuredModels.map((model) => [model.name.toLowerCase(), !isModelExcluded(row.record, model.name)]),
-  ));
   const healthControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -1906,7 +1825,6 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
   const checkedCount = resultValues.filter((result) => result.status !== 'checking').length;
   const healthyCount = resultValues.filter((result) => result.status === 'healthy').length;
   const failedCount = resultValues.filter((result) => result.status === 'failed').length;
-  const exhaustedCount = resultValues.filter((result) => result.status === 'budget-exhausted').length;
   const hasCheckingModel = resultValues.some((result) => result.status === 'checking');
 
   const saveResult = (result: ProviderModelHealthResult) => {
@@ -1943,7 +1861,6 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
   const statusLabel = (state: ProviderModelHealthState | undefined) => {
     if (!state) return t('apiAccess.health.notChecked');
     if (state.status === 'checking') return t('apiAccess.health.checking');
-    if (state.status === 'budget-exhausted') return t('apiAccess.health.budgetExhausted');
     return state.status === 'healthy'
       ? t('apiAccess.health.healthy')
       : t('apiAccess.health.failed');
@@ -1974,7 +1891,7 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
           total: models.length,
           healthy: healthyCount,
           failed: failedCount,
-        })}{exhaustedCount ? ` · ${t('apiAccess.health.budgetSummary', { count: exhaustedCount })}` : ''}</span>
+        })}</span>
         {modelError ? (
           <MessageNotice message={t('apiAccess.health.modelLoadFailed', { error: modelError })} onDismiss={() => setModelError('')} />
         ) : modelLoading ? (
@@ -2007,9 +1924,8 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
             : checked?.responseLatencyMs !== undefined
               ? t('apiAccess.health.responseInline', { latency: checked.responseLatencyMs })
               : '';
-          const enabled = modelEnabled[model.name.toLowerCase()] ?? true;
           return (
-            <div className={`provider-health-model-row ${checked?.status === 'failed' ? 'failed' : ''}${enabled ? '' : ' disabled'}`} key={model.name}>
+            <div className={`provider-health-model-row ${checked?.status === 'failed' ? 'failed' : ''}`} key={model.name}>
               <div className="provider-health-model-name">
                 <strong title={model.name}>{model.name}</strong>
                 {error
@@ -2018,26 +1934,9 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
                     ? <small title={model.alias || model.displayName}>{model.alias || model.displayName}</small>
                     : null}
               </div>
-              {onModelToggle ? (
-                <label className="provider-health-toggle">
-                  <span>{enabled ? t('apiAccess.status.enabled') : t('apiAccess.status.disabled')}</span>
-                  <Switch
-                    checked={enabled}
-                    disabled={checkingAll || modelLoading}
-                    onChange={() => {
-                      const nextEnabled = !enabled;
-                      setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: nextEnabled }));
-                      void onModelToggle(model.name, nextEnabled).catch(() => {
-                        setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: !nextEnabled }));
-                      });
-                    }}
-                    aria-label={t('apiAccess.health.toggleAria', { model: model.name, action: enabled ? t('common.disable') : t('common.enable') })}
-                  />
-                </label>
-              ) : null}
               <span
-                className={`state-pill provider-health-pill provider-health-model-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : checked?.status === 'budget-exhausted' ? 'warning' : ''}`}
-                title={checked?.status === 'budget-exhausted' ? t('apiAccess.health.budgetExhaustedDetail') : latencyTitle}
+                className={`state-pill provider-health-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : ''}`}
+                title={latencyTitle}
               >
                 {statusLabel(state)}
                 {latencyInline ? ` · ${latencyInline}` : ''}
@@ -2363,7 +2262,7 @@ export function ApiProviderDialog({
         <div className="provider-dialog-basic-grid">
         {definition.openAi ? <label><span>{t('apiAccess.entries.name')}</span><input autoFocus value={draft.name} maxLength={80} onChange={(event) => updateTextField('name', event.currentTarget.value)} placeholder={t('apiAccess.entries.namePlaceholder')} /></label> : null}
         <label><span>{t('apiAccess.field.remark')}</span><input value={draft.remark} maxLength={80} onChange={(event) => updateTextField('remark', event.currentTarget.value)} placeholder={t('apiAccess.remarkPlaceholder')} /></label>
-        <label><span>{t('apiAccess.field.baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeCategory === 'zai' ? t('apiAccess.zai.basePlaceholder') : activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
+        <label><span>{t('apiAccess.field.baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
         </div>
         {!definition.openAi ? <div className="provider-dialog-secret">
           <label><span>{t('apiAccess.field.key')}</span><input autoFocus type={keyVisible ? 'text' : 'password'} autoComplete="off" spellCheck={false}

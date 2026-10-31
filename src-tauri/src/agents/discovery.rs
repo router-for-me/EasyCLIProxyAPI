@@ -18,8 +18,7 @@ pub(crate) fn agent_configuration_environment(_: &str) -> Option<PathBuf> {
 pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBuf> {
     match client {
         AgentClient::ClaudeCode => {
-            let directory =
-                agent_config_directory("claude-code").unwrap_or_else(|| home.join(".claude"));
+            let directory = home.join(".claude");
             let settings = directory.join("settings.json");
             let legacy = directory.join("claude.json");
             let settings_state_exists = agent_state_path(std::slice::from_ref(&settings))
@@ -50,18 +49,12 @@ pub(crate) fn agent_config_paths(client: AgentClient, home: &Path) -> Vec<PathBu
         AgentClient::GrokBuild => vec![grok_build_home(home).join(GROK_BUILD_CONFIG_FILE)],
         AgentClient::Omp => {
             let directory = omp_agent_directory(home);
-            vec![
-                directory.join(OMP_MODELS_FILE),
-                directory.join(OMP_SETTINGS_FILE),
-            ]
+            vec![directory.join(OMP_MODELS_FILE), directory.join(OMP_SETTINGS_FILE)]
         }
     }
 }
 
 pub(crate) fn opencode_config_path(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("opencode") {
-        return select_opencode_config(&directory);
-    }
     #[cfg(test)]
     let (custom_config, xdg_config_home): (Option<PathBuf>, Option<PathBuf>) = (None, None);
     #[cfg(not(test))]
@@ -89,10 +82,6 @@ pub(crate) fn opencode_config_path_from_environment(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| home.join(".config"))
         .join("opencode");
-    select_opencode_config(&config_directory)
-}
-
-fn select_opencode_config(config_directory: &Path) -> PathBuf {
     let json = config_directory.join("opencode.json");
     let jsonc = config_directory.join("opencode.jsonc");
     let candidates = [json.clone(), jsonc];
@@ -110,9 +99,6 @@ fn select_opencode_config(config_directory: &Path) -> PathBuf {
 }
 
 pub(crate) fn openclaw_agent_config_path(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("openclaw") {
-        return directory.join("openclaw.json");
-    }
     #[cfg(test)]
     let (custom_config, state_directory, openclaw_home): (
         Option<PathBuf>,
@@ -169,31 +155,18 @@ fn expand_openclaw_path(home: &Path, path: &Path) -> PathBuf {
 }
 
 pub(crate) fn kimi_code_home(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("kimi-code") {
-        return directory;
-    }
     agent_configuration_environment("KIMI_CODE_HOME").unwrap_or_else(|| home.join(".kimi-code"))
 }
 
 pub(crate) fn grok_build_home(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("grok-build") {
-        return directory;
-    }
     agent_configuration_environment("GROK_HOME").unwrap_or_else(|| home.join(".grok"))
 }
 
 pub(crate) fn omp_agent_directory(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("omp") {
-        return directory;
-    }
-    agent_configuration_environment("PI_CODING_AGENT_DIR")
-        .unwrap_or_else(|| home.join(".omp/agent"))
+    agent_configuration_environment("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".omp/agent"))
 }
 
 pub(crate) fn deepseek_harness_home(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("deepseek-harness") {
-        return directory;
-    }
     agent_configuration_environment("DSH_HOME").unwrap_or_else(|| home.join(".dsh"))
 }
 
@@ -279,9 +252,6 @@ pub(crate) fn read_package_json_version(path: &Path) -> Option<String> {
 }
 
 pub(crate) fn pi_agent_directory(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("pi") {
-        return directory;
-    }
     agent_configuration_environment("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi/agent"))
 }
 
@@ -524,7 +494,7 @@ pub(crate) fn inspect_pi_provider_status_with_executable(
                 let object = root
                     .as_object()
                     .ok_or_else(|| "Pi CLIProxyAPI configuration root must be a JSON object".to_string())?;
-                let expected_base_url = agent_effective_loopback_origin(PI_AGENT_ID, port);
+                let expected_base_url = managed_core_loopback_origin(port);
                 credentials_match = object
                     .get("baseUrl")
                     .and_then(serde_json::Value::as_str)
@@ -709,7 +679,7 @@ pub(crate) fn repair_pi_provider_inner(
     } else {
         None
     };
-    let base_url = agent_effective_loopback_origin(PI_AGENT_ID, port);
+    let base_url = managed_core_loopback_origin(port);
     let rendered = build_pi_provider_config(existing.as_deref(), &base_url, api_key)?;
     let settings = fs::read_to_string(&settings_path).map_err(|error| {
         format!(
@@ -925,9 +895,6 @@ pub(crate) fn remove_pi_package(executable: &Path, home: &Path) -> Result<(), St
 }
 
 pub(crate) fn codex_configuration_directory(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("codex") {
-        return directory;
-    }
     agent_configuration_environment("CODEX_HOME").unwrap_or_else(|| home.join(".codex"))
 }
 
@@ -936,9 +903,6 @@ pub(crate) fn codex_configuration_directory(home: &Path) -> PathBuf {
 // lives under `<dataBaseDir>/.zcode/v2/`. Fall back to the default location when
 // the setting is missing or unreadable.
 pub(crate) fn zcode_config_directory(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("zcode") {
-        return directory;
-    }
     if let Some(custom) = agent_configuration_environment("ZCODE_HOME") {
         return custom.join(".zcode/v2");
     }
@@ -989,12 +953,13 @@ pub(crate) fn codex_auth_file_has_oauth_tokens(path: &Path) -> bool {
     let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) else {
         return false;
     };
-    codex_has_oauth_tokens(root.get("tokens"))
-        && match root.get("auth_mode").and_then(serde_json::Value::as_str) {
-            Some("chatgpt") => true,
-            None => root.get("OPENAI_API_KEY").is_none_or(serde_json::Value::is_null),
-            _ => false,
-        }
+    root.get("tokens")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|tokens| {
+            tokens
+                .values()
+                .any(|value| value.as_str().is_some_and(|token| !token.trim().is_empty()))
+        })
 }
 
 pub(crate) fn codex_auth_file_has_api_key(path: &Path, api_key: &str) -> bool {
@@ -1061,12 +1026,6 @@ pub(crate) fn expected_agent_record_paths(client: AgentClient, paths: &[PathBuf]
 }
 
 pub(crate) fn claude_desktop_config_paths(_home: &Path) -> Vec<PathBuf> {
-    if let Some(directory) = agent_config_directory("claude-desktop") {
-        return claude_desktop_config_paths_from_directories(
-            directory.clone(),
-            directory.join("Claude-3p"),
-        );
-    }
     #[cfg(target_os = "macos")]
     let (normal, threep) = {
         let support = _home.join("Library/Application Support");
@@ -1147,9 +1106,6 @@ pub(crate) fn find_windows_claude_data_directory(
 }
 
 pub(crate) fn hermes_agent_config_path(home: &Path) -> PathBuf {
-    if let Some(directory) = agent_config_directory("hermes") {
-        return directory.join("config.yaml");
-    }
     if let Some(directory) = agent_configuration_environment("HERMES_HOME") {
         return directory.join("config.yaml");
     }
@@ -1205,19 +1161,6 @@ pub(crate) fn inspect_agent_config_with_executables(
     executable_override: Option<&Path>,
     desktop_override: Option<&Path>,
 ) -> AgentConfigStatus {
-    inspect_agent_config_and_executable(
-        client, home, port, api_key, executable_override, desktop_override,
-    ).0
-}
-
-pub(crate) fn inspect_agent_config_and_executable(
-    client: AgentClient,
-    home: &Path,
-    port: u16,
-    api_key: &str,
-    executable_override: Option<&Path>,
-    desktop_override: Option<&Path>,
-) -> (AgentConfigStatus, Option<PathBuf>) {
     let paths = agent_config_paths(client, home);
     let config_exists = paths.iter().any(|path| path.is_file());
     let result = config_paths(client.id(), home)
@@ -1258,13 +1201,7 @@ pub(crate) fn inspect_agent_config_and_executable(
     };
     let copilot_cli = (client == AgentClient::CopilotCli)
         .then(|| detect_copilot_cli(home, executable_override)).flatten();
-    let codex_cli = (client == AgentClient::Codex)
-        .then(|| resolve_codex_cli(home, executable_override));
-    let codex_error = codex_cli.as_ref().and_then(|result| result.as_ref().err()).cloned();
-    let codex_cli = codex_cli.and_then(Result::ok).flatten();
-    let executable = if client == AgentClient::Codex {
-        codex_cli.as_ref().map(|resolved| resolved.path.clone())
-    } else if client == AgentClient::CopilotCli {
+    let executable = if client == AgentClient::CopilotCli {
         copilot_cli.as_ref().map(|(path, _)| path.clone())
     } else { executable_override.filter(|path| path.is_file()
         || (matches!(client, AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy)
@@ -1272,9 +1209,7 @@ pub(crate) fn inspect_agent_config_and_executable(
         .or_else(|| find_agent_executable(client, home)) };
     let plugin_version = (client == AgentClient::VscodeCopilot).then(||
         executable.as_deref().and_then(|path| read_vscode_copilot_version(path, home))).flatten();
-    let cli_version = if client == AgentClient::Codex {
-        codex_cli.map(|resolved| resolved.version)
-    } else if client == AgentClient::CopilotCli {
+    let cli_version = if client == AgentClient::CopilotCli {
         copilot_cli.map(|(_, version)| version)
     } else if client == AgentClient::VscodeCopilot {
         None
@@ -1342,14 +1277,13 @@ pub(crate) fn inspect_agent_config_and_executable(
             "Only a configuration file was detected. You can still edit the configuration and connect it to CPA, but launch functionality is unavailable".to_string(),
         );
     }
-    let error = error.or(codex_error);
     if let Some(message) = error.as_ref() {
         warnings.push(message.clone());
     }
 
     let configuration_synchronized = agent_configuration_is_synchronized(client, home, configured);
 
-    (AgentConfigStatus {
+    AgentConfigStatus {
         id: client.id().to_string(),
         name: client.name().to_string(),
         supported_platform: client.supported_platform(),
@@ -1399,7 +1333,7 @@ pub(crate) fn inspect_agent_config_and_executable(
             .flatten(),
         warnings,
         error,
-    }, executable)
+    }
 }
 
 pub(crate) fn agent_installation_detected(
@@ -2433,11 +2367,7 @@ pub(crate) fn read_claude_desktop_version(home: &Path) -> Option<String> {
             read_macos_app_version(application)
         })
     }
-    #[cfg(target_os = "linux")]
-    {
-        find_claude_desktop_executable(home).and_then(|path| read_agent_version(&path, home))
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = home;
         None
@@ -2692,7 +2622,7 @@ pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
     normalize_detected_agent_version(package.get("version")?.as_str()?)
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 pub(crate) fn windows_powershell_single_quoted_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
@@ -2751,9 +2681,6 @@ pub(crate) fn find_agent_executable(client: AgentClient, home: &Path) -> Option<
     }
     if client == AgentClient::OpenCode {
         return find_opencode_executable(home);
-    }
-    if client == AgentClient::Codex {
-        return find_codex_executable(home);
     }
     if client == AgentClient::DeepSeekHarness {
         return find_deepseek_harness_executable(home);
@@ -2881,14 +2808,6 @@ pub(crate) fn find_named_agent_executable_in_directories(
     directories: &[PathBuf],
     names: &[&str],
 ) -> Option<PathBuf> {
-    find_all_named_agent_executables_in_directories(directories, names).into_iter().next()
-}
-
-pub(crate) fn find_all_named_agent_executables_in_directories(
-    directories: &[PathBuf],
-    names: &[&str],
-) -> Vec<PathBuf> {
-    let mut result = Vec::new();
     for directory in directories {
         for name in names {
             #[cfg(target_os = "windows")]
@@ -2900,61 +2819,15 @@ pub(crate) fn find_all_named_agent_executables_in_directories(
             ];
             #[cfg(not(target_os = "windows"))]
             let candidates = [directory.join(name)];
-            for candidate in candidates {
-                if agent_cli_executable(&candidate) && !result.contains(&candidate) {
-                    result.push(candidate);
-                }
+            if let Some(candidate) = candidates
+                .into_iter()
+                .find(|path| agent_cli_executable(path))
+            {
+                return Some(candidate);
             }
         }
     }
-    result
-}
-
-pub(crate) fn find_codex_executable(home: &Path) -> Option<PathBuf> {
-    resolve_codex_cli(home, None).ok().flatten().map(|resolved| resolved.path)
-}
-
-#[derive(Debug)]
-pub(crate) struct ResolvedCodexCli {
-    pub(crate) path: PathBuf,
-    pub(crate) version: String,
-}
-
-pub(crate) fn resolve_codex_cli(
-    home: &Path,
-    executable_override: Option<&Path>,
-) -> Result<Option<ResolvedCodexCli>, String> {
-    let environment_override = env::var_os("CODEX_CLI_PATH")
-        .filter(|path| !path.to_string_lossy().trim().is_empty()).map(PathBuf::from);
-    resolve_codex_cli_in_directories(
-        home, executable_override, environment_override.as_deref(),
-        &agent_executable_directories(home),
-    )
-}
-
-pub(crate) fn resolve_codex_cli_in_directories(
-    home: &Path,
-    executable_override: Option<&Path>,
-    environment_override: Option<&Path>,
-    directories: &[PathBuf],
-) -> Result<Option<ResolvedCodexCli>, String> {
-    let validate = |path: PathBuf| {
-        let path = if path.is_absolute() { path } else {
-            env::current_dir().ok()?.join(path)
-        };
-        if !agent_cli_executable(&path) {
-            return None;
-        }
-        let version = read_agent_version_with_process_group(&path, home, true)?;
-        Some(ResolvedCodexCli { path, version })
-    };
-    if let Some(path) = executable_override.or(environment_override) {
-        return validate(path.to_path_buf()).map(Some).ok_or_else(|| {
-            format!("Codex CLI at {} could not be executed or did not return a version. Check the configured CLI path", path.display())
-        });
-    }
-    Ok(find_all_named_agent_executables_in_directories(directories, &["codex"])
-        .into_iter().find_map(validate))
+    None
 }
 
 pub(crate) fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {
@@ -2971,9 +2844,8 @@ pub(crate) fn agent_executable_directories_from_environment(
     registered: &[PathBuf],
 ) -> Vec<PathBuf> {
     let mut directories = Vec::new();
-    let mut seen = std::collections::HashSet::new();
     let mut push = |path: PathBuf| {
-        if !path.as_os_str().is_empty() && seen.insert(path.clone()) {
+        if !path.as_os_str().is_empty() && !directories.iter().any(|item| item == &path) {
             directories.push(path);
         }
     };
@@ -3135,17 +3007,12 @@ pub(crate) fn windows_command_for_executable(executable: &Path, keep_shell_open:
     }
 
     let mut command = Command::new(windows_command_processor());
-    command.args(windows_batch_command_arguments(keep_shell_open));
+    command.args(["/D", if keep_shell_open { "/K" } else { "/C" }, "call"]);
     command.raw_arg(windows_batch_executable_argument(executable));
     command
 }
 
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn windows_batch_command_arguments(keep_shell_open: bool) -> [&'static str; 3] {
-    ["/D", if keep_shell_open { "/K" } else { "/C" }, "call"]
-}
-
-#[cfg(any(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 pub(crate) fn windows_batch_executable_argument(executable: &Path) -> String {
     format!("\"{}\"", path_to_string(executable))
 }
@@ -3154,21 +3021,6 @@ pub(crate) fn command_output_with_timeout(
     command: &mut Command,
     timeout: Duration,
 ) -> io::Result<Option<std::process::Output>> {
-    command_output_with_timeout_and_process_group(command, timeout, false)
-}
-
-fn command_output_with_timeout_and_process_group(
-    command: &mut Command,
-    timeout: Duration,
-    isolate_process_group: bool,
-) -> io::Result<Option<std::process::Output>> {
-    #[cfg(unix)]
-    if isolate_process_group {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(not(unix))]
-    let _ = isolate_process_group;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -3202,10 +3054,6 @@ fn command_output_with_timeout_and_process_group(
             }
             thread::sleep(AGENT_VERSION_PROBE_POLL_INTERVAL);
         };
-        #[cfg(unix)]
-        if isolate_process_group {
-            unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL); }
-        }
         let stdout = stdout_reader
             .join()
             .map_err(|_| io::Error::other("Agent detection output thread exited unexpectedly"))??;
@@ -3238,14 +3086,6 @@ fn terminate_agent_probe_process(child: &mut Child) {
 }
 
 pub(crate) fn read_agent_version(path: &Path, home: &Path) -> Option<String> {
-    read_agent_version_with_process_group(path, home, false)
-}
-
-fn read_agent_version_with_process_group(
-    path: &Path,
-    home: &Path,
-    isolate_process_group: bool,
-) -> Option<String> {
     #[cfg(target_os = "windows")]
     let mut command = windows_command_for_executable(path, false);
 
@@ -3255,9 +3095,7 @@ fn read_agent_version_with_process_group(
     command.arg("--version");
     configure_background_command(&mut command);
     configure_agent_command_environment(&mut command, home, path).ok()?;
-    let output = command_output_with_timeout_and_process_group(
-        &mut command, AGENT_VERSION_PROBE_TIMEOUT, isolate_process_group,
-    ).ok()??;
+    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
     if !output.status.success() {
         return None;
     }
@@ -3291,7 +3129,7 @@ pub(crate) fn inspect_claude_agent_config(
     )
     .map_err(|error| format!("Failed to parse Claude Code configuration: {error}"))?;
     let env = root.get("env").and_then(serde_json::Value::as_object);
-    let expected_base = agent_effective_loopback_origin("claude-code", port);
+    let expected_base = managed_core_loopback_origin(port);
     let configured = env
         .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
         .and_then(serde_json::Value::as_str)
@@ -3331,8 +3169,9 @@ pub(crate) fn inspect_claude_code_model_mappings(
             .map_err(|error| format!("Failed to read Claude Code configuration: {error}"))?,
     )
     .map_err(|error| format!("Failed to parse Claude Code configuration: {error}"))?;
-    let empty_env = serde_json::Map::new();
-    let env = root.get("env").and_then(serde_json::Value::as_object).unwrap_or(&empty_env);
+    let Some(env) = root.get("env").and_then(serde_json::Value::as_object) else {
+        return Ok(None);
+    };
     let fallback = env
         .get("ANTHROPIC_MODEL")
         .and_then(serde_json::Value::as_str)
@@ -3345,8 +3184,7 @@ pub(crate) fn inspect_claude_code_model_mappings(
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .or(fallback)
-            .or_else(|| root.get("language").and_then(serde_json::Value::as_str).map(|_| ""))?;
+            .or(fallback)?;
         let normalized = strip_claude_code_context_suffix(value);
         Some((normalized.to_string(), normalized.len() != value.len()))
     };
@@ -3419,7 +3257,6 @@ pub(crate) fn inspect_claude_code_model_mappings(
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_string()),
-        response_language: root.get("language").and_then(serde_json::Value::as_str).map(str::to_string),
     }))
 }
 
@@ -3552,7 +3389,6 @@ pub(crate) fn claude_code_model_settings(
         manage_subagent_model: mappings.manage_subagent_model,
         startup_model: mappings.startup_model.clone(),
         subagent_model: mappings.subagent_model.clone(),
-        response_language: mappings.response_language.clone(),
     }
 }
 
@@ -3693,7 +3529,7 @@ pub(crate) fn inspect_claude_desktop_agent_config(
     let threep = read_agent_json_or_empty(&paths[1], "Claude Desktop 3P configuration")?;
     let profile = read_agent_json_or_empty(&paths[2], "Claude Desktop gateway configuration")?;
     let meta = read_agent_json_or_empty(&paths[3], "Claude Desktop configuration index")?;
-    let expected_base = agent_effective_loopback_origin("claude-desktop", port);
+    let expected_base = managed_core_loopback_origin(port);
     let configured = claude_desktop_profile_uses_local_gateway(&profile)
         && !claude_desktop_has_hybrid_pointer(&meta)
         && normal
@@ -3837,13 +3673,7 @@ pub(crate) fn inspect_codex_agent_config(
             .and_then(|provider| provider.get("wire_api"))
             .and_then(toml::Value::as_str)
             == Some("responses");
-    let file_auth = root.get("cli_auth_credentials_store").is_none_or(|value| value.as_str() == Some("file"));
-    let login_method = root.get("forced_login_method").is_none_or(|value| {
-        value.as_str() == Some(if oauth_configuration { "chatgpt" } else { "api" })
-    });
-    let configured = configured_without_auth && auth_configured && file_auth && login_method
-        && provider.is_some_and(|provider| !provider.contains_key("env_key"))
-        && root.get("profile").and_then(toml::Value::as_str).is_none_or(|profile| profile.trim().is_empty());
+    let configured = configured_without_auth && auth_configured;
     let model = root
         .get("model")
         .and_then(toml::Value::as_str)
@@ -3879,7 +3709,7 @@ pub(crate) fn inspect_opencode_agent_config(
     let provider = root
         .get("provider")
         .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID));
-    let expected_base = format!("{}/v1", agent_effective_loopback_origin("opencode", port));
+    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
     let configured = provider
         .and_then(|provider| provider.get("options"))
         .and_then(|options| options.get("baseURL"))
@@ -3935,7 +3765,7 @@ pub(crate) fn inspect_zcode_agent_config(
         .and_then(|selection| selection.get("modelId"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string);
-    let expected_origin = agent_effective_loopback_origin("zcode", port);
+    let expected_origin = managed_core_loopback_origin(port);
     let expected_base = format!("{expected_origin}/v1");
     let provider_base = provider
         .and_then(|provider| provider.pointer("/config/api/baseUrl"))
@@ -4002,7 +3832,7 @@ pub(crate) fn inspect_omp_agent_config(
     let settings = read_agent_yaml_mapping_or_empty(&paths[1], "Oh My Pi config.yml")?;
     let provider = omp_provider_mapping(&models);
     let model = omp_selected_model(&settings);
-    let expected = format!("{}/v1", agent_effective_loopback_origin("omp", port));
+    let expected = format!("{}/v1", managed_core_loopback_origin(port));
     let configured = provider
         .and_then(|provider| yaml_mapping_value(provider, "baseUrl"))
         .and_then(serde_norway::Value::as_str)
@@ -4057,7 +3887,7 @@ pub(crate) fn inspect_kimi_code_agent_config(
         &fs::read_to_string(path).map_err(|error| format!("Failed to read Kimi Code configuration: {error}"))?,
     )
     .map_err(|error| format!("Failed to parse Kimi Code configuration: {error}"))?;
-    let expected_base = format!("{}/v1", agent_effective_loopback_origin("kimi-code", port));
+    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
     let provider = root
         .get("providers")
         .and_then(toml::Value::as_table)
@@ -4114,7 +3944,7 @@ pub(crate) fn inspect_grok_build_agent_config(
         &fs::read_to_string(path).map_err(|error| format!("Failed to read Grok Build configuration: {error}"))?,
     )
     .map_err(|error| format!("Failed to parse Grok Build configuration: {error}"))?;
-    let expected_base = format!("{}/v1", agent_effective_loopback_origin("grok-build", port));
+    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
     let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
     let selected = root
         .get("models")
@@ -4168,7 +3998,7 @@ pub(crate) fn inspect_openclaw_agent_config(
         .get("models")
         .and_then(|models| models.get("providers"))
         .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID));
-    let expected_base = format!("{}/v1", agent_effective_loopback_origin("openclaw", port));
+    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
     let configured = provider
         .and_then(|provider| provider.get("baseUrl"))
         .and_then(serde_json::Value::as_str)
@@ -4204,7 +4034,7 @@ pub(crate) fn inspect_hermes_agent_config(
     )
     .map_err(|error| format!("Failed to parse Hermes YAML configuration: {error}"))?;
     let provider = hermes_managed_provider(&root);
-    let expected_base = format!("{}/v1", agent_effective_loopback_origin("hermes", port));
+    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
     let configured = provider
         .and_then(|provider| provider.get("base_url").or_else(|| provider.get("baseUrl")))
         .and_then(serde_yaml::Value::as_str)
@@ -4258,9 +4088,9 @@ pub(crate) fn inspect_deepseek_harness_config(
         .and_then(serde_norway::Value::as_str)
         == Some("anthropic-messages")
     {
-        agent_effective_loopback_origin("deepseek-harness", port)
+        managed_core_loopback_origin(port)
     } else {
-        format!("{}/v1", agent_effective_loopback_origin("deepseek-harness", port))
+        format!("{}/v1", managed_core_loopback_origin(port))
     };
     let credentials_layout_supported = deepseek_harness_credentials_layout_supported(&credentials);
     let credential = yaml_mapping_value(&credentials, "refs")

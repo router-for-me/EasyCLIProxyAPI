@@ -19,7 +19,6 @@ import {
   Eye,
   EyeOff,
   Gauge,
-  GitBranch,
   History,
   House,
   Languages,
@@ -28,7 +27,6 @@ import {
   MessageCircle,
   Network,
   PackageOpen,
-  Blocks,
   Puzzle,
   ServerCog,
   Settings,
@@ -47,9 +45,7 @@ import { QuotaPage } from './pages/QuotaPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
-import { RoutingPage } from './pages/routing/RoutingPage';
 import { PluginsPage } from './pages/PluginsPage';
-import { McpSkillsPage } from './pages/McpSkillsPage';
 import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
 import { usePluginNavLayout } from './components/usePluginNavLayout';
@@ -61,10 +57,8 @@ import {
   type PluginNavOverride,
 } from './services/pluginNavigation';
 import { languageOptions, useI18n } from './i18n';
-import { getUpdateChannel, setUpdateChannel } from './services/appUpdates';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
-import { forgetUpdatedPlugins, pluginUpdateIndicatorState } from './pluginUpdateModel';
 import { canOpenAppPage, requestAppNavigation } from './navigation';
 import { useThemePreference } from './theme';
 import { usePrivacyMode } from './privacy';
@@ -124,12 +118,6 @@ const pages = [
     component: ConfigPanelPage,
   },
   {
-    id: 'routing',
-    labelKey: 'app.nav.routing',
-    icon: GitBranch,
-    component: RoutingPage,
-  },
-  {
     id: 'versions',
     labelKey: 'app.nav.versions',
     icon: PackageOpen,
@@ -140,12 +128,6 @@ const pages = [
     labelKey: 'app.nav.plugins',
     icon: Puzzle,
     component: PluginsPage,
-  },
-  {
-    id: 'mcp-skills',
-    labelKey: 'app.nav.mcpSkills',
-    icon: Blocks,
-    component: McpSkillsPage,
   },
 ] as const;
 
@@ -180,32 +162,7 @@ function App() {
 
 function AppContent() {
   const { locale, setLocale, t } = useI18n();
-  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing, check: appUpdateCheck } = useAppUpdate();
-  const logoTapRef = useRef<{ count: number; timer: number | null }>({ count: 0, timer: null });
-  const handleLogoTap = useCallback(() => {
-    const tap = logoTapRef.current;
-    tap.count += 1;
-    if (tap.timer !== null) window.clearTimeout(tap.timer);
-    tap.timer = window.setTimeout(() => {
-      tap.count = 0;
-      tap.timer = null;
-    }, 3000);
-    if (tap.count >= 5) {
-      tap.count = 0;
-      if (tap.timer !== null) {
-        window.clearTimeout(tap.timer);
-        tap.timer = null;
-      }
-      void (async () => {
-        const current = await getUpdateChannel().catch(() => 'stable');
-        const next = current === 'preview' ? 'stable' : 'preview';
-        const applied = await setUpdateChannel(next as 'stable' | 'preview').catch(() => null);
-        if (applied && typeof appUpdateCheck === 'function') {
-          await appUpdateCheck();
-        }
-      })();
-    }
-  }, [appUpdateCheck]);
+  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<AppPageId>('home');
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -223,7 +180,7 @@ function AppContent() {
   const { status } = useCoreRuntime();
   const coreReady = Boolean(status?.ready);
   const [navElement, setNavElement] = useState<HTMLElement | null>(null);
-  const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady);
+  const { entries: pluginEntries, fetched: pluginEntriesFetched } = usePluginNavEntries(coreReady);
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
   const navPages = pages.filter((page) => page.id !== 'easy');
   const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, navPages.length, pluginEntries.length);
@@ -235,17 +192,6 @@ function AppContent() {
     : resolvePluginNavLayout(autoPluginLayout, pluginEntries.length, pluginNavOverride);
   const pluginNavExpanded = pluginNavLayout === 'expanded';
   const pluginChildActive = pluginEntries.some((entry) => entry.route === active);
-  // The top bar's nav row scrolls sideways on phones: keep the active item inside it.
-  useLayoutEffect(() => {
-    const row = navElement?.querySelector<HTMLElement>('button.active');
-    if (!navElement || !row) return;
-    const box = navElement.getBoundingClientRect();
-    const rect = row.getBoundingClientRect();
-    // Line the item up with the row's start, where the row's scroll snapping puts it anyway.
-    if (rect.left < box.left || rect.right > box.right) navElement.scrollLeft += rect.left - box.left;
-    if (rect.top < box.top) navElement.scrollTop += rect.top - box.top;
-    else if (rect.bottom > box.bottom) navElement.scrollTop += rect.bottom - box.bottom;
-  }, [navElement, active, pluginEntries.length, pluginNavExpanded]);
   const activePage = pages.find((page) => page.id === active);
   const ActivePage = activePage?.component;
   const selectedLanguage = languageOptions.find((option) => option.value === locale)
@@ -265,8 +211,8 @@ function AppContent() {
   }, [active, coreReady]);
 
   useEffect(() => {
-    if (status !== null && !status.ready) void closePluginWebview().catch(() => undefined);
-  }, [status]);
+    if (!coreReady) void closePluginWebview().catch(() => undefined);
+  }, [coreReady]);
 
   useEffect(() => {
     if (pluginEntriesFetched && isPluginRoute(active) && !pluginEntry) {
@@ -423,7 +369,7 @@ function AppContent() {
         {active !== "easy" ? (
           <aside className="sidebar">
             <div className="sidebar-brand" title={t('app.desktopConsole')}>
-              <img src={appLogo} alt="" className="brand-mark brand-logo" onClick={handleLogoTap} />
+              <img src={appLogo} alt="" className="brand-mark brand-logo" />
               <div className="sidebar-brand-text">
                 <strong>EasyCLIProxyAPI</strong>
                 <span>{t('app.desktopConsole')}</span>
@@ -444,14 +390,7 @@ function AppContent() {
                 const locked = !canOpenAppPage(page.id, coreReady);
                 const updateIndicator = page.id === 'versions'
                   ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
-                  : page.id === 'plugins'
-                    ? pluginUpdateIndicatorState(pluginUpdates)
-                    : null;
-                const updateIndicatorLabel = page.id === 'plugins'
-                  ? Object.keys(pluginUpdates).length > 0
-                    ? `${t('plugins.updateAvailable')} (${Object.keys(pluginUpdates).length})`
-                    : ''
-                  : availableUpdateLabel;
+                  : null;
                 const row = (
                   <button
                     key={page.id}
@@ -476,10 +415,10 @@ function AppContent() {
                         className={`nav-update-indicator ${updateIndicator}`}
                         title={updateIndicator === 'processing'
                           ? t('appUpdate.progressTitle')
-                          : updateIndicatorLabel}
+                          : availableUpdateLabel}
                         aria-label={updateIndicator === 'processing'
                           ? t('appUpdate.progressTitle')
-                          : updateIndicatorLabel}
+                          : availableUpdateLabel}
                       />
                     ) : null}
                   </button>
@@ -629,12 +568,6 @@ function AppContent() {
                   setTheme={setTheme}
                   locale={locale}
                   setLocale={setLocale}
-                />
-              ) : ActivePage === PluginsPage ? (
-                <PluginsPage
-                  discoveredPlugins={installedPluginList}
-                  discoveredUpdates={pluginUpdates}
-                  onPluginUpdatesResolved={forgetUpdatedPlugins}
                 />
               ) : (
                 <ActivePage />

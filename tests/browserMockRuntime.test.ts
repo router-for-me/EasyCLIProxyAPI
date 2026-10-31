@@ -19,36 +19,6 @@ describe('browser mock options', () => {
 });
 
 describe('browser mock runtime', () => {
-  test('only changes the selected download source on an explicit selection', async () => {
-    const events: string[] = [];
-    const runtime = createBrowserMockRuntime('stopped', (event) => events.push(event));
-    for (const source of ['github', 'gitcode', 'gh-proxy', 'gh-fast', 'custom:https://mirror.example.com/']) {
-      await runtime.invoke('set_download_source', { source });
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        await runtime.invoke('check_app_update');
-        await runtime.invoke('check_latest_core');
-        await runtime.invoke('list_core_versions');
-        expect((await runtime.invoke('get_version_source_settings') as { source: string }).source).toBe(source);
-      }
-    }
-    expect(events).not.toContain('version-download-source-changed');
-  });
-
-  test('persists tags in downloads while omitting them from the core list response', async () => {
-    const runtime = createBrowserMockRuntime('running');
-    const request = (method: string, path: string, extra = {}) => runtime.invoke('management_request', { request: { method, path, ...extra } });
-    await request('PATCH', '/credentials/fields', { body: { name: 'codex-personal.json', tags: [' team ', '', 'team', 'production', null] } });
-    expect(await request('GET', '/credentials/download', { query: { name: 'codex-personal.json' } }))
-      .toMatchObject({ tags: ['team', 'production'] });
-    const listed = await request('GET', '/credentials') as { files: Array<{ name: string; tags?: string[] }> };
-    expect(listed.files.find(file => file.name === 'codex-personal.json')).not.toHaveProperty('tags');
-    await request('PATCH', '/credentials/fields', { body: { name: 'codex-personal.json', note: 'unchanged tags' } });
-    expect(await request('GET', '/credentials/download', { query: { name: 'codex-personal.json' } }))
-      .toMatchObject({ tags: ['team', 'production'], note: 'unchanged tags' });
-    await request('PATCH', '/credentials/fields', { body: { name: 'codex-personal.json', tags: [] } });
-    expect(await request('GET', '/credentials/download', { query: { name: 'codex-personal.json' } })).toMatchObject({ tags: [] });
-  });
-
   test('saves, preserves and clears the Codex approval model', async () => {
     const runtime = createBrowserMockRuntime('running');
     const save = (request: Record<string, unknown>) => runtime.invoke('save_codex_model_catalog_editor', { request });
@@ -122,13 +92,6 @@ describe('browser mock runtime', () => {
 
   test('latency simulation also works outside a browser', async () => {
     expect(await createBrowserMockRuntime('running', undefined, 1).invoke('get_core_status')).toMatchObject({ ready: true });
-  });
-
-  test('lists selectable core versions for downgrade support', async () => {
-    const runtime = createBrowserMockRuntime('running');
-    const versions = await runtime.invoke('list_core_versions') as Array<{ version: string; assetName: string }>;
-    expect(versions.map((item) => item.version)).toEqual(['7.3.16', '7.3.15', '7.3.14']);
-    expect(versions[1].assetName).toBe('CLIProxyAPI_7.3.15_windows_amd64.zip');
   });
 
   for (const scenario of ['running', 'empty'] as const) {
@@ -283,14 +246,4 @@ describe('browser mock native provider groups', () => {
     await request(runtime, 'PUT', '/config/api-keys/openai-compatibility', [{ ...group, keys: [group.keys[1]] }]);
     expect(await request(runtime, 'GET', '/config/api-keys/openai-compatibility')).toEqual([{ ...group, keys: [group.keys[1]] }]);
   });
-});
-
-test('application update mock retains the selected core mode only for that attempt', async () => {
-  const runtime = createBrowserMockRuntime('running');
-  expect(await runtime.invoke('check_app_update')).toMatchObject({ preserveCoreSupported: true });
-  await runtime.invoke('start_app_update', { preserveCore: true });
-  expect(await runtime.invoke('get_app_update_task')).toMatchObject({ running: true, preserveCore: true });
-  await runtime.invoke('cancel_app_update');
-  await runtime.invoke('start_app_update');
-  expect(await runtime.invoke('get_app_update_task')).toMatchObject({ running: true, preserveCore: false });
 });

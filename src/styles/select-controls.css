@@ -33,9 +33,8 @@
 
 .select-control:not([multiple]):not([size]):focus {
   border-color: var(--color-accent);
-  outline: 2px solid var(--ui-focus-ring);
-  outline-offset: 1px;
-  box-shadow: none;
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 14%, transparent);
 }
 
 .select-control:not([multiple]):not([size]):disabled {

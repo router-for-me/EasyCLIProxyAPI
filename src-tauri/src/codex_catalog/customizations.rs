@@ -8,13 +8,6 @@ use std::path::Path;
 pub(super) struct ModelCustomizations {
     default_auto_review_model: Option<String>,
     models: BTreeMap<String, Map<String, Value>>,
-    model_order: Vec<String>,
-}
-
-impl ModelCustomizations {
-    pub(super) fn model_order(&self) -> &[String] {
-        &self.model_order
-    }
 }
 
 pub(super) const EDITABLE_FIELDS: [&str; 13] = [
@@ -40,8 +33,6 @@ struct SavedCustomizations {
     #[serde(default)]
     default_auto_review_model: Option<String>,
     models: BTreeMap<String, Map<String, Value>>,
-    #[serde(default)]
-    model_order: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,7 +40,6 @@ struct SavedCustomizations {
 pub(crate) struct CatalogEditorSnapshot {
     default_auto_review_model: Option<String>,
     revision: String,
-    default_order: Vec<String>,
     models: Vec<CatalogEditorModel>,
 }
 
@@ -297,28 +287,12 @@ pub(super) fn snapshot_for_state(
             defaults,
         });
     }
-    let default_order: Vec<String> = models.iter().map(|model| model.slug.clone()).collect();
-    if !state.customizations.model_order.is_empty() {
-        let rank: std::collections::HashMap<String, usize> = state
-            .customizations
-            .model_order
-            .iter()
-            .enumerate()
-            .map(|(index, slug)| (slug.clone(), index))
-            .collect();
-        models.sort_by_key(|model| {
-            rank.get(&normalize_id(&model.slug))
-                .copied()
-                .unwrap_or(usize::MAX)
-        });
-    }
     let mut digest = Sha256::new();
     digest.update(baseline.as_bytes());
     digest.update(serde_json::to_vec(&state.customizations).map_err(|error| error.to_string())?);
     Ok(CatalogEditorSnapshot {
         default_auto_review_model: state.customizations.default_auto_review_model.clone(),
         revision: format!("{:x}", digest.finalize()),
-        default_order,
         models,
     })
 }
@@ -346,16 +320,7 @@ fn customizations_from_request(
     let default_auto_review_model = request.review_model.map_or_else(
         || snapshot.default_auto_review_model.clone(), |selection| selection.model);
     validate_review_model(default_auto_review_model.as_deref())?;
-    let mut customizations = ModelCustomizations {
-        default_auto_review_model,
-        models: BTreeMap::new(),
-        model_order: Vec::new(),
-    };
-    let requested_order: Vec<String> = request
-        .models
-        .iter()
-        .map(|model| normalize_id(&model.slug))
-        .collect();
+    let mut customizations = ModelCustomizations { default_auto_review_model, models: BTreeMap::new() };
     for requested in request.models {
         let key = normalize_id(&requested.slug);
         let current = snapshot
@@ -396,9 +361,6 @@ fn customizations_from_request(
             customizations.models.insert(key, changes);
         }
     }
-    if requested_order != snapshot.default_order {
-        customizations.model_order = requested_order;
-    }
     Ok(customizations)
 }
 
@@ -421,17 +383,7 @@ fn decode_customizations(content: &[u8]) -> Result<ModelCustomizations, String> 
         normalized.insert(key, model);
     }
     validate_review_model(saved.default_auto_review_model.as_deref())?;
-    let model_order = saved
-        .model_order
-        .iter()
-        .map(|slug| normalize_id(slug))
-        .filter(|slug| !slug.is_empty())
-        .collect();
-    Ok(ModelCustomizations {
-        default_auto_review_model: saved.default_auto_review_model,
-        models: normalized,
-        model_order,
-    })
+    Ok(ModelCustomizations { default_auto_review_model: saved.default_auto_review_model, models: normalized })
 }
 
 pub(crate) fn load_customizations(path: &Path) -> Result<(), String> {
@@ -469,7 +421,6 @@ fn save_for_state(
         version: 1,
         default_auto_review_model: customizations.default_auto_review_model.clone(),
         models: customizations.models.clone(),
-        model_order: customizations.model_order.clone(),
     };
     let content = serde_json::to_vec_pretty(&saved).map_err(|error| error.to_string())?;
     if content.len() > crate::MAX_CODEX_MODEL_CATALOG_BYTES {
@@ -506,7 +457,7 @@ mod tests {
             context_source: "template",
             input_modalities: None,
             default_reasoning_level: None,
-            reasoning_levels: None,
+            reasoning_levels: Vec::new(),
             hidden: false,
         }
     }
@@ -586,11 +537,7 @@ mod tests {
 
     #[test]
     fn tool_search_overrides_survive_regeneration_and_restart_for_prefixed_and_unknown_models() {
-        for (slug, enabled, official) in [
-            ("Fy/gpt-6.1-sol", false, true),
-            ("provider/custom-model", false, false),
-            ("provider/opt-in-model", true, false),
-        ] {
+        for (slug, enabled) in [("Fy/gpt-6.1-sol", false), ("provider/custom-model", true)] {
             let mut state = CatalogState {
                 sources: parse_sources(MODEL_CATALOG_JSON).unwrap(),
                 json: MODEL_CATALOG_JSON.to_string(),
@@ -598,9 +545,8 @@ mod tests {
             };
             let runtime = parse_public_models(&serde_json::json!({"data":[{"id":slug}]})).unwrap();
             let snapshot = snapshot_for_state(&runtime, &state).unwrap();
-            assert_eq!(snapshot.models[0].has_official_template, official);
-            assert_eq!(snapshot.models[0].defaults["supports_search_tool"], true, "{slug}");
-            assert_eq!(snapshot.models[0].configuration["supports_search_tool"], true, "{slug}");
+            assert_eq!(snapshot.models[0].has_official_template, !enabled);
+            assert_eq!(snapshot.models[0].defaults["supports_search_tool"], !enabled);
             let mut configuration = snapshot.models[0].configuration.clone();
             configuration.insert("supports_search_tool".into(), Value::Bool(enabled));
             let path = temporary_path();
@@ -609,10 +555,6 @@ mod tests {
                 revision: snapshot.revision,
                 models: vec![CatalogEditorModelRequest { slug: slug.into(), configuration }],
             }, &mut state).unwrap();
-            let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            if !enabled {
-                assert_eq!(saved["models"][normalize_id(slug)]["supports_search_tool"], false);
-            }
             // A refreshed template must not replace the saved per-routing-ID override.
             let mut cloud: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
             cloud["catalog_revision"] = Value::from(state.sources.revision + 1);
@@ -622,9 +564,8 @@ mod tests {
             let cloud = cloud.to_string();
             assert!(state.activate(&cloud, parse_sources(&cloud).unwrap()));
             let restarted = CatalogState {
-                sources: parse_sources(&cloud).unwrap(),
-                json: cloud,
                 customizations: decode_customizations(&std::fs::read(&path).unwrap()).unwrap(),
+                ..state.clone()
             };
             for current in [&state, &restarted] {
                 let catalog = prepare_catalog_with_customizations(
@@ -632,11 +573,9 @@ mod tests {
                 ).unwrap();
                 let generated: Value = serde_json::from_str(&catalog.json).unwrap();
                 assert_eq!(generated["models"][0]["supports_search_tool"], enabled);
-                let snapshot = snapshot_for_state(&runtime, current).unwrap();
-                assert_eq!(snapshot.models[0].configuration["supports_search_tool"], enabled);
             }
             let snapshot = snapshot_for_state(&runtime, &restarted).unwrap();
-            assert_eq!(snapshot.models[0].customized, !enabled);
+            assert!(snapshot.models[0].customized);
             let mut restored = restarted.clone();
             save_for_state(&path, &runtime, CatalogEditorRequest {
                 review_model: None,
@@ -647,113 +586,11 @@ mod tests {
             }, &mut restored).unwrap();
             let snapshot = snapshot_for_state(&runtime, &restored).unwrap();
             assert!(!snapshot.models[0].customized);
-            assert_eq!(snapshot.models[0].defaults["supports_search_tool"], true);
-            assert_eq!(snapshot.models[0].configuration["supports_search_tool"], true);
+            assert_eq!(snapshot.models[0].configuration["supports_search_tool"], !enabled);
             std::fs::remove_file(path).unwrap();
         }
         assert!(validate_configuration(&serde_json::json!({"supports_search_tool":"true"})
             .as_object().unwrap()).is_err());
-    }
-
-    #[test]
-    fn editor_defaults_match_generated_tool_search_for_templates_missing_the_field() {
-        let mut sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
-        sources.fallback.remove("supports_search_tool");
-        let mut state = CatalogState {
-            sources,
-            json: MODEL_CATALOG_JSON.to_string(),
-            customizations: Default::default(),
-        };
-        let runtime = vec![runtime_model("missing-field-model")];
-        let snapshot = snapshot_for_state(&runtime, &state).unwrap();
-        assert_eq!(snapshot.models[0].defaults["supports_search_tool"], true);
-        assert_eq!(snapshot.models[0].configuration["supports_search_tool"], true);
-        assert!(!snapshot.models[0].customized);
-        let mut configuration = snapshot.models[0].configuration.clone();
-        configuration.insert("description".into(), Value::String("Edited".into()));
-        let path = temporary_path();
-        save_for_state(&path, &runtime, CatalogEditorRequest {
-            review_model: None,
-            revision: snapshot.revision,
-            models: vec![CatalogEditorModelRequest {
-                slug: "missing-field-model".into(), configuration,
-            }],
-        }, &mut state).unwrap();
-        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert!(saved["models"]["missing-field-model"].get("supports_search_tool").is_none());
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn official_tool_search_defaults_remain_unchanged_in_generation_and_editor() {
-        for expected in [Some(true), Some(false), None] {
-            let mut state = CatalogState {
-                sources: parse_sources(MODEL_CATALOG_JSON).unwrap(),
-                json: MODEL_CATALOG_JSON.to_string(),
-                customizations: Default::default(),
-            };
-            let template = &mut state.sources.templates.get_mut("gpt-6.1-sol").unwrap().value;
-            if let Some(enabled) = expected {
-                template.insert("supports_search_tool".into(), Value::Bool(enabled));
-            } else {
-                template.remove("supports_search_tool");
-            }
-            let runtime = vec![runtime_model("provider/gpt-6.1-sol")];
-            let catalog = prepare_catalog_with_customizations(
-                &runtime, &state.sources, &state.customizations,
-            ).unwrap();
-            let generated: Value = serde_json::from_str(&catalog.json).unwrap();
-            assert_eq!(
-                generated["models"][0].get("supports_search_tool"),
-                expected.map(Value::Bool).as_ref()
-            );
-            let snapshot = snapshot_for_state(&runtime, &state).unwrap();
-            assert!(snapshot.models[0].has_official_template);
-            assert!(!snapshot.models[0].customized);
-            assert_eq!(snapshot.models[0].defaults["supports_search_tool"], expected.unwrap_or(false));
-            assert_eq!(snapshot.models[0].configuration["supports_search_tool"], expected.unwrap_or(false));
-        }
-    }
-
-    #[test]
-    fn saved_tool_search_off_survives_the_new_third_party_default() {
-        let runtime = parse_public_models(&serde_json::json!({"data":[{"id":"provider/custom-model"}]})).unwrap();
-        let mut state = CatalogState {
-            sources: parse_sources(MODEL_CATALOG_JSON).unwrap(),
-            json: MODEL_CATALOG_JSON.to_string(),
-            customizations: Default::default(),
-        };
-        let snapshot = snapshot_for_state(&runtime, &state).unwrap();
-        assert_eq!(snapshot.models[0].defaults["supports_search_tool"], true);
-        let path = temporary_path();
-        std::fs::write(&path, br#"{"version":1,"models":{"provider/custom-model":{"supports_search_tool":false}}}"#).unwrap();
-        state.customizations = decode_customizations(&std::fs::read(&path).unwrap()).unwrap();
-        let restarted = CatalogState {
-            sources: parse_sources(MODEL_CATALOG_JSON).unwrap(),
-            json: MODEL_CATALOG_JSON.to_string(),
-            customizations: decode_customizations(&std::fs::read(&path).unwrap()).unwrap(),
-        };
-        for current in [&state, &restarted] {
-            let catalog = prepare_catalog_with_customizations(
-                &runtime, &current.sources, &current.customizations,
-            ).unwrap();
-            let generated: Value = serde_json::from_str(&catalog.json).unwrap();
-            assert_eq!(generated["models"][0]["supports_search_tool"], false, "restart");
-        }
-        let snapshot = snapshot_for_state(&runtime, &restarted).unwrap();
-        assert!(snapshot.models[0].customized);
-        assert_eq!(snapshot.models[0].defaults["supports_search_tool"], true);
-        assert_eq!(snapshot.models[0].configuration["supports_search_tool"], false);
-        let mut configuration = snapshot.models[0].configuration.clone();
-        configuration.insert("description".into(), Value::String("Edited".into()));
-        save_for_state(&path, &runtime, CatalogEditorRequest {
-            review_model: None,
-            revision: snapshot.revision,
-            models: vec![CatalogEditorModelRequest { slug: "provider/custom-model".into(), configuration }],
-        }, &mut state).unwrap();
-        let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(saved["models"]["provider/custom-model"]["supports_search_tool"], false);
-        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -1032,62 +869,5 @@ mod tests {
         assert_eq!(error, "CODEX_MODEL_CATALOG_CHANGED");
         assert!(state.customizations.models.is_empty());
         assert!(!path.exists());
-    }
-
-    #[test]
-    fn model_order_roundtrips_and_reorders_the_public_catalog() {
-        let mut state = CatalogState {
-            sources: parse_sources(MODEL_CATALOG_JSON).unwrap(),
-            json: MODEL_CATALOG_JSON.to_string(),
-            customizations: Default::default(),
-        };
-        let runtime = vec![
-            runtime_model("alpha"),
-            runtime_model("beta"),
-            runtime_model("gamma"),
-        ];
-        let path = temporary_path();
-        let snapshot = snapshot_for_state(&runtime, &state).unwrap();
-        let default_order = snapshot.default_order.clone();
-        assert_eq!(default_order.len(), 3);
-        let mut requests: Vec<CatalogEditorModelRequest> = snapshot
-            .models
-            .iter()
-            .map(|model| CatalogEditorModelRequest {
-                slug: model.slug.clone(),
-                configuration: model.configuration.clone(),
-            })
-            .collect();
-        requests.reverse();
-        let expected: Vec<String> = default_order.iter().rev().cloned().collect();
-        let saved = save_for_state(&path, &runtime, CatalogEditorRequest {
-            revision: snapshot.revision,
-            review_model: None,
-            models: requests,
-        }, &mut state).unwrap();
-        assert_eq!(saved.models.iter().map(|model| model.slug.clone()).collect::<Vec<_>>(), expected);
-        assert_eq!(saved.default_order, default_order);
-        let decoded = decode_customizations(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(decoded.model_order, expected);
-        let catalog = prepare_catalog_with_customizations(&runtime, &state.sources, &state.customizations).unwrap();
-        let catalog: Value = serde_json::from_str(&catalog.json).unwrap();
-        let slugs: Vec<String> = catalog["models"].as_array().unwrap().iter()
-            .map(|model| model["slug"].as_str().unwrap().to_string())
-            .collect();
-        assert_eq!(slugs, expected);
-        let mut restore: Vec<CatalogEditorModelRequest> = saved.models.iter()
-            .map(|model| CatalogEditorModelRequest {
-                slug: model.slug.clone(),
-                configuration: model.configuration.clone(),
-            })
-            .collect();
-        restore.reverse();
-        save_for_state(&path, &runtime, CatalogEditorRequest {
-            revision: saved.revision,
-            review_model: None,
-            models: restore,
-        }, &mut state).unwrap();
-        assert!(decode_customizations(&std::fs::read(&path).unwrap()).unwrap().model_order.is_empty());
-        let _ = std::fs::remove_file(path);
     }
 }

@@ -77,13 +77,6 @@ pub(crate) fn detect_copilot_cli(
 }
 
 pub(crate) fn copilot_config_paths(client: AgentClient, home: &Path) -> Vec<PathBuf> {
-    if let Some(directory) = agent_config_directory(client.id()) {
-        return vec![directory.join(if client == AgentClient::CopilotCli {
-            CONNECTION_FILE
-        } else {
-            "chatLanguageModels.json"
-        })];
-    }
     if client == AgentClient::CopilotCli {
         let directory = agent_configuration_environment("COPILOT_HOME")
             .filter(|p| p.is_absolute())
@@ -256,7 +249,7 @@ pub(crate) fn inspect_copilot_config(
     key: &str,
 ) -> Result<(bool, Option<String>), String> {
     let content = read_optional_text(&paths[0])?;
-    let base = format!("{}/v1", agent_effective_loopback_origin(client.id(), port));
+    let base = format!("{}/v1", managed_core_loopback_origin(port));
     if client == AgentClient::CopilotCli {
         let root = parse(&paths[0], content.as_deref())?;
         let model = root
@@ -403,9 +396,6 @@ fn copilot_helper_command(args: &[std::ffi::OsString]) -> Result<Command, String
     if root["provider"] != MANAGED_AGENT_PROVIDER_ID {
         return Err("Copilot connection is not managed by CPA".into());
     }
-    #[cfg(windows)]
-    let mut command = windows_literal_cli_command(&executable, &args.iter().skip(4).map(|value| value.to_string_lossy().into_owned()).collect::<Vec<_>>())?;
-    #[cfg(not(windows))]
     let mut command = Command::new(executable);
     for (field, variable) in [
         ("baseUrl", "COPILOT_PROVIDER_BASE_URL"),
@@ -432,7 +422,6 @@ fn copilot_helper_command(args: &[std::ffi::OsString]) -> Result<Command, String
     ] {
         command.env_remove(key);
     }
-    #[cfg(not(windows))]
     command.args(args.iter().skip(4));
     Ok(command)
 }

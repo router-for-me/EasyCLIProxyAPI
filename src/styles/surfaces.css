@@ -4,7 +4,6 @@
   border-radius: var(--radius-lg);
   background: var(--bg-card);
   box-shadow: var(--ui-panel-shadow);
-  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 
 .panel:hover,
@@ -58,11 +57,4 @@
   border-radius: var(--radius-md);
   background: var(--color-surface-subtle);
   box-shadow: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .panel,
-  .surface-panel {
-    transition: none;
-  }
 }

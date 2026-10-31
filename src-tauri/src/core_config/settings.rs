@@ -332,15 +332,6 @@ pub(crate) fn merge_core_config_yaml(
         let document: serde_norway::Value = serde_norway::from_str(current)
             .map_err(|error| format!("Failed to parse kernel configuration: {error}"))?;
         startup_config.disable_cooling = core_config_settings_from_value(&document)?.disable_cooling;
-        let transient_error_cooldown_seconds = document.as_mapping().and_then(|root| {
-            nested_yaml_value(root, &["routing", "cooldown", "transient-error-cooldown-seconds"])
-                .or_else(|| nested_yaml_value(root, &["transient-error-cooldown-seconds"]))
-        });
-        if let Some(value) = transient_error_cooldown_seconds {
-            startup_config.transient_error_cooldown_seconds = value
-                .as_i64()
-                .ok_or_else(|| "transient-error-cooldown-seconds must be an integer".to_string())?;
-        }
     }
     startup_config.usage_statistics_enabled = config.usage_statistics_disabled != Some(true);
     let managed = apply_gui_managed_settings(&base, &startup_config)?;
@@ -476,13 +467,6 @@ pub(crate) fn patch_core_network_routing_yaml(
         )?;
         set_core_yaml_schema_value(
             document,
-            &["transient-error-cooldown-seconds"],
-            &["routing", "cooldown", "transient-error-cooldown-seconds"],
-            serde_norway::to_value(config.transient_error_cooldown_seconds)
-                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
-        )?;
-        set_core_yaml_schema_value(
-            document,
             &["request-retry"],
             &["routing", "retry", "request-retry"],
             serde_norway::to_value(config.request_retry)
@@ -541,13 +525,6 @@ pub(crate) fn patch_core_retry_yaml(
             &["disable-cooling"],
             &["routing", "cooldown", "disable-cooling"],
             serde_norway::Value::Bool(config.disable_cooling),
-        )?;
-        set_core_yaml_schema_value(
-            document,
-            &["transient-error-cooldown-seconds"],
-            &["routing", "cooldown", "transient-error-cooldown-seconds"],
-            serde_norway::to_value(config.transient_error_cooldown_seconds)
-                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
         )?;
         set_core_yaml_schema_value(
             document,
@@ -772,13 +749,6 @@ pub(crate) fn apply_gui_managed_settings(
         )?;
         changed |= set_core_yaml_schema_value(
             document,
-            &["transient-error-cooldown-seconds"],
-            &["routing", "cooldown", "transient-error-cooldown-seconds"],
-            serde_norway::to_value(config.transient_error_cooldown_seconds)
-                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
-        )?;
-        changed |= set_core_yaml_schema_value(
-            document,
             &["request-retry"],
             &["routing", "retry", "request-retry"],
             serde_norway::to_value(config.request_retry)
@@ -962,29 +932,13 @@ pub(crate) fn retry_windows_file_replace(
     }
 }
 
-#[cfg(any(windows, test))]
-pub(crate) fn is_wsl_path(path: &Path) -> bool {
-    let normalized = path
-        .to_string_lossy()
-        .replace('/', "\\")
-        .to_ascii_lowercase();
-    let unc = normalized
-        .strip_prefix("\\\\?\\unc\\")
-        .or_else(|| normalized.strip_prefix("\\\\"));
-    unc.and_then(|value| value.split_once('\\'))
-        .is_some_and(|(server, share)| {
-            (server.eq_ignore_ascii_case("wsl$") || server.eq_ignore_ascii_case("wsl.localhost"))
-                && !share.split('\\').next().unwrap_or_default().is_empty()
-        })
-}
-
 #[cfg(windows)]
 pub(crate) fn replace_file_atomically(
     temporary_path: &Path,
     destination_path: &Path,
 ) -> io::Result<()> {
     use std::{os::windows::ffi::OsStrExt, ptr};
-    use windows_sys::Win32::{Foundation::ERROR_NOT_SUPPORTED, Storage::FileSystem::ReplaceFileW};
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
 
     let destination = destination_path
         .as_os_str()
@@ -998,7 +952,7 @@ pub(crate) fn replace_file_atomically(
         .collect::<Vec<_>>();
     retry_windows_file_replace(
         || {
-            if is_wsl_path(destination_path) || !destination_path.exists() {
+            if !destination_path.exists() {
                 return fs::rename(temporary_path, destination_path);
             }
             let replaced = unsafe {
@@ -1012,11 +966,7 @@ pub(crate) fn replace_file_atomically(
                 )
             };
             if replaced == 0 {
-                let error = io::Error::last_os_error();
-                if error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32) {
-                    return fs::rename(temporary_path, destination_path);
-                }
-                return Err(error);
+                return Err(io::Error::last_os_error());
             }
             Ok(())
         },
@@ -1531,7 +1481,6 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         || presence.request_retry.is_none()
         || presence.max_retry_credentials.is_none()
         || presence.max_retry_interval.is_none()
-        || presence.transient_error_cooldown_seconds.is_none()
         || presence.streaming_bootstrap_retries.is_none();
     if missing_core_settings && !gui_parse_failed {
         if let Ok(core_settings) = read_installed_core_config_settings() {
@@ -1613,9 +1562,6 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
             }
             if presence.max_retry_interval.is_none() {
                 config.max_retry_interval = core_settings.max_retry_interval;
-            }
-            if presence.transient_error_cooldown_seconds.is_none() {
-                config.transient_error_cooldown_seconds = core_settings.transient_error_cooldown_seconds;
             }
             if presence.streaming_bootstrap_retries.is_none() {
                 config.streaming_bootstrap_retries = core_settings.streaming_bootstrap_retries;
@@ -1712,15 +1658,9 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.host = core_settings.host.clone();
     config.port = core_settings.port;
     config.allow_lan = !is_loopback_host(&core_settings.host);
-    // A kernel configuration without these fields falls back to kernel defaults;
-    // keep the GUI selection and key list (with remarks) instead of replacing them.
-    if core_settings.auth_dir_configured {
-        config.auth_dir = core_settings.auth_dir.clone();
-    }
-    if core_settings.api_keys_configured {
-        config.api_keys =
-            merge_core_api_keys_with_gui_metadata(&config.api_keys, &core_settings.api_keys, None);
-    }
+    config.auth_dir = core_settings.auth_dir.clone();
+    config.api_keys =
+        merge_core_api_keys_with_gui_metadata(&config.api_keys, &core_settings.api_keys, None);
     if let Some(secret_key) = core_settings
         .management_secret_key
         .as_deref()
@@ -1744,7 +1684,6 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.request_retry = core_settings.request_retry;
     config.max_retry_credentials = core_settings.max_retry_credentials;
     config.max_retry_interval = core_settings.max_retry_interval;
-    config.transient_error_cooldown_seconds = core_settings.transient_error_cooldown_seconds;
     config.streaming_bootstrap_retries = core_settings.streaming_bootstrap_retries;
 }
 
@@ -1883,14 +1822,14 @@ pub(crate) fn restore_window_position_for_monitor(
     saved_position: tauri::PhysicalPosition<i32>,
     window_size: tauri::PhysicalSize<u32>,
     work_area: &tauri::PhysicalRect<i32, u32>,
-    _scale_factor: f64,
+    scale_factor: f64,
 ) -> (tauri::PhysicalPosition<i32>, tauri::Position) {
     let fitted_physical = fit_window_position_to_work_area(saved_position, window_size, work_area);
     #[cfg(target_os = "macos")]
-    let target_position = if _scale_factor.is_finite() && _scale_factor > 0.0 {
+    let target_position = if scale_factor.is_finite() && scale_factor > 0.0 {
         tauri::Position::Logical(tauri::LogicalPosition::new(
-            f64::from(fitted_physical.x) / _scale_factor,
-            f64::from(fitted_physical.y) / _scale_factor,
+            f64::from(fitted_physical.x) / scale_factor,
+            f64::from(fitted_physical.y) / scale_factor,
         ))
     } else {
         tauri::Position::Physical(fitted_physical)
@@ -2156,14 +2095,6 @@ pub(crate) fn sanitize_gui_config_at(
 ) -> Result<bool, String> {
     let mut changed = false;
     let normalized_locale = normalize_app_locale(&config.locale);
-    if let Some(disarmed) = config.auto_update.without_unreachable_target() {
-        // Narrow the record to the part that is coherent rather than rewriting
-        // the whole section. The loader persists this sanitized config, so a
-        // wholesale reset would silently turn the feature off after a
-        // half-finished hand edit and leave nothing to explain the change.
-        config.auto_update = disarmed;
-        changed = true;
-    }
     if config.locale != normalized_locale {
         config.locale = normalized_locale.to_string();
         changed = true;
@@ -2312,7 +2243,6 @@ pub(crate) fn write_gui_config_to_path(
         .and_then(|content| content.parse::<Document>().ok())
         .unwrap_or_default();
     let root = document.as_table_mut();
-    crate::auto_update::write_settings(root, &config.auto_update)?;
     if config.usage_statistics_disabled == Some(true) {
         set_codex_table_item(root, "usage_statistics_disabled", value(true));
     } else {
@@ -2387,32 +2317,11 @@ pub(crate) fn write_gui_config_to_path(
             value(i64::from(config.max_retry_interval)),
         ),
         (
-            "transient-error-cooldown-seconds",
-            value(config.transient_error_cooldown_seconds),
-        ),
-        (
             "streaming-bootstrap-retries",
             value(i64::from(config.streaming_bootstrap_retries)),
         ),
     ] {
         set_codex_table_item(root, key, item);
-    }
-    // The reverse proxy section is GUI-owned but not part of GuiConfigPresence;
-    // it must be written and dropped explicitly so it survives unrelated saves.
-    if let Some(reverse_proxy) = config.reverse_proxy.as_ref() {
-        let mut table = match root.get("reverse-proxy") {
-            Some(Item::Table(table)) => table.clone(),
-            _ => toml_edit::Table::new(),
-        };
-        table.insert("enabled", value(reverse_proxy.enabled));
-        table.insert("listen-host", value(reverse_proxy.listen_host.as_str()));
-        table.insert("listen-port", value(i64::from(reverse_proxy.listen_port)));
-        table.insert("target-port", value(i64::from(reverse_proxy.target_port)));
-        table.insert("cert-path", value(reverse_proxy.cert_path.as_str()));
-        table.insert("key-path", value(reverse_proxy.key_path.as_str()));
-        root.insert("reverse-proxy", Item::Table(table));
-    } else {
-        root.remove("reverse-proxy");
     }
     for key in [
         "proxy-mode",
@@ -2539,7 +2448,6 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
         validate_strong_management_secret_key(&config.management_secret_key)?;
     }
     validate_routing_strategy(config.routing_strategy.trim())?;
-    config.auto_update.validate()?;
     if config.proxy_override {
         network_proxy::normalize_optional_proxy_url(&config.proxy_url)?;
     } else if config.proxy_url.chars().any(char::is_control) {
