@@ -3803,7 +3803,7 @@ pub(crate) fn build_zcode_agent_config(
         let entry = rule.as_object_mut().ok_or("ZCode model rule must be an object")?;
         entry.insert("providerId".to_string(), serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
         entry.insert("modelId".to_string(), serde_json::json!(option.name));
-        let (inferred_cw, inferred_mot, _, _, _) = infer_zcode_model_knowledge(&option.name);
+        let (inferred_cw, inferred_mot, _, _, _) = zcode::infer_zcode_model_knowledge_with_calibration(&option.name);
         let config_obj = ensure_json_object_entry(entry, "config");
         {
             let properties = ensure_json_object_entry(config_obj, "properties");
