@@ -19,6 +19,7 @@ import {
   Eye,
   EyeOff,
   Gauge,
+  GitBranch,
   History,
   House,
   Languages,
@@ -45,6 +46,7 @@ import { QuotaPage } from './pages/QuotaPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
+import { RoutingPage } from './pages/routing/RoutingPage';
 import { PluginsPage } from './pages/PluginsPage';
 import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
@@ -116,6 +118,12 @@ const pages = [
     labelKey: 'app.nav.config',
     icon: Settings,
     component: ConfigPanelPage,
+  },
+  {
+    id: 'routing',
+    labelKey: 'app.nav.routing',
+    icon: GitBranch,
+    component: RoutingPage,
   },
   {
     id: 'versions',

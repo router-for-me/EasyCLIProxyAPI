@@ -1,9 +1,11 @@
+import { routingZhCN } from './routing';
 import { easyModeZhCN } from '../easyMode';
 import { homeZhCN } from '../home';
 import { authFileListZhCN } from '../authFileList';
 import { themeDiyZhCN } from '../themeDiy';
 
 export const zhCN = {
+  ...routingZhCN,
   ...themeDiyZhCN,
   'app.window.minimize': '最小化',
   'app.window.maximize': '最大化',

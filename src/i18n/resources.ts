@@ -1,3 +1,4 @@
+import { routingZhTW } from './locales/routing';
 import { createTraditionalMessages } from './traditional';
 import { themeDiyZhTW } from './themeDiy';
 import { authFileTagsZhTW } from './authFileList';
@@ -11,6 +12,7 @@ export type MessageVariables = Record<string, string | number>;
 
 export const zhTW: Record<MessageKey, string> = {
   ...createTraditionalMessages(zhCN),
+  ...routingZhTW,
   ...themeDiyZhTW,
   ...authFileTagsZhTW,
   'quota.service.kimi.monthlyTotal': '月總額度',

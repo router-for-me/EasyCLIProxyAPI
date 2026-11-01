@@ -14,6 +14,7 @@ import { FloatingNotice, useAppNotice } from '../appNotice';
 import { VersionManagementPage, displayAppVersion } from './VersionManagementPage';
 import { HomeAccessPanel } from './HomeAccessPanel';
 import { HomeOverviewCards } from './HomeOverviewCards';
+import { RoutingPanel } from '../components/routing/RoutingPanel';
 import { CoreHealthPanel } from './CoreHealthPanel';
 import { useHomeOverview } from './useHomeOverview';
 import './HomeDashboard.css';
@@ -214,6 +215,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         modelsError={overview.snapshot?.errors.models ?? ''}
         onRefreshModels={overview.refresh} contextKey={healthContext}
       />} />
+      <RoutingPanel coreReady={coreReady} />
       <div className="home-top-grid">
         <div className="panel surface-panel control-panel">
           <div className="panel-heading home-panel-heading">
