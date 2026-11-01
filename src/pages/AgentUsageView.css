@@ -3,8 +3,42 @@
   gap: 16px;
 }
 
-.agent-usage-loading,
-.agent-usage-empty {
+.agent-usage-range,
+.agent-usage-sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-usage-sync {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+}
+
+.agent-usage-range {
+  width: auto;
+  height: auto;
+}
+
+.agent-usage-range button { padding: 4px 8px; }
+.agent-usage-sync-status { font-size: 12px; }
+
+.agent-usage-sync:disabled { cursor: wait; opacity: 0.65; }
+.agent-usage-spin { animation: agent-usage-rotate 1s linear infinite; }
+@keyframes agent-usage-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .agent-usage-spin { animation: none; } }
+
+.agent-usage-view button:focus-visible,
+.agent-usage-view select:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.agent-usage-loading {
   min-height: 260px;
 }
 
@@ -25,9 +59,12 @@
 .agent-usage-section-heading,
 .agent-usage-source-name,
 .agent-usage-source-metrics {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
 }
+
+.agent-usage-source-metrics span { white-space: nowrap; }
 
 .agent-usage-summary-heading,
 .agent-usage-section-heading {
@@ -39,17 +76,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.agent-usage-source-filter select {
-  max-width: 170px;
-  padding: 5px 8px;
-  border: 1px solid var(--usage-page-border);
-  border-radius: var(--radius-sm);
-  color: var(--usage-page-text);
-  background: var(--bg-card);
-  font: inherit;
-  font-size: 12px;
 }
 
 .agent-usage-summary-actions {
@@ -69,12 +95,6 @@
 
 .agent-usage-refresh-setting select {
   min-width: 126px;
-  padding: 5px 8px;
-  border: 1px solid var(--usage-page-border);
-  border-radius: var(--radius-sm);
-  color: var(--usage-page-text);
-  background: var(--bg-card);
-  font: inherit;
 }
 
 .agent-usage-summary h2,
@@ -111,7 +131,7 @@
 
 .agent-usage-stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--usage-page-border);
@@ -133,6 +153,8 @@
 }
 
 .agent-usage-stat-grid strong {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
   overflow: hidden;
   color: var(--usage-page-text);
   font-size: 20px;
@@ -142,7 +164,8 @@
 
 .agent-usage-columns {
   display: grid;
-  grid-template-columns: minmax(280px, 0.85fr) minmax(420px, 1.15fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
   gap: 16px;
 }
 
@@ -154,34 +177,26 @@
 }
 
 .agent-usage-source-list {
-  display: grid;
-  gap: 1px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 14px;
-  overflow: hidden;
-  border: 1px solid var(--usage-page-border);
-  border-radius: var(--radius-md);
-  background: var(--usage-page-border);
 }
 
 .agent-usage-source-row {
   display: grid;
-  width: 100%;
+  flex: 1 1 220px;
+  min-width: 0;
   gap: 8px;
   padding: 12px;
-  border: 0;
-  border-bottom: 1px solid var(--usage-page-border);
-  color: inherit;
+  height: auto;
   text-align: left;
-  background: var(--bg-card);
-}
-
-.agent-usage-source-row:hover,
-.agent-usage-source-row.selected {
-  background: var(--bg-hover);
+  justify-content: stretch;
 }
 
 .agent-usage-source-row.selected {
-  box-shadow: inset 3px 0 0 var(--color-accent);
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
 }
 
 .agent-usage-source-name {
@@ -219,10 +234,6 @@
   white-space: nowrap;
 }
 
-.agent-usage-source-row:last-child {
-  border-bottom: 0;
-}
-
 .agent-usage-table-wrap {
   max-height: 480px;
   margin-top: 14px;
@@ -235,7 +246,11 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
+
+.agent-usage-table-wrap td:not(:first-child),
+.agent-usage-source-metrics { font-family: var(--font-mono, ui-monospace, monospace); }
 
 .agent-usage-table-wrap th,
 .agent-usage-table-wrap td {
@@ -262,15 +277,6 @@
 
 .agent-usage-table-wrap tbody tr:last-child td {
   border-bottom: 0;
-}
-
-.agent-usage-inline-error {
-  padding: 10px 12px;
-  border: 1px solid var(--usage-page-border);
-  border-radius: var(--radius-md);
-  color: var(--color-danger);
-  background: var(--bg-card);
-  font-size: 12px;
 }
 
 .agent-usage-pricing {
@@ -300,4 +306,6 @@
   .agent-usage-summary-actions { justify-items: start; }
   .agent-usage-source-filter { align-items: flex-start; flex-direction: column; }
   .agent-usage-generated { align-self: flex-start; }
+  .agent-usage-source-list { flex-wrap: nowrap; overflow-x: auto; padding: 3px; }
+  .agent-usage-source-row { flex: 0 0 240px; }
 }

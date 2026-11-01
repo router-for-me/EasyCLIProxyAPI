@@ -1065,37 +1065,42 @@ export function createBrowserMockRuntime(
         return clone(state.coreStatus);
       }
       case 'get_usage_view_preferences': return clone(usageViewPreferences);
-      case 'get_agent_usage': return state.coreStatus.installed && scenario !== 'empty'
-        ? {
+      case 'get_agent_usage': {
+        const generatedAt = new Date().toISOString();
+        const sources = ['claude', 'codex', 'gemini', 'antigravity', 'opencode', 'kimi', 'pi', 'omp', 'mcode', 'copilot', 'zcode'];
+        const daily = {
+          date: generatedAt.slice(0, 10),
+          inputTokens: 12_400,
+          outputTokens: 4_800,
+          cacheCreationTokens: 600,
+          cacheReadTokens: 1_200,
+          reasoningOutputTokens: 800,
+          totalTokens: 19_000,
+          costUSD: 0,
+          models: [{
+            model: 'gpt-5.2-codex',
+            inputTokens: 12_400,
+            outputTokens: 4_800,
+            cacheCreationTokens: 600,
+            cacheReadTokens: 1_200,
+            reasoningOutputTokens: 800,
+            totalTokens: 19_000,
+            costUSD: null,
+          }],
+        };
+        return state.coreStatus.installed && scenario !== 'empty' ? {
             schemaVersion: 1,
-            generatedAt: new Date().toISOString(),
-            sources: [{
-              source: 'codex',
-              status: 'ok',
+            generatedAt,
+            sources: sources.map((source) => ({
+              source,
+              status: source === 'codex' ? 'ok' : 'empty',
               error: '',
-              daily: [{
-                date: new Date().toISOString().slice(0, 10),
-                inputTokens: 12_400,
-                outputTokens: 4_800,
-                cacheCreationTokens: 0,
-                cacheReadTokens: 1_200,
-                reasoningOutputTokens: 800,
-                totalTokens: 19_200,
-                costUSD: 0,
-                models: [{
-                  model: 'gpt-5.2-codex',
-                  inputTokens: 12_400,
-                  outputTokens: 4_800,
-                  cacheCreationTokens: 0,
-                  cacheReadTokens: 1_200,
-                  reasoningOutputTokens: 800,
-                  totalTokens: 19_200,
-                  costUSD: null,
-                }],
-              }],
-            }],
+              daily: source === 'codex' ? [daily] : [],
+              events: source === 'codex' ? [{ ...daily, timestamp: generatedAt }] : [],
+            })),
           }
-        : { schemaVersion: 1, generatedAt: new Date().toISOString(), sources: [] };
+        : { schemaVersion: 1, generatedAt, sources: [] };
+      }
       case 'save_usage_view_preferences': {
         const values = asObject(payload.values);
         if (!payload.values || typeof payload.values !== 'object' || Array.isArray(payload.values) || Object.keys(values).length > 100

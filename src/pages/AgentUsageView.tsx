@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Database, TriangleAlert } from 'lucide-react';
+import { Bot, Database, RefreshCw, TriangleAlert } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
+import { Notice } from '../components/Notice';
+import { Select } from '../components/Select';
+import { SegmentedControl } from '../components/SegmentedControl';
 import { useI18n } from '../i18n';
 import {
   AGENT_USAGE_REFRESH_INTERVALS,
@@ -8,16 +11,19 @@ import {
   saveAgentUsageRefreshInterval,
   type AgentUsageRefreshInterval,
 } from '../services/agentUsagePreferences';
-import { formatUsageNumber } from '../services/usageNumber';
 import { getUsagePricing, type UsagePricing } from '../services/usage';
 import {
   buildAgentUsagePriceRows,
-  estimateAgentUsageModelCost,
+  estimateAgentUsageDailyCost,
+  AGENT_USAGE_TIME_RANGES,
+  filterAgentUsageReport,
+  formatAgentUsageNumber as formatUsageNumber,
   getAgentUsage,
   type AgentUsageDaily,
   type AgentUsagePriceRow,
   type AgentUsageReport,
   type AgentUsageSource,
+  type AgentUsageTimeRange,
 } from '../services/agentUsage';
 import './AgentUsageView.css';
 
@@ -29,37 +35,25 @@ type AgentUsageViewProps = {
 const sourceLabels: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
+  mcode: 'MCode',
   opencode: 'OpenCode',
   omp: 'Oh My Pi',
   pi: 'Pi',
-  amp: 'Amp',
-  droid: 'Droid',
-  codebuff: 'Codebuff',
-  hermes: 'Hermes',
-  goose: 'Goose',
-  kilo: 'Kilo',
   copilot: 'GitHub Copilot CLI',
   gemini: 'Gemini CLI',
   antigravity: 'Antigravity',
   kimi: 'Kimi',
-  qwen: 'Qwen',
-  openclaw: 'OpenClaw',
-  grok: 'Grok CLI',
   zcode: 'ZCode',
 };
 
 const sourceLabel = (source: string): string => sourceLabels[source] ?? source;
-const money = (value: number): string => `$${value.toFixed(value >= 1 ? 2 : 4)}`;
-const rate = (value: number): string => `$${value.toFixed(value >= 1 ? 2 : 4)}`;
+const money = (value: number): string => new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', minimumFractionDigits: value >= 1 ? 2 : 4,
+  maximumFractionDigits: value >= 1 ? 2 : 4,
+}).format(value);
+const rate = money;
 
 const emptyTotals = () => ({ inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0 });
-
-function dailyCost(row: AgentUsageDaily, pricing: UsagePricing | null): number {
-  const modelCosts = row.models
-    .map((model) => estimateAgentUsageModelCost(model, pricing))
-    .filter((cost): cost is number => cost !== null);
-  return modelCosts.length ? modelCosts.reduce((sum, cost) => sum + cost, 0) : row.costUSD;
-}
 
 function addDaily(target: ReturnType<typeof emptyTotals>, row: AgentUsageDaily, pricing: UsagePricing | null) {
   target.inputTokens += row.inputTokens;
@@ -67,7 +61,7 @@ function addDaily(target: ReturnType<typeof emptyTotals>, row: AgentUsageDaily, 
   target.cacheCreationTokens += row.cacheCreationTokens;
   target.cacheReadTokens += row.cacheReadTokens;
   target.totalTokens += row.totalTokens;
-  target.costUSD += dailyCost(row, pricing);
+  target.costUSD += estimateAgentUsageDailyCost(row, pricing);
 }
 
 function sourceTotals(source: AgentUsageSource, pricing: UsagePricing | null) {
@@ -96,13 +90,22 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
   const [pricing, setPricing] = useState<UsagePricing | null>(null);
   const [pricingLoading, setPricingLoading] = useState(true);
   const [selectedSource, setSelectedSource] = useState('');
+  const [timeRange, setTimeRange] = useState<AgentUsageTimeRange>('7d');
   const [refreshInterval, setRefreshInterval] = useState<AgentUsageRefreshInterval>(loadAgentUsageRefreshInterval);
   const inFlightRef = useRef(false);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      onLoadingChange(false);
+    };
+  }, [onLoadingChange]);
 
   const loadReport = useCallback(() => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
-    let disposed = false;
     setLoading(true);
     setPricingLoading(true);
     onLoadingChange(true);
@@ -111,30 +114,26 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
       getUsagePricing({ query: {} }).catch(() => null),
     ])
       .then(([next, nextPricing]) => {
-        if (!disposed) {
+        if (mountedRef.current) {
           setReport(next);
           setPricing(nextPricing);
           setError('');
         }
       })
       .catch((reason) => {
-        if (!disposed) {
+        if (mountedRef.current) {
           const message = String(reason);
           setError(message || t('usage.agentUsage.readFailed'));
         }
       })
       .finally(() => {
-        if (!disposed) {
+        if (mountedRef.current) {
           setLoading(false);
           setPricingLoading(false);
           onLoadingChange(false);
         }
         inFlightRef.current = false;
       });
-    return () => {
-      disposed = true;
-      inFlightRef.current = false;
-    };
   }, [onLoadingChange, t]);
 
   useEffect(() => loadReport(), [loadReport, refreshKey]);
@@ -153,11 +152,15 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
     saveAgentUsageRefreshInterval(interval);
   };
 
-  const filteredSources = useMemo(
-    () => report?.sources.filter((source) => !selectedSource || source.source === selectedSource) ?? [],
-    [report, selectedSource],
+  const rangeReport = useMemo(
+    () => report ? filterAgentUsageReport(report, timeRange) : null,
+    [report, timeRange],
   );
-  const filteredReport = report ? { ...report, sources: filteredSources } : null;
+  const filteredReport = useMemo(() => rangeReport ? {
+    ...rangeReport, sources: rangeReport.sources.filter((source) => !selectedSource || source.source === selectedSource),
+  } : null, [rangeReport, selectedSource]);
+  const filteredSources = filteredReport?.sources ?? [];
+  const rangeTotals = useMemo(() => rangeReport ? totalsFor(rangeReport, pricing) : emptyTotals(), [rangeReport, pricing]);
   const totals = useMemo(() => filteredReport ? totalsFor(filteredReport, pricing) : emptyTotals(), [filteredReport, pricing]);
   const daily = useMemo(() => {
     const rows = new Map<string, ReturnType<typeof emptyTotals>>();
@@ -177,85 +180,109 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
     return <EmptyState className="agent-usage-loading" icon={<Database size={22} />}>{t('usage.agentUsage.loading')}</EmptyState>;
   }
   if (error && !report) {
-    return <EmptyState className="agent-usage-empty" tone="error" icon={<TriangleAlert size={20} />} title={t('usage.agentUsage.title')}>{error}</EmptyState>;
+    return <EmptyState className="agent-usage-loading" tone="error" icon={<TriangleAlert size={20} />} title={t('usage.agentUsage.title')} action={<button type="button" className="secondary-button" onClick={loadReport}>{t('usage.agentUsage.syncNow')}</button>}>{error}</EmptyState>;
   }
   if (!report) return null;
 
-  const availableSources = report.sources.filter((source) => source.status === 'ok' && source.daily.length > 0);
-  const visibleSources = report.sources.filter((source) => source.status !== 'empty' || source.daily.length > 0);
+  const availableSources = rangeReport?.sources.filter((source) => source.status === 'ok' && source.daily.length > 0) ?? [];
+  const visibleSources = rangeReport?.sources ?? [];
+  const generatedAt = new Date(report.generatedAt);
   return (
-    <section className="agent-usage-view" aria-label={t('usage.agentUsage.title')}>
-      {error ? <div className="agent-usage-inline-error" role="status">{error}</div> : null}
+    <section className="agent-usage-view" aria-label={t('usage.agentUsage.title')} aria-busy={loading}>
+      {error ? <Notice tone="error">{error}</Notice> : null}
       <div className="agent-usage-summary surface-card">
         <div className="agent-usage-summary-heading">
           <div>
             <h2>{t('usage.agentUsage.title')}</h2>
           </div>
           <div className="agent-usage-summary-actions">
+            <SegmentedControl className="routing-segmented agent-usage-range" aria-label={t('usage.agentUsage.timeRange')}
+              value={timeRange} onChange={setTimeRange}
+              items={AGENT_USAGE_TIME_RANGES.map((range) => ({ value: range, label: t(`usage.agentUsage.range.${range}`) }))} />
             <label className="agent-usage-refresh-setting">
               <span>{t('usage.agentUsage.refreshFrequency')}</span>
-              <select value={refreshInterval} onChange={(event) => handleRefreshIntervalChange(event.currentTarget.value)}>
+              <Select value={refreshInterval} onChange={(event) => handleRefreshIntervalChange(event.currentTarget.value)}>
                 <option value={0}>{t('usage.agentUsage.refreshFrequency.manual')}</option>
                 <option value={60_000}>{t('usage.agentUsage.refreshFrequency.1m')}</option>
                 <option value={300_000}>{t('usage.agentUsage.refreshFrequency.5m')}</option>
                 <option value={900_000}>{t('usage.agentUsage.refreshFrequency.15m')}</option>
                 <option value={1_800_000}>{t('usage.agentUsage.refreshFrequency.30m')}</option>
-              </select>
+              </Select>
             </label>
-            <span className="agent-usage-generated">{report.generatedAt ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(report.generatedAt)) : '—'}</span>
+            <div className="agent-usage-sync-actions">
+              <Notice tone={error ? 'error' : 'success'} variant="text" className="agent-usage-sync-status">
+                {loading ? t('usage.agentUsage.syncing') : error ? t('usage.agentUsage.status.error') : t('usage.agentUsage.lastSynced')}
+                {!Number.isNaN(generatedAt.getTime()) ? <> · <time dateTime={report.generatedAt}>{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'medium' }).format(generatedAt)}</time></> : null}
+              </Notice>
+              <button type="button" className="secondary-button compact-button agent-usage-sync" disabled={loading} onClick={loadReport}><RefreshCw size={14} className={loading ? 'agent-usage-spin' : ''} aria-hidden="true" />{t('usage.agentUsage.syncNow')}</button>
+            </div>
           </div>
         </div>
         <div className="agent-usage-stat-grid">
           <div><span>{t('usage.agentUsage.totalTokens')}</span><strong>{formatUsageNumber(totals.totalTokens, locale)}</strong></div>
+          <div><span>{t('usage.agentUsage.estimatedTotalCost')}</span><strong>{money(totals.costUSD)}</strong></div>
           <div><span>{t('usage.agentUsage.inputTokens')}</span><strong>{formatUsageNumber(totals.inputTokens, locale)}</strong></div>
           <div><span>{t('usage.agentUsage.outputTokens')}</span><strong>{formatUsageNumber(totals.outputTokens, locale)}</strong></div>
-          <div><span>{t('usage.agentUsage.estimatedCost')}</span><strong>{money(totals.costUSD)}</strong></div>
+          <div><span>{t('usage.agentUsage.cacheReadTokens')}</span><strong>{formatUsageNumber(totals.cacheReadTokens, locale)}</strong></div>
+          <div><span>{t('usage.agentUsage.cacheCreationTokens')}</span><strong>{formatUsageNumber(totals.cacheCreationTokens, locale)}</strong></div>
         </div>
       </div>
 
-      <div className="agent-usage-columns">
         <section className="panel surface-card agent-usage-sources">
           <div className="agent-usage-section-heading">
             <h3>{t('usage.agentUsage.sources')}</h3>
             <div className="agent-usage-source-filter">
-              <select
-                value={selectedSource}
-                aria-label={t('usage.agentUsage.sourceFilter')}
-                onChange={(event) => setSelectedSource(event.currentTarget.value)}
-              >
-                <option value="">{t('usage.agentUsage.sourceAll')}</option>
-                {report.sources
-                  .filter((source) => source.status !== 'empty' || source.daily.length > 0)
-                  .map((source) => <option key={source.source} value={source.source}>{sourceLabel(source.source)}</option>)}
-              </select>
               <span>{t('usage.agentUsage.sourceCount', { count: availableSources.length })}</span>
             </div>
           </div>
-          <div className="agent-usage-source-list">
+          <div className="agent-usage-source-list" role="group" aria-label={t('usage.agentUsage.sourceFilter')}>
+            <button type="button" className={`secondary-button agent-usage-source-row ${!selectedSource ? 'selected' : ''}`} aria-pressed={!selectedSource} onClick={() => setSelectedSource('')}>
+              <strong>{t('usage.agentUsage.sourceAll')}</strong>
+              <div className="agent-usage-source-metrics"><span>{formatUsageNumber(rangeTotals.totalTokens, locale)} {t('usage.agentUsage.tokens')}</span><span>{money(rangeTotals.costUSD)}</span></div>
+            </button>
             {visibleSources.length ? visibleSources.map((source) => {
               const sourceTotal = sourceTotals(source, pricing);
               return <button
                 type="button"
-                className={`agent-usage-source-row ${selectedSource === source.source ? 'selected' : ''}`}
+                className={`secondary-button agent-usage-source-row ${selectedSource === source.source ? 'selected' : ''}`}
                 key={source.source}
                 aria-pressed={selectedSource === source.source}
                 onClick={() => setSelectedSource((current) => current === source.source ? '' : source.source)}
               >
                 <div className="agent-usage-source-name"><Bot size={16} aria-hidden="true" /><strong>{sourceLabel(source.source)}</strong><span className={`agent-usage-status ${source.status}`}>{t(statusLabelKey(source.status))}</span></div>
-                <div className="agent-usage-source-metrics"><span>{formatUsageNumber(sourceTotal.totalTokens, locale)} {t('usage.agentUsage.tokens')}</span><span>{source.daily.length} {t('usage.agentUsage.days')}</span><span>{money(sourceTotal.costUSD)}</span></div>
+                <div className="agent-usage-source-metrics"><span>{formatUsageNumber(sourceTotal.totalTokens, locale)} {t('usage.agentUsage.tokens')}</span><span>{new Set(source.daily.map((row) => row.date)).size} {t('usage.agentUsage.days')}</span><span>{money(sourceTotal.costUSD)}</span></div>
                 {source.status === 'error' && source.error ? <small>{source.error}</small> : null}
               </button>;
             }) : <EmptyState variant="compact">{t('usage.agentUsage.empty')}</EmptyState>}
           </div>
         </section>
 
+      <div className="agent-usage-columns">
         <section className="panel surface-card agent-usage-daily">
           <div className="agent-usage-section-heading"><h3>{t('usage.agentUsage.daily')}</h3><span>{t('usage.agentUsage.dayCount', { count: daily.length })}</span></div>
-          {daily.length ? <div className="agent-usage-table-wrap"><table><thead><tr><th>{t('usage.agentUsage.date')}</th><th>{t('usage.agentUsage.inputTokens')}</th><th>{t('usage.agentUsage.outputTokens')}</th><th>{t('usage.agentUsage.totalTokens')}</th><th>{t('usage.agentUsage.estimatedCost')}</th></tr></thead><tbody>{daily.map(([date, row]) => <tr key={date}><td>{date}</td><td>{formatUsageNumber(row.inputTokens, locale)}</td><td>{formatUsageNumber(row.outputTokens, locale)}</td><td><strong>{formatUsageNumber(row.totalTokens, locale)}</strong></td><td>{money(row.costUSD)}</td></tr>)}</tbody></table></div> : <EmptyState variant="compact">{t('usage.agentUsage.empty')}</EmptyState>}
+          {daily.length ? <div className="agent-usage-table-wrap"><table>
+            <thead><tr>
+              <th>{t('usage.agentUsage.date')}</th>
+              <th>{t('usage.agentUsage.inputTokens')}</th>
+              <th>{t('usage.agentUsage.outputTokens')}</th>
+              <th>{t('usage.agentUsage.cacheReadTokens')}</th>
+              <th>{t('usage.agentUsage.cacheCreationTokens')}</th>
+              <th>{t('usage.agentUsage.totalTokens')}</th>
+              <th>{t('usage.agentUsage.estimatedCost')}</th>
+            </tr></thead>
+            <tbody>{daily.map(([date, row]) => <tr key={date}>
+              <td>{date}</td>
+              <td>{formatUsageNumber(row.inputTokens, locale)}</td>
+              <td>{formatUsageNumber(row.outputTokens, locale)}</td>
+              <td>{formatUsageNumber(row.cacheReadTokens, locale)}</td>
+              <td>{formatUsageNumber(row.cacheCreationTokens, locale)}</td>
+              <td><strong>{formatUsageNumber(row.totalTokens, locale)}</strong></td>
+              <td>{money(row.costUSD)}</td>
+            </tr>)}</tbody>
+          </table></div> : <EmptyState variant="compact">{t('usage.agentUsage.empty')}</EmptyState>}
         </section>
-      </div>
-
       <AgentUsagePricingView rows={priceRows} loading={pricingLoading} locale={locale} />
+      </div>
     </section>
   );
 }
