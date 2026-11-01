@@ -85,4 +85,27 @@ describe('localized release notes publication', () => {
   test('rejects tags that could escape the release notes directory', () => withNotesRoot(async (root) => {
     await expect(resolveReleaseNotes({ root, tag: '../../README' })).rejects.toThrow('Invalid release tag');
   }));
+
+  test('supports non-semver preview tags like only-preview', () => withNotesRoot(async (root) => {
+    expect(await resolveReleaseNotes({ root, tag: 'only-preview' })).toEqual({});
+    const previewDir = join(root, 'docs', 'release-notes', 'only-preview');
+    await mkdir(previewDir, { recursive: true });
+    await writeFile(join(previewDir, 'en.md'), '## Preview\n\n- Preview notes.\n');
+    expect(await resolveReleaseNotes({ root, tag: 'only-preview' })).toEqual({
+      en: '## Preview\n\n- Preview notes.\n',
+    });
+  }));
+
+  test('CLI supports non-semver preview tags like only-preview', () => withNotesRoot(async (root) => {
+    const script = fileURLToPath(new URL('../scripts/release-notes.mjs', import.meta.url));
+    const jsonPath = join(root, 'notes.json');
+    const bodyPath = join(root, 'notes.md');
+    const result = spawnSync('node', [script, '--tag', 'only-preview', '--output', jsonPath, '--body-output', bodyPath], {
+      cwd: root, encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(await readFile(jsonPath, 'utf8'))).toEqual({});
+    expect(await readFile(bodyPath, 'utf8')).toContain('Release notes for this version are not available in English.');
+  }));
 });

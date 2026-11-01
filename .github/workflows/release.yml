@@ -69,20 +69,31 @@ jobs:
           if [[ "$MIAOMIAO_PREVIEW" == "true" ]]; then
             base_version="${source_version%%[-+]*}"
             release_tag="v${base_version}-miaomiao.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+            version="$(node scripts/version.mjs "${release_tag#v}")"
           elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             # Replace any existing prerelease/build suffix for an unambiguous test version.
             base_version="${source_version%%[-+]*}"
             release_tag="v${base_version}-pr.${PR_NUMBER}.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+            version="$(node scripts/version.mjs "${release_tag#v}")"
           elif [ -z "$release_tag" ]; then
             release_tag="v$source_version"
+            version="$source_version"
           else
-            case "$release_tag" in
-              v*) ;;
-              *) release_tag="v$release_tag" ;;
-            esac
+            # Custom release tag supplied
+            # If it's a valid semver or v<semver>, parse with scripts/version.mjs
+            # If it's a tag like 'only-preview' (not semver), use source_version with preview suffix for binary package version
+            tag_version="${release_tag#v}"
+            if node scripts/version.mjs "$tag_version" >/dev/null 2>&1; then
+              version="$(node scripts/version.mjs "$tag_version")"
+              case "$release_tag" in
+                v*) ;;
+                *) release_tag="v$release_tag" ;;
+              esac
+            else
+              base_version="${source_version%%[-+]*}"
+              version="${base_version}-preview"
+            fi
           fi
-
-          version="$(node scripts/version.mjs "${release_tag#v}")"
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
@@ -421,6 +432,10 @@ jobs:
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
+          if ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1; then
+            echo "Skipping portable update manifests for non-semver release tag: $RELEASE_TAG"
+            exit 0
+          fi
           for platform in windows linux darwin; do
             node scripts/manifest.mjs \
               --directory artifacts \
@@ -440,15 +455,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          case "$RELEASE_TAG" in
-            v*) ;;
-            *) RELEASE_TAG="v$RELEASE_TAG" ;;
-          esac
+          if node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1; then
+            case "$RELEASE_TAG" in
+              v*) ;;
+              *) RELEASE_TAG="v$RELEASE_TAG" ;;
+            esac
+          fi
 
           prerelease="$MANUAL_PRERELEASE"
           release_args=(--title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/easycli-release-notes.md")
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             if [[ "$RELEASE_TAG" == *-* ]]; then
+              prerelease=true
+            elif ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1; then
               prerelease=true
             else
               prerelease=false
@@ -460,9 +479,18 @@ jobs:
             release_args+=(--prerelease)
           fi
 
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$RELEASE_TAG" \
+              -f sha="$GITHUB_SHA" -F force=true 2>/dev/null || true
+          fi
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" artifacts/* --clobber
-            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/easycli-release-notes.md"
+            edit_args=(--title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/easycli-release-notes.md")
+            if [[ "$prerelease" == "true" ]]; then
+              edit_args+=(--prerelease)
+            fi
+            gh release edit "$RELEASE_TAG" "${edit_args[@]}"
           else
             gh release create "$RELEASE_TAG" "${release_args[@]}" artifacts/*
           fi
