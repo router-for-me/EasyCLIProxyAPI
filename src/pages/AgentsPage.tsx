@@ -2037,29 +2037,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 {!isClaudeModelMappingClient && missingModelHint ? <span className="agent-model-hint" role="status">{missingModelHint}</span> : null}
               </div>}
 
-              {coreApiKeys.length > 1 ? (
-                <div className="agent-minimal-field">
-                  <label htmlFor="embedded-agent-api-key">{t('agents.apiKey.title')}</label>
-                  <Select
-                    id="embedded-agent-api-key"
-                    value={effectiveSelectedApiKey}
-                    disabled={busy || !canConfigureActiveClient}
-                    onChange={(event) => selectApiKey(event.currentTarget.value)}
-                  >
-                    {coreApiKeys.map((entry, index) => {
-                      const isDefault = index === 0;
-                      const label = entry.remark
-                        ? `${entry.remark} (${maskSecret(entry.apiKey)})${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`
-                        : `${maskSecret(entry.apiKey)}${isDefault ? ` · ${t('agents.apiKey.default')}` : ''}`;
-                      return (
-                        <option key={entry.apiKey} value={entry.apiKey}>
-                          {label}
-                        </option>
-                      );
-                    })}
-                  </Select>
-                </div>
-              ) : null}
+
 
               {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
 

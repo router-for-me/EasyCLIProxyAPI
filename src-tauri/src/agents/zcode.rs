@@ -4,7 +4,7 @@ pub(crate) fn infer_zcode_model_knowledge(model_id: &str) -> (Option<u64>, Optio
 
     // 1. Gemini: 1M context, 128K output, vision, pdf
     if lower.contains("gemini") {
-        return (Some(1_048_576), Some(128_000), true, true, vec!["disabled".into(), "enabled".into(), "high".into()]);
+        return (Some(1_048_576), Some(128_000), true, true, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into()]);
     }
 
     // 2. GLM 5.x / 4.x
@@ -58,7 +58,7 @@ pub(crate) fn infer_zcode_model_knowledge(model_id: &str) -> (Option<u64>, Optio
 
     // 7. Spark (Spark X2.6 / 4.0 Ultra supports 1M context)
     if lower.contains("spark") {
-        return (Some(1_000_000), Some(128_000), true, false, vec!["disabled".into(), "enabled".into()]);
+        return (Some(1_000_000), Some(128_000), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into(), "max".into()]);
     }
 
     // 8. MiniMax
@@ -91,6 +91,35 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use super::*;
 use crate::GuiConfigState;
+
+
+pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
+    let calibration = crate::usage::query_model_usage_calibration(model_id);
+    let target_name = calibration.as_ref()
+        .and_then(|c| c.canonical_response_model.as_deref())
+        .unwrap_or(model_id);
+
+    // 1. Directly infer full recommended capabilities for the model (first priority)
+    let (mut cw, mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
+
+    if let Some(calib) = calibration {
+        // 2. Adjust context window if higher real tokens were observed
+        if let Some(observed_tokens) = calib.max_observed_input_tokens {
+            if let Some(ref mut c) = cw {
+                if observed_tokens > *c {
+                    *c = observed_tokens.next_power_of_two();
+                }
+            }
+        }
+
+        // 3. Automatically remove levels that failed in real requests
+        if !calib.failed_reasoning_levels.is_empty() {
+            rl.retain(|level| !calib.failed_reasoning_levels.iter().any(|f| f.eq_ignore_ascii_case(level)));
+        }
+    }
+
+    (cw, mot, img, pdf, rl)
+}
 
 pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || reasoningLevel == \"disabled\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
 
@@ -184,9 +213,8 @@ fn parse_zcode_rule_properties(rule: &Value) -> (Option<u64>, Option<u64>, bool,
 fn parse_zcode_rule_reasoning(rule: &Value) -> (Option<Vec<String>>, Option<String>) {
     let option_specs = rule.get("config").and_then(|c| c.get("optionSpecs"));
     let reasoning = option_specs.and_then(|o| o.get("reasoningLevel"));
-    let values = reasoning.map(|reasoning| reasoning.get("values").and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-        .unwrap_or_default());
+    let values = reasoning.and_then(|r| r.get("values")).and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>());
     let map = reasoning.and_then(|r| r.get("map")).and_then(Value::as_str).map(String::from);
     (values, map)
 }
@@ -215,23 +243,20 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
 
     let mut option_specs = cfg.get("optionSpecs").and_then(Value::as_object).cloned().unwrap_or_default();
     if let Some(mot) = config.max_output_tokens {
-        ensure_json_object_entry(&mut option_specs, "maxOutputTokens")
-            .insert("max".into(), serde_json::json!(mot));
+        let mot_obj = ensure_json_object_entry(&mut option_specs, "maxOutputTokens");
+        mot_obj.insert("max".into(), serde_json::json!(mot));
+        mot_obj.insert("map".into(), serde_json::json!("{\"max_tokens\": maxOutputTokens}"));
     } else {
         option_specs.remove("maxOutputTokens");
     }
-    if !config.reasoning_levels.is_empty() {
-        let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
-        rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
-        if let Some(ref m) = config.reasoning_map {
-            rl.insert("map".into(), serde_json::json!(m));
-        } else {
-            rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
-        }
-        option_specs.insert("reasoningLevel".into(), Value::Object(rl));
+    let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
+    rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
+    if let Some(ref m) = config.reasoning_map {
+        rl.insert("map".into(), serde_json::json!(m));
     } else {
-        option_specs.insert("reasoningLevel".into(), Value::Null);
+        rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
     }
+    option_specs.insert("reasoningLevel".into(), Value::Object(rl));
 
     cfg.insert("properties".into(), Value::Object(properties));
     if !option_specs.is_empty() {
@@ -321,10 +346,15 @@ pub(crate) fn zcode_editor_snapshot(
 
     for option in available_models {
         seen_ids.insert(option.name.clone());
-        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) = infer_zcode_model_knowledge(&option.name);
+        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) = infer_zcode_model_knowledge_with_calibration(&option.name);
+
+        let effective_default_cw = match option.context_window {
+            Some(500_000) | None => inferred_cw.or(option.context_window),
+            Some(cw) => Some(cw).or(inferred_cw),
+        };
 
         let default_config = ZCodeModelConfig {
-            context_window: option.context_window.or(inferred_cw),
+            context_window: effective_default_cw,
             max_output_tokens: inferred_mot,
             supports_image: inferred_img,
             supports_pdf: inferred_pdf,
@@ -332,7 +362,7 @@ pub(crate) fn zcode_editor_snapshot(
             supports_json_schema_output: true,
             supports_native_web_search: true,
             supports_mid_conversation_system: true,
-            reasoning_levels: if option.reasoning_levels.is_empty() { inferred_rl } else { option.reasoning_levels.clone() },
+            reasoning_levels: if inferred_rl.is_empty() { option.reasoning_levels.clone() } else { inferred_rl },
             reasoning_map: Some(ZCODE_CPA_REASONING_MAP.to_string()),
             is_manual: false,
         };
@@ -357,7 +387,7 @@ pub(crate) fn zcode_editor_snapshot(
         } else if let Some(prov_rule) = provider_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(prov_rule);
             let (rl, map) = parse_zcode_rule_reasoning(prov_rule);
-            let effective_cw = cw.or(default_config.context_window);
+            let effective_cw = if cw == Some(500000) || cw.is_none() { default_config.context_window } else { cw };
             ZCodeModelConfig {
                 context_window: effective_cw,
                 max_output_tokens: mot.or(default_config.max_output_tokens),
