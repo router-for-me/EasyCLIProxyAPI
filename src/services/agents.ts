@@ -1,9 +1,15 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { readAgentConfigDirectories } from './agentConfigDirectories';
 import type { ClaudeDesktopModelMapping } from './claudeDesktopModels';
 import type { ModelOption } from './modelService';
 import type { DeepSeekHarnessLaunchOptions } from './deepSeekHarnessLaunch';
 
 export type AgentExecutablePaths = Partial<Record<AgentClientId | `${AgentClientId}:app`, string>>;
+
+export const invokeAgentCommand = <Result>(command: string, args?: Record<string, unknown>): Promise<Result> =>
+  tauriInvoke<Result>(command, { configDirectories: readAgentConfigDirectories(), ...args });
+
+const invoke = invokeAgentCommand;
 
 export type AgentConfigBackupListing = { versions: AgentConfigBackupVersion[] };
 

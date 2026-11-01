@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeAgentCommand as invoke } from './agents';
 
 export interface ZCodeSubagentItem {
   name: string;

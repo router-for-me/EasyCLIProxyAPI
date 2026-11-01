@@ -50,13 +50,14 @@ pub(crate) fn inspect_agent_config_statuses(
     app: &tauri::AppHandle,
     config: &GuiConfigFile,
 ) -> Result<Vec<AgentConfigStatus>, String> {
-    inspect_agent_config_statuses_with_overrides(app, config, &HashMap::new())
+    inspect_agent_config_statuses_with_overrides(app, config, &HashMap::new(), &HashMap::new())
 }
 
 pub(crate) fn inspect_agent_config_statuses_with_overrides(
     app: &tauri::AppHandle,
     config: &GuiConfigFile,
     executable_overrides: &HashMap<String, String>,
+    config_directories: &AgentConfigDirectories,
 ) -> Result<Vec<AgentConfigStatus>, String> {
     let home = app
         .path()
@@ -97,59 +98,88 @@ pub(crate) fn inspect_agent_config_statuses_with_overrides(
             let results = &results;
             let home = &home;
             let candidate_keys = candidate_keys;
-            workers.push(scope.spawn(move || -> Result<(), String> {
-                loop {
-                    let next = queue
-                        .lock()
-                        .map_err(|_| "Agent detection task queue lock is poisoned".to_string())?
-                        .next();
-                    let Some((index, target)) = next else {
-                        return Ok(());
-                    };
-                    let status = match target {
-                        AgentStatusDetectionTarget::Client(client) => {
-                            let (executable_override, desktop_override) =
-                                agent_executable_overrides(executable_overrides, client);
-                            let mut status = inspect_agent_config_with_executables(client, home, config.port, api_key,
-                                executable_override, desktop_override);
-                            if !status.configured && candidate_keys.len() > 1 {
-                                for &candidate in candidate_keys {
-                                    if candidate == api_key {
-                                        continue;
+            workers.push(scope.spawn(move || {
+                AGENT_CONFIG_DIRECTORIES.sync_scope(
+                    config_directories.clone(),
+                    || -> Result<(), String> {
+                        loop {
+                            let next = queue
+                                .lock()
+                                .map_err(|_| {
+                                    "Agent detection task queue lock is poisoned".to_string()
+                                })?
+                                .next();
+                            let Some((index, target)) = next else {
+                                return Ok(());
+                            };
+                            let status = match target {
+                                AgentStatusDetectionTarget::Client(client) => {
+                                    let (executable_override, desktop_override) =
+                                        agent_executable_overrides(executable_overrides, client);
+                                    let mut status = inspect_agent_config_with_executables(
+                                        client,
+                                        home,
+                                        config.port,
+                                        api_key,
+                                        executable_override,
+                                        desktop_override,
+                                    );
+                                    if !status.configured && candidate_keys.len() > 1 {
+                                        for &candidate in candidate_keys {
+                                            if candidate == api_key {
+                                                continue;
+                                            }
+                                            let alt = inspect_agent_config_with_executables(
+                                                client,
+                                                home,
+                                                config.port,
+                                                candidate,
+                                                executable_override,
+                                                desktop_override,
+                                            );
+                                            if alt.configured {
+                                                status = alt;
+                                                break;
+                                            }
+                                        }
                                     }
-                                    let alt = inspect_agent_config_with_executables(client, home, config.port, candidate,
-                                        executable_override, desktop_override);
-                                    if alt.configured {
-                                        status = alt;
-                                        break;
-                                    }
+                                    status
                                 }
-                            }
-                            status
-                        }
-                        AgentStatusDetectionTarget::PiProvider => {
-                            let mut status = inspect_pi_provider_status_with_executable(home, config.port, api_key,
-                                executable_overrides.get(PI_AGENT_ID).map(Path::new));
-                            if !status.configured && candidate_keys.len() > 1 {
-                                for &candidate in candidate_keys {
-                                    if candidate == api_key {
-                                        continue;
+                                AgentStatusDetectionTarget::PiProvider => {
+                                    let mut status = inspect_pi_provider_status_with_executable(
+                                        home,
+                                        config.port,
+                                        api_key,
+                                        executable_overrides.get(PI_AGENT_ID).map(Path::new),
+                                    );
+                                    if !status.configured && candidate_keys.len() > 1 {
+                                        for &candidate in candidate_keys {
+                                            if candidate == api_key {
+                                                continue;
+                                            }
+                                            let alt = inspect_pi_provider_status_with_executable(
+                                                home,
+                                                config.port,
+                                                candidate,
+                                                executable_overrides
+                                                    .get(PI_AGENT_ID)
+                                                    .map(Path::new),
+                                            );
+                                            if alt.configured {
+                                                status = alt;
+                                                break;
+                                            }
+                                        }
                                     }
-                                    let alt = inspect_pi_provider_status_with_executable(home, config.port, candidate,
-                                        executable_overrides.get(PI_AGENT_ID).map(Path::new));
-                                    if alt.configured {
-                                        status = alt;
-                                        break;
-                                    }
+                                    status
                                 }
-                            }
-                            status
+                            };
+                            results.lock().map_err(|_| {
+                                "Agent detection result lock is poisoned".to_string()
+                            })?[index] = Some(status);
                         }
-                    };
-                    results
-                        .lock()
-                        .map_err(|_| "Agent detection result lock is poisoned".to_string())?[index] = Some(status);
-                }
+                    },
+                )
             }));
         }
         for worker in workers {
@@ -188,7 +218,13 @@ pub(crate) fn refresh_agent_config_status_cache(
 pub(crate) async fn get_agent_config_statuses(
     app: tauri::AppHandle,
     executable_overrides: Option<HashMap<String, String>>,
+    config_directories: Option<AgentConfigDirectories>,
 ) -> Result<Vec<AgentConfigStatus>, String> {
+    let config_directories = validate_agent_config_directories(config_directories)?;
+    let custom_paths = !config_directories.is_empty()
+        || executable_overrides
+            .as_ref()
+            .is_some_and(|paths| !paths.is_empty());
     tauri::async_runtime::spawn_blocking(move || {
         let gui_config_state = app.state::<GuiConfigState>();
         let cache = app.state::<AgentConfigStatusCache>();
@@ -199,15 +235,26 @@ pub(crate) async fn get_agent_config_statuses(
                 .map_err(|_| "Agent configuration status refresh lock is poisoned".to_string())?;
             let config = gui_config_state.snapshot()?;
             let port = config.port;
-            if executable_overrides.as_ref().is_none_or(HashMap::is_empty) {
-              if let Some(statuses) = cache.get(port, effective_agent_api_key(&config))? {
-                return Ok(statuses);
-              }
+            if !custom_paths {
+                if let Some(statuses) = cache.get(port, effective_agent_api_key(&config))? {
+                    return Ok(statuses);
+                }
             }
         }
         let config = gui_config_state.snapshot()?;
-        let statuses = inspect_agent_config_statuses_with_overrides(&app, &config, &executable_overrides.unwrap_or_default())?;
-        cache.replace(config.port, effective_agent_api_key(&config), statuses.clone())?;
+        let statuses = inspect_agent_config_statuses_with_overrides(
+            &app,
+            &config,
+            &executable_overrides.unwrap_or_default(),
+            &config_directories,
+        )?;
+        if !custom_paths {
+            cache.replace(
+                config.port,
+                effective_agent_api_key(&config),
+                statuses.clone(),
+            )?;
+        }
         Ok(statuses)
     })
     .await
@@ -218,13 +265,30 @@ pub(crate) async fn get_agent_config_statuses(
 pub(crate) async fn refresh_agent_config_statuses(
     app: tauri::AppHandle,
     executable_overrides: Option<HashMap<String, String>>,
+    config_directories: Option<AgentConfigDirectories>,
 ) -> Result<Vec<AgentConfigStatus>, String> {
+    let config_directories = validate_agent_config_directories(config_directories)?;
+    let custom_paths = !config_directories.is_empty()
+        || executable_overrides
+            .as_ref()
+            .is_some_and(|paths| !paths.is_empty());
     tauri::async_runtime::spawn_blocking(move || {
         let gui_config_state = app.state::<GuiConfigState>();
         let cache = app.state::<AgentConfigStatusCache>();
         let config = gui_config_state.snapshot()?;
-        let statuses = inspect_agent_config_statuses_with_overrides(&app, &config, &executable_overrides.unwrap_or_default())?;
-        cache.replace(config.port, effective_agent_api_key(&config), statuses.clone())?;
+        let statuses = inspect_agent_config_statuses_with_overrides(
+            &app,
+            &config,
+            &executable_overrides.unwrap_or_default(),
+            &config_directories,
+        )?;
+        if !custom_paths {
+            cache.replace(
+                config.port,
+                effective_agent_api_key(&config),
+                statuses.clone(),
+            )?;
+        }
         Ok(statuses)
     })
     .await
@@ -294,6 +358,31 @@ pub(crate) async fn install_pi_provider(
     model: String,
     executable_overrides: Option<HashMap<String, String>>,
     api_key: Option<String>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            install_pi_provider_in_directories(
+                app,
+                gui_config_state,
+                cache,
+                model,
+                executable_overrides,
+                api_key,
+            )
+            .await
+        })
+        .await
+}
+
+pub(crate) async fn install_pi_provider_in_directories(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    cache: tauri::State<'_, AgentConfigStatusCache>,
+    model: String,
+    executable_overrides: Option<HashMap<String, String>>,
+    api_key: Option<String>,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app
         .path()
@@ -317,12 +406,15 @@ pub(crate) async fn install_pi_provider(
     let port = config.port;
     let api_key = effective_key.to_string();
     let proxy_url = config.proxy_url.clone();
+    let directories = AGENT_CONFIG_DIRECTORIES.with(Clone::clone);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        if let Some(executable) = executable {
-            install_pi_provider_inner(&home, &executable, port, &api_key, &model, &proxy_url)
-        } else {
-            configure_pi_provider_without_cli_inner(&home, port, &api_key, &model)
-        }
+        AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+            if let Some(executable) = executable {
+                install_pi_provider_inner(&home, &executable, port, &api_key, &model, &proxy_url)
+            } else {
+                configure_pi_provider_without_cli_inner(&home, port, &api_key, &model)
+            }
+        })
     })
     .await
     .map_err(|error| format!("Pi CLIProxyAPI provider installation task failed: {error}"))??;
@@ -338,20 +430,50 @@ pub(crate) async fn update_pi_provider(
     model: String,
     executable_overrides: Option<HashMap<String, String>>,
     api_key: Option<String>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            update_pi_provider_in_directories(
+                app,
+                gui_config_state,
+                cache,
+                model,
+                executable_overrides,
+                api_key,
+            )
+            .await
+        })
+        .await
+}
+
+pub(crate) async fn update_pi_provider_in_directories(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    cache: tauri::State<'_, AgentConfigStatusCache>,
+    model: String,
+    executable_overrides: Option<HashMap<String, String>>,
+    api_key: Option<String>,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
-    let executable = resolve_pi_executable(&home, executable_overrides.as_ref())
-        .ok_or_else(|| "Pi CLI was not detected. Install Pi and ensure the pi command is in PATH".to_string())?;
+    let executable =
+        resolve_pi_executable(&home, executable_overrides.as_ref()).ok_or_else(|| {
+            "Pi CLI was not detected. Install Pi and ensure the pi command is in PATH".to_string()
+        })?;
     let model = resolve_pi_default_model(&config, &model).await?;
     let port = config.port;
     let api_key = resolve_agent_api_key(&config, api_key.as_deref()).to_string();
     let proxy_url = config.proxy_url.clone();
+    let directories = AGENT_CONFIG_DIRECTORIES.with(Clone::clone);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        update_pi_provider_inner(&home, &executable, port, &api_key, &model, &proxy_url)
+        AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+            update_pi_provider_inner(&home, &executable, port, &api_key, &model, &proxy_url)
+        })
     })
     .await
     .map_err(|error| format!("Pi plugin update task failed: {error}"))??;
@@ -366,6 +488,22 @@ pub(crate) async fn repair_pi_provider(
     cache: tauri::State<'_, AgentConfigStatusCache>,
     model: String,
     api_key: Option<String>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            repair_pi_provider_in_directories(app, gui_config_state, cache, model, api_key).await
+        })
+        .await
+}
+
+pub(crate) async fn repair_pi_provider_in_directories(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    cache: tauri::State<'_, AgentConfigStatusCache>,
+    model: String,
+    api_key: Option<String>,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app
         .path()
@@ -375,8 +513,11 @@ pub(crate) async fn repair_pi_provider(
     let model = resolve_pi_default_model(&config, &model).await?;
     let port = config.port;
     let api_key = resolve_agent_api_key(&config, api_key.as_deref()).to_string();
+    let directories = AGENT_CONFIG_DIRECTORIES.with(Clone::clone);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        repair_pi_provider_inner(&home, port, &api_key, &model)
+        AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+            repair_pi_provider_inner(&home, port, &api_key, &model)
+        })
     })
     .await
     .map_err(|error| format!("Pi configuration repair task failed: {error}"))??;
@@ -389,6 +530,20 @@ pub(crate) async fn uninstall_pi_provider(
     app: tauri::AppHandle,
     cache: tauri::State<'_, AgentConfigStatusCache>,
     executable_overrides: Option<HashMap<String, String>>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            uninstall_pi_provider_in_directories(app, cache, executable_overrides).await
+        })
+        .await
+}
+
+pub(crate) async fn uninstall_pi_provider_in_directories(
+    app: tauri::AppHandle,
+    cache: tauri::State<'_, AgentConfigStatusCache>,
+    executable_overrides: Option<HashMap<String, String>>,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app
         .path()
@@ -396,8 +551,11 @@ pub(crate) async fn uninstall_pi_provider(
         .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let executable = resolve_pi_executable(&home, executable_overrides.as_ref())
         .ok_or_else(|| "Pi CLI was not detected. Install Pi first".to_string())?;
+    let directories = AGENT_CONFIG_DIRECTORIES.with(Clone::clone);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        uninstall_pi_provider_inner(&home, &executable)
+        AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+            uninstall_pi_provider_inner(&home, &executable)
+        })
     })
     .await
     .map_err(|error| format!("Pi plugin uninstall task failed: {error}"))??;
@@ -406,7 +564,15 @@ pub(crate) async fn uninstall_pi_provider(
 }
 
 #[tauri::command]
-pub(crate) fn check_codex_oauth_login(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn check_codex_oauth_login(
+    app: tauri::AppHandle,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<(), String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || check_codex_oauth_login_in_directories(app))
+}
+
+pub(crate) fn check_codex_oauth_login_in_directories(app: tauri::AppHandle) -> Result<(), String> {
     let home = app
         .path()
         .home_dir()
@@ -608,6 +774,19 @@ fn reload_changed_codex_catalog_files(app: &tauri::AppHandle) {
 pub(crate) async fn get_codex_model_catalog_editor(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<codex_catalog::CatalogEditorSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            get_codex_model_catalog_editor_in_directories(app, gui_config_state).await
+        })
+        .await
+}
+
+pub(crate) async fn get_codex_model_catalog_editor_in_directories(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<codex_catalog::CatalogEditorSnapshot, String> {
     let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
     let config = gui_config_state.snapshot()?;
@@ -625,6 +804,20 @@ pub(crate) struct CodexCatalogEditorSaveResult {
 
 #[tauri::command]
 pub(crate) async fn save_codex_model_catalog_editor(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    request: codex_catalog::CatalogEditorRequest,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<CodexCatalogEditorSaveResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            save_codex_model_catalog_editor_in_directories(app, gui_config_state, request).await
+        })
+        .await
+}
+
+pub(crate) async fn save_codex_model_catalog_editor_in_directories(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     request: codex_catalog::CatalogEditorRequest,
@@ -1342,6 +1535,37 @@ pub(crate) async fn apply_agent_config(
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
     executable_overrides: Option<HashMap<String, String>>,
     api_key: Option<String>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            apply_agent_config_in_directories(
+                app,
+                gui_config_state,
+                client,
+                model,
+                oauth_configuration,
+                claude_code_model_mappings,
+                claude_desktop_model_mappings,
+                executable_overrides,
+                api_key,
+            )
+            .await
+        })
+        .await
+}
+
+pub(crate) async fn apply_agent_config_in_directories(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    client: String,
+    model: String,
+    oauth_configuration: bool,
+    claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
+    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    executable_overrides: Option<HashMap<String, String>>,
+    api_key: Option<String>,
 ) -> Result<AgentConfigActionResult, String> {
     let client = AgentClient::parse(&client)?;
     let home = app
@@ -1393,7 +1617,15 @@ pub(crate) async fn apply_agent_config(
 }
 
 #[tauri::command]
-pub(crate) fn clear_codex_config(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+pub(crate) fn clear_codex_config(
+    app: tauri::AppHandle,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<Vec<String>, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || clear_codex_config_in_directories(app))
+}
+
+pub(crate) fn clear_codex_config_in_directories(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let home = app
         .path()
         .home_dir()
@@ -1407,6 +1639,39 @@ pub(crate) fn clear_codex_config(app: tauri::AppHandle) -> Result<Vec<String>, S
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn set_agent_config_enabled(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    client: String,
+    model: String,
+    enabled: bool,
+    force_restore: bool,
+    claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
+    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    executable_overrides: Option<HashMap<String, String>>,
+    api_key: Option<String>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            set_agent_config_enabled_in_directories(
+                app,
+                gui_config_state,
+                client,
+                model,
+                enabled,
+                force_restore,
+                claude_code_model_mappings,
+                claude_desktop_model_mappings,
+                executable_overrides,
+                api_key,
+            )
+            .await
+        })
+        .await
+}
+
+pub(crate) async fn set_agent_config_enabled_in_directories(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
@@ -1493,8 +1758,39 @@ pub(crate) async fn update_agent_config(
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
     executable_overrides: Option<HashMap<String, String>>,
     api_key: Option<String>,
+    config_directories: Option<AgentConfigDirectories>,
 ) -> Result<AgentConfigActionResult, String> {
-    apply_agent_config(
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            update_agent_config_in_directories(
+                app,
+                gui_config_state,
+                client,
+                model,
+                oauth_configuration,
+                claude_code_model_mappings,
+                claude_desktop_model_mappings,
+                executable_overrides,
+                api_key,
+            )
+            .await
+        })
+        .await
+}
+
+pub(crate) async fn update_agent_config_in_directories(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    client: String,
+    model: String,
+    oauth_configuration: bool,
+    claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
+    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
+    executable_overrides: Option<HashMap<String, String>>,
+    api_key: Option<String>,
+) -> Result<AgentConfigActionResult, String> {
+    apply_agent_config_in_directories(
         app,
         gui_config_state,
         client,

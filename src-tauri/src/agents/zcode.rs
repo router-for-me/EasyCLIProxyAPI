@@ -635,14 +635,23 @@ pub(crate) fn zcode_subagent_snapshot(home: &Path) -> Result<ZCodeSubagentConfig
     let mut seen_paths = std::collections::HashSet::new();
 
     let mut candidate_dirs = Vec::new();
-    if let Some(base) = zcode_data_base_dir(home) {
-        candidate_dirs.push(base.join(".zcode/agents"));
-        candidate_dirs.push(base.join(".zcode/cli/plugins/cache"));
-        candidate_dirs.push(base.join(".zcode/skills"));
+    if agent_config_directory("zcode").is_some() {
+        let root = if config_dir.file_name().is_some_and(|name| name == "v2") {
+            config_dir.parent().unwrap_or(&config_dir)
+        } else {
+            &config_dir
+        };
+        candidate_dirs.extend([root.join("agents"), root.join("cli/plugins/cache"), root.join("skills")]);
+    } else {
+        if let Some(base) = zcode_data_base_dir(home) {
+            candidate_dirs.push(base.join(".zcode/agents"));
+            candidate_dirs.push(base.join(".zcode/cli/plugins/cache"));
+            candidate_dirs.push(base.join(".zcode/skills"));
+        }
+        candidate_dirs.push(home.join(".zcode/agents"));
+        candidate_dirs.push(home.join(".zcode/cli/plugins/cache"));
+        candidate_dirs.push(home.join(".zcode/skills"));
     }
-    candidate_dirs.push(home.join(".zcode/agents"));
-    candidate_dirs.push(home.join(".zcode/cli/plugins/cache"));
-    candidate_dirs.push(home.join(".zcode/skills"));
 
     for dir in candidate_dirs {
         if !dir.is_dir() { continue; }
@@ -802,6 +811,19 @@ fn update_subagent_frontmatter(content: &str, model: Option<&str>, thought_level
 pub(crate) async fn get_zcode_model_catalog_editor(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<ZCodeCatalogEditorSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            get_zcode_model_catalog_editor_in_directories(app, gui_config_state).await
+        })
+        .await
+}
+
+pub(crate) async fn get_zcode_model_catalog_editor_in_directories(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<ZCodeCatalogEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
     let models = fetch_prepared_agent_models(AgentClient::ZCode, &config).await?;
@@ -814,6 +836,20 @@ pub(crate) async fn get_zcode_model_catalog_editor(
 
 #[tauri::command]
 pub(crate) async fn save_zcode_model_catalog_editor(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    request: ZCodeCatalogEditorSaveRequest,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<ZCodeCatalogEditorSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            save_zcode_model_catalog_editor_in_directories(app, gui_config_state, request).await
+        })
+        .await
+}
+
+pub(crate) async fn save_zcode_model_catalog_editor_in_directories(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     request: ZCodeCatalogEditorSaveRequest,
@@ -830,6 +866,18 @@ pub(crate) async fn save_zcode_model_catalog_editor(
 #[tauri::command]
 pub(crate) async fn get_zcode_subagent_config(
     app: tauri::AppHandle,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<ZCodeSubagentConfigSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            get_zcode_subagent_config_in_directories(app).await
+        })
+        .await
+}
+
+pub(crate) async fn get_zcode_subagent_config_in_directories(
+    app: tauri::AppHandle,
 ) -> Result<ZCodeSubagentConfigSnapshot, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = crate::AGENT_CONFIG_FILE_LOCK
@@ -840,6 +888,19 @@ pub(crate) async fn get_zcode_subagent_config(
 
 #[tauri::command]
 pub(crate) async fn save_zcode_subagent_config(
+    app: tauri::AppHandle,
+    request: ZCodeSubagentConfigSaveRequest,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<ZCodeSubagentConfigSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            save_zcode_subagent_config_in_directories(app, request).await
+        })
+        .await
+}
+
+pub(crate) async fn save_zcode_subagent_config_in_directories(
     app: tauri::AppHandle,
     request: ZCodeSubagentConfigSaveRequest,
 ) -> Result<ZCodeSubagentConfigSnapshot, String> {

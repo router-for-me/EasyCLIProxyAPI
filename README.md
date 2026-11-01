@@ -129,6 +129,12 @@ For supported clients, the application can synchronize the available model catal
 default model, back up the original configuration before applying managed settings, and restore the
 previous configuration.
 
+In **Agents → Management → Configuration directory**, enter or browse to the directory containing
+the client's configuration files, such as `.claude` or `.codex` (not the home directory).
+Windows also accepts WSL UNC paths such as `\\wsl$\Ubuntu\home\user\.claude` and
+`\\wsl.localhost\Ubuntu\home\user\.codex`. Each client remembers its own directory; clearing it
+restores the default. This setting changes configuration access, not how executables are launched.
+
 Antigravity CLI connects through CPA's Gemini-compatible API. Launch the CLI from CPA to supply its endpoint and API key for that process. Running `agy` directly requires setting those environment variables yourself.
 
 Codex **Session Management → Edit Context (Experimental)** reads messages only after a session is selected.
