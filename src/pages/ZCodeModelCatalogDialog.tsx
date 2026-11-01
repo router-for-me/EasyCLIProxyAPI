@@ -42,15 +42,13 @@ export function ZCodeModelCatalogDialog({
       setSnapshot(next);
       setModels(next.models);
       setModelOrder(next.modelOrder);
-      if (next.models.length > 0 && !selectedId) {
-        setSelectedId(next.models[0].id);
-      }
+      setSelectedId((current) => current || next.models[0]?.id || "");
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, []);
 
   useEffect(() => {
     void load();

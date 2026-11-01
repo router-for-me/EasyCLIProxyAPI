@@ -165,8 +165,11 @@ pub(crate) struct ZCodeSubagentConfigSaveRequest {
 fn parse_zcode_rule_properties(rule: &Value) -> (Option<u64>, Option<u64>, bool, bool, bool, bool, bool, bool) {
     let properties = rule.get("config").and_then(|c| c.get("properties"));
     let context_window = properties.and_then(|p| p.get("contextWindow")).and_then(Value::as_u64);
-    let max_output_tokens = properties.and_then(|p| p.get("maxOutputTokens"))
+    let max_output_tokens = rule.get("config").and_then(|c| c.get("optionSpecs"))
+        .and_then(|o| o.get("maxOutputTokens"))
         .and_then(|m| m.get("max")).and_then(Value::as_u64)
+        .or_else(|| properties.and_then(|p| p.get("maxOutputTokens"))
+            .and_then(|m| m.get("max")).and_then(Value::as_u64))
         .or_else(|| properties.and_then(|p| p.get("maxOutputTokens")).and_then(Value::as_u64));
     let input_format = properties.and_then(|p| p.get("inputFormat"));
     let supports_image = input_format.and_then(|f| f.get("supportsImage")).and_then(Value::as_bool).unwrap_or(true);
@@ -675,34 +678,40 @@ pub(crate) fn save_zcode_subagent_config_inner(
     let config_dir = zcode_config_directory(home);
     let settings_path = config_dir.join("setting.json");
 
-    if settings_path.is_file() {
-        if let Ok(content) = fs::read_to_string(&settings_path) {
-            if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
-                if let Some(obj) = val.as_object_mut() {
-                    if let Some(ref m) = request.default_subagent_model {
-                        obj.insert("defaultSubagentModel".into(), serde_json::json!(m));
-                    } else {
-                        obj.remove("defaultSubagentModel");
-                    }
-                    if let Some(ref tl) = request.default_thought_level {
-                        obj.insert("defaultThoughtLevel".into(), serde_json::json!(tl));
-                    } else {
-                        obj.remove("defaultThoughtLevel");
-                    }
-                    if let Ok(rendered) = serde_json::to_string_pretty(&val) {
-                        let _ = fs::write(&settings_path, rendered);
-                    }
-                }
-            }
-        }
+    let mut val = if settings_path.is_file() {
+        let content = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Failed to read ZCode settings: {e}"))?;
+        serde_json::from_str::<Value>(&content)
+            .map_err(|e| format!("Failed to parse ZCode settings: {e}"))?
+    } else {
+        fs::create_dir_all(&config_dir)
+            .map_err(|e| format!("Failed to create ZCode config directory: {e}"))?;
+        serde_json::json!({})
+    };
+    let obj = val.as_object_mut()
+        .ok_or_else(|| "ZCode settings must be a JSON object".to_string())?;
+    if let Some(ref m) = request.default_subagent_model {
+        obj.insert("defaultSubagentModel".into(), serde_json::json!(m));
+    } else {
+        obj.remove("defaultSubagentModel");
     }
+    if let Some(ref tl) = request.default_thought_level {
+        obj.insert("defaultThoughtLevel".into(), serde_json::json!(tl));
+    } else {
+        obj.remove("defaultThoughtLevel");
+    }
+    let rendered = serde_json::to_string_pretty(&val)
+        .map_err(|e| format!("Failed to serialize ZCode settings: {e}"))?;
+    fs::write(&settings_path, rendered)
+        .map_err(|e| format!("Failed to write ZCode settings: {e}"))?;
 
     for sub in &request.subagents {
         let p = Path::new(&sub.file_path);
         if !p.is_file() { continue; }
         if let Ok(content) = fs::read_to_string(p) {
             if let Some(updated) = update_subagent_frontmatter(&content, sub.model.as_deref(), sub.thought_level.as_deref()) {
-                let _ = fs::write(p, updated);
+                fs::write(p, updated)
+                    .map_err(|e| format!("Failed to write ZCode subagent {}: {e}", p.display()))?;
             }
         }
     }
