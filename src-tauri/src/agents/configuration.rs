@@ -3823,7 +3823,10 @@ pub(crate) fn build_zcode_agent_config(
         }
         let specs = ensure_json_object_entry(config_obj, "optionSpecs");
         if let Some(mot) = inferred_mot {
-            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
+            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({
+                "max": mot,
+                "map": "{\"max_tokens\": maxOutputTokens}",
+            }));
         }
         if !option.reasoning_levels.is_empty() {
             let is_generated_map = |m: &str| {
@@ -3842,9 +3845,14 @@ pub(crate) fn build_zcode_agent_config(
         if specs.is_empty() {
             config_obj.remove("optionSpecs");
         }
-        // Always place CPA managed models into manualProviderModelRules so ZCode software
-        // displays "关闭智能配置" (Manual configuration), bypassing ZCode's internal faulty discovery.
-        manual_updates.push(rule);
+        if manual.is_some() {
+            manual_updates.push(rule);
+        } else {
+            rules.insert((first_managed_index + rules.iter().filter(|entry| {
+                entry.get("providerId").and_then(serde_json::Value::as_str)
+                    == Some(MANAGED_AGENT_PROVIDER_ID)
+            }).count()).min(rules.len()), rule);
+        }
     }
     let manual_rules = model_rules.get_mut("manualProviderModelRules")
         .and_then(serde_json::Value::as_array_mut)

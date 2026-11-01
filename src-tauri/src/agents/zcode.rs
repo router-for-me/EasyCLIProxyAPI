@@ -184,9 +184,9 @@ fn parse_zcode_rule_properties(rule: &Value) -> (Option<u64>, Option<u64>, bool,
 fn parse_zcode_rule_reasoning(rule: &Value) -> (Option<Vec<String>>, Option<String>) {
     let option_specs = rule.get("config").and_then(|c| c.get("optionSpecs"));
     let reasoning = option_specs.and_then(|o| o.get("reasoningLevel"));
-    let values = reasoning.map(|reasoning| reasoning.get("values").and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-        .unwrap_or_default());
+    let values = reasoning.and_then(|r| r.get("values")).and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>())
+        .filter(|v| !v.is_empty());
     let map = reasoning.and_then(|r| r.get("map")).and_then(Value::as_str).map(String::from);
     (values, map)
 }
@@ -215,8 +215,9 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
 
     let mut option_specs = cfg.get("optionSpecs").and_then(Value::as_object).cloned().unwrap_or_default();
     if let Some(mot) = config.max_output_tokens {
-        ensure_json_object_entry(&mut option_specs, "maxOutputTokens")
-            .insert("max".into(), serde_json::json!(mot));
+        let mot_obj = ensure_json_object_entry(&mut option_specs, "maxOutputTokens");
+        mot_obj.insert("max".into(), serde_json::json!(mot));
+        mot_obj.insert("map".into(), serde_json::json!("{\"max_tokens\": maxOutputTokens}"));
     } else {
         option_specs.remove("maxOutputTokens");
     }
@@ -339,7 +340,7 @@ pub(crate) fn zcode_editor_snapshot(
             supports_mid_conversation_system: true,
             reasoning_levels: if option.reasoning_levels.is_empty() { inferred_rl } else { option.reasoning_levels.clone() },
             reasoning_map: Some(ZCODE_CPA_REASONING_MAP.to_string()),
-            is_manual: true,
+            is_manual: false,
         };
 
         let configuration = if let Some(manual_rule) = manual_rules.get(&option.name) {
@@ -530,10 +531,12 @@ pub(crate) fn save_zcode_editor(
         .filter_map(|rule| Some((rule.get("modelId")?.as_str()?.to_string(), rule.clone())))
         .collect::<std::collections::HashMap<_, _>>();
     for model in &request.models {
-        let mut cfg = model.configuration.clone();
-        cfg.is_manual = true;
-        let rule_obj = build_zcode_rule_object(&model.id, &cfg, existing_rules.get(&model.id));
-        new_manual_rules.push(rule_obj);
+        let rule_obj = build_zcode_rule_object(&model.id, &model.configuration, existing_rules.get(&model.id));
+        if model.configuration.is_manual {
+            new_manual_rules.push(rule_obj);
+        } else {
+            new_provider_rules.push(rule_obj);
+        }
     }
 
     let model_rules_sec = ensure_json_object_entry(config, "modelConfigRules");
