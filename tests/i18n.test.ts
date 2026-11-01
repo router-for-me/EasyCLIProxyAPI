@@ -5,6 +5,43 @@ import { jaOverrides } from '../src/i18n/ja';
 import { pluginConfigText } from '../src/i18n/pluginConfig';
 
 describe('i18n', () => {
+  it('localizes credential tag controls in every language', () => {
+    for (const [locale, label] of [['en', 'Tags'], ['zh-CN', '标签'], ['zh-TW', '標籤'], ['ja', 'タグ']] as const) {
+      expect(translate(locale, 'authFiles.tags.label')).toBe(label);
+      for (const key of [
+        'authFiles.tags.all',
+        'authFiles.tags.placeholder',
+        'authFiles.tags.hint',
+        'authFiles.tags.selectGroup',
+        'authFiles.tags.selectAllInGroup',
+        'authFiles.tags.filterBy',
+        'authFiles.tags.filterClear',
+        'authFiles.tags.add',
+        'authFiles.tags.addTag',
+        'authFiles.tags.removeTag',
+        'authFiles.tags.addAnother',
+        'authFiles.tags.inputPlaceholder',
+        'authFiles.tags.poolLabel',
+        'authFiles.tags.addFromPool',
+        'authFiles.tags.manageQuick',
+        'authFiles.tags.quickEditTitle',
+        'authFiles.tags.batchSectionTitle',
+        'authFiles.tags.batchAdd',
+        'authFiles.tags.batchRemove',
+        'authFiles.tags.batchAddPlaceholder',
+        'authFiles.tags.selectTagToRemove',
+        'authFiles.tags.batchAddSuccess',
+        'authFiles.tags.batchRemoveSuccess',
+        'authFiles.tags.noSelectedTags',
+        'authFiles.operations.clearSelection',
+        'authFiles.operations.selectedSummary',
+      ] as const) {
+        expect(translate(locale, key)).not.toBe(key);
+        expect(translate(locale, key)).not.toBe('');
+      }
+    }
+  });
+
   it('localizes the plugin discard confirmation in every language', () => {
     for (const [locale, cancel, confirm] of [
       ['zh-CN', '继续编辑', '放弃修改'], ['zh-TW', '繼續編輯', '放棄修改'],

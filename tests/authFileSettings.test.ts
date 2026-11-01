@@ -2,11 +2,25 @@ import { describe, expect, it } from 'bun:test';
 import { authFileSettingsFromPayload, buildAuthFileSettingsPatch, loadAuthFileSettings, saveAuthFileSettings } from '../src/services/authFileSettings';
 
 describe('credential settings', () => {
+  it('normalizes tags, ignores malformed values and patches only changed tag groups', async () => {
+    const original = authFileSettingsFromPayload({ tags: [' team ', '', 'team', 'production', null, 7], access_token: 'secret' });
+    expect(original.tags).toBe('team, production');
+    expect(authFileSettingsFromPayload({ tags: 'team' }).tags).toBe('');
+    expect(authFileSettingsFromPayload({ tags: null }).tags).toBe('');
+    expect(buildAuthFileSettingsPatch(original, { ...original, tags: ' production, team, team, ' })).toEqual({});
+    expect(buildAuthFileSettingsPatch(original, { ...original, tags: ' team, staging, staging, ' })).toEqual({ tags: ['team', 'staging'] });
+    expect(buildAuthFileSettingsPatch(original, { ...original, tags: ' , ' })).toEqual({ tags: [] });
+    const writes: unknown[] = [];
+    const api = { get: async () => ({}), patch: async (path: string, body: Record<string, unknown>) => { writes.push({ path, body }); } };
+    await saveAuthFileSettings('test.json', original, { ...original, tags: 'new, new' }, api);
+    expect(writes).toEqual([{ path: '/credentials/fields', body: { name: 'test.json', tags: ['new'] } }]);
+  });
+
   it('reads all fields and legacy aliases without retaining credential tokens', () => {
     const draft = authFileSettingsFromPayload(JSON.stringify({ prefix: 'team', 'proxy-url': 'socks5://localhost:1080', priority: -4, weight: 6,
       'disable-cooling': false, websocket: true, 'excluded-models': [' GPT-* ', 'gpt-*'], headers: { 'X-Team': 'test' }, note: 'note', access_token: 'secret' }));
     expect(draft).toEqual({ prefix: 'team', proxy_url: 'socks5://localhost:1080', priority: '-4', weight: '6', disable_cooling: 'false',
-      websockets: 'true', excluded_models: 'gpt-*', headers: '{\n  "X-Team": "test"\n}', note: 'note', advanced: {} });
+      websockets: 'true', excluded_models: 'gpt-*', headers: '{\n  "X-Team": "test"\n}', note: 'note', tags: '', advanced: {} });
     expect(JSON.stringify(draft)).not.toContain('secret');
   });
 

@@ -2367,7 +2367,11 @@ pub(crate) fn read_claude_desktop_version(home: &Path) -> Option<String> {
             read_macos_app_version(application)
         })
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        find_claude_desktop_executable(home).and_then(|path| read_agent_version(&path, home))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = home;
         None
@@ -2682,6 +2686,9 @@ pub(crate) fn find_agent_executable(client: AgentClient, home: &Path) -> Option<
     if client == AgentClient::OpenCode {
         return find_opencode_executable(home);
     }
+    if client == AgentClient::Codex {
+        return find_codex_executable(home);
+    }
     if client == AgentClient::DeepSeekHarness {
         return find_deepseek_harness_executable(home);
     }
@@ -2808,6 +2815,14 @@ pub(crate) fn find_named_agent_executable_in_directories(
     directories: &[PathBuf],
     names: &[&str],
 ) -> Option<PathBuf> {
+    find_all_named_agent_executables_in_directories(directories, names).into_iter().next()
+}
+
+pub(crate) fn find_all_named_agent_executables_in_directories(
+    directories: &[PathBuf],
+    names: &[&str],
+) -> Vec<PathBuf> {
+    let mut result = Vec::new();
     for directory in directories {
         for name in names {
             #[cfg(target_os = "windows")]
@@ -2819,15 +2834,42 @@ pub(crate) fn find_named_agent_executable_in_directories(
             ];
             #[cfg(not(target_os = "windows"))]
             let candidates = [directory.join(name)];
-            if let Some(candidate) = candidates
-                .into_iter()
-                .find(|path| agent_cli_executable(path))
-            {
-                return Some(candidate);
+            for candidate in candidates {
+                if agent_cli_executable(&candidate) && !result.contains(&candidate) {
+                    result.push(candidate);
+                }
             }
         }
     }
-    None
+    result
+}
+
+pub(crate) fn find_codex_executable(home: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        let local_app_data = env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Local"));
+        let bin_root = local_app_data.join("OpenAI/Codex/bin");
+        if let Ok(entries) = fs::read_dir(&bin_root) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("codex.exe");
+                if agent_cli_executable(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+    }
+    let directories = agent_executable_directories(home);
+    candidates.extend(find_all_named_agent_executables_in_directories(&directories, &["codex"]));
+
+    for candidate in &candidates {
+        if read_agent_version(candidate, home).is_some() {
+            return Some(candidate.clone());
+        }
+    }
+    candidates.into_iter().next()
 }
 
 pub(crate) fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {

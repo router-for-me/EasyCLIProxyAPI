@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { normalizeCredentialResults, refreshCredential, runCredentialBatch } from '../src/services/authFileOperations';
+import { batchAddCredentialTag, batchRemoveCredentialTag, normalizeCredentialResults, refreshCredential, runCredentialBatch, updateCredentialTags } from '../src/services/authFileOperations';
 import { authFileSettingsFromPayload, buildAuthFileSettingsPatch } from '../src/services/authFileSettings';
 import { managementApi } from '../src/services/managementApi';
 import { credentialQuotaPlugin, parsePluginCredentialQuota } from '../src/services/pluginCredentialQuota';
@@ -53,5 +53,66 @@ describe('plugin credential quotas', () => {
     expect(credentialQuotaPlugin({ supports_quota: false, quota_plugin_id: 'example' })).toBe('');
     expect(credentialQuotaPlugin({ supports_quota: true, quota_plugin_id: 'example' })).toBe('example');
     expect(() => parsePluginCredentialQuota({ groups: {} })).toThrow();
+  });
+});
+
+describe("batch tag operations", () => {
+  it("adds tags to credentials without duplicates and calls managementApi patch", async () => {
+    const patches: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const mockApi = {
+      patch: async (path: string, body: Record<string, unknown>) => {
+        patches.push({ path, body });
+      },
+    };
+    const fileA = { name: "a.json", tags: ["team"] };
+    const fileB = { name: "b.json", tags: ["personal"] };
+    const fileC = { name: "c.json", tags: ["team", "production"] };
+
+    const results = await batchAddCredentialTag([fileA, fileB, fileC], "production", mockApi as any);
+    expect(results).toHaveLength(2);
+    expect(results.every((r) => r.success)).toBe(true);
+    expect(patches).toEqual([
+      { path: "/credentials/fields", body: { name: "a.json", tags: ["team", "production"] } },
+      { path: "/credentials/fields", body: { name: "b.json", tags: ["personal", "production"] } },
+    ]);
+    expect(fileA.tags).toEqual(["team", "production"]);
+    expect(fileB.tags).toEqual(["personal", "production"]);
+    expect(fileC.tags).toEqual(["team", "production"]);
+  });
+
+  it("removes tags from credentials that have it and skips others", async () => {
+    const patches: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const mockApi = {
+      patch: async (path: string, body: Record<string, unknown>) => {
+        patches.push({ path, body });
+      },
+    };
+    const fileA = { name: "a.json", tags: ["team", "staging"] };
+    const fileB = { name: "b.json", tags: ["personal"] };
+
+    const results = await batchRemoveCredentialTag([fileA, fileB], "staging", mockApi as any);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toEqual({ id: "a.json", success: true });
+    expect(patches).toEqual([
+      { path: "/credentials/fields", body: { name: "a.json", tags: ["team"] } },
+    ]);
+    expect(fileA.tags).toEqual(["team"]);
+    expect(fileB.tags).toEqual(["personal"]);
+  });
+
+  it("updates a single credential tags with normalization", async () => {
+    const patches: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const mockApi = {
+      patch: async (path: string, body: Record<string, unknown>) => {
+        patches.push({ path, body });
+      },
+    };
+    const file = { name: "test.json", tags: ["old"] };
+    const nextTags = await updateCredentialTags(file, [" new ", "", "tag", "new", null as any], mockApi as any);
+    expect(nextTags).toEqual(["new", "tag"]);
+    expect(patches).toEqual([
+      { path: "/credentials/fields", body: { name: "test.json", tags: ["new", "tag"] } },
+    ]);
+    expect(file.tags).toEqual(["new", "tag"]);
   });
 });

@@ -110,6 +110,19 @@ describe('Claude Desktop custom models', () => {
     expect(desktopModelValidation([configured], [{ name: 'claude-opus-5', isAlias: false }], [configured])).toBe('aliasExists');
   });
 
+  test('does not flag aliasExists when alias already points to entry model', () => {
+    const configured = { model: 'custom-upstream-model', alias: 'claude-sonnet-5', context1m: false };
+    const available = [{ name: 'claude-sonnet-5', isAlias: true, alias: 'custom-upstream-model' }];
+    expect(desktopAliasNotice(configured, [configured], available, [])).toBeNull();
+    expect(desktopModelValidation([configured], available, [])).toBeNull();
+  });
+
+  test('preserves custom model alias without spuriously appending -cc when mapped to the same model', () => {
+    const configured = { model: 'custom-upstream-model', alias: 'claude-sonnet-5', context1m: false };
+    const available = [{ name: 'claude-sonnet-5', isAlias: true, alias: 'custom-upstream-model' }];
+    expect(suffixCollidingDesktopAliases([configured], available, [])).toEqual([configured]);
+  });
+
   test('tracks alias edits, row removal and context changes independently of legacy fields', () => {
     const before = { ...legacy, desktopModels: [entry] };
     expect(sameAgentModelMappings(before, { ...before, opus: 'ignored' })).toBeTrue();

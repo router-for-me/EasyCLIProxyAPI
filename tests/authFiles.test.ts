@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   authFileCooldownResetIndex,
+  countAuthFileTags,
   changedOAuthAuthFileNames,
   dedupeAuthFiles,
   groupOAuthAccountsByProvider,
@@ -15,6 +16,15 @@ import {
 } from '../src/services/authFiles';
 
 describe('认证文件列表规范化', () => {
+  it('preserves cleared credential tags instead of restoring stale runtime tags', () => {
+    const disk = { name: 'same.json', source: 'file', tags: [] };
+    const runtime = { name: 'same.json', runtime_only: true, tags: ['old'] };
+    for (const entries of [[disk, runtime], [runtime, disk]]) {
+      expect(dedupeAuthFiles(entries)[0].tags).toEqual([]);
+    }
+    expect(dedupeAuthFiles([{ name: 'same.json', source: 'file' }, runtime])[0].tags).toEqual(['old']);
+  });
+
   it('合并同名的磁盘和运行时记录并优先保留磁盘状态', () => {
     const files = dedupeAuthFiles([
       {
@@ -240,5 +250,22 @@ describe('OAuth login account summary', () => {
     ]);
     expect(grouped.get('claude')).toEqual([{ name: 'claude-a.json', label: 'Work', disabled: false, identities: [] }]);
     expect(grouped.get('kimi')).toEqual([{ name: 'kimi.json', label: 'kimi.json', disabled: false, identities: [] }]);
+  });
+});
+
+describe("credential tag counting", () => {
+  it("counts tags across auth files and ignores empty or malformed tags", () => {
+    const files = [
+      { name: "a.json", tags: ["team", "production"] },
+      { name: "b.json", tags: ["team", "staging", ""] },
+      { name: "c.json", tags: null },
+      { name: "d.json", tags: ["team"] },
+      { name: "e.json" },
+    ];
+    const counts = countAuthFileTags(files);
+    expect(counts.get("team")).toBe(3);
+    expect(counts.get("production")).toBe(1);
+    expect(counts.get("staging")).toBe(1);
+    expect(counts.get("nonexistent")).toBeUndefined();
   });
 });
