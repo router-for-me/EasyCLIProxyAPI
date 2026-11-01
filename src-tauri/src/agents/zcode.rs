@@ -94,11 +94,16 @@ use crate::GuiConfigState;
 
 
 pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
-    // 1. First priority: Check local call records across any software (Codex, ZCode, etc.) in usage.db
-    if let Some(calib) = crate::usage::query_model_usage_calibration(model_id) {
-        let target_name = calib.canonical_response_model.as_deref().unwrap_or(model_id);
-        let (mut cw, mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
+    let calibration = crate::usage::query_model_usage_calibration(model_id);
+    let target_name = calibration.as_ref()
+        .and_then(|c| c.canonical_response_model.as_deref())
+        .unwrap_or(model_id);
 
+    // 1. Directly infer full recommended capabilities for the model (first priority)
+    let (mut cw, mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
+
+    if let Some(calib) = calibration {
+        // 2. Adjust context window if higher real tokens were observed
         if let Some(observed_tokens) = calib.max_observed_input_tokens {
             if let Some(ref mut c) = cw {
                 if observed_tokens > *c {
@@ -107,17 +112,13 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
             }
         }
 
-        for proven in calib.proven_reasoning_levels {
-            if !rl.contains(&proven) {
-                rl.push(proven);
-            }
+        // 3. Automatically remove levels that failed in real requests
+        if !calib.failed_reasoning_levels.is_empty() {
+            rl.retain(|level| !calib.failed_reasoning_levels.iter().any(|f| f.eq_ignore_ascii_case(level)));
         }
-
-        return (cw, mot, img, pdf, rl);
     }
 
-    // 2. Cold start fallback: Authoritative model family inference
-    infer_zcode_model_knowledge(model_id)
+    (cw, mot, img, pdf, rl)
 }
 
 pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || reasoningLevel == \"disabled\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
