@@ -32,6 +32,7 @@ on:
       - main
     tags:
       - 'v*'
+      - 'only-preview'
 
 concurrency:
   group: portable-${{ github.ref }}-${{ inputs.preview && inputs.source_sha || (github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref_type == 'branch' && 'cache' || 'release') }}
