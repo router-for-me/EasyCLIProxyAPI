@@ -169,6 +169,168 @@ pub(crate) async fn check_latest_core(
     })
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreReleaseVersion {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+}
+
+#[tauri::command]
+pub(crate) async fn list_core_versions(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<Vec<CoreVersionOption>, String> {
+    let platform = current_core_platform()?;
+    let config = gui_config_state.snapshot()?;
+    let client = http_client(&config.proxy_url, &config.custom_download_mirrors)?;
+    let repository = configured_gitcode_core_repository();
+    let mut failures = Vec::new();
+    for candidate in version_download_source_candidates(
+        config.selected_download_candidate(),
+        repository.is_some(),
+        &config.custom_download_mirrors,
+    ) {
+        let result = fetch_core_versions_from_source(&client, &candidate, repository).await;
+        match result {
+            Ok(releases) => {
+                let versions = core_version_options(releases, &platform);
+                if !versions.is_empty() {
+                    return Ok(versions);
+                }
+                failures.push(format!(
+                    "{}: No selectable kernel versions",
+                    candidate.display_name()
+                ));
+            }
+            Err(error) => failures.push(format!("{}: {error}", candidate.display_name())),
+        }
+    }
+    Err(format!(
+        "All kernel version list sources failed: {}",
+        failures.join("；")
+    ))
+}
+
+pub(crate) async fn fetch_core_versions_from_source(
+    client: &reqwest::Client,
+    source: &VersionDownloadCandidate,
+    repository: Option<&str>,
+) -> Result<Vec<CoreReleaseVersion>, String> {
+    if source.source == VersionDownloadSource::Gitcode {
+        let repository = repository.ok_or("GitCode kernel repository is not configured")?;
+        return fetch_core_version_list(
+            client,
+            &format!("https://api.gitcode.com/api/v5/repos/{repository}/releases?per_page=100"),
+        )
+        .await;
+    }
+    let api_result =
+        fetch_core_version_list(client, &version_source_url(source, CORE_RELEASES_API_URL)).await;
+    let api_error = match api_result {
+        Ok(releases)
+            if releases.iter().any(|release| {
+                !release.draft
+                    && semver::Version::parse(release.tag_name.trim().trim_start_matches('v'))
+                        .is_ok()
+            }) =>
+        {
+            return Ok(releases)
+        }
+        Ok(_) => "No selectable kernel versions".to_string(),
+        Err(error) => error,
+    };
+    let atom_result = async {
+        let body = client
+            .get(version_source_url(source, RELEASE_ATOM_URL))
+            .header(
+                reqwest::header::ACCEPT,
+                "application/atom+xml,application/xml,text/xml",
+            )
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .text()
+            .await
+            .map_err(|error| error.to_string())?;
+        let releases = core_versions_from_atom(&body);
+        if releases.is_empty() {
+            return Err("Atom feed did not return version tags".to_string());
+        }
+        Ok(releases)
+    }
+    .await;
+    atom_result
+        .map_err(|error| format!("Release API failed: {api_error}; Atom feed failed: {error}"))
+}
+
+async fn fetch_core_version_list(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<Vec<CoreReleaseVersion>, String> {
+    client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::USER_AGENT, USER_AGENT)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to query CPA kernel versions: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Failed to read CPA kernel versions: {error}"))?
+        .json::<Vec<CoreReleaseVersion>>()
+        .await
+        .map_err(|error| format!("Failed to parse CPA kernel versions: {error}"))
+}
+
+pub(crate) fn core_versions_from_atom(xml: &str) -> Vec<CoreReleaseVersion> {
+    xml.split("<entry>")
+        .skip(1)
+        .filter_map(|entry| {
+            let entry = entry.split_once("</entry>")?.0;
+            let tag_name = release_tag_from_atom(&format!("<entry>{entry}</entry>"))?;
+            let version = semver::Version::parse(tag_name.trim_start_matches('v')).ok()?;
+            Some(CoreReleaseVersion {
+                tag_name,
+                draft: false,
+                prerelease: !version.pre.is_empty(),
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn core_version_options(
+    releases: Vec<CoreReleaseVersion>,
+    platform: &CorePlatform,
+) -> Vec<CoreVersionOption> {
+    let mut versions = Vec::new();
+    for release in releases {
+        if release.draft {
+            continue;
+        }
+        let Ok(parsed) = semver::Version::parse(release.tag_name.trim().trim_start_matches('v'))
+        else {
+            continue;
+        };
+        let version = normalize_version(&parsed.to_string());
+        versions.push(CoreVersionOption {
+            asset_name: core_release_asset_name(&version, &platform),
+            version,
+            prerelease: release.prerelease || !parsed.pre.is_empty(),
+        });
+    }
+    versions.sort_by(|left, right| {
+        let left_version = semver::Version::parse(left.version.trim_start_matches('v')).ok();
+        let right_version = semver::Version::parse(right.version.trim_start_matches('v')).ok();
+        right_version.cmp(&left_version)
+    });
+    versions.dedup_by(|left, right| left.version == right.version);
+    versions
+}
+
 #[tauri::command]
 pub(crate) fn detect_bundled_core() -> Result<Option<BundledCoreInfo>, String> {
     bundled_core_archive().map(|value| value.map(|(info, _)| info))

@@ -5,6 +5,12 @@ export type CoreLatest = {
   assetName: string;
 };
 
+export type CoreVersionOption = {
+  version: string;
+  assetName: string;
+  prerelease: boolean;
+};
+
 export type CoreInstallTask = {
   running: boolean;
   cancellable: boolean;
@@ -38,6 +44,9 @@ export type VersionDownloadSource = string;
 
 export const checkLatestCore = (): Promise<CoreLatest> =>
   invoke<CoreLatest>('check_latest_core');
+
+export const listCoreVersions = (): Promise<CoreVersionOption[]> =>
+  invoke<CoreVersionOption[]>('list_core_versions');
 
 export const getCoreInstallTask = (): Promise<CoreInstallTask> =>
   invoke<CoreInstallTask>('get_core_install_task');

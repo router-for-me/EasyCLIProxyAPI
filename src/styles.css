@@ -702,6 +702,78 @@ textarea:focus-visible {
   color: var(--color-success-text);
 }
 
+.core-version-selector {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.core-version-selector label {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 180px;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+}
+
+.core-version-select-control {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.core-version-select-control > svg {
+  position: absolute;
+  right: 12px;
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.core-version-selector select {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 34px 0 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  text-overflow: ellipsis;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.core-version-selector select:hover:not(:disabled),
+.core-version-selector select:focus-visible {
+  border-color: var(--ui-accent-strong);
+}
+
+.core-version-selector select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.core-version-selector button {
+  display: inline-flex;
+  min-height: 40px;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.core-version-selector button > svg {
+  flex: none;
+}
+
 .version-card-actions {
   display: flex;
   flex-wrap: wrap;
