@@ -2,6 +2,25 @@
    EasyCLIProxyAPI UI Refinements & Modern White Theme Design System
    ========================================================================== */
 
+@keyframes ui-view-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ui-dialog-enter {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes ui-notice-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ui-notice-exit {
+  to { opacity: 0; transform: translateY(6px); }
+}
+
 /* 1. Global Light Theme Surface & Contrast Variables */
 :root {
   --bg-secondary: var(--color-surface-sunken);
@@ -813,7 +832,7 @@ button.oauth-account-count:focus-visible {
 .primary-button {
   border-radius: var(--radius-md);
   font-weight: 500;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) var(--ease-out);
 }
 
 .secondary-button {
@@ -822,7 +841,7 @@ button.oauth-account-count:focus-visible {
   color: var(--text-secondary);
   border-radius: var(--radius-md);
   font-weight: 500;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) var(--ease-out);
 }
 
 .secondary-button:hover:not(:disabled) {
@@ -837,7 +856,7 @@ button.oauth-account-count:focus-visible {
   color: var(--button-danger-soft-text);
   border-radius: var(--radius-md);
   font-weight: 500;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) var(--ease-out);
 }
 
 .danger-button:hover:not(:disabled) {
@@ -912,7 +931,201 @@ button.oauth-account-count:focus-visible {
   background: transparent;
 }
 
-/* Responsive Shell (Preserved from existing accessibility rules) */
+:is(.icon-button, .btn, .btn-primary, .btn-secondary, .btn-ghost, .btn-danger) {
+  transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) var(--ease-out);
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  :is(.primary-button, .secondary-button, .danger-button, .btn, .btn-primary, .btn-secondary, .btn-danger):not(:disabled, [aria-disabled='true'], .ghost):hover {
+    transform: translateY(-1px);
+  }
+}
+
+:is(.primary-button, .secondary-button, .danger-button, .icon-button, .btn, .btn-primary, .btn-secondary, .btn-ghost, .btn-danger):not(:disabled, [aria-disabled='true']):active {
+  transform: scale(0.98);
+}
+
+:is(button, input, textarea, select):focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 1px;
+}
+
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color']), textarea) {
+  transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+
+:where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color']), textarea):not(:disabled):hover {
+  border-color: var(--color-border-hover);
+}
+
+:where(input, textarea)::placeholder {
+  color: var(--text-placeholder);
+  opacity: 1;
+}
+
+.content > :not([hidden]),
+[role='tabpanel']:not([hidden]) {
+  animation: ui-view-enter var(--motion-enter) var(--ease-out);
+}
+
+.config-dialog-backdrop {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.app-dialog {
+  animation: ui-dialog-enter var(--motion-enter) var(--ease-out);
+}
+
+.app-dialog > .config-dialog-heading h2 {
+  line-height: var(--line-height-tight);
+  letter-spacing: -0.02em;
+}
+
+.app-dialog > .config-dialog-heading,
+.app-dialog > .config-dialog-actions {
+  gap: 12px;
+}
+
+:where(.app-dialog) > :is(.config-dialog-heading, .config-dialog-actions) {
+  padding-block: 2px;
+}
+
+@supports (backdrop-filter: blur(8px)) {
+  .app-notice-entry .notice.notice-box {
+    background: color-mix(in srgb, var(--notice-background) 94%, transparent);
+  }
+
+  .api-provider-dialog :is(.config-dialog-heading, .config-dialog-actions) {
+    background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+}
+
+.usage-events-table th,
+.usage-pricing-table th {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.notice-box {
+  border-inline-start: 3px solid var(--notice-color);
+}
+
+.notice-box .notice-icon {
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--notice-color) 10%, transparent);
+}
+
+.app-notice-entry {
+  animation: ui-notice-enter var(--motion-enter) var(--ease-out);
+}
+
+.app-notice-entry[data-closing='true'] {
+  animation: ui-notice-exit var(--motion-exit) ease-in forwards;
+  pointer-events: none;
+}
+
+.app-notice-entry .notice-box {
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.empty-state-icon {
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 2px;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 12%, var(--color-border-subtle));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--ui-accent) 7%, var(--color-surface));
+  color: var(--ui-accent);
+}
+
+.empty-state-error .empty-state-icon {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-subtle);
+  color: var(--color-danger-text);
+}
+
+.empty-state-compact .empty-state-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+}
+
+.empty-state-title {
+  line-height: var(--line-height-tight);
+}
+
+.empty-state-description {
+  max-width: 52ch;
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-body);
+}
+
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+  max-width: 100%;
+}
+
+:where(*) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--theme-scrollbar-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-full);
+  background: var(--theme-scrollbar-thumb);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--theme-scrollbar-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .content > :not([hidden]),
+  [role='tabpanel']:not([hidden]),
+  .app-dialog,
+  .app-notice-entry,
+  .app-notice-entry[data-closing='true'] {
+    animation: none;
+  }
+
+  :is(.primary-button, .secondary-button, .danger-button, .icon-button, .btn, .btn-primary, .btn-secondary, .btn-ghost, .btn-danger),
+  :where(input, textarea) {
+    transition: none;
+  }
+
+  :is(.primary-button, .secondary-button, .danger-button, .icon-button, .btn, .btn-primary, .btn-secondary, .btn-ghost, .btn-danger):not(:disabled, [aria-disabled='true']):active {
+    transform: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .empty-state-icon { border-color: CanvasText; }
+}
+
 @media (max-width: 900px) {
   .app-shell:not(.app-shell-easy-mode) {
     grid-template-columns: minmax(0, 1fr);

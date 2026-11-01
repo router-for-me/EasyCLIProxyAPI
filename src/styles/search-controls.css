@@ -23,8 +23,9 @@
 
 .search-control[data-size]:focus-within {
   border-color: var(--primary-color);
-  outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 14%, transparent);
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 1px;
+  box-shadow: none;
 }
 
 .search-control[data-size] > svg {

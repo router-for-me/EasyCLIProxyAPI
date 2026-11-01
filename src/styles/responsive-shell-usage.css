@@ -45,6 +45,15 @@
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
+  scroll-padding-inline: 4px;
+  overscroll-behavior-x: contain;
+}
+
+@media (max-width: 700px) {
+  .app-notice-stack {
+    right: 16px;
+    width: min(480px, calc(100vw - 32px));
+  }
 }
 
 .usage-tabs button,
