@@ -50,7 +50,7 @@ export async function readRoutingBoard(api: RoutingApi = managementApi): Promise
           name: readString(source.group, 'name') || family, family,
           priority: number(record.priority),
           weights, kind: 'provider', keyCount: weights.length,
-          prefix: readString(record, 'prefix') || readString(source.group, 'prefix'),
+          prefix: readString(record, 'prefix'),
           disabled: source.group.disabled === true || record.disabled === true
             || (Array.isArray(record['excluded-models']) && record['excluded-models'].includes('*')),
           unavailable: false, runtimeOnly: false, groupIndex: source.groupIndex, keyIndex: source.keyIndex,

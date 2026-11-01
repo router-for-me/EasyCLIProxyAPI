@@ -193,11 +193,14 @@ describe('routing components', () => {
 it('reads provider and credential metadata while keeping existing fields', async () => {
   const api = {
     get: async <T,>(path: string) => (path === '/credentials' ? { files: [{ name: 'oauth.json', provider: 'codex', prefix: 'oauth' }] }
-      : path === '/config/routing' ? {} : path === '/config/api-keys/openai-compatibility' ? [{ name: 'Provider', prefix: 'group', keys: [{ 'api-key': 'fixture-a' }, { 'api-key': 'fixture-b' }] }] : []) as T,
+      : path === '/config/routing' ? {}
+      : path === '/config/api-keys/codex' ? [{ name: 'Codex', prefix: 'group', keys: [{ 'api-key': 'fixture-c', prefix: '' }] }]
+      : path === '/config/api-keys/openai-compatibility' ? [{ name: 'Provider', prefix: 'group', keys: [{ 'api-key': 'fixture-a' }, { 'api-key': 'fixture-b' }] }] : []) as T,
     put: async () => ({}), patch: async () => ({}),
   };
   const board = await readRoutingBoard(api);
   expect(board.partial).toEqual([]);
-  expect(board.members.find(item => item.kind === 'provider')).toMatchObject({ keyCount: 2, prefix: 'group', weights: [null, null] });
+  expect(board.members.find(item => item.family === 'openai-compatibility')).toMatchObject({ keyCount: 2, prefix: 'group', weights: [null, null] });
+  expect(board.members.find(item => item.family === 'codex')).toMatchObject({ prefix: '' });
   expect(board.members.find(item => item.kind === 'credential')).toMatchObject({ keyCount: 1, prefix: 'oauth', credentialName: 'oauth.json' });
 });
