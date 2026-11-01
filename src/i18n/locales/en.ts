@@ -2160,7 +2160,7 @@ export const en: Record<MessageKey, string> = {
   'kernel.versions.installVersion': 'Install {version}',
   'kernel.versions.installLatest': 'Stop and Update',
   'kernel.versions.confirmUpdateTitle': 'Stop and Update Core',
-  'kernel.versions.stopAndConfirmDescription': 'Updating the core will stop the currently running core process and install version {version}. You can restart the core after the update. Do you want to continue?',
+  'kernel.versions.stopAndConfirmDescription': 'Updating the core will stop the currently running core process and install version {version}. The core will be automatically started after the update. Do you want to continue?',
   'kernel.versions.stopAndUpdateVersion': 'Stop and update to {version}',
   'kernel.versions.installBundledTitle': 'Install bundled core {version} without downloading',
   'kernel.versions.installBundled': 'Install Bundled Core',

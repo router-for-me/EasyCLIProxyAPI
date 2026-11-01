@@ -2159,7 +2159,7 @@ export const zhCN = {
   'kernel.versions.installVersion': '安装 {version}',
   'kernel.versions.installLatest': '停止并更新',
   'kernel.versions.confirmUpdateTitle': '停止并更新内核',
-  'kernel.versions.stopAndConfirmDescription': '更新内核将停止正在运行的内核进程，并下载安装版本 {version}。更新完成后需重新启动内核，是否继续？',
+  'kernel.versions.stopAndConfirmDescription': '更新内核将停止正在运行的内核进程，并下载安装版本 {version}。更新完成后将自动启动内核，是否继续？',
   'kernel.versions.stopAndUpdateVersion': '停止并更新至 {version}',
   'kernel.versions.installBundledTitle': '安装随应用附带的内核 {version}，无需下载',
   'kernel.versions.installBundled': '安装内置内核',
