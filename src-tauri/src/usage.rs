@@ -1466,37 +1466,56 @@ pub(crate) fn open_usage_database() -> Result<Connection, String> {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ModelUsageCalibration {
     pub canonical_response_model: Option<String>,
-    pub proven_reasoning_levels: Vec<String>,
+    pub failed_reasoning_levels: Vec<String>,
     pub max_observed_input_tokens: Option<u64>,
 }
 
 pub(crate) fn query_model_usage_calibration(model_id: &str) -> Option<ModelUsageCalibration> {
     let connection = open_usage_database().ok()?;
     let mut stmt = connection.prepare(
-        "SELECT response_model, reasoning_effort, failed, input_tokens FROM usage_events WHERE lower(trim(model)) = lower(trim(?1)) ORDER BY id DESC LIMIT 100"
+        "SELECT response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens 
+         FROM usage_events 
+         WHERE lower(trim(model)) = lower(trim(?1)) 
+         ORDER BY id DESC LIMIT 100"
     ).ok()?;
+
     let rows = stmt.query_map(params![model_id], |row| {
         let response_model: Option<String> = row.get(0).ok().filter(|s: &String| !s.trim().is_empty());
         let reasoning_effort: Option<String> = row.get(1).ok().filter(|s: &String| !s.trim().is_empty() && s != "none");
         let failed: bool = row.get::<_, i64>(2).map(|v| v != 0).unwrap_or(false);
-        let input_tokens: u64 = row.get::<_, i64>(3).map(|v| v.max(0) as u64).unwrap_or(0);
-        Ok((response_model, reasoning_effort, failed, input_tokens))
+        let failure_status: Option<i64> = row.get(3).ok();
+        let failure_body: Option<String> = row.get(4).ok().filter(|s: &String| !s.trim().is_empty());
+        let input_tokens: u64 = row.get::<_, i64>(5).map(|v| v.max(0) as u64).unwrap_or(0);
+        Ok((response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens))
     }).ok()?;
 
     let mut calibration = ModelUsageCalibration::default();
-    let mut proven_efforts = std::collections::HashSet::new();
+    let mut failed_efforts = std::collections::HashSet::new();
     let mut max_input = 0u64;
 
     for row in rows.flatten() {
-        let (response_model, reasoning_effort, failed, input_tokens) = row;
+        let (response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens) = row;
         if calibration.canonical_response_model.is_none() && response_model.is_some() {
             calibration.canonical_response_model = response_model;
         }
-        if !failed {
+
+        if failed {
             if let Some(effort) = reasoning_effort {
-                proven_efforts.insert(effort);
+                let is_effort_failure = (failure_status == Some(400) || failure_status == Some(422))
+                    && failure_body.as_deref().map(|body| {
+                        let lower = body.to_ascii_lowercase();
+                        lower.contains("effort") 
+                            || lower.contains("reasoning") 
+                            || lower.contains("thinking") 
+                            || lower.contains("thought")
+                            || lower.contains("unsupported")
+                    }).unwrap_or(false);
+                if is_effort_failure {
+                    failed_efforts.insert(effort);
+                }
             }
         }
+
         if input_tokens > max_input {
             max_input = input_tokens;
         }
@@ -1505,11 +1524,14 @@ pub(crate) fn query_model_usage_calibration(model_id: &str) -> Option<ModelUsage
     if max_input > 0 {
         calibration.max_observed_input_tokens = Some(max_input);
     }
-    if !proven_efforts.is_empty() {
-        calibration.proven_reasoning_levels = proven_efforts.into_iter().collect();
+    if !failed_efforts.is_empty() {
+        calibration.failed_reasoning_levels = failed_efforts.into_iter().collect();
     }
 
-    if calibration.canonical_response_model.is_some() || !calibration.proven_reasoning_levels.is_empty() || calibration.max_observed_input_tokens.is_some() {
+    if calibration.canonical_response_model.is_some() 
+        || !calibration.failed_reasoning_levels.is_empty() 
+        || calibration.max_observed_input_tokens.is_some() 
+    {
         Some(calibration)
     } else {
         None
