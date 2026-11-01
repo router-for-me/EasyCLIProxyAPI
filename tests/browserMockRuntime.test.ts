@@ -19,6 +19,21 @@ describe('browser mock options', () => {
 });
 
 describe('browser mock runtime', () => {
+  test('persists normalized credential tags through fields, download and list routes', async () => {
+    const runtime = createBrowserMockRuntime('running');
+    const request = (method: string, path: string, extra = {}) => runtime.invoke('management_request', { request: { method, path, ...extra } });
+    await request('PATCH', '/credentials/fields', { body: { name: 'codex-personal.json', tags: [' team ', '', 'team', 'production', null] } });
+    expect(await request('GET', '/credentials/download', { query: { name: 'codex-personal.json' } }))
+      .toMatchObject({ tags: ['team', 'production'] });
+    const listed = await request('GET', '/credentials') as { files: Array<{ name: string; tags?: string[] }> };
+    expect(listed.files.find(file => file.name === 'codex-personal.json')?.tags).toEqual(['team', 'production']);
+    await request('PATCH', '/credentials/fields', { body: { name: 'codex-personal.json', note: 'unchanged tags' } });
+    expect(await request('GET', '/credentials/download', { query: { name: 'codex-personal.json' } }))
+      .toMatchObject({ tags: ['team', 'production'], note: 'unchanged tags' });
+    await request('PATCH', '/credentials/fields', { body: { name: 'codex-personal.json', tags: [] } });
+    expect(await request('GET', '/credentials/download', { query: { name: 'codex-personal.json' } })).toMatchObject({ tags: [] });
+  });
+
   test('saves, preserves and clears the Codex approval model', async () => {
     const runtime = createBrowserMockRuntime('running');
     const save = (request: Record<string, unknown>) => runtime.invoke('save_codex_model_catalog_editor', { request });

@@ -3,6 +3,7 @@ import { applyTemplateChanges, readTemplatePath, sameTemplateValue, type Templat
 import { requestBucketRangeLabel } from '../services/authFileRequests';
 import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
 import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
+import { normalizeAuthFileTags } from '../services/authFiles';
 
 export type BrowserMockScenario = 'running' | 'stopped' | 'empty' | 'error';
 export type BrowserMockMode = BrowserMockScenario | 'off';
@@ -301,6 +302,7 @@ function createState(scenario: BrowserMockScenario) {
   const authFiles: JsonObject[] = [
     {
       name: 'codex-personal.json',
+      tags: ['personal'],
       provider: 'codex',
       type: 'codex',
       source: 'file',
@@ -322,6 +324,7 @@ function createState(scenario: BrowserMockScenario) {
     },
     {
       name: 'claude-team.json',
+      tags: ['team', 'production'],
       provider: 'claude',
       type: 'anthropic',
       source: 'file',
@@ -898,6 +901,7 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
     const file = findAuthFile(state, readString(patch.name));
     if (!file) throw new Error(`Browser Mock credential not found: ${readString(patch.name)}`);
     Object.assign(file, clone(patch));
+    if (Object.prototype.hasOwnProperty.call(patch, 'tags')) file.tags = normalizeAuthFileTags(patch.tags);
     return { status: 'ok' };
   }
   if (method === 'POST' && path === '/routing/cooldown/reset') {

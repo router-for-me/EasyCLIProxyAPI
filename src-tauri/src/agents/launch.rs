@@ -1560,7 +1560,14 @@ fn windows_powershell_cli_script(
         .map(|argument| windows_powershell_single_quoted_literal(argument))
         .collect::<Vec<_>>()
         .join(" ");
-    format!("Set-Location -LiteralPath {directory}; & {executable} {arguments}")
+    format!(
+        "Set-Location -LiteralPath {directory}; \
+         try {{ & {executable} {arguments}; \
+         if ($LASTEXITCODE -ne 0) {{ Write-Host 'Exit code:' $LASTEXITCODE; \
+         Write-Host 'Executable:' {executable}; Write-Host 'Command:' {executable} {arguments} }} \
+         }} catch {{ Write-Host $_.Exception.Message; \
+         Write-Host 'Executable:' {executable}; Write-Host 'Command:' {executable} {arguments} }}"
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -1580,6 +1587,10 @@ fn windows_cli_launch_command(
         .is_some_and(|extension| {
             extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
         });
+    let is_powershell_script = executable
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ps1"));
 
     let command = match terminal {
         "windows-terminal" => {
@@ -1603,9 +1614,28 @@ fn windows_cli_launch_command(
         // Use an interactive shell, as with a manual launch, so terminal setup
         // and the window lifetime do not depend on the CLI (notably on Win10).
         "auto" | "powershell" => {
-            let mut command = Command::new(windows_powershell_executable());
-            let script = windows_powershell_cli_script(executable, working_directory, arguments);
-            command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &script]);
+            let mut command = if is_batch_script {
+                let mut command = windows_command_for_executable(executable, true);
+                command.args(arguments);
+                command
+            } else if is_powershell_script {
+                let mut command = Command::new(windows_powershell_executable());
+                command.args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NoExit",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ]);
+                command.arg(executable).args(arguments);
+                command
+            } else {
+                let mut command = Command::new(windows_powershell_executable());
+                let script = windows_powershell_cli_script(executable, working_directory, arguments);
+                command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &script]);
+                command
+            };
             command.creation_flags(CREATE_NEW_CONSOLE);
             command
         }
@@ -1801,15 +1831,36 @@ mod tests {
     #[test]
     fn windows_auto_cli_uses_a_persistent_shell_for_native_and_batch_clients() {
         let directory = Path::new(r"C:\Users\Test User\project's [work]");
-        for executable in [r"C:\Tools\Claude Code\claude.exe", r"C:\Tools\Claude Code\claude.cmd"] {
-            let command = windows_cli_launch_command(
-                Path::new(executable), "Claude Code", directory, &[], "auto",
-            ).unwrap();
-            assert_eq!(command.get_program(), windows_powershell_executable().as_os_str());
-            let arguments = command.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>();
-            assert_eq!(&arguments[..4], ["-NoLogo", "-NoProfile", "-NoExit", "-Command"]);
-            assert!(arguments[4].contains("Set-Location -LiteralPath 'C:\\Users\\Test User\\project''s [work]'"));
-            assert!(arguments[4].contains(&format!("& '{executable}'")));
+        for executable in [
+            r"C:\Tools\Claude Code\claude.exe",
+            r"C:\Tools\Claude Code\claude.cmd",
+            r"C:\Tools\Claude Code\claude.BAT",
+            r"C:\Tools\Claude Code\claude.PS1",
+        ] {
+            for terminal in ["auto", "powershell"] {
+                let command = windows_cli_launch_command(
+                    Path::new(executable), "Claude Code", directory, &[], terminal,
+                ).unwrap();
+                let arguments = command.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>();
+                if executable.ends_with(".cmd") || executable.ends_with(".BAT") {
+                    assert_eq!(command.get_program(), windows_command_processor().as_os_str());
+                    assert_eq!(&arguments[..3], ["/D", "/K", "call"]);
+                    assert_eq!(arguments[3], windows_batch_executable_argument(Path::new(executable)));
+                    continue;
+                }
+                assert_eq!(command.get_program(), windows_powershell_executable().as_os_str());
+                if executable.ends_with(".PS1") {
+                    assert_eq!(arguments, ["-NoLogo", "-NoProfile", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", executable]);
+                    continue;
+                }
+                assert_eq!(&arguments[..4], ["-NoLogo", "-NoProfile", "-NoExit", "-Command"]);
+                assert!(arguments[4].contains("Set-Location -LiteralPath 'C:\\Users\\Test User\\project''s [work]'"));
+                assert!(arguments[4].contains(&format!("try {{ & '{executable}'")));
+                assert!(arguments[4].contains("if ($LASTEXITCODE -ne 0)"));
+                assert!(arguments[4].contains("catch { Write-Host $_.Exception.Message"));
+                assert!(arguments[4].contains(&format!("Write-Host 'Executable:' '{executable}'")));
+                assert!(arguments[4].contains(&format!("Write-Host 'Command:' '{executable}'")));
+            }
         }
     }
 
@@ -1823,9 +1874,12 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         let batch = directory.join("test client.cmd");
         fs::write(&batch, "@echo off\r\necho %CD%\r\necho %~1\r\necho %CPA_LAUNCH_TEST%\r\nexit /b 0\r\n").unwrap();
+        let powershell = directory.join("test client.ps1");
+        fs::write(&powershell, "[Console]::WriteLine([Environment]::CurrentDirectory); [Console]::WriteLine($args[0]); [Console]::WriteLine($env:CPA_LAUNCH_TEST)").unwrap();
         let native = windows_powershell_executable();
         for (executable, arguments) in [
             (batch, vec!["two words".to_string()]),
+            (powershell, vec!["two words".to_string()]),
             (native, vec!["-NoProfile".into(), "-Command".into(),
                 "[Console]::WriteLine([Environment]::CurrentDirectory); [Console]::WriteLine('two words'); [Console]::WriteLine($env:CPA_LAUNCH_TEST)".into()]),
         ] {
@@ -1833,8 +1887,15 @@ mod tests {
                 &executable, "test client", &directory, &arguments, "auto",
             ).unwrap();
             // Run the same startup script without keeping a test shell open.
-            let mut command = Command::new(interactive.get_program());
-            command.args(interactive.get_args().filter(|arg| *arg != "-NoExit"));
+            let mut command = if interactive.get_program() == windows_command_processor().as_os_str() {
+                let mut command = windows_command_for_executable(&executable, false);
+                command.args(&arguments);
+                command
+            } else {
+                let mut command = Command::new(interactive.get_program());
+                command.args(interactive.get_args().filter(|arg| *arg != "-NoExit"));
+                command
+            };
             command.current_dir(&directory).env("CPA_LAUNCH_TEST", "launch-fixture");
             configure_background_command(&mut command);
             let output = command_output_with_timeout(&mut command, Duration::from_secs(20))

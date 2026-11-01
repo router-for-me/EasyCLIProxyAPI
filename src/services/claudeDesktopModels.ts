@@ -56,6 +56,9 @@ export function desktopAliasNotice(
   if (alias === modelKey(entry.model)) return 'sameModel' as const;
   const appliedAlias = appliedEntries.some((applied) => modelKey(applied.alias) === alias
     && applied.model.trim() && modelKey(applied.model) !== alias);
+  const pointsToSameModel = models.some((model) => modelKey(model.name) === alias
+    && model.isAlias && model.alias && modelKey(model.alias) === modelKey(entry.model));
+  if (pointsToSameModel) return null;
   if (models.some((model) => modelKey(model.name) === alias && (!model.isAlias || !appliedAlias))
     || entries.some((other) => modelKey(other.model) === alias)) return 'aliasExists' as const;
   return null;

@@ -1,6 +1,6 @@
 import { getCurrentLocale, translate } from '../i18n';
 import { isRecord, managementApi } from './managementApi';
-import { normalizeAuthFilePriorityInput } from './authFiles';
+import { normalizeAuthFilePriorityInput, normalizeAuthFileTags } from './authFiles';
 import { authFileExcludedRulesFromPayload } from './oauthModelSettings';
 import { normalizeOAuthExcludedRules } from './oauthModels';
 import { credentialAdvancedShape } from './credentialAdvancedSettings';
@@ -19,6 +19,7 @@ export type AuthFileSettingsDraft = {
   excluded_models: string;
   headers: string;
   note: string;
+  tags: string;
   advanced: Record<string, unknown>;
   normalizeCloakMetadata?: string[];
 };
@@ -106,6 +107,7 @@ export const authFileSettingsFromPayload = (payload: unknown): AuthFileSettingsD
     excluded_models: authFileExcludedRulesFromPayload(metadata).join('\n'),
     headers: JSON.stringify(headers, null, 2),
     note: text(metadata.note),
+    tags: normalizeAuthFileTags(metadata.tags).join(', '),
     advanced: Object.fromEntries(Object.keys(credentialAdvancedShape.fields ?? {}).flatMap(key => {
       const value = read(key, key.replace(/_/g, '-'));
       return value === undefined ? [] : [[key, advancedDraftValue(key, value)]];
@@ -118,6 +120,10 @@ export const buildAuthFileSettingsPatch = (
   draft: AuthFileSettingsDraft,
 ): Record<string, unknown> => {
   const patch: Record<string, unknown> = {};
+  const tags = normalizeAuthFileTags(draft.tags.split(','));
+  if (JSON.stringify([...tags].sort()) !== JSON.stringify(normalizeAuthFileTags(original.tags.split(',')).sort())) {
+    patch.tags = tags;
+  }
   for (const key of ['prefix', 'proxy_url', 'note'] as const) {
     if (draft[key].trim() !== original[key].trim()) patch[key] = draft[key].trim();
   }

@@ -3709,7 +3709,7 @@ pub(crate) fn build_opencode_agent_config(
     }
 }
 
-const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
+const ZCODE_CPA_REASONING_MAP: &str = super::zcode::ZCODE_CPA_REASONING_MAP;
 
 pub(crate) fn build_zcode_agent_config(
     existing: Option<&str>,
@@ -3750,8 +3750,8 @@ pub(crate) fn build_zcode_agent_config(
     api.insert("baseUrl".to_string(), serde_json::json!(base_url));
     let ordered = ordered_agent_models(available_models, model);
     let model_names = ordered.iter().map(|option| option.name.as_str()).collect::<Vec<_>>();
-    provider_config.insert("personalModelIds".to_string(), serde_json::json!(model_names));
-    provider_config.insert("modelOrder".to_string(), serde_json::json!(model_names));
+    provider_config.entry("personalModelIds").or_insert_with(|| serde_json::json!(model_names));
+    provider_config.entry("modelOrder").or_insert_with(|| serde_json::json!(model_names));
     rules.retain(|rule| {
         rule.get("providerId").and_then(serde_json::Value::as_str)
             != Some(MANAGED_AGENT_PROVIDER_ID)
@@ -3811,7 +3811,11 @@ pub(crate) fn build_zcode_agent_config(
                 .entry("supportsImage")
                 .or_insert(serde_json::json!(true));
             properties.remove("maxOutputTokens");
-            if let Some(context_window) = option.context_window.or(inferred_cw) {
+            let effective_cw = match option.context_window {
+                Some(500_000) | None => inferred_cw.or(option.context_window),
+                Some(cw) => Some(cw).or(inferred_cw),
+            };
+            if let Some(context_window) = effective_cw {
                 properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
             } else if manual.is_none() {
                 properties.remove("contextWindow");
@@ -3822,9 +3826,12 @@ pub(crate) fn build_zcode_agent_config(
             specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
         }
         if !option.reasoning_levels.is_empty() {
+            let is_generated_map = |m: &str| {
+                m == ZCODE_CPA_REASONING_MAP || m == "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"
+            };
             let generated = manual.is_none() && specs.get("reasoningLevel")
                 .and_then(|spec| spec.get("map")).and_then(serde_json::Value::as_str)
-                == Some(ZCODE_CPA_REASONING_MAP);
+                .map(is_generated_map).unwrap_or(false);
             if generated || !specs.contains_key("reasoningLevel") {
                 specs.insert("reasoningLevel".into(), serde_json::json!({
                     "values": option.reasoning_levels,
@@ -3832,14 +3839,12 @@ pub(crate) fn build_zcode_agent_config(
                 }));
             }
         }
-        if manual.is_some() {
-            manual_updates.push(rule);
-        } else {
-            rules.insert((first_managed_index + rules.iter().filter(|entry| {
-                entry.get("providerId").and_then(serde_json::Value::as_str)
-                    == Some(MANAGED_AGENT_PROVIDER_ID)
-            }).count()).min(rules.len()), rule);
+        if specs.is_empty() {
+            config_obj.remove("optionSpecs");
         }
+        // Always place CPA managed models into manualProviderModelRules so ZCode software
+        // displays "关闭智能配置" (Manual configuration), bypassing ZCode's internal faulty discovery.
+        manual_updates.push(rule);
     }
     let manual_rules = model_rules.get_mut("manualProviderModelRules")
         .and_then(serde_json::Value::as_array_mut)

@@ -656,3 +656,42 @@ fn desktop_excluded_upstream_cannot_reuse_its_existing_provider_alias() {
     assert!(ensure_claude_desktop_model_aliases_in_yaml(
         input, &custom_mappings(&[("grok-4.6", "claude-opus-4-5")]), &[]).is_err());
 }
+
+#[test]
+fn desktop_custom_upstream_model_creates_alias_on_matching_family_provider() {
+    let input = "codex-api-key:\n  - api-key: test-key\nopenai-compatibility:\n  - name: test-openai\n";
+    let mappings = custom_mappings(&[("gpt-5-preview", "claude-opus-5")]);
+    let rendered = ensure_claude_desktop_model_aliases_in_yaml(input, &mappings, &[]).unwrap();
+    let parsed = json(&rendered);
+    let codex_models = parsed["codex-api-key"][0]["models"].as_array().unwrap();
+    assert!(codex_models.iter().any(|model| model["name"] == "gpt-5-preview" && model["alias"] == "claude-opus-5"));
+}
+
+#[test]
+fn desktop_custom_upstream_model_without_models_key_creates_alias_on_generic_provider() {
+    let input = "openai-compatibility:\n  - name: my-custom-endpoint\n    api-key: my-key\n";
+    let mappings = custom_mappings(&[("my-custom-llm", "claude-sonnet-5")]);
+    let rendered = ensure_claude_desktop_model_aliases_in_yaml(input, &mappings, &[]).unwrap();
+    let parsed = json(&rendered);
+    let models = parsed["openai-compatibility"][0]["models"].as_array().unwrap();
+    assert!(models.iter().any(|model| model["name"] == "my-custom-llm" && model["alias"] == "claude-sonnet-5"));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn desktop_linux_executable_version_probe() {
+    let home = agent_test_home("claude-desktop-linux-probe");
+    let bin_dir = home.join(".local/bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let script = bin_dir.join("claude-desktop");
+    fs::write(&script, r#"#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'Claude Desktop 0.10.1'; exit 0; fi
+"#).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let version = read_claude_desktop_version(&home);
+    assert_eq!(version.as_deref(), Some("Claude Desktop 0.10.1"));
+}
