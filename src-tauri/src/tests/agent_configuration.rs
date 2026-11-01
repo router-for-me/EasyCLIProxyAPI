@@ -1408,6 +1408,87 @@ fn zcode_catalog_editor_preserves_native_rule_fields_and_empty_visibility() {
 }
 
 #[test]
+fn zcode_preserves_catalog_visibility_and_model_order() {
+    let models = test_agent_models(&["first", "second"]);
+    let render = |existing: Option<&str>| build_zcode_agent_config(
+        existing, "http://127.0.0.1:8317/v1", DEFAULT_API_KEY, "first", &models,
+    ).unwrap();
+    let initial = render(None);
+    let mut root: serde_json::Value = serde_json::from_str(&initial).unwrap();
+    let provider = &root["config"]["providerConfigRules"]["providerRules"][0]["config"];
+    assert_eq!(provider["personalModelIds"], serde_json::json!(["first", "second"]));
+    assert_eq!(provider["modelOrder"], serde_json::json!(["first", "second"]));
+    for visible in [serde_json::json!(["second"]), serde_json::json!([])] {
+        let provider = &mut root["config"]["providerConfigRules"]["providerRules"][0]["config"];
+        provider["personalModelIds"] = visible.clone();
+        provider["modelOrder"] = serde_json::json!(["second", "first"]);
+        let updated: serde_json::Value = serde_json::from_str(&render(Some(&root.to_string()))).unwrap();
+        let provider = &updated["config"]["providerConfigRules"]["providerRules"][0]["config"];
+        assert_eq!(provider["personalModelIds"], visible);
+        assert_eq!(provider["modelOrder"], serde_json::json!(["second", "first"]));
+    }
+}
+
+#[test]
+fn zcode_catalog_preserves_explicit_context_and_reasoning_settings() {
+    let home = agent_test_home("zcode-explicit-model-settings");
+    let config_dir = zcode_config_directory(&home);
+    fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join(ZCODE_PROVIDER_CONFIG_FILE);
+    let mut models = test_agent_models(&["custom-model"]);
+    models[0].context_window = Some(1_000_000);
+    models[0].reasoning_levels = vec!["low".into(), "high".into()];
+    for section in ["providerModelRules", "manualProviderModelRules"] {
+        for reasoning in [
+            None,
+            Some(serde_json::Value::Null),
+            Some(serde_json::json!({})),
+            Some(serde_json::json!("")),
+            Some(serde_json::json!(false)),
+            Some(serde_json::json!({"values": []})),
+            Some(serde_json::json!({"values": ["disabled"], "map": "native-map"})),
+        ] {
+            let mut rule = serde_json::json!({
+                "providerId": "cpa-gui", "modelId": "custom-model",
+                "config": {"properties": {"contextWindow": 500000}, "optionSpecs": {}},
+            });
+            if let Some(ref value) = reasoning {
+                rule["config"]["optionSpecs"]["reasoningLevel"] = value.clone();
+            }
+            let mut root = serde_json::json!({
+                "schemaVersion": 1,
+                "config": {"modelConfigRules": {
+                    "providerModelRules": [], "manualProviderModelRules": [],
+                }},
+            });
+            root["config"]["modelConfigRules"][section] = serde_json::json!([rule]);
+            fs::write(&path, root.to_string()).unwrap();
+            let snapshot = zcode_editor_snapshot(&home, &models).unwrap();
+            let configuration = &snapshot.models[0].configuration;
+            assert_eq!(configuration.context_window, Some(500_000));
+            let expected_levels = match reasoning.as_ref() {
+                None => models[0].reasoning_levels.clone(),
+                Some(value) => value.get("values").and_then(serde_json::Value::as_array)
+                    .map(|values| values.iter().filter_map(serde_json::Value::as_str).map(String::from).collect())
+                    .unwrap_or_default(),
+            };
+            assert_eq!(configuration.reasoning_levels, expected_levels);
+            if expected_levels.is_empty() {
+                assert_eq!(configuration.reasoning_map, None);
+            } else if reasoning.is_some() {
+                assert_eq!(configuration.reasoning_map.as_deref(), Some("native-map"));
+            }
+            let saved = save_zcode_editor(&home, &models, ZCodeCatalogEditorSaveRequest {
+                models: snapshot.models, model_order: snapshot.model_order,
+            }).unwrap();
+            assert_eq!(saved.models[0].configuration.reasoning_levels, expected_levels);
+            assert_eq!(saved.models[0].configuration.context_window, Some(500_000));
+        }
+    }
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn zcode_runtime_reasoning_options_upgrade_aliases_and_preserve_native_settings() {
     let mut models = test_agent_models(&["custom-alias", "unknown-model", "gpt-manual"]);
     for model in &mut models { model.context_window = None; }

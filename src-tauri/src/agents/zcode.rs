@@ -181,12 +181,12 @@ fn parse_zcode_rule_properties(rule: &Value) -> (Option<u64>, Option<u64>, bool,
     (context_window, max_output_tokens, supports_image, supports_pdf, supports_video, supports_json, supports_search, supports_system)
 }
 
-fn parse_zcode_rule_reasoning(rule: &Value) -> (Vec<String>, Option<String>) {
+fn parse_zcode_rule_reasoning(rule: &Value) -> (Option<Vec<String>>, Option<String>) {
     let option_specs = rule.get("config").and_then(|c| c.get("optionSpecs"));
     let reasoning = option_specs.and_then(|o| o.get("reasoningLevel"));
-    let values = reasoning.and_then(|r| r.get("values")).and_then(Value::as_array)
+    let values = reasoning.map(|reasoning| reasoning.get("values").and_then(Value::as_array)
         .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-        .unwrap_or_default();
+        .unwrap_or_default());
     let map = reasoning.and_then(|r| r.get("map")).and_then(Value::as_str).map(String::from);
     (values, map)
 }
@@ -227,7 +227,7 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
         }
         option_specs.insert("reasoningLevel".into(), Value::Object(rl));
     } else {
-        option_specs.remove("reasoningLevel");
+        option_specs.insert("reasoningLevel".into(), Value::Null);
     }
 
     cfg.insert("properties".into(), Value::Object(properties));
@@ -335,7 +335,7 @@ pub(crate) fn zcode_editor_snapshot(
         let configuration = if let Some(manual_rule) = manual_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(manual_rule);
             let (rl, map) = parse_zcode_rule_reasoning(manual_rule);
-            let effective_cw = if cw == Some(500000) { default_config.context_window } else { cw.or(default_config.context_window) };
+            let effective_cw = cw.or(default_config.context_window);
             ZCodeModelConfig {
                 context_window: effective_cw,
                 max_output_tokens: mot.or(default_config.max_output_tokens),
@@ -345,14 +345,14 @@ pub(crate) fn zcode_editor_snapshot(
                 supports_json_schema_output: json_out,
                 supports_native_web_search: search,
                 supports_mid_conversation_system: sys,
-                reasoning_levels: if rl.is_empty() { default_config.reasoning_levels.clone() } else { rl },
-                reasoning_map: map.or_else(|| default_config.reasoning_map.clone()),
+                reasoning_map: if rl.is_some() { map } else { default_config.reasoning_map.clone() },
+                reasoning_levels: rl.unwrap_or_else(|| default_config.reasoning_levels.clone()),
                 is_manual: true,
             }
         } else if let Some(prov_rule) = provider_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(prov_rule);
             let (rl, map) = parse_zcode_rule_reasoning(prov_rule);
-            let effective_cw = if cw == Some(500000) { default_config.context_window } else { cw.or(default_config.context_window) };
+            let effective_cw = cw.or(default_config.context_window);
             ZCodeModelConfig {
                 context_window: effective_cw,
                 max_output_tokens: mot.or(default_config.max_output_tokens),
@@ -362,8 +362,8 @@ pub(crate) fn zcode_editor_snapshot(
                 supports_json_schema_output: json_out,
                 supports_native_web_search: search,
                 supports_mid_conversation_system: sys,
-                reasoning_levels: if rl.is_empty() { default_config.reasoning_levels.clone() } else { rl },
-                reasoning_map: map.or_else(|| default_config.reasoning_map.clone()),
+                reasoning_map: if rl.is_some() { map } else { default_config.reasoning_map.clone() },
+                reasoning_levels: rl.unwrap_or_else(|| default_config.reasoning_levels.clone()),
                 is_manual: false,
             }
         } else {
@@ -397,7 +397,7 @@ pub(crate) fn zcode_editor_snapshot(
                 supports_json_schema_output: json_out,
                 supports_native_web_search: search,
                 supports_mid_conversation_system: sys,
-                reasoning_levels: rl.clone(),
+                reasoning_levels: rl.unwrap_or_default(),
                 reasoning_map: map.clone(),
                 is_manual: true,
             };

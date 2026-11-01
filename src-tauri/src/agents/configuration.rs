@@ -3750,8 +3750,8 @@ pub(crate) fn build_zcode_agent_config(
     api.insert("baseUrl".to_string(), serde_json::json!(base_url));
     let ordered = ordered_agent_models(available_models, model);
     let model_names = ordered.iter().map(|option| option.name.as_str()).collect::<Vec<_>>();
-    provider_config.insert("personalModelIds".to_string(), serde_json::json!(model_names));
-    provider_config.insert("modelOrder".to_string(), serde_json::json!(model_names));
+    provider_config.entry("personalModelIds").or_insert_with(|| serde_json::json!(model_names));
+    provider_config.entry("modelOrder").or_insert_with(|| serde_json::json!(model_names));
     rules.retain(|rule| {
         rule.get("providerId").and_then(serde_json::Value::as_str)
             != Some(MANAGED_AGENT_PROVIDER_ID)
