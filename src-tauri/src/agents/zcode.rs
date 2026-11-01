@@ -92,6 +92,34 @@ use serde_json::{Map, Value};
 use super::*;
 use crate::GuiConfigState;
 
+
+pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
+    // 1. First priority: Check local call records across any software (Codex, ZCode, etc.) in usage.db
+    if let Some(calib) = crate::usage::query_model_usage_calibration(model_id) {
+        let target_name = calib.canonical_response_model.as_deref().unwrap_or(model_id);
+        let (mut cw, mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
+
+        if let Some(observed_tokens) = calib.max_observed_input_tokens {
+            if let Some(ref mut c) = cw {
+                if observed_tokens > *c {
+                    *c = observed_tokens.next_power_of_two();
+                }
+            }
+        }
+
+        for proven in calib.proven_reasoning_levels {
+            if !rl.contains(&proven) {
+                rl.push(proven);
+            }
+        }
+
+        return (cw, mot, img, pdf, rl);
+    }
+
+    // 2. Cold start fallback: Authoritative model family inference
+    infer_zcode_model_knowledge(model_id)
+}
+
 pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || reasoningLevel == \"disabled\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -322,7 +350,7 @@ pub(crate) fn zcode_editor_snapshot(
 
     for option in available_models {
         seen_ids.insert(option.name.clone());
-        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) = infer_zcode_model_knowledge(&option.name);
+        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) = infer_zcode_model_knowledge_with_calibration(&option.name);
 
         let effective_default_cw = match option.context_window {
             Some(500_000) | None => inferred_cw.or(option.context_window),
