@@ -1344,6 +1344,70 @@ fn zcode_defaults_to_image_input_and_preserves_explicit_input_settings() {
 }
 
 #[test]
+fn zcode_catalog_editor_preserves_native_rule_fields_and_empty_visibility() {
+    let home = agent_test_home("zcode-catalog-native-fields");
+    let config_dir = zcode_config_directory(&home);
+    fs::create_dir_all(&config_dir).unwrap();
+    let path = config_dir.join(ZCODE_PROVIDER_CONFIG_FILE);
+    let models = test_agent_models(&["custom-model"]);
+    for section in ["providerModelRules", "manualProviderModelRules"] {
+        let rule = serde_json::json!({
+            "providerId": "cpa-gui",
+            "modelId": "custom-model",
+            "nativeRuleField": "keep",
+            "config": {
+                "nativeSetting": true,
+                "properties": {
+                    "supportsToolCall": false,
+                    "inputFormat": {"nativeFormat": true},
+                },
+                "optionSpecs": {
+                    "nativeOption": {"values": ["keep"]},
+                    "maxOutputTokens": {"min": 1, "max": 32000},
+                },
+            },
+        });
+        let mut root = serde_json::json!({
+            "schemaVersion": 1,
+            "config": {
+                "providerConfigRules": {"providerRules": [{
+                    "providerId": "cpa-gui", "config": {},
+                }]},
+                "modelConfigRules": {
+                    "providerModelRules": [], "manualProviderModelRules": [],
+                },
+            },
+        });
+        root["config"]["modelConfigRules"][section] = serde_json::json!([rule]);
+        fs::write(&path, root.to_string()).unwrap();
+        let snapshot = zcode_editor_snapshot(&home, &models).unwrap();
+        assert!(snapshot.models[0].enabled);
+        root["config"]["providerConfigRules"]["providerRules"][0]["config"]["personalModelIds"] = serde_json::json!([]);
+        fs::write(&path, root.to_string()).unwrap();
+        let mut snapshot = zcode_editor_snapshot(&home, &models).unwrap();
+        assert!(!snapshot.models[0].enabled);
+        snapshot.models[0].configuration.supports_image = false;
+        snapshot.models[0].configuration.context_window = Some(300_000);
+        let saved = save_zcode_editor(&home, &models, ZCodeCatalogEditorSaveRequest {
+            models: snapshot.models,
+            model_order: snapshot.model_order,
+        }).unwrap();
+        assert!(!saved.models[0].enabled);
+        let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let saved_rule = &value["config"]["modelConfigRules"][section][0];
+        assert_eq!(saved_rule["nativeRuleField"], rule["nativeRuleField"]);
+        assert_eq!(saved_rule["config"]["nativeSetting"], true);
+        assert_eq!(saved_rule["config"]["properties"]["supportsToolCall"], false);
+        assert_eq!(saved_rule["config"]["properties"]["inputFormat"]["nativeFormat"], true);
+        assert_eq!(saved_rule["config"]["properties"]["inputFormat"]["supportsImage"], false);
+        assert_eq!(saved_rule["config"]["properties"]["contextWindow"], 300_000);
+        assert_eq!(saved_rule["config"]["optionSpecs"]["nativeOption"], rule["config"]["optionSpecs"]["nativeOption"]);
+        assert_eq!(saved_rule["config"]["optionSpecs"]["maxOutputTokens"]["min"], 1);
+    }
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn zcode_runtime_reasoning_options_upgrade_aliases_and_preserve_native_settings() {
     let mut models = test_agent_models(&["custom-alias", "unknown-model", "gpt-manual"]);
     for model in &mut models { model.context_window = None; }
@@ -1364,7 +1428,7 @@ fn zcode_runtime_reasoning_options_upgrade_aliases_and_preserve_native_settings(
     let rule = rules.iter().find(|rule| rule["modelId"] == "custom-alias").unwrap();
     assert_eq!(rule["config"]["optionSpecs"]["reasoningLevel"]["values"],
         serde_json::json!(["low", "medium", "high", "xhigh"]));
-    assert_eq!(rule["config"]["optionSpecs"]["reasoningLevel"]["map"], "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}");
+    assert_eq!(rule["config"]["optionSpecs"]["reasoningLevel"]["map"], "reasoningLevel == \"none\" || reasoningLevel == \"disabled\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}");
     let unknown = rules.iter().find(|rule| rule["modelId"] == "unknown-model").unwrap();
     assert_eq!(unknown["config"]["properties"]["inputFormat"]["supportsImage"], true);
     assert!(unknown["config"].get("optionSpecs").is_none());

@@ -44,6 +44,7 @@ export function ZCodeModelCatalogDialog({
       setModelOrder(next.modelOrder);
       setSelectedId((current) => current || next.models[0]?.id || "");
     } catch (e) {
+      setSnapshot(null);
       setError(String(e));
     } finally {
       setLoading(false);
@@ -160,7 +161,7 @@ export function ZCodeModelCatalogDialog({
   };
 
   const save = async () => {
-    if (loading || saving) return;
+    if (!snapshot || loading || saving) return;
     setSaving(true);
     setError("");
     setNotice("");
@@ -553,7 +554,7 @@ export function ZCodeModelCatalogDialog({
         <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>
           {t("common.cancel")}
         </button>
-        <button type="button" className="primary-button" onClick={() => void save()} disabled={loading || saving}>
+        <button type="button" className="primary-button" onClick={() => void save()} disabled={!snapshot || loading || saving}>
           {saving ? <LoaderCircle size={16} className="spin" /> : null}
           {saving ? t("common.saving") : t("common.save")}
         </button>

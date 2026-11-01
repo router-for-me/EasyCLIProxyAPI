@@ -3709,7 +3709,7 @@ pub(crate) fn build_opencode_agent_config(
     }
 }
 
-const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
+const ZCODE_CPA_REASONING_MAP: &str = super::zcode::ZCODE_CPA_REASONING_MAP;
 
 pub(crate) fn build_zcode_agent_config(
     existing: Option<&str>,
@@ -3811,7 +3811,7 @@ pub(crate) fn build_zcode_agent_config(
                 .entry("supportsImage")
                 .or_insert(serde_json::json!(true));
             properties.remove("maxOutputTokens");
-            if let Some(context_window) = option.context_window.or(inferred_cw) {
+            if let Some(context_window) = option.context_window.or(inferred_cw.filter(|_| manual.is_none())) {
                 properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
             } else if manual.is_none() {
                 properties.remove("contextWindow");
@@ -3831,6 +3831,9 @@ pub(crate) fn build_zcode_agent_config(
                     "map": ZCODE_CPA_REASONING_MAP,
                 }));
             }
+        }
+        if specs.is_empty() {
+            config_obj.remove("optionSpecs");
         }
         if manual.is_some() {
             manual_updates.push(rule);

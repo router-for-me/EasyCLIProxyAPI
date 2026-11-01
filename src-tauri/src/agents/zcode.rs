@@ -82,7 +82,7 @@ pub(crate) fn infer_zcode_model_knowledge(model_id: &str) -> (Option<u64>, Optio
         return (Some(128_000), Some(16_384), true, false, vec!["disabled".into()]);
     }
 
-    (Some(128_000), Some(32_000), true, false, vec!["disabled".into()])
+    (None, None, false, false, vec![])
 }
 
 use std::fs;
@@ -92,7 +92,7 @@ use serde_json::{Map, Value};
 use super::*;
 use crate::GuiConfigState;
 
-pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
+pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || reasoningLevel == \"disabled\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -191,25 +191,34 @@ fn parse_zcode_rule_reasoning(rule: &Value) -> (Vec<String>, Option<String>) {
     (values, map)
 }
 
-fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig) -> Value {
-    let mut properties = Map::new();
+fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: Option<&Value>) -> Value {
+    let mut rule = existing.cloned().unwrap_or_else(|| serde_json::json!({}));
+    let entry = rule.as_object_mut().expect("ZCode model rule must be an object");
+    entry.insert("providerId".into(), serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
+    entry.insert("modelId".into(), serde_json::json!(model_id));
+    let cfg = ensure_json_object_entry(entry, "config");
+    let mut properties = cfg.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
     if let Some(cw) = config.context_window {
         properties.insert("contextWindow".into(), serde_json::json!(cw));
+    } else {
+        properties.remove("contextWindow");
     }
-    properties.insert("inputFormat".into(), serde_json::json!({
+    let input_format = ensure_json_object_entry(&mut properties, "inputFormat");
+    input_format.extend(serde_json::json!({
         "supportsImage": config.supports_image,
         "supportsPdf": config.supports_pdf,
         "supportsVideo": config.supports_video,
-    }));
+    }).as_object().unwrap().clone());
     properties.insert("supportsJsonSchemaOutput".into(), serde_json::json!(config.supports_json_schema_output));
     properties.insert("supportsNativeWebSearch".into(), serde_json::json!(config.supports_native_web_search));
     properties.insert("supportsMidConversationSystem".into(), serde_json::json!(config.supports_mid_conversation_system));
 
-    let mut option_specs = Map::new();
+    let mut option_specs = cfg.get("optionSpecs").and_then(Value::as_object).cloned().unwrap_or_default();
     let mot = config.max_output_tokens.unwrap_or(128_000);
-    option_specs.insert("maxOutputTokens".into(), serde_json::json!({ "max": mot }));
+    ensure_json_object_entry(&mut option_specs, "maxOutputTokens")
+        .insert("max".into(), serde_json::json!(mot));
     if !config.reasoning_levels.is_empty() {
-        let mut rl = Map::new();
+        let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
         rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
         if let Some(ref m) = config.reasoning_map {
             rl.insert("map".into(), serde_json::json!(m));
@@ -217,9 +226,10 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig) -> Value {
             rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
         }
         option_specs.insert("reasoningLevel".into(), Value::Object(rl));
+    } else {
+        option_specs.remove("reasoningLevel");
     }
 
-    let mut cfg = Map::new();
     cfg.insert("properties".into(), Value::Object(properties));
     if !option_specs.is_empty() {
         cfg.insert("optionSpecs".into(), Value::Object(option_specs));
@@ -228,11 +238,7 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig) -> Value {
         cfg.insert("enabled".into(), serde_json::json!(true));
     }
 
-    serde_json::json!({
-        "providerId": MANAGED_AGENT_PROVIDER_ID,
-        "modelId": model_id,
-        "config": cfg,
-    })
+    rule
 }
 
 pub(crate) fn zcode_editor_snapshot(
@@ -258,6 +264,7 @@ pub(crate) fn zcode_editor_snapshot(
     };
 
     let mut personal_model_ids: Vec<String> = Vec::new();
+    let mut has_personal_model_ids = false;
     let mut model_order: Vec<String> = Vec::new();
     let mut default_model: Option<String> = None;
     let mut manual_rules: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
@@ -272,6 +279,7 @@ pub(crate) fn zcode_editor_snapshot(
                 if let Some(managed) = rules.iter().find(|p| p.get("providerId").and_then(Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)) {
                     if let Some(pcfg) = managed.get("config") {
                         if let Some(pids) = pcfg.get("personalModelIds").and_then(Value::as_array) {
+                            has_personal_model_ids = true;
                             personal_model_ids = pids.iter().filter_map(Value::as_str).map(String::from).collect();
                         }
                         if let Some(morder) = pcfg.get("modelOrder").and_then(Value::as_array) {
@@ -362,7 +370,7 @@ pub(crate) fn zcode_editor_snapshot(
             default_config.clone()
         };
 
-        let enabled = if personal_model_ids.is_empty() {
+        let enabled = if !has_personal_model_ids {
             true
         } else {
             personal_model_ids.contains(&option.name)
@@ -497,8 +505,15 @@ pub(crate) fn save_zcode_editor(
 
     let mut new_provider_rules = Vec::new();
     let mut new_manual_rules = Vec::new();
+    let existing_rules = config.get("modelConfigRules").into_iter()
+        .flat_map(|section| ["providerModelRules", "manualProviderModelRules"].into_iter()
+            .filter_map(|key| section.get(key).and_then(Value::as_array)))
+        .flatten()
+        .filter(|rule| rule.get("providerId").and_then(Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID))
+        .filter_map(|rule| Some((rule.get("modelId")?.as_str()?.to_string(), rule.clone())))
+        .collect::<std::collections::HashMap<_, _>>();
     for model in &request.models {
-        let rule_obj = build_zcode_rule_object(&model.id, &model.configuration);
+        let rule_obj = build_zcode_rule_object(&model.id, &model.configuration, existing_rules.get(&model.id));
         if model.configuration.is_manual {
             new_manual_rules.push(rule_obj);
         } else {
