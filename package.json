@@ -15,6 +15,8 @@
     "test:ui:responsive": "node tests/responsive-layout-ui.cjs",
     "test:ui:settings": "node tests/config-settings-ui.cjs",
     "test:ui:browser-mock": "node tests/browser-mock-ui.cjs",
+    "test:ui:agent-environment": "node tests/agent-environment-directory-ui.cjs",
+    "test:desktop:agent-environment": "node tests/agent-environment-desktop.cjs",
     "test:ui:credential-tags": "node tests/credential-tags-ui.cjs",
     "screenshots": "node scripts/capture-readme-screenshots.cjs",
     "theme:schema": "bun scripts/theme-schema.mjs",

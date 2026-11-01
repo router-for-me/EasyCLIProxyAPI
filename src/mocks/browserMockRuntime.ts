@@ -1440,6 +1440,7 @@ export function createBrowserMockRuntime(
       };
       case 'apply_usage_model_prices': return { imported: asArray(payload.prices).length };
 
+      case 'get_agent_environment_options': return { supported: false, defaultDirectory: '/home/user/.config', distributions: [] };
       case 'get_agent_config_statuses':
       case 'refresh_agent_config_statuses': return clone(state.agentStatuses);
       case 'get_core_models': {

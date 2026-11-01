@@ -2396,7 +2396,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     await reloadStatusesAfterAction();
                   }}
                 /> : null}
-                key={selected} configDirectory={configDirectories[selected] ?? ''}
+                key={selected} client={selected} configDirectory={configDirectories[selected] ?? ''}
                 onSaveConfigDirectory={directory => void saveConfigDirectory(directory)} onChooseConfigDirectory={() => void chooseConfigDirectory()}
                 executablePath={executablePaths[selected] ?? ''} onChooseExecutablePath={() => void chooseExecutablePath()}
                 onClearExecutablePath={() => clearExecutablePath()}

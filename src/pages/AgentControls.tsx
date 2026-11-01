@@ -1,6 +1,8 @@
 import { Notice } from '../components/Notice';
 import { MessageNotice } from '../appNotice';
-import { useEffect, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { AgentEnvironmentDirectory } from './AgentEnvironmentDirectory';
+import type { AgentClientId } from '../services/agents';
 import { AppWindow, FolderOpen, LoaderCircle, Play, RefreshCw, Square, Terminal, Trash2 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
@@ -90,7 +92,7 @@ export function AgentConfigManagementPanel({
   pi, codex, busyAction, canTemplate, canUpdatePi, canUninstallPi, pluginInstalled, pluginVersion, updateLabel,
   executablePath, onChooseExecutablePath, onClearExecutablePath, onBackup, onRestore, onTemplate, onClear, onUpdatePi, onUninstallPi, canClearIntegration, onClearIntegration,
   dualTargets, desktopExecutablePath, onChooseDesktopExecutablePath, onClearDesktopExecutablePath,
-  configDirectory, onSaveConfigDirectory, onChooseConfigDirectory,
+  client, configDirectory, onSaveConfigDirectory, onChooseConfigDirectory,
 }: {
   codexProviderControl?: ReactNode;
   codexRemoteCompactionControl?: ReactNode;
@@ -103,30 +105,13 @@ export function AgentConfigManagementPanel({
   onBackup: () => void; onRestore: () => void; onTemplate: () => void; onClear: () => void;
   onUpdatePi: () => void; onUninstallPi: () => void;
   canClearIntegration: boolean; onClearIntegration: () => void;
-  configDirectory: string; onSaveConfigDirectory: (directory: string) => void; onChooseConfigDirectory: () => void;
+  client: AgentClientId; configDirectory: string; onSaveConfigDirectory: (directory: string) => void; onChooseConfigDirectory: () => void;
 }) {
   const { t } = useI18n();
   const busy = busyAction !== null;
-  const [directoryDraft, setDirectoryDraft] = useState(configDirectory);
-  useEffect(() => setDirectoryDraft(configDirectory), [configDirectory]);
   return <div className="agent-management-sections">
-    <section className="agent-management-row agent-config-directory">
-      <div><h3>{t('agents.configDirectory.title')}</h3><p>{t('agents.configDirectory.description')}</p>
-        <input className="config-network-input" aria-label={t('agents.configDirectory.title')} value={directoryDraft} disabled={busy}
-          placeholder={t('agents.configDirectory.placeholder')} onChange={event => setDirectoryDraft(event.target.value)} />
-      </div>
-      <div className="agent-management-actions">
-        <button type="button" className="secondary-button" onClick={onChooseConfigDirectory} disabled={busy}>
-          <FolderOpen size={16} />{t('agents.configDirectory.browse')}
-        </button>
-        <button type="button" className="secondary-button" onClick={() => onSaveConfigDirectory(directoryDraft.trim())}
-          disabled={busy || directoryDraft.trim() === configDirectory}>{t('agents.configDirectory.save')}</button>
-        <button type="button" className="secondary-button ghost" onClick={() => setDirectoryDraft(configDirectory)}
-          disabled={busy || directoryDraft === configDirectory}>{t('agents.configDirectory.reset')}</button>
-        {configDirectory ? <button type="button" className="secondary-button ghost" onClick={() => onSaveConfigDirectory('')}
-          disabled={busy}>{t('agents.configDirectory.clear')}</button> : null}
-      </div>
-    </section>
+    <AgentEnvironmentDirectory client={client} directory={configDirectory} busy={busy}
+      onSave={onSaveConfigDirectory} onBrowse={onChooseConfigDirectory} />
     <section className="agent-management-row">
       <div><h3>{t(dualTargets ? 'agents.executablePath.cliTitle' : 'agents.executablePath.title')}</h3><p>{t('agents.executablePath.description')}</p>
         {executablePath ? <small className="agent-path-value" title={executablePath}>{executablePath}</small> : null}</div>
