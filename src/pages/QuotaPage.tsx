@@ -19,6 +19,7 @@ import grokIcon from '../assets/icons/grok.svg';
 import devinIcon from '../assets/icons/devin.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
+import metaIcon from '../assets/icons/meta.svg';
 import { managementApi, readBoolean, responseList } from '../services/managementApi';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import {
@@ -50,10 +51,11 @@ const providerMeta: Record<QuotaDisplayProvider, { label: string; icon: string }
   kimi: { label: 'Kimi', icon: kimiIcon },
   xai: { label: 'xAI', icon: grokIcon },
   devin: { label: 'Devin', icon: devinIcon },
+  meta: { label: 'Muse', icon: metaIcon },
   antigravity: { label: 'Antigravity', icon: antigravityIcon },
 };
 
-const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin', 'plugin'];
+const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin', 'meta', 'plugin'];
 const REFRESH_CONCURRENCY = 4;
 
 export function QuotaPage() {

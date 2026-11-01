@@ -17,6 +17,7 @@ import { DEVIN_QUOTA_DATA, DEVIN_QUOTA_HEADERS, DEVIN_QUOTA_URL, readDevinQuota 
 import { antigravityProjectFor, codexMetadataFor, isPaidXaiFile } from './quotaMetadata';
 import { quotaResetFor, quotaResetInstant } from './quotaTime';
 import { parseKimiPlanName, parseKimiQuotaUrl } from './kimiQuota';
+import { parseMetaQuotaPayload, type MetaQuotaData } from './metaQuota';
 import { getCurrentLocale, translate, type AppLocale } from '../i18n';
 
 const quotaText = (
@@ -25,7 +26,7 @@ const quotaText = (
 ) => translate(getCurrentLocale(), key, variables);
 
 export type AuthFile = Record<string, unknown>;
-export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin';
+export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin' | 'meta';
 export type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
 export type QuotaRow = {
   label: string;
@@ -61,6 +62,7 @@ export type QuotaState = {
 export const idleQuota = (): QuotaState => ({ status: 'idle', rows: [] });
 
 const endpointByProvider: Record<QuotaProvider, string> = {
+  meta: 'https://api.meta.ai/muse-code/key',
   devin: DEVIN_QUOTA_URL,
   claude: 'https://api.anthropic.com/api/oauth/usage',
   codex: 'https://chatgpt.com/backend-api/wham/usage',
@@ -79,6 +81,11 @@ const ANTIGRAVITY_CODE_ASSIST_URL =
   'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
 
 const headersByProvider: Record<QuotaProvider, Record<string, string>> = {
+  meta: {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'x-api-version': '1.0.0',
+  },
   devin: DEVIN_QUOTA_HEADERS,
   claude: {
     Authorization: 'Bearer $TOKEN$',
@@ -113,7 +120,8 @@ export const providerForFile = (file: AuthFile): QuotaProvider | null => {
   if (value === 'anthropic') return 'claude';
   if (value === 'anti-gravity') return 'antigravity';
   if (value === 'kimi-ai') return 'kimi';
-  return ['claude', 'codex', 'kimi', 'xai', 'antigravity', 'devin'].includes(value)
+  if (value === 'muse') return 'meta';
+  return ['claude', 'codex', 'kimi', 'xai', 'antigravity', 'devin', 'meta'].includes(value)
     ? (value as QuotaProvider)
     : null;
 };
@@ -384,7 +392,21 @@ export const codexResetCreditDetailsFor = (
   };
 };
 
+const metaQuotaRows = (quota: MetaQuotaData): QuotaRow[] => quota.windows.map((window) => ({
+  label: window.id === 'weekly' ? quotaText('quota.service.weekly')
+    : window.durationMinutes === undefined ? quotaText('quota.service.meta.window')
+      : window.durationMinutes % 60 === 0
+        ? quotaText('quota.service.meta.windowHours', { hours: window.durationMinutes / 60 })
+        : quotaText('quota.service.meta.windowMinutes', { minutes: window.durationMinutes }),
+  remainingPercent: window.usedPercent === null ? null : 100 - window.usedPercent,
+  resetAtMs: quotaResetInstant(window.resetAt),
+}));
+
 export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRow[] => {
+  if (provider === 'meta') {
+    const quota = parseMetaQuotaPayload(payload);
+    return quota ? metaQuotaRows(quota) : [];
+  }
   if (provider === 'devin') return readDevinQuota(payload).windows.map((window) => ({
     label: quotaText(window.id === 'daily' ? 'quota.service.daily' : 'quota.service.weekly'),
     remainingPercent: window.remainingPercent,
@@ -1000,6 +1022,50 @@ async function callKimiQuota(file: AuthFile): Promise<{ payload: unknown; plan?:
   return { payload, plan };
 }
 
+async function callMetaQuota(file: AuthFile): Promise<QuotaState> {
+  const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
+  if (!authIndex) throw new Error(quotaText('quota.service.error.missingAuthIndex'));
+  const generation = captureQuotaCacheGeneration();
+  const assertCurrent = () => {
+    if (captureQuotaCacheGeneration() !== generation) throw new Error(quotaText('quota.service.meta.staleRequest'));
+  };
+  let credential: unknown;
+  try {
+    if (!readString(file, 'name') || [file.runtimeOnly, file.runtime_only].some(value => value === true || value === 'true')) {
+      throw new Error();
+    }
+    credential = parseBody(await managementApi.get('/credentials/download', { name: file.name as string }));
+  } catch {
+    assertCurrent();
+    throw new Error(quotaText('quota.service.meta.credentialUnavailable'));
+  }
+  assertCurrent();
+  if (!isRecord(credential)) throw new Error(quotaText('quota.service.meta.credentialUnavailable'));
+  const dcaToken = typeof credential.dca_token === 'string' ? credential.dca_token.trim() : '';
+  if (!/^dca:[^\s]+$/.test(dcaToken)) throw new Error(quotaText('quota.service.meta.missingDcaToken'));
+  let response: Record<string, unknown>;
+  try {
+    response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
+      authIndex,
+      method: 'POST',
+      url: endpointByProvider.meta,
+      header: { ...headersByProvider.meta, Authorization: `Bearer ${dcaToken}` },
+      data: '{}',
+    });
+  } catch {
+    assertCurrent();
+    throw new Error(quotaText('quota.service.meta.requestFailed'));
+  }
+  assertCurrent();
+  const status = Number(response.status_code ?? response.statusCode ?? 0);
+  if (!(status >= 200 && status < 300)) {
+    throw new Error(`${quotaText('quota.service.meta.requestFailed')} (${Number.isFinite(status) ? status : 0})`);
+  }
+  const quota = parseMetaQuotaPayload(response.body ?? response.bodyText);
+  if (!quota) throw new Error(quotaText('quota.service.meta.invalidResponse'));
+  return { status: 'success', rows: metaQuotaRows(quota), plan: quota.plan, fetchedAt: Date.now() };
+}
+
 async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
   if (quotaProviderForFile(file) === 'plugin') return loadPluginCredentialQuota(file);
   const provider = providerForFile(file);
@@ -1012,6 +1078,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
   }
   try {
     if (booleanValue(file.disabled) === true) throw new Error(quotaText('quota.fileDisabled'));
+    if (provider === 'meta') return await callMetaQuota(file);
     const codexMetadata = provider === 'codex' ? codexMetadataFor(file) : undefined;
     const codexAccountId = codexMetadata?.accountId || '';
     const responseClock: { serverTimeOffsetMs?: number } = {};
