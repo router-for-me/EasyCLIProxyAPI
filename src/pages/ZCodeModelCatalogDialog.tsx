@@ -83,10 +83,11 @@ export function ZCodeModelCatalogDialog({
   const toggleReasoningLevel = (level: string) => {
     if (!selectedModel) return;
     updateSelectedConfig((prev) => {
-      const exists = prev.reasoningLevels.includes(level);
+      const base = prev.reasoningLevels.length ? prev.reasoningLevels : (selectedModel.defaults.reasoningLevels || []);
+      const exists = base.includes(level);
       const nextLevels = exists
-        ? prev.reasoningLevels.filter((l) => l !== level)
-        : [...prev.reasoningLevels, level];
+        ? base.filter((l) => l !== level)
+        : [...base, level];
       return { ...prev, reasoningLevels: nextLevels };
     });
   };
@@ -246,7 +247,10 @@ export function ZCodeModelCatalogDialog({
                 <legend>思考等级 (reasoningLevel)</legend>
                 <div className="codex-catalog-chips">
                   {COMMON_REASONING_LEVELS.map((level) => {
-                    const checked = selectedModel.configuration.reasoningLevels.includes(level);
+                    const activeLevels = selectedModel.configuration.reasoningLevels.length
+                      ? selectedModel.configuration.reasoningLevels
+                      : selectedModel.defaults.reasoningLevels;
+                    const checked = activeLevels.includes(level);
                     return (
                       <label key={level} className={checked ? "selected" : ""}>
                         <Checkbox
