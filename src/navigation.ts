@@ -1,10 +1,12 @@
 const alwaysAvailablePages = new Set(['easy', 'home', 'versions', 'config', 'usage-records', 'agents']);
+const coreRequiredPages = new Set(['routing']);
 
 export function isAlwaysAvailablePage(pageId: string) {
   return alwaysAvailablePages.has(pageId);
 }
 
 export function canOpenAppPage(pageId: string, coreReady: boolean) {
+  if (coreRequiredPages.has(pageId)) return coreReady;
   return coreReady || isAlwaysAvailablePage(pageId);
 }
 

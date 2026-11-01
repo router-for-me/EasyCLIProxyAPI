@@ -1,3 +1,4 @@
+import { readAgentConfigDirectories, writeAgentConfigDirectories } from '../services/agentConfigDirectories';
 import { pollWhileActive } from '../services/windowActivity';
 import { Notice } from '../components/Notice';
 import { Tabs } from '../components/Tabs';
@@ -589,6 +590,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const setLaunchError = (launchError: string) => updateViewState({ launchError });
   const [statuses, setStatuses] = useState<AgentConfigStatus[]>(() => agentStatusesCache ?? []);
   const [executablePaths, setExecutablePaths] = useState(() => readAgentExecutablePaths());
+  const [configDirectories, setConfigDirectories] = useState(readAgentConfigDirectories);
   const [modelData, setModelData] = useState(() => ({
     client: selected, models: agentModelsCache[selected] ?? [],
   }));
@@ -1553,6 +1555,37 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     }
   };
 
+  const saveConfigDirectory = async (directory: string) => {
+    const previous = configDirectories;
+    const next = { ...previous };
+    if (directory.trim()) next[selected] = directory.trim();
+    else delete next[selected];
+    setBusyAction('directory');
+    setConfigurationError('');
+    try {
+      writeAgentConfigDirectories(next);
+      ++statusRequestRef.current;
+      const refreshed = await refreshAgentConfigStatuses({ executableOverrides: executablePaths });
+      setConfigDirectories(next);
+      setStatuses(refreshed);
+      setConfigurationNotice(t('agents.configDirectory.saved'));
+    } catch (requestError) {
+      try { writeAgentConfigDirectories(previous); } catch { }
+      setConfigurationError(String(requestError));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const chooseConfigDirectory = async () => {
+    try {
+      const directory = await open({ directory: true, multiple: false, title: t('agents.configDirectory.title') });
+      if (typeof directory === 'string') await saveConfigDirectory(directory);
+    } catch (requestError) {
+      setConfigurationError(String(requestError));
+    }
+  };
+
   const chooseExecutablePath = async (desktop = false) => {
     try {
       const selectedPath = await open({ directory: false, multiple: false, title: t('agents.executablePath.dialogTitle') });
@@ -2385,6 +2418,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                     await reloadStatusesAfterAction();
                   }}
                 /> : null}
+                key={selected} configDirectory={configDirectories[selected] ?? ''}
+                onSaveConfigDirectory={directory => void saveConfigDirectory(directory)} onChooseConfigDirectory={() => void chooseConfigDirectory()}
                 executablePath={executablePaths[selected] ?? ''} onChooseExecutablePath={() => void chooseExecutablePath()}
                 onClearExecutablePath={() => clearExecutablePath()}
                 dualTargets={hasIndependentCliAndApp} desktopExecutablePath={executablePaths[`${selected}:app`] ?? ''}

@@ -3014,6 +3014,8 @@
 .agent-management-sections { display: grid; min-width: 0; }
 .agent-management-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; min-width: 0; border-bottom: 1px solid var(--color-border-default); }
 .agent-management-row:first-child { padding-top: 6px; }
+.agent-config-directory input { width: 100%; margin-top: 10px; font-family: ui-monospace, monospace; }
+.agent-config-directory .agent-management-actions { flex-wrap: wrap; }
 .agent-management-row:last-child { border-bottom: 0; }
 .agent-management-row > div:first-child { min-width: 0; flex: 1; }
 .agent-management-row h3 { margin: 0 0 6px; color: var(--color-text-primary); font-size: var(--font-size-section); }

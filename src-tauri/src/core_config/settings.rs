@@ -932,13 +932,29 @@ pub(crate) fn retry_windows_file_replace(
     }
 }
 
+#[cfg(any(windows, test))]
+pub(crate) fn is_wsl_path(path: &Path) -> bool {
+    let normalized = path
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    let unc = normalized
+        .strip_prefix("\\\\?\\unc\\")
+        .or_else(|| normalized.strip_prefix("\\\\"));
+    unc.and_then(|value| value.split_once('\\'))
+        .is_some_and(|(server, share)| {
+            (server.eq_ignore_ascii_case("wsl$") || server.eq_ignore_ascii_case("wsl.localhost"))
+                && !share.split('\\').next().unwrap_or_default().is_empty()
+        })
+}
+
 #[cfg(windows)]
 pub(crate) fn replace_file_atomically(
     temporary_path: &Path,
     destination_path: &Path,
 ) -> io::Result<()> {
     use std::{os::windows::ffi::OsStrExt, ptr};
-    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+    use windows_sys::Win32::{Foundation::ERROR_NOT_SUPPORTED, Storage::FileSystem::ReplaceFileW};
 
     let destination = destination_path
         .as_os_str()
@@ -952,7 +968,7 @@ pub(crate) fn replace_file_atomically(
         .collect::<Vec<_>>();
     retry_windows_file_replace(
         || {
-            if !destination_path.exists() {
+            if is_wsl_path(destination_path) || !destination_path.exists() {
                 return fs::rename(temporary_path, destination_path);
             }
             let replaced = unsafe {
@@ -966,7 +982,11 @@ pub(crate) fn replace_file_atomically(
                 )
             };
             if replaced == 0 {
-                return Err(io::Error::last_os_error());
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32) {
+                    return fs::rename(temporary_path, destination_path);
+                }
+                return Err(error);
             }
             Ok(())
         },

@@ -119,6 +119,11 @@ API 接入页面按照协议或 Provider 管理上游 API 凭证和服务地址�
 对于受支持的客户端，软件可以同步可用模型目录、选择默认模型、在应用托管配置前备份原始配置，
 以及恢复之前的配置。
 
+在 **智能体 → 管理 → 配置目录** 中，可输入或浏览选择配置文件所在目录，例如 `.claude` 或
+`.codex`（而非家目录）。Windows 下支持 `\\wsl$\Ubuntu\home\user\.claude` 和
+`\\wsl.localhost\Ubuntu\home\user\.codex` 等 WSL UNC 路径。每个客户端独立保存目录，清除后恢复默认。
+此设置仅更改配置文件的访问位置，不更改可执行文件的启动方式。
+
 WorkBuddy 接入沿用模型选择、更新配置、关闭配置修改、手动备份/恢复和桌面启动/重启流程。
 支持 WorkBuddy 与 WorkBuddy AI 的 `models.json` 对象及数组格式，并保留已有自定义模型。
 应用后需在 WorkBuddy 内选择 `CPA:模型名`；已有会话不会自动切换模型，未显示时可重启 App。

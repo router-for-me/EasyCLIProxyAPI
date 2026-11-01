@@ -1,0 +1,303 @@
+.agent-usage-view {
+  display: grid;
+  gap: 16px;
+}
+
+.agent-usage-loading,
+.agent-usage-empty {
+  min-height: 260px;
+}
+
+.agent-usage-summary,
+.agent-usage-sources,
+.agent-usage-daily,
+.agent-usage-pricing {
+  color: var(--usage-page-text);
+}
+
+.agent-usage-summary {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+}
+
+.agent-usage-summary-heading,
+.agent-usage-section-heading,
+.agent-usage-source-name,
+.agent-usage-source-metrics {
+  display: flex;
+  align-items: center;
+}
+
+.agent-usage-summary-heading,
+.agent-usage-section-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.agent-usage-source-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-usage-source-filter select {
+  max-width: 170px;
+  padding: 5px 8px;
+  border: 1px solid var(--usage-page-border);
+  border-radius: var(--radius-sm);
+  color: var(--usage-page-text);
+  background: var(--bg-card);
+  font: inherit;
+  font-size: 12px;
+}
+
+.agent-usage-summary-actions {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  flex: none;
+}
+
+.agent-usage-refresh-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--usage-page-muted);
+  font-size: 12px;
+}
+
+.agent-usage-refresh-setting select {
+  min-width: 126px;
+  padding: 5px 8px;
+  border: 1px solid var(--usage-page-border);
+  border-radius: var(--radius-sm);
+  color: var(--usage-page-text);
+  background: var(--bg-card);
+  font: inherit;
+}
+
+.agent-usage-summary h2,
+.agent-usage-section-heading h3 {
+  margin: 0;
+  color: var(--usage-page-text);
+}
+
+.agent-usage-summary h2 {
+  font-size: 18px;
+}
+
+.agent-usage-section-heading h3 {
+  font-size: 15px;
+}
+
+.agent-usage-summary p,
+.agent-usage-generated,
+.agent-usage-section-heading span,
+.agent-usage-source-metrics,
+.agent-usage-source-row small {
+  color: var(--usage-page-muted);
+}
+
+.agent-usage-summary p {
+  margin: 5px 0 0;
+  font-size: 12px;
+}
+
+.agent-usage-generated {
+  flex: none;
+  font-size: 12px;
+}
+
+.agent-usage-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--usage-page-border);
+  border-radius: var(--radius-md);
+  background: var(--usage-page-border);
+}
+
+.agent-usage-stat-grid > div {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 14px 16px;
+  background: var(--bg-card);
+}
+
+.agent-usage-stat-grid span {
+  color: var(--usage-page-muted);
+  font-size: 12px;
+}
+
+.agent-usage-stat-grid strong {
+  overflow: hidden;
+  color: var(--usage-page-text);
+  font-size: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-usage-columns {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(420px, 1.15fr);
+  gap: 16px;
+}
+
+.agent-usage-sources,
+.agent-usage-daily,
+.agent-usage-pricing {
+  min-width: 0;
+  padding: 16px;
+}
+
+.agent-usage-source-list {
+  display: grid;
+  gap: 1px;
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--usage-page-border);
+  border-radius: var(--radius-md);
+  background: var(--usage-page-border);
+}
+
+.agent-usage-source-row {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  padding: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--usage-page-border);
+  color: inherit;
+  text-align: left;
+  background: var(--bg-card);
+}
+
+.agent-usage-source-row:hover,
+.agent-usage-source-row.selected {
+  background: var(--bg-hover);
+}
+
+.agent-usage-source-row.selected {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.agent-usage-source-name {
+  min-width: 0;
+  gap: 7px;
+}
+
+.agent-usage-source-name strong {
+  overflow: hidden;
+  color: var(--usage-page-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-usage-status {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+}
+
+.agent-usage-status.ok { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+.agent-usage-status.empty { color: var(--usage-page-muted); background: var(--bg-hover); }
+.agent-usage-status.error { color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
+
+.agent-usage-source-metrics {
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.agent-usage-source-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-usage-source-row:last-child {
+  border-bottom: 0;
+}
+
+.agent-usage-table-wrap {
+  max-height: 480px;
+  margin-top: 14px;
+  overflow: auto;
+  border: 1px solid var(--usage-page-border);
+  border-radius: var(--radius-md);
+}
+
+.agent-usage-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.agent-usage-table-wrap th,
+.agent-usage-table-wrap td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--usage-page-border);
+  color: var(--usage-page-text);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.agent-usage-table-wrap th:first-child,
+.agent-usage-table-wrap td:first-child {
+  text-align: left;
+}
+
+.agent-usage-table-wrap th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-card);
+  color: var(--usage-page-muted);
+  font-weight: 600;
+}
+
+.agent-usage-table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.agent-usage-inline-error {
+  padding: 10px 12px;
+  border: 1px solid var(--usage-page-border);
+  border-radius: var(--radius-md);
+  color: var(--color-danger);
+  background: var(--bg-card);
+  font-size: 12px;
+}
+
+.agent-usage-pricing {
+  min-width: 0;
+  padding: 16px;
+}
+
+.agent-usage-pricing .agent-usage-section-heading > div {
+  min-width: 0;
+}
+
+.agent-usage-pricing .agent-usage-section-heading h3 {
+  margin-bottom: 4px;
+}
+
+.agent-usage-pricing .agent-usage-section-heading span {
+  font-size: 12px;
+}
+
+@container workspace (max-width: 860px) {
+  .agent-usage-columns { grid-template-columns: 1fr; }
+}
+
+@container workspace (max-width: 620px) {
+  .agent-usage-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .agent-usage-summary-heading { align-items: flex-start; flex-direction: column; }
+  .agent-usage-summary-actions { justify-items: start; }
+  .agent-usage-source-filter { align-items: flex-start; flex-direction: column; }
+  .agent-usage-generated { align-self: flex-start; }
+}

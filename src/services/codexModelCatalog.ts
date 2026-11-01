@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invokeAgentCommand as invoke } from './agents';
 import type { MessageKey } from '../i18n/resources';
 
 export const codexReasoningEfforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
