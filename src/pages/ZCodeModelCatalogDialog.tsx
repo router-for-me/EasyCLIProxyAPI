@@ -166,17 +166,15 @@ export function ZCodeModelCatalogDialog({
                   className={model.id === selectedId ? "active" : ""}
                   onClick={() => setSelectedId(model.id)}
                 >
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: "8px" }}>
-                    <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
-                      <strong>{model.id}</strong>
-                      <div style={{ display: "flex", gap: "6px", fontSize: "11px", opacity: 0.8, marginTop: "2px" }}>
-                        {model.configuration.contextWindow ? (
-                          <span>{Math.round(model.configuration.contextWindow / 1024)}K</span>
-                        ) : null}
-                        {model.configuration.supportsImage ? <span>· 视觉</span> : null}
-                      </div>
+                  <strong style={{ display: "block", textAlign: "left" }}>{model.id}</strong>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: "8px", marginTop: "2px" }}>
+                    <div style={{ display: "flex", gap: "6px", fontSize: "11px", opacity: 0.8, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {model.configuration.contextWindow ? (
+                        <span>{Math.round(model.configuration.contextWindow / 1024)}K</span>
+                      ) : null}
+                      {model.configuration.supportsImage ? <span>· 视觉</span> : null}
                     </div>
-                    <div onClick={(e) => e.stopPropagation()}>
+                    <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                       <Switch
                         size="sm"
                         checked={model.enabled}
