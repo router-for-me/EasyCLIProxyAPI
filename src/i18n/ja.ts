@@ -2160,7 +2160,7 @@ export const jaOverrides = {
   'kernel.versions.installVersion': '{version} をインストール',
   'kernel.versions.installLatest': '停止して更新',
   'kernel.versions.confirmUpdateTitle': 'コアを停止して更新',
-  'kernel.versions.stopAndConfirmDescription': 'コアを更新すると実行中のコアプロセスが停止し、バージョン {version} がインストールされます。更新後にコアを再起動できます。続行しますか？',
+  'kernel.versions.stopAndConfirmDescription': 'コアを更新すると実行中のコアプロセスが停止し、バージョン {version} がインストールされます。更新完了後にコアは自動的に起動します。続行しますか？',
   'kernel.versions.stopAndUpdateVersion': '{version} に停止して更新',
   'kernel.versions.installBundledTitle': 'ダウンロードせずに同梱コア {version} をインストール',
   'kernel.versions.installBundled': '同梱コアをインストール',

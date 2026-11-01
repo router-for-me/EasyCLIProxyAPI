@@ -510,17 +510,34 @@ pub(crate) async fn install_core_version(
                 &staged.staging_dir,
                 &rollback_dir,
                 || {
-                    if was_running && !process_state.is_shutting_down() {
-                        start_core_process_inner(process_state.inner(), &config)
+                    if should_restore_core_after_install(
+                        was_running,
+                        &config,
+                        process_state.is_shutting_down(),
+                    ) {
+                        start_core_process_inner(process_state.inner(), &config)?;
+                        if let Err(error) = gui_config_state.set_run_on_startup(true) {
+                            let _ = stop_core_process_inner(process_state.inner());
+                            return Err(error);
+                        }
+                        Ok(())
                     } else {
                         Ok(())
                     }
                 },
             );
             let swap_and_restore = match swap_and_restore {
-                Err(error) if was_running && !process_state.is_shutting_down() => {
+                Err(error)
+                    if should_restore_core_after_install(
+                        was_running,
+                        &config,
+                        process_state.is_shutting_down(),
+                    ) => {
                     match start_core_process_inner(process_state.inner(), &config) {
-                        Ok(()) => Err(error),
+                        Ok(()) => combine_install_and_restart_results(
+                            Err(error),
+                            gui_config_state.set_run_on_startup(true).map(|_| ()),
+                        ),
                         Err(resume_error) => Err(format!(
                             "{error}; failed to start the previous kernel again: {resume_error}"
                         )),
@@ -562,7 +579,14 @@ where
     let config = gui_config_state.snapshot()?;
     let was_running = pause_core_for_install(app, process_state, &config)?;
     let result = install();
-    restore_core_after_install(app, process_state, &config, was_running, result)
+    restore_core_after_install(
+        app,
+        process_state,
+        gui_config_state,
+        &config,
+        was_running,
+        result,
+    )
 }
 
 fn pause_core_for_install(
@@ -591,15 +615,29 @@ pub(crate) fn pause_core_process_for_install(
     Ok(was_running)
 }
 
+pub(crate) fn should_restore_core_after_install(
+    was_running: bool,
+    config: &GuiConfigFile,
+    shutting_down: bool,
+) -> bool {
+    !shutting_down && (was_running || should_start_core_on_launch(config))
+}
+
 fn restore_core_after_install<T>(
     app: &tauri::AppHandle,
     process_state: &CoreProcessState,
+    gui_config_state: &GuiConfigState,
     config: &GuiConfigFile,
     was_running: bool,
     install_result: Result<T, String>,
 ) -> Result<T, String> {
-    let restart_result = if was_running && !process_state.is_shutting_down() {
+    let restart_result = if should_restore_core_after_install(
+        was_running,
+        config,
+        process_state.is_shutting_down(),
+    ) {
         start_core_process_inner(process_state, config)
+            .and_then(|()| gui_config_state.set_run_on_startup(true).map(|_| ()))
     } else {
         Ok(())
     };
@@ -1728,7 +1766,7 @@ pub(crate) fn start_core_process_inner(
         return Err("CPA kernel is already running".to_string());
     }
     let management_address = core_management_address(&gui_config.host, gui_config.port)?;
-    if TcpStream::connect_timeout(&management_address, Duration::from_millis(250)).is_ok() {
+    if !wait_for_core_port_release(management_address) {
         return Err(format!(
             "Port {} is in use by another program. Change the port and try again",
             gui_config.port
@@ -1777,6 +1815,31 @@ pub(crate) fn start_core_process_inner(
 
     process_state.store_child(child)?;
     Ok(())
+}
+
+pub(crate) fn wait_for_core_port_release(address: SocketAddr) -> bool {
+    retry_core_operation(3, Duration::from_millis(200), || {
+        if TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok() {
+            Err(())
+        } else {
+            Ok(())
+        }
+    })
+    .is_ok()
+}
+
+pub(crate) fn retry_core_operation<T, E>(
+    attempts: usize,
+    delay: Duration,
+    mut operation: impl FnMut() -> Result<T, E>,
+) -> Result<T, E> {
+    for _ in 1..attempts {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(_) => thread::sleep(delay),
+        }
+    }
+    operation()
 }
 
 pub(crate) fn wait_for_core_management_port(
@@ -2477,17 +2540,47 @@ pub(crate) fn process_executable_path(process_id: u32) -> Option<PathBuf> {
     Some(PathBuf::from(OsString::from_wide(&buffer)))
 }
 
+pub(crate) fn core_processes_ready(process_ids: &[u32], address: SocketAddr) -> bool {
+    process_ids
+        .iter()
+        .any(|process_id| is_process_alive(*process_id))
+        && TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
+}
+
 pub(crate) fn adopt_existing_core_processes(
     process_state: &CoreProcessState,
+    config: &GuiConfigFile,
 ) -> Result<Vec<u32>, String> {
     let install_dir = core_install_dir()?;
     let Some(binary_path) = find_core_binary(&install_dir) else {
         process_state.clear_adopted_processes()?;
         return Ok(Vec::new());
     };
-    let process_ids = find_core_process_ids(&binary_path);
+    let process_ids = find_core_process_ids(&binary_path)
+        .into_iter()
+        .filter(|process_id| is_process_alive(*process_id))
+        .collect::<Vec<_>>();
+    if !process_ids.is_empty() {
+        let address = core_management_address(&config.host, config.port)?;
+        let ready = retry_core_operation(3, Duration::from_millis(400), || {
+            process_state.ensure_active()?;
+            if core_processes_ready(&process_ids, address) {
+                Ok(())
+            } else {
+                Err("CPA kernel is not ready for adoption".to_string())
+            }
+        });
+        if ready.is_err() {
+            process_state.adopt_process_ids(&binary_path, process_ids)?;
+            stop_core_process_inner(process_state)?;
+            return Ok(Vec::new());
+        }
+    }
     process_state.adopt_process_ids(&binary_path, process_ids.clone())?;
-    Ok(process_ids)
+    Ok(process_ids
+        .into_iter()
+        .filter(|process_id| is_process_alive(*process_id))
+        .collect())
 }
 
 pub(crate) fn shutdown_managed_core(
@@ -3205,7 +3298,7 @@ pub(crate) fn should_start_hidden(config: &GuiConfigFile) -> bool {
 }
 
 pub(crate) fn should_start_core_on_launch(config: &GuiConfigFile) -> bool {
-    config.start_core_on_launch
+    config.start_core_on_launch || config.run_on_startup
 }
 
 pub(crate) fn configure_initial_main_window(

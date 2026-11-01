@@ -2,6 +2,100 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn core_install_restores_runtime_for_either_startup_setting_or_running_core() {
+    for was_running in [false, true] {
+        for start_core_on_launch in [false, true] {
+            for run_on_startup in [false, true] {
+                let config = GuiConfigFile {
+                    start_core_on_launch,
+                    run_on_startup,
+                    ..GuiConfigFile::default()
+                };
+                assert_eq!(
+                    should_restore_core_after_install(was_running, &config, false),
+                    was_running || start_core_on_launch || run_on_startup
+                );
+                assert!(!should_restore_core_after_install(was_running, &config, true));
+            }
+        }
+    }
+}
+
+#[test]
+fn core_startup_retries_transient_failures_and_stops_after_success() {
+    let mut calls = 0;
+    let result = retry_core_operation(3, Duration::ZERO, || {
+        calls += 1;
+        if calls < 3 {
+            Err("port busy")
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(result, Ok(()));
+    assert_eq!(calls, 3);
+
+    calls = 0;
+    let result = retry_core_operation(3, Duration::ZERO, || {
+        calls += 1;
+        Ok::<_, String>(())
+    });
+    assert!(result.is_ok());
+    assert_eq!(calls, 1);
+}
+
+#[test]
+fn core_startup_retry_returns_last_failure() {
+    let mut calls = 0;
+    let result = retry_core_operation(3, Duration::ZERO, || {
+        calls += 1;
+        Err::<(), _>(calls)
+    });
+    assert_eq!(result, Err(3));
+    assert_eq!(calls, 3);
+}
+
+#[test]
+fn core_port_check_waits_for_release_and_rejects_busy_ports() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    assert!(!wait_for_core_port_release(address));
+    drop(listener);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        listener.accept().unwrap();
+        drop(listener);
+    });
+    assert!(wait_for_core_port_release(address));
+    server.join().unwrap();
+}
+
+#[test]
+fn core_adoption_requires_a_live_process_and_ready_management_port() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    assert!(!core_processes_ready(&[], address));
+    assert!(core_processes_ready(&[std::process::id()], address));
+    assert!(!core_processes_ready(
+        &[std::process::id()],
+        SocketAddr::from(([127, 0, 0, 1], 0))
+    ));
+
+    let mut child = Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+        .args(if cfg!(windows) {
+            ["/C", "exit 0"]
+        } else {
+            ["-c", "exit 0"]
+        })
+        .spawn()
+        .unwrap();
+    let process_id = child.id();
+    child.wait().unwrap();
+    assert!(!core_processes_ready(&[process_id], address));
+}
+
+#[test]
 fn core_version_list_normalizes_sorts_and_filters_releases() {
     let releases = serde_json::from_str::<Vec<CoreReleaseVersion>>(
         r#"[

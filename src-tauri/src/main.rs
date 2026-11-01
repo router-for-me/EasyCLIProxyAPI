@@ -2582,7 +2582,9 @@ fn main() {
         .manage(CoreDownloadState::default())
         .manage(AppUpdateState::default())
         .manage(window_activity::WindowActivity::default())
-        .manage(CoreProcessState::new(gui_config.start_core_on_launch))
+        .manage(CoreProcessState::new(should_start_core_on_launch(
+            &gui_config,
+        )))
         .manage(DeepSeekHarnessProcessState::default())
         .manage(usage::UsageCollectorState::default())
         .manage(GuiConfigState::new(gui_config))
@@ -2755,7 +2757,7 @@ fn main() {
                     return;
                 };
 
-                if config.start_core_on_launch {
+                if should_start_core_on_launch(&config) {
                     if let Ok(status) =
                         current_core_status(Some(process_state.inner()), Some(config.port))
                     {
@@ -2769,8 +2771,10 @@ fn main() {
                     Err(error) => eprintln!("Failed to automatically install CPA offline kernel: {error}"),
                 }
 
-                let adopted_process_ids = match adopt_existing_core_processes(process_state.inner())
-                {
+                let adopted_process_ids = match adopt_existing_core_processes(
+                    process_state.inner(),
+                    &config,
+                ) {
                     Ok(process_ids) => process_ids,
                     Err(error) => {
                         eprintln!("Failed to scan for and adopt the CPA kernel in the current directory: {error}");
@@ -2787,8 +2791,14 @@ fn main() {
                             .join(", ")
                     );
                 } else if should_start_core_on_launch(&config) {
-                    if let Err(error) = start_core_process_inner(process_state.inner(), &config) {
+                    let start_result = retry_core_operation(3, Duration::from_millis(400), || {
+                        process_state.ensure_active()?;
+                        start_core_process_inner(process_state.inner(), &config)
+                    });
+                    if let Err(error) = start_result {
                         eprintln!("Failed to automatically start CPA kernel: {error}");
+                    } else if let Err(error) = gui_config_state.set_run_on_startup(true) {
+                        eprintln!("Failed to save automatically started kernel state: {error}");
                     }
                 }
 
