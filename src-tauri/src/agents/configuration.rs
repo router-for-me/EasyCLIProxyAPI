@@ -3822,9 +3822,12 @@ pub(crate) fn build_zcode_agent_config(
             specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
         }
         if !option.reasoning_levels.is_empty() {
+            let is_generated_map = |m: &str| {
+                m == ZCODE_CPA_REASONING_MAP || m == "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"
+            };
             let generated = manual.is_none() && specs.get("reasoningLevel")
                 .and_then(|spec| spec.get("map")).and_then(serde_json::Value::as_str)
-                == Some(ZCODE_CPA_REASONING_MAP);
+                .map(is_generated_map).unwrap_or(false);
             if generated || !specs.contains_key("reasoningLevel") {
                 specs.insert("reasoningLevel".into(), serde_json::json!({
                     "values": option.reasoning_levels,

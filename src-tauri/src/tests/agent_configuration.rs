@@ -1403,6 +1403,27 @@ fn zcode_catalog_editor_preserves_native_rule_fields_and_empty_visibility() {
         assert_eq!(saved_rule["config"]["properties"]["contextWindow"], 300_000);
         assert_eq!(saved_rule["config"]["optionSpecs"]["nativeOption"], rule["config"]["optionSpecs"]["nativeOption"]);
         assert_eq!(saved_rule["config"]["optionSpecs"]["maxOutputTokens"]["min"], 1);
+        let mut absent_rule = rule.clone();
+        absent_rule["modelId"] = serde_json::json!("temporarily-unavailable");
+        let mut value = value;
+        value["config"]["modelConfigRules"][section].as_array_mut().unwrap().push(absent_rule.clone());
+        value["config"]["providerConfigRules"]["providerRules"][0]["config"]["personalModelIds"] =
+            serde_json::json!(["temporarily-unavailable"]);
+        fs::write(&path, value.to_string()).unwrap();
+        let mut models = saved.models;
+        models[0].configuration.max_output_tokens = None;
+        save_zcode_editor(&home, &[], ZCodeCatalogEditorSaveRequest {
+            models,
+            model_order: saved.model_order,
+        }).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let rules = value["config"]["modelConfigRules"][section].as_array().unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.iter().find(|rule| rule["modelId"] == "temporarily-unavailable"), Some(&absent_rule));
+        let saved_rule = rules.iter().find(|rule| rule["modelId"] == "custom-model").unwrap();
+        assert!(saved_rule["config"]["optionSpecs"].get("maxOutputTokens").is_none());
+        assert_eq!(value["config"]["providerConfigRules"]["providerRules"][0]["config"]["personalModelIds"],
+            serde_json::json!(["temporarily-unavailable"]));
     }
     fs::remove_dir_all(home).unwrap();
 }
@@ -1517,6 +1538,14 @@ fn zcode_runtime_reasoning_options_upgrade_aliases_and_preserve_native_settings(
     assert_eq!(value["config"]["modelConfigRules"]["manualProviderModelRules"],
         original_value["config"]["modelConfigRules"]["manualProviderModelRules"]);
     assert_eq!(render(&rendered, &models), rendered);
+
+    let mut legacy = value.clone();
+    let rules = legacy["config"]["modelConfigRules"]["providerModelRules"].as_array_mut().unwrap();
+    let rule = rules.iter_mut().find(|rule| rule["modelId"] == "custom-alias").unwrap();
+    rule["config"]["optionSpecs"]["reasoningLevel"]["map"] = serde_json::json!(
+        "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"
+    );
+    assert_eq!(render(&legacy.to_string(), &models), rendered);
 
     models[0].reasoning_levels = vec!["low".into(), "high".into()];
     let updated: serde_json::Value = serde_json::from_str(&render(&rendered, &models)).unwrap();

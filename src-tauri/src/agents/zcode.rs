@@ -214,9 +214,12 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     properties.insert("supportsMidConversationSystem".into(), serde_json::json!(config.supports_mid_conversation_system));
 
     let mut option_specs = cfg.get("optionSpecs").and_then(Value::as_object).cloned().unwrap_or_default();
-    let mot = config.max_output_tokens.unwrap_or(128_000);
-    ensure_json_object_entry(&mut option_specs, "maxOutputTokens")
-        .insert("max".into(), serde_json::json!(mot));
+    if let Some(mot) = config.max_output_tokens {
+        ensure_json_object_entry(&mut option_specs, "maxOutputTokens")
+            .insert("max".into(), serde_json::json!(mot));
+    } else {
+        option_specs.remove("maxOutputTokens");
+    }
     if !config.reasoning_levels.is_empty() {
         let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
         rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
@@ -233,6 +236,8 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     cfg.insert("properties".into(), Value::Object(properties));
     if !option_specs.is_empty() {
         cfg.insert("optionSpecs".into(), Value::Object(option_specs));
+    } else {
+        cfg.remove("optionSpecs");
     }
     if config.is_manual {
         cfg.insert("enabled".into(), serde_json::json!(true));
@@ -492,7 +497,14 @@ pub(crate) fn save_zcode_editor(
     let managed_obj = managed.as_object_mut().ok_or("ZCode managed provider must be an object")?;
     let provider_cfg = ensure_json_object_entry(managed_obj, "config");
 
-    let enabled_ids: Vec<Value> = request.models.iter().filter(|m| m.enabled).map(|m| serde_json::json!(m.id)).collect();
+    let requested_ids = request.models.iter().map(|model| model.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut enabled_ids: Vec<Value> = request.models.iter().filter(|m| m.enabled).map(|m| serde_json::json!(m.id)).collect();
+    if let Some(existing_ids) = provider_cfg.get("personalModelIds").and_then(Value::as_array) {
+        enabled_ids.extend(existing_ids.iter().filter(|id| {
+            id.as_str().map(|id| !requested_ids.contains(id)).unwrap_or(false)
+        }).cloned());
+    }
     provider_cfg.insert("personalModelIds".into(), Value::Array(enabled_ids));
     let order_ids: Vec<Value> = request.model_order.iter().map(|id| serde_json::json!(id)).collect();
     provider_cfg.insert("modelOrder".into(), Value::Array(order_ids));
@@ -528,7 +540,10 @@ pub(crate) fn save_zcode_editor(
             .or_insert_with(|| serde_json::json!([]))
             .as_array_mut()
             .ok_or("providerModelRules must be an array")?;
-        provider_model_rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID));
+        provider_model_rules.retain(|r| {
+            r.get("providerId").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID)
+                || !r.get("modelId").and_then(Value::as_str).map(|id| requested_ids.contains(id)).unwrap_or(false)
+        });
         provider_model_rules.extend(new_provider_rules);
     }
     {
@@ -537,7 +552,10 @@ pub(crate) fn save_zcode_editor(
             .or_insert_with(|| serde_json::json!([]))
             .as_array_mut()
             .ok_or("manualProviderModelRules must be an array")?;
-        manual_model_rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID));
+        manual_model_rules.retain(|r| {
+            r.get("providerId").and_then(Value::as_str) != Some(MANAGED_AGENT_PROVIDER_ID)
+                || !r.get("modelId").and_then(Value::as_str).map(|id| requested_ids.contains(id)).unwrap_or(false)
+        });
         manual_model_rules.extend(new_manual_rules);
     }
 
