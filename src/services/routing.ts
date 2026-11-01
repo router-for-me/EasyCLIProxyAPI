@@ -19,6 +19,7 @@ export type RoutingSettings = {
 export type RoutingMember = {
   key: string; name: string; family: string; priority: number; weights: (number | null)[];
   disabled: boolean; unavailable: boolean; runtimeOnly: boolean;
+  kind?: 'provider' | 'credential'; keyCount?: number; prefix?: string;
   familyIndex?: number; groupIndex?: number; keyIndex?: number; credentialName?: string;
 };
 export type RoutingBoard = {
@@ -41,16 +42,20 @@ export async function readRoutingBoard(api: RoutingApi = managementApi): Promise
       const payload = await api.get<unknown>(`/config/api-keys/${family}`);
       if (!Array.isArray(payload) || !payload.every(isRecord)) throw new Error('Invalid configuration');
       groups[family] = payload;
-      return providerEntries(family === 'openai-compatibility' ? family : `${family}-api-key`, payload).map(({ record, source }): RoutingMember => ({
-        key: `provider:${family}:${source.groupIndex}:${source.keyIndex ?? 'group'}`,
-        name: readString(source.group, 'name') || family, family,
-        priority: number(record.priority),
-        weights: source.keyIndex === undefined && Array.isArray(record.keys)
-          ? record.keys.filter(isRecord).map(key => weight(key.weight)) : [weight(record.weight)],
-        disabled: source.group.disabled === true || record.disabled === true
-          || (Array.isArray(record['excluded-models']) && record['excluded-models'].includes('*')),
-        unavailable: false, runtimeOnly: false, groupIndex: source.groupIndex, keyIndex: source.keyIndex,
-      }));
+      return providerEntries(family === 'openai-compatibility' ? family : `${family}-api-key`, payload).map(({ record, source }): RoutingMember => {
+        const weights = source.keyIndex === undefined && Array.isArray(record.keys)
+          ? record.keys.filter(isRecord).map(key => weight(key.weight)) : [weight(record.weight)];
+        return {
+          key: `provider:${family}:${source.groupIndex}:${source.keyIndex ?? 'group'}`,
+          name: readString(source.group, 'name') || family, family,
+          priority: number(record.priority),
+          weights, kind: 'provider', keyCount: weights.length,
+          prefix: readString(record, 'prefix') || readString(source.group, 'prefix'),
+          disabled: source.group.disabled === true || record.disabled === true
+            || (Array.isArray(record['excluded-models']) && record['excluded-models'].includes('*')),
+          unavailable: false, runtimeOnly: false, groupIndex: source.groupIndex, keyIndex: source.keyIndex,
+        };
+      });
     } catch (error) {
       if (String(error).includes('Management API error (404): not_found')) { groups[family] = []; return []; }
       partial.push(family); return [];
@@ -63,6 +68,7 @@ export async function readRoutingBoard(api: RoutingApi = managementApi): Promise
     return {
       key: `credential:${name || readString(file, 'auth_index') || index}`, name: name || readString(file, 'provider'),
       credentialName: name, family: readString(file, 'provider', 'type'), priority: number(file.priority), weights: [weight(file.weight)],
+      kind: 'credential', keyCount: 1, prefix: readString(file, 'prefix'),
       disabled: file.disabled === true, unavailable: file.unavailable === true,
       runtimeOnly: file.runtime_only === true || !name,
     };
