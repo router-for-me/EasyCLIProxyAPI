@@ -531,6 +531,7 @@ export function UsageRecordsPage() {
         <EmptyState className="usage-initial-loading" icon={<Database size={22} />}>{t('usage.loading')}</EmptyState>
       ) : null}
 
+      {activeTab === 'overview' && <RoutingPanel />}
       {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
       {activeTab === 'analysis' && (analysis || overview) ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
       {activeTab === 'events' ? (
@@ -1754,3 +1755,4 @@ function UsageEmpty() {
     <EmptyState className="usage-empty" icon={<TriangleAlert size={18} />}>{t('usage.empty')}</EmptyState>
   );
 }
+import { RoutingPanel } from '../components/routing/RoutingPanel';

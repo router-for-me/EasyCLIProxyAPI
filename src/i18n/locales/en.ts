@@ -1,3 +1,4 @@
+import { routingEn } from './routing';
 import type { MessageKey } from './zh-CN';
 import { easyModeEn } from '../easyMode';
 import { homeEn } from '../home';
@@ -5,6 +6,7 @@ import { authFileListEn } from '../authFileList';
 import { themeDiyEn } from '../themeDiy';
 
 export const en: Record<MessageKey, string> = {
+  ...routingEn,
   ...themeDiyEn,
   'app.window.minimize': 'Minimize',
   'app.window.maximize': 'Maximize',
