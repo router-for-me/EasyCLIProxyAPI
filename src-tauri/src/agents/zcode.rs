@@ -4,7 +4,7 @@ pub(crate) fn infer_zcode_model_knowledge(model_id: &str) -> (Option<u64>, Optio
 
     // 1. Gemini: 1M context, 128K output, vision, pdf
     if lower.contains("gemini") {
-        return (Some(1_048_576), Some(128_000), true, true, vec!["disabled".into(), "enabled".into(), "high".into()]);
+        return (Some(1_048_576), Some(128_000), true, true, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into()]);
     }
 
     // 2. GLM 5.x / 4.x
@@ -58,7 +58,7 @@ pub(crate) fn infer_zcode_model_knowledge(model_id: &str) -> (Option<u64>, Optio
 
     // 7. Spark (Spark X2.6 / 4.0 Ultra supports 1M context)
     if lower.contains("spark") {
-        return (Some(1_000_000), Some(128_000), true, false, vec!["disabled".into(), "enabled".into()]);
+        return (Some(1_000_000), Some(128_000), true, false, vec!["disabled".into(), "enabled".into(), "low".into(), "medium".into(), "high".into(), "max".into()]);
     }
 
     // 8. MiniMax
@@ -338,7 +338,7 @@ pub(crate) fn zcode_editor_snapshot(
             supports_json_schema_output: true,
             supports_native_web_search: true,
             supports_mid_conversation_system: true,
-            reasoning_levels: if option.reasoning_levels.is_empty() { inferred_rl } else { option.reasoning_levels.clone() },
+            reasoning_levels: if inferred_rl.is_empty() { option.reasoning_levels.clone() } else { inferred_rl },
             reasoning_map: Some(ZCODE_CPA_REASONING_MAP.to_string()),
             is_manual: false,
         };
