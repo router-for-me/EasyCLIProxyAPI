@@ -2862,6 +2862,7 @@ fn main() {
             get_software_settings,
             save_software_settings,
             get_agent_config_statuses,
+            get_agent_environment_options,
             create_agent_config_backup,
             list_agent_config_backups,
             preview_agent_config_backup,

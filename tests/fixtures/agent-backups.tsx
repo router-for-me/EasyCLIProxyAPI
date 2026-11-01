@@ -53,6 +53,7 @@ mockIPC(async (cmd,args:any) => {
    });
  }
  if((window as any).fixtureFailedCommands?.includes(cmd))throw new Error('模拟后台刷新失败');
+ if(cmd==='get_agent_environment_options')return (window as any).fixtureEnvironmentOptions ?? {supported:false,defaultDirectory:'/home/user/.config',distributions:[]};
  if(cmd==='restart_codex_cli_daemon')return null;
  if(cmd==='plugin:event|listen') return 1;
  if(cmd==='plugin:event|unlisten'||cmd==='set_app_locale') return null;
