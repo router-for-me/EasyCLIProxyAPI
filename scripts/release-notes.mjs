@@ -12,8 +12,18 @@ export const releaseNotesLanguages = [
 
 // Only explicitly authored translations are published. Missing languages stay missing.
 export async function resolveReleaseNotes({ root = process.cwd(), tag }) {
-  const version = validateAppVersion(String(tag ?? '').trim().replace(/^v/, ''), 'release tag');
-  const directory = join(root, 'docs', 'release-notes', `v${version}`);
+  const rawTag = String(tag ?? '').trim();
+  if (!rawTag || rawTag.includes('..') || !/^[A-Za-z0-9_.-]+$/.test(rawTag)) {
+    throw new Error(`Invalid release tag: ${tag}`);
+  }
+  let dirName = rawTag;
+  try {
+    const version = validateAppVersion(rawTag.replace(/^v/, ''), 'release tag');
+    dirName = `v${version}`;
+  } catch {
+    // Non-semver tags (e.g. only-preview) use rawTag as the release-notes directory name
+  }
+  const directory = join(root, 'docs', 'release-notes', dirName);
   const notes = {};
   for (const { locale } of releaseNotesLanguages) {
     try {
