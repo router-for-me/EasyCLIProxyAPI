@@ -885,7 +885,7 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
     }
   }
   if (method === 'GET' && path === '/credentials') {
-    return { files: clone(state.authFiles), observed_at: new Date().toISOString() };
+    return { files: clone(state.authFiles).map(({ tags, ...file }) => file), observed_at: new Date().toISOString() };
   }
   if (method === 'GET' && path === '/credentials/download') {
     const file = findAuthFile(state, readString(query.name));

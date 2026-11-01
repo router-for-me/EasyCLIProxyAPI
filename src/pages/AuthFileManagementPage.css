@@ -68,24 +68,6 @@
   font-weight: var(--font-weight-medium);
 }
 
-.auth-tag-add-trigger.filter-chip {
-  padding: 2px 6px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-tertiary);
-  font-size: var(--font-size-caption);
-  line-height: 1.4;
-  cursor: pointer;
-}
-
-.auth-tag-add-trigger.filter-chip:hover,
-.auth-tag-add-trigger.filter-chip.active {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-  background: var(--bg-card);
-}
-
 .auth-active-tag-badge.filter-chip {
   display: inline-flex;
   align-items: center;
@@ -105,114 +87,6 @@
   background: var(--bg-secondary);
 }
 
-.auth-card-quick-tag-editor {
-  margin-top: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 2;
-}
-
-.auth-quick-tag-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.auth-quick-tag-header strong {
-  font-size: var(--font-size-meta);
-  color: var(--text-primary);
-}
-
-.auth-quick-tag-current {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-}
-
-.auth-quick-tag-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: var(--font-size-caption);
-}
-
-.auth-quick-tag-badge .credential-tag-remove {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-}
-
-.auth-quick-tag-badge .credential-tag-remove:hover {
-  color: var(--text-primary);
-}
-
-.auth-quick-tag-input-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.auth-quick-tag-input {
-  flex: 1;
-  min-width: 100px;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--font-size-caption);
-}
-
-.auth-quick-tag-pool {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--border-color);
-}
-
-.auth-quick-tag-pool-label {
-  font-size: var(--font-size-caption);
-  color: var(--text-tertiary);
-}
-
-.auth-quick-tag-pool-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.auth-quick-tag-pool-btn.filter-chip {
-  padding: 1px 6px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-
-.auth-quick-tag-pool-btn.filter-chip:hover {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-}
 .auth-files-page .auth-files-toolbar .auth-files-filters select { appearance: none; -webkit-appearance: none; width: auto; min-width: 0; max-width: 100%; height: 32px; padding: 0 30px 0 11px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); outline: 0; box-shadow: none; background-color: var(--color-surface); background-image: var(--select-arrow); background-repeat: no-repeat; background-position: right 9px center; background-size: 14px; color: var(--color-text-primary); font: inherit; font-size: 12px; font-weight: 650; line-height: 30px; cursor: pointer; }
 .auth-files-page .auth-files-toolbar .auth-files-filters select::-ms-expand { display: none; }
 .auth-files-page .auth-files-toolbar .auth-files-filters select:hover { border-color: var(--border-hover); }

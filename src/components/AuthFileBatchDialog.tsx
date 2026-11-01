@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog } from "./Dialog";
 import { Checkbox } from "./Checkbox";
 import { Select } from "./Select";
@@ -24,6 +24,7 @@ import {
 } from "../services/authFileOperations";
 import { managementApi, readString } from "../services/managementApi";
 import { quotaKey } from "../services/quotaService";
+import { mergeCredentialTags } from "../services/credentialTags";
 import "./AuthFileBatchDialog.css";
 
 export function AuthFileBatchDialog({
@@ -38,7 +39,8 @@ export function AuthFileBatchDialog({
   const { t } = useI18n();
   const privacy = usePrivacyMask();
   const { askConfirmation, confirmationDialog } = useConfirmation();
-  const eligible = useMemo(() => files.filter(isOAuthCredentialFile), [files]);
+  const [tagRevision, setTagRevision] = useState(0);
+  const eligible = useMemo(() => mergeCredentialTags(files.filter(isOAuthCredentialFile)), [files, tagRevision]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagFilter, setTagFilter] = useState("");
   const [batchAddInput, setBatchAddInput] = useState("");
@@ -55,6 +57,9 @@ export function AuthFileBatchDialog({
     [eligible],
   );
   const tagCounts = useMemo(() => countAuthFileTags(eligible), [eligible]);
+  useEffect(() => {
+    if (tagFilter && !tagCounts.has(tagFilter)) setTagFilter("");
+  }, [tagFilter, tagCounts]);
   const tagIdentities = useMemo(() => files.flatMap(authFileIdentities), [files]);
   const matching = useMemo(
     () => eligible.filter((file) => !tagFilter || normalizeAuthFileTags(file.tags).includes(tagFilter)),
@@ -98,6 +103,7 @@ export function AuthFileBatchDialog({
     setResults([]);
     try {
       const batchRes = await batchAddCredentialTag(targets, tag);
+      setTagRevision(current => current + 1);
       const succeeded = batchRes.filter((r) => r.success).length;
       const failed = batchRes.filter((r) => !r.success).length;
       if (succeeded > 0) {
@@ -126,6 +132,7 @@ export function AuthFileBatchDialog({
     setResults([]);
     try {
       const batchRes = await batchRemoveCredentialTag(targets, tag);
+      setTagRevision(current => current + 1);
       const succeeded = batchRes.filter((r) => r.success).length;
       const failed = batchRes.filter((r) => !r.success).length;
       if (succeeded > 0) {
@@ -238,10 +245,12 @@ export function AuthFileBatchDialog({
               value={tagFilter}
               disabled={busy}
               onChange={(event) => {
-                setTagFilter(event.currentTarget.value);
+                const tag = event.currentTarget.value;
+                setTagFilter(tag);
+                setSelected(new Set(eligible.filter(file => tag && normalizeAuthFileTags(file.tags).includes(tag)).map(quotaKey)));
               }}
             >
-              <option value="">{t("authFiles.tags.all")} ({eligible.length})</option>
+              <option value="">{t("authFiles.tags.all")}</option>
               {tags.map((tag) => (
                 <option key={tag} value={tag}>
                   {privacy.text(tag, tagIdentities)} ({tagCounts.get(tag) ?? 0})
