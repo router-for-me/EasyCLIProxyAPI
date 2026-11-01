@@ -2530,6 +2530,10 @@ fn main() {
     let _instance_guard = match acquire_app_instance_guard() {
         Ok(guard) => guard,
         Err(error) => {
+            #[cfg(target_os = "linux")]
+            if portable_update_ack_argument().is_none() && request_running_app_activation() {
+                return;
+            }
             eprintln!("{error}");
             return;
         }
@@ -2572,7 +2576,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![AUTOSTART_ARGUMENT]),
         ))
         .plugin(
             tauri_plugin_opener::Builder::new()
@@ -2708,6 +2712,21 @@ fn main() {
 
             if let Err(error) = configure_initial_main_window(app.handle(), start_hidden) {
                 eprintln!("Failed to configure startup window state: {error}");
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                let activation_app = app.handle().clone();
+                if let Err(error) = start_app_activation_listener(move || {
+                    let app_handle = activation_app.clone();
+                    if let Err(error) = activation_app
+                        .run_on_main_thread(move || show_windows_main_window(&app_handle))
+                    {
+                        eprintln!("Failed to schedule showing the main window: {error}");
+                    }
+                }) {
+                    eprintln!("{error}");
+                }
             }
 
             if let Err(error) =

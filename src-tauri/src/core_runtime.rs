@@ -3288,13 +3288,43 @@ pub(crate) fn core_binary_name() -> &'static str {
     }
 }
 
+/// Passed by the autostart entry, so a launch at login can stay in the tray while a launch
+/// from the app menu or a shortcut shows the window.
+pub(crate) const AUTOSTART_ARGUMENT: &str = "--autostart";
+
 pub(crate) fn should_start_hidden(config: &GuiConfigFile) -> bool {
+    should_start_hidden_for_launch(config, launched_by_autostart())
+}
+
+/// On Linux a hidden instance is hard to reach: tray hosts call Activate, which the
+/// appindicator item does not handle, and there is no Dock reopen event. Silent start
+/// therefore applies to autostart launches only; macOS and Windows keep it for every launch.
+pub(crate) fn should_start_hidden_for_launch(config: &GuiConfigFile, autostart: bool) -> bool {
     config.silent_start
         && cfg!(any(
             target_os = "linux",
             target_os = "macos",
             target_os = "windows"
         ))
+        && (autostart || !cfg!(target_os = "linux"))
+}
+
+fn launched_by_autostart() -> bool {
+    std::env::args_os().any(|argument| argument == AUTOSTART_ARGUMENT) || launched_by_session_autostart()
+}
+
+// Autostart entries written before the argument existed: gnome-session sets DESKTOP_AUTOSTART_ID,
+// and systemd-xdg-autostart-generator runs them as app-<desktop id>@autostart.service.
+#[cfg(target_os = "linux")]
+fn launched_by_session_autostart() -> bool {
+    std::env::var_os("DESKTOP_AUTOSTART_ID").is_some()
+        || fs::read_to_string("/proc/self/cgroup")
+            .is_ok_and(|cgroup| cgroup.lines().any(|line| line.ends_with("@autostart.service")))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn launched_by_session_autostart() -> bool {
+    false
 }
 
 pub(crate) fn should_start_core_on_launch(config: &GuiConfigFile) -> bool {
