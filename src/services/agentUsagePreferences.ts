@@ -14,7 +14,9 @@ export const AGENT_USAGE_REFRESH_INTERVALS = [
 export type AgentUsageRefreshInterval = (typeof AGENT_USAGE_REFRESH_INTERVALS)[number];
 
 export function loadAgentUsageRefreshInterval(): AgentUsageRefreshInterval {
-  const value = Number(usagePreferences.getItem(AGENT_USAGE_REFRESH_INTERVAL_KEY));
+  const stored = usagePreferences.getItem(AGENT_USAGE_REFRESH_INTERVAL_KEY);
+  if (stored === null || stored.trim() === '') return DEFAULT_AGENT_USAGE_REFRESH_INTERVAL;
+  const value = Number(stored);
   return AGENT_USAGE_REFRESH_INTERVALS.includes(value as AgentUsageRefreshInterval)
     ? value as AgentUsageRefreshInterval
     : DEFAULT_AGENT_USAGE_REFRESH_INTERVAL;
