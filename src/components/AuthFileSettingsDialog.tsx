@@ -36,7 +36,8 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
-  const dirty = draft !== null && (Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
+  const [tagInput, setTagInput] = useState('');
+  const dirty = draft !== null && (Boolean(tagInput.trim()) || Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
 
   useEffect(() => {
     let active = true;
@@ -74,7 +75,8 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
     setSaving(true);
     setError('');
     try {
-      const changed = await saveAuthFileSettings(name, original, draft);
+      const nextDraft = { ...draft, tags: normalizeAuthFileTags([...draft.tags.split(','), ...tagInput.split(',')]).join(', ') };
+      const changed = await saveAuthFileSettings(name, original, nextDraft);
       if (changed) onSaved();
       else onClose();
     } catch (reason) {
@@ -87,7 +89,6 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   const rules = normalizeOAuthExcludedRules((draft?.excluded_models ?? '').split(/\r?\n/));
   const query = search.trim().toLowerCase();
   const candidates = oauthModelCandidates(models, rules).filter((model) => modelSearchText({ name: model.id, displayName: model.displayName }).includes(query));
-  const [tagInput, setTagInput] = useState('');
   const currentTags = normalizeAuthFileTags((draft?.tags ?? '').split(','));
   const availablePoolTags = existingTags.filter(t => !currentTags.includes(t));
 
