@@ -1678,9 +1678,15 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.host = core_settings.host.clone();
     config.port = core_settings.port;
     config.allow_lan = !is_loopback_host(&core_settings.host);
-    config.auth_dir = core_settings.auth_dir.clone();
-    config.api_keys =
-        merge_core_api_keys_with_gui_metadata(&config.api_keys, &core_settings.api_keys, None);
+    // A kernel configuration without these fields falls back to kernel defaults;
+    // keep the GUI selection and key list (with remarks) instead of replacing them.
+    if core_settings.auth_dir_configured {
+        config.auth_dir = core_settings.auth_dir.clone();
+    }
+    if core_settings.api_keys_configured {
+        config.api_keys =
+            merge_core_api_keys_with_gui_metadata(&config.api_keys, &core_settings.api_keys, None);
+    }
     if let Some(secret_key) = core_settings
         .management_secret_key
         .as_deref()

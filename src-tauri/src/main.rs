@@ -1642,6 +1642,12 @@ struct CoreConfigSettings {
     #[serde(skip_serializing)]
     auth_dir: String,
     api_keys: Vec<String>,
+    /// Whether the kernel configuration sets `auth-dir`; otherwise `auth_dir` is the kernel default.
+    #[serde(skip_serializing)]
+    auth_dir_configured: bool,
+    /// Whether the kernel configuration declares API keys other than the example placeholders.
+    #[serde(skip_serializing)]
+    api_keys_configured: bool,
     management_secret_configured: bool,
     debug: bool,
     commercial_mode: bool,
@@ -2415,6 +2421,8 @@ impl From<&GuiConfigFile> for CoreConfigSettings {
             port: config.port,
             auth_dir: config.auth_dir.clone(),
             api_keys: gui_api_key_values(&config.api_keys),
+            auth_dir_configured: true,
+            api_keys_configured: true,
             management_secret_configured: !config.management_secret_key.is_empty(),
             debug: config.debug,
             commercial_mode: config.commercial_mode,
