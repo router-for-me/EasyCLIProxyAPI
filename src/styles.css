@@ -7777,7 +7777,7 @@ textarea:focus-visible {
 .usage-overview-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: max-content minmax(380px, 1fr);
+  grid-template-rows: max-content minmax(0, 1fr);
   gap: 14px;
   align-items: stretch;
   overflow: clip;
@@ -7786,7 +7786,7 @@ textarea:focus-visible {
 .usage-overview-panels {
   position: relative;
   min-width: 0;
-  min-height: 380px;
+  min-height: 0;
 }
 
 .usage-overview-canvas {
@@ -7896,11 +7896,6 @@ textarea:focus-visible {
   font-size: var(--font-size-caption);
 }
 
-.usage-overview-canvas .usage-section-heading strong {
-  font-size: 17px;
-  font-weight: 600;
-}
-
 .usage-trend-wrapper {
   display: grid;
   min-height: 0;
@@ -7931,9 +7926,8 @@ textarea:focus-visible {
   border: 1px solid transparent;
   border-radius: var(--radius-full);
   background: transparent;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
   cursor: pointer;
   transition: all 0.15s ease;
   user-select: none;
@@ -7975,9 +7969,8 @@ textarea:focus-visible {
   position: relative;
   grid-column: 1;
   grid-row: 1;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
   line-height: 1;
   user-select: none;
@@ -8053,9 +8046,8 @@ textarea:focus-visible {
 .usage-trend-x-axis span {
   position: absolute;
   top: 2px;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
   transform: translateX(-50%);
   white-space: nowrap;
@@ -8216,7 +8208,7 @@ textarea:focus-visible {
 
 .usage-token-donut-label strong {
   color: var(--text-primary);
-  font-size: clamp(20px, 16cqi, 36px);
+  font-size: clamp(14px, 14cqi, 36px);
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
@@ -8224,9 +8216,8 @@ textarea:focus-visible {
 }
 
 .usage-token-donut-label span {
-  color: var(--color-text-secondary);
-  font-size: 12.5px;
-  font-weight: 500;
+  color: var(--text-tertiary);
+  font-size: clamp(9px, 5cqi, 12px);
   line-height: 1.4;
 }
 
@@ -8257,7 +8248,6 @@ textarea:focus-visible {
   gap: 6px;
   min-width: 0;
   color: var(--text-secondary);
-  font-size: 13.5px;
   line-height: 1.4;
 }
 
@@ -8279,18 +8269,17 @@ textarea:focus-visible {
 
 .usage-token-count {
   color: var(--text-primary);
-  font-size: 14.5px;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: var(--font-weight-medium);
 }
 
 .usage-token-pct {
   display: inline-block;
   min-width: 42px;
   text-align: right;
-  color: var(--color-text-secondary);
+  color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
-  font-size: 13.5px;
+  font-size: var(--font-size-caption);
 }
 
 .usage-token-bar-track {
@@ -8335,8 +8324,8 @@ textarea:focus-visible {
   gap: 6px;
   padding: 8px 0;
   border-block: 1px solid var(--color-border-subtle);
-  color: var(--color-text-secondary);
-  font-size: 13.5px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
   line-height: 1.4;
 }
 
@@ -8355,8 +8344,8 @@ textarea:focus-visible {
 
 .usage-token-notes b {
   color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 700;
+  font-size: var(--font-size-section);
+  font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
 }
 
@@ -8383,8 +8372,8 @@ textarea:focus-visible {
   gap: 6px;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
 }
 
 .usage-token-context-group h3 svg {
@@ -8415,17 +8404,15 @@ textarea:focus-visible {
 }
 
 .usage-token-context-metrics dt {
-  color: var(--color-text-secondary);
-  font-size: 12.5px;
-  font-weight: 500;
+  color: var(--text-tertiary);
   overflow-wrap: anywhere;
 }
 
 .usage-token-context-metrics dd {
   margin: 0;
   color: var(--text-primary);
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.025em;
   line-height: 1.25;
@@ -8501,11 +8488,16 @@ textarea:focus-visible {
   }
 
   .usage-token-notes {
+    font-size: 11px;
     padding: 0;
   }
 
   .usage-token-notes span {
     padding-inline: 6px;
+  }
+
+  .usage-token-notes b {
+    font-size: 14px;
   }
 
   .usage-token-context {
@@ -8524,11 +8516,20 @@ textarea:focus-visible {
   }
 
   .usage-token-context-group h3 {
+    font-size: 11px;
     gap: 4px;
   }
 
   .usage-token-context-metrics {
     column-gap: 6px;
+  }
+
+  .usage-token-context-metrics dd {
+    font-size: 16px;
+  }
+
+  .usage-token-results .usage-token-context-metrics dt {
+    font-size: 10px;
   }
 
   .usage-token-results .usage-token-context-metrics {

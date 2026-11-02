@@ -22,11 +22,6 @@
 .live-routing-panel footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--text-tertiary); font-size: 11px; padding-top: 10px; }
 .live-routing-warning { font-size: 12px; color: var(--warning-color); overflow-wrap: anywhere; }
 .live-routing-empty { min-height: 170px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-tertiary); font-size: 13px; }
-.usage-records-page .live-routing-panel { flex-shrink: 0; }
-.usage-records-page .live-routing-panel:has(.live-routing-empty) { padding: 10px 16px; }
-.usage-records-page .live-routing-empty { min-height: 44px; flex-direction: row; gap: 10px; color: var(--color-text-secondary); font-size: 13px; }
-.usage-records-page .live-routing-empty > svg { width: 18px; height: 18px; flex-shrink: 0; }
-.usage-records-page .live-routing-empty > p { margin: 0; }
 .live-routing-panel.paused .live-routing-count { color: var(--text-secondary); background: var(--bg-tertiary); }
 @keyframes routing-node-enter { from { opacity: 0; } to { opacity: 1; } }
 @media (max-width: 640px) { .live-routing-panel { padding: 14px; } }
