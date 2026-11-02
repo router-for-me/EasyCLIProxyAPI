@@ -254,7 +254,8 @@ describe('Stage 2 acceptance fixes regression', () => {
     expect(resolveToken(compLight['--usage-th-color'], allTokensLight)).toBe('#3e4c5a');
     expect(resolveToken(compDark['--usage-th-color'], allTokensDark)).toBe('#d5deea');
     expect(resolveToken(compLight['--status-dot-success-bg'], allTokensLight)).toBe('#10b981');
-    expect(resolveToken(compLight['--config-dialog-shadow'], allTokensLight)).toBe('0 18px 48px rgba(45, 42, 38, 0.24)');
+    expect(compLight['--config-dialog-shadow']).toBe('var(--shadow-dialog)');
+    expect(resolveToken(compLight['--config-dialog-shadow'], allTokensLight)).toBe('0 24px 64px -12px rgba(0, 0, 0, 0.24), 0 8px 24px -8px rgba(0, 0, 0, 0.12)');
     expect(resolveToken(compLight['--state-pill-success-bg'], allTokensLight)).toBe('#f0fdf4');
     expect(resolveToken(compLight['--state-pill-success-text'], allTokensLight)).toBe('#15803d');
     expect(resolveToken(compLight['--agent-claude-toggle-checked-text'], allTokensLight)).toBe('#554075');

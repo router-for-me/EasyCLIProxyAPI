@@ -74,11 +74,12 @@ import { UsageAnalysisView, type UsageAnalysis, type UsageCategory } from './Usa
 import { Select } from '../components/Select';
 import { AgentUsageView } from './AgentUsageView';
 
-type UsageTab = 'overview' | 'analysis' | 'events' | 'pricing' | 'agent-usage' | 'data-management';
+type UsageTab = 'overview' | 'live-routing' | 'analysis' | 'events' | 'pricing' | 'agent-usage' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
 
 const USAGE_TABS = [
   { value: 'overview', labelKey: 'usage.tab.overview' },
+  { value: 'live-routing', labelKey: 'routing.live' },
   { value: 'analysis', labelKey: 'usage.tab.analysis' },
   { value: 'events', labelKey: 'usage.tab.events' },
   { value: 'pricing', labelKey: 'usage.tab.pricing' },
@@ -113,7 +114,7 @@ const emptyAnalysis: UsageAnalysis = { models: [], providers: [], sources: [], a
 const loadTab = (): UsageTab => {
   try {
     const saved = usagePreferences.getItem(TAB_KEY);
-    return saved === 'analysis' || saved === 'events' || saved === 'pricing' || saved === 'agent-usage' || saved === 'data-management'
+    return saved === 'live-routing' || saved === 'analysis' || saved === 'events' || saved === 'pricing' || saved === 'agent-usage' || saved === 'data-management'
       ? saved
       : 'overview';
   } catch {
@@ -270,7 +271,7 @@ export function UsageRecordsPage() {
       const requestId = ++requestIdRef.current;
       const { timeQuery, query } = buildQueries();
       if (!quiet) setLoading(true);
-      if (activeTab === 'agent-usage') {
+      if (activeTab === 'agent-usage' || activeTab === 'live-routing') {
         setLoading(false);
         return;
       }
@@ -536,13 +537,13 @@ export function UsageRecordsPage() {
         role="tabpanel"
         aria-labelledby={`usage-tab-${activeTab}`}
       >
-      {activeTab !== 'data-management' && activeTab !== 'agent-usage' ? filterPanel : null}
+      {activeTab !== 'data-management' && activeTab !== 'agent-usage' && activeTab !== 'live-routing' ? filterPanel : null}
 
       {showInitialLoading && activeTab !== 'events' ? (
         <EmptyState className="usage-initial-loading" icon={<Database size={22} />}>{t('usage.loading')}</EmptyState>
       ) : null}
 
-      {activeTab === 'overview' && <RoutingPanel />}
+      {activeTab === 'live-routing' ? <RoutingPanel /> : null}
       {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
       {activeTab === 'analysis' && (analysis || overview) ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
       {activeTab === 'events' ? (

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 export function usePresence<Item extends { id: string }>(items: Item[]) {
-  const [rows, setRows] = useState<{ item: Item; exiting: boolean }[]>([]);
+  const [rows, setRows] = useState<{ item: Item; exiting: boolean }[]>(() => items.map(item => ({ item, exiting: false })));
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   useEffect(() => {
     const wanted = new Set(items.map(item => item.id));

@@ -1,4 +1,12 @@
 export const routingEn = {
+  'routing.activeFlows': 'Active flows', 'routing.flowDetail': 'Model → upstream routes',
+  'routing.windowRequests': 'Requests · 60s', 'routing.windowAverage': '60s average',
+  'routing.avgLatency': 'Avg request latency', 'routing.credentialHealth': 'Ready / cooling credentials', 'routing.healthDetail': 'Configured upstream status',
+  'routing.monitoring': 'Listening for gateway traffic', 'routing.standbyHint': 'Live monitor · standing by after 60 seconds without activity',
+  'routing.windowBadge': '60s window', 'routing.ready': 'Ready', 'routing.notReady': 'Unavailable',
+  'routing.inventoryUnknown': 'Credential status unavailable. Waiting for the gateway connection.',
+  'routing.noTargets': 'No upstream credentials found. Configure credentials to start routing.', 'routing.inventoryCount': '{count} configured credentials · showing up to 6',
+  'routing.gatewayHub': 'CPA routing hub', 'routing.distribution': 'Window request share',
   'routing.policyTitle': 'Gateway policy',
   'routing.policyDescription': 'Global routing and retry rules for every tier.',
   'routing.roundRobinDesc': 'Available credentials take turns sharing requests within each tier.',
@@ -99,6 +107,14 @@ export const routingEn = {
 } as const;
 type RoutingMessages = Record<keyof typeof routingEn, string>;
 export const routingZhCN: RoutingMessages = {
+  'routing.activeFlows': '活跃路由流向', 'routing.flowDetail': '模型 → 上游凭据',
+  'routing.windowRequests': '窗口请求总量', 'routing.windowAverage': '60 秒均值',
+  'routing.avgLatency': '平均请求延迟', 'routing.credentialHealth': '正常 / 冷却凭据', 'routing.healthDetail': '已配置上游状态',
+  'routing.monitoring': '监听网关流量中', 'routing.standbyHint': '实时监控 · 60秒无活动将保持待命',
+  'routing.windowBadge': '60 秒窗口', 'routing.ready': '就绪', 'routing.notReady': '不可用',
+  'routing.inventoryUnknown': '凭据状态暂不可用，等待网关连接。',
+  'routing.noTargets': '暂无上游凭据，配置凭据后即可开始路由。', 'routing.inventoryCount': '已配置 {count} 个凭据 · 最多展示 6 个',
+  'routing.gatewayHub': 'CPA 网关调度中心', 'routing.distribution': '窗口请求占比',
   'routing.policyTitle': '网关策略',
   'routing.policyDescription': '作用于所有调度层级的全局路由与重试规则。',
   'routing.roundRobinDesc': '同层可用凭据轮流分担请求。',
@@ -163,6 +179,14 @@ export const routingZhCN: RoutingMessages = {
   'routing.failures': '{count} 次失败', 'routing.updated': '更新于 {time}',
 };
 export const routingZhTW: RoutingMessages = {
+  'routing.activeFlows': '活躍路由流向', 'routing.flowDetail': '模型 → 上游憑據',
+  'routing.windowRequests': '視窗請求總量', 'routing.windowAverage': '60 秒均值',
+  'routing.avgLatency': '平均請求延遲', 'routing.credentialHealth': '正常 / 冷卻憑據', 'routing.healthDetail': '已設定上游狀態',
+  'routing.monitoring': '監聽閘道流量中', 'routing.standbyHint': '即時監控 · 60秒無活動將保持待命',
+  'routing.windowBadge': '60 秒視窗', 'routing.ready': '就緒', 'routing.notReady': '無法使用',
+  'routing.inventoryUnknown': '憑據狀態暫不可用，等待閘道連線。',
+  'routing.noTargets': '暫無上游憑據，設定憑據後即可開始路由。', 'routing.inventoryCount': '已設定 {count} 個憑據 · 最多顯示 6 個',
+  'routing.gatewayHub': 'CPA 閘道調度中心', 'routing.distribution': '視窗請求佔比',
   'routing.policyTitle': '閘道策略',
   'routing.policyDescription': '作用於所有調度層級的全域路由與重試規則。',
   'routing.roundRobinDesc': '同層可用憑證輪流分擔請求。',
@@ -227,6 +251,14 @@ export const routingZhTW: RoutingMessages = {
   'routing.failures': '{count} 次失敗', 'routing.updated': '更新於 {time}',
 };
 export const routingJa: RoutingMessages = {
+  'routing.activeFlows': 'アクティブな経路', 'routing.flowDetail': 'モデル → 上流認証情報',
+  'routing.windowRequests': '60秒間のリクエスト', 'routing.windowAverage': '60秒平均',
+  'routing.avgLatency': '平均リクエスト遅延', 'routing.credentialHealth': '準備完了 / クールダウン', 'routing.healthDetail': '設定済み上流の状態',
+  'routing.monitoring': 'ゲートウェイの通信を監視中', 'routing.standbyHint': 'リアルタイム監視 · 60秒間通信がない場合は待機',
+  'routing.windowBadge': '60秒ウィンドウ', 'routing.ready': '準備完了', 'routing.notReady': '利用不可',
+  'routing.inventoryUnknown': '認証情報の状態を取得できません。接続を待機中。',
+  'routing.noTargets': '上流認証情報がありません。認証情報を設定してください。', 'routing.inventoryCount': '認証情報 {count} 件 · 最大6件表示',
+  'routing.gatewayHub': 'CPA ルーティングハブ', 'routing.distribution': 'リクエストの割合',
   'routing.policyTitle': 'ゲートウェイポリシー',
   'routing.policyDescription': 'すべての階層に適用するルーティングと再試行のルール。',
   'routing.roundRobinDesc': '同じ階層の利用可能な認証情報で順番にリクエストを分担します。',
