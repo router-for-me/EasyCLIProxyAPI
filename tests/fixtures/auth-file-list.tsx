@@ -39,6 +39,14 @@ const files: Record<string, unknown>[] = Array.from({ length: displayCases ? 6 :
     retry_at: new Date(startedAt + 180000).toISOString(), remaining_seconds: 180, http_status: 429, backoff_level: 0 }] : [],
 }));
 
+if (params.has('duplicateNames')) files[0].name = files[1].name;
+if (params.has('invalidTags')) files.push(
+  { auth_index: 'nameless', provider: 'codex' },
+  { name: 42, auth_index: 'nonstring', provider: 'codex', tags: { invalid: true } },
+  { auth_index: 'nameless-tagged', provider: 'codex', tags: ['shared', 'noneditable'] },
+  { name: 'runtime.json', auth_index: 'runtime', provider: 'codex', runtime_only: true, tags: ['shared', 'noneditable'] },
+);
+
 updateQuotaCache(Object.fromEntries(files.map((file, index) => {
   if (smallList || (displayCases && index < 5)) return [quotaKey(file), { status: 'idle', rows: [] } satisfies QuotaState];
   const quota: QuotaState = {
@@ -79,7 +87,7 @@ mockIPC(async (cmd, args) => {
   state.requests.push(structuredClone(request));
   if (request.path === '/credentials' && request.method === 'GET') {
     state.reads += 1;
-    return { observed_at: new Date().toISOString(), files: structuredClone(state.files).map(({ tags, ...file }) => file) };
+    return { observed_at: new Date().toISOString(), files: structuredClone(state.files).map(({ tags, ...file }) => params.has('invalidTags') ? { ...file, tags } : file) };
   }
   if (request.path === '/credentials/download' && request.method === 'GET') {
     return structuredClone(state.files.find(file => file.name === request.query?.name) ?? {});

@@ -132,6 +132,50 @@ const path = require('node:path');
     };
     const special = '<team> & "日本語"';
     const long = 'long-label-'.repeat(24);
+    await page.evaluate(key => localStorage.removeItem(key), storageKey);
+    await page.goto(`${url}&duplicateNames`);
+    await page.locator('.auth-files-filters select').nth(1).selectOption('Devin');
+    assert.equal(await page.locator('.auth-file-card').count(), 1);
+    await page.getByRole('button', { name: 'Batch management', exact: true }).click();
+    assert.equal(await batch.locator('.auth-batch-row').count(), 1);
+    assert.equal(await batch.locator('.auth-batch-item-name').textContent(), '02-account.json');
+    assert.doesNotMatch(await batch.textContent(), /long-fictional-account/);
+    await batch.locator('.auth-batch-selection-group input').check();
+    assert.equal(await batch.locator('.auth-batch-row input:checked').count(), 1);
+    await batch.locator('.auth-batch-tag-input').fill('stable-scope');
+    await batch.getByRole('button', { name: '+ Batch add', exact: true }).click();
+    await batch.locator('.notice-success').waitFor();
+    assert.equal(await batch.locator('.auth-batch-row').count(), 1);
+    assert.equal(await batch.locator('.auth-batch-row input:checked').count(), 1);
+    await batch.getByRole('button', { name: 'Refresh credentials', exact: true }).click();
+    await batch.getByText('1 succeeded, 0 failed', { exact: false }).waitFor();
+    assert.deepEqual(await page.evaluate(() => window.authFileListFixture.requests
+      .filter(request => request.path === '/credentials/refresh').map(request => request.body)),
+    [{ name: '02-account.json', auth_index: 'fixture-account-2' }]);
+    await screenshot('duplicate_name_batch');
+
+    await page.evaluate(key => localStorage.setItem(key, JSON.stringify({ '01-account.json': ['shared'] })), storageKey);
+    await page.goto(`${url}&invalidTags`);
+    await openManager();
+    assert.match(await manager.getByRole('button', { name: /Untagged/ }).textContent(), /\(4\)/);
+    assert.equal(await row('noneditable').getByRole('button', { name: 'Rename', exact: true }).isDisabled(), true);
+    assert.equal(await row('noneditable').getByRole('button', { name: 'Remove from all credentials', exact: true }).isDisabled(), true);
+    await row('shared').getByRole('button', { name: 'Rename', exact: true }).click();
+    await manager.getByRole('textbox', { name: 'New tag name', exact: true }).fill('renamed-safe');
+    await manager.getByRole('button', { name: 'Save', exact: true }).click();
+    await confirmation.waitFor();
+    assert.match(await confirmation.textContent(), /1 credentials/);
+    await confirmation.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await manager.getByText('1 succeeded, 0 failed', { exact: false }).waitFor();
+    assert.equal(await row('shared').getByRole('button', { name: 'Remove from all credentials', exact: true }).isDisabled(), true);
+    await row('renamed-safe').getByRole('button', { name: 'Remove from all credentials', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Confirm', exact: true }).click();
+    await page.waitForFunction(() => window.authFileListFixture.requests.filter(request => request.path === '/credentials/fields').length === 2);
+    assert.deepEqual(await page.evaluate(() => window.authFileListFixture.requests
+      .filter(request => request.path === '/credentials/fields').map(request => request.body.name)), ['01-account.json', '01-account.json']);
+    assert.deepEqual(errors, []);
+    await screenshot('nameless_tag_manager');
+
     await seed({ '01-account.json': ['alpha', 'keep', special, long], '02-account.json': ['alpha', 'beta'], '03-account.json': [] });
     await filter().selectOption('alpha');
     await openManager();

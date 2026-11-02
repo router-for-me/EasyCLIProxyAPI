@@ -525,7 +525,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
         <button type="button" className="secondary-button small-button" onClick={() => fileInputRef.current?.click()} disabled={busy}>
           <Import size={16} />{t('authFiles.import')}
         </button>
-        <button type="button" className="secondary-button small-button ghost" disabled={busy || loading} onClick={() => { setBatchScope(new Set(visibleFiles.map(file => readString(file, 'name')))); setBatchOpen(true); }}>{t('authFiles.operations.title')}</button>
+        <button type="button" className="secondary-button small-button ghost" disabled={busy || loading} onClick={() => { setBatchScope(new Set(visibleFiles.map(quotaKey))); setBatchOpen(true); }}>{t('authFiles.operations.title')}</button>
         <button type="button" className="secondary-button small-button" disabled={busy || loading} onClick={() => setTagManagerOpen(true)}>{t('authFiles.tags.manage')}</button>
         <input ref={fileInputRef} type="file" accept=".json,application/json" multiple hidden onChange={(event) => void handleUpload(event)} />
         </div>
@@ -704,7 +704,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
       </section>
       {runtimeCount > 0 ? <p className="page-footnote">{t('authFiles.runtimeFootnote', { count: runtimeCount })}</p> : null}
 
-      {batchOpen ? <AuthFileBatchDialog files={files.filter(file => batchScope.has(readString(file, 'name')))} onClose={() => setBatchOpen(false)} onChanged={() => loadFiles(false)} /> : null}
+      {batchOpen ? <AuthFileBatchDialog files={files.filter(file => batchScope.has(quotaKey(file)))} onClose={() => setBatchOpen(false)} onChanged={() => loadFiles(false)} /> : null}
       {tagManagerOpen ? <CredentialTagManager files={files} onClose={() => setTagManagerOpen(false)} onChanged={() => loadFiles(false)} onFilter={tag => {
         setTagFilter(tag ?? ''); setUntaggedOnly(tag === null); setTagManagerOpen(false);
       }} /> : null}

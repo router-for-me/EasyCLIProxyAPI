@@ -4,7 +4,7 @@ import { Notice } from './Notice';
 import { useConfirmation } from './ConfirmationDialog';
 import { useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
-import { authFileIdentities, countAuthFileTags, type AuthFileRecord } from '../services/authFiles';
+import { authFileIdentities, countAuthFileTags, isRuntimeOnlyAuthFile, normalizeAuthFileTags, type AuthFileRecord } from '../services/authFiles';
 import { batchRemoveCredentialTag, renameCredentialTag, type CredentialResult } from '../services/authFileOperations';
 import { mergeCredentialTags } from '../services/credentialTags';
 
@@ -28,10 +28,12 @@ export function CredentialTagManager({ files, onClose, onChanged, onFilter }: {
   const [error, setError] = useState('');
   const resolved = useMemo(() => mergeCredentialTags(files), [files, revision]);
   const counts = countAuthFileTags(resolved);
+  const editable = resolved.filter(file => typeof file.name === 'string' && file.name.trim() && !isRuntimeOnlyAuthFile(file));
+  const editableCounts = countAuthFileTags(editable);
   const identities = files.flatMap(authFileIdentities);
   const tags = [...counts.keys()].sort((left, right) => left.localeCompare(right))
     .filter(tag => tag.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  const untagged = resolved.filter(file => !(file.tags as string[]).length).length;
+  const untagged = resolved.filter(file => !normalizeAuthFileTags(file.tags).length).length;
   const target = replacement.trim();
   const valid = Boolean(target && target !== editing && !/[,，\r\n]/.test(target));
   const finishEditing = () => {
@@ -41,8 +43,9 @@ export function CredentialTagManager({ files, onClose, onChanged, onFilter }: {
 
   const apply = async (source: string, rename: boolean) => {
     if (pending.current || (rename && !valid)) return;
+    const count = editableCounts.get(source) ?? 0;
+    if (!count) return;
     pending.current = true;
-    const count = counts.get(source) ?? 0;
     try {
       const confirmed = await askConfirmation({
         title: t(rename ? 'authFiles.tags.rename' : 'authFiles.tags.removeEverywhere'),
@@ -56,7 +59,7 @@ export function CredentialTagManager({ files, onClose, onChanged, onFilter }: {
       setBusy(true);
       setError('');
       setResults([]);
-      const next = rename ? await renameCredentialTag(resolved, source, target) : await batchRemoveCredentialTag(resolved, source);
+      const next = rename ? await renameCredentialTag(editable, source, target) : await batchRemoveCredentialTag(editable, source);
       setResults(next);
       setRevision(value => value + 1);
       if (next.every(result => result.success)) finishEditing();
@@ -93,9 +96,9 @@ export function CredentialTagManager({ files, onClose, onChanged, onFilter }: {
             <small>{t(counts.has(target) && target !== tag ? 'authFiles.tags.mergeHint' : 'authFiles.tags.renameHint')}</small>
             <button type="submit" className="primary-button small-button" disabled={busy || !valid}>{t('common.save')}</button>
             <button type="button" className="secondary-button small-button" disabled={busy} onClick={finishEditing}>{t('common.cancel')}</button>
-          </form> : <button type="button" className="secondary-button small-button" disabled={busy}
+          </form> : <button type="button" className="secondary-button small-button" disabled={busy || !editableCounts.has(tag)}
             onClick={() => { setEditing(tag); setReplacement(tag); }}>{t('authFiles.tags.rename')}</button>}
-          <button type="button" className="danger-button small-button" disabled={busy} onClick={() => void apply(tag, false)}>{t('authFiles.tags.removeEverywhere')}</button>
+          <button type="button" className="danger-button small-button" disabled={busy || !editableCounts.has(tag)} onClick={() => void apply(tag, false)}>{t('authFiles.tags.removeEverywhere')}</button>
           </div>
         </div>)}
       </div>
