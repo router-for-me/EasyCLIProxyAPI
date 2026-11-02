@@ -95,11 +95,31 @@ createRoot(document.getElementById('root')).render(element(I18nProvider, null,
     assert.equal(await page.evaluate(() => window.syncCount), 2);
     for (const theme of ['light', 'dark']) {
       await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      if (process.env.USAGE_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.USAGE_SCREENSHOTS, `usage-${theme}-1280.png`), fullPage: true, animations: 'disabled' });
+      const desktopLayout = await page.evaluate(() => {
+        const sources = [...document.querySelectorAll('.agent-usage-source-row')].map(node => node.getBoundingClientRect());
+        const stats = [...document.querySelectorAll('.agent-usage-stat')].map(node => node.getBoundingClientRect());
+        const daily = document.querySelector('.agent-usage-daily').getBoundingClientRect();
+        const pricing = document.querySelector('.agent-usage-pricing').getBoundingClientRect();
+        return {
+          uniformSources: sources.every(source => Math.abs(source.width - sources[0].width) < 1 && Math.abs(source.height - sources[0].height) < 1),
+          singleStatRow: stats.every(stat => stat.top === stats[0].top),
+          sideBySide: daily.top === pricing.top && daily.right <= pricing.left,
+          fitsViewport: document.querySelector('.agent-usage-view').getBoundingClientRect().bottom <= innerHeight,
+        };
+      });
+      assert.deepEqual(desktopLayout, { uniformSources: true, singleStatRow: true, sideBySide: true, fitsViewport: true }, `${theme} desktop layout`);
       for (const width of [1440, 768, 390]) {
         await page.setViewportSize({ width, height: 1100 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme} at ${width}px overflows`);
         assert.equal(await page.locator('.agent-usage-stat-grid').evaluate(node => getComputedStyle(node).gap === '1px'), false);
-        if (process.env.USAGE_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.USAGE_SCREENSHOTS, `usage-${theme}-${width}.png`), fullPage: true });
+        if (width <= 768) {
+          const daily = await page.locator('.agent-usage-daily').boundingBox();
+          const pricing = await page.locator('.agent-usage-pricing').boundingBox();
+          assert.ok(pricing.y >= daily.y + daily.height, `${theme} tables stack at ${width}px`);
+        }
+        if (process.env.USAGE_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.USAGE_SCREENSHOTS, `usage-${theme}-${width}.png`), fullPage: true, animations: 'disabled' });
       }
     }
     await page.emulateMedia({ reducedMotion: 'reduce' });
