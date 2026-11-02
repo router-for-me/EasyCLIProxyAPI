@@ -40,6 +40,11 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$temporary/home" "$temporary/tmp" "$temporary/xdg" "$temporary/cpa-core"
+mkdir -p "$temporary/xdg/autostart"
+for desktop in /etc/xdg/autostart/*.desktop; do
+  [[ -f "$desktop" ]] || continue
+  printf '[Desktop Entry]\nType=Application\nHidden=true\n' > "$temporary/xdg/autostart/${desktop##*/}"
+done
 cp "$gui" "$temporary/EasyCLIProxyAPI"
 cp "$core" "$temporary/cpa-core/cli-proxy-api"
 cp ../../core-version.txt "$temporary/core-version.txt"
