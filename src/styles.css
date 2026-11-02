@@ -514,42 +514,43 @@ textarea:focus-visible {
   color: var(--color-danger-text);
 }
 
-.version-source-control label {
-  display: grid;
-}
-
 .version-source-control {
-  display: grid;
-  grid-template-columns: minmax(0, 220px) auto;
+  display: flex;
+  align-items: center;
   width: max-content;
   max-width: 100%;
   gap: 8px;
 }
 
-.version-source-control select {
-  width: 220px;
-  max-width: 100%;
+.version-source-select {
+  min-width: 200px;
+}
+
+.version-source-select .select-menu-trigger {
+  width: 100%;
+  min-width: 200px;
   height: 42px;
-  padding: 0 36px 0 12px;
+  min-height: 42px;
+  padding: 0 12px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text-primary);
-  cursor: pointer;
   font-size: var(--font-size-body);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: border-color 150ms ease, background-color 150ms ease;
 }
 
-.version-source-control select:hover:not(:disabled) {
-  border-color: var(--color-border-hover);
-}
-
-.version-source-control select:disabled {
-  cursor: not-allowed;
-  opacity: 0.58;
+.version-source-select .select-menu-trigger:hover:not(:disabled),
+.version-source-select.open .select-menu-trigger {
+  border-color: var(--ui-accent-strong);
 }
 
 .version-source-add-button {
   gap: 6px;
+  white-space: nowrap;
 }
 
 .version-source-add-button:disabled {
@@ -565,24 +566,26 @@ textarea:focus-visible {
 }
 
 .version-list-item {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  min-height: 240px;
-  align-items: stretch;
-  gap: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 280px;
   padding: 24px;
 }
 
 .version-item-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   min-width: 0;
 }
 
 .version-card-top {
   display: flex;
   min-width: 0;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 14px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
 }
 
 .version-card-top h2 {
@@ -630,14 +633,15 @@ textarea:focus-visible {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   min-width: 0;
   gap: 12px;
-  margin: 20px 0 0;
+  margin: 18px 0 0;
 }
 
 .version-metric-tile {
   display: grid;
   min-width: 0;
   gap: 5px;
-  padding: 15px 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
 }
 
 .version-metric-label {
@@ -663,133 +667,168 @@ textarea:focus-visible {
   color: var(--color-warning-text);
 }
 
+.app-version-info-section,
+.core-version-picker {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+}
+
+.app-version-info-section {
+  gap: 8px;
+}
+
 .version-alert-banner {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 6px;
-  margin-top: 12px;
-  color: var(--color-text-muted);
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
   font-size: var(--font-size-meta);
   line-height: var(--line-height-body);
 }
 
 .version-alert-banner > svg {
   flex: none;
+  color: var(--color-text-muted);
 }
 
 .version-alert-banner.info {
   color: var(--color-text-secondary);
+  border-color: var(--color-border-subtle);
 }
 
 .version-alert-banner.neutral {
   color: var(--color-text-tertiary);
+  border-color: var(--color-border-subtle);
 }
 
 .version-alert-banner.update {
   color: var(--ui-accent-strong);
+  border-color: var(--ui-accent-strong);
 }
 
 .version-alert-banner.warning {
   color: var(--color-warning-text);
+  border-color: var(--color-warning-text);
 }
 
 .version-alert-banner.error {
   color: var(--color-danger-text);
+  border-color: var(--color-danger-text);
 }
 
 .version-alert-banner.success {
   color: var(--color-success-text);
+  border-color: var(--color-success-text);
 }
 
-.core-version-selector {
-  display: flex;
-  align-items: end;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--color-border-subtle);
-}
-
-.core-version-selector label {
-  display: grid;
-  min-width: 0;
-  flex: 1 1 180px;
+.core-version-picker {
   gap: 8px;
+}
+
+.core-version-picker-label {
   color: var(--color-text-secondary);
   font-size: var(--font-size-meta);
   font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-body);
 }
 
-.core-version-select-control {
-  position: relative;
-  display: flex;
-  min-width: 0;
+.core-version-picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
   align-items: center;
 }
 
-.core-version-select-control > svg {
-  position: absolute;
-  right: 12px;
-  color: var(--color-text-muted);
-  pointer-events: none;
+.core-version-select-wrap {
+  min-width: 0;
 }
 
-.core-version-selector select {
-  appearance: none;
+.core-version-select {
   width: 100%;
-  min-width: 0;
-  height: 40px;
-  padding: 0 34px 0 12px;
+}
+
+.core-version-select .select-menu-trigger {
+  width: 100%;
+  height: 42px;
+  min-height: 42px;
+  padding: 0 12px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text-primary);
-  cursor: pointer;
-  text-overflow: ellipsis;
-  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: border-color 150ms ease, background-color 150ms ease;
 }
 
-.core-version-selector select:hover:not(:disabled),
-.core-version-selector select:focus-visible {
+.core-version-select .select-menu-trigger strong {
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
+}
+
+.core-version-select .select-menu-trigger:hover:not(:disabled),
+.core-version-select.open .select-menu-trigger {
   border-color: var(--ui-accent-strong);
 }
 
-.core-version-selector select:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
+.core-version-select-dropdown .select-menu-option span {
+  font-family: var(--font-family-mono, monospace);
 }
 
-.core-version-selector button {
-  display: inline-flex;
-  min-height: 40px;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-}
-
-.core-version-selector button > svg {
-  flex: none;
+.core-version-install-btn {
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .version-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-start;
-  align-self: end;
+  display: grid;
   gap: 10px;
+  margin-top: 20px;
+  align-items: center;
+}
+
+.app-module-card .version-card-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.app-module-card .version-card-actions.has-install-now {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.core-module-card .version-card-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .version-card-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  flex: 1 1 120px;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 12px;
   white-space: nowrap;
+}
+
+.version-card-actions button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-card-actions button svg {
+  flex: none;
 }
 
 .app-release-notes {
@@ -1350,15 +1389,7 @@ textarea:focus-visible {
 
   .version-list-item {
     min-height: 0;
-    gap: 20px;
     padding: 22px;
-  }
-
-  .version-card-actions,
-  .version-card-actions.core-actions {
-    grid-column: 1;
-    grid-row: auto;
-    justify-content: flex-start;
   }
 
   .version-source-row {
@@ -1391,19 +1422,37 @@ textarea:focus-visible {
 
   .version-source-row {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .version-source-control select {
-    width: 100%;
+    gap: 16px;
   }
 
   .version-source-control {
+    display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+  }
+
+  .version-source-select {
+    width: 100%;
+  }
+
+  .version-source-select .select-menu-trigger {
+    min-width: 0;
     width: 100%;
   }
 
   .version-source-add-button {
     grid-column: 1 / -1;
+  }
+
+  .core-version-picker-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .version-card-actions,
+  .app-module-card .version-card-actions,
+  .app-module-card .version-card-actions.has-install-now,
+  .core-module-card .version-card-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
