@@ -239,6 +239,45 @@ func TestFetchUsesHostInterfacesAndCancels(t *testing.T) {
 	}
 }
 
+func TestCacheCapacityRefreshAndInsert(t *testing.T) {
+	for _, id := range []string{"account-0", "new-account"} {
+		t.Run(id, func(t *testing.T) {
+			cfg, _ := parseConfig(nil)
+			worker := newEngine(cfg, nil)
+			t.Cleanup(worker.stop)
+			worker.mu.Lock()
+			for index := 0; index < 1024; index++ {
+				worker.cache[fmt.Sprintf("account-%d", index)] = cacheEntry{}
+			}
+			worker.mu.Unlock()
+			for attempt := 0; attempt < 3; attempt++ {
+				worker.mu.Lock()
+				worker.pending[id] = true
+				worker.queue <- id
+				worker.mu.Unlock()
+				deadline := time.Now().Add(time.Second)
+				for {
+					worker.mu.Lock()
+					pending := worker.pending[id]
+					count := len(worker.cache)
+					_, exists := worker.cache[id]
+					worker.mu.Unlock()
+					if !pending {
+						if count != 1024 || !exists {
+							t.Fatalf("cache size=%d refreshed account present=%v", count, exists)
+						}
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("background refresh did not finish")
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+		})
+	}
+}
+
 func TestBackgroundRefreshAndFailure(t *testing.T) {
 	var calls atomic.Int32
 	var fail atomic.Bool

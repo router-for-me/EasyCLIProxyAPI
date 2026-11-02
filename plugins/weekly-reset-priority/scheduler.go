@@ -124,7 +124,7 @@ func (worker *engine) run() {
 			result := fetchQuota(ctx, worker.call, id, worker.now())
 			cancel()
 			worker.mu.Lock()
-			if len(worker.cache) >= 1024 {
+			if _, exists := worker.cache[id]; !exists && len(worker.cache) >= 1024 {
 				for key := range worker.cache {
 					delete(worker.cache, key)
 					break
