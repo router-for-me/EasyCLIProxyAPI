@@ -1,0 +1,13 @@
+{
+  "id": "weekly-reset-priority",
+  "name": "weekly-reset-priority",
+  "version": "0.1.0",
+  "core_version": "8.0.48",
+  "sdk_module": "github.com/router-for-me/CLIProxyAPI/v8",
+  "sdk_version": "v8.0.48",
+  "abi_version": 1,
+  "capabilities": ["scheduler"],
+  "scheduler_across_priorities": false,
+  "providers": ["codex"],
+  "optional": true
+}
