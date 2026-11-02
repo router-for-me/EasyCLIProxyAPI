@@ -6,7 +6,7 @@
 .config-settings-search input::-webkit-search-cancel-button { display: none; }
 .config-settings-search button { flex: none; }
 .config-settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; min-width: 0; }
-.config-settings-topnav { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.config-settings-topnav { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; flex-wrap: wrap; background: var(--bg-primary); }
 .config-page .config-subpage-tabs button { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; min-width: 0; }
 .config-nav-dirty { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: var(--radius-full); background: var(--primary-color); }
 .config-settings-content { min-width: 0; }
@@ -497,6 +497,10 @@
 @container settings-card (max-width: 620px) {
   .config-page #config-group-management .template-config-field:not(.template-config-toggle),
   .config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (min-width: 721px) {
+  .config-page .config-settings-topnav { flex-wrap: nowrap; align-items: center; }
 }
 
 @media (max-width: 720px) {
