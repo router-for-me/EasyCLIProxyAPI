@@ -1,4 +1,85 @@
 @layer components {
+.config-dialog.credential-tag-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(680px, 100%);
+  height: auto;
+  max-height: calc(100dvh - 32px);
+  min-width: 0;
+  overflow-y: auto;
+}
+.credential-tag-manager > * { flex-shrink: 0; }
+.credential-tag-manager > p { margin: 0; color: var(--text-secondary); }
+.credential-tag-manager input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+}
+.credential-tag-manager input:hover { border-color: var(--border-hover); }
+.credential-tag-manager :is(input, button):focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-color: var(--primary-color);
+}
+.credential-tag-manager .filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.credential-tag-manager .filter-chip:hover:not(:disabled) {
+  border-color: var(--primary-color);
+  background: var(--bg-hover);
+  color: var(--primary-color);
+}
+.credential-tag-manager .credential-tag-count {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.credential-tag-manager > .filter-chip { align-self: flex-start; }
+.credential-tag-manager-list { display: grid; gap: 8px; min-width: 0; }
+.credential-tag-manager-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.credential-tag-manager-label { justify-self: start; min-width: 0; text-align: start; }
+.credential-tag-manager-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.credential-tag-manager-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; }
+.config-dialog.credential-tag-manager .credential-tag-manager-actions > button { flex: 0 0 auto; width: auto; padding: 6px 8px; font-size: var(--font-size-caption); }
+.credential-tag-manager-row:has(.credential-tag-rename) { grid-template-columns: minmax(0, 1fr); }
+.credential-tag-manager-row:has(.credential-tag-rename) .credential-tag-manager-actions { justify-content: flex-start; }
+.credential-tag-rename { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.credential-tag-rename input { flex: 1 1 160px; min-width: 0; }
+.credential-tag-rename small { flex-basis: 100%; color: var(--text-secondary); }
+@media (max-width: 540px) {
+  .credential-tag-manager-row { grid-template-columns: minmax(0, 1fr); }
+  .credential-tag-manager-actions { justify-content: flex-start; }
+}
 .auth-files-page {
   --auth-muted: var(--auth-file-muted);
   --auth-text: var(--auth-file-text);

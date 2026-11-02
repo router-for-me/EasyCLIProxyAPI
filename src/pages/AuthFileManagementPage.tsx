@@ -1,4 +1,5 @@
 import { AuthFileBatchDialog } from '../components/AuthFileBatchDialog';
+import { CredentialTagManager } from '../components/CredentialTagManager';
 import { refreshCredential } from '../services/authFileOperations';
 import { mergeCredentialTags } from '../services/credentialTags';
 import { EmptyState } from '../components/EmptyState';
@@ -142,6 +143,8 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
   const { files, receivedAtMs, observedAt } = fileSnapshot;
   const [filter, setFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
+  const [untaggedOnly, setUntaggedOnly] = useState(false);
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -153,6 +156,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
+  const [batchScope, setBatchScope] = useState<Set<string>>(new Set());
   const refreshPending = useRef(false);
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [cooldownResetting, setCooldownResetting] = useState<Set<string>>(() => new Set());
@@ -362,6 +366,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
 
   const tags = useMemo(() => [...new Set(files.flatMap(file => normalizeAuthFileTags(file.tags)))].sort((left, right) => left.localeCompare(right)), [files]);
   const tagCounts = useMemo(() => countAuthFileTags(files), [files]);
+  const untaggedFilterValue = `untagged:${JSON.stringify(tags)}`;
   useEffect(() => {
     if (tagFilter && !tagCounts.has(tagFilter)) setTagFilter('');
   }, [tagFilter, tagCounts]);
@@ -384,14 +389,14 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
           .join(' ')
           .toLowerCase()
           .includes(query);
-      return providerMatch && runtimeMatch && searchMatch && (!tagFilter || normalizeAuthFileTags(file.tags).includes(tagFilter));
+      return providerMatch && runtimeMatch && searchMatch && (untaggedOnly ? !normalizeAuthFileTags(file.tags).length : !tagFilter || normalizeAuthFileTags(file.tags).includes(tagFilter));
     });
-  }, [files, filter, providerFilter, statusFilter, tagFilter]);
+  }, [files, filter, providerFilter, statusFilter, tagFilter, untaggedOnly]);
 
   const pageCount = Math.max(1, Math.ceil(visibleFiles.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageFiles = visibleFiles.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  useEffect(() => setPage(1), [filter, providerFilter, statusFilter, tagFilter, pageSize]);
+  useEffect(() => setPage(1), [filter, providerFilter, statusFilter, tagFilter, untaggedOnly, pageSize]);
   useEffect(() => setPage((current) => Math.min(current, pageCount)), [pageCount]);
 
   const toggleDetails = (key: string) => setExpandedFiles((current) => {
@@ -520,7 +525,8 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
         <button type="button" className="secondary-button small-button" onClick={() => fileInputRef.current?.click()} disabled={busy}>
           <Import size={16} />{t('authFiles.import')}
         </button>
-        <button type="button" className="secondary-button small-button ghost" disabled={busy || loading} onClick={() => setBatchOpen(true)}>{t('authFiles.operations.title')}</button>
+        <button type="button" className="secondary-button small-button ghost" disabled={busy || loading} onClick={() => { setBatchScope(new Set(visibleFiles.map(file => readString(file, 'name')))); setBatchOpen(true); }}>{t('authFiles.operations.title')}</button>
+        <button type="button" className="secondary-button small-button" disabled={busy || loading} onClick={() => setTagManagerOpen(true)}>{t('authFiles.tags.manage')}</button>
         <input ref={fileInputRef} type="file" accept=".json,application/json" multiple hidden onChange={(event) => void handleUpload(event)} />
         </div>
       </header>
@@ -534,19 +540,20 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
           <input value={filter} onChange={(event) => setFilter(event.currentTarget.value)} placeholder={t('authFiles.searchPlaceholder')} aria-label={t('authFiles.searchPlaceholder')} />
           </div>
           <div className="auth-files-filters">
-          <Select value={tagFilter} onChange={(event) => setTagFilter(event.currentTarget.value)} aria-label={t('authFiles.tags.label')}>
+          <Select value={untaggedOnly ? untaggedFilterValue : tagFilter} onChange={(event) => { setUntaggedOnly(event.currentTarget.selectedIndex === 1); setTagFilter(event.currentTarget.selectedIndex === 1 ? '' : event.currentTarget.value); }} aria-label={t('authFiles.tags.label')}>
             <option value="">{t('authFiles.tags.all')}</option>
+            <option value={untaggedFilterValue}>{t('authFiles.tags.untagged')} ({files.filter(file => !normalizeAuthFileTags(file.tags).length).length})</option>
             {tags.map(tag => <option key={tag} value={tag}>{privacy.text(tag, tagIdentities)} ({tagCounts.get(tag) ?? 0})</option>)}
           </Select>
-          {tagFilter ? (
+          {tagFilter || untaggedOnly ? (
             <button
               type="button"
               className="filter-chip auth-active-tag-badge"
-              onClick={() => setTagFilter("")}
+              onClick={() => { setTagFilter(''); setUntaggedOnly(false); }}
               title={t("authFiles.tags.filterClear")}
               aria-label={t("authFiles.tags.filterClear")}
             >
-              <span>{privacy.text(tagFilter, tagIdentities)}</span>
+              <span>{untaggedOnly ? t('authFiles.tags.untagged') : privacy.text(tagFilter, tagIdentities)}</span>
               <X size={12} aria-hidden="true" />
             </button>
           ) : null}
@@ -620,6 +627,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                               className={`filter-chip auth-tag-chip ${tagFilter === tag ? "active" : ""}`}
                               onClick={(e) => {
                                 e.stopPropagation();
+                                setUntaggedOnly(false);
                                 setTagFilter((current) => (current === tag ? "" : tag));
                               }}
                               title={t(tagFilter === tag ? "authFiles.tags.filterClear" : "authFiles.tags.filterBy", {
@@ -696,9 +704,12 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
       </section>
       {runtimeCount > 0 ? <p className="page-footnote">{t('authFiles.runtimeFootnote', { count: runtimeCount })}</p> : null}
 
-      {batchOpen ? <AuthFileBatchDialog files={visibleFiles} onClose={() => setBatchOpen(false)} onChanged={() => loadFiles(false)} /> : null}
+      {batchOpen ? <AuthFileBatchDialog files={files.filter(file => batchScope.has(readString(file, 'name')))} onClose={() => setBatchOpen(false)} onChanged={() => loadFiles(false)} /> : null}
+      {tagManagerOpen ? <CredentialTagManager files={files} onClose={() => setTagManagerOpen(false)} onChanged={() => loadFiles(false)} onFilter={tag => {
+        setTagFilter(tag ?? ''); setUntaggedOnly(tag === null); setTagManagerOpen(false);
+      }} /> : null}
       {settingsName ? <AuthFileSettingsDialog key={settingsName} name={settingsName} displayName={shownNameFor(settingsName)} provider={providerKey(files.find((file) => fileName(file) === settingsName) ?? {})}
-          existingTags={tags} onClose={() => { setSettingsName(null); void loadFiles(false); }} onSaved={() => {
+          existingTags={tags} existingTagCounts={tagCounts} onClose={() => { setSettingsName(null); void loadFiles(false); }} onSaved={() => {
         showNotice({ key: 'authFiles.settings.updated', variables: { name: shownNameFor(settingsName) } });
         setSettingsName(null);
         void loadFiles(false);

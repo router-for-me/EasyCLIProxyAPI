@@ -5,6 +5,12 @@ export const normalizeAuthFileTags = (value: unknown): string[] =>
     ? [...new Set(value.filter((tag): tag is string => typeof tag === 'string').map(tag => tag.trim()).filter(Boolean))]
     : [];
 
+export const parseCredentialTagInput = (value: string): string[] =>
+  normalizeAuthFileTags(value.split(/[,，\r\n]+/));
+
+export const replaceCredentialTag = (tags: unknown, source: string, target: string): string[] =>
+  normalizeAuthFileTags(normalizeAuthFileTags(tags).map(tag => tag === source ? target : tag));
+
 const readTags = (): Map<string, string[]> => {
   try {
     const payload: unknown = JSON.parse(localStorage.getItem(CREDENTIAL_TAGS_STORAGE_KEY) ?? '{}');

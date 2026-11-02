@@ -184,7 +184,7 @@ export const saveAuthFileSettings = async (
 ) => {
   const patch = buildAuthFileSettingsPatch(original, draft);
   if (!Object.keys(patch).length) return false;
-  if ('tags' in patch) setCredentialTags(name, patch.tags);
   await api.patch('/credentials/fields', { name, ...patch });
+  if ('tags' in patch) setCredentialTags(name, patch.tags);
   return true;
 };

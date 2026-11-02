@@ -6,6 +6,7 @@ import { useI18n } from '../i18n';
 import { managementApi } from '../services/managementApi';
 import { loadAuthFileSettings, saveAuthFileSettings, type AuthFileSettingsDraft, type BooleanOverride } from '../services/authFileSettings';
 import { normalizeAuthFileTags } from '../services/authFiles';
+import { parseCredentialTagInput } from '../services/credentialTags';
 import { modelMatchesRule, normalizeOAuthExcludedRules, oauthModelCandidates, oauthModelsFromPayload, setOAuthModelsExcluded, type OAuthModelDefinition } from '../services/oauthModels';
 import './AuthFileSettingsDialog.css';
 import { Dialog } from './Dialog';
@@ -13,12 +14,13 @@ import { CredentialAdvancedFields, CredentialHeadersEditor, credentialProviderKe
 import { modelSearchText, type ModelOption } from '../services/modelService';
 import { Select } from './Select';
 
-export function AuthFileSettingsDialog({ name, displayName = name, provider = '', existingTags = [], onClose, onSaved }: {
+export function AuthFileSettingsDialog({ name, displayName = name, provider = '', existingTags = [], existingTagCounts, onClose, onSaved }: {
   name: string;
   /** Privacy-masked name for display; `name` stays the request key. */
   displayName?: string;
   provider?: string;
   existingTags?: string[];
+  existingTagCounts?: Map<string, number>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -37,6 +39,7 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [tagInput, setTagInput] = useState('');
+  const [tagSearch, setTagSearch] = useState('');
   const dirty = draft !== null && (Boolean(tagInput.trim()) || Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
 
   useEffect(() => {
@@ -75,7 +78,7 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
     setSaving(true);
     setError('');
     try {
-      const nextDraft = { ...draft, tags: normalizeAuthFileTags([...draft.tags.split(','), ...tagInput.split(',')]).join(', ') };
+      const nextDraft = { ...draft, tags: normalizeAuthFileTags([...parseCredentialTagInput(draft.tags), ...parseCredentialTagInput(tagInput)]).join(', ') };
       const changed = await saveAuthFileSettings(name, original, nextDraft);
       if (changed) onSaved();
       else onClose();
@@ -90,16 +93,12 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   const query = search.trim().toLowerCase();
   const candidates = oauthModelCandidates(models, rules).filter((model) => modelSearchText({ name: model.id, displayName: model.displayName }).includes(query));
   const currentTags = normalizeAuthFileTags((draft?.tags ?? '').split(','));
-  const availablePoolTags = existingTags.filter(t => !currentTags.includes(t));
+  const availablePoolTags = existingTags.filter(tag => !currentTags.includes(tag) && tag.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase()));
 
   const addTag = (tagToAdd: string) => {
-    const normalized = tagToAdd.trim();
-    if (!normalized) return;
-    if (currentTags.includes(normalized)) {
-      setTagInput('');
-      return;
-    }
-    const next = [...currentTags, normalized];
+    const normalized = parseCredentialTagInput(tagToAdd);
+    if (!normalized.length) return;
+    const next = normalizeAuthFileTags([...currentTags, ...normalized]);
     update('tags', next.join(', '));
     setTagInput('');
   };
@@ -110,7 +109,11 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   };
 
   const handleTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter' || event.key === ',') {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) {
+      if (event.key === 'Enter') event.preventDefault();
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ',' || event.key === '，') {
       event.preventDefault();
       if (tagInput.trim()) {
         addTag(tagInput);
@@ -212,16 +215,25 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
                         value={tagInput}
                         onChange={(e) => setTagInput(e.currentTarget.value)}
                         onKeyDown={handleTagKeyDown}
+                        onPaste={event => {
+                          const pasted = event.clipboardData.getData('text');
+                          if (!/[,，\r\n]/.test(pasted)) return;
+                          event.preventDefault();
+                          const input = event.currentTarget;
+                          addTag(tagInput.slice(0, input.selectionStart ?? tagInput.length) + pasted + tagInput.slice(input.selectionEnd ?? tagInput.length));
+                        }}
                         onBlur={() => { if (tagInput.trim()) addTag(tagInput); }}
                         placeholder={currentTags.length ? t('authFiles.tags.addAnother') : t('authFiles.tags.placeholder')}
                         className="credential-tag-input"
                         aria-label={t('authFiles.tags.inputPlaceholder')}
                       />
                     </div>
-                    {availablePoolTags.length > 0 ? (
+                    {existingTags.length > 0 ? (
                       <div className="credential-tag-pool">
                         <span className="credential-tag-pool-label">{t('authFiles.tags.poolLabel')}:</span>
+                        <input type="search" value={tagSearch} onChange={event => setTagSearch(event.currentTarget.value)} aria-label={t('authFiles.tags.search')} placeholder={t('authFiles.tags.search')} />
                         <div className="credential-tag-pool-list">
+                          {!availablePoolTags.length ? <small role="status">{t('authFiles.tags.noMatches')}</small> : null}
                           {availablePoolTags.map(tag => (
                             <button
                               key={tag}
@@ -230,7 +242,7 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
                               onClick={() => addTag(tag)}
                               title={t('authFiles.tags.addFromPool', { tag })}
                             >
-                              + {tag}
+                              + {tag}{existingTagCounts ? ` (${existingTagCounts.get(tag) ?? 0})` : ''}
                             </button>
                           ))}
                         </div>

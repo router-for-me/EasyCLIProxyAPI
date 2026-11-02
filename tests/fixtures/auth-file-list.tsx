@@ -67,7 +67,7 @@ updateQuotaCache(Object.fromEntries(files.map((file, index) => {
   return [quotaKey(file), quota];
 })));
 
-const state = { files, requests: [] as Request[], unhandled: [] as string[], reads: 0 };
+const state = { files, requests: [] as Request[], unhandled: [] as string[], reads: 0, failTagWrites: [] as string[] };
 (window as typeof window & { authFileListFixture: typeof state }).authFileListFixture = state;
 mockIPC(async (cmd, args) => {
   if (cmd === 'set_app_locale') return null;
@@ -86,6 +86,7 @@ mockIPC(async (cmd, args) => {
   }
   if (request.path === '/credentials/models' && request.method === 'GET') return { models: [] };
   if (request.path === '/credentials/fields' && request.method === 'PATCH') {
+    if (request.body?.tags && state.failTagWrites.includes(String(request.body.name))) throw new Error('Mock tag write failed');
     const target = state.files.find(file => file.name === request.body?.name);
     if (!target) throw new Error('Unknown credential');
     Object.assign(target, request.body);
