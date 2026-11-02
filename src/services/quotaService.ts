@@ -29,6 +29,7 @@ export type AuthFile = Record<string, unknown>;
 export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin' | 'meta';
 export type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
 export type QuotaRow = {
+  kind?: 'cloud-credits';
   label: string;
   remainingPercent: number | null;
   quotaAvailable?: boolean;
@@ -38,6 +39,7 @@ export type QuotaRow = {
   reset?: string;
   resetAtMs?: number;
   detail?: string;
+  help?: string;
 };
 export type QuotaState = {
   status: QuotaStatus;
@@ -226,6 +228,11 @@ const relativeResetLabel = (value: unknown): string | undefined => {
   }
   return quotaText('quota.service.relative.minutes', { minutes });
 };
+
+export const formatClaudeDollars = (value: number | null) =>
+  value === null || !Number.isFinite(value)
+    ? undefined
+    : new Intl.NumberFormat(getCurrentLocale(), { style: 'currency', currency: 'USD' }).format(value);
 
 const formatUsdFromCents = (value: number | null) =>
   value === null
@@ -443,6 +450,12 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
   }
 
   if (provider === 'claude') {
+    const dollarFields = ['limit_dollars', 'used_dollars', 'remaining_dollars'];
+    const dollarWindows = Object.entries(value).filter(([key, raw]) =>
+      !['five_hour', 'seven_day', 'extra_usage', 'extraUsage'].includes(key) && isRecord(raw)
+      && (dollarFields.some((field) => numberValue(raw[field]) !== null)
+        || [...dollarFields, 'utilization', 'resets_at'].every((field) => Object.prototype.hasOwnProperty.call(raw, field))));
+    const dollarKeys = new Set(dollarWindows.map(([key]) => key));
     const labels: Record<string, string> = {
       five_hour: quotaText('quota.service.window.fiveHour'),
       seven_day: quotaText('quota.service.window.sevenDay'),
@@ -461,7 +474,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
       });
     const fable = fableCandidates.find((limit) => limit.is_active === true) ?? fableCandidates[0];
     const rows = Object.entries(labels)
-      .filter(([key]) => key !== 'iguana_necktie' || !fable)
+      .filter(([key]) => !dollarKeys.has(key) && (key !== 'iguana_necktie' || !fable))
       .map(([key]): QuotaRow | null => {
         const raw = value[key];
         if (!isRecord(raw) || !('utilization' in raw)) return null;
@@ -479,6 +492,33 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
       reset: absoluteResetLabel(fable.resets_at ?? fable.resetsAt),
       resetAtMs: quotaResetFor(fable, ['resets_at', 'resetsAt']),
     });
+    for (const [key, window] of dollarWindows) {
+      if (!isRecord(window)) continue;
+      const limit = numberValue(window.limit_dollars);
+      const used = numberValue(window.used_dollars);
+      const remaining = numberValue(window.remaining_dollars);
+      const utilization = numberValue(window.utilization);
+      const computedRemaining = limit !== null && limit > 0
+        ? remaining !== null ? remaining / limit * 100
+          : used !== null ? (limit - used) / limit * 100 : null
+        : null;
+      const details = [
+        used !== null ? quotaText('quota.service.cloud.used', { value: formatClaudeDollars(used)! }) : '',
+        limit !== null ? quotaText('quota.service.cloud.limit', { value: formatClaudeDollars(limit)! }) : '',
+        remaining !== null ? quotaText('quota.service.cloud.remaining', { value: formatClaudeDollars(remaining)! }) : '',
+      ].filter(Boolean);
+      rows.push({
+        label: quotaText('quota.service.cloud.label') + (key === 'iguana_necktie' ? '' : ` (${key})`),
+        kind: 'cloud-credits',
+        remainingPercent: clampPercent(computedRemaining)
+          ?? (utilization !== null && utilization >= 0 && utilization <= 100
+            ? remainingFromUsedPercent(utilization) : null),
+        reset: absoluteResetLabel(window.resets_at ?? window.resetsAt),
+        resetAtMs: quotaResetFor(window, ['resets_at', 'resetsAt']),
+        detail: details.join(' · ') || undefined,
+        help: quotaText('quota.service.cloud.help'),
+      });
+    }
     const extraUsage = isRecord(value.extra_usage)
       ? value.extra_usage
       : isRecord(value.extraUsage)
