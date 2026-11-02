@@ -766,8 +766,12 @@ button.oauth-account-count:focus-visible {
 }
 
 .usage-overview-layout {
-  grid-template-rows: max-content minmax(0, 1fr);
+  grid-template-rows: max-content minmax(380px, 1fr);
   align-content: stretch;
+}
+
+.usage-tab-panel > .usage-overview-layout {
+  flex-shrink: 0;
 }
 
 .usage-metrics-grid .metric-card {

@@ -25,6 +25,54 @@ const declarations = (sheet: postcss.Root, selector: string, property: string, r
 };
 
 describe('shared UI refinements', () => {
+  it('keeps overview cards readable and scrollable in short windows', () => {
+    const styles = readStyle('styles.css');
+    const page = readFileSync(resolve(import.meta.dir, '../src/pages/UsageRecordsPage.tsx'), 'utf8');
+    expect(page).toContain('Math.max(0.88, Math.min(1, width / 900, height / 420))');
+    expect(declarations(styles, '.usage-overview-panels', 'min-height')).toEqual(['380px']);
+    for (const sheet of [styles, refinements]) {
+      expect(declarations(sheet, '.usage-overview-layout', 'grid-template-rows')).toContain('max-content minmax(380px, 1fr)');
+    }
+    expect(declarations(refinements, '.usage-tab-panel > .usage-overview-layout', 'flex-shrink')).toEqual(['0']);
+    expect(declarations(styles, '.usage-tab-panel', 'overflow-y')).toEqual(['auto']);
+    for (const selector of ['.usage-trend-y-axis', '.usage-trend-x-axis span', '.usage-trend-legend-item']) {
+      expect(declarations(styles, selector, 'font-size')).toEqual(['13px']);
+      expect(declarations(styles, selector, 'font-weight')).toEqual(['500']);
+      expect(declarations(styles, selector, 'color')).toEqual(['var(--color-text-secondary)']);
+    }
+    for (const [selector, size] of [
+      ['.usage-overview-canvas .usage-section-heading strong', '17px'],
+      ['.usage-token-donut-label strong', 'clamp(20px, 16cqi, 36px)'],
+      ['.usage-token-donut-label span', '12.5px'],
+      ['.usage-token-name', '13.5px'],
+      ['.usage-token-count', '14.5px'],
+      ['.usage-token-pct', '13.5px'],
+      ['.usage-token-notes', '13.5px'],
+      ['.usage-token-notes b', '18px'],
+      ['.usage-token-context-group h3', '13.5px'],
+      ['.usage-token-context-metrics dt', '12.5px'],
+      ['.usage-token-context-metrics dd', '20px'],
+    ]) {
+      expect(declarations(styles, selector, 'font-size')).toEqual([size]);
+    }
+    expect(declarations(styles, '.usage-token-results .usage-token-context-metrics dt', 'font-size')).toEqual([]);
+    for (const selector of ['.usage-token-count', '.usage-token-notes b', '.usage-token-context-metrics dd']) {
+      expect(declarations(styles, selector, 'font-variant-numeric')).toEqual(['tabular-nums']);
+    }
+  });
+
+  it('compacts only empty routing panels on the usage page', () => {
+    const routing = readStyle('components/routing/RoutingPanel.css');
+    expect(declarations(routing, '.usage-records-page .live-routing-panel', 'flex-shrink')).toEqual(['0']);
+    expect(declarations(routing, '.usage-records-page .live-routing-panel:has(.live-routing-empty)', 'padding')).toEqual(['10px 16px']);
+    expect(declarations(routing, '.usage-records-page .live-routing-empty', 'min-height')).toEqual(['44px']);
+    expect(declarations(routing, '.usage-records-page .live-routing-empty', 'flex-direction')).toEqual(['row']);
+    expect(declarations(routing, '.usage-records-page .live-routing-empty', 'gap')).toEqual(['10px']);
+    for (const property of ['width', 'height']) {
+      expect(declarations(routing, '.usage-records-page .live-routing-empty > svg', property)).toEqual(['18px']);
+    }
+  });
+
   it('keeps motion keyframes out of layout and leaves enter transforms temporary', () => {
     const names: string[] = [];
     refinements.walkAtRules('keyframes', keyframes => {

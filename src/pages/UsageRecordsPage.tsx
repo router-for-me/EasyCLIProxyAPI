@@ -901,7 +901,7 @@ function UsageOverviewPanels({ children }: { children: ReactNode }) {
     const measure = () => {
       const { width, height } = container.getBoundingClientRect();
       if (width <= 0 || height <= 0) return;
-      const nextScale = Math.min(1, width / 900, height / 420);
+      const nextScale = Math.max(0.88, Math.min(1, width / 900, height / 420));
       setScale((current) => Math.abs(current - nextScale) < 0.001 ? current : nextScale);
     };
     const scheduleMeasure = () => {
