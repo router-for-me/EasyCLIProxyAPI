@@ -1299,6 +1299,52 @@ pub(crate) fn build_http_client_with_proxy(
         .map_err(|error| format!("{error_prefix}: {error}"))
 }
 
+pub(crate) fn update_request_error(error: reqwest::Error) -> String {
+    let error = error.without_url();
+    let mut causes = Vec::new();
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(cause) = source {
+        let message = cause.to_string().to_ascii_lowercase();
+        let category = if message.contains("unknownissuer") || message.contains("unknown issuer") {
+            "TLS certificate issuer is not trusted"
+        } else if message.contains("notvalidforname") || message.contains("not valid for name") {
+            "TLS certificate hostname mismatch"
+        } else if message.contains("certificate") {
+            "TLS certificate validation failed"
+        } else if message.contains("tunnel") || message.contains("proxy") {
+            "Proxy connection failed"
+        } else if message.contains("dns") || message.contains("resolve") {
+            "DNS resolution failed"
+        } else if message.contains("refused") {
+            "Connection refused"
+        } else {
+            source = cause.source();
+            continue;
+        };
+        if !causes.contains(&category) {
+            causes.push(category);
+        }
+        source = cause.source();
+    }
+    if error.is_timeout() {
+        causes.push("Request timed out");
+    }
+    if let Some(status) = error.status() {
+        return format!("HTTP status {status}");
+    }
+    if error.is_decode() {
+        causes.push("Invalid HTTP response body");
+    } else if error.is_body() {
+        causes.push("Failed to read HTTP response body");
+    } else if error.is_connect() && causes.is_empty() {
+        causes.push("Network connection failed");
+    }
+    if causes.is_empty() {
+        return "HTTP request failed".to_string();
+    }
+    causes.join(": ")
+}
+
 pub(crate) fn http_client(
     proxy_url: &str,
     custom_mirrors: &[String],

@@ -162,6 +162,10 @@ Manually renamed files without a session ID in their filename or a database path
 
 ## Upgrading
 
+Behind an enterprise proxy, administrators should install the corporate root CA
+in the OS trust store, not disable TLS validation. See
+[enterprise proxy certificates and regression testing](docs/enterprise-proxy.md).
+
 Every Windows release publishes both the complete ZIP and the legacy `update` ZIP. This keeps in-app updates available to older clients that have not migrated yet, while newer clients use the complete package so the bundled core can be updated too.
 
 Current Windows, Linux, and macOS release packages support in-app automatic updates. Linux replaces the portable application files while preserving runtime data, and macOS replaces the signed application bundle. Each platform waits for the new version to confirm a successful launch and rolls back automatically if startup fails. The installation directory must be writable by the current user.

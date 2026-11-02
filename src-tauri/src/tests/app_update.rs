@@ -460,6 +460,107 @@ fn portable_update_test_manifest(version: &str) -> PortableUpdateManifest {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn proxy_ca_native_roots_connect_regression() {
+    if let Ok(proxy) = std::env::var("CPA_TLS_FIXTURE_PROXY") {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let check_client = build_http_client_with_proxy(
+                reqwest::Client::builder().timeout(Duration::from_secs(5)),
+                &proxy,
+                "fixture client",
+            ).unwrap();
+            let download_client = http_client(&proxy, &[]).unwrap();
+            let webpki_only = build_http_client_with_proxy(
+                reqwest::Client::builder().tls_built_in_native_certs(false)
+                    .timeout(Duration::from_secs(5)),
+                &proxy, "public roots fixture client",
+            ).unwrap();
+            let error = fetch_portable_update_manifest_url(&webpki_only, "https://update.test/manifest.json")
+                .await.unwrap_err();
+            assert!(error.contains("issuer is not trusted"), "{error}");
+            for client in [&check_client, &download_client] {
+                let manifest = fetch_portable_update_manifest_url(
+                    client, "https://update.test/manifest.json",
+                ).await.unwrap();
+                assert_eq!(manifest.version, "1.2.3");
+                let archive = client.get("https://update.test/archive").send().await
+                    .unwrap().error_for_status().unwrap().bytes().await.unwrap();
+                assert_eq!(archive.as_ref(), b"fixture archive");
+                for (host, expected) in [
+                    ("untrusted.test", "issuer is not trusted"),
+                    ("mismatch.test", "hostname mismatch"),
+                ] {
+                    let error = fetch_portable_update_manifest_url(
+                        client, &format!("https://private-user:private-password@{host}/secret-path?token=private-token"),
+                    ).await.unwrap_err();
+                    assert!(error.contains(expected), "{error}");
+                    for secret in ["private-user", "private-password", "secret-path", "private-token", host, "proxy-password"] {
+                        assert!(!error.contains(secret), "{error}");
+                    }
+                }
+                let port = std::env::var("CPA_TLS_FIXTURE_PLAIN").unwrap();
+                for host in ["localhost", "127.0.0.1"] {
+                    assert_eq!(client.get(format!("http://{host}:{port}/archive"))
+                        .send().await.unwrap().bytes().await.unwrap().as_ref(), b"fixture archive");
+                }
+                let ipv6_port = std::env::var("CPA_TLS_FIXTURE_IPV6").unwrap();
+                assert_eq!(client.get(format!("http://[::1]:{ipv6_port}/archive"))
+                    .send().await.unwrap().bytes().await.unwrap().as_ref(), b"fixture archive");
+            }
+            let tls_address = std::env::var("CPA_TLS_FIXTURE_TLS").unwrap().parse().unwrap();
+            let direct = build_http_client_with_proxy(
+                reqwest::Client::builder().resolve("update.test", tls_address)
+                    .timeout(Duration::from_secs(5)),
+                "", "direct fixture client",
+            ).unwrap();
+            direct.get(format!("https://update.test:{}/archive", tls_address.port()))
+                .send().await.unwrap().error_for_status().unwrap();
+            let failed_proxy = build_http_client_with_proxy(
+                reqwest::Client::builder().timeout(Duration::from_secs(5)),
+                &std::env::var("CPA_TLS_FIXTURE_FAILED_PROXY").unwrap(), "fixture client",
+            ).unwrap();
+            let error = fetch_portable_update_manifest_url(&failed_proxy, "https://update.test/manifest.json")
+                .await.unwrap_err();
+            assert!(error.contains("Proxy connection failed"), "{error}");
+            assert!(!error.contains("proxy-password"), "{error}");
+        });
+        return;
+    }
+    let manifest = portable_update_test_manifest("1.2.3");
+    let assets = manifest
+        .assets
+        .iter()
+        .map(|(name, asset)| {
+            (
+                name.clone(),
+                serde_json::json!({
+                    "url": asset.url, "sha256": asset.sha256, "sizeBytes": asset.size_bytes,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>();
+    let payload = serde_json::json!({
+        "schemaVersion": manifest.schema_version, "version": manifest.version,
+        "publishedAt": manifest.published_at, "releaseUrl": manifest.release_url,
+        "assets": assets,
+    });
+    let status = Command::new("python3")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/proxy_ca.py"))
+        .arg(std::env::current_exe().unwrap())
+        .env("CPA_TLS_MANIFEST", payload.to_string())
+        .status()
+        .expect("Python 3 and OpenSSL are required for the isolated TLS fixture");
+    assert!(
+        status.success(),
+        "isolated TLS/CONNECT fixture failed: {status}"
+    );
+}
+
 #[test]
 fn portable_update_manifest_uses_only_explicit_locale_release_notes() {
     let mut value = serde_json::json!({
