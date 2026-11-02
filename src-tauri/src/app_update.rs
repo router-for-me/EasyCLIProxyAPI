@@ -447,6 +447,13 @@ pub(crate) fn github_https_redirect_policy() -> reqwest::redirect::Policy {
 pub(crate) fn validate_portable_update_manifest(
     manifest: &PortableUpdateManifest,
 ) -> Result<(), String> {
+    validate_portable_update_manifest_for_repository(manifest, configured_gitcode_gui_repository())
+}
+
+pub(crate) fn validate_portable_update_manifest_for_repository(
+    manifest: &PortableUpdateManifest,
+    repository: Option<&str>,
+) -> Result<(), String> {
     if manifest.schema_version != 1 {
         return Err(format!(
             "Unsupported application update manifest version: {}",
@@ -480,6 +487,7 @@ pub(crate) fn validate_portable_update_manifest(
         display_platform,
         suffix,
         platform == "windows",
+        repository,
     )?;
     if let Some(full_assets) = &manifest.full_assets {
         validate_portable_update_asset_catalog(
@@ -489,6 +497,7 @@ pub(crate) fn validate_portable_update_manifest(
             display_platform,
             suffix,
             false,
+            repository,
         )?;
     }
     Ok(())
@@ -511,6 +520,7 @@ fn validate_portable_update_asset_catalog(
     display_platform: &str,
     suffix: &str,
     allow_windows_legacy: bool,
+    repository: Option<&str>,
 ) -> Result<(), String> {
     if assets.len() != 2 {
         return Err(format!("The application update manifest must include both {display_platform} architectures"));
@@ -538,7 +548,12 @@ fn validate_portable_update_asset_catalog(
         if allow_windows_legacy {
             expected_filenames.push(legacy_package_name.as_str());
         }
-        validate_portable_update_asset_fallbacks(asset, &tag, &expected_filenames)?;
+        validate_portable_update_asset_fallbacks_for_repository(
+            asset,
+            &tag,
+            &expected_filenames,
+            repository,
+        )?;
     }
     Ok(())
 }
@@ -566,19 +581,6 @@ pub(crate) fn validate_portable_update_asset(asset: &PortableUpdateAsset) -> Res
     Ok(())
 }
 
-pub(crate) fn validate_portable_update_asset_fallbacks(
-    asset: &PortableUpdateAsset,
-    tag: &str,
-    expected_filenames: &[&str],
-) -> Result<(), String> {
-    validate_portable_update_asset_fallbacks_for_repository(
-        asset,
-        tag,
-        expected_filenames,
-        configured_gitcode_gui_repository(),
-    )
-}
-
 pub(crate) fn validate_portable_update_asset_fallbacks_for_repository(
     asset: &PortableUpdateAsset,
     tag: &str,
@@ -588,8 +590,9 @@ pub(crate) fn validate_portable_update_asset_fallbacks_for_repository(
     if asset.fallback_urls.is_empty() {
         return Ok(());
     }
-    let repository = repository
-        .ok_or_else(|| "GitCode fallback is not configured for this build".to_string())?;
+    let Some(repository) = repository else {
+        return Ok(());
+    };
     if asset.fallback_urls.len() != 1 {
         return Err("Software update assets may define only one fallback URL".to_string());
     }
@@ -1161,8 +1164,22 @@ pub(crate) fn portable_update_download_urls(
     asset: &PortableUpdateAsset,
     source: &VersionDownloadCandidate,
 ) -> Vec<String> {
+    portable_update_download_urls_for_repository(asset, source, configured_gitcode_gui_repository())
+}
+
+pub(crate) fn portable_update_download_urls_for_repository(
+    asset: &PortableUpdateAsset,
+    source: &VersionDownloadCandidate,
+    repository: Option<&str>,
+) -> Vec<String> {
     let mut urls = std::iter::once(asset.url.as_str())
-        .chain(asset.fallback_urls.iter().map(String::as_str))
+        .chain(
+            asset
+                .fallback_urls
+                .iter()
+                .filter(|_| repository.is_some())
+                .map(String::as_str),
+        )
         .map(str::to_string)
         .collect::<Vec<_>>();
     if source.source == VersionDownloadSource::Gitcode {
