@@ -1656,6 +1656,25 @@ fn windows_encoded_script(script: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>())
 }
 
+#[cfg(any(windows, test))]
+fn windows_encoded_cli_launch_arguments(
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+    terminal: &str,
+) -> Vec<String> {
+    let script = windows_powershell_cli_script(executable, working_directory, arguments);
+    let mut shell_arguments = vec!["-NoLogo".into(), "-NoProfile".into()];
+    if terminal != "cmd" {
+        shell_arguments.push("-NoExit".into());
+    }
+    if executable.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ps1")) {
+        shell_arguments.extend(["-ExecutionPolicy".into(), "Bypass".into()]);
+    }
+    shell_arguments.extend(["-EncodedCommand".into(), windows_encoded_script(&script)]);
+    shell_arguments
+}
+
 #[cfg(windows)]
 pub(crate) fn windows_literal_cli_command(executable: &Path, arguments: &[String]) -> Result<Command, String> {
     let (executable, arguments) = windows_literal_cli_invocation(executable, arguments)?;
@@ -1682,7 +1701,6 @@ fn windows_cli_launch_command(
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     if !arguments.is_empty() {
         let (literal_executable, literal_arguments) = windows_literal_cli_invocation(executable, arguments)?;
-        let script = windows_powershell_cli_script(&literal_executable, working_directory, &literal_arguments);
         let mut command = if terminal == "windows-terminal" {
             let mut command = Command::new(program_on_path("wt.exe").ok_or("Windows Terminal not found")?);
             command.args(["-d", &path_to_string(working_directory), "--"]).arg(windows_powershell_executable());
@@ -1697,10 +1715,9 @@ fn windows_cli_launch_command(
         } else {
             return Err(format!("Failed to start {label}: selected terminal is unsupported"));
         };
-        let encoded = windows_encoded_script(&script);
-        command.args(["-NoLogo", "-NoProfile"]);
-        if terminal != "cmd" { command.arg("-NoExit"); }
-        command.args(["-EncodedCommand", &encoded]);
+        command.args(windows_encoded_cli_launch_arguments(
+            &literal_executable, working_directory, &literal_arguments, terminal,
+        ));
         if terminal != "windows-terminal" { command.creation_flags(CREATE_NEW_CONSOLE); }
         return Ok(command);
     }
@@ -1965,6 +1982,33 @@ mod tests {
         for option in ["--profile", "--patch", "--host", "--port", "--trusted-host", "--no-open", "--open"] {
             assert!(validate_deepseek_custom_arguments(&[option.into()]).is_err());
             assert!(validate_deepseek_custom_arguments(&[format!("{option}=value")]).is_err());
+        }
+    }
+
+    #[test]
+    fn custom_arguments_windows_encoded_launch_preserves_script_execution_policy() {
+        use base64::Engine;
+        let directory = Path::new(r"C:\Users\Test User\project's [work]");
+        let custom = vec!["two words".into(), String::new(), "$(x); & | 'quoted'".into()];
+        for executable in ["client.ps1", "client.PS1", "client.exe"] {
+            let (program, forwarded) = windows_literal_cli_invocation(Path::new(executable), &custom).unwrap();
+            for terminal in ["auto", "powershell", "cmd", "windows-terminal"] {
+                let values = windows_encoded_cli_launch_arguments(&program, directory, &forwarded, terminal);
+                let mut expected = vec!["-NoLogo", "-NoProfile"];
+                if terminal != "cmd" {
+                    expected.push("-NoExit");
+                }
+                if executable != "client.exe" {
+                    expected.extend(["-ExecutionPolicy", "Bypass"]);
+                }
+                expected.push("-EncodedCommand");
+                assert_eq!(&values[..values.len() - 1], &expected, "{terminal}: {executable}");
+                let bytes = base64::engine::general_purpose::STANDARD.decode(values.last().unwrap()).unwrap();
+                let script = String::from_utf16(&bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>()).unwrap();
+                assert_eq!(script, windows_powershell_cli_script(&program, directory, &custom));
+                assert_eq!(script.contains("$cpaLaunchArguments = @("), executable != "client.exe");
+                assert!(!script.contains("Set-ExecutionPolicy"));
+            }
         }
     }
 
