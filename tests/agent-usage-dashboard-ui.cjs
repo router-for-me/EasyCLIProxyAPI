@@ -66,11 +66,18 @@ createRoot(document.getElementById('root')).render(element(I18nProvider, null,
     await active.waitFor();
     assert.equal(await page.locator('.agent-usage-stat').count(), 6);
     assert.equal(await page.locator('.agent-usage-stat.primary').count(), 2);
+    assert.equal(await page.locator('.agent-usage-stat > span svg').count(), 0);
+    assert.equal(await page.locator('.agent-usage-stat small').count(), 0);
     assert.equal(await active.locator('.agent-usage-source-share').textContent(), '100%');
     assert.equal(await page.locator('.is-empty .agent-usage-source-metrics').count(), 0);
     assert.match(await page.locator('[data-source="zcode"]').textContent(), /Cannot read local records/);
     assert.equal(await page.locator('.agent-usage-daily tbody tr').count(), 1);
+    assert.equal(await page.locator('.agent-usage-daily thead th').count(), 7);
     assert.equal(await page.locator('.agent-usage-pricing tbody tr').count(), 1);
+    assert.equal(await page.locator('.agent-usage-pricing thead th').count(), 5);
+    const codexBox = await active.boundingBox();
+    assert.equal(Math.round(codexBox.height), 62);
+    assert.equal(await page.locator('.agent-usage-table-wrap').first().evaluate(node => getComputedStyle(node).borderWidth), '0px');
     await active.click();
     assert.equal(await active.getAttribute('aria-pressed'), 'true');
     await active.click();
@@ -110,6 +117,7 @@ createRoot(document.getElementById('root')).render(element(I18nProvider, null,
         };
       });
       assert.deepEqual(desktopLayout, { uniformSources: true, singleStatRow: true, sideBySide: true, fitsViewport: true }, `${theme} desktop layout`);
+      assert.equal(await page.locator('.agent-usage-daily .agent-usage-table-wrap').evaluate(node => node.scrollWidth <= node.clientWidth), true, `${theme} daily table fits without horizontal scroll`);
       for (const width of [1440, 768, 390]) {
         await page.setViewportSize({ width, height: 1100 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme} at ${width}px overflows`);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Check, Coins, Database, Layers, RefreshCw, TriangleAlert, Zap } from 'lucide-react';
+import { Database, Layers, RefreshCw, TriangleAlert } from 'lucide-react';
 import { BrandIcon } from '../components/BrandIcon';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
@@ -193,7 +193,7 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
       {error ? <Notice tone="error">{error}</Notice> : null}
       <div className="agent-usage-summary">
         <div className="agent-usage-summary-heading">
-          <div>
+          <div className="agent-usage-title-row">
             <h2>{t('usage.agentUsage.title')}</h2>
             <div role="status" className={`agent-usage-sync-status${error ? ' error' : ''}`}>
               <span className="agent-usage-sync-dot" aria-hidden="true" />
@@ -219,35 +219,56 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
           </div>
         </div>
         <div className="surface-card agent-usage-stat-grid">
-          <div className="agent-usage-stat primary tokens"><span><Layers size={16} aria-hidden="true" />{t('usage.agentUsage.totalTokens')}</span><strong>{formatUsageNumber(totals.totalTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
-          <div className="agent-usage-stat primary cost"><span><Coins size={16} aria-hidden="true" />{t('usage.agentUsage.estimatedTotalCost')}</span><strong>{money(totals.costUSD)}</strong><small>USD</small></div>
-          <div className="agent-usage-stat input"><span><ArrowDownLeft size={16} aria-hidden="true" />{t('usage.agentUsage.inputTokens')}</span><strong>{formatUsageNumber(totals.inputTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
-          <div className="agent-usage-stat output"><span><ArrowUpRight size={16} aria-hidden="true" />{t('usage.agentUsage.outputTokens')}</span><strong>{formatUsageNumber(totals.outputTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
-          <div className="agent-usage-stat cache-read"><span><Zap size={16} aria-hidden="true" />{t('usage.agentUsage.cacheReadTokens')}</span><strong>{formatUsageNumber(totals.cacheReadTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
-          <div className="agent-usage-stat cache-write"><span><Database size={16} aria-hidden="true" />{t('usage.agentUsage.cacheCreationTokens')}</span><strong>{formatUsageNumber(totals.cacheCreationTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
+          <div className="agent-usage-stat primary tokens"><span>{t('usage.agentUsage.totalTokens')}</span><strong>{formatUsageNumber(totals.totalTokens, locale)}</strong></div>
+          <div className="agent-usage-stat primary cost"><span>{t('usage.agentUsage.estimatedTotalCost')}</span><strong>{money(totals.costUSD)}</strong></div>
+          <div className="agent-usage-stat input"><span>{t('usage.agentUsage.inputTokens')}</span><strong>{formatUsageNumber(totals.inputTokens, locale)}</strong></div>
+          <div className="agent-usage-stat output"><span>{t('usage.agentUsage.outputTokens')}</span><strong>{formatUsageNumber(totals.outputTokens, locale)}</strong></div>
+          <div className="agent-usage-stat cache-read"><span>{t('usage.agentUsage.cacheReadTokens')}</span><strong>{formatUsageNumber(totals.cacheReadTokens, locale)}</strong></div>
+          <div className="agent-usage-stat cache-write"><span>{t('usage.agentUsage.cacheCreationTokens')}</span><strong>{formatUsageNumber(totals.cacheCreationTokens, locale)}</strong></div>
         </div>
       </div>
 
-        <section className="panel surface-card agent-usage-sources">
-          <div className="agent-usage-section-heading">
-            <h3>{t('usage.agentUsage.sources')}</h3>
-            <div className="agent-usage-source-filter">
-              <span>{t('usage.agentUsage.sourceCount', { count: availableSources.length })}</span>
-            </div>
+      <section className="panel surface-card agent-usage-sources">
+        <div className="agent-usage-section-heading">
+          <h3>{t('usage.agentUsage.sources')}</h3>
+          <div className="agent-usage-source-filter">
+            <span>{t('usage.agentUsage.sourceCount', { count: availableSources.length })}</span>
           </div>
-          <div className="agent-usage-source-list" role="group" aria-label={t('usage.agentUsage.sourceFilter')}>
-            <button type="button" className={`agent-usage-source-row ${!selectedSource ? 'selected' : ''}`} aria-pressed={!selectedSource} onClick={() => setSelectedSource('')}>
-              <div className="agent-usage-source-name"><span className="agent-usage-source-icon"><Layers size={16} aria-hidden="true" /></span><strong>{t('usage.agentUsage.sourceAll')}</strong>{!selectedSource && <Check size={14} aria-hidden="true" />}</div>
-              <div className="agent-usage-source-volume"><strong>{formatUsageNumber(rangeTotals.totalTokens, locale)}</strong><span>{t('usage.agentUsage.tokens')}</span></div>
-              <div className="agent-usage-source-track" aria-hidden="true"><span style={{ width: rangeTotals.totalTokens > 0 ? '100%' : '0%' }} /></div>
-              <div className="agent-usage-source-metrics"><span>{money(rangeTotals.costUSD)}</span></div>
-            </button>
-            {visibleSources.map((source) => {
-              const sourceTotal = sourceTotals(source, pricing);
-              const hasData = source.daily.length > 0;
-              const status = !hasData && source.status === 'ok' ? 'empty' : source.status;
-              const contribution = rangeTotals.totalTokens > 0 ? sourceTotal.totalTokens / rangeTotals.totalTokens : 0;
-              return <button
+        </div>
+        <div className="agent-usage-source-list" role="group" aria-label={t('usage.agentUsage.sourceFilter')}>
+          <button type="button" className={`agent-usage-source-row ${!selectedSource ? 'selected' : ''}`} aria-pressed={!selectedSource} onClick={() => setSelectedSource('')}>
+            <span className="agent-usage-source-icon"><Layers size={17} aria-hidden="true" /></span>
+            <div className="agent-usage-source-body">
+              <div className="agent-usage-source-top">
+                <strong>{t('usage.agentUsage.sourceAll')}</strong>
+                {rangeTotals.totalTokens > 0 ? (
+                  <span className="agent-usage-source-share">100%</span>
+                ) : (
+                  <span className="agent-usage-status ok">{money(rangeTotals.costUSD)}</span>
+                )}
+              </div>
+              <div className="agent-usage-source-bottom">
+                <div className="agent-usage-source-volume">
+                  <strong>{formatUsageNumber(rangeTotals.totalTokens, locale)}</strong>
+                  <span>{t('usage.agentUsage.tokens')}</span>
+                  <span className="agent-usage-source-cost">{money(rangeTotals.costUSD)}</span>
+                </div>
+              </div>
+            </div>
+            {rangeTotals.totalTokens > 0 ? (
+              <div className="agent-usage-source-track" aria-hidden="true"><span style={{ width: '100%' }} /></div>
+            ) : null}
+          </button>
+          {visibleSources.map((source) => {
+            const sourceTotal = sourceTotals(source, pricing);
+            const hasData = source.daily.length > 0;
+            const status = !hasData && source.status === 'ok' ? 'empty' : source.status;
+            const contribution = rangeTotals.totalTokens > 0 ? sourceTotal.totalTokens / rangeTotals.totalTokens : 0;
+            const days = new Set(source.daily.map((row) => row.date)).size;
+            const label = sourceLabel(source.source);
+            const percent = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(contribution);
+            return (
+              <button
                 type="button"
                 className={`agent-usage-source-row ${hasData ? 'has-data' : 'is-empty'} ${selectedSource === source.source ? 'selected' : ''}`}
                 key={source.source}
@@ -255,18 +276,45 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
                 aria-pressed={selectedSource === source.source}
                 onClick={() => setSelectedSource((current) => current === source.source ? '' : source.source)}
               >
-                <div className="agent-usage-source-name"><span className="agent-usage-source-icon"><BrandIcon name={source.source} size={16} /></span><strong title={sourceLabel(source.source)}>{sourceLabel(source.source)}</strong><span className={`agent-usage-status ${status}`}>{t(statusLabelKey(status))}</span>{selectedSource === source.source && <Check size={14} aria-hidden="true" />}</div>
-                {hasData && <>
-                  <div className="agent-usage-source-volume"><strong>{formatUsageNumber(sourceTotal.totalTokens, locale)}</strong><span>{t('usage.agentUsage.tokens')}</span><span className="agent-usage-source-share">{new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(contribution)}</span></div>
-                  <div className="agent-usage-source-track" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, contribution * 100))}%` }} /></div>
-                  <div className="agent-usage-source-metrics"><span>{new Set(source.daily.map((row) => row.date)).size} {t('usage.agentUsage.days')}</span><span>{money(sourceTotal.costUSD)}</span></div>
-                </>}
-                {source.status === 'error' && source.error ? <small title={source.error}>{source.error}</small> : null}
-              </button>;
-            })}
-            {!visibleSources.length && <EmptyState variant="compact">{t('usage.agentUsage.empty')}</EmptyState>}
-          </div>
-        </section>
+                <span className="agent-usage-source-icon"><BrandIcon name={source.source} size={18} /></span>
+                <div className="agent-usage-source-body">
+                  <div className="agent-usage-source-top">
+                    <strong title={label}>{label}</strong>
+                    {hasData ? (
+                      <span className="agent-usage-source-share">{percent}</span>
+                    ) : (
+                      <span className={`agent-usage-status ${status}`}>{t(statusLabelKey(status))}</span>
+                    )}
+                  </div>
+                  <div className="agent-usage-source-bottom">
+                    {hasData ? (
+                      <div className="agent-usage-source-volume">
+                        <strong>{formatUsageNumber(sourceTotal.totalTokens, locale)}</strong>
+                        <span>{t('usage.agentUsage.tokens')}</span>
+                        <span className="agent-usage-source-metrics">
+                          <span>{days} {t('usage.agentUsage.days')}</span>
+                          <span> · </span>
+                          <span>{money(sourceTotal.costUSD)}</span>
+                        </span>
+                      </div>
+                    ) : source.status === 'error' && source.error ? (
+                      <small title={source.error}>{source.error}</small>
+                    ) : (
+                      <span className="agent-usage-source-empty-hint">0 {t('usage.agentUsage.tokens')}</span>
+                    )}
+                  </div>
+                </div>
+                {hasData ? (
+                  <div className="agent-usage-source-track" aria-hidden="true">
+                    <span style={{ width: `${Math.min(100, Math.max(0, contribution * 100))}%` }} />
+                  </div>
+                ) : null}
+              </button>
+            );
+          })}
+          {!visibleSources.length && <EmptyState variant="compact">{t('usage.agentUsage.empty')}</EmptyState>}
+        </div>
+      </section>
 
       <div className="agent-usage-columns">
         <section className="panel surface-card agent-usage-daily">
@@ -327,12 +375,8 @@ function AgentUsagePricingView({
                 <th>{t('usage.pricing.model')}</th>
                 <th>{t('usage.agentUsage.days')}</th>
                 <th>{t('usage.agentUsage.totalTokens')}</th>
-                <th>{t('usage.pricing.prompt')}</th>
-                <th>{t('usage.pricing.completion')}</th>
-                <th>{t('usage.pricing.cacheRead')}</th>
-                <th>{t('usage.pricing.cacheCreation')}</th>
+                <th>{t('usage.pricing.prompt')} / {t('usage.pricing.completion')}</th>
                 <th>{t('usage.pricing.cost')}</th>
-                <th>{t('usage.agentUsage.recordedCost')}</th>
               </tr>
             </thead>
             <tbody>
@@ -341,12 +385,16 @@ function AgentUsagePricingView({
                   <td title={row.model}>{row.model}</td>
                   <td>{formatUsageNumber(row.days, locale)} {t('usage.agentUsage.days')}</td>
                   <td>{formatUsageNumber(row.totalTokens, locale)}</td>
-                  <td>{row.price ? rate(row.price.prompt) : '—'}</td>
-                  <td>{row.price ? rate(row.price.completion) : '—'}</td>
-                  <td>{row.price ? rate(row.price.cacheRead) : '—'}</td>
-                  <td>{row.price ? rate(row.price.cacheCreation) : '—'}</td>
-                  <td>{row.estimatedCostUSD === null ? '—' : money(row.estimatedCostUSD)}</td>
-                  <td>{row.recordedCostUSD === null ? '—' : money(row.recordedCostUSD)}</td>
+                  <td>{row.price ? `${rate(row.price.prompt)} / ${rate(row.price.completion)}` : '—'}</td>
+                  <td>
+                    <strong>
+                      {row.estimatedCostUSD !== null
+                        ? money(row.estimatedCostUSD)
+                        : row.recordedCostUSD !== null
+                          ? money(row.recordedCostUSD)
+                          : '—'}
+                    </strong>
+                  </td>
                 </tr>
               ))}
             </tbody>
