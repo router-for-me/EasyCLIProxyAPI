@@ -6,6 +6,13 @@ import { authFileListJa } from './authFileList';
 import { themeDiyJa } from './themeDiy';
 
 export const jaOverrides = {
+  'agents.customArguments.summary': '引数は空白で区切り、空白を含む値は引用符で囲みます。シェルは実行せず、下書きはこのセッションのみ保持します。',
+  'agents.customArguments.details': '引用符とエスケープの詳細',
+  'agents.customArguments.label': '追加の起動引数（任意）',
+  'agents.customArguments.help': '空白で分割します。引用符で値をまとめ、"" は空の値です。単一引用符の外ではバックスラッシュでエスケープします。Windows パスは単一引用符で囲んでください。二重引用符内では $、`、"、バックスラッシュのみをエスケープします。単語の先頭の # はコメントです。シェルコマンドや置換は実行しません。改行と制御文字は使用できません。下書きはこのセッションのみクライアント別に保持します。',
+  'agents.customArguments.deepseek': '生成したオプションの後、headless タスクの前に入力順で一度だけ追加します。--profile、--patch、--host、--port、--trusted-host、--open、--no-open は上の設定を使用し、ここでは重複できません。他の重複オプションはそのまま CLI に渡します。',
+  'agents.customArguments.error': '引用符を閉じ、末尾のバックスラッシュの後に文字を入力してください。改行と制御文字は使用できません。',
+  'agents.customArguments.conflict': 'profile、patch、host、port、trusted-host、ブラウザーの設定は追加引数ではなく上の設定を使用してください。',
   ...routingJa,
   ...themeDiyJa,
   'app.window.minimize': '最小化',

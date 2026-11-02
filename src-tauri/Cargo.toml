@@ -26,6 +26,7 @@ serde_json = "1"
 serde_norway = "0.9"
 serde_yaml = "0.9"
 sha2 = "0.10"
+shlex = "2"
 tar = "0.4"
 tauri = { version = "~2.12.4", features = ["macos-private-api", "tray-icon", "unstable"] }
 tauri-plugin-autostart = "2.7.0"

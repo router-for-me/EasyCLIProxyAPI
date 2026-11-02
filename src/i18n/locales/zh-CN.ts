@@ -5,6 +5,13 @@ import { authFileListZhCN } from '../authFileList';
 import { themeDiyZhCN } from '../themeDiy';
 
 export const zhCN = {
+  'agents.customArguments.summary': '用空格分隔参数，含空格的值请加引号。不执行 Shell 命令，草稿仅保留至本次会话结束。',
+  'agents.customArguments.details': '引号与转义规则',
+  'agents.customArguments.label': '自定义启动参数（可选）',
+  'agents.customArguments.help': '空格分隔参数；单引号或双引号组合一个值，"" 传递空值。单引号外反斜杠转义字符，Windows 路径请用单引号。双引号内仅转义 $、`、" 或反斜杠。词首 # 开始注释。不执行 Shell 命令或替换。不允许换行或控制字符。草稿仅在本次会话中按客户端保留。',
+  'agents.customArguments.deepseek': '额外参数按输入顺序追加一次，位于 headless 任务之前。--profile、--patch、--host、--port、--trusted-host、--open 和 --no-open 请使用上方控件，不可在此重复。其他重复选项原样传递，由 CLI 解释。',
+  'agents.customArguments.error': '请闭合引号并补全末尾反斜杠转义。不允许换行或控制字符。',
+  'agents.customArguments.conflict': '请使用上方控件设置 profile、patch、host、port、trusted-host 和浏览器选项，不要在自定义参数中重复。',
   ...routingZhCN,
   ...themeDiyZhCN,
   'app.window.minimize': '最小化',

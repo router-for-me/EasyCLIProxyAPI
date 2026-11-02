@@ -6,6 +6,13 @@ import { authFileListEn } from '../authFileList';
 import { themeDiyEn } from '../themeDiy';
 
 export const en: Record<MessageKey, string> = {
+  'agents.customArguments.summary': 'Separate arguments with spaces; quote values containing spaces. No shell execution. Drafts last only this session.',
+  'agents.customArguments.details': 'Quoting and escaping details',
+  'agents.customArguments.label': 'Custom startup arguments (optional)',
+  'agents.customArguments.help': 'Spaces separate arguments. Single or double quotes group a value; "" passes an empty value. Backslashes escape characters outside single quotes: wrap Windows paths in single quotes. Inside double quotes, backslashes only escape $, `, ", or backslash. A word starting with # is a comment. No shell commands or substitutions run. Newlines and control characters are not allowed. Drafts stay per client for this session only.',
+  'agents.customArguments.deepseek': 'Extra arguments follow generated options once, in input order, before a headless task. Use the controls above for --profile, --patch, --host, --port, --trusted-host, --open and --no-open; do not repeat them here. Other duplicate options are passed unchanged for the CLI to interpret.',
+  'agents.customArguments.error': 'Close all quotes and complete any trailing backslash escape. Newlines and control characters are not allowed.',
+  'agents.customArguments.conflict': 'Use the controls above for profile, patch, host, port, trusted-host and browser options instead of custom arguments.',
   ...routingEn,
   ...themeDiyEn,
   'app.window.minimize': 'Minimize',

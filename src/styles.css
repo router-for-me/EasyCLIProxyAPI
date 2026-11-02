@@ -6097,6 +6097,8 @@ textarea:focus-visible {
 }
 
 .agent-launch-directory-dialog {
+  align-self: safe center;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto;
   align-content: start;
   width: min(620px, 100%);
@@ -6104,6 +6106,11 @@ textarea:focus-visible {
   height: auto;
   min-height: 0;
   overflow-y: auto;
+}
+
+.agent-launch-directory-dialog .config-dialog-heading h2 {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .agent-launch-directory-dialog > p {
@@ -6122,6 +6129,52 @@ textarea:focus-visible {
   display: grid;
   gap: 12px;
   padding: 14px;
+}
+
+.agent-custom-arguments {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  min-width: 0;
+}
+
+.agent-custom-arguments textarea.config-dialog-text-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 84px;
+  height: auto;
+  padding: 10px 12px;
+  resize: vertical;
+  overflow-wrap: anywhere;
+  font-family: var(--font-family-mono, monospace);
+  font-weight: var(--font-weight-normal);
+  line-height: 1.5;
+}
+
+.agent-custom-arguments p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-relaxed);
+  overflow-wrap: anywhere;
+}
+
+.agent-custom-arguments summary {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+  cursor: pointer;
+}
+
+.agent-custom-arguments details[open] summary {
+  margin-bottom: 8px;
+}
+
+.agent-custom-arguments [role='alert'] {
+  color: var(--color-danger-text);
+}
+
+.agent-custom-arguments textarea[aria-invalid='true'] {
+  border-color: var(--color-danger-border);
 }
 
 .deepseek-harness-launch-field {

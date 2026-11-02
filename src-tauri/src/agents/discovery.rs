@@ -2671,7 +2671,7 @@ pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
     normalize_detected_agent_version(package.get("version")?.as_str()?)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 pub(crate) fn windows_powershell_single_quoted_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
