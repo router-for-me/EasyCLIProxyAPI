@@ -2769,6 +2769,7 @@ fn main() {
             });
 
             let core_app = app.handle().clone();
+            let runtime_update_ack = portable_update_ack.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let Ok(_guard) = CORE_OPERATION_LOCK.lock() else {
                     return;
@@ -2795,7 +2796,13 @@ fn main() {
                 match auto_install_bundled_core_if_needed(&core_app) {
                     Ok(true) => eprintln!("Automatically installed or upgraded to the CPA kernel version bundled with the application"),
                     Ok(false) => {}
-                    Err(error) => eprintln!("Failed to automatically install CPA offline kernel: {error}"),
+                    Err(error) => {
+                        eprintln!("Failed to automatically install CPA offline kernel: {error}");
+                        if runtime_update_ack.is_some() {
+                            process_state.set_starting(false);
+                            return;
+                        }
+                    }
                 }
 
                 let adopted_process_ids = match adopt_existing_core_processes(
@@ -2824,6 +2831,10 @@ fn main() {
                     });
                     if let Err(error) = start_result {
                         eprintln!("Failed to automatically start CPA kernel: {error}");
+                        if runtime_update_ack.is_some() {
+                            process_state.set_starting(false);
+                            return;
+                        }
                     } else if let Err(error) = gui_config_state.set_run_on_startup(true) {
                         eprintln!("Failed to save automatically started kernel state: {error}");
                     }
@@ -2836,12 +2847,19 @@ fn main() {
                 {
                     emit_core_status(&core_app, &status);
                 }
+                if let Some(ack_path) = runtime_update_ack.as_ref() {
+                    let core_expected =
+                        !adopted_process_ids.is_empty() || should_start_core_on_launch(&config);
+                    if let Err(error) = acknowledge_update_runtime(
+                        ack_path,
+                        process_state.inner(),
+                        &config,
+                        core_expected,
+                    ) {
+                        eprintln!("Application update runtime acceptance failed: {error}");
+                    }
+                }
             });
-
-            if let Some(ack_path) = portable_update_ack.as_ref() {
-                fs::write(ack_path, env!("CARGO_PKG_VERSION").as_bytes())
-                    .map_err(|error| format!("Failed to write application update startup confirmation: {error}"))?;
-            }
 
             Ok(())
         })
