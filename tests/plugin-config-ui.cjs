@@ -113,6 +113,25 @@ const path = require('node:path');
     assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= 390 && box.y + box.height <= 680);
     assert.equal(await page.getByRole('button', { name: '保存', exact: true }).isVisible(), true);
     if (process.env.PLUGIN_CONFIG_SCREENSHOT) await page.screenshot({ path: process.env.PLUGIN_CONFIG_SCREENSHOT });
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await open('semanticRouter&locale=zh-CN');
+    assert.equal(await field('alias').inputValue(), 'semantic-auto');
+    assert.equal(JSON.parse(await field('classifier').inputValue()).model, 'classifier');
+    const candidates = field('candidates');
+    const originalCandidates = JSON.parse(await candidates.inputValue());
+    assert.equal(originalCandidates[0].description, '程序设计、调试和代码审查');
+    await candidates.fill('{}');
+    await page.getByRole('button', { name: '保存', exact: true }).click();
+    assert.equal(await candidates.getAttribute('aria-invalid'), 'true');
+    await candidates.fill(JSON.stringify(originalCandidates, null, 2));
+    await candidates.scrollIntoViewIfNeeded();
+    if (process.env.SEMANTIC_ROUTER_SCREENSHOT) await page.screenshot({ path: process.env.SEMANTIC_ROUTER_SCREENSHOT });
+    originalCandidates[0].description = '编程与重构';
+    await candidates.fill(JSON.stringify(originalCandidates));
+    await page.getByRole('button', { name: '保存', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    assert.deepEqual(await page.evaluate(() => window.pluginConfigFixture.patches[0]), { candidates: originalCandidates });
     assert.deepEqual(errors, []);
     console.log('Plugin configuration UI passed: typed validation, touched-only patches, JSON fallback, retry, discard, pending state, keyboard focus, mobile layout.');
   } catch (error) {
