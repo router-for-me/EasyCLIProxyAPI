@@ -477,7 +477,7 @@
 
 .agent-usage-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: start;
   gap: 14px;
 }
@@ -498,22 +498,23 @@
   font-variant-numeric: tabular-nums;
 }
 
+.agent-usage-table-wrap th,
+.agent-usage-table-wrap td {
+  padding: 8px 5px;
+  font-size: 11.5px;
+}
+
 .agent-usage-table-wrap th {
   background: transparent;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-secondary);
-  font-size: 11.5px;
   font-weight: 600;
-  padding: 8px 8px;
   text-align: right;
-  white-space: nowrap;
 }
 
 .agent-usage-table-wrap td {
-  padding: 9px 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent);
   color: var(--text-primary);
-  font-size: 12px;
   text-align: right;
   white-space: nowrap;
 }
@@ -521,11 +522,6 @@
 .agent-usage-table-wrap th:first-child,
 .agent-usage-table-wrap td:first-child {
   text-align: left;
-}
-
-.agent-usage-daily th,
-.agent-usage-daily td {
-  padding: 8px 5px;
 }
 
 .agent-usage-table-wrap tbody tr:nth-child(even) {

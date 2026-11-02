@@ -40,7 +40,7 @@ const sourceLabels: Record<string, string> = {
   opencode: 'OpenCode',
   omp: 'Oh My Pi',
   pi: 'Pi',
-  copilot: 'GitHub Copilot CLI',
+  copilot: 'Copilot CLI',
   gemini: 'Gemini CLI',
   antigravity: 'Antigravity',
   kimi: 'Kimi',
@@ -375,7 +375,8 @@ function AgentUsagePricingView({
                 <th>{t('usage.pricing.model')}</th>
                 <th>{t('usage.agentUsage.days')}</th>
                 <th>{t('usage.agentUsage.totalTokens')}</th>
-                <th>{t('usage.pricing.prompt')} / {t('usage.pricing.completion')}</th>
+                <th>{t('usage.pricing.prompt')}</th>
+                <th>{t('usage.pricing.completion')}</th>
                 <th>{t('usage.pricing.cost')}</th>
               </tr>
             </thead>
@@ -385,7 +386,8 @@ function AgentUsagePricingView({
                   <td title={row.model}>{row.model}</td>
                   <td>{formatUsageNumber(row.days, locale)} {t('usage.agentUsage.days')}</td>
                   <td>{formatUsageNumber(row.totalTokens, locale)}</td>
-                  <td>{row.price ? `${rate(row.price.prompt)} / ${rate(row.price.completion)}` : '—'}</td>
+                  <td>{row.price ? rate(row.price.prompt) : '—'}</td>
+                  <td>{row.price ? rate(row.price.completion) : '—'}</td>
                   <td>
                     <strong>
                       {row.estimatedCostUSD !== null

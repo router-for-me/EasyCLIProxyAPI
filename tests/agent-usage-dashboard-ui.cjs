@@ -74,7 +74,7 @@ createRoot(document.getElementById('root')).render(element(I18nProvider, null,
     assert.equal(await page.locator('.agent-usage-daily tbody tr').count(), 1);
     assert.equal(await page.locator('.agent-usage-daily thead th').count(), 7);
     assert.equal(await page.locator('.agent-usage-pricing tbody tr').count(), 1);
-    assert.equal(await page.locator('.agent-usage-pricing thead th').count(), 5);
+    assert.equal(await page.locator('.agent-usage-pricing thead th').count(), 6);
     const codexBox = await active.boundingBox();
     assert.equal(Math.round(codexBox.height), 62);
     assert.equal(await page.locator('.agent-usage-table-wrap').first().evaluate(node => getComputedStyle(node).borderWidth), '0px');
@@ -118,6 +118,7 @@ createRoot(document.getElementById('root')).render(element(I18nProvider, null,
       });
       assert.deepEqual(desktopLayout, { uniformSources: true, singleStatRow: true, sideBySide: true, fitsViewport: true }, `${theme} desktop layout`);
       assert.equal(await page.locator('.agent-usage-daily .agent-usage-table-wrap').evaluate(node => node.scrollWidth <= node.clientWidth), true, `${theme} daily table fits without horizontal scroll`);
+      assert.equal(await page.locator('.agent-usage-pricing .agent-usage-table-wrap').evaluate(node => node.scrollWidth <= node.clientWidth), true, `${theme} pricing table fits without horizontal scroll`);
       for (const width of [1440, 768, 390]) {
         await page.setViewportSize({ width, height: 1100 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme} at ${width}px overflows`);
