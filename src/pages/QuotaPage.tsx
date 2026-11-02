@@ -1,4 +1,7 @@
 import { requestRateColor } from '../services/authFileRequests';
+import { PluginLogo, usePluginList } from '../components/ProviderLogo';
+import { findPluginLogo } from '../services/pluginLogos';
+import { credentialQuotaPlugin } from '../services/pluginCredentialQuota';
 import { Notice } from '../components/Notice';
 import { EmptyState } from '../components/EmptyState';
 import { SegmentedControl } from '../components/SegmentedControl';
@@ -191,6 +194,8 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
   const { locale, t } = useI18n();
   const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
   const provider = quotaProviderForFile(file);
+  const providerId = String(file.provider ?? file.type ?? '').toLowerCase();
+  const plugins = usePluginList();
   const privacy = usePrivacyMask();
   const name = privacy.credentialName(file);
   const disabled = readBoolean(file, 'disabled');
@@ -212,7 +217,10 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
     <article className="panel real-quota-card surface-card">
       <div className="real-quota-card-header">
         <div className="quota-identity">
-          {provider === 'plugin' && String(file.provider ?? file.type).toLowerCase() !== 'gemini' ? <Gauge size={24} aria-hidden="true" /> : <img src={provider === 'plugin' && String(file.provider ?? file.type).toLowerCase() === 'gemini' ? geminiIcon : provider ? providerMeta[provider].icon : geminiIcon} alt="" className="quota-account-icon" />}
+          {provider && provider !== 'plugin'
+            ? <img src={providerMeta[provider].icon} alt="" className="quota-account-icon" />
+            : providerId === 'gemini' ? <img src={geminiIcon} alt="" className="quota-account-icon" />
+            : <PluginLogo src={findPluginLogo(plugins, providerId, credentialQuotaPlugin(file))} size={22} className="quota-account-icon" />}
           <div><strong title={name}>{name}</strong></div>
         </div>
         {quota.plan || quota.subscriptionActiveUntil ? <div className="quota-plan">
