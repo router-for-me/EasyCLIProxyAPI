@@ -1769,6 +1769,7 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(8317);
+    let auth_dir_configured = v8_or_legacy(&["oauth", "auth-dir"], &["auth-dir"]).is_some();
     let auth_dir = v8_or_legacy(&["oauth", "auth-dir"], &["auth-dir"])
         .map(|value| {
             value
@@ -1851,10 +1852,15 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(false);
-    let api_keys = extract_core_api_keys(root)?
-        .into_iter()
+    let declared_api_keys = extract_core_api_keys(root)?;
+    let api_keys: Vec<String> = declared_api_keys
+        .iter()
         .filter(|api_key| !is_example_core_api_key(api_key))
+        .cloned()
         .collect();
+    // A list that holds only the example placeholders counts as not configured.
+    let api_keys_configured = !api_keys.is_empty()
+        || (declared_api_keys.is_empty() && core_api_keys_declared(root));
     let management_secret_key = extract_core_management_secret_key(root)?;
     let plugins_enabled = nested_yaml_value(root, &["plugins", "enabled"])
         .map(|value| {
@@ -1951,6 +1957,8 @@ pub(crate) fn core_config_settings_from_value(
         port,
         auth_dir,
         api_keys,
+        auth_dir_configured,
+        api_keys_configured,
         management_secret_configured: management_secret_key
             .as_deref()
             .is_some_and(|value| !value.is_empty()),
@@ -1974,6 +1982,21 @@ pub(crate) fn core_config_settings_from_value(
         streaming_bootstrap_retries,
         management_secret_key,
     })
+}
+
+fn core_api_keys_declared(root: &serde_norway::Mapping) -> bool {
+    if nested_yaml_value(root, &["access", "api-keys"]).is_some() {
+        return true;
+    }
+    if let Some(value) = yaml_mapping_value(root, "api-keys") {
+        return !value.is_mapping();
+    }
+    nested_yaml_value(root, &["auth", "providers", "config-api-key"])
+        .and_then(serde_norway::Value::as_mapping)
+        .is_some_and(|legacy| {
+            yaml_mapping_value(legacy, "api-key-entries").is_some()
+                || yaml_mapping_value(legacy, "api-keys").is_some()
+        })
 }
 
 pub(crate) fn extract_core_api_keys(root: &serde_norway::Mapping) -> Result<Vec<String>, String> {
