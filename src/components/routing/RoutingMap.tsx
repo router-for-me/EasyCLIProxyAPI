@@ -127,7 +127,7 @@ export function RoutingMap({
                       d={d}
                       style={{ stroke: color }}
                     />
-                    <circle className="routing-packet" r="3" fill={color}>
+                    <circle className="routing-packet" r="4" fill={color}>
                       <animateMotion dur="1.5s" repeatCount="indefinite" path={d} />
                     </circle>
                   </>
@@ -167,7 +167,7 @@ export function RoutingMap({
                       d={d}
                       style={{ stroke: color }}
                     />
-                    <circle className="routing-packet" r="3" fill={color}>
+                    <circle className="routing-packet" r="4" fill={color}>
                       <animateMotion dur="1.5s" repeatCount="indefinite" path={d} />
                     </circle>
                   </>
@@ -203,7 +203,7 @@ export function RoutingMap({
                 style={{ '--route-color': color } as CSSProperties}
               >
                 <span className="routing-node-mark">
-                  <BrandIcon name={item.provider || item.name} size={18} />
+                  <BrandIcon name={item.provider || item.name} size={22} />
                 </span>
                 <span className="routing-row-text">
                   <span className="routing-row-name" title={name}>{name}</span>
@@ -229,7 +229,7 @@ export function RoutingMap({
           <span className="gateway-rail gateway-rail-in" />
           <span className="gateway-rail gateway-rail-out" />
           <span className="gateway-mark">
-            <img src={appLogo} width={22} height={22} alt="" />
+            <img src={appLogo} width={30} height={30} alt="" />
           </span>
           <span className="gateway-name">{t('routing.gateway')}</span>
           <span className="gateway-meta">
@@ -264,7 +264,7 @@ export function RoutingMap({
               >
                 <span className="routing-port port-in" aria-hidden="true" />
                 <span className="routing-node-mark">
-                  <BrandIcon name={item.provider || cooldown?.provider || item.name} size={18} />
+                  <BrandIcon name={item.provider || cooldown?.provider || item.name} size={22} />
                 </span>
                 <span className="routing-row-text">
                   <span className="routing-row-name" title={name}>{name}</span>

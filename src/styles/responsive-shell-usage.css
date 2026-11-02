@@ -132,19 +132,49 @@
   white-space: nowrap;
 }
 
+.usage-tab-panel:has(.usage-live-routing-layout) {
+  display: flex;
+  flex-direction: column;
+}
+
+.usage-live-routing-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.usage-live-routing-layout > .live-routing-panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 480px;
+}
+
+.usage-live-routing-layout .live-routing-map {
+  flex: 1 1 auto;
+  min-height: 360px;
+}
+
 @container workspace (min-width: 600px) {
-  .usage-overview-layout .usage-stat-grid {
+  .usage-overview-layout .usage-stat-grid,
+  .usage-live-routing-layout .usage-stat-grid {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
 
 @container workspace (max-width: 880px) {
-  .usage-overview-layout .usage-stat-card {
+  .usage-overview-layout .usage-stat-card,
+  .usage-live-routing-layout .usage-stat-card {
     gap: 5px;
     padding: 10px 8px;
   }
 
-  .usage-overview-layout .usage-stat-card-value {
+  .usage-overview-layout .usage-stat-card-value,
+  .usage-live-routing-layout .usage-stat-card-value {
     font-size: 24px;
   }
 }

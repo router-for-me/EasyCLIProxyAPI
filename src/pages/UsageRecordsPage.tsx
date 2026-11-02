@@ -110,6 +110,28 @@ const loadPageSize = (): number => {
   }
 };
 const emptyAnalysis: UsageAnalysis = { models: [], providers: [], sources: [], apiKeys: [] };
+const emptyOverview: UsageOverview = {
+  totalRequests: 0,
+  successCount: 0,
+  failureCount: 0,
+  canceledCount: 0,
+  successRate: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  reasoningTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  totalTokens: 0,
+  rpm: 0,
+  tpm: 0,
+  tps: 0,
+  tpsSampleCount: 0,
+  averageLatencyMs: 0,
+  cacheHitRate: 0,
+  estimatedCost: 0,
+  pricedRequests: 0,
+  timeline: [],
+};
 
 const loadTab = (): UsageTab => {
   try {
@@ -271,7 +293,7 @@ export function UsageRecordsPage() {
       const requestId = ++requestIdRef.current;
       const { timeQuery, query } = buildQueries();
       if (!quiet) setLoading(true);
-      if (activeTab === 'agent-usage' || activeTab === 'live-routing') {
+      if (activeTab === 'agent-usage') {
         setLoading(false);
         return;
       }
@@ -284,7 +306,7 @@ export function UsageRecordsPage() {
         const optionsRequest = refreshOptions
           ? getUsageAnalysis({ query: timeQuery })
           : Promise.resolve(null);
-        if (activeTab === 'overview') {
+        if (activeTab === 'overview' || activeTab === 'live-routing') {
           const [nextStatus, nextOptions, nextOverview] = await Promise.all([
             statusRequest,
             optionsRequest,
@@ -543,7 +565,12 @@ export function UsageRecordsPage() {
         <EmptyState className="usage-initial-loading" icon={<Database size={22} />}>{t('usage.loading')}</EmptyState>
       ) : null}
 
-      {activeTab === 'live-routing' ? <RoutingPanel /> : null}
+      {activeTab === 'live-routing' ? (
+        <div className="usage-live-routing-layout">
+          <UsageStatGrid overview={overview ?? emptyOverview} />
+          <RoutingPanel />
+        </div>
+      ) : null}
       {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
       {activeTab === 'analysis' && (analysis || overview) ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
       {activeTab === 'events' ? (
@@ -792,7 +819,7 @@ function UsageDataManagementView() {
   );
 }
 
-function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pick<UsageQuery, 'start' | 'end'> }) {
+function UsageStatGrid({ overview }: { overview: UsageOverview }) {
   const { t } = useI18n();
   const cards = [
     {
@@ -867,15 +894,23 @@ function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pi
   ];
 
   return (
+    <div className="surface-card usage-stat-grid">
+      {cards.map(({ key, tone, label, value, metaTitle }) => (
+        <article className={`panel usage-stat-card tone-${tone}`} key={key} title={metaTitle}>
+          <span className="usage-stat-card-label">{label}</span>
+          <strong className="usage-stat-card-value">{value}</strong>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function OverviewView({ overview, range }: { overview: UsageOverview; range?: Pick<UsageQuery, 'start' | 'end'> }) {
+  const { t } = useI18n();
+
+  return (
     <div className="usage-overview-layout">
-      <div className="surface-card usage-stat-grid">
-        {cards.map(({ key, tone, label, value, metaTitle }) => (
-          <article className={`panel usage-stat-card tone-${tone}`} key={key} title={metaTitle}>
-            <span className="usage-stat-card-label">{label}</span>
-            <strong className="usage-stat-card-value">{value}</strong>
-          </article>
-        ))}
-      </div>
+      <UsageStatGrid overview={overview} />
       <UsageOverviewPanels>
         <section className="panel surface-card usage-trend-panel">
           <div className="usage-section-heading">

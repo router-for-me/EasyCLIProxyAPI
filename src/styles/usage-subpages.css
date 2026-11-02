@@ -1,5 +1,5 @@
 /* Shared surfaces for usage subpages; the overview keeps its own chart palette. */
-.usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']),
+.usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']):not([aria-labelledby='usage-tab-live-routing']),
 .usage-price-sync-dialog,
 .usage-column-dialog {
   --usage-page-text: var(--usage-subpage-text);
