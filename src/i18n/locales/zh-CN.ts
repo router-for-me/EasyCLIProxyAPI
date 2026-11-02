@@ -918,6 +918,7 @@ export const zhCN = {
   'usage.analysis.modelTitle': '模型消耗',
   'usage.analysis.modelHint': '对比各模型的用量与占比',
   'usage.analysis.metricLabel': '模型排序指标',
+  'usage.analysis.keyMetricLabel': '密钥排序指标',
   'usage.analysis.metricTokens': 'Token',
   'usage.analysis.metricRequests': '请求量',
   'usage.analysis.otherModels': '其他 {count} 个模型',

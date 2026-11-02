@@ -4,12 +4,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const base = 'http://127.0.0.1:1421';
+const base = process.env.USAGE_TEST_URL || 'http://127.0.0.1:1421';
 const screenshots = path.resolve('.codex/request-log-ui');
 fs.mkdirSync(screenshots, { recursive: true });
 
 (async () => {
-  const browser = await chromium.launch({ channel: 'msedge', headless: true,
+  const browser = await chromium.launch({ ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH
+    ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : { channel: 'msedge' }), headless: true,
     args: ['--no-proxy-server'], ignoreDefaultArgs: ['--hide-scrollbars'] });
   try {
     const page = await browser.newPage({ viewport: { width: 1266, height: 900 }, timezoneId: 'Asia/Shanghai' });
@@ -29,6 +30,18 @@ fs.mkdirSync(screenshots, { recursive: true });
       value: Number(row.dataset.metricValue),
       share: Number(row.querySelector('.usage-model-share').textContent.replace('%', '')),
     })));
+    const modelPanel = page.locator('.usage-model-comparison');
+    const keyPanel = page.locator('.usage-context-key-panel');
+    const keyRows = () => keyPanel.locator('li').evaluateAll(rows => rows.map(row => ({
+      label: row.querySelector(':scope > span').textContent,
+      values: [...row.querySelectorAll('.usage-context-metrics > span')].map(value => ({ text: value.textContent.trim(), exact: value.title })),
+      share: Number(row.querySelector('small').textContent.replace('%', '')),
+    })));
+    const selectFilter = async (index, name) => {
+      await page.locator('.usage-filter-item').nth(index).locator('.select-menu-trigger').click();
+      await page.getByRole('option', { name, exact: true }).click();
+      await page.locator('.usage-refresh-btn:not(:disabled)').waitFor();
+    };
     const chartBars = () => page.locator('.usage-activity-bar').evaluateAll(bars => bars.map(bar => ({
       requests: Number(bar.dataset.requests), success: Number(bar.dataset.success),
       failed: Number(bar.dataset.failure), canceled: Number(bar.dataset.canceled),
@@ -45,7 +58,7 @@ fs.mkdirSync(screenshots, { recursive: true });
     };
     const assertNoOverflow = async (label) => {
       const overflow = await page.evaluate(() => [document.documentElement, document.body,
-        ...document.querySelectorAll('.content, .usage-records-page, .usage-filter-panel, .usage-analysis-view, .usage-analysis-card, .usage-analysis-context, .usage-activity-card, .usage-activity-plot')]
+        ...document.querySelectorAll('.content, .usage-records-page, .usage-filter-panel, .usage-analysis-view, .usage-analysis-card, .usage-analysis-context, .usage-activity-card, .usage-activity-plot, .usage-context-key-panel, .usage-context-values, .usage-context-metrics')]
         .filter(element => element.scrollWidth > element.clientWidth + 1)
         .map(element => ({ element: element.className || element.tagName, width: element.clientWidth, scrollWidth: element.scrollWidth })));
       assert.deepEqual(overflow, [], `${label}: analysis fits without horizontal overflow`);
@@ -58,8 +71,7 @@ fs.mkdirSync(screenshots, { recursive: true });
 
     await open();
     assert.equal(await page.locator('#usage-tab-analysis').getAttribute('aria-selected'), 'true');
-    assert.equal(await page.locator('.usage-filter-panel select').count(), 6, 'Analysis keeps the shared filter controls');
-    assert.equal(await page.locator('.usage-filter-panel button').count(), 0, 'Analysis does not restore the removed reset button');
+    assert.equal(await page.locator('.usage-filter-item').count(), 5, 'Analysis keeps the shared filter controls');
     let rows = await modelRows();
     assert.deepEqual(rows.map(row => row.key), ['model-a', 'model-b', 'model-c', 'model-d', 'model-f', 'other']);
     assert.deepEqual(rows.map(row => row.value), [10000, 4000, 3600, 1200, 540, 660], 'Top five plus other includes all eight models');
@@ -70,13 +82,13 @@ fs.mkdirSync(screenshots, { recursive: true });
     assert.equal(rows.some(row => row.key === 'other'), false);
     assertShares(rows, 20000);
     await page.getByRole('button', { name: 'Show less', exact: true }).click();
-    await page.getByRole('radio', { name: 'Requests', exact: true }).click();
+    await modelPanel.getByRole('radio', { name: 'Requests', exact: true }).click();
     rows = await modelRows();
     assert.deepEqual(rows.map(row => row.key), ['model-c', 'model-a', 'model-f', 'model-b', 'model-d', 'other']);
     assert.deepEqual(rows.map(row => row.value), [12, 10, 9, 8, 6, 15]);
     assertShares(rows, 60);
-    assert.equal(await page.getByRole('radio', { name: 'Requests', exact: true }).getAttribute('aria-checked'), 'true');
-    await page.getByRole('radio', { name: 'Token', exact: true }).click();
+    assert.equal(await modelPanel.getByRole('radio', { name: 'Requests', exact: true }).getAttribute('aria-checked'), 'true');
+    await modelPanel.getByRole('radio', { name: 'Token', exact: true }).click();
     assertShares(await modelRows(), 20000);
 
     assert.equal(await page.locator('.usage-results-center strong').textContent(), '84.6%', 'Success rate excludes the eight canceled requests from its denominator');
@@ -119,21 +131,71 @@ fs.mkdirSync(screenshots, { recursive: true });
     assert.equal(await tooltip.count(), 0, 'Hover details clear when the pointer leaves the chart');
 
     const details = page.locator('.usage-context-detail');
-    assert.equal(await details.count(), 3);
-    for (let index = 0; index < 3; index += 1) {
+    assert.equal(await details.count(), 2);
+    for (let index = 0; index < 2; index += 1) {
       const detail = details.nth(index);
       assert.equal(await detail.evaluate(element => element.open), false);
       await detail.locator('summary').click();
-      assert.equal(await detail.evaluate(element => element.open), true, 'Provider, source, and key breakdowns expand independently');
-      assert.equal(await detail.locator('li').count(), [2, 3, 4][index]);
-      assert.equal(await detail.locator('li > strong').evaluateAll(items => items.reduce((total, item) => total + Number(item.title), 0)), 60);
+      assert.equal(await detail.evaluate(element => element.open), true, 'Source and key breakdowns expand independently');
+      assert.equal(await detail.locator('li').count(), [3, 4][index]);
+      if (index === 0) assert.equal(await detail.locator('li > strong').evaluateAll(items => items.reduce((total, item) => total + Number(item.title), 0)), 60);
       await detail.locator('summary').click();
     }
+
+    assert.equal(await keyPanel.getByRole('radiogroup', { name: 'API key ranking metric' }).count(), 1);
+    assert.match(await keyPanel.locator('summary').textContent(), /10K Token.*10 requests.*50%/);
+    await keyPanel.locator('summary').click();
+    let keys = await keyRows();
+    assert.deepEqual(keys.map(row => row.values.map(value => value.exact)), [['10,000', '10'], ['4,800', '18'], ['4,400', '12'], ['800', '20']]);
+    assert.deepEqual(keys.map(row => row.share), [50, 24, 22, 4]);
+    const sourceBefore = await details.first().textContent();
+    await keyPanel.getByRole('radio', { name: 'Requests', exact: true }).click();
+    keys = await keyRows();
+    assert.deepEqual(keys.map(row => row.values.map(value => value.exact)), [['20', '800'], ['18', '4,800'], ['12', '4,400'], ['10', '10,000']]);
+    assert.deepEqual(keys.map(row => row.share), [33.3, 30, 20, 16.7]);
+    assert.match(await keyPanel.locator('summary').textContent(), /20 requests.*800 Token.*33.3%/);
+    assert.equal(await details.first().textContent(), sourceBefore, 'Key metric leaves upstream context unchanged');
+    assert.equal(await modelPanel.getByRole('radio', { name: 'Token', exact: true }).getAttribute('aria-checked'), 'true');
+    await keyPanel.getByRole('radio', { name: 'Requests', exact: true }).focus();
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await keyPanel.getByRole('radio', { name: 'Token', exact: true }).getAttribute('aria-checked'), 'true');
+    assert.equal(await keyPanel.locator('details').evaluate(element => element.open), true, 'Metric keyboard navigation does not collapse the list');
+
+    await selectFilter(3, 'Personal');
+    assert.deepEqual((await keyRows()).map(row => row.values.map(value => value.exact)), [['4,800', '18']]);
+    assert.match(await keyPanel.locator('summary').textContent(), /100%/);
+    await selectFilter(1, 'gpt-6-sol');
+    assert.deepEqual((await keyRows()).map(row => row.values.map(value => value.exact)), [['1,200', '6']]);
+    await selectFilter(0, 'Custom');
+    await page.locator('input[type="datetime-local"]').first().fill('2026-10-02T06:00');
+    await page.locator('input[type="datetime-local"]').last().fill('2026-10-02T06:00');
+    await page.waitForFunction(() => document.querySelector('.usage-context-key-panel .usage-context-primary')?.title === '200');
+    assert.deepEqual((await keyRows()).map(row => row.values.map(value => value.exact)), [['200', '1']]);
+
+    await open({ scenario: 'large', privacy: '1' });
+    await keyPanel.locator('summary').click();
+    keys = await keyRows();
+    assert.equal(keys[0].values[0].exact, '10,000,030,000');
+    assert.match(keys[0].values[0].text, /Token/);
+    assert.equal(keys[0].values[1].exact, '10');
+    assert.equal(keys[0].share, 50);
+    assert.equal((await keyPanel.innerHTML()).includes('developer@example.com'), false, 'Privacy masks labels and titles in summary and expanded rows');
+
+    await open({ scenario: 'key-ties' });
+    await keyPanel.locator('summary').click();
+    assert.deepEqual((await keyRows()).map(row => row.label), ['developer@example.com', 'Personal', 'Team workspace', 'Long API key description for layout verification']);
+    await keyPanel.getByRole('radio', { name: 'Requests', exact: true }).click();
+    assert.deepEqual((await keyRows()).map(row => row.share), [25, 25, 25, 25]);
 
     await open({ scenario: 'zero-tokens' });
     assertShares(await modelRows(), 0);
     assert.equal(await page.locator('.usage-analysis-empty').count(), 0, 'Recorded requests remain available even if they used zero tokens');
-    await page.getByRole('radio', { name: 'Requests', exact: true }).click();
+    await keyPanel.locator('summary').click();
+    assert.deepEqual((await keyRows()).map(row => row.share), [0, 0, 0, 0]);
+    assert.match(await keyPanel.locator('summary').textContent(), /0 Token.*20 requests.*0%/);
+    await keyPanel.getByRole('radio', { name: 'Requests', exact: true }).click();
+    assert.deepEqual((await keyRows()).map(row => row.share), [33.3, 30, 20, 16.7]);
+    await modelPanel.getByRole('radio', { name: 'Requests', exact: true }).click();
     assertShares(await modelRows(), 60);
     await assertChartTotals();
     await open({ scenario: 'canceled' });
@@ -161,9 +223,45 @@ fs.mkdirSync(screenshots, { recursive: true });
       await page.locator('.usage-analysis-expand').click();
       for (const detail of await page.locator('.usage-context-detail').all()) await detail.locator('summary').click();
       await assertNoOverflow(`${width}x${height} ${theme} expanded details`);
+      assert.equal(await keyPanel.getByRole('radio', { name: 'Token', exact: true }).getAttribute('aria-checked'), 'true');
+      assert.equal(await keyPanel.locator('.usage-context-metrics > span').evaluateAll(items =>
+        items.every(item => getComputedStyle(item).whiteSpace === 'nowrap')), true, 'Token units and CJK request counts stay together');
+      assert.match(await keyPanel.locator('summary').textContent(), /10K Token.*10 次请求.*50%/);
+      if (process.env.USAGE_SCREENSHOT_PREFIX && theme === 'light' && [1266, 390].includes(width)) {
+        await keyPanel.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: `${process.env.USAGE_SCREENSHOT_PREFIX}_${width}.png`, fullPage: true });
+      }
     }
+    await page.setViewportSize({ width: 1266, height: 900 });
+    await page.goto(`${base}/tests/fixtures/usage-layout.html?tab=analysis&locale=en`, { waitUntil: 'domcontentloaded' });
+    await page.locator('.usage-refresh-btn:not(:disabled)').waitFor();
+    assert.match(await keyPanel.locator('summary').textContent(), /24K Token.*200 requests.*100%/);
+    await keyPanel.locator('summary').click();
+    assert.deepEqual((await keyRows()).map(row => row.values.map(value => value.exact)), [['24,000', '200']]);
+    await page.evaluate(() => { window.usageKeyFixture.apiKeys[0].tokens = 0; });
+    await page.locator('.usage-refresh-btn').click();
+    await page.waitForFunction(() => document.querySelector('.usage-context-key-panel .usage-context-primary')?.title === '0');
+    assert.match(await keyPanel.locator('summary').textContent(), /0 Token.*200 requests.*0%/);
+    assert.deepEqual((await keyRows()).map(row => row.share), [0]);
+    await page.evaluate(() => {
+      window.usageKeyFixture.apiKeys = [
+        { key: 'zero-b', label: 'Zero B', requests: 0, tokens: 10, failures: 0 },
+        { key: 'zero-a', label: 'Zero A', requests: 0, tokens: 90, failures: 0 },
+      ];
+    });
+    await page.locator('.usage-refresh-btn').click();
+    await page.waitForFunction(() => document.querySelector('.usage-context-key-panel .usage-context-primary')?.title === '90');
+    assert.deepEqual((await keyRows()).map(row => row.share), [90, 10]);
+    await keyPanel.getByRole('radio', { name: 'Requests', exact: true }).click();
+    assert.deepEqual((await keyRows()).map(row => row.share), [0, 0]);
+    assert.match(await keyPanel.locator('summary').textContent(), /0 requests.*90 Token.*0%/);
+    await page.evaluate(() => { window.usageKeyFixture.apiKeys = []; });
+    await page.locator('.usage-refresh-btn').click();
+    await page.waitForFunction(() => !document.querySelector('.usage-context-key-panel li'));
+    assert.equal(await keyPanel.locator('.usage-context-leader > strong').textContent(), '—');
+    assert.equal(/NaN|Infinity/.test(await keyPanel.textContent()), false);
     assert.deepEqual(errors, [], 'Analysis interactions do not produce runtime errors');
-    console.log('PASS: model metric rankings/shares and aggregation, request outcomes, zero-token/canceled/empty states, chronological chart totals and keyboard/hover, category details, responsive light/dark layouts.');
+    console.log('PASS: model/key rankings, totals, shares, deterministic ties, filters, privacy, exact large numbers, zero-token/single/empty keys, request outcomes, chart keyboard/hover, responsive light/dark layouts.');
   } finally {
     await browser.close();
   }
