@@ -1,5 +1,5 @@
 .live-routing-panel {
-  padding: 18px 20px;
+  padding: 22px 26px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   background: var(--panel-bg, var(--bg-card));
@@ -12,7 +12,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .live-routing-heading > div {
@@ -23,8 +23,8 @@
 }
 
 .live-routing-heading h2 {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 650;
   color: var(--text-primary);
   margin: 0;
 }
@@ -32,14 +32,14 @@
 .live-routing-state {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: 7px;
+  font-size: 13px;
   color: var(--text-secondary);
 }
 
 .live-routing-state span[aria-hidden="true"] {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--success-color, #10b981);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--success-color, #10b981) 25%, transparent);
@@ -51,17 +51,22 @@
 }
 
 .live-routing-count {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--primary-color);
   background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-  padding: 3px 8px;
+  padding: 4px 10px;
   border-radius: var(--radius-full);
 }
 
 .live-routing-panel.paused .live-routing-count {
   color: var(--text-secondary);
   background: var(--bg-tertiary);
+}
+
+.live-routing-heading .icon-button {
+  width: 36px;
+  height: 36px;
 }
 
 .live-routing-warning {
@@ -73,12 +78,12 @@
 
 .live-routing-map {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(136px, 168px) minmax(220px, 1.15fr);
-  column-gap: clamp(48px, 7vw, 112px);
+  grid-template-columns: minmax(240px, 1fr) minmax(176px, 212px) minmax(260px, 1.15fr);
+  column-gap: clamp(56px, 8vw, 128px);
   align-items: center;
-  min-height: 236px;
+  min-height: 300px;
   position: relative;
-  padding: 8px 6px 10px;
+  padding: 16px 10px;
 }
 
 .live-routing-map::before {
@@ -106,7 +111,7 @@
 .routing-edge {
   fill: none;
   stroke: var(--border-color);
-  stroke-width: 1.5;
+  stroke-width: 2.2;
   stroke-linecap: round;
   transition: stroke 0.25s ease, stroke-width 0.25s ease;
 }
@@ -119,7 +124,7 @@
 
 .routing-edge-flow {
   fill: none;
-  stroke-width: 2;
+  stroke-width: 2.6;
   stroke-linecap: round;
   stroke-dasharray: 6 8;
   animation: routing-edge-flow 1.5s linear infinite;
@@ -138,7 +143,7 @@
 .routing-map-column {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
   min-width: 0;
   position: relative;
   z-index: 2;
@@ -148,8 +153,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px;
-  font-size: 11px;
+  padding: 0 6px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -157,6 +163,13 @@
 }
 
 .routing-column-count {
+  min-width: 22px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
@@ -165,11 +178,12 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 14px;
+  min-height: 68px;
+  padding: 14px 18px;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   min-width: 0;
   transition: border-color 0.15s ease, background-color 0.15s ease;
@@ -191,10 +205,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 38px;
+  height: 38px;
   flex-shrink: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   background: color-mix(in srgb, var(--route-color, var(--text-tertiary)) 12%, transparent);
   color: var(--route-color, var(--text-secondary));
 }
@@ -204,12 +218,12 @@
   flex-direction: column;
   min-width: 0;
   flex: 1;
-  gap: 2px;
+  gap: 4px;
 }
 
 .routing-row-name {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 14.5px;
+  font-weight: 600;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -217,7 +231,7 @@
 }
 
 .routing-row-meta {
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
@@ -238,11 +252,11 @@
 }
 
 .routing-cooldown-pill {
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--warning-color, #f59e0b);
   background: color-mix(in srgb, var(--warning-color, #f59e0b) 12%, transparent);
-  padding: 2px 6px;
+  padding: 4px 10px;
   border-radius: var(--radius-full);
   white-space: nowrap;
 }
@@ -251,19 +265,19 @@
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--bg-card);
-  border: 1.5px solid var(--route-color, var(--border-color));
+  border: 2px solid var(--route-color, var(--border-color));
 }
 
 .routing-port.port-out {
-  right: -3px;
+  right: -5px;
 }
 
 .routing-port.port-in {
-  left: -3px;
+  left: -5px;
 }
 
 .routing-port.port-ghost {
@@ -283,12 +297,14 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   align-items: center;
   text-align: center;
-  padding: 16px 14px;
+  padding: 24px 18px;
   width: 100%;
-  max-width: 156px;
-  border-radius: var(--radius-lg);
+  max-width: 196px;
+  min-height: 176px;
+  border-radius: 16px;
   border: 1px solid var(--border-color);
   background: var(--bg-card);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
@@ -302,8 +318,8 @@
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 3px;
-  height: 36px;
+  width: 4px;
+  height: 48px;
   border-radius: 2px;
   background: color-mix(in srgb, var(--primary-color) 40%, var(--border-color));
 }
@@ -319,28 +335,28 @@
 .gateway-mark {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 6px;
-  margin-bottom: 8px;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  margin-bottom: 12px;
   background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-secondary));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 60%, transparent);
 }
 
 .gateway-mark img {
-  border-radius: 6px;
+  border-radius: 8px;
   display: block;
 }
 
 .gateway-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 650;
   color: var(--text-primary);
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 
 .gateway-meta {
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -351,9 +367,9 @@
   flex-wrap: wrap;
   gap: 8px;
   color: var(--text-tertiary);
-  font-size: 11px;
-  padding-top: 10px;
-  margin-top: 4px;
+  font-size: 12px;
+  padding-top: 14px;
+  margin-top: 8px;
   border-top: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
 }
 
