@@ -61,7 +61,7 @@
   box-sizing: border-box;
   width: max-content;
   min-width: 0;
-  max-width: min(320px, calc(100vw - 24px));
+  max-width: min(420px, calc(100vw - 24px));
   padding: 4px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -71,13 +71,16 @@
 
 .select-menu-list {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   border-radius: var(--radius-md);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
 }
 
 .select-menu-option {
   display: grid;
-  grid-template-columns: minmax(0, max-content) 16px;
+  grid-template-columns: minmax(0, 1fr) 16px;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -104,6 +107,13 @@
 
 .select-menu-option.selected {
   background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-card));
+}
+
+.select-menu-option:disabled,
+.select-menu-option.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .select-menu-option > svg {
