@@ -97,7 +97,7 @@ def run():
     thread = threading.Thread(target=upstream.serve_forever, daemon=True)
     thread.start()
     try:
-        with tempfile.TemporaryDirectory(prefix="semantic-router-", dir=ROOT / ".build") as temporary:
+        with tempfile.TemporaryDirectory(prefix="semantic-router-") as temporary:
             temporary = Path(temporary)
             plugin_dir = temporary / "plugins/linux/amd64"
             plugin_dir.mkdir(parents=True)

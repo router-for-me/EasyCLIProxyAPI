@@ -33,6 +33,14 @@ yaml="$(go list -m -f '{{.Dir}}' gopkg.in/yaml.v3)"
 cp -f "$yaml/LICENSE" "$package/YAML-LICENSE"
 if [[ -f "$yaml/NOTICE" ]]; then cp -f "$yaml/NOTICE" "$package/YAML-NOTICE"; fi
 cp -f "$(go env GOROOT)/LICENSE" "$package/GO-LICENSE"
-(cd "$package" && sha256sum "semantic-router.$extension" > SHA256SUMS)
+if command -v sha256sum >/dev/null 2>&1; then
+  checksum=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  checksum=(shasum -a 256)
+else
+  echo "A SHA-256 checksum tool is required: sha256sum or shasum" >&2
+  exit 1
+fi
+(cd "$package" && "${checksum[@]}" "semantic-router.$extension" > SHA256SUMS)
 tar -czf "$package.tar.gz" -C dist "$(basename "$package")"
 echo "Install: $package/semantic-router.$extension"

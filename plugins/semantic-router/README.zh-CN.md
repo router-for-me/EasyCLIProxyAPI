@@ -70,8 +70,10 @@ curl http://127.0.0.1:8317/v1/chat/completions \
 go test -race ./...
 bash build.sh
 CPA_CORE=/path/to/cli-proxy-api python3 smoke_test.py
+CPA_CORE=/path/to/cli-proxy-api python3 build_test.py -v
 CPA_GUI=/path/to/release/cpa-gui CPA_CORE=/path/to/cli-proxy-api bash verify_gui.sh
 ```
 
 集成测试启动临时本地核心和确定性的本地分类/上游 HTTP 服务，所有配置、凭据均为临时测试数据；退出时清理子进程和端口。
+`build_test.py` 使用隔离 PATH 验证缺少 `sha256sum` 时的 `shasum -a 256` 打包路径，并在没有 `.build` 的临时目录运行真实核心集成测试，不删除已有构建文件。打包回归使用模拟编译器，不代表 macOS 原生构建验证。
 它验证真实动态库加载、语义决策、显式模型绕过、畸形结果/HTTP 错误/超时回退、流式工具载荷和关闭插件后的行为。
