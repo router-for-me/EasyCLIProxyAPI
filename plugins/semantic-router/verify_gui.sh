@@ -17,7 +17,15 @@ if [[ "${CPA_GUI_ISOLATED:-}" != 1 ]]; then
     setsid dbus-run-session -- bash "$PWD/verify_gui.sh" &
   session_pid=$!
   trap 'kill -- "-$session_pid" 2>/dev/null || true' EXIT
-  if wait "$session_pid"; then rm -rf "$temporary"; else
+  if wait "$session_pid"; then
+    kill -- "-$session_pid" 2>/dev/null || true
+    for attempt in {1..50}; do
+      if rm -rf "$temporary" 2>/dev/null; then exit 0; fi
+      sleep 0.1
+    done
+    echo "GUI verification cleanup failed: $temporary" >&2
+    exit 1
+  else
     echo "GUI verification failed; debug logs preserved: $temporary" >&2
     exit 1
   fi
