@@ -487,6 +487,27 @@ fn apply_rollout_metadata(record: &mut Value, request: &SaveCodexSessionContextR
                 payload.insert("model".to_string(), json!(model));
             }
         }
+    } else if record_type == Some("event_msg") {
+        if let Some(payload) = record.get_mut("payload").and_then(Value::as_object_mut) {
+            if payload.get("type").and_then(Value::as_str) == Some("thread_settings_applied") {
+                if let Some(thread_settings) = payload
+                    .get_mut("thread_settings")
+                    .and_then(Value::as_object_mut)
+                {
+                    for (key, value) in [
+                        ("cwd", request.cwd.as_ref()),
+                        ("model", request.model.as_ref()),
+                        ("model_provider_id", request.model_provider.as_ref()),
+                    ] {
+                        if let Some(value) = value {
+                            if thread_settings.contains_key(key) {
+                                thread_settings.insert(key.to_string(), json!(value));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3203,6 +3224,24 @@ mod tests {
             TEST_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed)
         )
     }
+
+    #[test]
+    fn context_save_updates_existing_thread_settings_applied_fields() {
+        let request: SaveCodexSessionContextRequest = serde_json::from_value(json!({
+            "sessionId": "thread-1",
+            "cwd": "/new",
+            "model": "gpt-6",
+            "modelProvider": "cpa-gui",
+        }))
+        .unwrap();
+        let mut record = json!({"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"cwd":"/old","model_provider_id":"openai","service_tier":"default"}}});
+        apply_rollout_metadata(&mut record, &request);
+        assert_eq!(
+            record["payload"]["thread_settings"],
+            json!({"cwd":"/new","model_provider_id":"cpa-gui","service_tier":"default"})
+        );
+    }
+
     #[test]
     fn legacy_message_copies_follow_edits_and_deletions_in_their_turn() {
         for canonical in [false, true] {

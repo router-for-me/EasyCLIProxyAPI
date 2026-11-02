@@ -1632,7 +1632,8 @@ fn build_rollout_repair(
             .map_or((body_with_cr, ""), |body| (body, "\r"));
         let mut output = body.to_string();
         if let Ok(mut record) = serde_json::from_str::<Value>(body) {
-            if record.get("type").and_then(Value::as_str) == Some("session_meta") {
+            let record_type = record.get("type").and_then(Value::as_str);
+            if record_type == Some("session_meta") {
                 if let Some(payload) = record.get_mut("payload").and_then(Value::as_object_mut) {
                     session_meta_count += 1;
                     if thread_id.is_none() {
@@ -1658,6 +1659,32 @@ fn build_rollout_repair(
                         output = serde_json::to_string(&record)
                             .map_err(|error| format!("Failed to serialize session_meta: {error}"))?;
                         changed = true;
+                    }
+                }
+            } else if record_type == Some("event_msg") {
+                if let Some(payload) = record.get_mut("payload").and_then(Value::as_object_mut) {
+                    if payload.get("type").and_then(Value::as_str) == Some("thread_settings_applied") {
+                        if let Some(thread_settings) = payload
+                            .get_mut("thread_settings")
+                            .and_then(Value::as_object_mut)
+                        {
+                            if let Some(provider) = thread_settings
+                                .get("model_provider_id")
+                                .and_then(Value::as_str)
+                            {
+                                providers.push(provider.to_string());
+                                if provider != target_provider {
+                                    thread_settings.insert(
+                                        "model_provider_id".to_string(),
+                                        json!(target_provider),
+                                    );
+                                    output = serde_json::to_string(&record).map_err(|error| {
+                                        format!("Failed to serialize thread_settings_applied: {error}")
+                                    })?;
+                                    changed = true;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1750,6 +1777,22 @@ fn repair_maps(
     (user_event_ids, cwd_by_id)
 }
 
+/// Rows of `local_thread_catalog` that belong to this CODEX_HOME's sessions.
+/// Codex Desktop lists ChatGPT cloud, SSH and WSL threads in the same table;
+/// those carry no local provider and must keep their value. `None` when the
+/// table cannot be scoped to the local host.
+fn local_catalog_scope(connection: &Connection) -> Result<Option<&'static str>, String> {
+    let columns = table_columns(connection, "local_thread_catalog")?;
+    if !columns.contains("model_provider") || !columns.contains("host_id") {
+        return Ok(None);
+    }
+    Ok(Some(if table_exists(connection, "local_thread_catalog_hosts")? {
+        "host_id IN (SELECT host_id FROM local_thread_catalog_hosts WHERE host_kind = 'local')"
+    } else {
+        "host_id = 'local'"
+    }))
+}
+
 fn count_sqlite_repairs(
     paths: &[PathBuf],
     repairs: &[RolloutRepair],
@@ -1798,6 +1841,16 @@ fn count_sqlite_repairs(
                         as usize;
                 }
             }
+            if let Some(scope) = local_catalog_scope(&connection)? {
+                count += connection
+                    .query_row(
+                        &format!("SELECT COUNT(*) FROM local_thread_catalog WHERE COALESCE(model_provider, '') <> ?1 AND {scope}"),
+                        [target_provider],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(|error| format!("Failed to count session catalog provider rows: {error}"))?
+                    as usize;
+            }
             Ok(count)
         })();
         match count_result {
@@ -1825,7 +1878,10 @@ fn apply_sqlite_repairs(
         let update_result = (|| -> Result<usize, String> {
             let mut connection = open_read_write(path)?;
             let columns = table_columns(&connection, "threads")?;
-            if columns.is_empty() {
+            // Codex Desktop keeps its thread list in codex-dev.db, which has
+            // local_thread_catalog but no threads table.
+            let catalog_scope = local_catalog_scope(&connection)?;
+            if columns.is_empty() && catalog_scope.is_none() {
                 return Ok(0);
             }
             let transaction = connection
@@ -1859,6 +1915,14 @@ fn apply_sqlite_repairs(
                         )
                         .map_err(|error| format!("Failed to update session project path: {error}"))?;
                 }
+            }
+            if let Some(scope) = catalog_scope {
+                updated += transaction
+                    .execute(
+                        &format!("UPDATE local_thread_catalog SET model_provider = ?1 WHERE COALESCE(model_provider, '') <> ?1 AND {scope}"),
+                        [target_provider],
+                    )
+                    .map_err(|error| format!("Failed to update session catalog provider: {error}"))?;
             }
             transaction
                 .commit()
@@ -2980,6 +3044,87 @@ mod tests {
             fs::metadata(&rollout).unwrap().modified().unwrap(),
             before_mtime
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn provider_repair_updates_thread_settings_applied_and_local_thread_catalog() {
+        let root = test_root("repair-thread-settings-applied");
+        fs::create_dir_all(root.join("sessions")).unwrap();
+        let rollout = root.join("sessions/rollout.jsonl");
+        let original = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread-1\",\"model_provider\":\"cpa-gui\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_id\":\"thread-1\",\"thread_settings\":{\"model\":\"claude-opus-5-5\",\"model_provider_id\":\"openai\"}}}\n"
+        );
+        fs::write(&rollout, original).unwrap();
+        create_threads_db(&root.join("state_5.sqlite"), &rollout);
+        fs::create_dir_all(root.join("sqlite")).unwrap();
+        let desktop_db = root.join("sqlite/codex-dev.db");
+        Connection::open(&desktop_db)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE inbox_items (id TEXT, thread_id TEXT);\n\
+                 CREATE TABLE local_thread_catalog_hosts (host_id TEXT PRIMARY KEY, host_kind TEXT NOT NULL);\n\
+                 CREATE TABLE local_thread_catalog (host_id TEXT, thread_id TEXT, model_provider TEXT, PRIMARY KEY (host_id, thread_id));\n\
+                 INSERT INTO local_thread_catalog_hosts VALUES ('local', 'local'), ('chatgpt:account', 'chatgpt'), ('ssh:box', 'ssh');\n\
+                 INSERT INTO local_thread_catalog VALUES ('local', 'thread-1', 'openai'), ('chatgpt:account', 'cloud-1', NULL), ('ssh:box', 'remote-1', 'openai');",
+            )
+            .unwrap();
+
+        let result = repair_codex_session_metadata_from_home(&root, "cpa-gui", |_| {}).unwrap();
+        assert_eq!(result.changed_rollout_files, 1);
+        let updated_text = fs::read_to_string(&rollout).unwrap();
+        assert!(!updated_text.contains("\"model_provider_id\":\"openai\""));
+        assert!(updated_text.contains("\"model_provider_id\":\"cpa-gui\""));
+
+        let connection = Connection::open(&desktop_db).unwrap();
+        let provider_of = |thread: &str| -> Option<String> {
+            connection
+                .query_row(
+                    "SELECT model_provider FROM local_thread_catalog WHERE thread_id = ?1",
+                    [thread],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(provider_of("thread-1").as_deref(), Some("cpa-gui"));
+        // Cloud and remote-host threads are not local sessions of this CODEX_HOME.
+        assert_eq!(provider_of("cloud-1"), None);
+        assert_eq!(provider_of("remote-1").as_deref(), Some("openai"));
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn catalog_only_provider_change_is_backed_up_before_it_is_applied() {
+        let root = test_root("repair-catalog-backup");
+        fs::create_dir_all(root.join("sessions")).unwrap();
+        fs::write(
+            root.join("sessions/rollout.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"thread-1\",\"model_provider\":\"cpa-gui\"}}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("sqlite")).unwrap();
+        let desktop_db = root.join("sqlite/codex-dev.db");
+        Connection::open(&desktop_db)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE inbox_items (id TEXT, thread_id TEXT);\n\
+                 CREATE TABLE local_thread_catalog (host_id TEXT, thread_id TEXT, model_provider TEXT, PRIMARY KEY (host_id, thread_id));\n\
+                 INSERT INTO local_thread_catalog VALUES ('local', 'thread-1', 'openai');",
+            )
+            .unwrap();
+
+        let result = repair_codex_session_metadata_from_home(&root, "cpa-gui", |_| {}).unwrap();
+        assert_eq!(result.changed_rollout_files, 0);
+        assert_eq!(result.sqlite_rows_updated, 1);
+        let backup = PathBuf::from(result.backup_path.expect("a catalog rewrite needs a backup"));
+        let backed_up = Connection::open(backup.join("databases/sqlite/codex-dev.db")).unwrap();
+        let provider: String = backed_up
+            .query_row("SELECT model_provider FROM local_thread_catalog", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(provider, "openai");
+        drop(backed_up);
         fs::remove_dir_all(root).unwrap();
     }
 
