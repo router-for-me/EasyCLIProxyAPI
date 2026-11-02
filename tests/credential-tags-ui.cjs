@@ -212,6 +212,40 @@ const path = require('node:path');
     assert.deepEqual((await storedTags())['02-account.json'], ['scoped']);
     assert.deepEqual((await storedTags())['03-account.json'], []);
     await batch.getByRole('button', { name: 'Close', exact: true }).click();
+    for (const label of ['中文，标签', '旧行\n标签']) {
+      await seed({ '01-account.json': ['keep', label], '02-account.json': ['unrelated'], '03-account.json': [] });
+      await page.getByRole('button', { name: 'Batch management', exact: true }).click();
+      await batch.locator('.auth-batch-selection-group input').check();
+      const chip = batch.locator('.auth-batch-pool-chip').filter({ hasText: label.split('\n')[0] });
+      const tagWrites = () => page.evaluate(() => window.authFileListFixture.requests.filter(request =>
+        request.method === 'PATCH' && request.path === '/credentials/fields' && Array.isArray(request.body.tags)));
+      const before = (await tagWrites()).length;
+      await chip.click();
+      await batch.locator('.notice-success').waitFor();
+      assert.equal(await batch.locator('.notice-success').textContent(), `Added tag "${label}" to 2 credentials`);
+      assert.deepEqual(await storedTags(), {
+        '01-account.json': ['keep', label], '02-account.json': ['unrelated', label], '03-account.json': [label],
+      });
+      assert.deepEqual((await tagWrites()).slice(before).map(request => request.body), [
+        { name: '02-account.json', tags: ['unrelated', label] }, { name: '03-account.json', tags: [label] },
+      ]);
+      await chip.click();
+      await batch.locator('.notice-success').waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => !document.querySelector('.auth-batch-pool-chip').disabled);
+      assert.equal((await tagWrites()).length, before + 2);
+      await batch.locator('.auth-batch-tag-input').fill(' fresh，weekly, fresh ');
+      await batch.locator('.auth-batch-tag-input-group + small').filter({ hasText: '3 selected; 3 credentials will change.' }).waitFor();
+      await batch.getByRole('button', { name: '+ Batch add', exact: true }).click();
+      await batch.locator('.notice-success').waitFor();
+      assert.deepEqual(await storedTags(), {
+        '01-account.json': ['keep', label, 'fresh', 'weekly'],
+        '02-account.json': ['unrelated', label, 'fresh', 'weekly'],
+        '03-account.json': [label, 'fresh', 'weekly'],
+      });
+      await batch.locator('.auth-batch-tag-input-group + small').filter({ hasText: '3 selected; 0 credentials will change.' }).waitFor();
+      await batch.getByRole('button', { name: 'Close', exact: true }).click();
+    }
+
     await seed({ '01-account.json': ['common'], '02-account.json': ['common'], '03-account.json': [] });
     await page.getByRole('button', { name: 'Batch management', exact: true }).click();
     assert.equal(await batch.locator('.auth-batch-tag-input').count(), 0);

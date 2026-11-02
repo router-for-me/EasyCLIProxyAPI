@@ -89,15 +89,16 @@ export function AuthFileBatchDialog({
   };
 
   const runBatchAddTag = async (tagOverride?: string) => {
-    const tag = (tagOverride ?? batchAddInput).trim();
-    if (!tag || !targets.length || busy || pending.current) return;
+    const tagsToAdd = tagOverride === undefined ? parseCredentialTagInput(batchAddInput) : [tagOverride];
+    const tag = tagsToAdd.join(", ");
+    if (!tagsToAdd.length || !targets.length || busy || pending.current) return;
     pending.current = true;
     setBusy(true);
     setError("");
     setFeedbackNotice("");
     setResults([]);
     try {
-      const batchRes = await batchAddCredentialTag(targets, tag);
+      const batchRes = await batchAddCredentialTag(targets, tagsToAdd);
       setTagRevision(current => current + 1);
       const succeeded = batchRes.filter((r) => r.success).length;
       const failed = batchRes.filter((r) => !r.success).length;

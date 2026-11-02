@@ -38,10 +38,10 @@ export async function runCredentialBatch(files: AuthFileRecord[], action: (file:
 
 export async function batchAddCredentialTag(
   files: AuthFileRecord[],
-  tag: string,
+  tag: string | string[],
   api: Pick<typeof managementApi, 'patch'> = managementApi,
 ): Promise<CredentialResult[]> {
-  const normalized = parseCredentialTagInput(tag);
+  const normalized = Array.isArray(tag) ? normalizeAuthFileTags(tag) : parseCredentialTagInput(tag);
   if (!normalized.length) return [];
   const targets = files.filter(file => normalized.some(tag => !resolveCredentialTags(readString(file, 'name'), file.tags).includes(tag)));
   return runCredentialBatch(targets, async file => {
