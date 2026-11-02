@@ -78,7 +78,7 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
     setSaving(true);
     setError('');
     try {
-      const nextDraft = { ...draft, tags: normalizeAuthFileTags([...parseCredentialTagInput(draft.tags), ...parseCredentialTagInput(tagInput)]).join(', ') };
+      const nextDraft = { ...draft, tags: normalizeAuthFileTags([...draft.tags.split(','), ...parseCredentialTagInput(tagInput)]).join(', ') };
       const changed = await saveAuthFileSettings(name, original, nextDraft);
       if (changed) onSaved();
       else onClose();
@@ -95,8 +95,8 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   const currentTags = normalizeAuthFileTags((draft?.tags ?? '').split(','));
   const availablePoolTags = existingTags.filter(tag => !currentTags.includes(tag) && tag.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase()));
 
-  const addTag = (tagToAdd: string) => {
-    const normalized = parseCredentialTagInput(tagToAdd);
+  const addTag = (tagToAdd: string, fromPool = false) => {
+    const normalized = fromPool ? normalizeAuthFileTags([tagToAdd]) : parseCredentialTagInput(tagToAdd);
     if (!normalized.length) return;
     const next = normalizeAuthFileTags([...currentTags, ...normalized]);
     update('tags', next.join(', '));
@@ -239,7 +239,7 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
                               key={tag}
                               type="button"
                               className="filter-chip credential-tag-pool-item"
-                              onClick={() => addTag(tag)}
+                              onClick={() => addTag(tag, true)}
                               title={t('authFiles.tags.addFromPool', { tag })}
                             >
                               + {tag}{existingTagCounts ? ` (${existingTagCounts.get(tag) ?? 0})` : ''}

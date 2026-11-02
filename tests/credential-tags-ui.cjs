@@ -246,6 +246,73 @@ const path = require('node:path');
     await page.reload();
     await card('03-account.json').getByRole('button', { name: '入力', exact: true }).waitFor();
 
+    for (const clearControl of ['button', 'checkbox', 'row']) {
+      await seed({ '01-account.json': ['shared'], '02-account.json': ['shared'], '03-account.json': [] });
+      await page.getByRole('button', { name: 'Batch management', exact: true }).click();
+      await batch.locator('.auth-batch-filter-label select').selectOption('shared');
+      await page.evaluate(() => { window.authFileListFixture.failTagWrites = ['02-account.json']; });
+      await batch.locator('.auth-batch-tag-remove-group select').selectOption('shared');
+      await batch.getByRole('button', { name: '- Batch remove', exact: true }).click();
+      await batch.locator('.notice-warn').getByText('Completed: 1 succeeded, 1 failed', { exact: true }).waitFor();
+      assert.equal(await batch.locator('.auth-batch-row').count(), 1);
+      assert.equal(await batch.locator('.auth-batch-row input:checked').count(), 1);
+      assert.match(await batch.locator('.auth-batch-selection-group').textContent(), /2\/1/);
+      assert.deepEqual((await storedTags())['01-account.json'], []);
+      assert.deepEqual((await storedTags())['02-account.json'], ['shared']);
+      const requestsBeforeClear = await page.evaluate(() => window.authFileListFixture.requests.length);
+      if (clearControl === 'button') await batch.getByRole('button', { name: 'Clear selection', exact: true }).click();
+      else if (clearControl === 'checkbox') await batch.locator('.auth-batch-selection-group input').uncheck();
+      else await batch.locator('.auth-batch-row input').uncheck();
+      assert.match(await batch.locator('.auth-batch-selection-group').textContent(), /0\/1/);
+      assert.equal(await batch.locator('.auth-batch-row input:checked').count(), 0);
+      assert.equal(await batch.locator('.auth-batch-tag-ops').count(), 0);
+      for (const action of ['Refresh credentials', 'Enable', 'Disable', 'Delete']) {
+        assert.equal(await batch.getByRole('button', { name: action, exact: true }).isDisabled(), true);
+      }
+      await page.keyboard.press('Enter');
+      assert.equal(await page.evaluate(() => window.authFileListFixture.requests.length), requestsBeforeClear);
+      await batch.getByRole('button', { name: 'Close', exact: true }).click();
+    }
+
+    const legacyTags = ['中文，标签', 'legacy\nlabel'];
+    await seed({ '01-account.json': legacyTags, '02-account.json': legacyTags, '03-account.json': [] });
+    await page.evaluate(tags => {
+      window.authFileListFixture.files[0].tags = tags;
+      window.authFileListFixture.files[1].tags = tags;
+    }, legacyTags);
+    await edit('01-account.json');
+    assert.equal(await dialog().locator('.credential-tag-badge').count(), 2);
+    await dialog().locator('.credential-settings-field:has(code:text-is("priority")) input').fill('7');
+    await dialog().locator('.credential-settings-field:has(code:text-is("note")) textarea').fill('Updated note');
+    await save();
+    assert.deepEqual((await storedTags())['01-account.json'], legacyTags);
+    assert.deepEqual(await page.evaluate(() => window.authFileListFixture.files[0].tags), legacyTags);
+    const unrelatedPatch = await page.evaluate(() => window.authFileListFixture.requests.filter(request => request.method === 'PATCH').at(-1).body);
+    assert.equal('tags' in unrelatedPatch, false);
+    assert.equal(unrelatedPatch.priority, 7);
+    assert.equal(unrelatedPatch.note, 'Updated note');
+    await edit('01-account.json');
+    await paste(dialog().locator('.credential-tag-input'), ' new，weekly\nnew, nightly ');
+    await dialog().locator('.credential-tag-input').fill('nightly，new');
+    await save();
+    const expandedTags = [...legacyTags, 'new', 'weekly', 'nightly'];
+    assert.deepEqual((await storedTags())['01-account.json'], expandedTags);
+    assert.deepEqual(await page.evaluate(() => window.authFileListFixture.files[0].tags), expandedTags);
+    await edit('03-account.json');
+    await dialog().getByRole('searchbox', { name: 'Search existing tags', exact: true }).fill('中文');
+    await dialog().locator('.credential-tag-pool-item').click();
+    await dialog().getByRole('searchbox', { name: 'Search existing tags', exact: true }).fill('legacy');
+    await dialog().locator('.credential-tag-pool-item').click();
+    await dialog().locator('.credential-tag-input').fill('other，extra');
+    await save();
+    assert.deepEqual((await storedTags())['03-account.json'], [...legacyTags, 'other', 'extra']);
+    assert.deepEqual(await page.evaluate(() => window.authFileListFixture.files[2].tags), [...legacyTags, 'other', 'extra']);
+    await edit('03-account.json');
+    await dialog().getByRole('button', { name: 'Remove tag "中文，标签"', exact: true }).click();
+    await save();
+    assert.deepEqual((await storedTags())['03-account.json'], ['legacy\nlabel', 'other', 'extra']);
+    assert.deepEqual(await page.evaluate(() => window.authFileListFixture.files[2].tags), ['legacy\nlabel', 'other', 'extra']);
+
     const locales = [
       ['zh-CN', '全部标签', '管理标签'], ['zh-TW', '全部標籤', '管理標籤'],
       ['en', 'All tags', 'Manage tags'], ['ja', 'すべてのタグ', 'タグを管理'],

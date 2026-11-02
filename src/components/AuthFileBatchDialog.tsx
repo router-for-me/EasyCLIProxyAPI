@@ -81,19 +81,11 @@ export function AuthFileBatchDialog({
   const removeAffectedCount = targets.filter(file => normalizeAuthFileTags(file.tags).includes(batchRemoveTag)).length;
 
   const selectAllMatching = () => {
-    setSelected((current) => {
-      const next = new Set(current);
-      matching.forEach((file) => next.add(quotaKey(file)));
-      return next;
-    });
+    setSelected(new Set(matching.map(quotaKey)));
   };
 
   const clearSelection = () => {
-    setSelected((current) => {
-      const next = new Set(current);
-      matching.forEach((file) => next.delete(quotaKey(file)));
-      return next;
-    });
+    setSelected(new Set());
   };
 
   const runBatchAddTag = async (tagOverride?: string) => {
@@ -211,14 +203,8 @@ export function AuthFileBatchDialog({
               disabled={busy || !matching.length}
               onChange={(event) => {
                 const checked = event.currentTarget.checked;
-                setSelected((current) => {
-                  const next = new Set(current);
-                  matching.forEach((file) => {
-                    if (checked) next.add(quotaKey(file));
-                    else next.delete(quotaKey(file));
-                  });
-                  return next;
-                });
+                if (checked) selectAllMatching();
+                else clearSelection();
               }}
               label={`${t("authFiles.operations.selectAll")} (${targets.length}/${matching.length})`}
             />
@@ -284,7 +270,7 @@ export function AuthFileBatchDialog({
                     onChange={(event) => {
                       const checked = event.currentTarget.checked;
                       setSelected((current) => {
-                        const next = new Set(current);
+                        const next = new Set(matching.map(quotaKey).filter(key => current.has(key)));
                         if (checked) next.add(quotaKey(file));
                         else next.delete(quotaKey(file));
                         return next;
