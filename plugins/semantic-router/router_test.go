@@ -109,7 +109,7 @@ func TestExplicitBypassAndRecursionPrevention(t *testing.T) {
 }
 
 func TestFallbackPaths(t *testing.T) {
-	for _, mode := range []string{"error", "bad-json", "out-of-range", "none", "words", "unavailable", "catalog-error", "missing-context", "http-error", "disappeared"} {
+	for _, mode := range []string{"error", "bad-json", "out-of-range", "none", "words", "unavailable", "missing-context", "http-error", "disappeared"} {
 		t.Run(mode, func(t *testing.T) {
 			var catalogs atomic.Int32
 			router := configured(t, func(method string, data []byte) ([]byte, error) {
@@ -167,7 +167,7 @@ func TestTimeoutAndBoundedWork(t *testing.T) {
 	for index := 0; index < 10; index++ {
 		start := time.Now()
 		result := router.route(request("test"), "scope")
-		if result.TargetModel != "general" || time.Since(start) > time.Second {
+		if (index < 7 && result.TargetModel != "general") || (index >= 7 && result.Handled) || time.Since(start) > time.Second {
 			t.Fatal("timeout failed")
 		}
 	}
@@ -247,5 +247,62 @@ func TestMissingFallbackFailsClosed(t *testing.T) {
 	input.AvailableProviders = nil
 	if decision(router.config.Fallback, input.AvailableProviders, "fallback").Handled {
 		t.Fatal("missing provider routed")
+	}
+}
+
+func TestFallbackRechecksCatalog(t *testing.T) {
+	for _, mode := range []string{"initial-error", "recheck-error", "removed", "removed-selection", "timeout-removed", "panic-removed"} {
+		t.Run(mode, func(t *testing.T) {
+			blocked := make(chan struct{})
+			defer close(blocked)
+			var catalogs atomic.Int32
+			router := configured(t, func(method string, data []byte) ([]byte, error) {
+				if method == pluginabi.MethodHostAuthModels {
+					count := catalogs.Add(1)
+					if mode == "initial-error" || (mode == "recheck-error" && count > 1) {
+						return nil, errors.New("catalog unavailable")
+					}
+					if count > 1 {
+						return catalogBytes("classifier"), nil
+					}
+					return catalogBytes("classifier", "general", "coder"), nil
+				}
+				switch mode {
+				case "timeout-removed":
+					<-blocked
+				case "panic-removed":
+					panic("classifier failed")
+				case "removed-selection":
+					return completion("1"), nil
+				}
+				return completion("0"), nil
+			})
+			if result := router.route(request("test"), "scope"); result.Handled {
+				t.Fatalf("unverified fallback routed: %+v", result)
+			}
+		})
+	}
+}
+
+func TestMissingFallbackWithBlockedCatalogAndSaturation(t *testing.T) {
+	blocked := make(chan struct{})
+	defer close(blocked)
+	var calls atomic.Int32
+	router := configured(t, func(method string, data []byte) ([]byte, error) {
+		calls.Add(1)
+		<-blocked
+		return catalogBytes("classifier", "coder"), nil
+	})
+	for index := 0; index < 10; index++ {
+		started := time.Now()
+		if result := router.route(request("test"), "scope"); result.Handled {
+			t.Fatalf("missing fallback routed on timeout or saturation: %+v", result)
+		}
+		if time.Since(started) > time.Second {
+			t.Fatal("route exceeded bounded timeout")
+		}
+	}
+	if calls.Load() != 8 {
+		t.Fatalf("expected eight outstanding catalog calls, got %d", calls.Load())
 	}
 }

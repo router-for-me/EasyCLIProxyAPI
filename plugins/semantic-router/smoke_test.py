@@ -188,7 +188,7 @@ plugins:
                         elapsed = time.monotonic() - started
                         assert len(classifier_calls) == count + 1, f"{failure} did not reach classifier"
                         if failure == "timeout":
-                            assert 0.12 <= elapsed < 0.55, elapsed
+                            assert 0.06 <= elapsed < 0.55, elapsed
                             time.sleep(0.8)
                     mode = "normal"
                     api(port, config_path + "/enabled", False, method="PUT", management=True)

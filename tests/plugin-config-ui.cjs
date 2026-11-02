@@ -125,8 +125,25 @@ const path = require('node:path');
     await page.getByRole('button', { name: '保存', exact: true }).click();
     assert.equal(await candidates.getAttribute('aria-invalid'), 'true');
     await candidates.fill(JSON.stringify(originalCandidates, null, 2));
-    await candidates.scrollIntoViewIfNeeded();
-    if (process.env.SEMANTIC_ROUTER_SCREENSHOT) await page.screenshot({ path: process.env.SEMANTIC_ROUTER_SCREENSHOT });
+    if (process.env.SEMANTIC_ROUTER_SCREENSHOT) {
+      await page.setViewportSize({ width: 1280, height: 1100 });
+      await page.getByRole('dialog').evaluate(dialog => {
+        for (const element of dialog.querySelectorAll('*')) {
+          if (element.scrollHeight > element.clientHeight) element.scrollTop = 0;
+        }
+        for (const textarea of dialog.querySelectorAll('textarea')) {
+          textarea.style.height = `${textarea.scrollHeight + 4}px`;
+        }
+      });
+      await page.screenshot({ path: process.env.SEMANTIC_ROUTER_SCREENSHOT });
+      await page.getByRole('dialog').evaluate(dialog => {
+        for (const element of dialog.querySelectorAll('*:not(textarea)')) {
+          if (element.scrollHeight > element.clientHeight) element.scrollTop = element.scrollHeight;
+        }
+      });
+      await candidates.evaluate(element => { element.scrollTop = 0; });
+      await page.screenshot({ path: process.env.SEMANTIC_ROUTER_SCREENSHOT.replace(/\.png$/, '-candidates.png') });
+    }
     originalCandidates[0].description = '编程与重构';
     await candidates.fill(JSON.stringify(originalCandidates));
     await page.getByRole('button', { name: '保存', exact: true }).click();

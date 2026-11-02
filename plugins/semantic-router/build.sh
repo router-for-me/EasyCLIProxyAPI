@@ -28,11 +28,11 @@ rm -f "$package/semantic-router.h"
 cp manifest.json README.zh-CN.md "$package/"
 cp ../../LICENSE "$package/LICENSE"
 sdk="$(go list -m -f '{{.Dir}}' github.com/router-for-me/CLIProxyAPI/v8)"
-cp "$sdk/LICENSE" "$package/SDK-LICENSE"
+cp -f "$sdk/LICENSE" "$package/SDK-LICENSE"
 yaml="$(go list -m -f '{{.Dir}}' gopkg.in/yaml.v3)"
-cp "$yaml/LICENSE" "$package/YAML-LICENSE"
-if [[ -f "$yaml/NOTICE" ]]; then cp "$yaml/NOTICE" "$package/YAML-NOTICE"; fi
-cp "$(go env GOROOT)/LICENSE" "$package/GO-LICENSE"
+cp -f "$yaml/LICENSE" "$package/YAML-LICENSE"
+if [[ -f "$yaml/NOTICE" ]]; then cp -f "$yaml/NOTICE" "$package/YAML-NOTICE"; fi
+cp -f "$(go env GOROOT)/LICENSE" "$package/GO-LICENSE"
 (cd "$package" && sha256sum "semantic-router.$extension" > SHA256SUMS)
 tar -czf "$package.tar.gz" -C dist "$(basename "$package")"
 echo "Install: $package/semantic-router.$extension"

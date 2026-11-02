@@ -22,10 +22,13 @@ type router struct {
 	paused  bool
 	workers sync.WaitGroup
 	slots   chan struct{}
+	tasks   chan struct{}
 	call    hostCaller
 }
 
-func newRouter(call hostCaller) *router { return &router{call: call, slots: make(chan struct{}, 8)} }
+func newRouter(call hostCaller) *router {
+	return &router{call: call, slots: make(chan struct{}, 8), tasks: make(chan struct{}, 8)}
+}
 
 func (router *router) stop() {
 	router.mu.Lock()
@@ -99,7 +102,7 @@ func (router *router) route(request pluginapi.ModelRouteRequest, callbackID stri
 		router.workers.Add(1)
 	default:
 		router.mu.Unlock()
-		return decision(config.Fallback, request.AvailableProviders, "classifier busy; fallback")
+		return pluginapi.ModelRouteResponse{}
 	}
 	router.mu.Unlock()
 	answer := make(chan pluginapi.ModelRouteResponse, 1)
@@ -108,7 +111,7 @@ func (router *router) route(request pluginapi.ModelRouteRequest, callbackID stri
 		defer func() { <-router.slots }()
 		defer func() {
 			if recover() != nil {
-				answer <- decision(config.Fallback, request.AvailableProviders, "classifier failed; fallback")
+				answer <- pluginapi.ModelRouteResponse{}
 			}
 		}()
 		answer <- router.choose(config, request, callbackID)
@@ -119,7 +122,47 @@ func (router *router) route(request pluginapi.ModelRouteRequest, callbackID stri
 	case result := <-answer:
 		return result
 	case <-timer.C:
-		return decision(config.Fallback, request.AvailableProviders, "classifier timeout; fallback")
+		return pluginapi.ModelRouteResponse{}
+	}
+}
+
+func (router *router) execute(payload []byte, timeout time.Duration) ([]byte, error) {
+	router.mu.Lock()
+	if router.closed || router.paused {
+		router.mu.Unlock()
+		return nil, errors.New("plugin is stopping")
+	}
+	select {
+	case router.tasks <- struct{}{}:
+		router.workers.Add(1)
+	default:
+		router.mu.Unlock()
+		return nil, errors.New("classifier busy")
+	}
+	router.mu.Unlock()
+	type result struct {
+		data []byte
+		err  error
+	}
+	answer := make(chan result, 1)
+	go func() {
+		defer router.workers.Done()
+		defer func() { <-router.tasks }()
+		defer func() {
+			if recover() != nil {
+				answer <- result{err: errors.New("classifier failed")}
+			}
+		}()
+		data, err := router.call(pluginabi.MethodHostModelExecute, payload)
+		answer <- result{data: data, err: err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case response := <-answer:
+		return response.data, response.err
+	case <-timer.C:
+		return nil, errors.New("classifier timeout")
 	}
 }
 
@@ -133,6 +176,12 @@ func decision(selected target, providers []string, reason string) pluginapi.Mode
 }
 
 func (router *router) catalog() (map[string]bool, error) {
+	select {
+	case router.tasks <- struct{}{}:
+		defer func() { <-router.tasks }()
+	default:
+		return nil, errors.New("catalog busy")
+	}
 	data, err := router.call(pluginabi.MethodHostAuthModels, []byte(`{}`))
 	if err != nil {
 		return nil, err
@@ -152,11 +201,15 @@ func (router *router) catalog() (map[string]bool, error) {
 
 func (router *router) choose(config configuration, request pluginapi.ModelRouteRequest, callbackID string) pluginapi.ModelRouteResponse {
 	fallback := func() pluginapi.ModelRouteResponse {
+		models, err := router.catalog()
+		if err != nil || !models[config.Fallback.Provider+"/"+config.Fallback.Model] {
+			return pluginapi.ModelRouteResponse{}
+		}
 		return decision(config.Fallback, request.AvailableProviders, "classification unavailable; fallback")
 	}
 	models, err := router.catalog()
 	if err != nil {
-		return fallback()
+		return pluginapi.ModelRouteResponse{}
 	}
 	available := func(item target) bool { return models[item.Provider+"/"+item.Model] }
 	if !available(config.Fallback) {
@@ -185,7 +238,7 @@ func (router *router) choose(config configuration, request pluginapi.ModelRouteR
 		pluginapi.HostModelExecutionRequest
 		CallbackID string `json:"host_callback_id"`
 	}{pluginapi.HostModelExecutionRequest{EntryProtocol: "openai", ExitProtocol: "openai", Model: config.Classifier.Model, ForcedProvider: config.Classifier.Provider, Body: body}, callbackID})
-	data, err := router.call(pluginabi.MethodHostModelExecute, payload)
+	data, err := router.execute(payload, time.Duration(config.TimeoutMS)*time.Millisecond/2)
 	if err != nil {
 		return fallback()
 	}
@@ -209,7 +262,10 @@ func (router *router) choose(config configuration, request pluginapi.ModelRouteR
 	}
 	selected := candidates[index-1]
 	models, err = router.catalog()
-	if err != nil || !available(selected) {
+	if err != nil {
+		return pluginapi.ModelRouteResponse{}
+	}
+	if !available(selected) {
 		return fallback()
 	}
 	return decision(selected, request.AvailableProviders, "semantic selection")
