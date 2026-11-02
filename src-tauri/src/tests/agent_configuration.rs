@@ -2,6 +2,62 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn claude_response_language_round_trip_preserves_custom_and_unrelated_settings() {
+    let directory = agent_test_home("response-language");
+    let path = directory.join("settings.json");
+    let models = test_agent_models(&["route-model"]);
+    let existing = r#"{"language":"  日本語（関西弁）  ","permissions":{"allow":["Read"]},"env":{"KEEP":"yes"}}"#;
+    let mut mappings = ClaudeDesktopModelMappings::all("route-model");
+    for language in [None, Some("Japanese"), Some("  日本語（関西弁）  ")] {
+        mappings.response_language = language.map(str::to_string);
+        let rendered = build_claude_agent_config(Some(existing), "http://localhost:8317", "fixture-key", "route-model", &models, Some(&mappings)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(value["language"], language.unwrap_or("  日本語（関西弁）  "));
+        assert_eq!(value["permissions"]["allow"][0], "Read");
+        assert_eq!(value["env"]["KEEP"], "yes");
+        assert!(value["env"].get("language").is_none());
+        fs::write(&path, &rendered).unwrap();
+        let inspected = inspect_claude_code_model_mappings(&path).unwrap().unwrap();
+        assert_eq!(inspected.response_language.as_deref(), value["language"].as_str());
+        let serialized = serde_json::to_string(&inspected).unwrap();
+        let mut reloaded: ClaudeDesktopModelMappings = serde_json::from_str(&serialized).unwrap();
+        reloaded.sonnet = "another-model".into();
+        let updated = build_claude_agent_config(Some(&rendered), "http://localhost:8317", "fixture-key", "route-model", &models, Some(&reloaded)).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&updated).unwrap()["language"], value["language"]);
+    }
+    fs::write(&path, r#"{"language":"Cymraeg"}"#).unwrap();
+    assert_eq!(inspect_claude_code_model_mappings(&path).unwrap().unwrap().response_language.as_deref(), Some("Cymraeg"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn claude_response_language_reset_unmanaged_and_old_state() {
+    let models = test_agent_models(&["route-model"]);
+    let mut mappings: ClaudeDesktopModelMappings = serde_json::from_str(r#"{"opus":"route-model","sonnet":"route-model","haiku":"route-model"}"#).unwrap();
+    assert_eq!(mappings.response_language, None);
+    for existing in [r#"{"language":"custom dialect"}"#, r#"{"language":{"future":"format"}}"#, "{}"] {
+        let rendered = build_claude_agent_config(Some(existing), "http://localhost:8317", "fixture-key", "route-model", &models, Some(&mappings)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(value.get("language"), serde_json::from_str::<serde_json::Value>(existing).unwrap().get("language"));
+    }
+    for reset in ["", "  "] {
+        mappings.response_language = Some(reset.into());
+        let rendered = build_claude_agent_config(Some(r#"{"language":"custom dialect","unrelated":true}"#), "http://localhost:8317", "fixture-key", "route-model", &models, Some(&mappings)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert!(value.get("language").is_none());
+        assert_eq!(value["unrelated"], true);
+    }
+    mappings.response_language = Some("Gaeilge".into());
+    assert!(resolve_claude_code_model_mappings(AgentClient::ClaudeDesktop, &models, "route-model", Some(mappings.clone())).unwrap().is_none());
+    let desktop = resolve_claude_desktop_model_mappings(AgentClient::ClaudeDesktop, &models, "route-model", Some(mappings.clone())).unwrap().unwrap();
+    assert_eq!(desktop.response_language, None);
+    let profile = build_claude_desktop_profile(None, "http://localhost:8317", "fixture-key", "route-model", &models, Some(&mappings)).unwrap();
+    assert!(serde_json::from_str::<serde_json::Value>(&profile).unwrap().get("language").is_none());
+    let code = resolve_claude_code_model_mappings(AgentClient::ClaudeCode, &models, "route-model", Some(mappings)).unwrap().unwrap();
+    assert_eq!(code.response_language.as_deref(), Some("Gaeilge"));
+}
+
+#[test]
 fn claude_code_explicit_model_inputs_replace_clear_and_round_trip() {
     let directory = agent_test_home("claude-code-explicit-models");
     let path = directory.join("settings.json");
@@ -237,6 +293,7 @@ fn claude_code_role_mappings_drive_settings() {
         fable_1m: false,
         startup_model: None,
         subagent_model: None,
+        response_language: None,
     };
     let models = vec![
         AgentModelOption {
@@ -363,6 +420,7 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
         fable_1m: false,
         startup_model: None,
         subagent_model: None,
+        response_language: None,
     };
     let models = vec![
         AgentModelOption {

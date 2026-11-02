@@ -846,6 +846,13 @@ pub(crate) fn build_claude_agent_config(
         .cloned()
         .unwrap_or_else(|| ClaudeDesktopModelMappings::all(model));
     let max_context_tokens = mappings.max_context_tokens;
+    if let Some(language) = &mappings.response_language {
+        if language.trim().is_empty() {
+            root.remove("language");
+        } else {
+            root.insert("language".into(), serde_json::Value::String(language.clone()));
+        }
+    }
     let model_settings = claude_code_model_settings(&mappings);
     let subagent_model = model_settings.haiku.clone();
     // Explicit/default session selections may switch roles, while Subagents may use

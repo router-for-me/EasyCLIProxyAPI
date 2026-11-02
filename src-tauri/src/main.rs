@@ -1213,6 +1213,8 @@ struct ClaudeDesktopModelMappings {
     /// Optional explicit model written to CLAUDE_CODE_SUBAGENT_MODEL.
     #[serde(default)]
     subagent_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response_language: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -1281,6 +1283,7 @@ impl ClaudeDesktopModelMappings {
             manage_subagent_model: true,
             startup_model: None,
             subagent_model: None,
+            response_language: None,
         }
     }
 }

@@ -6,6 +6,11 @@ import { authFileListEn } from '../authFileList';
 import { themeDiyEn } from '../themeDiy';
 
 export const en: Record<MessageKey, string> = {
+  'agents.responseLanguage.label': 'Response language',
+  'agents.responseLanguage.unmanaged': 'Keep existing setting (unmanaged)',
+  'agents.responseLanguage.default': 'Claude default (remove override)',
+  'agents.responseLanguage.custom': 'Custom language',
+  'agents.responseLanguage.hint': 'Claude Code only: writes language in settings.json. Presets are suggestions, not a complete list; enter any language or dialect. Unmanaged preserves the existing setting; default or blank custom text removes the override. Does not change the app interface language.',
   ...routingEn,
   ...themeDiyEn,
   'app.window.minimize': 'Minimize',

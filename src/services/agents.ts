@@ -78,6 +78,7 @@ export type AgentLaunchTarget = {
 export type AgentModificationState = 'unconfigured' | 'applied' | 'invalid';
 
 export type ClaudeModelMappings = {
+  responseLanguage?: string | null;
   desktopModels?: ClaudeDesktopModelMapping[];
   opus: string;
   sonnet: string;

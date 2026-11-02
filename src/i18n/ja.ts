@@ -6,6 +6,11 @@ import { authFileListJa } from './authFileList';
 import { themeDiyJa } from './themeDiy';
 
 export const jaOverrides = {
+  'agents.responseLanguage.label': '応答言語',
+  'agents.responseLanguage.unmanaged': '既存の設定を保持（管理しない）',
+  'agents.responseLanguage.default': 'Claude の既定（上書きを削除）',
+  'agents.responseLanguage.custom': 'カスタム言語',
+  'agents.responseLanguage.hint': 'Claude Code 専用：settings.json の language に保存します。候補は完全な一覧ではなく、任意の言語や方言を入力できます。管理しない場合は既存の設定を保持し、既定または空欄で上書きを削除します。アプリの表示言語は変更しません。',
   ...routingJa,
   ...themeDiyJa,
   'app.window.minimize': '最小化',
