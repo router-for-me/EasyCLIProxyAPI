@@ -6,6 +6,7 @@ struct Decision {
     dead: bool,
     queued: bool,
     stopped: bool,
+    plugin_exit_pid: Option<u32>,
     attempts: Vec<Duration>,
 }
 
@@ -18,11 +19,12 @@ impl Decision {
         true
     }
 
-    fn exited(&mut self, generation: u64) -> bool {
+    fn exited(&mut self, generation: u64, pid: u32) -> bool {
         if self.stopped || self.dead || generation != self.generation {
             return false;
         }
         self.dead = true;
+        self.plugin_exit_pid = Some(pid);
         true
     }
 
@@ -192,7 +194,7 @@ mod native {
                         let mut exited_pid = 0;
                         if unsafe { args.BrowserProcessId(&mut exited_pid) }.is_err() || exited_pid != pid { return; }
                         let state = callback_app.state::<State>();
-                        let accepted = state.decision.lock().unwrap().exited(generation);
+                        let accepted = state.decision.lock().unwrap().exited(generation, pid);
                         if accepted {
                             let mut kind = Default::default();
                             let exit_kind = unsafe { args.BrowserProcessExitKind(&mut kind) }.map(|_| kind);
@@ -242,6 +244,14 @@ mod native {
             }
         }
         let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let exited_pid = state.decision.lock().unwrap().plugin_exit_pid;
+            if let Some(pid) = exited_pid {
+                if !crate::plugin_webview::recover_main_frontend(app, pid)? {
+                    request(app);
+                    return Ok(());
+                }
+                state.decision.lock().unwrap().plugin_exit_pid = None;
+            }
             let window = app
                 .get_window("main")
                 .ok_or("Main native window unavailable")?;
@@ -399,11 +409,14 @@ mod tests {
     fn recovery_requires_teardown_and_rejects_stale_callbacks() {
         let mut state = Decision::default();
         assert!(!state.begin(Duration::ZERO));
-        assert!(state.exited(0));
-        assert!(!state.exited(0));
+        assert!(state.exited(0, 42));
+        assert!(!state.exited(0, 99));
+        assert_eq!(state.plugin_exit_pid, Some(42));
         assert!(state.begin(Duration::ZERO));
         state.dead = false;
-        assert!(!state.exited(0));
+        state.plugin_exit_pid = None;
+        assert!(!state.exited(0, 42));
+        assert_eq!(state.plugin_exit_pid, None);
         assert!(!state.begin(Duration::from_secs(10)));
     }
 
@@ -412,8 +425,11 @@ mod tests {
         let mut state = Decision::default();
         assert!(state.queue());
         assert!(!state.queue());
-        state.exited(0);
+        state.exited(0, 42);
         state.stopped = true;
+        state.plugin_exit_pid = None;
+        assert!(!state.exited(state.generation, 99));
+        assert_eq!(state.plugin_exit_pid, None);
         state.queued = false;
         assert!(!state.queue());
         assert!(!state.begin(Duration::ZERO));
@@ -437,7 +453,7 @@ mod tests {
     #[test]
     fn recovery_limits_retries_and_respects_shutdown() {
         let mut state = Decision::default();
-        state.exited(0);
+        state.exited(0, 42);
         assert!(state.begin(Duration::ZERO));
         assert!(!state.begin(Duration::from_secs(1)));
         for seconds in [5, 10] {
@@ -447,7 +463,7 @@ mod tests {
         assert!(!state.begin(Duration::from_secs(59)));
         assert!(state.begin(Duration::from_secs(60)));
         state.stopped = true;
-        assert!(!state.exited(state.generation));
+        assert!(!state.exited(state.generation, 42));
         assert!(!state.begin(Duration::from_secs(120)));
     }
 }
