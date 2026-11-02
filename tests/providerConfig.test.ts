@@ -40,7 +40,7 @@ describe('model health availability toggles', () => {
 
   it('removes only exact model exclusion and ignores a provider-wide wildcard', () => {
     const record = { 'excluded-models': ['*', 'healthy-model'] };
-    expect(providerRecordWithModelEnabledState(record, 'healthy-model', true)['excluded-models']).toBeUndefined();
+    expect(providerRecordWithModelEnabledState(record, 'healthy-model', true)['excluded-models']).toEqual(['*']);
   });
 
   it('does not mutate the input record', () => {
