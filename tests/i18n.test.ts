@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { languageOptions, normalizeLocale, supportedLocales, translate } from '../src/i18n';
-import { en, ja, zhCN, zhTW, type MessageKey } from '../src/i18n/resources';
+import { en, ja, ru, zhCN, zhTW, type MessageKey } from '../src/i18n/resources';
 import { jaOverrides } from '../src/i18n/ja';
 import { pluginConfigText } from '../src/i18n/pluginConfig';
 
@@ -118,6 +118,7 @@ describe('i18n', () => {
       { value: 'zh-TW', nativeLabel: '繁體中文' },
       { value: 'ja', nativeLabel: '日本語' },
       { value: 'en', nativeLabel: 'English' },
+      { value: 'ru', nativeLabel: 'Русский' },
     ]);
   });
 
@@ -133,7 +134,7 @@ describe('i18n', () => {
     const variables = (message: string) => [...new Set(
       [...message.matchAll(/\{(\w+)\}/g)].map((match) => match[1]),
     )].sort();
-    for (const [locale, messages] of Object.entries({ en, ja, zhTW })) {
+    for (const [locale, messages] of Object.entries({ en, ru, ja, zhTW })) {
       const mismatches = (Object.keys(zhCN) as MessageKey[]).filter((key) =>
         !messages[key].trim()
         || JSON.stringify(variables(messages[key])) !== JSON.stringify(variables(zhCN[key])),
@@ -191,7 +192,7 @@ describe('i18n', () => {
       ] as const) {
         expect(translate(locale, key)).toContain('Base URL');
       }
-      expect(translate(locale, 'usage.stat.tokens')).toMatch(/tokens?/i);
+      expect(translate(locale, 'usage.stat.tokens')).toMatch(/tokens?|токен/i);
     }
   });
 });

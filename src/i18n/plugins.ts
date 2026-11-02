@@ -102,6 +102,6 @@ const messages = {
 } as const;
 
 export function pluginText(key: keyof typeof messages, locale: AppLocale = getCurrentLocale()): string {
-  const text = messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const text = messages[key][locale === 'en' || locale === 'ru' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text }).text : text;
 }

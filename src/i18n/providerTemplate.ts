@@ -55,6 +55,6 @@ const messages = {
 } as const;
 export type ProviderTemplateMessage = keyof typeof messages;
 export function providerText(key: ProviderTemplateMessage, locale: AppLocale = getCurrentLocale()): string {
-  const value = messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const value = messages[key][locale === 'en' || locale === 'ru' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
 }

@@ -7,6 +7,7 @@ import { en } from './locales/en';
 import { zhCN, type MessageKey } from './locales/zh-CN';
 
 export { en, zhCN };
+export { ru } from './ru';
 export type { MessageKey };
 export type MessageVariables = Record<string, string | number>;
 

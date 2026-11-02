@@ -7,6 +7,7 @@ export function templateText(value: TemplateText | undefined, locale: AppLocale)
   if (typeof value === 'string') return value;
   if (locale === 'zh-CN') return value.zh;
   if (locale === 'zh-TW') return createTraditionalMessages({ text: value.zh }).text;
+  if (locale === 'ru') return value.en;
   return locale === 'ja' ? value.ja ?? value.en : value.en;
 }
 
