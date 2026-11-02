@@ -714,6 +714,7 @@ export const zhCN = {
   'usage.tab.agentUsage': 'Agent 使用记录',
   'usage.tab.dataManagement': '数据管理',
   'usage.agentUsage.title': 'Agent 使用记录',
+  'usage.agentUsage.subtitle': '本地使用概览 · Token 消耗与成本一目了然',
   'usage.agentUsage.timeRange': '时间范围',
   'usage.agentUsage.range.today': '当天',
   'usage.agentUsage.range.24h': '近 24 小时',

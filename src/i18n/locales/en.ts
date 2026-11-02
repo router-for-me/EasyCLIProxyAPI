@@ -729,6 +729,7 @@ export const en: Record<MessageKey, string> = {
   'usage.tab.agentUsage': 'Agent Usage',
   'usage.tab.dataManagement': 'Data Management',
   'usage.agentUsage.title': 'Agent Usage Records',
+  'usage.agentUsage.subtitle': 'Local usage at a glance · Tokens and estimated costs',
   'usage.agentUsage.timeRange': 'Time range',
   'usage.agentUsage.range.today': 'Today',
   'usage.agentUsage.range.24h': '24h',

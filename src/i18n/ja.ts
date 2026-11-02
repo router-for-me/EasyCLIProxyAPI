@@ -746,6 +746,7 @@ export const jaOverrides = {
   'usage.tab.agentUsage': 'Agent 使用履歴',
   'usage.tab.dataManagement': 'データ管理',
   'usage.agentUsage.title': 'Agent 使用履歴',
+  'usage.agentUsage.subtitle': 'ローカル利用状況 · トークン消費と推定コストをひと目で',
   'usage.agentUsage.timeRange': '期間',
   'usage.agentUsage.range.today': '今日',
   'usage.agentUsage.range.24h': '過去24時間',
