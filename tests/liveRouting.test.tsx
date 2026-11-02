@@ -67,10 +67,9 @@ describe('live routing telemetry', () => {
 
   it('renders telemetry and a useful standby state before the first poll', () => {
     const html = renderToStaticMarkup(<I18nProvider><RoutingPanel /></I18nProvider>);
-    expect(html).toContain('routing-metrics');
-    expect(html).toContain('routing-standby');
-    expect(html).toContain('routing-radar');
-    expect(html).toContain('— / —');
+    expect(html).toContain('live-routing-map');
+    expect(html).toContain('routing-gateway');
+    expect(html).toContain('node-ghost');
     expect(html).not.toContain('live-routing-empty');
   });
 });

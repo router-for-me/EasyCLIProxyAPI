@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Bot, Check, Coins, Database, Layers, RefreshCw, TriangleAlert, Zap } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Check, Coins, Database, Layers, RefreshCw, TriangleAlert, Zap } from 'lucide-react';
+import { BrandIcon } from '../components/BrandIcon';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
 import { Select } from '../components/Select';
@@ -190,7 +191,7 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
   return (
     <section className="agent-usage-view" aria-label={t('usage.agentUsage.title')} aria-busy={loading}>
       {error ? <Notice tone="error">{error}</Notice> : null}
-      <div className="agent-usage-summary surface-card">
+      <div className="agent-usage-summary">
         <div className="agent-usage-summary-heading">
           <div>
             <h2>{t('usage.agentUsage.title')}</h2>
@@ -217,9 +218,9 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
             </label>
           </div>
         </div>
-        <div className="agent-usage-stat-grid">
-          <div className="agent-usage-stat primary tokens"><span><Layers size={17} aria-hidden="true" />{t('usage.agentUsage.totalTokens')}</span><strong>{formatUsageNumber(totals.totalTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
-          <div className="agent-usage-stat primary cost"><span><Coins size={17} aria-hidden="true" />{t('usage.agentUsage.estimatedTotalCost')}</span><strong>{money(totals.costUSD)}</strong><small>USD</small></div>
+        <div className="surface-card agent-usage-stat-grid">
+          <div className="agent-usage-stat primary tokens"><span><Layers size={16} aria-hidden="true" />{t('usage.agentUsage.totalTokens')}</span><strong>{formatUsageNumber(totals.totalTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
+          <div className="agent-usage-stat primary cost"><span><Coins size={16} aria-hidden="true" />{t('usage.agentUsage.estimatedTotalCost')}</span><strong>{money(totals.costUSD)}</strong><small>USD</small></div>
           <div className="agent-usage-stat input"><span><ArrowDownLeft size={16} aria-hidden="true" />{t('usage.agentUsage.inputTokens')}</span><strong>{formatUsageNumber(totals.inputTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
           <div className="agent-usage-stat output"><span><ArrowUpRight size={16} aria-hidden="true" />{t('usage.agentUsage.outputTokens')}</span><strong>{formatUsageNumber(totals.outputTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
           <div className="agent-usage-stat cache-read"><span><Zap size={16} aria-hidden="true" />{t('usage.agentUsage.cacheReadTokens')}</span><strong>{formatUsageNumber(totals.cacheReadTokens, locale)}</strong><small>{t('usage.agentUsage.tokens')}</small></div>
@@ -236,7 +237,7 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
           </div>
           <div className="agent-usage-source-list" role="group" aria-label={t('usage.agentUsage.sourceFilter')}>
             <button type="button" className={`agent-usage-source-row ${!selectedSource ? 'selected' : ''}`} aria-pressed={!selectedSource} onClick={() => setSelectedSource('')}>
-              <div className="agent-usage-source-name"><span className="agent-usage-source-icon"><Layers size={17} aria-hidden="true" /></span><strong>{t('usage.agentUsage.sourceAll')}</strong>{!selectedSource && <Check size={14} aria-hidden="true" />}</div>
+              <div className="agent-usage-source-name"><span className="agent-usage-source-icon"><Layers size={16} aria-hidden="true" /></span><strong>{t('usage.agentUsage.sourceAll')}</strong>{!selectedSource && <Check size={14} aria-hidden="true" />}</div>
               <div className="agent-usage-source-volume"><strong>{formatUsageNumber(rangeTotals.totalTokens, locale)}</strong><span>{t('usage.agentUsage.tokens')}</span></div>
               <div className="agent-usage-source-track" aria-hidden="true"><span style={{ width: rangeTotals.totalTokens > 0 ? '100%' : '0%' }} /></div>
               <div className="agent-usage-source-metrics"><span>{money(rangeTotals.costUSD)}</span></div>
@@ -254,7 +255,7 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
                 aria-pressed={selectedSource === source.source}
                 onClick={() => setSelectedSource((current) => current === source.source ? '' : source.source)}
               >
-                <div className="agent-usage-source-name"><span className="agent-usage-source-icon"><Bot size={17} aria-hidden="true" /></span><strong title={sourceLabel(source.source)}>{sourceLabel(source.source)}</strong><span className={`agent-usage-status ${status}`}>{t(statusLabelKey(status))}</span>{selectedSource === source.source && <Check size={14} aria-hidden="true" />}</div>
+                <div className="agent-usage-source-name"><span className="agent-usage-source-icon"><BrandIcon name={source.source} size={16} /></span><strong title={sourceLabel(source.source)}>{sourceLabel(source.source)}</strong><span className={`agent-usage-status ${status}`}>{t(statusLabelKey(status))}</span>{selectedSource === source.source && <Check size={14} aria-hidden="true" />}</div>
                 {hasData && <>
                   <div className="agent-usage-source-volume"><strong>{formatUsageNumber(sourceTotal.totalTokens, locale)}</strong><span>{t('usage.agentUsage.tokens')}</span><span className="agent-usage-source-share">{new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(contribution)}</span></div>
                   <div className="agent-usage-source-track" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, contribution * 100))}%` }} /></div>
