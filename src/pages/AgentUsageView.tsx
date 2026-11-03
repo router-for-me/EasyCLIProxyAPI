@@ -201,7 +201,6 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
   const usedSources = useMemo(() => sources
     .filter((source) => source.totals.totalTokens > 0 || selectedSources.includes(source.source))
     .sort((left, right) => right.totals.totalTokens - left.totals.totalTokens), [selectedSources, sources]);
-  const failedSources = sources.filter((source) => source.status === 'error' && source.error);
   const allSourceTokens = usedSources.reduce((sum, source) => sum + source.totals.totalTokens, 0);
   const models = useMemo(() => buildModelRanking(sources), [sources]);
 
@@ -320,10 +319,6 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
             );
           })}
         </div>
-      ) : null}
-
-      {failedSources.length ? (
-        <Notice tone="warn">{failedSources.map((source) => `${sourceLabel(source.source)}: ${source.error}`).join(' · ')}</Notice>
       ) : null}
 
       <div className="agent-usage-kpis">
