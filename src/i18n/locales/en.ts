@@ -2151,6 +2151,7 @@ export const en: Record<MessageKey, string> = {
   'appUpdate.notes.publishedAt': 'Published {date}',
   'appUpdate.publishedAt': 'Built {date}',
   'appUpdate.buildTime': 'Latest build',
+  'appUpdate.currentBuild': 'Installed build',
   'appUpdate.notes.openRelease': 'View full release notes',
   'appUpdate.notes.empty': 'Release notes are not available in the current language.',
   'appUpdate.notes.loading': 'Loading release notes…',

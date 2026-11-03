@@ -328,6 +328,7 @@ async fn resolve_app_update(
         )?;
     }
     let latest_version = normalize_version(&manifest.version);
+    let current_build_at = local_portable_app_built_at();
     let update_available = is_app_update_available(&current_version, &latest_version)?;
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
@@ -365,6 +366,7 @@ async fn resolve_app_update(
         release_url: manifest.release_url,
         release_notes: manifest.release_notes,
         published_at: manifest.published_at,
+        current_build_at,
         auto_update_supported,
         download_size_bytes: asset.map(|value| value.size_bytes),
         unsupported_reason,
@@ -773,6 +775,16 @@ pub(crate) fn local_portable_app_manifest_path() -> Result<PathBuf, String> {
         return Ok(resources_dir.join(PORTABLE_APP_MANIFEST_FILE));
     }
     Ok(executable_dir.join(PORTABLE_APP_MANIFEST_FILE))
+}
+
+pub(crate) fn local_portable_app_built_at() -> Option<String> {
+    let path = local_portable_app_manifest_path().ok()?;
+    let contents = fs::read_to_string(path).ok()?;
+    let manifest = serde_json::from_str::<PortableAppManifest>(&contents).ok()?;
+    manifest
+        .built_at
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && chrono::DateTime::parse_from_rfc3339(value).is_ok())
 }
 
 pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Result<bool, String> {

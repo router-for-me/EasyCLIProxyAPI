@@ -8,6 +8,7 @@ export type AppUpdateInfo = {
   releaseUrl: string;
   releaseNotes: Partial<Record<AppLocale, string>> | null;
   publishedAt: string;
+  currentBuildAt: string | null;
   autoUpdateSupported: boolean;
   downloadSizeBytes: number | null;
   unsupportedReason: string | null;

@@ -116,6 +116,7 @@ export const zhTW: Record<MessageKey, string> = {
   'appUpdate.notes.publishedAt': '{date}發布',
   'appUpdate.publishedAt': '最新編譯：{date}',
   'appUpdate.buildTime': '最新編譯時間',
+  'appUpdate.currentBuild': '上次升級時間',
   'appUpdate.notes.openRelease': '查看完整發布說明',
   'appUpdate.notes.empty': '尚未取得目前語言的更新說明。',
   'appUpdate.notes.loading': '正在取得更新說明…',

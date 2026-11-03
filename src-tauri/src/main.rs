@@ -478,6 +478,7 @@ struct AppUpdateInfo {
     release_url: String,
     release_notes: HashMap<String, String>,
     published_at: String,
+    current_build_at: Option<String>,
     auto_update_supported: bool,
     download_size_bytes: Option<u64>,
     unsupported_reason: Option<String>,
@@ -518,6 +519,8 @@ struct PortableAppManifest {
     schema_version: u32,
     application: String,
     version: String,
+    #[serde(default)]
+    built_at: Option<String>,
     platform: String,
     arch: String,
     #[serde(default)]
