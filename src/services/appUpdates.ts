@@ -12,6 +12,7 @@ export type AppUpdateInfo = {
   autoUpdateSupported: boolean;
   downloadSizeBytes: number | null;
   unsupportedReason: string | null;
+  updateChannel: string;
 };
 
 export type AppUpdateTask = {
@@ -49,3 +50,9 @@ export const startAppUpdate = (): Promise<void> =>
 
 export const cancelAppUpdate = (): Promise<void> =>
   invoke<void>('cancel_app_update');
+
+export const getUpdateChannel = (): Promise<string> =>
+  invoke<string>('get_update_channel');
+
+export const setUpdateChannel = (channel: 'stable' | 'preview'): Promise<string> =>
+  invoke<string>('set_update_channel', { channel });

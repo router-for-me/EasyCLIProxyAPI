@@ -311,7 +311,12 @@ async fn resolve_app_update(
     )?;
     let requested_source = config.selected_download_candidate();
     let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
-    let is_preview = current_version.to_ascii_lowercase().contains("preview");
+    let update_channel = if config.update_channel.eq_ignore_ascii_case("preview") {
+        "preview".to_string()
+    } else {
+        "stable".to_string()
+    };
+    let is_preview = update_channel == "preview";
     let (manifest, resolved_source) = fetch_portable_update_manifest(
         &client,
         requested_source.clone(),
@@ -370,6 +375,7 @@ async fn resolve_app_update(
         auto_update_supported,
         download_size_bytes: asset.map(|value| value.size_bytes),
         unsupported_reason,
+        update_channel: update_channel.clone(),
     };
     Ok((info, pending))
 }
@@ -2837,4 +2843,31 @@ pub(crate) fn portable_update_ack_argument() -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[tauri::command]
+pub(crate) fn get_update_channel(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<String, String> {
+    let config = gui_config_state.snapshot()?;
+    Ok(if config.update_channel.eq_ignore_ascii_case("preview") {
+        "preview".to_string()
+    } else {
+        "stable".to_string()
+    })
+}
+
+#[tauri::command]
+pub(crate) fn set_update_channel(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    channel: String,
+) -> Result<String, String> {
+    let channel = if channel.eq_ignore_ascii_case("preview") {
+        "preview"
+    } else {
+        "stable"
+    };
+    // Reuse the same persist path used by set_download_source.
+    gui_config_state.set_update_channel(channel)?;
+    Ok(channel.to_string())
 }

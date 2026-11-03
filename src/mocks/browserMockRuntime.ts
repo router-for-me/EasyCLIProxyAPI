@@ -509,6 +509,7 @@ function createState(scenario: BrowserMockScenario) {
       autoUpdateSupported: true,
       downloadSizeBytes: 48 * 1024 * 1024,
       unsupportedReason: null,
+      updateChannel: 'stable',
     },
     appUpdateTask: {
       running: false,
@@ -1464,6 +1465,8 @@ export function createBrowserMockRuntime(
 
       case 'check_app_update': return clone(state.appUpdateInfo);
       case 'get_app_update_task': return clone(state.appUpdateTask);
+      case 'get_update_channel': return 'stable';
+      case 'set_update_channel': return String(payload.channel ?? 'stable');
       case 'start_app_update': {
         Object.assign(state.appUpdateTask, {
           running: true,

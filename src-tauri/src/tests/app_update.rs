@@ -22,8 +22,8 @@ fn app_update_comparison_uses_semantic_versions() {
     assert!(is_app_update_available("v0.2.0-beta.1", "v0.2.0").unwrap());
     assert!(!is_app_update_available("v0.2.0", "v0.2.0").unwrap());
     assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
-    assert!(is_app_update_available("v0.3.6-preview", "v0.3.6-preview").unwrap());
-    assert!(is_app_update_available("0.3.6-preview", "0.3.6-preview").unwrap());
+    assert!(!is_app_update_available("v0.3.6-preview.20261103-1929", "v0.3.6-preview.20261103-1929").unwrap());
+    assert!(is_app_update_available("v0.3.6-preview.20261102-1830", "v0.3.6-preview.20261103-1929").unwrap());
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
