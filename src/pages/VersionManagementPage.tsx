@@ -22,6 +22,7 @@ import type {
 } from '../services/coreVersions';
 import { useEffect, useRef, useState } from 'react';
 import { getVersion } from '../services/platform';
+import { getUpdateChannel, setUpdateChannel } from '../services/appUpdates';
 import {
   Download,
   ExternalLink,
@@ -453,6 +454,10 @@ export function VersionManagementPage() {
         hour12: false,
       })
     : null;
+  const [updateChannel, setUpdateChannelState] = useState('');
+  const [channelDraft, setChannelDraft] = useState('');
+  const [channelError, setChannelError] = useState('');
+  const activeChannel = updateChannel || appUpdate?.updateChannel || '';
   const currentAppBuiltAt = appUpdate?.currentBuildAt && Number.isFinite(Date.parse(appUpdate.currentBuildAt))
     ? formatDate(appUpdate.currentBuildAt, {
         year: 'numeric',
@@ -550,6 +555,19 @@ export function VersionManagementPage() {
     setCustomMirrorDialogOpen(false);
     setCustomMirrorDraft('');
     setVersionSourceError('');
+  };
+
+  const applyChannel = async (next: string) => {
+    const value = next.trim();
+    if (!value) return;
+    setChannelError('');
+    try {
+      const applied = await setUpdateChannel(value);
+      setUpdateChannelState(applied);
+      await (checkAppUpdate)();
+    } catch (error) {
+      setChannelError(String(error));
+    }
   };
 
   const downloadSourceOptions: SelectMenuOption[] = [
@@ -678,6 +696,36 @@ export function VersionManagementPage() {
                     : ''}
                 </span>
               </div>
+              {activeChannel.startsWith('preview') ? (
+                <div className="version-alert-banner neutral">
+                  <Info size={14} aria-hidden="true" />
+                  <span>{t('appUpdate.previewChannel', { channel: activeChannel })}</span>
+                  <input
+                    className="text-input"
+                    value={channelDraft}
+                    onChange={(event) => setChannelDraft(event.currentTarget.value)}
+                    placeholder={t('appUpdate.previewChannelPlaceholder')}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void applyChannel(channelDraft);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="link-button muted"
+                    onClick={() => void applyChannel(channelDraft)}
+                  >
+                    {t('appUpdate.previewChannelSwitch')}
+                  </button>
+                  <button
+                    type="button"
+                    className="link-button muted"
+                    onClick={() => void applyChannel('stable')}
+                  >
+                    {t('appUpdate.previewChannelToStable')}
+                  </button>
+                </div>
+              ) : null}
+              {channelError ? <MessageNotice message={channelError} /> : null}
             </div>
           </div>
 

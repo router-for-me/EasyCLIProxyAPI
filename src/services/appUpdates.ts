@@ -54,5 +54,5 @@ export const cancelAppUpdate = (): Promise<void> =>
 export const getUpdateChannel = (): Promise<string> =>
   invoke<string>('get_update_channel');
 
-export const setUpdateChannel = (channel: 'stable' | 'preview'): Promise<string> =>
+export const setUpdateChannel = (channel: string): Promise<string> =>
   invoke<string>('set_update_channel', { channel });

@@ -1465,8 +1465,12 @@ export function createBrowserMockRuntime(
 
       case 'check_app_update': return clone(state.appUpdateInfo);
       case 'get_app_update_task': return clone(state.appUpdateTask);
-      case 'get_update_channel': return 'stable';
-      case 'set_update_channel': return String(payload.channel ?? 'stable');
+      case 'get_update_channel': return state.appUpdateInfo.updateChannel ?? 'stable';
+      case 'set_update_channel': {
+        const channel = String(payload.channel ?? 'stable');
+        state.appUpdateInfo.updateChannel = channel;
+        return channel;
+      }
       case 'start_app_update': {
         Object.assign(state.appUpdateTask, {
           running: true,
