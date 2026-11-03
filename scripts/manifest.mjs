@@ -86,7 +86,7 @@ export async function generatePortableUpdateManifest({
       sha256: createHash('sha256').update(contents).digest('hex'),
       sizeBytes: metadata.size,
     };
-    if (resolvedGitcodeRepository) {
+    if (resolvedGitcodeRepository && !isOnlyPreview) {
       asset.fallbackUrls = [gitcodeReleaseAttachmentUrl(
         resolvedGitcodeRepository,
         tag,

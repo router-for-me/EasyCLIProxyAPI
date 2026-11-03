@@ -319,12 +319,14 @@ async fn resolve_app_update(
         is_preview,
     )
     .await?;
-    persist_automatic_download_source_switch(
-        app,
-        gui_config_state,
-        &requested_source,
-        &resolved_source,
-    )?;
+    if !(is_preview && resolved_source.source == VersionDownloadSource::Gitcode) {
+        persist_automatic_download_source_switch(
+            app,
+            gui_config_state,
+            &requested_source,
+            &resolved_source,
+        )?;
+    }
     let latest_version = normalize_version(&manifest.version);
     let update_available = is_app_update_available(&current_version, &latest_version)?;
     let target = portable_update_target();
@@ -383,11 +385,18 @@ pub(crate) async fn fetch_portable_update_manifest(
     {
         let result = match candidate.source {
             VersionDownloadSource::Gitcode => {
-                fetch_portable_update_manifest_from_gitcode(
-                    client,
-                    gitcode_repository.expect("GitCode candidate requires a configured repository"),
-                )
-                .await
+                let repository =
+                    gitcode_repository.expect("GitCode candidate requires a configured repository");
+                if is_preview {
+                    let manifest_url = gitcode_release_attachment_url(
+                        repository,
+                        "only-preview",
+                        APP_UPDATE_MANIFEST_NAME,
+                    );
+                    fetch_portable_update_manifest_url(client, &manifest_url).await
+                } else {
+                    fetch_portable_update_manifest_from_gitcode(client, repository).await
+                }
             }
             VersionDownloadSource::Github
             | VersionDownloadSource::GhProxy
