@@ -379,24 +379,19 @@ pub(crate) async fn fetch_portable_update_manifest(
     is_preview: bool,
 ) -> Result<(PortableUpdateManifest, VersionDownloadCandidate), String> {
     let gitcode_repository = configured_gitcode_gui_repository();
+    // Preview builds only exist on GitHub releases, so GitCode never participates.
+    let gitcode_available = gitcode_repository.is_some() && !is_preview;
     let mut failures = Vec::new();
     for candidate in
-        version_download_source_candidates(source, gitcode_repository.is_some(), custom_mirrors)
+        version_download_source_candidates(source, gitcode_available, custom_mirrors)
     {
         let result = match candidate.source {
             VersionDownloadSource::Gitcode => {
-                let repository =
-                    gitcode_repository.expect("GitCode candidate requires a configured repository");
-                if is_preview {
-                    let manifest_url = gitcode_release_attachment_url(
-                        repository,
-                        "only-preview",
-                        APP_UPDATE_MANIFEST_NAME,
-                    );
-                    fetch_portable_update_manifest_url(client, &manifest_url).await
-                } else {
-                    fetch_portable_update_manifest_from_gitcode(client, repository).await
-                }
+                fetch_portable_update_manifest_from_gitcode(
+                    client,
+                    gitcode_repository.expect("GitCode candidate requires a configured repository"),
+                )
+                .await
             }
             VersionDownloadSource::Github
             | VersionDownloadSource::GhProxy
