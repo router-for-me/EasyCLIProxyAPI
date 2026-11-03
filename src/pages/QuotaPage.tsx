@@ -1,4 +1,7 @@
 import { requestRateColor } from '../services/authFileRequests';
+import { PluginLogo, usePluginList } from '../components/ProviderLogo';
+import { findPluginLogo } from '../services/pluginLogos';
+import { credentialQuotaPlugin } from '../services/pluginCredentialQuota';
 import { Notice } from '../components/Notice';
 import { EmptyState } from '../components/EmptyState';
 import { SegmentedControl } from '../components/SegmentedControl';
@@ -19,6 +22,7 @@ import grokIcon from '../assets/icons/grok.svg';
 import devinIcon from '../assets/icons/devin.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
+import metaIcon from '../assets/icons/meta.svg';
 import { managementApi, readBoolean, responseList } from '../services/managementApi';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import {
@@ -50,10 +54,11 @@ const providerMeta: Record<QuotaDisplayProvider, { label: string; icon: string }
   kimi: { label: 'Kimi', icon: kimiIcon },
   xai: { label: 'xAI', icon: grokIcon },
   devin: { label: 'Devin', icon: devinIcon },
+  meta: { label: 'Muse', icon: metaIcon },
   antigravity: { label: 'Antigravity', icon: antigravityIcon },
 };
 
-const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin', 'plugin'];
+const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin', 'meta', 'plugin'];
 const REFRESH_CONCURRENCY = 4;
 
 export function QuotaPage() {
@@ -189,6 +194,8 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
   const { locale, t } = useI18n();
   const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
   const provider = quotaProviderForFile(file);
+  const providerId = String(file.provider ?? file.type ?? '').toLowerCase();
+  const plugins = usePluginList();
   const privacy = usePrivacyMask();
   const name = privacy.credentialName(file);
   const disabled = readBoolean(file, 'disabled');
@@ -210,7 +217,10 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
     <article className="panel real-quota-card surface-card">
       <div className="real-quota-card-header">
         <div className="quota-identity">
-          {provider === 'plugin' && String(file.provider ?? file.type).toLowerCase() !== 'gemini' ? <Gauge size={24} aria-hidden="true" /> : <img src={provider === 'plugin' && String(file.provider ?? file.type).toLowerCase() === 'gemini' ? geminiIcon : provider ? providerMeta[provider].icon : geminiIcon} alt="" className="quota-account-icon" />}
+          {provider && provider !== 'plugin'
+            ? <img src={providerMeta[provider].icon} alt="" className="quota-account-icon" />
+            : providerId === 'gemini' ? <img src={geminiIcon} alt="" className="quota-account-icon" />
+            : <PluginLogo src={findPluginLogo(plugins, providerId, credentialQuotaPlugin(file))} size={22} className="quota-account-icon" />}
           <div><strong title={name}>{name}</strong></div>
         </div>
         {quota.plan || quota.subscriptionActiveUntil ? <div className="quota-plan">

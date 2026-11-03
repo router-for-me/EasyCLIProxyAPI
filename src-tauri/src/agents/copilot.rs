@@ -77,6 +77,13 @@ pub(crate) fn detect_copilot_cli(
 }
 
 pub(crate) fn copilot_config_paths(client: AgentClient, home: &Path) -> Vec<PathBuf> {
+    if let Some(directory) = agent_config_directory(client.id()) {
+        return vec![directory.join(if client == AgentClient::CopilotCli {
+            CONNECTION_FILE
+        } else {
+            "chatLanguageModels.json"
+        })];
+    }
     if client == AgentClient::CopilotCli {
         let directory = agent_configuration_environment("COPILOT_HOME")
             .filter(|p| p.is_absolute())

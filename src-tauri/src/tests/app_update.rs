@@ -1380,3 +1380,97 @@ fn release_asset_names_cover_the_six_supported_gui_targets() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn update_runtime_ack_rejects_gui_only_ack_and_times_out_without_deleting_backups() {
+    let root = agent_test_home("update-runtime-no-ack");
+    let backup = root.join("old-app");
+    fs::write(&backup, b"recoverable old app").unwrap();
+    let ack = root.join("update-started.ack");
+    // The old GUI setup acknowledgement is not runtime readiness.
+    fs::write(&ack, env!("CARGO_PKG_VERSION")).unwrap();
+    let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+    let result = wait_for_update_runtime_ack(
+        &mut child,
+        &ack,
+        env!("CARGO_PKG_VERSION"),
+        Duration::from_millis(75),
+    );
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(result.unwrap_err().contains("Timed out"));
+    assert_eq!(fs::read(&backup).unwrap(), b"recoverable old app");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_core_startup_failure_never_publishes_runtime_ack() {
+    let root = agent_test_home("update-runtime-core-failure");
+    let ack = root.join("update-started.ack");
+    let result = acknowledge_update_runtime_with_probe(&ack, true, || {
+        Err("forced core bind failure".to_string())
+    });
+    assert_eq!(result.unwrap_err(), "forced core bind failure");
+    assert!(!ack.exists());
+    assert!(!ack.with_extension("pending").exists());
+    // A probe without a kernel process cannot release a backup either.
+    assert!(acknowledge_update_runtime_with_probe(&ack, true, || Ok((0, 3))).is_err());
+    assert!(!ack.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_runtime_ack_records_kernel_only_when_one_was_expected() {
+    let root = agent_test_home("update-runtime-core-optional");
+    let ack = root.join("update-started.ack");
+    // A fresh setup without credentials serves an empty model list.
+    acknowledge_update_runtime_with_probe(&ack, true, || Ok((42, 0))).unwrap();
+    let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&ack).unwrap()).unwrap();
+    assert_eq!(receipt["core"], serde_json::json!({"pid": 42, "model_count": 0}));
+    assert_eq!(receipt["gui_pid"], std::process::id());
+
+    acknowledge_update_runtime_with_probe(&ack, false, || -> Result<(u32, usize), String> {
+        panic!("the kernel must not be probed when it was not expected to start")
+    })
+    .unwrap();
+    let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&ack).unwrap()).unwrap();
+    assert!(receipt["core"].is_null());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn update_runtime_ack_is_bound_to_live_gui_pid_and_target_version() {
+    let root = agent_test_home("update-runtime-ack-binding");
+    let ack_path = root.join("update-started.ack");
+    let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+    for (pid, version, core, accepted) in [
+        (child.id() + 1, "1.2.3", serde_json::json!({"pid": 42, "model_count": 1}), false),
+        (child.id(), "1.2.2", serde_json::json!({"pid": 42, "model_count": 1}), false),
+        (child.id(), "1.2.3", serde_json::json!({"pid": 0, "model_count": 1}), false),
+        (child.id(), "1.2.3", serde_json::json!({"pid": 42, "model_count": 0}), true),
+        (child.id(), "1.2.3", serde_json::Value::Null, true),
+    ] {
+        fs::write(
+            &ack_path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1, "version": version, "gui_pid": pid, "core": core,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            wait_for_update_runtime_ack(&mut child, &ack_path, "1.2.3", Duration::ZERO).is_ok(),
+            accepted
+        );
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        wait_for_update_runtime_ack(&mut child, &ack_path, "1.2.3", Duration::ZERO)
+            .unwrap_err()
+            .contains("exited")
+    );
+    fs::remove_dir_all(root).unwrap();
+}

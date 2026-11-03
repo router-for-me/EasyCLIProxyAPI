@@ -1,0 +1,393 @@
+.live-routing-panel {
+  padding: 22px 26px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--panel-bg, var(--bg-card));
+  overflow: hidden;
+  min-width: 0;
+}
+
+.live-routing-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.live-routing-heading > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-routing-heading h2 {
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.live-routing-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.live-routing-state span[aria-hidden="true"] {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success-color, #10b981);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--success-color, #10b981) 25%, transparent);
+}
+
+.live-routing-panel.paused .live-routing-state span[aria-hidden="true"] {
+  background: var(--text-tertiary);
+  box-shadow: none;
+}
+
+.live-routing-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+}
+
+.live-routing-panel.paused .live-routing-count {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.live-routing-heading .icon-button {
+  width: 36px;
+  height: 36px;
+}
+
+.live-routing-warning {
+  font-size: 12px;
+  color: var(--warning-color);
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+.live-routing-map {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(176px, 212px) minmax(260px, 1.15fr);
+  column-gap: clamp(56px, 8vw, 128px);
+  align-items: center;
+  min-height: 300px;
+  position: relative;
+  padding: 16px 10px;
+}
+
+.live-routing-map::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(color-mix(in srgb, var(--border-color) 65%, transparent) 1px, transparent 1.5px);
+  background-size: 18px 18px;
+  background-position: 9px 9px;
+  mask-image: radial-gradient(ellipse 80% 90% at 50% 50%, #000 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 90% at 50% 50%, #000 55%, transparent 100%);
+}
+
+.live-routing-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.routing-edge {
+  fill: none;
+  stroke: var(--border-color);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  transition: stroke 0.25s ease, stroke-width 0.25s ease;
+}
+
+.routing-edge-ghost {
+  stroke: color-mix(in srgb, var(--border-color) 70%, transparent);
+  stroke-dasharray: 4 4;
+  stroke-width: 1.2;
+}
+
+.routing-edge-flow {
+  fill: none;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-dasharray: 6 8;
+  animation: routing-edge-flow 1.5s linear infinite;
+}
+
+@keyframes routing-edge-flow {
+  from { stroke-dashoffset: 28; }
+  to { stroke-dashoffset: 0; }
+}
+
+.routing-packet {
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+
+.routing-map-column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.routing-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.routing-column-count {
+  min-width: 22px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.routing-node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 68px;
+  padding: 14px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  min-width: 0;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.routing-node.node-ghost {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--border-color) 75%, transparent);
+  background: transparent;
+  box-shadow: none;
+}
+
+.routing-node.node-resting {
+  border-color: var(--warning-color, #f59e0b);
+  background: color-mix(in srgb, var(--warning-color, #f59e0b) 5%, var(--bg-card));
+}
+
+.routing-node-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--route-color, var(--text-tertiary)) 12%, transparent);
+  color: var(--route-color, var(--text-secondary));
+}
+
+.routing-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.routing-row-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routing-row-meta {
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routing-row-failures {
+  color: var(--error-color, #ef4444);
+}
+
+.routing-node-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.routing-cooldown-pill {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--warning-color, #f59e0b);
+  background: color-mix(in srgb, var(--warning-color, #f59e0b) 12%, transparent);
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.routing-port {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 2px solid var(--route-color, var(--border-color));
+}
+
+.routing-port.port-out {
+  right: -5px;
+}
+
+.routing-port.port-in {
+  left: -5px;
+}
+
+.routing-port.port-ghost {
+  border-color: color-mix(in srgb, var(--border-color) 70%, transparent);
+  background: transparent;
+}
+
+.routing-map-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  z-index: 2;
+}
+
+.routing-gateway {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 24px 18px;
+  width: 100%;
+  max-width: 196px;
+  min-height: 176px;
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+}
+
+.routing-gateway.gateway-idle {
+  opacity: 0.92;
+}
+
+.gateway-rail {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 48px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--primary-color) 40%, var(--border-color));
+}
+
+.gateway-rail-in {
+  left: -2px;
+}
+
+.gateway-rail-out {
+  right: -2px;
+}
+
+.gateway-mark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  margin-bottom: 12px;
+  background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-secondary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+.gateway-mark img {
+  border-radius: 8px;
+  display: block;
+}
+
+.gateway-name {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.gateway-meta {
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-routing-panel footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding-top: 14px;
+  margin-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+}
+
+.live-routing-panel.paused .routing-edge-flow {
+  animation-play-state: paused;
+}
+
+@media (max-width: 640px) {
+  .live-routing-panel {
+    padding: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .routing-edge-flow {
+    animation: none;
+  }
+  .routing-packet {
+    display: none;
+  }
+}

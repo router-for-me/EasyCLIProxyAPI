@@ -26,6 +26,7 @@
   font-weight: var(--font-weight-medium);
   line-height: 1;
   white-space: nowrap;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .quota-page .quota-category-filter button:hover {
   border-color: color-mix(in srgb, var(--ui-accent) 35%, var(--border-color));
@@ -37,6 +38,9 @@
   color: var(--ui-accent-strong);
   font-weight: var(--font-weight-semibold);
   box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .quota-page .quota-category-filter button { transition: none; }
 }
 .quota-page .quota-category-filter img {
   width: 16px;

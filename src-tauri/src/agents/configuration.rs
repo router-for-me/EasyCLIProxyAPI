@@ -3803,7 +3803,7 @@ pub(crate) fn build_zcode_agent_config(
         let entry = rule.as_object_mut().ok_or("ZCode model rule must be an object")?;
         entry.insert("providerId".to_string(), serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
         entry.insert("modelId".to_string(), serde_json::json!(option.name));
-        let (inferred_cw, inferred_mot, _, _, _) = infer_zcode_model_knowledge(&option.name);
+        let (inferred_cw, inferred_mot, _, _, _) = zcode::infer_zcode_model_knowledge_with_calibration(&option.name);
         let config_obj = ensure_json_object_entry(entry, "config");
         {
             let properties = ensure_json_object_entry(config_obj, "properties");
@@ -3811,7 +3811,15 @@ pub(crate) fn build_zcode_agent_config(
                 .entry("supportsImage")
                 .or_insert(serde_json::json!(true));
             properties.remove("maxOutputTokens");
-            if let Some(context_window) = option.context_window.or(inferred_cw.filter(|_| manual.is_none())) {
+            let effective_cw = match option.context_window {
+                Some(500_000) | None => manual
+                    .and_then(|rule| rule.pointer("/config/properties/contextWindow"))
+                    .and_then(serde_json::Value::as_u64)
+                    .or(inferred_cw)
+                    .or(option.context_window),
+                Some(cw) => Some(cw).or(inferred_cw),
+            };
+            if let Some(context_window) = effective_cw {
                 properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
             } else if manual.is_none() {
                 properties.remove("contextWindow");
@@ -3819,7 +3827,10 @@ pub(crate) fn build_zcode_agent_config(
         }
         let specs = ensure_json_object_entry(config_obj, "optionSpecs");
         if let Some(mot) = inferred_mot {
-            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
+            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({
+                "max": mot,
+                "map": "{\"max_tokens\": maxOutputTokens}",
+            }));
         }
         if !option.reasoning_levels.is_empty() {
             let is_generated_map = |m: &str| {

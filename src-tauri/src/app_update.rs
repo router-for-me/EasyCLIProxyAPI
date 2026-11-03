@@ -3,6 +3,123 @@ use super::*;
 pub(crate) const PORTABLE_UPDATE_HELPER_ACK_FILE: &str = "update-helper-started.ack";
 const PORTABLE_UPDATE_HELPER_START_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Serialize, Deserialize)]
+struct UpdateRuntimeAck {
+    schema_version: u32,
+    version: String,
+    gui_pid: u32,
+    /// Present when the new process was expected to run a kernel at startup.
+    core: Option<UpdateRuntimeCore>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct UpdateRuntimeCore {
+    pid: u32,
+    model_count: usize,
+}
+
+#[cfg(any(windows, target_os = "linux", all(unix, test)))]
+pub(crate) fn wait_for_update_runtime_ack(
+    child: &mut Child,
+    ack_path: &Path,
+    version: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        // A stale receipt must never accept a process that has already exited.
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err("New application exited before runtime acceptance".to_string());
+        }
+        if let Ok(bytes) = fs::read(ack_path) {
+            if let Ok(ack) = serde_json::from_slice::<UpdateRuntimeAck>(&bytes) {
+                if ack.schema_version == 1
+                    && normalize_version(&ack.version) == normalize_version(version)
+                    && ack.gui_pid == child.id()
+                    && ack.core.as_ref().is_none_or(|core| core.pid > 0)
+                {
+                    return Ok(());
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err("Timed out waiting for the updated application to accept its runtime".to_string());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Publishes the update acceptance receipt once the new process is usable.
+/// When a kernel was expected to run, it must be ready (running with its
+/// management port open), be the configured executable and answer the model
+/// list with the GUI key. An empty model list is accepted: a fresh setup has
+/// no credentials yet.
+pub(crate) fn acknowledge_update_runtime(
+    ack_path: &Path,
+    process_state: &CoreProcessState,
+    config: &GuiConfigFile,
+    core_expected: bool,
+) -> Result<(), String> {
+    let probe = || {
+        let status = current_core_status(Some(process_state), Some(config.port))?;
+        if !status.ready {
+            return Err("Updated kernel is not ready".to_string());
+        }
+        let core_pid = status.process_id.ok_or("Updated kernel PID is missing")?;
+        let binary = status
+            .binary_path
+            .ok_or("Updated kernel executable is missing")?;
+        if !process_executable_path(core_pid)
+            .is_some_and(|path| executable_paths_match(Path::new(&binary), &path))
+        {
+            return Err("Updated kernel process identity changed".to_string());
+        }
+        let models = tauri::async_runtime::block_on(fetch_agent_models(
+            config.port,
+            effective_agent_api_key(config),
+        ))?;
+        if !is_process_alive(core_pid) {
+            return Err("Updated kernel exited during acceptance".to_string());
+        }
+        Ok((core_pid, models.len()))
+    };
+    // The listener can open before routes and credentials finish loading.
+    acknowledge_update_runtime_with_probe(ack_path, core_expected, || {
+        retry_core_operation(6, Duration::from_millis(500), probe)
+    })
+}
+
+pub(crate) fn acknowledge_update_runtime_with_probe(
+    ack_path: &Path,
+    core_expected: bool,
+    probe: impl FnOnce() -> Result<(u32, usize), String>,
+) -> Result<(), String> {
+    let core = if core_expected {
+        let (pid, model_count) = probe()?;
+        if pid == 0 {
+            return Err("Updated kernel readiness probe returned no process".to_string());
+        }
+        Some(UpdateRuntimeCore { pid, model_count })
+    } else {
+        None
+    };
+    let ack = UpdateRuntimeAck {
+        schema_version: 1,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        gui_pid: std::process::id(),
+        core,
+    };
+    let bytes = serde_json::to_vec(&ack).map_err(|error| error.to_string())?;
+    // Readers tolerate partial data, but publish only a complete receipt.
+    let temporary = ack_path.with_extension("pending");
+    fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    fs::rename(&temporary, ack_path).map_err(|error| error.to_string())
+}
+
 pub(crate) fn deserialize_release_notes<'de, D>(
     deserializer: D,
 ) -> Result<HashMap<String, String>, D::Error>
@@ -2077,22 +2194,9 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
         }
     };
 
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let mut confirmed = false;
-    while Instant::now() < deadline {
-        if descriptor.ack_path.is_file() {
-            confirmed = true;
-            break;
-        }
-        if child
-            .try_wait()
-            .map_err(|error| format!("Failed to check new application version status: {error}"))?
-            .is_some()
-        {
-            break;
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
+    let confirmed = wait_for_update_runtime_ack(
+        &mut child, &descriptor.ack_path, &descriptor.target_version, Duration::from_secs(60),
+    ).is_ok();
 
     if confirmed {
         let _ = fs::remove_file(&descriptor.backup_exe);

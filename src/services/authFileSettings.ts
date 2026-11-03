@@ -7,6 +7,7 @@ import { credentialAdvancedShape } from './credentialAdvancedSettings';
 import { validateStructuredValueText } from './structuredConfig';
 import { templateText } from '../i18n/templateConfig';
 import { sameTemplateValue } from './templateConfig';
+import { resolveCredentialTags, setCredentialTags } from './credentialTags';
 
 export type BooleanOverride = '' | 'true' | 'false';
 export type AuthFileSettingsDraft = {
@@ -172,8 +173,10 @@ type SettingsApi = {
   patch: (path: string, body: Record<string, unknown>) => Promise<unknown>;
 };
 
-export const loadAuthFileSettings = async (name: string, api: SettingsApi = managementApi) =>
-  authFileSettingsFromPayload(await api.get('/credentials/download', { name }));
+export const loadAuthFileSettings = async (name: string, api: SettingsApi = managementApi) => {
+  const draft = authFileSettingsFromPayload(await api.get('/credentials/download', { name }));
+  return { ...draft, tags: resolveCredentialTags(name, draft.tags.split(',')).join(', ') };
+};
 
 export const saveAuthFileSettings = async (
   name: string, original: AuthFileSettingsDraft, draft: AuthFileSettingsDraft,
@@ -181,6 +184,7 @@ export const saveAuthFileSettings = async (
 ) => {
   const patch = buildAuthFileSettingsPatch(original, draft);
   if (!Object.keys(patch).length) return false;
+  if ('tags' in patch) setCredentialTags(name, patch.tags);
   await api.patch('/credentials/fields', { name, ...patch });
   return true;
 };

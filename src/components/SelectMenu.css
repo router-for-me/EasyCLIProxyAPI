@@ -19,6 +19,13 @@
   background: var(--bg-primary);
   color: var(--text-primary);
   text-align: left;
+  transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease;
+}
+
+.select-menu-trigger:focus-visible {
+  border-color: var(--color-accent);
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 1px;
 }
 
 .select-menu-trigger:hover:not(:disabled),
@@ -61,23 +68,27 @@
   box-sizing: border-box;
   width: max-content;
   min-width: 0;
-  max-width: min(320px, calc(100vw - 24px));
+  max-width: min(420px, calc(100vw - 24px));
   padding: 4px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--bg-card);
   box-shadow: var(--shadow-popover);
+  animation: ui-view-enter var(--motion-fast) var(--ease-out);
 }
 
 .select-menu-list {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   border-radius: var(--radius-md);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
 }
 
 .select-menu-option {
   display: grid;
-  grid-template-columns: minmax(0, max-content) 16px;
+  grid-template-columns: minmax(0, 1fr) 16px;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -88,6 +99,12 @@
   background: transparent;
   color: var(--text-primary);
   text-align: left;
+  transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.select-menu-option:focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: -2px;
 }
 
 .select-menu-option span {
@@ -106,6 +123,13 @@
   background: color-mix(in srgb, var(--primary-color) 12%, var(--bg-card));
 }
 
+.select-menu-option:disabled,
+.select-menu-option.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .select-menu-option > svg {
   color: var(--primary-color);
 }
@@ -115,6 +139,13 @@
   color: var(--text-secondary);
   font-size: var(--font-size-caption);
   font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .select-menu-dropdown { animation: none; }
+  .select-menu-trigger,
+  .select-menu-trigger > svg,
+  .select-menu-option { transition: none; }
 }
 
 }

@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agents;
+mod agent_usage;
+mod agent_usage_store;
 mod app_settings;
 mod app_update;
 mod claude_catalog;
@@ -112,6 +114,8 @@ const RELEASE_PAGE_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/rel
 const RELEASE_ATOM_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/releases.atom";
 const RELEASE_DOWNLOAD_PREFIX: &str =
     "https://github.com/router-for-me/CLIProxyAPI/releases/download/";
+const CORE_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases?per_page=100";
 #[cfg(windows)]
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-windows.json";
 #[cfg(target_os = "linux")]
@@ -446,6 +450,14 @@ struct CoreStatus {
 struct CoreLatest {
     version: String,
     asset_name: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoreVersionOption {
+    version: String,
+    asset_name: String,
+    prerelease: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -1631,6 +1643,12 @@ struct CoreConfigSettings {
     #[serde(skip_serializing)]
     auth_dir: String,
     api_keys: Vec<String>,
+    /// Whether the kernel configuration sets `auth-dir`; otherwise `auth_dir` is the kernel default.
+    #[serde(skip_serializing)]
+    auth_dir_configured: bool,
+    /// Whether the kernel configuration declares API keys other than the example placeholders.
+    #[serde(skip_serializing)]
+    api_keys_configured: bool,
     management_secret_configured: bool,
     debug: bool,
     commercial_mode: bool,
@@ -2404,6 +2422,8 @@ impl From<&GuiConfigFile> for CoreConfigSettings {
             port: config.port,
             auth_dir: config.auth_dir.clone(),
             api_keys: gui_api_key_values(&config.api_keys),
+            auth_dir_configured: true,
+            api_keys_configured: true,
             management_secret_configured: !config.management_secret_key.is_empty(),
             debug: config.debug,
             commercial_mode: config.commercial_mode,
@@ -2519,6 +2539,10 @@ fn main() {
     let _instance_guard = match acquire_app_instance_guard() {
         Ok(guard) => guard,
         Err(error) => {
+            #[cfg(target_os = "linux")]
+            if portable_update_ack_argument().is_none() && request_running_app_activation() {
+                return;
+            }
             eprintln!("{error}");
             return;
         }
@@ -2561,7 +2585,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![AUTOSTART_ARGUMENT]),
         ))
         .plugin(
             tauri_plugin_opener::Builder::new()
@@ -2571,9 +2595,12 @@ fn main() {
         .manage(CoreDownloadState::default())
         .manage(AppUpdateState::default())
         .manage(window_activity::WindowActivity::default())
-        .manage(CoreProcessState::new(gui_config.start_core_on_launch))
+        .manage(CoreProcessState::new(should_start_core_on_launch(
+            &gui_config,
+        )))
         .manage(DeepSeekHarnessProcessState::default())
         .manage(usage::UsageCollectorState::default())
+        .manage(agent_usage::AgentUsageState::default())
         .manage(GuiConfigState::new(gui_config))
         .manage(plugin_webview::PluginWebviewState::default())
         .manage(MainWindowState::new(
@@ -2697,6 +2724,21 @@ fn main() {
                 eprintln!("Failed to configure startup window state: {error}");
             }
 
+            #[cfg(target_os = "linux")]
+            {
+                let activation_app = app.handle().clone();
+                if let Err(error) = start_app_activation_listener(move || {
+                    let app_handle = activation_app.clone();
+                    if let Err(error) = activation_app
+                        .run_on_main_thread(move || show_windows_main_window(&app_handle))
+                    {
+                        eprintln!("Failed to schedule showing the main window: {error}");
+                    }
+                }) {
+                    eprintln!("{error}");
+                }
+            }
+
             if let Err(error) =
                 configuration_watcher::start_configuration_file_watcher(app.handle().clone())
             {
@@ -2706,6 +2748,7 @@ fn main() {
             network_proxy::start_monitor(app.handle().clone());
             core_recovery::start(app.handle().clone());
             start_codex_model_catalog_sync(app.handle().clone());
+            agent_usage::start_background_sync(app.handle().clone());
 
             let usage_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -2729,6 +2772,7 @@ fn main() {
             });
 
             let core_app = app.handle().clone();
+            let runtime_update_ack = portable_update_ack.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let Ok(_guard) = CORE_OPERATION_LOCK.lock() else {
                     return;
@@ -2744,7 +2788,7 @@ fn main() {
                     return;
                 };
 
-                if config.start_core_on_launch {
+                if should_start_core_on_launch(&config) {
                     if let Ok(status) =
                         current_core_status(Some(process_state.inner()), Some(config.port))
                     {
@@ -2755,11 +2799,19 @@ fn main() {
                 match auto_install_bundled_core_if_needed(&core_app) {
                     Ok(true) => eprintln!("Automatically installed or upgraded to the CPA kernel version bundled with the application"),
                     Ok(false) => {}
-                    Err(error) => eprintln!("Failed to automatically install CPA offline kernel: {error}"),
+                    Err(error) => {
+                        eprintln!("Failed to automatically install CPA offline kernel: {error}");
+                        if runtime_update_ack.is_some() {
+                            process_state.set_starting(false);
+                            return;
+                        }
+                    }
                 }
 
-                let adopted_process_ids = match adopt_existing_core_processes(process_state.inner())
-                {
+                let adopted_process_ids = match adopt_existing_core_processes(
+                    process_state.inner(),
+                    &config,
+                ) {
                     Ok(process_ids) => process_ids,
                     Err(error) => {
                         eprintln!("Failed to scan for and adopt the CPA kernel in the current directory: {error}");
@@ -2776,8 +2828,18 @@ fn main() {
                             .join(", ")
                     );
                 } else if should_start_core_on_launch(&config) {
-                    if let Err(error) = start_core_process_inner(process_state.inner(), &config) {
+                    let start_result = retry_core_operation(3, Duration::from_millis(400), || {
+                        process_state.ensure_active()?;
+                        start_core_process_inner(process_state.inner(), &config)
+                    });
+                    if let Err(error) = start_result {
                         eprintln!("Failed to automatically start CPA kernel: {error}");
+                        if runtime_update_ack.is_some() {
+                            process_state.set_starting(false);
+                            return;
+                        }
+                    } else if let Err(error) = gui_config_state.set_run_on_startup(true) {
+                        eprintln!("Failed to save automatically started kernel state: {error}");
                     }
                 }
 
@@ -2788,12 +2850,19 @@ fn main() {
                 {
                     emit_core_status(&core_app, &status);
                 }
+                if let Some(ack_path) = runtime_update_ack.as_ref() {
+                    let core_expected =
+                        !adopted_process_ids.is_empty() || should_start_core_on_launch(&config);
+                    if let Err(error) = acknowledge_update_runtime(
+                        ack_path,
+                        process_state.inner(),
+                        &config,
+                        core_expected,
+                    ) {
+                        eprintln!("Application update runtime acceptance failed: {error}");
+                    }
+                }
             });
-
-            if let Some(ack_path) = portable_update_ack.as_ref() {
-                fs::write(ack_path, env!("CARGO_PKG_VERSION").as_bytes())
-                    .map_err(|error| format!("Failed to write application update startup confirmation: {error}"))?;
-            }
 
             Ok(())
         })
@@ -2814,6 +2883,10 @@ fn main() {
             get_gui_settings,
             get_usage_view_preferences,
             save_usage_view_preferences,
+            agent_usage::get_agent_usage,
+            agent_usage::sync_agent_usage,
+            agent_usage::get_agent_usage_storage,
+            agent_usage::clear_agent_usage_history,
             resolve_api_access_remarks,
             save_api_access_remark,
             set_app_locale,
@@ -2821,6 +2894,7 @@ fn main() {
             get_software_settings,
             save_software_settings,
             get_agent_config_statuses,
+            get_agent_environment_options,
             create_agent_config_backup,
             list_agent_config_backups,
             preview_agent_config_backup,
@@ -2932,6 +3006,7 @@ fn main() {
             start_app_update,
             cancel_app_update,
             check_latest_core,
+            core_runtime::list_core_versions,
             detect_bundled_core,
             install_core_version,
             install_bundled_core,

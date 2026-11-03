@@ -80,4 +80,82 @@
 }
 
 
+
+.credential-tags-field {
+  display: grid;
+  gap: 7px;
+}
+.credential-tag-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+.credential-tag-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+.credential-tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: var(--font-size-meta);
+  line-height: 1.4;
+}
+.credential-tag-editor .credential-tag-input {
+  flex: 1 1 140px;
+  min-width: 100px;
+  border: 0;
+  padding: 2px 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-label);
+  outline: 0;
+}
+.credential-tag-editor .credential-tag-input:focus {
+  outline: 0;
+}
+.credential-tag-pool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-color);
+}
+.credential-tag-pool-label {
+  font-size: var(--font-size-meta);
+  color: var(--text-tertiary);
+}
+.credential-tag-pool-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.filter-chip.credential-tag-pool-item {
+  cursor: pointer;
+  padding: 2px 7px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+.filter-chip.credential-tag-pool-item:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
 }
