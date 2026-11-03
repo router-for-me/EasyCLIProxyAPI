@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { validateAppVersion } from './version.mjs';
+import { readAppVersion, validateAppVersion } from './version.mjs';
 import { validateReleaseNotes } from './release-notes.mjs';
 
 export function portableUpdateManifestName(platform) {
@@ -31,6 +31,7 @@ export async function generatePortableUpdateManifest({
   repository,
   gitcodeRepository,
   tag: rawTag,
+  version: requestedVersion,
   publishedAt = new Date().toISOString(),
   releaseNotes,
 }) {
@@ -51,8 +52,13 @@ export async function generatePortableUpdateManifest({
   const resolvedGitcodeRepository = String(gitcodeRepository ?? '').trim();
   const normalizedRawTag = String(rawTag ?? '').trim();
   const isOnlyPreview = normalizedRawTag === 'only-preview';
-  const tag = isOnlyPreview ? 'only-preview' : (normalizedRawTag.startsWith('v') ? normalizedRawTag : `v${normalizedRawTag}`);
-  const version = isOnlyPreview ? '0.3.6-preview' : tag.slice(1);
+  const tag = isOnlyPreview
+    ? 'only-preview'
+    : (normalizedRawTag.startsWith('v') ? normalizedRawTag : `v${normalizedRawTag}`);
+  const version = isOnlyPreview
+    ? (String(requestedVersion ?? '').trim() || await readAppVersion())
+    : tag.slice(1);
+  const packageTag = `v${version}`;
 
   validateAppVersion(version, 'release tag');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(resolvedRepository)) {
@@ -69,7 +75,7 @@ export async function generatePortableUpdateManifest({
 
   const assets = {};
   for (const arch of ['amd64', 'aarch64']) {
-    const filename = `EasyCLIProxyAPI-${tag}-${platformSpec.display}-${arch}.${platformSpec.suffix}`;
+    const filename = `EasyCLIProxyAPI-${packageTag}-${platformSpec.display}-${arch}.${platformSpec.suffix}`;
     const path = join(resolvedDirectory, filename);
     const [contents, metadata] = await Promise.all([readFile(path), stat(path)]);
     if (!metadata.isFile() || metadata.size === 0) {
@@ -133,6 +139,7 @@ async function main() {
       repository: args.get('--repository'),
       gitcodeRepository: args.get('--gitcode-repository'),
       tag: args.get('--tag'),
+      version: args.get('--version'),
       publishedAt,
       releaseNotes,
     });
