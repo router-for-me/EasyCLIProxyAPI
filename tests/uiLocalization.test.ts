@@ -15,6 +15,7 @@ const technicalText = new Set([
   'headers',
   'ms',
   'note',
+  'tags',
   'Models.dev',
   'LiteLLM',
 ]);

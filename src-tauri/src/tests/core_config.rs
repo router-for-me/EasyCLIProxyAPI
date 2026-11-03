@@ -926,6 +926,8 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
         port: 9000,
         auth_dir: "/tmp/external-auth".to_string(),
         api_keys: vec!["existing-key".to_string()],
+        auth_dir_configured: true,
+        api_keys_configured: true,
         management_secret_configured: true,
         debug: true,
         commercial_mode: true,
@@ -985,6 +987,42 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
     assert_eq!(config.max_retry_interval, 5);
     assert_eq!(config.streaming_bootstrap_retries, 1);
     assert!(config.run_on_startup);
+}
+
+#[test]
+fn kernel_config_without_auth_dir_or_api_keys_keeps_gui_values() {
+    let gui_config = || GuiConfigFile {
+        auth_dir: "/srv/cpa-auth".to_string(),
+        api_keys: vec![GuiApiKeyEntry {
+            key: "gui-key".to_string(),
+            remark: "laptop".to_string(),
+        }],
+        ..GuiConfigFile::default()
+    };
+    let apply = |input: &str| {
+        let document = serde_norway::from_str::<serde_norway::Value>(input).unwrap();
+        let settings = core_config_settings_from_value(&document).unwrap();
+        let mut config = gui_config();
+        apply_core_settings_to_gui_config(&mut config, &settings);
+        config
+    };
+
+    for input in [
+        "port: 8317\n",
+        "port: 8317\napi-keys:\n  - your-api-key-1\n  - your-api-key-2\n",
+    ] {
+        let config = apply(input);
+        assert_eq!(config.auth_dir, "/srv/cpa-auth", "{input}");
+        assert_eq!(config.api_keys, gui_config().api_keys, "{input}");
+    }
+
+    let config = apply("oauth:\n  auth-dir: ~/.cli-proxy-api\naccess:\n  api-keys: [core-key]\n");
+    assert_eq!(config.auth_dir, "~/.cli-proxy-api");
+    assert_eq!(gui_api_key_values(&config.api_keys), vec!["core-key"]);
+
+    let config = apply("auth-dir: /tmp/external-auth\napi-keys: []\n");
+    assert_eq!(config.auth_dir, "/tmp/external-auth");
+    assert!(config.api_keys.is_empty());
 }
 
 #[test]

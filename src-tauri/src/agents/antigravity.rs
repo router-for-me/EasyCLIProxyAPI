@@ -8,7 +8,8 @@ pub(crate) const ANTIGRAVITY_CONNECTION_FILE: &str = "cpa-connection.json";
 const CLI_MODEL_LABEL: &str = "CPA (EasyCLIProxyAPI)";
 
 pub(crate) fn antigravity_config_paths(_client: AgentClient, home: &Path) -> Vec<PathBuf> {
-    let directory = home.join(".gemini/antigravity-cli");
+    let directory = agent_config_directory("antigravity-cli")
+        .unwrap_or_else(|| home.join(".gemini/antigravity-cli"));
     vec![
         directory.join("settings.json"),
         directory.join(ANTIGRAVITY_CONNECTION_FILE),

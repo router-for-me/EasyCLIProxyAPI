@@ -7,6 +7,9 @@ mod tests;
 // WorkBuddy AI 5.5 reads models.json as either LanguageModel[] or { models, availableModels }.
 // Its chat selection is account/session-local; publishing a model must not rewrite that state.
 pub(crate) fn workbuddy_home(home: &Path) -> PathBuf {
+    if let Some(directory) = agent_config_directory("workbuddy") {
+        return directory;
+    }
     workbuddy_home_from_environment(
         home,
         agent_configuration_environment("WORKBUDDY_CONFIG_DIR").as_deref(),

@@ -246,6 +246,20 @@ pub(crate) async fn preview_agent_config_backup(
     app: tauri::AppHandle,
     client: String,
     id: String,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<BackupPreview, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            preview_agent_config_backup_in_directories(app, client, id).await
+        })
+        .await
+}
+
+pub(crate) async fn preview_agent_config_backup_in_directories(
+    app: tauri::AppHandle,
+    client: String,
+    id: String,
 ) -> Result<BackupPreview, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let config = app.state::<GuiConfigState>().snapshot()?;
@@ -256,6 +270,21 @@ pub(crate) async fn preview_agent_config_backup(
 
 #[tauri::command]
 pub(crate) async fn restore_agent_config_backup(
+    app: tauri::AppHandle,
+    client: String,
+    id: String,
+    revision: String,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            restore_agent_config_backup_in_directories(app, client, id, revision).await
+        })
+        .await
+}
+
+pub(crate) async fn restore_agent_config_backup_in_directories(
     app: tauri::AppHandle,
     client: String,
     id: String,

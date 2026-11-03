@@ -2,26 +2,153 @@
 .model-discovery-dialog.auth-batch-dialog {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 0;
-  height: min(620px, calc(100dvh - 48px));
+  height: min(680px, calc(100dvh - 48px));
+  max-width: min(720px, calc(100vw - 32px));
 }
 
-.auth-batch-dialog .model-discovery-content {
+.auth-batch-dialog .model-discovery-content.auth-batch-content {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-batch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.auth-batch-selection-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.auth-batch-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-meta);
+  color: var(--text-secondary);
+}
+
+.auth-batch-filter-label select {
+  min-width: 140px;
+}
+
+.auth-batch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.auth-batch-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.auth-batch-item-name {
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.auth-batch-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.auth-batch-tag-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
+  background: var(--bg-card);
+  overflow-wrap: anywhere;
+}
+
+.auth-batch-tag-ops {
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-batch-tag-ops-title {
+  font-size: var(--font-size-label);
+  color: var(--text-primary);
+}
+
+.auth-batch-tag-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-batch-tag-input-group,
+.auth-batch-tag-remove-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.auth-batch-tag-input {
+  flex: 1 1 200px;
+  min-width: 140px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-meta);
+}
+
+.auth-batch-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.filter-chip.auth-batch-pool-chip {
+  padding: 2px 8px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.filter-chip.auth-batch-pool-chip:hover:not(:disabled) {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.auth-batch-notice {
+  margin: 4px 0;
 }
 
 .auth-batch-dialog .model-discovery-actions {
   flex-wrap: wrap;
-}
-
-.auth-batch-dialog .model-discovery-toolbar {
-  flex-wrap: wrap;
-}
-
-.auth-batch-tags {
-  display: block;
-  overflow-wrap: anywhere;
-  color: var(--color-text-muted);
 }
 
 .auth-batch-dialog .model-discovery-actions button {
@@ -33,5 +160,6 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-meta);
   line-height: 1.4;
+  width: 100%;
 }
 }

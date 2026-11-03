@@ -5,6 +5,7 @@ import { Check, Search, LoaderCircle, Settings2, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { managementApi } from '../services/managementApi';
 import { loadAuthFileSettings, saveAuthFileSettings, type AuthFileSettingsDraft, type BooleanOverride } from '../services/authFileSettings';
+import { normalizeAuthFileTags } from '../services/authFiles';
 import { modelMatchesRule, normalizeOAuthExcludedRules, oauthModelCandidates, oauthModelsFromPayload, setOAuthModelsExcluded, type OAuthModelDefinition } from '../services/oauthModels';
 import './AuthFileSettingsDialog.css';
 import { Dialog } from './Dialog';
@@ -12,11 +13,12 @@ import { CredentialAdvancedFields, CredentialHeadersEditor, credentialProviderKe
 import { modelSearchText, type ModelOption } from '../services/modelService';
 import { Select } from './Select';
 
-export function AuthFileSettingsDialog({ name, displayName = name, provider = '', onClose, onSaved }: {
+export function AuthFileSettingsDialog({ name, displayName = name, provider = '', existingTags = [], onClose, onSaved }: {
   name: string;
   /** Privacy-masked name for display; `name` stays the request key. */
   displayName?: string;
   provider?: string;
+  existingTags?: string[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -34,7 +36,8 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
-  const dirty = draft !== null && (Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
+  const [tagInput, setTagInput] = useState('');
+  const dirty = draft !== null && (Boolean(tagInput.trim()) || Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
 
   useEffect(() => {
     let active = true;
@@ -72,7 +75,8 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
     setSaving(true);
     setError('');
     try {
-      const changed = await saveAuthFileSettings(name, original, draft);
+      const nextDraft = { ...draft, tags: normalizeAuthFileTags([...draft.tags.split(','), ...tagInput.split(',')]).join(', ') };
+      const changed = await saveAuthFileSettings(name, original, nextDraft);
       if (changed) onSaved();
       else onClose();
     } catch (reason) {
@@ -85,6 +89,37 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   const rules = normalizeOAuthExcludedRules((draft?.excluded_models ?? '').split(/\r?\n/));
   const query = search.trim().toLowerCase();
   const candidates = oauthModelCandidates(models, rules).filter((model) => modelSearchText({ name: model.id, displayName: model.displayName }).includes(query));
+  const currentTags = normalizeAuthFileTags((draft?.tags ?? '').split(','));
+  const availablePoolTags = existingTags.filter(t => !currentTags.includes(t));
+
+  const addTag = (tagToAdd: string) => {
+    const normalized = tagToAdd.trim();
+    if (!normalized) return;
+    if (currentTags.includes(normalized)) {
+      setTagInput('');
+      return;
+    }
+    const next = [...currentTags, normalized];
+    update('tags', next.join(', '));
+    setTagInput('');
+  };
+
+  const removeTag = (tagToRemove: string) => {
+    const next = currentTags.filter(t => t !== tagToRemove);
+    update('tags', next.join(', '));
+  };
+
+  const handleTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault();
+      if (tagInput.trim()) {
+        addTag(tagInput);
+      }
+    } else if (event.key === 'Backspace' && !tagInput && currentTags.length > 0) {
+      removeTag(currentTags[currentTags.length - 1]);
+    }
+  };
+
   const resolvedProvider = credentialProviderKey(name, provider);
   const showWebsockets = resolvedProvider === 'codex' || resolvedProvider === 'xai' || draft?.websockets === 'true' || draft?.websockets === 'false';
   const textField = (key: 'prefix' | 'proxy_url' | 'priority' | 'weight') => (
@@ -154,11 +189,56 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
               <section className="credential-settings-section">
                 <h3>{t('authFiles.settings.additional')}</h3>
                 <CredentialHeadersEditor value={draft.headers} disabled={saving} onChange={(headers) => update('headers', headers)} />
-                <label className="credential-settings-field">
+                <div className="credential-settings-field credential-tags-field">
                   <span>{t('authFiles.tags.label')} <code>tags</code></span>
-                  <input value={draft.tags} onChange={(event) => update('tags', event.currentTarget.value)} placeholder={t('authFiles.tags.placeholder')} />
+                  <div className="credential-tag-editor surface-frame">
+                    <div className="credential-tag-badges" role="list" aria-label={t('authFiles.tags.label')}>
+                      {currentTags.map(tag => (
+                        <span key={tag} className="credential-tag-badge" role="listitem">
+                          <span>{tag}</span>
+                          <button
+                            type="button"
+                            className="icon-button quiet ghost tiny-button"
+                            onClick={() => removeTag(tag)}
+                            title={t('authFiles.tags.removeTag', { tag })}
+                            aria-label={t('authFiles.tags.removeTag', { tag })}
+                          >
+                            <X size={12} aria-hidden="true" />
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        type="text"
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.currentTarget.value)}
+                        onKeyDown={handleTagKeyDown}
+                        onBlur={() => { if (tagInput.trim()) addTag(tagInput); }}
+                        placeholder={currentTags.length ? t('authFiles.tags.addAnother') : t('authFiles.tags.placeholder')}
+                        className="credential-tag-input"
+                        aria-label={t('authFiles.tags.inputPlaceholder')}
+                      />
+                    </div>
+                    {availablePoolTags.length > 0 ? (
+                      <div className="credential-tag-pool">
+                        <span className="credential-tag-pool-label">{t('authFiles.tags.poolLabel')}:</span>
+                        <div className="credential-tag-pool-list">
+                          {availablePoolTags.map(tag => (
+                            <button
+                              key={tag}
+                              type="button"
+                              className="filter-chip credential-tag-pool-item"
+                              onClick={() => addTag(tag)}
+                              title={t('authFiles.tags.addFromPool', { tag })}
+                            >
+                              + {tag}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                   <small>{t('authFiles.tags.hint')}</small>
-                </label>
+                </div>
                 <label className="credential-settings-field">
                   <span>{t('authFiles.settings.note')} <code>note</code></span>
                   <textarea rows={2} value={draft.note} onChange={(event) => update('note', event.currentTarget.value)} />
