@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agents;
+mod agent_skills;
 mod agent_usage;
 mod agent_usage_store;
 mod app_settings;
@@ -2916,6 +2917,9 @@ fn main() {
             agent_usage::sync_agent_usage,
             agent_usage::get_agent_usage_storage,
             agent_usage::clear_agent_usage_history,
+            agent_skills::list_skills,
+            agent_skills::get_skill_detail,
+            agent_skills::set_skill_enabled,
             resolve_api_access_remarks,
             save_api_access_remark,
             set_app_locale,
