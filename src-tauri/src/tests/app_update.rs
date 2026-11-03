@@ -22,6 +22,8 @@ fn app_update_comparison_uses_semantic_versions() {
     assert!(is_app_update_available("v0.2.0-beta.1", "v0.2.0").unwrap());
     assert!(!is_app_update_available("v0.2.0", "v0.2.0").unwrap());
     assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
+    assert!(is_app_update_available("v0.3.6-preview", "v0.3.6-preview").unwrap());
+    assert!(is_app_update_available("0.3.6-preview", "0.3.6-preview").unwrap());
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -569,6 +571,20 @@ fn portable_update_manifest_requires_both_matching_github_assets() {
         "{APP_RELEASE_DOWNLOAD_PREFIX}v9.9.9/EasyCLIProxyAPI-v1.2.3-{display}-amd64.{suffix}"
     );
     assert!(validate_portable_update_manifest(&mismatched_tag).is_err());
+
+    let mut preview_manifest = portable_update_test_manifest("0.3.6-preview");
+    preview_manifest.release_url =
+        "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/only-preview".to_string();
+    for arch in ["amd64", "aarch64"] {
+        preview_manifest
+            .assets
+            .get_mut(&format!("{platform}-{arch}"))
+            .unwrap()
+            .url = format!(
+            "{APP_RELEASE_DOWNLOAD_PREFIX}only-preview/EasyCLIProxyAPI-v0.3.6-preview-{display}-{arch}.{suffix}"
+        );
+    }
+    assert!(validate_portable_update_manifest(&preview_manifest).is_ok());
 }
 
 #[test]

@@ -122,6 +122,15 @@ const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIP
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-linux.json";
 #[cfg(target_os = "macos")]
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-darwin-v2.json";
+#[cfg(windows)]
+const APP_UPDATE_PREVIEW_MANIFEST_URL: &str =
+    "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/only-preview/portable-update-windows.json";
+#[cfg(target_os = "linux")]
+const APP_UPDATE_PREVIEW_MANIFEST_URL: &str =
+    "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/only-preview/portable-update-linux.json";
+#[cfg(target_os = "macos")]
+const APP_UPDATE_PREVIEW_MANIFEST_URL: &str =
+    "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/only-preview/portable-update-darwin-v2.json";
 const APP_RELEASE_DOWNLOAD_PREFIX: &str =
     "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/";
 #[cfg(windows)]

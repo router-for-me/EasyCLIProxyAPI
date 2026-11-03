@@ -310,10 +310,13 @@ async fn resolve_app_update(
         "Failed to create version check client",
     )?;
     let requested_source = config.selected_download_candidate();
+    let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
+    let is_preview = current_version.to_ascii_lowercase().contains("preview");
     let (manifest, resolved_source) = fetch_portable_update_manifest(
         &client,
         requested_source.clone(),
         &config.custom_download_mirrors,
+        is_preview,
     )
     .await?;
     persist_automatic_download_source_switch(
@@ -323,7 +326,6 @@ async fn resolve_app_update(
         &resolved_source,
     )?;
     let latest_version = normalize_version(&manifest.version);
-    let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
     let update_available = is_app_update_available(&current_version, &latest_version)?;
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
@@ -368,6 +370,7 @@ pub(crate) async fn fetch_portable_update_manifest(
     client: &reqwest::Client,
     source: VersionDownloadCandidate,
     custom_mirrors: &[String],
+    is_preview: bool,
 ) -> Result<(PortableUpdateManifest, VersionDownloadCandidate), String> {
     let gitcode_repository = configured_gitcode_gui_repository();
     let mut failures = Vec::new();
@@ -384,12 +387,14 @@ pub(crate) async fn fetch_portable_update_manifest(
             }
             VersionDownloadSource::Github
             | VersionDownloadSource::GhProxy
-            | VersionDownloadSource::GhFast => {
-                let url = version_source_url(&candidate, APP_UPDATE_MANIFEST_URL);
-                fetch_portable_update_manifest_url(client, &url).await
-            }
-            VersionDownloadSource::Custom => {
-                let url = version_source_url(&candidate, APP_UPDATE_MANIFEST_URL);
+            | VersionDownloadSource::GhFast
+            | VersionDownloadSource::Custom => {
+                let manifest_url = if is_preview {
+                    APP_UPDATE_PREVIEW_MANIFEST_URL
+                } else {
+                    APP_UPDATE_MANIFEST_URL
+                };
+                let url = version_source_url(&candidate, manifest_url);
                 fetch_portable_update_manifest_url(client, &url).await
             }
         };
@@ -583,9 +588,10 @@ pub(crate) fn validate_portable_update_manifest(
         || release_url.password().is_some()
         || release_url.query().is_some()
         || release_url.fragment().is_some()
-        || !release_url
+        || (!release_url
             .path()
             .starts_with("/router-for-me/EasyCLIProxyAPI/releases/tag/v")
+            && release_url.path() != "/router-for-me/EasyCLIProxyAPI/releases/tag/only-preview")
     {
         return Err("Untrusted application update release URL".to_string());
     }
@@ -633,7 +639,12 @@ fn validate_portable_update_asset_catalog(
         return Err(format!("The application update manifest must include both {display_platform} architectures"));
     }
     let version = manifest.version.trim().trim_start_matches('v');
-    let tag = format!("v{version}");
+    let is_only_preview = manifest.release_url.ends_with("/only-preview");
+    let tag = if is_only_preview {
+        "only-preview".to_string()
+    } else {
+        format!("v{version}")
+    };
     for arch in ["amd64", "aarch64"] {
         let key = format!("{platform}-{arch}");
         let asset = assets
