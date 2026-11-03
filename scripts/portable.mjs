@@ -86,6 +86,7 @@ await writeFile(join(output, 'portable-app.json'), `${JSON.stringify({
   schemaVersion: 1,
   application: 'EasyCLIProxyAPI',
   version: appVersion,
+  builtAt: new Date().toISOString(),
   platform: targetOS,
   arch: targetArch,
   autoUpdate: ['windows', 'linux', 'darwin'].includes(targetOS),

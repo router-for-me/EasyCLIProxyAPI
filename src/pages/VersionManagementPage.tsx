@@ -453,6 +453,16 @@ export function VersionManagementPage() {
         hour12: false,
       })
     : null;
+  const currentAppBuiltAt = appUpdate?.currentBuildAt && Number.isFinite(Date.parse(appUpdate.currentBuildAt))
+    ? formatDate(appUpdate.currentBuildAt, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : null;
   const appIsPreview = /preview/i.test(resolvedAppVersion || '') || /preview/i.test(appUpdate?.latestVersion || '');
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
@@ -624,7 +634,14 @@ export function VersionManagementPage() {
             </div>
 
             {appIsPreview ? (
-              <dl className="version-metrics-comparison single">
+              <dl className="version-metrics-comparison">
+                <div className="surface-section surface-muted version-metric-tile">
+                  <dt className="version-metric-label">{t('appUpdate.currentBuild')}</dt>
+                  <dd className="version-metric-value" title={currentAppBuiltAt || ''}>
+                    {currentAppBuiltAt ?? t('common.detecting')}
+                  </dd>
+                  <span className="version-metric-sub">{currentAppVersion}</span>
+                </div>
                 <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
                   <dt className="version-metric-label">{t('appUpdate.buildTime')}</dt>
                   <dd className="version-metric-value" title={latestAppPublishedAt || ''}>
