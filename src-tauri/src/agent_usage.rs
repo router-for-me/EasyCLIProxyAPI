@@ -1116,6 +1116,19 @@ mod tests {
     }
 
     #[test]
+    fn copilot_session_state_root_ignores_unrelated_trees() {
+        let home = test_directory("copilot-root");
+        fs::create_dir_all(home.join(".copilot")).unwrap();
+        fs::write(home.join(".copilot/config.json"), "{not json").unwrap();
+        fs::create_dir_all(home.join(".copilot/session-state")).unwrap();
+        fs::write(home.join(".copilot/session-state/events.jsonl"), "{}\n").unwrap();
+        let files = source_files(&home, "copilot");
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(files[0].ends_with("session-state/events.jsonl"));
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
     fn enforces_scan_depth_and_document_size_limits() {
         let root = test_directory("limits");
         let mut directory = root.clone();
