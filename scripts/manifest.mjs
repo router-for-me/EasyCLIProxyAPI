@@ -50,8 +50,9 @@ export async function generatePortableUpdateManifest({
   const resolvedRepository = repository ?? 'router-for-me/EasyCLIProxyAPI';
   const resolvedGitcodeRepository = String(gitcodeRepository ?? '').trim();
   const normalizedRawTag = String(rawTag ?? '').trim();
-  const tag = normalizedRawTag.startsWith('v') ? normalizedRawTag : `v${normalizedRawTag}`;
-  const version = tag.slice(1);
+  const isOnlyPreview = normalizedRawTag === 'only-preview';
+  const tag = isOnlyPreview ? 'only-preview' : (normalizedRawTag.startsWith('v') ? normalizedRawTag : `v${normalizedRawTag}`);
+  const version = isOnlyPreview ? '0.3.6-preview' : tag.slice(1);
 
   validateAppVersion(version, 'release tag');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(resolvedRepository)) {

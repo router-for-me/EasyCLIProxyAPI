@@ -438,7 +438,7 @@ jobs:
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
-          if ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1; then
+          if ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1 && [ "$RELEASE_TAG" != "only-preview" ]; then
             echo "Skipping portable update manifests for non-semver release tag: $RELEASE_TAG"
             exit 0
           fi
