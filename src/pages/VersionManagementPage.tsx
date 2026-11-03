@@ -453,6 +453,7 @@ export function VersionManagementPage() {
         hour12: false,
       })
     : null;
+  const appIsPreview = /preview/i.test(resolvedAppVersion || '') || /preview/i.test(appUpdate?.latestVersion || '');
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
   const appVersionStatusLabel: string | null = appUpdateTask.running
@@ -464,6 +465,9 @@ export function VersionManagementPage() {
         : checkingAppUpdate || !appUpdate
           ? t('appUpdate.phase.checking')
           : null;
+  const resolvedAppVersionStatusLabel = appIsPreview && appHasUpdate && latestAppPublishedAt
+    ? t('appUpdate.buildTime')
+    : appVersionStatusLabel;
   const appVersionStatusTone = appUpdateError
     ? 'error'
     : appUpdateTask.running || checkingAppUpdate || !appUpdate
@@ -612,25 +616,37 @@ export function VersionManagementPage() {
           <div className="version-item-content">
             <div className="version-card-top">
               <h2>{t('kernel.versions.appCardTitle')}</h2>
-              {appVersionStatusLabel ? (
-                <span className={`version-row-status ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
-                  {appVersionStatusLabel}
+              {resolvedAppVersionStatusLabel ? (
+                <span className={`version-row-status ${appVersionStatusTone}`} title={appUpdateError || resolvedAppVersionStatusLabel}>
+                  {resolvedAppVersionStatusLabel}
                 </span>
               ) : null}
             </div>
 
-            <dl className="version-metrics-comparison">
-              <div className="surface-section surface-muted version-metric-tile">
-                <dt className="version-metric-label">{t('appUpdate.current')}</dt>
-                <dd className="version-metric-value">{currentAppVersion}</dd>
-              </div>
-              <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
-                <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
-                <dd className="version-metric-value">
-                  {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
-                </dd>
-              </div>
-            </dl>
+            {appIsPreview ? (
+              <dl className="version-metrics-comparison single">
+                <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
+                  <dt className="version-metric-label">{t('appUpdate.buildTime')}</dt>
+                  <dd className="version-metric-value" title={latestAppPublishedAt || ''}>
+                    {latestAppPublishedAt ?? (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+                  </dd>
+                  <span className="version-metric-sub">{latestAppVersion || currentAppVersion}</span>
+                </div>
+              </dl>
+            ) : (
+              <dl className="version-metrics-comparison">
+                <div className="surface-section surface-muted version-metric-tile">
+                  <dt className="version-metric-label">{t('appUpdate.current')}</dt>
+                  <dd className="version-metric-value">{currentAppVersion}</dd>
+                </div>
+                <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
+                  <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
+                  <dd className="version-metric-value">
+                    {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+                  </dd>
+                </div>
+              </dl>
+            )}
 
             <div className="app-version-info-section">
               <MessageNotice message={appUpdateError} />
