@@ -636,6 +636,20 @@ textarea:focus-visible {
   margin: 18px 0 0;
 }
 
+.version-metrics-comparison.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.version-metric-sub {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .version-metric-tile {
   display: grid;
   min-width: 0;

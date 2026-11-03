@@ -2150,6 +2150,7 @@ export const jaOverrides = {
   'appUpdate.notes.collapse': '折りたたむ',
   'appUpdate.notes.publishedAt': '{date}公開',
   'appUpdate.publishedAt': '最新ビルド：{date}',
+  'appUpdate.buildTime': '最新ビルド日時',
   'appUpdate.notes.openRelease': 'リリースノート全体を見る',
   'appUpdate.notes.empty': '現在の言語の更新内容を取得できませんでした。',
   'appUpdate.notes.loading': '更新内容を取得中…',
