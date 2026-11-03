@@ -18,7 +18,7 @@ describe('Kimi monthly quotas', () => {
   it('appends both monthly quotas, preserving precision and independent resets', () => {
     const rows = quotaRowsFor('kimi', payload);
     expect(rows.map(row => row.label)).toEqual([
-      '5 hours window', 'Weekly quota', 'Monthly total quota', 'Monthly coding quota',
+      '5 hours limit', 'Weekly limit', 'Monthly total quota', 'Monthly coding quota',
     ]);
     expect(rows[2].remainingPercent).toBeCloseTo(74.71);
     expect(rows[3].remainingPercent).toBe(40);

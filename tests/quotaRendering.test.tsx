@@ -69,7 +69,7 @@ describe('quota card rendering', () => {
       monthly: { config: { monthlyLimit: 10000, used: 2500 } },
     }) }, 'xai');
     expect(html).toContain('SuperGrok Heavy');
-    expect(html).toContain('Weekly quota');
+    expect(html).toContain('Weekly limit');
     expect(html).toContain('Prepaid balance');
     expect(html).toContain('$2.50');
     expect(html.match(/75% remaining/g)).toHaveLength(1);
