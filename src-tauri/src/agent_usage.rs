@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use tauri::{Emitter, Manager};
@@ -390,7 +390,8 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
         }
         "copilot" => {
             extensions.push("json");
-            roots.push(home.join(".copilot"));
+            let root = env_directory("COPILOT_HOME").unwrap_or_else(|| home.join(".copilot"));
+            roots.push(root);
             if let Some(app_data) = env::var_os("APPDATA") {
                 roots.push(PathBuf::from(app_data).join("GitHub Copilot"));
             }
@@ -428,6 +429,18 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
                         .is_ok_and(|metadata| metadata.is_file())
             });
         }
+    }
+    if source == "copilot" {
+        files.retain(|path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            !name.eq_ignore_ascii_case("config.json")
+                && !name.eq_ignore_ascii_case("settings.json")
+                && !name.eq_ignore_ascii_case("hosts.json")
+                && !name.eq_ignore_ascii_case("ezcpa-connection.json")
+        });
     }
     files.sort();
     files.dedup();
@@ -488,13 +501,27 @@ pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) 
         return read_opencode_database(path, delta);
     }
 
-    let file = File::open(path).map_err(|_| ())?;
+    let mut file = File::open(path).map_err(|_| ())?;
     if extension.eq_ignore_ascii_case("json") {
         if metadata.len() > MAX_JSON_DOCUMENT_BYTES {
             return Ok(());
         }
-        let value: Value = serde_json::from_reader(file).map_err(|_| ())?;
-        add_value_usage(&value, source, path, delta);
+        let value = match serde_json::from_reader::<_, Value>(&file) {
+            Ok(value) => Some(value),
+            Err(error) if error.is_io() => return Err(()),
+            Err(_) => {
+                let mut content = String::new();
+                file.seek(SeekFrom::Start(0)).map_err(|_| ())?;
+                match file.read_to_string(&mut content) {
+                    Ok(_) => json5::from_str::<Value>(&content).ok(),
+                    Err(read_error) if read_error.kind() == std::io::ErrorKind::InvalidData => None,
+                    Err(_) => return Err(()),
+                }
+            }
+        };
+        if let Some(value) = value {
+            add_value_usage(&value, source, path, delta);
+        }
         return Ok(());
     }
 
@@ -1489,6 +1516,69 @@ mod tests {
         let output = serde_json::to_string(&delta.daily.keys().collect::<Vec<_>>()).unwrap();
         assert!(!output.contains("private"));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn copilot_jsonc_config_and_malformed_json_do_not_fail_read_usage_file() {
+        let home = test_directory("copilot-config");
+        let copilot_dir = home.join(".copilot");
+        fs::create_dir_all(&copilot_dir).unwrap();
+
+        let config_path = copilot_dir.join("config.json");
+        fs::write(
+            &config_path,
+            "// User settings belong in settings.json.\n{\"firstLaunchAt\": \"2026-01-01T00:00:00.000Z\"}\n",
+        )
+        .unwrap();
+
+        // 1. source_files excludes config.json
+        let files = source_files(&home, "copilot");
+        assert!(!files.contains(&config_path));
+        assert!(files.is_empty());
+
+        // 2. read_usage_file on config.json with // comments returns Ok(())
+        let mut delta = FileDelta::default();
+        assert!(read_usage_file(&config_path, "copilot", &mut delta).is_ok());
+        assert_eq!(delta_total(&delta).total_tokens, 0);
+
+        // 3. read_usage_file on malformed non-JSON/JSON5 returns Ok(()) without breaking
+        let malformed_path = copilot_dir.join("malformed.json");
+        fs::write(&malformed_path, "// not valid json\n{ invalid :::").unwrap();
+        let mut malformed_delta = FileDelta::default();
+        assert!(read_usage_file(&malformed_path, "copilot", &mut malformed_delta).is_ok());
+        assert_eq!(delta_total(&malformed_delta).total_tokens, 0);
+
+        // 4. Valid session-state/events.jsonl is discovered and counted
+        let session_dir = copilot_dir.join("session-state");
+        fs::create_dir_all(&session_dir).unwrap();
+        let events_path = session_dir.join("events.jsonl");
+        let timestamp = local_timestamp(2026, 10, 29, 12);
+        fs::write(
+            &events_path,
+            format!(
+                "{}\n",
+                json!({
+                    "timestamp": timestamp,
+                    "model": "copilot-model",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "total_tokens": 150
+                    }
+                })
+            ),
+        )
+        .unwrap();
+
+        let files_with_session = source_files(&home, "copilot");
+        assert!(files_with_session.contains(&events_path));
+        assert!(!files_with_session.contains(&config_path));
+
+        let mut session_delta = FileDelta::default();
+        read_usage_file(&events_path, "copilot", &mut session_delta).unwrap();
+        assert_eq!(delta_total(&session_delta).total_tokens, 150);
+
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]
