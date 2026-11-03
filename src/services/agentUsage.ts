@@ -1,21 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isRecord, readNumber, readString } from './managementApi';
-import type { ModelPrice, UsagePricing } from './usage';
 
-export type AgentUsageModel = {
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheCreationTokens: number;
-  cacheReadTokens: number;
-  reasoningTokens: number;
-  totalTokens: number;
-  costUSD: number | null;
-};
-
-export type AgentUsageDaily = {
-  date: string;
-  timestamp?: string;
+export type AgentUsageTotals = {
   inputTokens: number;
   outputTokens: number;
   cacheCreationTokens: number;
@@ -23,34 +9,123 @@ export type AgentUsageDaily = {
   reasoningTokens: number;
   totalTokens: number;
   costUSD: number;
-  models: AgentUsageModel[];
+  samples: number;
+  days: number;
+};
+
+export type AgentUsageModelRow = {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  priced: boolean;
+  prompt: number | null;
+  completion: number | null;
+  cacheRead: number | null;
+  cacheCreation: number | null;
+  days: number;
+};
+
+export type AgentUsageBucketRow = {
+  bucket: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  samples: number;
 };
 
 export type AgentUsageSource = {
   source: string;
-  status: 'ok' | 'empty' | 'error';
+  status: 'ok' | 'empty' | 'error' | 'archived';
+  archivedAt: string;
   error: string;
-  daily: AgentUsageDaily[];
-  events?: AgentUsageDaily[];
+  totals: AgentUsageTotals;
+  models: AgentUsageModelRow[];
+  series: AgentUsageBucketRow[];
+};
+
+export type AgentUsageCalendarRow = {
+  date: string;
+  totalTokens: number;
+  costUSD: number;
+};
+
+export type AgentUsageHourRow = {
+  weekday: number;
+  hour: number;
+  totalTokens: number;
+  samples: number;
+};
+
+export type AgentUsagePeriodTotals = {
+  totalTokens: number;
+  costUSD: number;
 };
 
 export type AgentUsageReport = {
   schemaVersion: number;
   generatedAt: string;
+  lastSyncAt: string;
+  syncing: boolean;
+  bucket: 'hour' | 'day' | 'week' | 'month';
+  rangeStart: string;
+  rangeEnd: string;
+  totals: AgentUsageTotals;
+  previous: AgentUsagePeriodTotals | null;
   sources: AgentUsageSource[];
+  timeline: AgentUsageBucketRow[];
+  calendar: AgentUsageCalendarRow[];
+  hourly: AgentUsageHourRow[];
 };
 
-export type AgentUsagePriceRow = {
-  model: string;
-  days: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  totalTokens: number;
-  recordedCostUSD: number | null;
-  price: ModelPrice | null;
-  estimatedCostUSD: number | null;
+export type AgentUsageSyncResult = {
+  skipped: boolean;
+  changedFiles: number;
+  scannedFiles: number;
+  durationMs: number;
+  lastSyncAt: string;
+};
+
+export type AgentUsageSyncProgress = {
+  source: string;
+  scanned: number;
+  total: number;
+  finished: boolean;
+};
+
+export type AgentUsageStorage = {
+  databaseSizeBytes: number;
+  dailyRows: number;
+  hourlyRows: number;
+  fileRows: number;
+  lastSyncAt: string;
+};
+
+export const AGENT_USAGE_TIME_RANGES = ['today', '24h', '7d', '30d', 'all'] as const;
+export type AgentUsageTimeRange = (typeof AGENT_USAGE_TIME_RANGES)[number];
+
+export const AGENT_USAGE_GRANULARITIES = ['hour', 'day', 'week', 'month'] as const;
+export type AgentUsageGranularity = (typeof AGENT_USAGE_GRANULARITIES)[number];
+
+export const AGENT_USAGE_METRICS = ['totalTokens', 'costUSD'] as const;
+export type AgentUsageMetric = (typeof AGENT_USAGE_METRICS)[number];
+
+export const AGENT_USAGE_GROUP_BY = ['source', 'model'] as const;
+export type AgentUsageGroupBy = (typeof AGENT_USAGE_GROUP_BY)[number];
+
+export type AgentUsageQuery = {
+  range: AgentUsageTimeRange;
+  sources?: string[];
+  groupBy?: AgentUsageGroupBy;
+  granularity?: AgentUsageGranularity | '';
 };
 
 const tokenValue = (value: unknown, ...keys: string[]): number => {
@@ -63,15 +138,46 @@ const costValue = (value: unknown, ...keys: string[]): number => {
   return parsed !== null && Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
-const optionalCostValue = (value: unknown): number | null => {
+const optionalNumber = (value: unknown): number | null => {
   const parsed = typeof value === 'number' ? value : readNumber(value);
-  return parsed !== null && Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  return parsed !== null && Number.isFinite(parsed) ? parsed : null;
 };
 
-const normalizeModel = (value: unknown): AgentUsageModel => {
+const normalizeTotals = (value: unknown): AgentUsageTotals => {
+  if (!isRecord(value)) throw new Error('Invalid Agent usage totals');
+  return {
+    inputTokens: tokenValue(value, 'inputTokens'),
+    outputTokens: tokenValue(value, 'outputTokens'),
+    cacheCreationTokens: tokenValue(value, 'cacheCreationTokens'),
+    cacheReadTokens: tokenValue(value, 'cacheReadTokens'),
+    reasoningTokens: tokenValue(value, 'reasoningOutputTokens', 'reasoningTokens'),
+    totalTokens: tokenValue(value, 'totalTokens'),
+    costUSD: costValue(value, 'costUSD'),
+    samples: tokenValue(value, 'samples'),
+    days: tokenValue(value, 'days'),
+  };
+};
+
+const normalizeBucket = (value: unknown): AgentUsageBucketRow => {
+  if (!isRecord(value)) throw new Error('Invalid Agent usage series row');
+  const bucket = readString(value, 'bucket');
+  if (!bucket) throw new Error('Agent usage series bucket is missing');
+  return {
+    bucket,
+    inputTokens: tokenValue(value, 'inputTokens'),
+    outputTokens: tokenValue(value, 'outputTokens'),
+    cacheCreationTokens: tokenValue(value, 'cacheCreationTokens'),
+    cacheReadTokens: tokenValue(value, 'cacheReadTokens'),
+    reasoningTokens: tokenValue(value, 'reasoningOutputTokens', 'reasoningTokens'),
+    totalTokens: tokenValue(value, 'totalTokens'),
+    costUSD: costValue(value, 'costUSD'),
+    samples: tokenValue(value, 'samples'),
+  };
+};
+
+const normalizeModel = (value: unknown): AgentUsageModelRow => {
   if (!isRecord(value)) throw new Error('Invalid Agent usage model row');
   const model = readString(value, 'model');
-  if (!model) throw new Error('Agent usage model is missing');
   return {
     model,
     inputTokens: tokenValue(value, 'inputTokens'),
@@ -80,27 +186,13 @@ const normalizeModel = (value: unknown): AgentUsageModel => {
     cacheReadTokens: tokenValue(value, 'cacheReadTokens'),
     reasoningTokens: tokenValue(value, 'reasoningOutputTokens', 'reasoningTokens'),
     totalTokens: tokenValue(value, 'totalTokens'),
-    costUSD: optionalCostValue(value.costUSD),
-  };
-};
-
-const normalizeDaily = (value: unknown): AgentUsageDaily => {
-  if (!isRecord(value)) throw new Error('Invalid Agent usage daily row');
-  const date = readString(value, 'date');
-  const parsedDate = new Date(`${date}T00:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) throw new Error('Agent usage date is invalid');
-  const models = Array.isArray(value.models) ? value.models.map(normalizeModel) : [];
-  return {
-    date,
-    ...(typeof value.timestamp === 'string' && Number.isFinite(Date.parse(value.timestamp)) ? { timestamp: value.timestamp } : {}),
-    inputTokens: tokenValue(value, 'inputTokens'),
-    outputTokens: tokenValue(value, 'outputTokens'),
-    cacheCreationTokens: tokenValue(value, 'cacheCreationTokens'),
-    cacheReadTokens: tokenValue(value, 'cacheReadTokens'),
-    reasoningTokens: tokenValue(value, 'reasoningOutputTokens', 'reasoningTokens'),
-    totalTokens: tokenValue(value, 'totalTokens'),
-    costUSD: costValue(value, 'costUSD', 'totalCost'),
-    models,
+    costUSD: costValue(value, 'costUSD'),
+    priced: value.priced === true,
+    prompt: optionalNumber(value.prompt),
+    completion: optionalNumber(value.completion),
+    cacheRead: optionalNumber(value.cacheRead),
+    cacheCreation: optionalNumber(value.cacheCreation),
+    days: tokenValue(value, 'days'),
   };
 };
 
@@ -109,165 +201,120 @@ const normalizeSource = (value: unknown): AgentUsageSource => {
   const source = readString(value, 'source');
   if (!source) throw new Error('Agent usage source is missing');
   const status = readString(value, 'status');
-  if (status !== 'ok' && status !== 'empty' && status !== 'error') throw new Error('Agent usage status is invalid');
+  if (status !== 'ok' && status !== 'empty' && status !== 'error' && status !== 'archived') {
+    throw new Error('Agent usage status is invalid');
+  }
   return {
     source,
     status,
+    archivedAt: readString(value, 'archivedAt'),
     error: readString(value, 'error'),
-    daily: Array.isArray(value.daily) ? value.daily.map(normalizeDaily) : [],
-    ...(Array.isArray(value.events) ? { events: value.events.map(normalizeDaily) } : {}),
+    totals: normalizeTotals(value.totals),
+    models: Array.isArray(value.models) ? value.models.map(normalizeModel) : [],
+    series: Array.isArray(value.series) ? value.series.map(normalizeBucket) : [],
   };
 };
 
 export function normalizeAgentUsageReport(value: unknown): AgentUsageReport {
-  if (!isRecord(value) || !Array.isArray(value.sources)) throw new Error('Invalid Agent usage report');
+  if (!isRecord(value) || !Array.isArray(value.sources) || !Array.isArray(value.timeline)) {
+    throw new Error('Invalid Agent usage report');
+  }
+  const bucket = readString(value, 'bucket');
+  if (bucket !== 'hour' && bucket !== 'day' && bucket !== 'week' && bucket !== 'month') {
+    throw new Error('Agent usage bucket is invalid');
+  }
   return {
     schemaVersion: tokenValue(value, 'schemaVersion'),
     generatedAt: readString(value, 'generatedAt'),
+    lastSyncAt: readString(value, 'lastSyncAt'),
+    syncing: value.syncing === true,
+    bucket,
+    rangeStart: readString(value, 'rangeStart'),
+    rangeEnd: readString(value, 'rangeEnd'),
+    totals: normalizeTotals(value.totals),
+    previous: isRecord(value.previous)
+      ? { totalTokens: tokenValue(value.previous, 'totalTokens'), costUSD: costValue(value.previous, 'costUSD') }
+      : null,
     sources: value.sources.map(normalizeSource),
+    timeline: value.timeline.map(normalizeBucket),
+    calendar: Array.isArray(value.calendar)
+      ? value.calendar.flatMap((row) => {
+        if (!isRecord(row)) return [];
+        const date = readString(row, 'date');
+        return date ? [{ date, totalTokens: tokenValue(row, 'totalTokens'), costUSD: costValue(row, 'costUSD') }] : [];
+      })
+      : [],
+    hourly: Array.isArray(value.hourly)
+      ? value.hourly.flatMap((row) => {
+        if (!isRecord(row)) return [];
+        return [{
+          weekday: tokenValue(row, 'weekday'),
+          hour: tokenValue(row, 'hour'),
+          totalTokens: tokenValue(row, 'totalTokens'),
+          samples: tokenValue(row, 'samples'),
+        }];
+      })
+      : [],
   };
 }
 
-function priceForModel(model: string, pricing: UsagePricing | null): ModelPrice | null {
-  if (!pricing) return null;
-  const key = model.trim().toLowerCase();
-  return pricing.rows.find((row) => {
-    const rowModel = row.model.trim().toLowerCase();
-    const sourceModel = row.price?.sourceModelId.trim().toLowerCase();
-    return rowModel === key || sourceModel === key;
-  })?.price ?? null;
-}
+const normalizeSyncResult = (value: unknown): AgentUsageSyncResult => {
+  if (!isRecord(value)) throw new Error('Invalid Agent usage sync result');
+  return {
+    skipped: value.skipped === true,
+    changedFiles: tokenValue(value, 'changedFiles'),
+    scannedFiles: tokenValue(value, 'scannedFiles'),
+    durationMs: tokenValue(value, 'durationMs'),
+    lastSyncAt: readString(value, 'lastSyncAt'),
+  };
+};
 
-function estimatedCostForModel(
-  inputTokens: number,
-  outputTokens: number,
-  cacheReadTokens: number,
-  cacheCreationTokens: number,
-  price: ModelPrice | null,
-): number | null {
-  if (!price) return null;
-  return (
-    inputTokens * price.prompt
-    + outputTokens * price.completion
-    + cacheReadTokens * price.cacheRead
-    + cacheCreationTokens * price.cacheCreation
-  ) / 1_000_000;
-}
+const normalizeStorage = (value: unknown): AgentUsageStorage => {
+  if (!isRecord(value)) throw new Error('Invalid Agent usage storage');
+  return {
+    databaseSizeBytes: tokenValue(value, 'databaseSizeBytes'),
+    dailyRows: tokenValue(value, 'dailyRows'),
+    hourlyRows: tokenValue(value, 'hourlyRows'),
+    fileRows: tokenValue(value, 'fileRows'),
+    lastSyncAt: readString(value, 'lastSyncAt'),
+  };
+};
 
-export function buildAgentUsagePriceRows(
-  report: AgentUsageReport,
-  pricing: UsagePricing | null,
-): AgentUsagePriceRow[] {
-  const rows = new Map<string, Omit<AgentUsagePriceRow, 'price' | 'estimatedCostUSD'>>();
-  const modelDays = new Map<string, Set<string>>();
-  report.sources.forEach((source) => source.daily.forEach((daily) => daily.models.forEach((model) => {
-    const name = model.model.trim();
-    if (!name) return;
-    const key = name.toLowerCase();
-    const current = rows.get(key) ?? {
-      model: name,
-      days: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      totalTokens: 0,
-      recordedCostUSD: null,
-    };
-    const days = modelDays.get(key) ?? new Set<string>();
-    days.add(daily.date);
-    modelDays.set(key, days);
-    current.days = days.size;
-    current.inputTokens += model.inputTokens;
-    current.outputTokens += model.outputTokens;
-    current.cacheReadTokens += model.cacheReadTokens;
-    current.cacheCreationTokens += model.cacheCreationTokens;
-    current.totalTokens += model.totalTokens;
-    if (model.costUSD !== null) current.recordedCostUSD = (current.recordedCostUSD ?? 0) + model.costUSD;
-    rows.set(key, current);
-  })));
+export const getAgentUsage = (query: AgentUsageQuery): Promise<AgentUsageReport> =>
+  invoke<unknown>('get_agent_usage', { query }).then(normalizeAgentUsageReport);
 
-  return [...rows.values()]
-    .map((row) => {
-      const price = priceForModel(row.model, pricing);
-      return {
-        ...row,
-        price,
-        estimatedCostUSD: estimatedCostForModel(
-          row.inputTokens,
-          row.outputTokens,
-          row.cacheReadTokens,
-          row.cacheCreationTokens,
-          price,
-        ),
-      };
-    })
-    .sort((left, right) => {
-      const leftPriced = left.price ? 1 : 0;
-      const rightPriced = right.price ? 1 : 0;
-      return rightPriced - leftPriced
-        || right.totalTokens - left.totalTokens
-        || left.model.localeCompare(right.model);
-    });
-}
+export const syncAgentUsage = (): Promise<AgentUsageSyncResult> =>
+  invoke<unknown>('sync_agent_usage').then(normalizeSyncResult);
 
-export function estimateAgentUsageModelCost(
-  model: AgentUsageModel,
-  pricing: UsagePricing | null,
-): number | null {
-  return estimatedCostForModel(
-    model.inputTokens,
-    model.outputTokens,
-    model.cacheReadTokens,
-    model.cacheCreationTokens,
-    priceForModel(model.model, pricing),
-  );
-}
+export const getAgentUsageStorage = (): Promise<AgentUsageStorage> =>
+  invoke<unknown>('get_agent_usage_storage').then(normalizeStorage);
 
-export const getAgentUsage = (_refresh = false): Promise<AgentUsageReport> =>
-  invoke<unknown>('get_agent_usage').then(normalizeAgentUsageReport);
-
-export const AGENT_USAGE_TIME_RANGES = ['today', '24h', '7d', '30d', 'all'] as const;
-export type AgentUsageTimeRange = (typeof AGENT_USAGE_TIME_RANGES)[number];
+export const clearAgentUsageHistory = (): Promise<void> =>
+  invoke<void>('clear_agent_usage_history');
 
 export function formatAgentUsageNumber(value: number, locale: string): string {
   return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Number.isFinite(value) ? value : 0);
 }
 
-export function filterAgentUsageReport(
-  report: AgentUsageReport,
-  range: AgentUsageTimeRange,
-  source = '',
-  now = new Date(),
-): AgentUsageReport {
-  const start = new Date(now);
-  if (range === '24h') start.setTime(start.getTime() - 24 * 60 * 60 * 1000);
-  else if (range === '7d') start.setDate(start.getDate() - 6);
-  else if (range === '30d') start.setDate(start.getDate() - 29);
-  const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  const firstDate = dateKey(start);
-  const lastDate = dateKey(now);
-  return {
-    ...report,
-    sources: report.sources.filter((row) => !source || row.source === source).map((row) => ({
-      ...row,
-      daily: (row.events?.length ? row.events : row.daily).filter((day) => {
-        if (day.timestamp) {
-          const time = new Date(day.timestamp);
-          if (range === 'all') return true;
-          if (range === '24h') return time >= start && time <= now;
-          const date = dateKey(time);
-          return date >= firstDate && date <= lastDate;
-        }
-        return range === 'all' || (day.date >= firstDate && day.date <= lastDate);
-      }).map((day) => day.timestamp ? { ...day, date: dateKey(new Date(day.timestamp)) } : day),
-    })),
-  };
+const compactFormatter = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+
+export function formatAgentUsageCompact(value: number): string {
+  return compactFormatter.format(Number.isFinite(value) ? value : 0);
 }
 
-export function estimateAgentUsageDailyCost(row: AgentUsageDaily, pricing: UsagePricing | null): number {
-  if (!row.models.length) return row.costUSD;
-  const costs = row.models.map((model) => estimateAgentUsageModelCost(model, pricing) ?? model.costUSD);
-  if (costs.every((cost) => cost === null)) return row.costUSD;
-  return costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0);
+export function formatAgentUsageBucket(bucket: string, kind: AgentUsageReport['bucket']): string {
+  if (kind === 'hour') {
+    const [date, hour] = bucket.split('T');
+    return `${date} ${hour}:00`;
+  }
+  return bucket;
+}
+
+export function formatAgentUsageAxisLabel(bucket: string, kind: AgentUsageReport['bucket']): string {
+  if (kind === 'hour') {
+    const [date, hour] = bucket.split('T');
+    return `${date.slice(5)} ${hour}:00`;
+  }
+  if (kind === 'month') return bucket;
+  return bucket.slice(5);
 }

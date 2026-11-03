@@ -1,20 +1,31 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{Connection, OpenFlags};
-use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
-use tauri::Manager;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use tauri::{Emitter, Manager};
+
+use crate::agent_usage_store::{
+    self, AgentUsageQuery, AgentUsageReport, AgentUsageStorage, AgentUsageSyncResult,
+};
 
 const MAX_SCAN_FILES: usize = 20_000;
-const MAX_JSON_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_JSON_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_JSON_LINE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_MODEL_NAME_CHARS: usize = 120;
+const SYNC_PROGRESS_EVENT: &str = "agent-usage-sync-progress";
+const SYNCED_EVENT: &str = "agent-usage-synced";
+const SYNC_INTERVAL_PREFERENCE: &str = "cpa-gui.usage-agent-refresh-interval.v1";
+const BACKGROUND_SYNC_INTERVALS: [i64; 5] = [0, 300_000, 900_000, 1_800_000, 3_600_000];
+const DEFAULT_BACKGROUND_SYNC_INTERVAL: i64 = 300_000;
+const BACKGROUND_SYNC_STARTUP_DELAY_SECS: u64 = 20;
+const BACKGROUND_SYNC_TICK_SECS: u64 = 60;
 
-const SOURCE_NAMES: &[&str] = &[
+pub(crate) const SOURCE_NAMES: &[&str] = &[
     "claude",
     "codex",
     "mcode",
@@ -28,72 +39,22 @@ const SOURCE_NAMES: &[&str] = &[
     "zcode",
 ];
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct AgentUsageReport {
-    schema_version: u8,
-    generated_at: String,
-    sources: Vec<AgentUsageSource>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentUsageSource {
-    source: String,
-    status: String,
-    error: String,
-    daily: Vec<AgentUsageDaily>,
-    events: Vec<AgentUsageDaily>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentUsageDaily {
-    date: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    timestamp: Option<String>,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_creation_tokens: u64,
-    cache_read_tokens: u64,
-    #[serde(rename = "reasoningOutputTokens")]
-    reasoning_tokens: u64,
-    total_tokens: u64,
-    #[serde(rename = "costUSD")]
-    cost_usd: f64,
-    models: Vec<AgentUsageModel>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentUsageModel {
-    model: String,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_creation_tokens: u64,
-    cache_read_tokens: u64,
-    #[serde(rename = "reasoningOutputTokens")]
-    reasoning_tokens: u64,
-    total_tokens: u64,
-    #[serde(rename = "costUSD")]
-    cost_usd: Option<f64>,
+#[derive(Debug, Default, Clone)]
+pub(crate) struct UsageCounter {
+    pub(crate) input_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) cache_creation_tokens: u64,
+    pub(crate) cache_read_tokens: u64,
+    pub(crate) reasoning_tokens: u64,
+    pub(crate) total_tokens: u64,
+    pub(crate) cost_usd: f64,
+    pub(crate) samples: u64,
 }
 
 #[derive(Debug, Default, Clone)]
-struct UsageCounter {
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_creation_tokens: u64,
-    cache_read_tokens: u64,
-    reasoning_tokens: u64,
-    total_tokens: u64,
-    cost_usd: f64,
-}
-
-#[derive(Debug, Default)]
-struct DayAggregate {
-    totals: UsageCounter,
-    models: BTreeMap<String, UsageCounter>,
+pub(crate) struct FileDelta {
+    pub(crate) daily: BTreeMap<(String, String), UsageCounter>,
+    pub(crate) hourly: BTreeMap<(String, u8, String), UsageCounter>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,121 +63,158 @@ struct UsageSample {
     model: Option<String>,
 }
 
-#[tauri::command]
-pub(crate) async fn get_agent_usage(app: tauri::AppHandle) -> Result<AgentUsageReport, String> {
+#[derive(Default)]
+pub(crate) struct AgentUsageState {
+    syncing: AtomicBool,
+    last_sync_millis: AtomicI64,
+}
+
+struct SyncGuard<'a>(&'a AtomicBool);
+
+impl<'a> SyncGuard<'a> {
+    fn acquire(flag: &'a AtomicBool) -> Option<Self> {
+        (!flag.swap(true, Ordering::SeqCst)).then_some(Self(flag))
+    }
+}
+
+impl Drop for SyncGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+fn background_interval_millis(preferences: &BTreeMap<String, String>) -> i64 {
+    preferences
+        .get(SYNC_INTERVAL_PREFERENCE)
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|value| BACKGROUND_SYNC_INTERVALS.contains(value))
+        .unwrap_or(DEFAULT_BACKGROUND_SYNC_INTERVAL)
+}
+
+fn sync_due(last_sync_millis: i64, interval_millis: i64, now_millis: i64) -> bool {
+    interval_millis > 0
+        && (last_sync_millis <= 0 || now_millis.saturating_sub(last_sync_millis) >= interval_millis)
+}
+
+fn now_millis() -> i64 {
+    Local::now().timestamp_millis()
+}
+
+fn run_sync(app: &tauri::AppHandle) -> Result<AgentUsageSyncResult, String> {
+    let state = app.state::<AgentUsageState>();
+    let Some(_guard) = SyncGuard::acquire(&state.syncing) else {
+        return Ok(AgentUsageSyncResult {
+            skipped: true,
+            ..AgentUsageSyncResult::default()
+        });
+    };
+    let outcome = sync_store(app);
+    if outcome.is_ok() {
+        state.last_sync_millis.store(now_millis(), Ordering::SeqCst);
+    }
+    let _ = app.emit_to("main", SYNCED_EVENT, outcome.as_ref().ok());
+    outcome
+}
+
+fn sync_store(app: &tauri::AppHandle) -> Result<AgentUsageSyncResult, String> {
     let home = app
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to get user directory: {error}"))?;
-
-    let proxy_usage_database = crate::usage::usage_database_path().ok();
-
-    tauri::async_runtime::spawn_blocking(move || {
-        build_report(&home, proxy_usage_database.as_deref())
-    })
-    .await
-    .map_err(|error| format!("Failed to read local Agent usage: {error}"))
+    let proxy_database = crate::usage::usage_database_path().ok();
+    let mut connection = agent_usage_store::open_store()?;
+    agent_usage_store::sync(
+        &mut connection,
+        &home,
+        proxy_database.as_deref(),
+        |progress| {
+            if crate::window_activity::is_active(app) {
+                let _ = app.emit_to("main", SYNC_PROGRESS_EVENT, progress);
+            }
+        },
+    )
 }
 
-fn build_report(home: &Path, proxy_usage_database: Option<&Path>) -> AgentUsageReport {
-    let sources = SOURCE_NAMES
-        .iter()
-        .map(|source| {
-            let local = read_source(home, source);
-            if *source == "codex" && local.status == "empty" {
-                if let Some(database) = proxy_usage_database {
-                    if let Some(aggregate) = read_proxy_codex_usage(database) {
-                        return source_from_aggregate("codex", aggregate);
-                    }
+pub(crate) fn start_background_sync(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(
+            BACKGROUND_SYNC_STARTUP_DELAY_SECS,
+        ));
+        loop {
+            let interval = crate::app_settings::get_usage_view_preferences()
+                .map(|preferences| background_interval_millis(&preferences))
+                .unwrap_or(DEFAULT_BACKGROUND_SYNC_INTERVAL);
+            let last = app
+                .state::<AgentUsageState>()
+                .last_sync_millis
+                .load(Ordering::SeqCst);
+            if sync_due(last, interval, now_millis()) {
+                if let Err(error) = run_sync(&app) {
+                    eprintln!("Background Agent usage sync failed: {error}");
                 }
             }
-            local
-        })
-        .collect();
-
-    AgentUsageReport {
-        schema_version: 1,
-        generated_at: Utc::now().to_rfc3339(),
-        sources,
-    }
-}
-
-fn read_source(home: &Path, source: &str) -> AgentUsageSource {
-    let files = source_files(home, source);
-    if files.is_empty() {
-        return empty_source(source);
-    }
-
-    let mut aggregate: BTreeMap<String, DayAggregate> = BTreeMap::new();
-    let mut readable_files = 0usize;
-    let mut failed_files = 0usize;
-
-    for path in files {
-        match read_usage_file(&path, source, &mut aggregate) {
-            Ok(()) => readable_files += 1,
-            Err(_) => failed_files += 1,
+            std::thread::sleep(std::time::Duration::from_secs(BACKGROUND_SYNC_TICK_SECS));
         }
-    }
-
-    if readable_files == 0 && failed_files > 0 {
-        return AgentUsageSource {
-            source: source.to_string(),
-            status: "error".to_string(),
-            error: "Unable to read local usage records".to_string(),
-            daily: Vec::new(),
-            events: Vec::new(),
-        };
-    }
-
-    source_from_aggregate(source, aggregate)
+    });
 }
 
-fn source_from_aggregate(
-    source: &str,
-    aggregate: BTreeMap<String, DayAggregate>,
-) -> AgentUsageSource {
-    let rows = aggregate
-        .into_iter()
-        .map(|(date, day)| AgentUsageDaily {
-            timestamp: date.contains('T').then(|| date.clone()),
-            date: date.chars().take(10).collect(),
-            input_tokens: day.totals.input_tokens,
-            output_tokens: day.totals.output_tokens,
-            cache_creation_tokens: day.totals.cache_creation_tokens,
-            cache_read_tokens: day.totals.cache_read_tokens,
-            reasoning_tokens: day.totals.reasoning_tokens,
-            total_tokens: day.totals.total_tokens,
-            cost_usd: day.totals.cost_usd,
-            models: day
-                .models
-                .into_iter()
-                .map(|(model, counter)| AgentUsageModel {
-                    model,
-                    input_tokens: counter.input_tokens,
-                    output_tokens: counter.output_tokens,
-                    cache_creation_tokens: counter.cache_creation_tokens,
-                    cache_read_tokens: counter.cache_read_tokens,
-                    reasoning_tokens: counter.reasoning_tokens,
-                    total_tokens: counter.total_tokens,
-                    cost_usd: (counter.cost_usd > 0.0).then_some(counter.cost_usd),
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>();
-    let (daily, events): (Vec<_>, Vec<_>) =
-        rows.into_iter().partition(|row| row.timestamp.is_none());
+#[tauri::command]
+pub(crate) async fn get_agent_usage(
+    app: tauri::AppHandle,
+    query: Option<AgentUsageQuery>,
+) -> Result<AgentUsageReport, String> {
+    let syncing = app
+        .state::<AgentUsageState>()
+        .syncing
+        .load(Ordering::SeqCst);
+    let query = query.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = agent_usage_store::open_store()?;
+        let mut report = agent_usage_store::report(&connection, &query)?;
+        report.syncing = syncing;
+        Ok(report)
+    })
+    .await
+    .map_err(|error| format!("Failed to read local Agent usage: {error}"))?
+}
 
-    AgentUsageSource {
-        source: source.to_string(),
-        status: if daily.is_empty() {
-            "empty".to_string()
-        } else {
-            "ok".to_string()
-        },
-        error: String::new(),
-        daily,
-        events,
-    }
+#[tauri::command]
+pub(crate) async fn sync_agent_usage(
+    app: tauri::AppHandle,
+) -> Result<AgentUsageSyncResult, String> {
+    tauri::async_runtime::spawn_blocking(move || run_sync(&app))
+        .await
+        .map_err(|error| format!("Failed to sync local Agent usage: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn get_agent_usage_storage() -> Result<AgentUsageStorage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = agent_usage_store::store_path()?;
+        if !path.is_file() {
+            return Ok(agent_usage_store::empty_storage());
+        }
+        let connection = agent_usage_store::open_store_at(&path)?;
+        agent_usage_store::storage(&connection, &path)
+    })
+    .await
+    .map_err(|error| format!("Failed to read Agent usage storage: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn clear_agent_usage_history(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AgentUsageState>();
+        let Some(_guard) = SyncGuard::acquire(&state.syncing) else {
+            return Err("Agent usage sync is running; try again when it finishes".to_string());
+        };
+        let connection = agent_usage_store::open_store()?;
+        agent_usage_store::clear(&connection)?;
+        state.last_sync_millis.store(0, Ordering::SeqCst);
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Failed to clear Agent usage history: {error}"))?
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -227,7 +225,7 @@ struct ProxyModelPrice {
     cache_creation: f64,
 }
 
-fn read_proxy_codex_usage(path: &Path) -> Option<BTreeMap<String, DayAggregate>> {
+pub(crate) fn proxy_codex_delta(path: &Path) -> Option<FileDelta> {
     if !path.is_file() {
         return None;
     }
@@ -274,31 +272,36 @@ fn read_proxy_codex_usage(path: &Path) -> Option<BTreeMap<String, DayAggregate>>
                         total_tokens
                     },
                     cost_usd: 0.0,
+                    samples: 1,
                 },
             ))
         })
         .ok()?;
 
-    let mut aggregate: BTreeMap<String, DayAggregate> = BTreeMap::new();
-    let mut row_count = 0usize;
+    let mut delta = FileDelta::default();
     for row in rows.flatten() {
         let (timestamp, model, mut counter) = row;
-        let Some(date) = proxy_date(&timestamp) else {
+        let Some(time) = DateTime::parse_from_rfc3339(&timestamp)
+            .ok()
+            .map(|time| time.with_timezone(&Local))
+        else {
             continue;
         };
         if let Some(price) = prices.get(&model.to_ascii_lowercase()) {
             counter.cost_usd = proxy_cost(&counter, price);
         }
-        for key in [date, timestamp] {
-            let day = aggregate.entry(key).or_default();
-            add_counter(&mut day.totals, &counter);
-            if !model.trim().is_empty() {
-                add_counter(day.models.entry(model.clone()).or_default(), &counter);
-            }
-        }
-        row_count += 1;
+        let day = time.format("%Y-%m-%d").to_string();
+        let hour = time.hour() as u8;
+        add_counter(
+            delta.daily.entry((day.clone(), model.clone())).or_default(),
+            &counter,
+        );
+        add_counter(
+            delta.hourly.entry((day, hour, model)).or_default(),
+            &counter,
+        );
     }
-    (row_count > 0).then_some(aggregate)
+    (!delta.daily.is_empty()).then_some(delta)
 }
 
 fn load_proxy_model_prices(connection: &Connection) -> HashMap<String, ProxyModelPrice> {
@@ -339,23 +342,7 @@ fn proxy_cost(counter: &UsageCounter, price: &ProxyModelPrice) -> f64 {
         / 1_000_000.0
 }
 
-fn proxy_date(timestamp: &str) -> Option<String> {
-    DateTime::parse_from_rfc3339(timestamp)
-        .ok()
-        .map(|date| date.format("%Y-%m-%d").to_string())
-}
-
-fn empty_source(source: &str) -> AgentUsageSource {
-    AgentUsageSource {
-        source: source.to_string(),
-        status: "empty".to_string(),
-        error: String::new(),
-        daily: Vec::new(),
-        events: Vec::new(),
-    }
-}
-
-fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
+pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let mut extensions = vec!["jsonl"];
 
@@ -488,11 +475,7 @@ fn collect_files(root: &Path, depth: usize, extensions: &[&str], output: &mut Ve
     }
 }
 
-fn read_usage_file(
-    path: &Path,
-    source: &str,
-    aggregate: &mut BTreeMap<String, DayAggregate>,
-) -> Result<(), ()> {
+pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) -> Result<(), ()> {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
@@ -502,28 +485,29 @@ fn read_usage_file(
         return Ok(());
     }
     if extension.eq_ignore_ascii_case("db") {
-        return read_opencode_database(path, aggregate);
-    }
-    if metadata.len() > MAX_JSON_FILE_BYTES {
-        return Ok(());
+        return read_opencode_database(path, delta);
     }
 
     let file = File::open(path).map_err(|_| ())?;
     if extension.eq_ignore_ascii_case("json") {
+        if metadata.len() > MAX_JSON_DOCUMENT_BYTES {
+            return Ok(());
+        }
         let value: Value = serde_json::from_reader(file).map_err(|_| ())?;
-        add_value_usage(&value, source, path, aggregate);
+        add_value_usage(&value, source, path, delta);
         return Ok(());
     }
 
     let reader = BufReader::new(file);
     let mut codex_total = UsageCounter::default();
     let mut codex_model = None;
-    let mut claude_messages = HashMap::new();
+    let mut claude_samples: HashMap<String, (UsageSample, Option<DateTime<Local>>)> =
+        HashMap::new();
     let mut gemini_messages = Vec::new();
     let mut gemini_positions = HashMap::new();
     for line in reader.lines() {
         let line = line.map_err(|_| ())?;
-        if line.len() > MAX_JSON_FILE_BYTES as usize {
+        if line.len() > MAX_JSON_LINE_BYTES {
             continue;
         }
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
@@ -556,7 +540,7 @@ fn read_usage_file(
             } else if value.get("id").and_then(Value::as_str).is_some() {
                 upsert_gemini_message(value, &mut gemini_messages, &mut gemini_positions);
             } else {
-                add_value_usage(&value, source, path, aggregate);
+                add_value_usage(&value, source, path, delta);
             }
         } else if source == "codex" {
             if value["type"] == "turn_context" {
@@ -589,23 +573,25 @@ fn read_usage_file(
                     codex_total = current;
                 }
                 sample.model = sample.model.or_else(|| codex_model.clone());
-                add_sample_usage(sample, &value, path, aggregate);
+                add_sample_usage(sample, &value, path, delta);
             }
         } else {
-            if source == "claude" && extract_claude_usage(&value).is_some() {
-                if let Some(id) = value.pointer("/message/id").and_then(Value::as_str) {
-                    claude_messages.insert(id.to_string(), value);
-                    continue;
+            if source == "claude" {
+                if let Some(sample) = extract_claude_usage(&value) {
+                    if let Some(id) = value.pointer("/message/id").and_then(Value::as_str) {
+                        claude_samples.insert(id.to_string(), (sample, sample_time(&value, path)));
+                        continue;
+                    }
                 }
             }
-            add_value_usage(&value, source, path, aggregate);
+            add_value_usage(&value, source, path, delta);
         }
     }
-    for value in claude_messages.into_values() {
-        add_value_usage(&value, source, path, aggregate);
+    for (sample, time) in claude_samples.into_values() {
+        add_sample_at(sample, time, delta);
     }
     for value in gemini_messages {
-        add_value_usage(&value, source, path, aggregate);
+        add_value_usage(&value, source, path, delta);
     }
     Ok(())
 }
@@ -626,10 +612,7 @@ fn upsert_gemini_message(
     }
 }
 
-fn read_opencode_database(
-    path: &Path,
-    aggregate: &mut BTreeMap<String, DayAggregate>,
-) -> Result<(), ()> {
+fn read_opencode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> {
     let connection =
         Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|_| ())?;
     connection
@@ -644,100 +627,107 @@ fn read_opencode_database(
         .map_err(|_| ())?;
     for row in rows {
         let data = row.map_err(|_| ())?;
-        if data.len() > MAX_JSON_FILE_BYTES as usize {
+        if data.len() > MAX_JSON_LINE_BYTES {
             continue;
         }
         if let Ok(value) = serde_json::from_str::<Value>(&data) {
-            add_value_usage(&value, "opencode", path, aggregate);
+            add_value_usage(&value, "opencode", path, delta);
         }
     }
     Ok(())
 }
 
-fn add_value_usage(
-    value: &Value,
-    source: &str,
-    path: &Path,
-    aggregate: &mut BTreeMap<String, DayAggregate>,
-) {
+fn add_value_usage(value: &Value, source: &str, path: &Path, delta: &mut FileDelta) {
     if let Some(messages) = value
         .as_array()
         .or_else(|| value.get("messages").and_then(Value::as_array))
     {
         for message in messages {
-            add_value_usage(message, source, path, aggregate);
+            add_value_usage(message, source, path, delta);
         }
         return;
     }
     let Some(sample) = extract_usage(value, source) else {
         return;
     };
-    add_sample_usage(sample, value, path, aggregate);
+    add_sample_usage(sample, value, path, delta);
 }
 
-fn add_sample_usage(
-    sample: UsageSample,
-    value: &Value,
-    path: &Path,
-    aggregate: &mut BTreeMap<String, DayAggregate>,
-) {
-    let Some(date) = extract_date(value).or_else(|| file_date(path)) else {
+fn add_sample_usage(sample: UsageSample, value: &Value, path: &Path, delta: &mut FileDelta) {
+    add_sample_at(sample, sample_time(value, path), delta);
+}
+
+fn add_sample_at(sample: UsageSample, time: Option<DateTime<Local>>, delta: &mut FileDelta) {
+    let Some(time) = time else {
         return;
     };
-
-    let timestamp = extract_timestamp(value)
-        .or_else(|| {
-            fs::metadata(path)
-                .ok()?
-                .modified()
-                .ok()
-                .map(DateTime::<Utc>::from)
-        })
-        .map(|time| time.to_rfc3339());
-    for key in std::iter::once(date).chain(timestamp) {
-        let day = aggregate.entry(key).or_default();
-        add_counter(&mut day.totals, &sample.counter);
-        if let Some(model) = &sample.model {
-            add_counter(
-                day.models.entry(model.clone()).or_default(),
-                &sample.counter,
-            );
-        }
-    }
+    let day = time.format("%Y-%m-%d").to_string();
+    let hour = time.hour() as u8;
+    let model = sample.model.unwrap_or_default();
+    let mut counter = sample.counter;
+    counter.samples = 1;
+    add_counter(
+        delta.daily.entry((day.clone(), model.clone())).or_default(),
+        &counter,
+    );
+    add_counter(
+        delta.hourly.entry((day, hour, model)).or_default(),
+        &counter,
+    );
 }
 
-fn extract_timestamp(value: &Value) -> Option<DateTime<Utc>> {
+fn sample_time(value: &Value, path: &Path) -> Option<DateTime<Local>> {
+    if let Some(time) = extract_local_timestamp(value) {
+        return Some(time);
+    }
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()
+        .map(DateTime::<Local>::from)
+}
+
+fn extract_local_timestamp(value: &Value) -> Option<DateTime<Local>> {
     let object = value.as_object()?;
     for key in ["timestamp", "time", "created_at", "createdAt", "date"] {
-        let Some(value) = object.get(key) else {
+        let Some(field) = object.get(key) else {
             continue;
         };
-        if let Some(text) = value.as_str() {
+        if let Some(text) = field.as_str() {
             if let Ok(time) = DateTime::parse_from_rfc3339(text) {
-                return Some(time.with_timezone(&Utc));
+                return Some(time.with_timezone(&Local));
             }
-            if let Ok(date) = chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d") {
-                return date.and_hms_opt(0, 0, 0).map(|time| time.and_utc());
+            if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
+                return local_midnight(date);
             }
         }
-        let value = value.get("created").unwrap_or(value);
-        if let Some(number) = value.as_f64().filter(|number| number.is_finite()) {
+        let inner = field.get("created").unwrap_or(field);
+        if let Some(number) = inner.as_f64().filter(|number| number.is_finite()) {
             let millis = if number.abs() > 10_000_000_000.0 {
                 number
             } else {
                 number * 1000.0
             };
             if millis >= i64::MIN as f64 && millis <= i64::MAX as f64 {
-                return DateTime::from_timestamp_millis(millis as i64);
+                return DateTime::from_timestamp_millis(millis as i64)
+                    .map(|time| time.with_timezone(&Local));
             }
         }
     }
     for key in ["message", "payload", "data"] {
-        if let Some(time) = object.get(key).and_then(extract_timestamp) {
+        if let Some(time) = object.get(key).and_then(extract_local_timestamp) {
             return Some(time);
         }
     }
     None
+}
+
+fn local_midnight(date: NaiveDate) -> Option<DateTime<Local>> {
+    let naive = date.and_hms_opt(0, 0, 0)?;
+    Local
+        .from_local_datetime(&naive)
+        .single()
+        .or_else(|| Local.from_local_datetime(&naive).earliest())
 }
 
 fn extract_usage(value: &Value, source: &str) -> Option<UsageSample> {
@@ -988,6 +978,7 @@ fn sample_from_map(map: &Map<String, Value>) -> Option<UsageSample> {
                         .and_then(|cost| first_cost(cost, &["total"]))
                 })
                 .unwrap_or(0.0),
+            samples: 0,
         },
         model: None,
     })
@@ -1006,6 +997,7 @@ fn add_counter(target: &mut UsageCounter, value: &UsageCounter) {
         .reasoning_tokens
         .saturating_add(value.reasoning_tokens);
     target.total_tokens = target.total_tokens.saturating_add(value.total_tokens);
+    target.samples = target.samples.saturating_add(value.samples);
     if value.cost_usd.is_finite() && value.cost_usd >= 0.0 {
         target.cost_usd += value.cost_usd;
     }
@@ -1057,60 +1049,6 @@ fn sanitize_model_name(value: &str) -> String {
         .collect()
 }
 
-fn extract_date(value: &Value) -> Option<String> {
-    if let Some(timestamp) = extract_timestamp(value) {
-        return Some(timestamp.format("%Y-%m-%d").to_string());
-    }
-    let object = value.as_object()?;
-    for key in ["timestamp", "time", "created_at", "createdAt", "date"] {
-        if let Some(time) = object.get(key).and_then(Value::as_object) {
-            if let Some(date) = time.get("created").and_then(date_value) {
-                return Some(date);
-            }
-        }
-        if let Some(date) = object.get(key).and_then(date_value) {
-            return Some(date);
-        }
-    }
-    None
-}
-
-fn date_value(value: &Value) -> Option<String> {
-    if let Some(string) = value.as_str() {
-        return valid_date_prefix(string).map(str::to_string);
-    }
-    let seconds = value.as_i64()?;
-    let millis = if seconds.unsigned_abs() > 10_000_000_000 {
-        seconds
-    } else {
-        seconds.saturating_mul(1_000)
-    };
-    DateTime::<Utc>::from_timestamp_millis(millis).map(|date| date.format("%Y-%m-%d").to_string())
-}
-
-fn valid_date_prefix(value: &str) -> Option<&str> {
-    let prefix = value.get(..10)?;
-    let bytes = prefix.as_bytes();
-    if chrono::NaiveDate::parse_from_str(prefix, "%Y-%m-%d").is_ok()
-        && bytes[4] == b'-'
-        && bytes[7] == b'-'
-        && bytes[..4].iter().all(u8::is_ascii_digit)
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[8..10].iter().all(u8::is_ascii_digit)
-    {
-        Some(prefix)
-    } else {
-        None
-    }
-}
-
-fn file_date(path: &Path) -> Option<String> {
-    let modified = fs::metadata(path).ok()?.modified().ok()?;
-    let duration = modified.duration_since(UNIX_EPOCH).ok()?;
-    DateTime::<Utc>::from_timestamp_millis(duration.as_millis().try_into().ok()?)
-        .map(|date| date.format("%Y-%m-%d").to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1118,10 +1056,27 @@ mod tests {
     use std::io::Write;
 
     fn test_directory(name: &str) -> PathBuf {
-        let path = env::temp_dir().join(format!("cpa-usage-{name}-{}", std::process::id()));
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target/test-tmp")
+            .join(format!("cpa-usage-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    fn local_timestamp(year: i32, month: u32, day: u32, hour: u32) -> String {
+        Local
+            .with_ymd_and_hms(year, month, day, hour, 0, 0)
+            .unwrap()
+            .to_rfc3339()
+    }
+
+    fn delta_total(delta: &FileDelta) -> UsageCounter {
+        let mut total = UsageCounter::default();
+        for counter in delta.daily.values() {
+            add_counter(&mut total, counter);
+        }
+        total
     }
 
     #[test]
@@ -1157,7 +1112,7 @@ mod tests {
     }
 
     #[test]
-    fn enforces_scan_depth_and_file_size_limits() {
+    fn enforces_scan_depth_and_document_size_limits() {
         let root = test_directory("limits");
         let mut directory = root.clone();
         for depth in 0..10 {
@@ -1168,15 +1123,29 @@ mod tests {
         let mut files = Vec::new();
         collect_files(&root, 0, &["jsonl"], &mut files);
         assert_eq!(files.len(), 9);
-        for extension in ["json", "jsonl"] {
-            let path = root.join(format!("large.{extension}"));
-            let mut file = File::create(&path).unwrap();
-            writeln!(file, "{{\"usage\":{{\"input_tokens\":100}}}}").unwrap();
-            file.set_len(MAX_JSON_FILE_BYTES + 1).unwrap();
-            let mut aggregate = BTreeMap::new();
-            read_usage_file(&path, "pi", &mut aggregate).unwrap();
-            assert!(aggregate.is_empty());
-        }
+
+        let document = root.join("large.json");
+        let mut file = File::create(&document).unwrap();
+        writeln!(file, "{{\"usage\":{{\"input_tokens\":100}}}}").unwrap();
+        file.set_len(MAX_JSON_DOCUMENT_BYTES + 1).unwrap();
+        drop(file);
+        let mut delta = FileDelta::default();
+        read_usage_file(&document, "pi", &mut delta).unwrap();
+        assert!(delta.daily.is_empty());
+
+        let stream = root.join("large.jsonl");
+        let mut file = File::create(&stream).unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"timestamp": local_timestamp(2026, 10, 29, 12), "usage": {"input_tokens": 100, "output_tokens": 1}})
+        )
+        .unwrap();
+        file.set_len(MAX_JSON_DOCUMENT_BYTES + 1).unwrap();
+        drop(file);
+        let mut delta = FileDelta::default();
+        read_usage_file(&stream, "pi", &mut delta).unwrap();
+        assert_eq!(delta_total(&delta).input_tokens, 100);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1204,26 +1173,28 @@ mod tests {
     #[test]
     fn reads_gemini_message_arrays_and_thinking_without_double_counting_cache() {
         let value = json!({"messages": [
-            {"timestamp": "2026-10-29T12:00:00Z", "model": "gemini", "tokens": {
+            {"timestamp": local_timestamp(2026, 10, 29, 12), "model": "gemini", "tokens": {
                 "input": 100, "output": 20, "cached": 30, "thoughts": 5
             }},
             {"type": "user", "content": "private"}
         ]});
-        let mut aggregate = BTreeMap::new();
-        add_value_usage(&value, "gemini", Path::new("session.json"), &mut aggregate);
-        let counter = &aggregate["2026-10-29"].totals;
+        let mut delta = FileDelta::default();
+        add_value_usage(&value, "gemini", Path::new("session.json"), &mut delta);
+        let counter = delta
+            .daily
+            .get(&("2026-10-29".to_string(), "gemini".to_string()))
+            .unwrap();
         assert_eq!(counter.input_tokens, 70);
         assert_eq!(counter.output_tokens, 25);
         assert_eq!(counter.cache_read_tokens, 30);
         assert_eq!(counter.reasoning_tokens, 5);
         assert_eq!(counter.total_tokens, 125);
-        let report = source_from_aggregate("gemini", aggregate);
-        assert_eq!(report.daily.len(), 1);
-        assert_eq!(report.events.len(), 1);
-        assert_eq!(
-            report.events[0].timestamp.as_deref(),
-            Some("2026-10-29T12:00:00+00:00")
-        );
+        assert_eq!(counter.samples, 1);
+        let hourly = delta
+            .hourly
+            .get(&("2026-10-29".to_string(), 12, "gemini".to_string()))
+            .unwrap();
+        assert_eq!(hourly.total_tokens, 125);
     }
 
     #[test]
@@ -1232,8 +1203,9 @@ mod tests {
         let root = home.join(".gemini/tmp/project/chats");
         fs::create_dir_all(&root).unwrap();
         let path = root.join("session.jsonl");
+        let timestamp = local_timestamp(2026, 10, 29, 12);
         let message = |id: &str, input: u64| {
-            json!({"id": id, "type": "gemini", "timestamp": "2026-10-29T12:00:00Z",
+            json!({"id": id, "type": "gemini", "timestamp": timestamp,
             "model": "gemini", "tokens": {"input": input, "output": 1}})
         };
         let mut file = File::create(&path).unwrap();
@@ -1255,11 +1227,13 @@ mod tests {
             json!({"messages": [message("old", 10000)]}).to_string(),
         )
         .unwrap();
-        let source = read_source(&home, "gemini");
-        assert_eq!(source_files(&home, "gemini"), vec![path]);
-        assert_eq!(source.daily.len(), 1);
-        assert_eq!(source.daily[0].input_tokens, 80);
-        assert_eq!(source.daily[0].total_tokens, 82);
+        assert_eq!(source_files(&home, "gemini"), vec![path.clone()]);
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "gemini", &mut delta).unwrap();
+        let total = delta_total(&delta);
+        assert_eq!(total.input_tokens, 80);
+        assert_eq!(total.total_tokens, 82);
+        assert_eq!(delta.daily.len(), 1);
         fs::remove_dir_all(home).unwrap();
     }
 
@@ -1308,16 +1282,18 @@ mod tests {
     fn keeps_the_latest_claude_message_usage_instead_of_counting_updates() {
         let root = test_directory("claude-updates");
         let path = root.join("session.jsonl");
+        let timestamp = local_timestamp(2026, 10, 29, 12);
         let mut file = File::create(&path).unwrap();
         for output in [10, 20] {
-            writeln!(file, "{}", json!({"timestamp": "2026-10-29T12:00:00Z", "message": {
+            writeln!(file, "{}", json!({"timestamp": timestamp, "message": {
                 "id": "one", "model": "claude", "usage": {"input_tokens": 100, "output_tokens": output}
             }})).unwrap();
         }
         drop(file);
-        let mut aggregate = BTreeMap::new();
-        read_usage_file(&path, "claude", &mut aggregate).unwrap();
-        assert_eq!(aggregate["2026-10-29"].totals.total_tokens, 120);
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "claude", &mut delta).unwrap();
+        assert_eq!(delta_total(&delta).total_tokens, 120);
+        assert_eq!(delta_total(&delta).samples, 1);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1329,11 +1305,10 @@ mod tests {
         let sample = extract_usage(&value, "kimi").unwrap();
         assert_eq!(sample.model.as_deref(), Some("kimi-k2"));
         assert_eq!(
-            extract_timestamp(&value).unwrap().timestamp_millis(),
+            extract_local_timestamp(&value).unwrap().timestamp_millis(),
             1793275200125
         );
         assert_eq!(sample.counter.total_tokens, 30);
-        assert!(valid_date_prefix("2026-02-30").is_none());
         let sample = extract_codex_usage(&json!({"payload": {"type": "token_count", "info": {
             "total_token_usage": null, "last_token_usage": {"input_tokens": 100, "cached_input_tokens": 20, "output_tokens": 30}
         }}})).unwrap();
@@ -1349,20 +1324,26 @@ mod tests {
         connection
             .execute_batch("CREATE TABLE message (data TEXT NOT NULL)")
             .unwrap();
-        let value = json!({"modelID": "model", "time": {"created": 1793275200000i64},
+        let created = Local
+            .with_ymd_and_hms(2026, 10, 29, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let value = json!({"modelID": "model", "time": {"created": created},
             "tokens": {"input": 10, "output": 20, "reasoning": 5, "cache": {"read": 30, "write": 40}}, "cost": 0.25});
         connection
             .execute("INSERT INTO message VALUES (?1)", [value.to_string()])
             .unwrap();
         drop(connection);
-        let mut aggregate = BTreeMap::new();
-        read_usage_file(&path, "opencode", &mut aggregate).unwrap();
-        let day = aggregate.values().next().unwrap();
-        assert_eq!(day.totals.total_tokens, 100);
-        assert_eq!(day.totals.cache_read_tokens, 30);
-        assert_eq!(day.totals.cache_creation_tokens, 40);
-        assert_eq!(day.totals.cost_usd, 0.25);
-        assert!(day.models.contains_key("model"));
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "opencode", &mut delta).unwrap();
+        let counter = delta
+            .daily
+            .get(&("2026-10-29".to_string(), "model".to_string()))
+            .unwrap();
+        assert_eq!(counter.total_tokens, 100);
+        assert_eq!(counter.cache_read_tokens, 30);
+        assert_eq!(counter.cache_creation_tokens, 40);
+        assert_eq!(counter.cost_usd, 0.25);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1378,9 +1359,9 @@ mod tests {
         )
         .unwrap();
         for (timestamp, input, cached, output) in [
-            ("2026-10-29T23:00:00Z", 100, 20, 30),
-            ("2026-10-29T23:00:00Z", 100, 20, 30),
-            ("2026-10-30T01:00:00Z", 160, 30, 50),
+            (local_timestamp(2026, 10, 29, 12), 100, 20, 30),
+            (local_timestamp(2026, 10, 29, 12), 100, 20, 30),
+            (local_timestamp(2026, 10, 30, 12), 160, 30, 50),
         ] {
             writeln!(file, "{}", json!({"timestamp": timestamp, "payload": {"type": "token_count", "info": {
                 "total_token_usage": {"input_tokens": input, "cached_input_tokens": cached, "output_tokens": output},
@@ -1388,20 +1369,27 @@ mod tests {
             }}})).unwrap();
         }
         drop(file);
-        let mut aggregate = BTreeMap::new();
-        read_usage_file(&path, "codex", &mut aggregate).unwrap();
-        assert_eq!(aggregate["2026-10-29"].totals.input_tokens, 80);
-        assert_eq!(aggregate["2026-10-29"].totals.total_tokens, 130);
-        assert_eq!(aggregate["2026-10-30"].totals.input_tokens, 50);
-        assert_eq!(aggregate["2026-10-30"].totals.total_tokens, 80);
-        assert!(aggregate["2026-10-30"].models.contains_key("gpt-test"));
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "codex", &mut delta).unwrap();
+        let first = delta
+            .daily
+            .get(&("2026-10-29".to_string(), "gpt-test".to_string()))
+            .unwrap();
+        assert_eq!(first.input_tokens, 80);
+        assert_eq!(first.total_tokens, 130);
+        let second = delta
+            .daily
+            .get(&("2026-10-30".to_string(), "gpt-test".to_string()))
+            .unwrap();
+        assert_eq!(second.input_tokens, 50);
+        assert_eq!(second.total_tokens, 80);
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn parses_codex_token_count_without_private_fields() {
         let value = json!({
-            "timestamp": "2026-10-29T12:00:00Z",
+            "timestamp": local_timestamp(2026, 10, 29, 12),
             "payload": {
                 "type": "token_count",
                 "info": {
@@ -1417,20 +1405,22 @@ mod tests {
                 }
             }
         });
-        let mut aggregate = BTreeMap::new();
-        add_value_usage(&value, "codex", Path::new("rollout.jsonl"), &mut aggregate);
-        let row = &aggregate["2026-10-29"];
-        assert_eq!(row.totals.total_tokens, 155);
-        assert_eq!(row.totals.cache_read_tokens, 10);
-        assert!(row.models.contains_key("gpt-5"));
-        let output = serde_json::to_string(&row.models.keys().collect::<Vec<_>>()).unwrap();
+        let mut delta = FileDelta::default();
+        add_value_usage(&value, "codex", Path::new("rollout.jsonl"), &mut delta);
+        let counter = delta
+            .daily
+            .get(&("2026-10-29".to_string(), "gpt-5".to_string()))
+            .unwrap();
+        assert_eq!(counter.total_tokens, 155);
+        assert_eq!(counter.cache_read_tokens, 10);
+        let output = serde_json::to_string(&delta.daily.keys().collect::<Vec<_>>()).unwrap();
         assert!(!output.contains("private"));
     }
 
     #[test]
     fn parses_kimi_usage_and_uses_the_request_model() {
         let value = json!({
-            "time": "2026-10-29T12:00:00Z",
+            "time": local_timestamp(2026, 10, 29, 12),
             "model": "kimi-k2",
             "usage": {
                 "inputOther": 20,
@@ -1439,18 +1429,20 @@ mod tests {
                 "output": 9
             }
         });
-        let mut aggregate = BTreeMap::new();
-        add_value_usage(&value, "kimi", Path::new("wire.jsonl"), &mut aggregate);
-        let row = &aggregate["2026-10-29"];
-        assert_eq!(row.totals.total_tokens, 36);
-        assert_eq!(row.totals.input_tokens, 20);
-        assert!(row.models.contains_key("kimi-k2"));
+        let mut delta = FileDelta::default();
+        add_value_usage(&value, "kimi", Path::new("wire.jsonl"), &mut delta);
+        let counter = delta
+            .daily
+            .get(&("2026-10-29".to_string(), "kimi-k2".to_string()))
+            .unwrap();
+        assert_eq!(counter.total_tokens, 36);
+        assert_eq!(counter.input_tokens, 20);
     }
 
     #[test]
     fn parses_claude_message_usage() {
         let value = json!({
-            "timestamp": "2026-10-29T12:00:00Z",
+            "timestamp": local_timestamp(2026, 10, 29, 12),
             "message": {
                 "model": "claude-sonnet",
                 "usage": {
@@ -1461,9 +1453,26 @@ mod tests {
                 }
             }
         });
-        let mut aggregate = BTreeMap::new();
-        add_value_usage(&value, "claude", Path::new("session.jsonl"), &mut aggregate);
-        assert_eq!(aggregate["2026-10-29"].totals.total_tokens, 26);
+        let mut delta = FileDelta::default();
+        add_value_usage(&value, "claude", Path::new("session.jsonl"), &mut delta);
+        assert_eq!(delta_total(&delta).total_tokens, 26);
+    }
+
+    #[test]
+    fn buckets_samples_by_local_day_and_hour() {
+        let value = json!({
+            "timestamp": local_timestamp(2026, 10, 29, 23),
+            "model": "model",
+            "usage": {"input": 10, "output": 5}
+        });
+        let mut delta = FileDelta::default();
+        add_value_usage(&value, "pi", Path::new("session.jsonl"), &mut delta);
+        assert!(delta
+            .daily
+            .contains_key(&("2026-10-29".to_string(), "model".to_string())));
+        assert!(delta
+            .hourly
+            .contains_key(&("2026-10-29".to_string(), 23, "model".to_string())));
     }
 
     #[test]
@@ -1472,15 +1481,13 @@ mod tests {
             std::env::temp_dir().join(format!("cpa-agent-usage-{}.jsonl", std::process::id()));
         let mut file = File::create(&path).unwrap();
         writeln!(file, "not json").unwrap();
-        writeln!(file, "{{\"usage\":{{\"input_tokens\":1,\"output_tokens\":2}},\"time\":\"2026-10-29T00:00:00Z\",\"model\":\"safe\",\"prompt\":\"private\"}}").unwrap();
+        writeln!(file, "{{\"usage\":{{\"input_tokens\":1,\"output_tokens\":2}},\"time\":\"2026-10-29T12:00:00Z\",\"model\":\"safe\",\"prompt\":\"private\"}}").unwrap();
         drop(file);
-        let mut aggregate = BTreeMap::new();
-        read_usage_file(&path, "kimi", &mut aggregate).unwrap();
-        assert_eq!(aggregate["2026-10-29"].totals.total_tokens, 3);
-        assert!(aggregate["2026-10-29"]
-            .models
-            .keys()
-            .all(|model| model != "private"));
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "kimi", &mut delta).unwrap();
+        assert_eq!(delta_total(&delta).total_tokens, 3);
+        let output = serde_json::to_string(&delta.daily.keys().collect::<Vec<_>>()).unwrap();
+        assert!(!output.contains("private"));
         let _ = fs::remove_file(path);
     }
 
@@ -1488,6 +1495,7 @@ mod tests {
     fn proxy_usage_fallback_only_counts_codex_executors_or_unambiguous_sources() {
         let path =
             std::env::temp_dir().join(format!("cpa-agent-usage-proxy-{}.db", std::process::id()));
+        let _ = fs::remove_file(&path);
         let connection = Connection::open(&path).unwrap();
         connection
             .execute_batch(
@@ -1515,8 +1523,11 @@ mod tests {
                 );",
             )
             .unwrap();
-        let timestamp = Utc::now().to_rfc3339();
-        let timestamp_ms = Utc::now().timestamp_millis();
+        let timestamp = local_timestamp(2026, 10, 29, 12);
+        let timestamp_ms = Local
+            .with_ymd_and_hms(2026, 10, 29, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis();
         connection
             .execute(
                 "INSERT INTO usage_events VALUES (?1, ?2, 'gpt-5', '', 120, 40, 2, 20, 0, 160, 'codex', 'CodexExecutor')",
@@ -1541,12 +1552,41 @@ mod tests {
         }
         drop(connection);
 
-        let aggregate = read_proxy_codex_usage(&path).unwrap();
-        let day = aggregate.values().next().unwrap();
-        assert_eq!(day.totals.total_tokens, 160);
-        assert_eq!(day.totals.cache_read_tokens, 20);
-        assert!((day.totals.cost_usd - 0.00019).abs() < 0.0000001);
-        assert!(day.models.contains_key("gpt-5"));
+        let delta = proxy_codex_delta(&path).unwrap();
+        let total = delta_total(&delta);
+        assert_eq!(total.total_tokens, 160);
+        assert_eq!(total.cache_read_tokens, 20);
+        assert!((total.cost_usd - 0.00019).abs() < 0.0000001);
+        assert!(delta
+            .daily
+            .contains_key(&("2026-10-29".to_string(), "gpt-5".to_string())));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn schedules_background_sync_from_the_saved_interval() {
+        let mut preferences = BTreeMap::new();
+        assert_eq!(background_interval_millis(&preferences), 300_000);
+        preferences.insert(SYNC_INTERVAL_PREFERENCE.to_string(), "3600000".to_string());
+        assert_eq!(background_interval_millis(&preferences), 3_600_000);
+        preferences.insert(SYNC_INTERVAL_PREFERENCE.to_string(), "60000".to_string());
+        assert_eq!(background_interval_millis(&preferences), 300_000);
+        preferences.insert(SYNC_INTERVAL_PREFERENCE.to_string(), "0".to_string());
+        assert_eq!(background_interval_millis(&preferences), 0);
+        assert!(!sync_due(0, 0, 1_000));
+        assert!(!sync_due(1_000_000, 0, 9_000_000));
+        assert!(sync_due(0, 300_000, 1_000));
+        assert!(!sync_due(1_000_000, 300_000, 1_200_000));
+        assert!(sync_due(1_000_000, 300_000, 1_300_000));
+    }
+
+    #[test]
+    fn keeps_sync_and_clear_mutually_exclusive() {
+        let flag = AtomicBool::new(false);
+        let guard = SyncGuard::acquire(&flag).unwrap();
+        assert!(SyncGuard::acquire(&flag).is_none());
+        drop(guard);
+        assert!(SyncGuard::acquire(&flag).is_some());
+        assert!(!flag.load(Ordering::SeqCst));
     }
 }

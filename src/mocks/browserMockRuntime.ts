@@ -978,6 +978,253 @@ const ERROR_SCENARIO_COMMANDS = new Set([
   'get_agent_config_statuses',
 ]);
 
+
+const MOCK_AGENT_SOURCES = ['claude', 'codex', 'mcode', 'opencode', 'omp', 'pi', 'copilot', 'gemini', 'antigravity', 'kimi', 'zcode'];
+
+type MockAgentCounter = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  samples: number;
+};
+
+const emptyMockCounter = (): MockAgentCounter => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  reasoningTokens: 0,
+  totalTokens: 0,
+  costUSD: 0,
+  samples: 0,
+});
+
+const addMockCounter = (target: MockAgentCounter, value: MockAgentCounter) => {
+  target.inputTokens += value.inputTokens;
+  target.outputTokens += value.outputTokens;
+  target.cacheReadTokens += value.cacheReadTokens;
+  target.cacheCreationTokens += value.cacheCreationTokens;
+  target.reasoningTokens += value.reasoningTokens;
+  target.totalTokens += value.totalTokens;
+  target.costUSD += value.costUSD;
+  target.samples += value.samples;
+};
+
+function mockAgentUsageReport(range: string, selected: string[], groupBy: string, granularity: string, cleared: boolean) {
+  const generatedAt = new Date().toISOString();
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const dayKey = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const historyDays = 120;
+  const span = range === 'today' ? 1 : range === '24h' ? 2 : range === '7d' ? 7 : range === '30d' ? 30 : historyDays;
+  const hourly = range === 'today' || range === '24h';
+  const kind = granularity === 'hour' && range !== 'all' ? 'hour'
+    : granularity === 'hour' || granularity === 'day' ? 'day'
+      : granularity === 'week' || granularity === 'month' ? granularity
+        : hourly ? 'hour' : range === 'all' && span > 92 ? 'week' : 'day';
+  const start = new Date(today);
+  start.setDate(start.getDate() - (span - 1));
+  const bucketOf = (date: Date, hour: number) => {
+    if (kind === 'hour') return `${dayKey(date)}T${pad(hour)}`;
+    if (kind === 'month') return dayKey(date).slice(0, 7);
+    if (kind === 'week') {
+      const monday = new Date(date);
+      monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+      return dayKey(monday);
+    }
+    return dayKey(date);
+  };
+  const inWindow = (date: Date, hour: number) => {
+    if (range === 'today') return dayKey(date) === dayKey(today) && hour <= now.getHours();
+    if (range === '24h') {
+      const time = new Date(date);
+      time.setHours(hour);
+      return now.getTime() - time.getTime() < 24 * 3_600_000 && time.getTime() <= now.getTime();
+    }
+    return true;
+  };
+  const report = {
+    schemaVersion: 2,
+    generatedAt,
+    lastSyncAt: cleared ? '' : generatedAt,
+    syncing: false,
+    bucket: kind,
+    rangeStart: dayKey(start),
+    rangeEnd: dayKey(today),
+    totals: { ...emptyMockCounter(), days: 0 },
+    previous: range === 'all' || cleared ? null : { totalTokens: 0, costUSD: 0 },
+    sources: [] as Record<string, unknown>[],
+    timeline: [] as Record<string, unknown>[],
+    calendar: [] as { date: string; totalTokens: number; costUSD: number }[],
+    hourly: [] as { weekday: number; hour: number; totalTokens: number; samples: number }[],
+  };
+  const timeline = new Map<string, MockAgentCounter>();
+  for (let offset = 0; offset < span; offset += 1) {
+    const date = new Date(start);
+    date.setDate(date.getDate() + offset);
+    for (let hour = 0; hour < 24; hour += 1) {
+      if (inWindow(date, hour) && (kind === 'hour' ? true : hour === 0)) timeline.set(bucketOf(date, hour), emptyMockCounter());
+      if (kind === 'hour' && dayKey(date) === dayKey(today) && hour >= now.getHours()) break;
+    }
+  }
+  const finish = () => {
+    report.timeline = [...timeline.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([bucket, counter]) => ({ bucket, ...counter }));
+    return report;
+  };
+  if (cleared) {
+    report.sources = MOCK_AGENT_SOURCES.map((source) => ({ source, status: 'empty', archivedAt: '', error: '', totals: { ...emptyMockCounter(), days: 0 }, models: [], series: [] }));
+    return finish();
+  }
+
+  const profiles = [
+    { source: 'claude', models: ['claude-opus-4-1', 'claude-sonnet-4-5'], base: 260_000, rate: 0.0000062, status: 'ok', idle: [2, 9] },
+    { source: 'codex', models: ['gpt-5.2-codex', 'gpt-5'], base: 150_000, rate: 0.0000042, status: 'ok', idle: [3, 4, 11] },
+    { source: 'pi', models: ['deepseek-v4.1-flash'], base: 52_000, rate: 0, status: 'archived', idle: [0, 1, 5] },
+  ];
+  const included = (source: string) => selected.length === 0 || selected.includes(source);
+  const calendar = new Map<string, MockAgentCounter>();
+  const activeDays = new Set<string>();
+  const hourWeights = Array.from({ length: 24 }, (_, hour) => Math.max(0, Math.sin(((hour - 7) / 16) * Math.PI)));
+  const weightSum = hourWeights.reduce((sum, value) => sum + value, 0);
+  const sample = (profile: typeof profiles[number], offsetFromToday: number) => {
+    const counter = emptyMockCounter();
+    if (profile.idle.includes(offsetFromToday % 13)) return counter;
+    const wave = 0.55 + 0.45 * Math.sin((offsetFromToday + profile.base % 7) / 2.4);
+    counter.inputTokens = Math.round(profile.base * wave);
+    counter.outputTokens = Math.round(counter.inputTokens * 0.22);
+    counter.cacheReadTokens = Math.round(counter.inputTokens * 1.8);
+    counter.cacheCreationTokens = Math.round(counter.inputTokens * 0.16);
+    counter.reasoningTokens = Math.round(counter.outputTokens * 0.3);
+    counter.totalTokens = counter.inputTokens + counter.outputTokens + counter.cacheReadTokens + counter.cacheCreationTokens;
+    counter.costUSD = Number((counter.totalTokens * profile.rate).toFixed(4));
+    counter.samples = Math.round(6 + wave * 18);
+    return counter;
+  };
+  const scale = (counter: MockAgentCounter, factor: number): MockAgentCounter => ({
+    inputTokens: Math.round(counter.inputTokens * factor),
+    outputTokens: Math.round(counter.outputTokens * factor),
+    cacheReadTokens: Math.round(counter.cacheReadTokens * factor),
+    cacheCreationTokens: Math.round(counter.cacheCreationTokens * factor),
+    reasoningTokens: Math.round(counter.reasoningTokens * factor),
+    totalTokens: Math.round(counter.totalTokens * factor),
+    costUSD: counter.costUSD * factor,
+    samples: Math.round(counter.samples * factor),
+  });
+  const cells = new Map<string, { totalTokens: number; samples: number }>();
+
+  profiles.forEach((profile) => {
+    const totals = emptyMockCounter();
+    const days = new Set<string>();
+    const sourceBuckets = new Map<string, MockAgentCounter>();
+    for (let offset = 0; offset < span; offset += 1) {
+      const date = new Date(start);
+      date.setDate(date.getDate() + offset);
+      const fromToday = span - 1 - offset;
+      const daily = sample(profile, fromToday);
+      if (!daily.totalTokens) continue;
+      for (let hour = 0; hour < 24; hour += 1) {
+        if (!hourWeights[hour] || !inWindow(date, hour)) continue;
+        if (dayKey(date) === dayKey(today) && hour > now.getHours()) continue;
+        const counter = scale(daily, hourWeights[hour] / weightSum);
+        addMockCounter(totals, counter);
+        days.add(dayKey(date));
+        if (!included(profile.source)) continue;
+        const bucket = bucketOf(date, hour);
+        const sourceCounter = sourceBuckets.get(bucket) ?? emptyMockCounter();
+        addMockCounter(sourceCounter, counter);
+        sourceBuckets.set(bucket, sourceCounter);
+        addMockCounter(timeline.get(bucket) ?? (timeline.set(bucket, emptyMockCounter()).get(bucket) as MockAgentCounter), counter);
+        addMockCounter(report.totals, counter);
+        activeDays.add(dayKey(date));
+      }
+    }
+    for (let fromToday = 0; included(profile.source) && fromToday < historyDays; fromToday += 1) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - fromToday);
+      const daily = sample(profile, fromToday);
+      if (!daily.totalTokens) continue;
+      const dayCounter = calendar.get(dayKey(date)) ?? emptyMockCounter();
+      addMockCounter(dayCounter, daily);
+      calendar.set(dayKey(date), dayCounter);
+      for (let hour = 0; fromToday < 30 && hour < 24; hour += 1) {
+        if (!hourWeights[hour]) continue;
+        const counter = scale(daily, hourWeights[hour] / weightSum);
+        const key = `${(date.getDay() + 6) % 7}-${hour}`;
+        const cell = cells.get(key) ?? { totalTokens: 0, samples: 0 };
+        cell.totalTokens += counter.totalTokens;
+        cell.samples += counter.samples;
+        cells.set(key, cell);
+      }
+    }
+    if (report.previous && included(profile.source)) {
+      for (let offset = 0; offset < (hourly ? 1 : span); offset += 1) {
+        const previous = sample(profile, span + offset);
+        report.previous.totalTokens += hourly ? Math.round(previous.totalTokens * 0.6) : previous.totalTokens;
+        report.previous.costUSD += hourly ? previous.costUSD * 0.6 : previous.costUSD;
+      }
+    }
+    const shares = profile.models.map((_, index) => profile.models.length === 1 ? 1 : index === 0 ? 0.72 : 0.28);
+    report.sources.push({
+      source: profile.source,
+      status: profile.status,
+      archivedAt: profile.status === 'archived' ? new Date(today.getTime() - 86_400_000 * 21).toISOString() : '',
+      error: '',
+      totals: { ...totals, days: days.size },
+      models: included(profile.source) && totals.totalTokens > 0 ? profile.models.map((model, index) => ({
+        model,
+        inputTokens: Math.round(totals.inputTokens * shares[index]),
+        outputTokens: Math.round(totals.outputTokens * shares[index]),
+        cacheCreationTokens: Math.round(totals.cacheCreationTokens * shares[index]),
+        cacheReadTokens: Math.round(totals.cacheReadTokens * shares[index]),
+        reasoningOutputTokens: Math.round(totals.reasoningTokens * shares[index]),
+        totalTokens: Math.round(totals.totalTokens * shares[index]),
+        costUSD: Number((totals.costUSD * shares[index]).toFixed(4)),
+        priced: profile.rate > 0,
+        prompt: profile.rate > 0 ? 3 : null,
+        completion: profile.rate > 0 ? 15 : null,
+        cacheRead: profile.rate > 0 ? 0.3 : null,
+        cacheCreation: profile.rate > 0 ? 3.75 : null,
+        days: days.size,
+      })) : [],
+      series: [...sourceBuckets.entries()].sort(([left], [right]) => left.localeCompare(right)).flatMap(([bucket, counter]) => (
+        groupBy === 'model'
+          ? profile.models.map((model, index) => ({ bucket: `${bucket}|${model}`, ...scale(counter, shares[index]) }))
+          : [{ bucket, ...counter }]
+      )),
+    });
+  });
+
+  MOCK_AGENT_SOURCES.forEach((source) => {
+    if (report.sources.some((entry) => entry.source === source)) return;
+    report.sources.push({
+      source,
+      status: source === 'opencode' ? 'ok' : 'empty',
+      archivedAt: '',
+      error: '',
+      totals: { ...emptyMockCounter(), days: 0 },
+      models: [],
+      series: [],
+    });
+  });
+
+  report.calendar = [...calendar.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([date, counter]) => ({
+    date,
+    totalTokens: counter.totalTokens,
+    costUSD: counter.costUSD,
+  }));
+  report.hourly = [...cells.entries()].map(([key, cell]) => {
+    const [weekday, hour] = key.split('-').map(Number);
+    return { weekday, hour, totalTokens: cell.totalTokens, samples: cell.samples };
+  });
+  report.totals.days = activeDays.size;
+  return finish();
+}
+
 export function createBrowserMockRuntime(
   scenario: BrowserMockScenario,
   emitEvent: EmitMockEvent = () => {},
@@ -987,6 +1234,7 @@ export function createBrowserMockRuntime(
 ): BrowserMockRuntime {
   const state = createState(scenario);
   let usageViewPreferences: Record<string, string> = {};
+  let agentUsageCleared = false;
   let privacyMode: boolean | null = null;
   let themeSelection: ThemeSelection | null = null;
   if (scenario === 'empty') {
@@ -1078,40 +1326,35 @@ export function createBrowserMockRuntime(
       }
       case 'get_usage_view_preferences': return clone(usageViewPreferences);
       case 'get_agent_usage': {
-        const generatedAt = new Date().toISOString();
-        const sources = ['claude', 'codex', 'gemini', 'antigravity', 'opencode', 'kimi', 'pi', 'omp', 'mcode', 'copilot', 'zcode'];
-        const daily = {
-          date: generatedAt.slice(0, 10),
-          inputTokens: 12_400,
-          outputTokens: 4_800,
-          cacheCreationTokens: 600,
-          cacheReadTokens: 1_200,
-          reasoningOutputTokens: 800,
-          totalTokens: 19_000,
-          costUSD: 0,
-          models: [{
-            model: 'gpt-5.2-codex',
-            inputTokens: 12_400,
-            outputTokens: 4_800,
-            cacheCreationTokens: 600,
-            cacheReadTokens: 1_200,
-            reasoningOutputTokens: 800,
-            totalTokens: 19_000,
-            costUSD: null,
-          }],
+        const query = asObject(payload.query);
+        const range = typeof query.range === 'string' ? query.range : '7d';
+        const sources = Array.isArray(query.sources) ? query.sources.filter((entry): entry is string => typeof entry === 'string') : [];
+        const groupBy = query.groupBy === 'model' ? 'model' : 'source';
+        const granularity = typeof query.granularity === 'string' ? query.granularity : '';
+        return mockAgentUsageReport(range, sources, groupBy, granularity, agentUsageCleared || !state.coreStatus.installed || scenario === 'empty');
+      }
+      case 'sync_agent_usage': {
+        if (scenario === 'error') throw new Error('Browser Mock: Agent usage sync failed');
+        return {
+          skipped: false,
+          changedFiles: 3,
+          scannedFiles: 835,
+          durationMs: 118,
+          lastSyncAt: new Date().toISOString(),
         };
-        return state.coreStatus.installed && scenario !== 'empty' ? {
-            schemaVersion: 1,
-            generatedAt,
-            sources: sources.map((source) => ({
-              source,
-              status: source === 'codex' ? 'ok' : 'empty',
-              error: '',
-              daily: source === 'codex' ? [daily] : [],
-              events: source === 'codex' ? [{ ...daily, timestamp: generatedAt }] : [],
-            })),
-          }
-        : { schemaVersion: 1, generatedAt, sources: [] };
+      }
+      case 'get_agent_usage_storage': {
+        return {
+          databaseSizeBytes: agentUsageCleared ? 0 : 4_718_592,
+          dailyRows: agentUsageCleared ? 0 : 1_540,
+          hourlyRows: agentUsageCleared ? 0 : 8_640,
+          fileRows: agentUsageCleared ? 0 : 835,
+          lastSyncAt: agentUsageCleared ? '' : new Date().toISOString(),
+        };
+      }
+      case 'clear_agent_usage_history': {
+        agentUsageCleared = true;
+        return null;
       }
       case 'save_usage_view_preferences': {
         const values = asObject(payload.values);

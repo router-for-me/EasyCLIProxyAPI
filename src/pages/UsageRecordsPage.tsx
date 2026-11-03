@@ -73,6 +73,26 @@ import { Dialog } from '../components/Dialog';
 import { UsageAnalysisView, type UsageAnalysis, type UsageCategory } from './UsageAnalysisView';
 import { Select } from '../components/Select';
 import { AgentUsageView } from './AgentUsageView';
+import {
+  clearAgentUsageHistory,
+  getAgentUsageStorage,
+  syncAgentUsage,
+  type AgentUsageStorage,
+} from '../services/agentUsage';
+import {
+  AGENT_USAGE_REFRESH_INTERVALS,
+  loadAgentUsageRefreshInterval,
+  saveAgentUsageRefreshInterval,
+  type AgentUsageRefreshInterval,
+} from '../services/agentUsagePreferences';
+
+const AGENT_INTERVAL_LABELS = {
+  0: 'usage.agentUsage.refreshFrequency.off',
+  300000: 'usage.agentUsage.refreshFrequency.5m',
+  900000: 'usage.agentUsage.refreshFrequency.15m',
+  1800000: 'usage.agentUsage.refreshFrequency.30m',
+  3600000: 'usage.agentUsage.refreshFrequency.1h',
+} as const;
 
 type UsageTab = 'overview' | 'live-routing' | 'analysis' | 'events' | 'pricing' | 'agent-usage' | 'data-management';
 type UsageRange = '4h' | '24h' | 'today' | '7d' | '30d' | 'all' | 'custom';
@@ -609,6 +629,17 @@ function UsageDataManagementView() {
   const [shrinkDraft, setShrinkDraft] = useState('');
   const [shrinking, setShrinking] = useState(false);
   const [storageNotice, setStorageNotice] = useState('');
+  const [agentStorage, setAgentStorage] = useState<AgentUsageStorage | null>(null);
+  const [agentSyncing, setAgentSyncing] = useState(false);
+  const [agentNotice, setAgentNotice] = useState('');
+  const [agentInterval, setAgentInterval] = useState<AgentUsageRefreshInterval>(loadAgentUsageRefreshInterval);
+
+  const changeAgentInterval = (value: string) => {
+    const next = Number(value) as AgentUsageRefreshInterval;
+    if (!AGENT_USAGE_REFRESH_INTERVALS.includes(next)) return;
+    setAgentInterval(next);
+    saveAgentUsageRefreshInterval(next);
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -628,6 +659,52 @@ function UsageDataManagementView() {
       disposed = true;
     };
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    getAgentUsageStorage()
+      .then((next) => {
+        if (!disposed) setAgentStorage(next);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const syncAgentHistory = async () => {
+    setAgentSyncing(true);
+    setError('');
+    setAgentNotice('');
+    try {
+      await syncAgentUsage();
+      setAgentStorage(await getAgentUsageStorage());
+    } catch (requestError) {
+      setError(String(requestError));
+    } finally {
+      setAgentSyncing(false);
+    }
+  };
+
+  const clearAgentHistory = async () => {
+    const confirmed = await askConfirmation({
+      title: t('usage.dataManagement.agentStorageClearConfirmTitle'),
+      message: t('usage.dataManagement.agentStorageClearConfirm'),
+    });
+    if (!confirmed) return;
+    setAgentSyncing(true);
+    setError('');
+    setAgentNotice('');
+    try {
+      await clearAgentUsageHistory();
+      setAgentStorage(await getAgentUsageStorage());
+      setAgentNotice(t('usage.dataManagement.agentStorageCleared'));
+    } catch (requestError) {
+      setError(String(requestError));
+    } finally {
+      setAgentSyncing(false);
+    }
+  };
 
   const saveStorageLimit = async () => {
     const normalized = limitDraft.trim();
@@ -792,6 +869,45 @@ function UsageDataManagementView() {
       </div>
 
       {storageNotice ? <MessageNotice tone="success" message={storageNotice} onDismiss={() => setStorageNotice('')} /> : null}
+
+      <div className="surface-card usage-data-management-action agent-usage-storage-action">
+        <div>
+          <strong>{t('usage.dataManagement.agentStorageTitle')}</strong>
+          <span>{t('usage.dataManagement.agentStorageDescription')}</span>
+          <small>
+            {[
+              agentStorage ? t('usage.dataManagement.agentStorageCurrent', {
+                size: formatStorageBytes(agentStorage.databaseSizeBytes),
+                daily: compactNumber(agentStorage.dailyRows),
+                hourly: compactNumber(agentStorage.hourlyRows),
+              }) : '',
+              agentStorage?.lastSyncAt
+                ? t('usage.dataManagement.agentStorageLastSync', {
+                  time: new Intl.DateTimeFormat(getCurrentLocale(), { dateStyle: 'short', timeStyle: 'short' }).format(new Date(agentStorage.lastSyncAt)),
+                })
+                : t('usage.dataManagement.agentStorageNeverSynced'),
+            ].filter(Boolean).join(' · ')}
+          </small>
+        </div>
+        <div className="usage-storage-limit-editor">
+          <label className="agent-usage-interval-setting">
+            <span>{t('usage.dataManagement.agentStorageInterval')}</span>
+            <Select value={agentInterval} onChange={(event) => changeAgentInterval(event.currentTarget.value)}>
+              {AGENT_USAGE_REFRESH_INTERVALS.map((interval) => (
+                <option key={interval} value={interval}>{t(AGENT_INTERVAL_LABELS[interval])}</option>
+              ))}
+            </Select>
+          </label>
+          <button type="button" className="primary-button" onClick={() => void syncAgentHistory()} disabled={agentSyncing}>
+            {agentSyncing ? t('usage.dataManagement.agentStorageSyncing') : t('usage.dataManagement.agentStorageSync')}
+          </button>
+          <button type="button" className="secondary-button" onClick={() => void clearAgentHistory()} disabled={agentSyncing}>
+            {t('usage.dataManagement.agentStorageClear')}
+          </button>
+        </div>
+      </div>
+
+      {agentNotice ? <MessageNotice tone="success" message={agentNotice} onDismiss={() => setAgentNotice('')} /> : null}
 
       <div className="surface-card usage-data-management-action">
         <div>
