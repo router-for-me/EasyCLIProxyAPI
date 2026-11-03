@@ -124,5 +124,12 @@ export const zhTW: Record<MessageKey, string> = {
   'home.runtime.errorDetails': '錯誤詳細資訊',
   'home.runtime.installHint': '安裝核心後即可啟動；鎖定的頁面會在核心執行後開放。',
   'usage.effort.unrecorded': '未記錄',
+  'agents.catalog.showAll': '全部顯示',
+  'agents.catalog.hideAll': '全部隱藏',
+  'agents.catalog.hidden': '已隱藏',
+  'quota.compactView': '緊湊檢視',
+  'quota.note.add': '新增備註',
+  'quota.note.edit': '編輯備註',
+  'quota.note.placeholder': '輸入帳號備註…',
 };
 export const ja: Record<MessageKey, string> = jaOverrides;
