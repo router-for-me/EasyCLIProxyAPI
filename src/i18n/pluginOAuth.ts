@@ -31,8 +31,38 @@ const messages = {
   expires: ['链接有效期至', 'Link expires at', 'リンクの有効期限'],
 } as const;
 
+const ruMessages: Record<keyof typeof messages, string> = {
+  title: 'Вход через плагин',
+  providerTitle: '{name} OAuth',
+  providerHint: 'Войдите через этот плагин и сохраните учетные данные аккаунта.',
+  loadFailed: 'Не удалось загрузить варианты входа плагина. Обновите страницу и повторите.',
+  starting: 'Получение ссылки для входа…',
+  waiting: 'Ожидание авторизации…',
+  success: 'Авторизация завершена, учетные данные сохранены.',
+  failed: 'Авторизация не удалась. Повторите.',
+  expired: 'Вход истек. Запросите новую ссылку.',
+  unavailable: 'Вход недоступен. Убедитесь, что плагин включен.',
+  missingState: 'Ядро не вернуло сеанс входа, поэтому проверить статус нельзя.',
+  invalidUrl: 'Некорректная ссылка для входа.',
+  link: 'Ссылка для входа',
+  open: 'Открыть в браузере',
+  copy: 'Скопировать ссылку',
+  copied: 'Скопировано.',
+  code: 'Код устройства',
+  copyCode: 'Скопировать код',
+  deviceHint: 'Откройте ссылку для входа и введите этот код, чтобы авторизоваться.',
+  callback: 'URL обратного вызова',
+  callbackHint: 'Если авторизация не завершилась автоматически, вставьте полный URL обратного вызова из адресной строки.',
+  callbackInvalid: 'Введите полный URL обратного вызова с текущим state и параметром code или error.',
+  submit: 'Отправить обратный вызов',
+  submitting: 'Отправка…',
+  submitted: 'Обратный вызов отправлен. Ожидание результата авторизации.',
+  retry: 'Повторить вход',
+  expires: 'Ссылка действует до',
+};
+
 export type PluginOAuthMessage = keyof typeof messages;
 export function pluginOAuthText(key: PluginOAuthMessage, locale: AppLocale = getCurrentLocale()): string {
-  const value = messages[key][locale === 'en' || locale === 'ru' ? 1 : locale === 'ja' ? 2 : 0];
+  const value = locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
 }
