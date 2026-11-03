@@ -331,7 +331,11 @@ async fn resolve_app_update(
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
     let portable_support = target
-        .map(|(_, arch)| validate_local_portable_app_manifest(arch))
+        .map(|(_, arch)| {
+            validate_local_portable_app_manifest(arch)
+                .map(|supported| supported || is_preview)
+                .or_else(|error| if is_preview { Ok(true) } else { Err(error) })
+        })
         .transpose()?;
     let auto_update_supported = portable_support == Some(true) && asset.is_some();
     let unsupported_reason = if auto_update_supported {
@@ -781,7 +785,9 @@ pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Resul
         && Some(manifest.platform.as_str()) == portable_update_platform_key()
         && manifest.arch == expected_arch
         && manifest.auto_update
-        && normalize_version(&manifest.version) == normalize_version(env!("CARGO_PKG_VERSION")))
+        && (normalize_version(&manifest.version) == normalize_version(env!("CARGO_PKG_VERSION"))
+            || env!("CARGO_PKG_VERSION").to_ascii_lowercase().contains("preview")
+            || manifest.version.to_ascii_lowercase().contains("preview")))
 }
 
 #[tauri::command]

@@ -2148,6 +2148,7 @@ export const zhCN = {
   'appUpdate.notes.expand': '展开',
   'appUpdate.notes.collapse': '收起',
   'appUpdate.notes.publishedAt': '{date}发布',
+  'appUpdate.publishedAt': '最新编译：{date}',
   'appUpdate.notes.openRelease': '查看完整发布说明',
   'appUpdate.notes.empty': '暂未获取到当前语言的更新说明。',
   'appUpdate.notes.loading': '正在获取更新说明…',

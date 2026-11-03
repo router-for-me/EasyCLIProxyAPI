@@ -64,7 +64,14 @@ export function AppReleaseNotes({ info, checking, failed, onOpenUrl }: Props) {
               {publishedAt ? (
                 <time dateTime={publishedAt}>
                   {t('appUpdate.notes.publishedAt', {
-                    date: formatDate(publishedAt, { year: 'numeric', month: 'long', day: 'numeric' }),
+                    date: formatDate(publishedAt, {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false,
+                    }),
                   })}
                 </time>
               ) : null}
