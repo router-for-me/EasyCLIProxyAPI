@@ -59,6 +59,7 @@ import {
   type PluginNavOverride,
 } from './services/pluginNavigation';
 import { languageOptions, useI18n } from './i18n';
+import { getUpdateChannel, setUpdateChannel } from './services/appUpdates';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
 import { canOpenAppPage, requestAppNavigation } from './navigation';
@@ -170,7 +171,32 @@ function App() {
 
 function AppContent() {
   const { locale, setLocale, t } = useI18n();
-  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
+  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing, check: appUpdateCheck } = useAppUpdate();
+  const logoTapRef = useRef<{ count: number; timer: number | null }>({ count: 0, timer: null });
+  const handleLogoTap = useCallback(() => {
+    const tap = logoTapRef.current;
+    tap.count += 1;
+    if (tap.timer !== null) window.clearTimeout(tap.timer);
+    tap.timer = window.setTimeout(() => {
+      tap.count = 0;
+      tap.timer = null;
+    }, 3000);
+    if (tap.count >= 5) {
+      tap.count = 0;
+      if (tap.timer !== null) {
+        window.clearTimeout(tap.timer);
+        tap.timer = null;
+      }
+      void (async () => {
+        const current = await getUpdateChannel().catch(() => 'stable');
+        const next = current === 'preview' ? 'stable' : 'preview';
+        const applied = await setUpdateChannel(next as 'stable' | 'preview').catch(() => null);
+        if (applied && typeof appUpdateCheck === 'function') {
+          await appUpdateCheck();
+        }
+      })();
+    }
+  }, [appUpdateCheck]);
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<AppPageId>('home');
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -377,7 +403,7 @@ function AppContent() {
         {active !== "easy" ? (
           <aside className="sidebar">
             <div className="sidebar-brand" title={t('app.desktopConsole')}>
-              <img src={appLogo} alt="" className="brand-mark brand-logo" />
+              <img src={appLogo} alt="" className="brand-mark brand-logo" onClick={handleLogoTap} />
               <div className="sidebar-brand-text">
                 <strong>EasyCLIProxyAPI</strong>
                 <span>{t('app.desktopConsole')}</span>

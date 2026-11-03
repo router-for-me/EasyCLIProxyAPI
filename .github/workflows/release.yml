@@ -92,7 +92,7 @@ jobs:
               esac
             else
               base_version="${source_version%%[-+]*}"
-              version="${base_version}-preview"
+              version="${base_version}-preview.$(date -u +%Y%m%d)-$(date -u +%H%M)"
             fi
           fi
 
