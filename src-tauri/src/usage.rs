@@ -5772,6 +5772,7 @@ mod tests {
             api_access_remarks: Vec::new(),
             management_secret_key: "123456".to_string(),
             debug: false,
+            update_channel: "stable".to_string(),
             commercial_mode: false,
             logging_to_file: false,
             logs_max_total_size_mb: crate::DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
