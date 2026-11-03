@@ -33,6 +33,7 @@ on:
     tags:
       - 'v*'
       - 'only-preview'
+      - 'preview-*'
 
 concurrency:
   group: portable-${{ github.ref }}-${{ inputs.preview && inputs.source_sha || (github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref_type == 'branch' && 'cache' || 'release') }}
@@ -438,7 +439,9 @@ jobs:
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
-          if ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1 && [ "$RELEASE_TAG" != "only-preview" ]; then
+          if ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1 \
+            && [ "$RELEASE_TAG" != "only-preview" ] \
+            && [[ "$RELEASE_TAG" != preview-* ]]; then
             echo "Skipping portable update manifests for non-semver release tag: $RELEASE_TAG"
             exit 0
           fi

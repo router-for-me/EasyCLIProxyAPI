@@ -52,10 +52,11 @@ export async function generatePortableUpdateManifest({
   const resolvedGitcodeRepository = String(gitcodeRepository ?? '').trim();
   const normalizedRawTag = String(rawTag ?? '').trim();
   const isOnlyPreview = normalizedRawTag === 'only-preview';
-  const tag = isOnlyPreview
-    ? 'only-preview'
+  const isPreviewChannel = isOnlyPreview || normalizedRawTag.startsWith('preview-');
+  const tag = isPreviewChannel
+    ? normalizedRawTag
     : (normalizedRawTag.startsWith('v') ? normalizedRawTag : `v${normalizedRawTag}`);
-  const version = isOnlyPreview
+  const version = isPreviewChannel
     ? (String(requestedVersion ?? '').trim() || await readAppVersion())
     : tag.slice(1);
   const packageTag = `v${version}`;
@@ -86,7 +87,7 @@ export async function generatePortableUpdateManifest({
       sha256: createHash('sha256').update(contents).digest('hex'),
       sizeBytes: metadata.size,
     };
-    if (resolvedGitcodeRepository && !isOnlyPreview) {
+    if (resolvedGitcodeRepository && !isPreviewChannel) {
       asset.fallbackUrls = [gitcodeReleaseAttachmentUrl(
         resolvedGitcodeRepository,
         tag,
