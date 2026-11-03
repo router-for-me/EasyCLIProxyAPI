@@ -390,9 +390,13 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
         }
         "copilot" => {
             extensions.push("json");
-            roots.push(home.join(".copilot"));
+            roots.push(home.join(".copilot").join("session-state"));
             if let Some(app_data) = env::var_os("APPDATA") {
-                roots.push(PathBuf::from(app_data).join("GitHub Copilot"));
+                roots.push(
+                    PathBuf::from(app_data)
+                        .join("GitHub Copilot")
+                        .join("session-state"),
+                );
             }
         }
         _ => return Vec::new(),
