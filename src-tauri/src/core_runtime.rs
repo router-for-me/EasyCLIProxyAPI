@@ -546,13 +546,18 @@ pub(crate) async fn install_core_version(
                 other => other,
             };
             emit_current_core_status(&app, process_state.inner(), config.port);
-            swap_and_restore.map(|()| CoreInstallResult {
-                version: staged.version,
-                asset_name: staged.asset_name,
-                install_dir: path_to_string(&staged.install_dir),
-                binary_path: Some(path_to_string(
-                    &staged.install_dir.join(&staged.binary_relative_path),
-                )),
+            swap_and_restore.and_then(|()| {
+                if let Ok(Some(bundled)) = detect_bundled_core() {
+                    mark_bundled_core_version_handled(&staged.install_dir, &bundled.version)?;
+                }
+                Ok(CoreInstallResult {
+                    version: staged.version,
+                    asset_name: staged.asset_name,
+                    install_dir: path_to_string(&staged.install_dir),
+                    binary_path: Some(path_to_string(
+                        &staged.install_dir.join(&staged.binary_relative_path),
+                    )),
+                })
             })
         });
 

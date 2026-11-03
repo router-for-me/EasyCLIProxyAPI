@@ -1298,6 +1298,43 @@ fn handled_bundled_core_does_not_undo_a_manual_rollback_on_restart() {
 }
 
 #[test]
+fn manual_core_install_prevents_bundled_core_auto_install_on_restart() {
+    let root = agent_test_home("manual-core-install-older");
+    let install_dir = root.join("cpa-core");
+    let staging_dir = root.join("cpa-core.staging");
+    let rollback_dir = root.join("cpa-core.rollback");
+    fs::create_dir_all(&install_dir).unwrap();
+    fs::create_dir_all(&staging_dir).unwrap();
+
+    let bundled_version = "v8.0.52";
+    let older_manual_version = "v8.0.50";
+
+    fs::write(staging_dir.join(core_binary_name()), b"manual-older-core-binary").unwrap();
+    write_core_metadata(
+        &staging_dir,
+        &CoreMetadata {
+            version: older_manual_version.to_string(),
+            asset_name: "CLIProxyAPI_8.0.50_linux_amd64.tar.gz".to_string(),
+            installed_at_unix: 1,
+        },
+    )
+    .unwrap();
+
+    assert!(core_needs_bundled_install(&install_dir, bundled_version));
+
+    apply_staged_core_with_rollback(&install_dir, &staging_dir, &rollback_dir, || Ok(())).unwrap();
+    mark_bundled_core_version_handled(&install_dir, bundled_version).unwrap();
+
+    let installed_metadata = read_core_metadata(&install_dir).unwrap();
+    assert_eq!(installed_metadata.version, older_manual_version);
+
+    assert!(!core_needs_bundled_install(&install_dir, bundled_version));
+    assert!(core_needs_bundled_install(&install_dir, "v8.0.53"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_already_newer_core_satisfies_the_bundle_after_manual_rollback() {
     let root = agent_test_home("bundled-newer-manual-rollback");
     let install_dir = root.join("cpa-core");
