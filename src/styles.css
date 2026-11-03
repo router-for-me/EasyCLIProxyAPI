@@ -9248,7 +9248,8 @@ textarea:focus-visible {
   margin-top: 12px;
 }
 
-.usage-storage-limit-action small {
+.usage-storage-limit-action small,
+.agent-usage-storage-action small {
   display: block;
   margin-top: 7px;
   color: var(--color-text-muted);

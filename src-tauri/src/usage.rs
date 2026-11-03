@@ -369,10 +369,10 @@ pub(crate) struct UsageStorageSettings {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelPrice {
     model: String,
-    prompt: f64,
-    completion: f64,
-    cache_read: f64,
-    cache_creation: f64,
+    pub(crate) prompt: f64,
+    pub(crate) completion: f64,
+    pub(crate) cache_read: f64,
+    pub(crate) cache_creation: f64,
     prompt_configured: bool,
     completion_configured: bool,
     cache_read_configured: bool,
@@ -4141,7 +4141,7 @@ fn canonical_model_tail(value: &str) -> String {
         .collect()
 }
 
-fn normalized_model_tail(value: &str) -> String {
+pub(crate) fn normalized_model_tail(value: &str) -> String {
     value
         .trim()
         .rsplit('/')
@@ -4717,6 +4717,29 @@ fn usage_root_dir() -> Result<PathBuf, String> {
 
 pub(crate) fn usage_database_path() -> Result<PathBuf, String> {
     Ok(usage_root_dir()?.join(USAGE_DATABASE_FILE))
+}
+
+pub(crate) fn load_agent_usage_prices() -> HashMap<String, ModelPrice> {
+    let prices = usage_database_path()
+        .ok()
+        .filter(|path| path.is_file())
+        .and_then(|path| {
+            Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .ok()
+        })
+        .and_then(|connection| load_model_prices(&connection).ok());
+    prices.unwrap_or_else(|| bundled_model_prices().unwrap_or_default())
+}
+
+pub(crate) fn resolve_agent_usage_price<'a>(
+    prices: &'a HashMap<String, ModelPrice>,
+    model: &str,
+) -> Option<&'a ModelPrice> {
+    find_model_price(prices, model)
 }
 
 fn record_local_hour(record: &UsageRecord) -> String {

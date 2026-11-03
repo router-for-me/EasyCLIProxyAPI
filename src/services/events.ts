@@ -3,6 +3,7 @@ import type { CoreStatus } from './coreLifecycle';
 import type { AppUpdateTask } from './appUpdates';
 import type { CoreInstallTask, VersionSourceSettings } from './coreVersions';
 import type { CodexSessionRepairProgress } from './codexSessionState';
+import type { AgentUsageSyncProgress, AgentUsageSyncResult } from './agentUsage';
 
 type Handler<T> = (event: { payload: T }) => void;
 export const onCoreStatusChanged = (handler: Handler<CoreStatus>): Promise<() => void> => listen('core-status-changed', handler);
@@ -12,4 +13,6 @@ export const onVersionDownloadSourceChanged = (handler: Handler<VersionSourceSet
 export const onCodexSessionRepairProgress = (handler: Handler<CodexSessionRepairProgress>): Promise<() => void> => listen('codex-session-repair-progress', handler);
 export const onConfigFilesChanged = (handler: () => void): Promise<() => void> => listen('config-files-changed', handler);
 export const onUsageRecordsUpdated = (handler: () => void): Promise<() => void> => listen('usage-records-updated', handler);
+export const onAgentUsageSyncProgress = (handler: Handler<AgentUsageSyncProgress>): Promise<() => void> => listen('agent-usage-sync-progress', handler);
+export const onAgentUsageSynced = (handler: Handler<AgentUsageSyncResult | null>): Promise<() => void> => listen('agent-usage-synced', handler);
 export const onWindowsCloseRequested = (handler: () => void): Promise<() => void> => listen('windows-close-requested', handler);

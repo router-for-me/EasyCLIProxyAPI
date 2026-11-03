@@ -1,202 +1,276 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import {
-  buildAgentUsagePriceRows, estimateAgentUsageDailyCost, filterAgentUsageReport,
-  formatAgentUsageNumber, normalizeAgentUsageReport,
+  formatAgentUsageAxisLabel,
+  formatAgentUsageCompact,
+  formatAgentUsageNumber,
+  normalizeAgentUsageReport,
+  type AgentUsageBucketRow,
+  type AgentUsageReport,
 } from '../src/services/agentUsage';
 import {
+  buildCalendarGrid,
+  buildHourGrid,
+  buildModelRanking,
+  buildStackedSeries,
+  buildTokenStructure,
+  axisScale,
+  cacheHitRate,
+  heatLevel,
+  heatThresholds,
+  labelStep,
+  periodChange,
+  slotIndexAt,
+  sparklinePoints,
+} from '../src/services/agentUsageCharts';
+import {
   AGENT_USAGE_REFRESH_INTERVALS, DEFAULT_AGENT_USAGE_REFRESH_INTERVAL,
-  loadAgentUsageRefreshInterval, saveAgentUsageRefreshInterval,
+  loadAgentUsageRefreshInterval, saveAgentUsageRefreshInterval, shouldSyncAgentUsageOnOpen,
 } from '../src/services/agentUsagePreferences';
 import { usagePreferences } from '../src/services/usagePreferences';
 import { createBrowserMockRuntime } from '../src/mocks/browserMockRuntime';
 
+const bucket = (name: string, totalTokens: number, costUSD = 0): AgentUsageBucketRow => ({
+  bucket: name,
+  inputTokens: totalTokens / 2,
+  outputTokens: totalTokens / 4,
+  cacheCreationTokens: totalTokens / 8,
+  cacheReadTokens: totalTokens / 8,
+  reasoningTokens: 0,
+  totalTokens,
+  costUSD,
+  samples: 1,
+});
+
+const totals = (totalTokens: number, costUSD = 0) => ({
+  inputTokens: totalTokens / 2,
+  outputTokens: totalTokens / 4,
+  cacheCreationTokens: totalTokens / 8,
+  cacheReadTokens: totalTokens / 8,
+  reasoningTokens: 0,
+  totalTokens,
+  costUSD,
+  samples: 2,
+  days: 1,
+});
+
+const source = (name: string, status: string, rows: AgentUsageBucketRow[], archivedAt = '') => ({
+  source: name,
+  status,
+  archivedAt,
+  error: '',
+  totals: totals(rows.reduce((sum, row) => sum + row.totalTokens, 0)),
+  models: [{
+    model: `${name}-model`,
+    inputTokens: 10,
+    outputTokens: 5,
+    cacheCreationTokens: 1,
+    cacheReadTokens: 2,
+    reasoningOutputTokens: 0,
+    totalTokens: 18,
+    costUSD: 0.25,
+    priced: true,
+    prompt: 1,
+    completion: 2,
+    cacheRead: 0.5,
+    cacheCreation: 0,
+    days: 1,
+  }],
+  series: rows,
+});
+
+const report = (overrides: Record<string, unknown> = {}) => normalizeAgentUsageReport({
+  schemaVersion: 2,
+  generatedAt: '2026-11-01T12:00:00Z',
+  lastSyncAt: '2026-11-01T11:00:00Z',
+  syncing: false,
+  bucket: 'day',
+  rangeStart: '2026-10-26',
+  rangeEnd: '2026-11-01',
+  totals: totals(300, 1.5),
+  sources: [source('codex', 'ok', [bucket('2026-10-31', 100), bucket('2026-11-01', 200)])],
+  timeline: [bucket('2026-10-31', 100), bucket('2026-11-01', 200)],
+  calendar: [{ date: '2026-10-31', totalTokens: 100, costUSD: 0.5 }, { date: '2026-11-01', totalTokens: 200, costUSD: 1 }],
+  hourly: [{ weekday: 0, hour: 9, totalTokens: 42, samples: 2 }],
+  ...overrides,
+});
+
 describe('Agent usage report normalization', () => {
-  it('keeps the aggregate fields from the harness usage report', () => {
-    const report = normalizeAgentUsageReport({
-      schemaVersion: 1,
-      generatedAt: '2026-10-29T12:00:00Z',
-      sources: [{
-        source: 'codex',
-        status: 'ok',
-        daily: [{
-          date: '2026-10-29',
-          inputTokens: 90,
-          outputTokens: 50,
-          cacheCreationTokens: 0,
-          cacheReadTokens: 10,
-          reasoningOutputTokens: 5,
-          totalTokens: 155,
-          costUSD: 0.0006,
-          project: 'private-project',
-          models: [{ model: 'gpt-5', inputTokens: 90, outputTokens: 50, totalTokens: 155, costUSD: 0.0006 }],
-        }],
-      }],
-    });
-
-    expect(report.sources[0].daily[0]).toEqual({
-      date: '2026-10-29',
-      inputTokens: 90,
-      outputTokens: 50,
-      cacheCreationTokens: 0,
-      cacheReadTokens: 10,
-      reasoningTokens: 5,
-      totalTokens: 155,
-      costUSD: 0.0006,
-      models: [{
-        model: 'gpt-5',
-        inputTokens: 90,
-        outputTokens: 50,
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
-        reasoningTokens: 0,
-        totalTokens: 155,
-        costUSD: 0.0006,
-      }],
-    });
-    expect(JSON.stringify(report)).not.toContain('private-project');
+  it('keeps totals, sources, series and timeline rows', () => {
+    const parsed = report();
+    expect(parsed.schemaVersion).toBe(2);
+    expect(parsed.bucket).toBe('day');
+    expect(parsed.totals.totalTokens).toBe(300);
+    expect(parsed.totals.costUSD).toBe(1.5);
+    expect(parsed.sources[0].series).toHaveLength(2);
+    expect(parsed.timeline[1].bucket).toBe('2026-11-01');
+    expect(parsed.calendar).toHaveLength(2);
+    expect(parsed.hourly[0]).toEqual({ weekday: 0, hour: 9, totalTokens: 42, samples: 2 });
+    expect(parsed.previous).toBeNull();
+    expect(report({ previous: { totalTokens: 120, costUSD: 0.5 } }).previous).toEqual({ totalTokens: 120, costUSD: 0.5 });
   });
 
-  it('rejects malformed source and daily rows', () => {
-    expect(() => normalizeAgentUsageReport({ sources: [{ source: 'codex', status: 'unknown', daily: [] }] })).toThrow();
-    expect(() => normalizeAgentUsageReport({ sources: [{ source: 'codex', status: 'ok', daily: [{ date: 'today' }] }] })).toThrow();
-    expect(() => normalizeAgentUsageReport({ sources: [{ source: 'codex', status: 'ok', daily: [{ date: '2026-02-30' }] }] })).toThrow();
+  it('rejects unknown buckets, statuses and missing timelines', () => {
+    expect(() => report({ bucket: 'decade' })).toThrow();
+    expect(() => report({ sources: [source('codex', 'unknown', [])] })).toThrow();
+    const { timeline: _timeline, ...withoutTimeline } = report() as unknown as Record<string, unknown>;
+    expect(() => normalizeAgentUsageReport(withoutTimeline)).toThrow();
   });
 
-  it('uses saved model prices for local Agent cost estimates', () => {
-    const report = normalizeAgentUsageReport({
-      schemaVersion: 1,
-      generatedAt: '2026-10-29T12:00:00Z',
-      sources: [{
-        source: 'codex',
-        status: 'ok',
-        daily: [{
-          date: '2026-10-29',
-          inputTokens: 100,
-          outputTokens: 40,
-          cacheCreationTokens: 0,
-          cacheReadTokens: 20,
-          totalTokens: 160,
-          costUSD: 0,
-          models: [{
-            model: 'gpt-5',
-            inputTokens: 100,
-            outputTokens: 40,
-            cacheCreationTokens: 0,
-            cacheReadTokens: 20,
-            reasoningTokens: 0,
-            totalTokens: 160,
-            costUSD: null,
-          }],
-        }],
-      }],
+  it('normalizes negative and non-finite counters to zero', () => {
+    const parsed = report({
+      totals: { inputTokens: -5, outputTokens: Infinity, cacheReadTokens: 3, totalTokens: 3, costUSD: Infinity },
     });
-    const rows = buildAgentUsagePriceRows(report, {
-      rows: [{
-        model: 'gpt-5', requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
-        cacheCreationTokens: 0, totalTokens: 0, estimatedCost: 0,
-        price: {
-          model: 'gpt-5', prompt: 1, completion: 2, cacheRead: 0.5, cacheCreation: 0,
-          promptConfigured: true, completionConfigured: true, cacheReadConfigured: true,
-          cacheCreationConfigured: true, source: 'manual', sourceModelId: '', updatedAtMs: 0,
-        },
-      }],
-      totalCost: 0, totalRequests: 0, pricedRequests: 0, savedPrices: 1,
-    });
-    expect(rows[0].estimatedCostUSD).toBeCloseTo(0.00019);
-    expect(rows[0].price?.prompt).toBe(1);
+    expect(parsed.totals.inputTokens).toBe(0);
+    expect(parsed.totals.outputTokens).toBe(0);
+    expect(parsed.totals.costUSD).toBe(0);
+  });
+
+  it('formats full token counts with separators', () => {
+    expect(formatAgentUsageNumber(1_234_567, 'en')).toBe('1,234,567');
+    expect(formatAgentUsageNumber(Number.NaN, 'en')).toBe('0');
+  });
+
+  it('formats compact axis labels per granularity', () => {
+    expect(formatAgentUsageAxisLabel('2026-11-01T09', 'hour')).toBe('11-01 09:00');
+    expect(formatAgentUsageAxisLabel('2026-11-01', 'day')).toBe('11-01');
+    expect(formatAgentUsageAxisLabel('2026-10', 'month')).toBe('2026-10');
   });
 });
 
-describe('local usage filtering and estimates', () => {
-  const now = new Date(2026, 10, 1, 12);
-  const day = (date: string, timestamp?: string) => ({
-    date, ...(timestamp ? { timestamp } : {}), inputTokens: 100, outputTokens: 40,
-    cacheReadTokens: 20, cacheCreationTokens: 10, totalTokens: 170,
-    models: [{ model: 'Example', inputTokens: 100, outputTokens: 40, totalTokens: 170, costUSD: 0.5 }],
-  });
-  const report = normalizeAgentUsageReport({ sources: [
-    { source: 'codex', status: 'ok', daily: [day('2026-10-02'), day('2026-10-03'), day('2026-10-25'), day('2026-10-26'), day('2026-10-31'), day('2026-11-01'), day('2026-11-02')] },
-    { source: 'claude', status: 'empty', daily: [] },
-  ] });
+describe('Agent usage chart helpers', () => {
+  const inputs = [
+    { key: 'codex', label: 'codex', rows: [bucket('2026-10-31', 100), bucket('2026-11-01', 200)] },
+    { key: 'claude', label: 'claude', rows: [bucket('2026-11-01', 50)] },
+  ];
 
-  it('uses inclusive calendar boundaries and excludes future dates', () => {
-    expect(filterAgentUsageReport(report, 'today', '', now).sources[0].daily.map((row) => row.date)).toEqual(['2026-11-01']);
-    expect(filterAgentUsageReport(report, '7d', '', now).sources[0].daily.map((row) => row.date)).toEqual(['2026-10-26', '2026-10-31', '2026-11-01']);
-    expect(filterAgentUsageReport(report, '30d', '', now).sources[0].daily[0].date).toBe('2026-10-03');
-    expect(filterAgentUsageReport(report, 'all', 'claude', now).sources.map((row) => row.source)).toEqual(['claude']);
-    expect(filterAgentUsageReport(report, 'all', '', now).sources[0].daily).toHaveLength(7);
-    expect(report.sources[0].daily).toHaveLength(7);
+  it('stacks series per bucket and merges duplicates', () => {
+    const stack = buildStackedSeries(inputs, 'totalTokens');
+    expect(stack.keys).toEqual(['codex', 'claude']);
+    expect(stack.points.map((point) => point.bucket)).toEqual(['2026-10-31', '2026-11-01']);
+    expect(stack.points[1].total).toBe(250);
+    expect(stack.max).toBe(250);
+
+    const duplicated = buildStackedSeries([{ key: 'codex', label: 'codex', rows: [bucket('2026-11-01', 10), bucket('2026-11-01', 5)] }], 'totalTokens');
+    expect(duplicated.points[0].total).toBe(15);
   });
 
-  it('filters the rolling 24 hours by timestamps, not whole calendar days', () => {
-    const timestamp = (dayOfMonth: number, hour: number) => new Date(2026, 9, dayOfMonth, hour).toISOString();
-    const timed = normalizeAgentUsageReport({ sources: [{
-      source: 'codex', status: 'ok', daily: [day('2026-10-31')],
-      events: [day('2026-10-31', timestamp(31, 11)), day('2026-10-31', timestamp(31, 12)), day('2026-11-01', now.toISOString()), day('2026-11-01', new Date(now.getTime() + 1).toISOString())],
-    }] });
-    expect(filterAgentUsageReport(timed, '24h', '', now).sources[0].daily).toHaveLength(2);
-    expect(filterAgentUsageReport(timed, 'today', '', now).sources[0].daily).toHaveLength(2);
+  it('keeps empty buckets from the timeline as zero-height bars', () => {
+    const stack = buildStackedSeries(inputs, 'totalTokens', ['2026-10-30', '2026-10-31', '2026-11-01']);
+    expect(stack.points.map((point) => [point.bucket, point.total])).toEqual([
+      ['2026-10-30', 0],
+      ['2026-10-31', 100],
+      ['2026-11-01', 250],
+    ]);
   });
 
-  it('counts unique dates for a model shared across sources and matches names case-insensitively', () => {
-    const combined = normalizeAgentUsageReport({ sources: [
-      { source: 'codex', status: 'ok', daily: [day('2026-11-01'), day('2026-11-01')] },
-      { source: 'pi', status: 'ok', daily: [day('2026-11-01'), day('2026-10-31')] },
-    ] });
-    const rows = buildAgentUsagePriceRows(combined, null);
-    expect(rows[0].days).toBe(2);
-    expect(rows[0].totalTokens).toBe(680);
-    expect(rows[0].recordedCostUSD).toBe(2);
-    expect(rows[0].estimatedCostUSD).toBeNull();
+  it('groups low ranking series into an other segment', () => {
+    const many = ['a', 'b', 'c'].map((key, index) => ({
+      key,
+      label: key,
+      rows: [bucket('2026-11-01', 100 - index * 10)],
+    }));
+    const stack = buildStackedSeries(many, 'totalTokens', [], 2);
+    expect(stack.keys).toEqual(['a', 'b', '__other__']);
+    expect(stack.points[0].total).toBe(270);
   });
 
-  it('retains recorded costs for unpriced models in partially priced days', () => {
-    const daily = normalizeAgentUsageReport({ sources: [{ source: 'codex', status: 'ok', daily: [{
-      ...day('2026-11-01'), costUSD: 5,
-      models: [
-        { model: 'priced', inputTokens: 1_000_000, totalTokens: 1_000_000, costUSD: 3 },
-        { model: 'unpriced', inputTokens: 10, totalTokens: 10, costUSD: 2 },
+  it('lays out calendar weeks starting on Monday', () => {
+    const grid = buildCalendarGrid([{ date: '2026-11-01', totalTokens: 12, costUSD: 1 }], '2026-11-01', 7);
+    expect(grid).toHaveLength(1);
+    expect(grid[0][0].date).toBe('2026-10-26');
+    expect(grid[0][6]).toEqual({ date: '2026-11-01', value: 12 });
+    expect(buildCalendarGrid([], 'not-a-date', 7)).toEqual([]);
+  });
+
+  it('builds the weekday by hour grid and token structure', () => {
+    const grid = buildHourGrid([{ weekday: 0, hour: 9, totalTokens: 5, samples: 1 }, { weekday: 0, hour: 9, totalTokens: 5, samples: 1 }]);
+    expect(grid[0][9]).toBe(10);
+    expect(grid[6][23]).toBe(0);
+
+    const structure = buildTokenStructure([{
+      bucket: '2026-11-01',
+      inputTokens: 50,
+      outputTokens: 25,
+      cacheCreationTokens: 25,
+      cacheReadTokens: 50,
+      reasoningTokens: 0,
+      totalTokens: 150,
+      costUSD: 0,
+      samples: 1,
+    }]);
+    expect(structure[0].cacheHitRate).toBeCloseTo(50 / 125);
+  });
+
+  it('ranks models across sources', () => {
+    const parsed: AgentUsageReport = report({
+      sources: [
+        source('codex', 'ok', [bucket('2026-11-01', 100)]),
+        source('pi', 'archived', [bucket('2026-11-01', 50)], '2026-10-20T00:00:00Z'),
       ],
-    }] }] }).sources[0].daily[0];
-    expect(estimateAgentUsageDailyCost(daily, null)).toBe(5);
-    const price = {
-      model: 'alias', sourceModelId: 'PRICED', prompt: 1, completion: 2, cacheRead: 0.5, cacheCreation: 0,
-      promptConfigured: true, completionConfigured: true, cacheReadConfigured: true,
-      cacheCreationConfigured: true, source: 'manual', updatedAtMs: 0,
-    };
-    expect(estimateAgentUsageDailyCost(daily, {
-      rows: [{ model: 'alias', requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
-        cacheCreationTokens: 0, totalTokens: 0, estimatedCost: 0, price }],
-      totalCost: 0, totalRequests: 0, pricedRequests: 0, savedPrices: 1,
-    })).toBe(3);
+    });
+    const ranking = buildModelRanking(parsed.sources);
+    expect(ranking.map((row) => row.model)).toEqual(['codex-model', 'pi-model']);
+    expect(ranking[0].sources).toEqual(['codex']);
+    expect(ranking[0].priced).toBe(true);
   });
 
-  it('formats full token counts with separators and normalizes non-finite values', () => {
-    expect(formatAgentUsageNumber(1_234_567, 'en')).toBe('1,234,567');
-    const invalid = normalizeAgentUsageReport({ sources: [{ source: 'pi', status: 'ok', daily: [{
-      ...day('2026-11-01'), inputTokens: -1, outputTokens: Infinity, costUSD: Infinity,
-      models: [{ model: 'test', costUSD: Infinity }],
-    }] }] }).sources[0].daily[0];
-    expect(invalid.inputTokens).toBe(0);
-    expect(invalid.outputTokens).toBe(0);
-    expect(invalid.costUSD).toBe(0);
-    expect(invalid.models[0].costUSD).toBeNull();
+  it('computes period change and cache hit rate', () => {
+    expect(periodChange(150, 100)).toBeCloseTo(0.5);
+    expect(periodChange(50, 100)).toBeCloseTo(-0.5);
+    expect(periodChange(50, 0)).toBeNull();
+    expect(cacheHitRate({ ...totals(0), inputTokens: 30, cacheReadTokens: 60, cacheCreationTokens: 10 })).toBeCloseTo(0.6);
+    expect(cacheHitRate(totals(0))).toBe(0);
   });
+});
 
-  it('returns timestamped browser records for every supported source', async () => {
+describe('Agent usage browser mock', () => {
+  it('serves the report contract for every supported source', async () => {
     const mock = createBrowserMockRuntime('running');
-    const result = normalizeAgentUsageReport(await mock.invoke('get_agent_usage'));
-    expect(result.sources).toHaveLength(11);
-    expect(result.sources.find((source) => source.source === 'codex')?.events?.[0].timestamp).toBe(result.generatedAt);
-    expect(filterAgentUsageReport(result, '24h').sources.find((source) => source.source === 'codex')?.daily).toHaveLength(1);
+    const parsed = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: '7d' } }));
+    expect(parsed.sources).toHaveLength(11);
+    expect(parsed.timeline.length).toBeGreaterThan(0);
+    expect(parsed.sources.find((entry) => entry.source === 'pi')?.status).toBe('archived');
+    expect(parsed.sources.find((entry) => entry.source === 'codex')?.series.length).toBeGreaterThan(0);
+  });
+
+  it('filters by several sources and groups series by model', async () => {
+    const mock = createBrowserMockRuntime('running');
+    const filtered = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: '7d', sources: ['claude', 'pi'], groupBy: 'model' } }));
+    expect(filtered.sources.filter((entry) => entry.series.length > 0).map((entry) => entry.source)).toEqual(['claude', 'pi']);
+    expect(filtered.sources.find((entry) => entry.source === 'codex')?.totals.totalTokens).toBeGreaterThan(0);
+    expect(filtered.sources.find((entry) => entry.source === 'claude')?.series[0].bucket).toContain('|');
+  });
+
+  it('honours granularity and keeps empty buckets', async () => {
+    const mock = createBrowserMockRuntime('running');
+    const daily = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: 'all', granularity: 'day' } }));
+    expect(daily.bucket).toBe('day');
+    expect(daily.timeline).toHaveLength(120);
+    expect(daily.previous).toBeNull();
+    const hourly = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: 'all', granularity: 'hour' } }));
+    expect(hourly.bucket).toBe('day');
+    const week = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: '7d' } }));
+    expect(week.timeline).toHaveLength(7);
+    expect(week.previous?.totalTokens).toBeGreaterThan(0);
+  });
+
+  it('supports syncing, storage inspection and clearing history', async () => {
+    const mock = createBrowserMockRuntime('running');
+    const synced = await mock.invoke('sync_agent_usage') as { changedFiles: number };
+    expect(synced.changedFiles).toBeGreaterThan(0);
+    const storage = await mock.invoke('get_agent_usage_storage') as { dailyRows: number };
+    expect(storage.dailyRows).toBeGreaterThan(0);
+    await mock.invoke('clear_agent_usage_history');
+    const cleared = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: '7d' } }));
+    expect(cleared.totals.totalTokens).toBe(0);
   });
 });
 
 describe('local usage refresh preferences', () => {
-  it('defaults missing, blank and invalid preferences to five minutes, preserving manual mode', () => {
+  it('defaults missing, blank, retired and invalid intervals to five minutes', () => {
     const read = spyOn(usagePreferences, 'getItem');
     try {
-      for (const stored of [null, '', ' ', 'invalid', '-1', '1234']) {
+      for (const stored of [null, '', ' ', 'invalid', '-1', '1234', '60000']) {
         read.mockReturnValue(stored);
         expect(loadAgentUsageRefreshInterval()).toBe(DEFAULT_AGENT_USAGE_REFRESH_INTERVAL);
       }
@@ -204,14 +278,73 @@ describe('local usage refresh preferences', () => {
         read.mockReturnValue(String(interval));
         expect(loadAgentUsageRefreshInterval()).toBe(interval);
       }
+      read.mockReturnValue('0');
+      expect(loadAgentUsageRefreshInterval()).toBe(0);
     } finally { read.mockRestore(); }
+  });
+
+  it('skips the sync on open only when background sync is off and history exists', () => {
+    expect(shouldSyncAgentUsageOnOpen(300_000, '2026-11-01T00:00:00Z')).toBe(true);
+    expect(shouldSyncAgentUsageOnOpen(0, '2026-11-01T00:00:00Z')).toBe(false);
+    expect(shouldSyncAgentUsageOnOpen(0, '')).toBe(true);
+    expect(shouldSyncAgentUsageOnOpen(0)).toBe(true);
   });
 
   it('persists selected intervals', () => {
     const save = spyOn(usagePreferences, 'setItem').mockImplementation(() => {});
     try {
-      saveAgentUsageRefreshInterval(0);
-      expect(save).toHaveBeenCalledWith('cpa-gui.usage-agent-refresh-interval.v1', '0');
+      saveAgentUsageRefreshInterval(3_600_000);
+      expect(save).toHaveBeenCalledWith('cpa-gui.usage-agent-refresh-interval.v1', '3600000');
     } finally { save.mockRestore(); }
+  });
+});
+
+describe('agent usage chart geometry', () => {
+  it('formats token counts with K, M and B units', () => {
+    expect(formatAgentUsageCompact(950)).toBe('950');
+    expect(formatAgentUsageCompact(12_340)).toBe('12.3K');
+    expect(formatAgentUsageCompact(128_400_000)).toBe('128.4M');
+    expect(formatAgentUsageCompact(2_000_000_000)).toBe('2B');
+    expect(formatAgentUsageCompact(Number.NaN)).toBe('0');
+  });
+
+  it('maps a pointer position to the bar slot under it', () => {
+    expect(slotIndexAt(40, 44, 600, 30)).toBeNull();
+    expect(slotIndexAt(44, 44, 600, 30)).toBe(0);
+    expect(slotIndexAt(44 + 600, 44, 600, 30)).toBe(29);
+    expect(slotIndexAt(44 + 305, 44, 600, 30)).toBe(15);
+    expect(slotIndexAt(100, 44, 600, 0)).toBeNull();
+  });
+
+  it('thins axis labels to the available width', () => {
+    expect(labelStep(7, 600, 64)).toBe(1);
+    expect(labelStep(720, 600, 96)).toBe(120);
+    expect(labelStep(30, 0, 64)).toBe(30);
+  });
+
+  it('scales sparkline points to the peak value', () => {
+    expect(sparklinePoints([], 100, 20)).toBe('');
+    expect(sparklinePoints([0, 5, 10], 100, 20)).toBe('0,20 50,10 100,0');
+    expect(sparklinePoints([3], 100, 20)).toBe('50,0');
+    expect(sparklinePoints([0, 0], 100, 20)).toBe('0,20 100,20');
+  });
+});
+
+describe('agent usage chart scales', () => {
+  it('fits the value axis tightly above the peak', () => {
+    expect(axisScale(101_000_000)).toEqual({ ceiling: 125_000_000, step: 25_000_000 });
+    expect(axisScale(4_100_000_000)).toEqual({ ceiling: 5_000_000_000, step: 1_000_000_000 });
+    expect(axisScale(3)).toEqual({ ceiling: 3, step: 1 });
+    expect(axisScale(57_000)).toEqual({ ceiling: 60_000, step: 20_000 });
+    expect(axisScale(0)).toEqual({ ceiling: 4, step: 1 });
+  });
+
+  it('splits heatmap values into quartile levels', () => {
+    const thresholds = heatThresholds([0, 1, 2, 3, 4, 100]);
+    expect(thresholds).toEqual([2, 3, 4]);
+    expect([0, 1, 2, 3, 4, 100].map((value) => heatLevel(value, thresholds))).toEqual([0, 1, 2, 3, 4, 4]);
+    expect(heatLevel(7, heatThresholds([7, 7]))).toBe(4);
+    expect(heatThresholds([0, 0])).toEqual([]);
+    expect(heatLevel(5, [])).toBe(1);
   });
 });

@@ -53,7 +53,7 @@ const exceptions: Record<string, string[]> = {
   ],
   'Chips, badges and legend toggles': [
     'usage-trend-legend-item', 'filter-chip', 'role-select-chip', 'oauth-account-count', 'context-badge', 'context-id-badge', 'context-meta-head', 'context-add-button',
-    'thinking-level-tags', 'auth-file-request-block',
+    'thinking-level-tags', 'auth-file-request-block', 'agent-usage-chip',
   ],
   'Multi-line content buttons whose height follows the content': ['agent-codex-catalog-button', 'close-choice-button'],
 };

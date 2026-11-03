@@ -1,37 +1,47 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Database, Layers, RefreshCw, TriangleAlert } from 'lucide-react';
+import { Database, RefreshCw, TriangleAlert } from 'lucide-react';
+import {
+  AgentUsageActivity,
+  AgentUsageChart,
+  AGENT_USAGE_VIEWS,
+  agentSourceColor,
+  agentUsageMoney as money,
+  STRUCTURE_COLORS,
+  type AgentUsageView as AgentUsageViewMode,
+} from '../components/AgentUsageCharts';
 import { BrandIcon } from '../components/BrandIcon';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
-import { Select } from '../components/Select';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { useI18n } from '../i18n';
 import {
-  AGENT_USAGE_REFRESH_INTERVALS,
-  loadAgentUsageRefreshInterval,
-  saveAgentUsageRefreshInterval,
-  type AgentUsageRefreshInterval,
-} from '../services/agentUsagePreferences';
-import { getUsagePricing, type UsagePricing } from '../services/usage';
-import {
-  buildAgentUsagePriceRows,
-  estimateAgentUsageDailyCost,
+  AGENT_USAGE_GRANULARITIES,
+  AGENT_USAGE_GROUP_BY,
   AGENT_USAGE_TIME_RANGES,
-  filterAgentUsageReport,
-  formatAgentUsageNumber as formatUsageNumber,
+  formatAgentUsageBucket,
+  formatAgentUsageCompact,
+  formatAgentUsageNumber,
   getAgentUsage,
-  type AgentUsageDaily,
-  type AgentUsagePriceRow,
+  syncAgentUsage,
+  type AgentUsageGranularity,
+  type AgentUsageGroupBy,
+  type AgentUsageMetric,
   type AgentUsageReport,
   type AgentUsageSource,
+  type AgentUsageSyncProgress,
   type AgentUsageTimeRange,
 } from '../services/agentUsage';
+import { buildModelRanking, cacheHitRate, periodChange, shareOf, sparklinePoints } from '../services/agentUsageCharts';
+import { loadAgentUsageRefreshInterval, shouldSyncAgentUsageOnOpen } from '../services/agentUsagePreferences';
+import { onAgentUsageSynced, onAgentUsageSyncProgress } from '../services/events';
 import './AgentUsageView.css';
 
 type AgentUsageViewProps = {
   refreshKey: number;
   onLoadingChange: (loading: boolean) => void;
 };
+
+type RankingTab = 'models' | 'sources' | 'details';
 
 const sourceLabels: Record<string, string> = {
   claude: 'Claude Code',
@@ -47,54 +57,44 @@ const sourceLabels: Record<string, string> = {
   zcode: 'ZCode',
 };
 
+const MODEL_PREVIEW_COUNT = 8;
+const PROGRESS_RELOAD_MS = 1200;
+const TOKEN_KINDS = ['cacheRead', 'cacheCreation', 'input', 'output'] as const;
+
 const sourceLabel = (source: string): string => sourceLabels[source] ?? source;
-const money = (value: number): string => new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', minimumFractionDigits: value >= 1 ? 2 : 4,
-  maximumFractionDigits: value >= 1 ? 2 : 4,
-}).format(value);
-const rate = money;
 
-const emptyTotals = () => ({ inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 0, costUSD: 0 });
-
-function addDaily(target: ReturnType<typeof emptyTotals>, row: AgentUsageDaily, pricing: UsagePricing | null) {
-  target.inputTokens += row.inputTokens;
-  target.outputTokens += row.outputTokens;
-  target.cacheCreationTokens += row.cacheCreationTokens;
-  target.cacheReadTokens += row.cacheReadTokens;
-  target.totalTokens += row.totalTokens;
-  target.costUSD += estimateAgentUsageDailyCost(row, pricing);
-}
-
-function sourceTotals(source: AgentUsageSource, pricing: UsagePricing | null) {
-  const totals = emptyTotals();
-  source.daily.forEach((row) => addDaily(totals, row, pricing));
-  return totals;
-}
-
-const statusLabelKey = (status: AgentUsageSource['status']) => {
-  if (status === 'ok') return 'usage.agentUsage.status.ok' as const;
-  if (status === 'empty') return 'usage.agentUsage.status.empty' as const;
-  return 'usage.agentUsage.status.error' as const;
-};
-
-function totalsFor(report: AgentUsageReport, pricing: UsagePricing | null) {
-  const totals = emptyTotals();
-  report.sources.forEach((source) => source.daily.forEach((row) => addDaily(totals, row, pricing)));
-  return totals;
+function Sparkline({ values, tone }: { values: number[]; tone: 'tokens' | 'cost' }) {
+  const points = sparklinePoints(values, 100, 26);
+  if (!points || values.every((value) => value <= 0)) return <span className="agent-usage-sparkline empty" aria-hidden="true" />;
+  return (
+    <svg className={`agent-usage-sparkline ${tone}`} viewBox="0 -2 100 30" preserveAspectRatio="none" aria-hidden="true">
+      <polygon points={`0,28 ${points} 100,28`} />
+      <polyline points={points} />
+    </svg>
+  );
 }
 
 export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewProps) {
   const { t, locale } = useI18n();
   const [report, setReport] = useState<AgentUsageReport | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [progress, setProgress] = useState<AgentUsageSyncProgress | null>(null);
   const [error, setError] = useState('');
-  const [pricing, setPricing] = useState<UsagePricing | null>(null);
-  const [pricingLoading, setPricingLoading] = useState(true);
-  const [selectedSource, setSelectedSource] = useState('');
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<AgentUsageTimeRange>('7d');
-  const [refreshInterval, setRefreshInterval] = useState<AgentUsageRefreshInterval>(loadAgentUsageRefreshInterval);
-  const inFlightRef = useRef(false);
+  const [granularity, setGranularity] = useState<AgentUsageGranularity | ''>('');
+  const [groupBy, setGroupBy] = useState<AgentUsageGroupBy>('source');
+  const [metric, setMetric] = useState<AgentUsageMetric>('totalTokens');
+  const [view, setView] = useState<AgentUsageViewMode>('trend');
+  const [ranking, setRanking] = useState<RankingTab>('models');
+  const [showAllModels, setShowAllModels] = useState(false);
   const mountedRef = useRef(false);
+  const openedRef = useRef(false);
+  const filtersRef = useRef({ range: timeRange, sources: selectedSources, groupBy, granularity });
+  const reloadAtRef = useRef(0);
+  const requestRef = useRef(0);
+  const localSyncRef = useRef(false);
+  filtersRef.current = { range: timeRange, sources: selectedSources, groupBy, granularity };
 
   useEffect(() => {
     mountedRef.current = true;
@@ -104,307 +104,430 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
     };
   }, [onLoadingChange]);
 
-  const loadReport = useCallback(() => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
-    setLoading(true);
-    setPricingLoading(true);
-    onLoadingChange(true);
-    Promise.all([
-      getAgentUsage(),
-      getUsagePricing({ query: {} }).catch(() => null),
-    ])
-      .then(([next, nextPricing]) => {
-        if (mountedRef.current) {
-          setReport(next);
-          setPricing(nextPricing);
-          setError('');
-        }
-      })
-      .catch((reason) => {
-        if (mountedRef.current) {
-          const message = String(reason);
-          setError(message || t('usage.agentUsage.readFailed'));
-        }
-      })
-      .finally(() => {
-        if (mountedRef.current) {
-          setLoading(false);
-          setPricingLoading(false);
-          onLoadingChange(false);
-        }
-        inFlightRef.current = false;
-      });
-  }, [onLoadingChange, t]);
+  const loadReport = useCallback(async (): Promise<AgentUsageReport | null> => {
+    const request = ++requestRef.current;
+    try {
+      const next = await getAgentUsage(filtersRef.current);
+      if (!mountedRef.current || request !== requestRef.current) return null;
+      setReport(next);
+      setError('');
+      const busy = next.syncing || localSyncRef.current;
+      setSyncing(busy);
+      if (!busy) setProgress(null);
+      return next;
+    } catch (reason) {
+      if (mountedRef.current && request === requestRef.current) setError(String(reason) || t('usage.agentUsage.readFailed'));
+      return null;
+    }
+  }, [t]);
 
-  useEffect(() => loadReport(), [loadReport, refreshKey]);
+  const finishSync = useCallback(() => {
+    if (!mountedRef.current) return;
+    setSyncing(false);
+    setProgress(null);
+  }, []);
+
+  const runSync = useCallback(async () => {
+    if (mountedRef.current) setSyncing(true);
+    localSyncRef.current = true;
+    try {
+      const result = await syncAgentUsage();
+      localSyncRef.current = false;
+      if (result.skipped) return;
+      await loadReport();
+      finishSync();
+    } catch (reason) {
+      localSyncRef.current = false;
+      if (mountedRef.current) setError(String(reason) || t('usage.agentUsage.readFailed'));
+      finishSync();
+    }
+  }, [finishSync, loadReport, t]);
 
   useEffect(() => {
-    if (refreshInterval === 0) return undefined;
-    const timer = window.setInterval(loadReport, refreshInterval);
-    return () => window.clearInterval(timer);
-  }, [loadReport, refreshInterval]);
+    onLoadingChange(syncing);
+  }, [onLoadingChange, syncing]);
 
-  const handleRefreshIntervalChange = (value: string) => {
-    const next = Number(value);
-    if (!AGENT_USAGE_REFRESH_INTERVALS.includes(next as AgentUsageRefreshInterval)) return;
-    const interval = next as AgentUsageRefreshInterval;
-    setRefreshInterval(interval);
-    saveAgentUsageRefreshInterval(interval);
+  useEffect(() => {
+    const disposers: (() => void)[] = [];
+    let disposed = false;
+    const keep = (promise: Promise<() => void>) => promise.then((unlisten) => {
+      if (disposed) unlisten();
+      else disposers.push(unlisten);
+    }).catch(() => {});
+    keep(onAgentUsageSyncProgress((event) => {
+      if (!mountedRef.current) return;
+      setSyncing(true);
+      setProgress(event.payload);
+      const now = Date.now();
+      if (event.payload.finished || now - reloadAtRef.current >= PROGRESS_RELOAD_MS) {
+        reloadAtRef.current = now;
+        void loadReport();
+      }
+    }));
+    keep(onAgentUsageSynced(() => {
+      void loadReport().then(finishSync);
+    }));
+    return () => {
+      disposed = true;
+      disposers.forEach((dispose) => dispose());
+    };
+  }, [finishSync, loadReport]);
+
+  useEffect(() => {
+    void loadReport().then((next) => {
+      const opening = !openedRef.current;
+      openedRef.current = true;
+      if (!opening || shouldSyncAgentUsageOnOpen(loadAgentUsageRefreshInterval(), next?.lastSyncAt)) void runSync();
+    });
+  }, [refreshKey, loadReport, runSync]);
+
+  useEffect(() => {
+    if (report) void loadReport();
+  }, [timeRange, selectedSources, groupBy, granularity]);
+
+  const changeRange = (next: AgentUsageTimeRange) => {
+    setTimeRange(next);
+    setGranularity('');
   };
 
-  const rangeReport = useMemo(
-    () => report ? filterAgentUsageReport(report, timeRange) : null,
-    [report, timeRange],
-  );
-  const filteredReport = useMemo(() => rangeReport ? {
-    ...rangeReport, sources: rangeReport.sources.filter((source) => !selectedSource || source.source === selectedSource),
-  } : null, [rangeReport, selectedSource]);
-  const filteredSources = filteredReport?.sources ?? [];
-  const rangeTotals = useMemo(() => rangeReport ? totalsFor(rangeReport, pricing) : emptyTotals(), [rangeReport, pricing]);
-  const totals = useMemo(() => filteredReport ? totalsFor(filteredReport, pricing) : emptyTotals(), [filteredReport, pricing]);
-  const daily = useMemo(() => {
-    const rows = new Map<string, ReturnType<typeof emptyTotals>>();
-    filteredSources.forEach((source) => source.daily.forEach((row) => {
-      const total = rows.get(row.date) ?? emptyTotals();
-      addDaily(total, row, pricing);
-      rows.set(row.date, total);
-    }));
-    return [...rows.entries()].sort(([left], [right]) => right.localeCompare(left));
-  }, [filteredSources, pricing]);
-  const priceRows = useMemo(
-    () => filteredReport ? buildAgentUsagePriceRows(filteredReport, pricing) : [],
-    [filteredReport, pricing],
-  );
+  const toggleSource = (source: string) => {
+    setSelectedSources((current) => current.includes(source)
+      ? current.filter((entry) => entry !== source)
+      : [...current, source]);
+  };
 
-  if (loading && !report) {
-    return <EmptyState className="agent-usage-loading" icon={<Database size={22} />}>{t('usage.agentUsage.loading')}</EmptyState>;
-  }
-  if (error && !report) {
-    return <EmptyState className="agent-usage-loading" tone="error" icon={<TriangleAlert size={20} />} title={t('usage.agentUsage.title')} action={<button type="button" className="secondary-button" onClick={loadReport}>{t('usage.agentUsage.syncNow')}</button>}>{error}</EmptyState>;
-  }
-  if (!report) return null;
+  const sources = report?.sources ?? [];
+  const sourceOrder = useMemo(() => sources.map((source) => source.source), [sources]);
+  const usedSources = useMemo(() => sources
+    .filter((source) => source.totals.totalTokens > 0 || selectedSources.includes(source.source))
+    .sort((left, right) => right.totals.totalTokens - left.totals.totalTokens), [selectedSources, sources]);
+  const failedSources = sources.filter((source) => source.status === 'error' && source.error);
+  const allSourceTokens = usedSources.reduce((sum, source) => sum + source.totals.totalTokens, 0);
+  const models = useMemo(() => buildModelRanking(sources), [sources]);
 
-  const availableSources = rangeReport?.sources.filter((source) => source.status === 'ok' && source.daily.length > 0) ?? [];
-  const visibleSources = rangeReport?.sources ?? [];
-  const generatedAt = new Date(report.generatedAt);
+  if (!report) {
+    if (error) {
+      return (
+        <EmptyState
+          className="agent-usage-loading"
+          tone="error"
+          icon={<TriangleAlert size={20} />}
+          title={t('usage.agentUsage.title')}
+          action={<button type="button" className="secondary-button" onClick={() => void loadReport().then(() => runSync())}>{t('usage.agentUsage.syncNow')}</button>}
+        >
+          {error}
+        </EmptyState>
+      );
+    }
+    return (
+      <EmptyState className="agent-usage-loading" icon={<Database size={22} />}>
+        {t('usage.agentUsage.loading')}
+      </EmptyState>
+    );
+  }
+
+  const totals = report.totals;
+  const percent = (value: number, digits = 1) => new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: digits }).format(value);
+  const changeText = (current: number, previous: number | undefined) => {
+    if (previous === undefined) return '';
+    const change = periodChange(current, previous);
+    if (change === null) return t('usage.agentUsage.changeNoBaseline');
+    if (Math.abs(change) < 0.005) return t('usage.agentUsage.changeFlat');
+    return t(change > 0 ? 'usage.agentUsage.changeUp' : 'usage.agentUsage.changeDown', { percent: percent(Math.abs(change), 0) });
+  };
+  const changeTone = (current: number, previous: number | undefined) => {
+    const change = previous === undefined ? null : periodChange(current, previous);
+    return change === null || Math.abs(change) < 0.005 ? '' : change > 0 ? 'up' : 'down';
+  };
+  const lastSyncAt = report.lastSyncAt ? new Date(report.lastSyncAt) : null;
+  const visibleModels = showAllModels ? models : models.slice(0, MODEL_PREVIEW_COUNT);
+  const modelTotal = models.reduce((sum, model) => sum + model.totalTokens, 0);
+  const detailRows = report.timeline.filter((row) => row.totalTokens > 0).reverse();
+  const archivedLabel = (source: AgentUsageSource): string => {
+    const date = source.archivedAt ? new Date(source.archivedAt) : null;
+    if (!date || Number.isNaN(date.getTime())) return t('usage.agentUsage.archivedUnknown');
+    return t('usage.agentUsage.archived', { date: new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(date) });
+  };
+  const emptyText = syncing ? t('usage.agentUsage.building') : t('usage.agentUsage.empty');
+  const hitRate = cacheHitRate(totals);
+  const tokenParts = TOKEN_KINDS.map((kind, index) => ({
+    kind,
+    color: STRUCTURE_COLORS[index],
+    value: kind === 'cacheRead' ? totals.cacheReadTokens : kind === 'cacheCreation' ? totals.cacheCreationTokens : kind === 'input' ? totals.inputTokens : totals.outputTokens,
+  }));
+  const tokenPartsTotal = tokenParts.reduce((sum, part) => sum + part.value, 0);
+  const full = (value: number) => formatAgentUsageNumber(value, locale);
+
   return (
-    <section className="agent-usage-view" aria-label={t('usage.agentUsage.title')} aria-busy={loading}>
+    <section className="agent-usage-view" aria-label={t('usage.agentUsage.title')} aria-busy={syncing}>
       {error ? <Notice tone="error">{error}</Notice> : null}
-      <div className="agent-usage-summary">
-        <div className="agent-usage-summary-heading">
-          <div className="agent-usage-title-row">
-            <h2>{t('usage.agentUsage.title')}</h2>
-            <div role="status" className={`agent-usage-sync-status${error ? ' error' : ''}`}>
-              <span className="agent-usage-sync-dot" aria-hidden="true" />
-              {loading ? t('usage.agentUsage.syncing') : error ? t('usage.agentUsage.status.error') : t('usage.agentUsage.lastSynced')}
-              {!Number.isNaN(generatedAt.getTime()) ? <time dateTime={report.generatedAt}>{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'medium' }).format(generatedAt)}</time> : null}
-            </div>
-          </div>
-          <div className="agent-usage-summary-actions">
-            <SegmentedControl className="agent-usage-range" aria-label={t('usage.agentUsage.timeRange')}
-              value={timeRange} onChange={setTimeRange}
-              items={AGENT_USAGE_TIME_RANGES.map((range) => ({ value: range, label: t(`usage.agentUsage.range.${range}`) }))} />
-            <button type="button" className="secondary-button compact-button agent-usage-sync" disabled={loading} onClick={loadReport}><RefreshCw size={14} className={loading ? 'agent-usage-spin' : ''} aria-hidden="true" />{t('usage.agentUsage.syncNow')}</button>
-            <label className="agent-usage-refresh-setting">
-              <span>{t('usage.agentUsage.refreshFrequency')}</span>
-              <Select value={refreshInterval} onChange={(event) => handleRefreshIntervalChange(event.currentTarget.value)}>
-                <option value={0}>{t('usage.agentUsage.refreshFrequency.manual')}</option>
-                <option value={60_000}>{t('usage.agentUsage.refreshFrequency.1m')}</option>
-                <option value={300_000}>{t('usage.agentUsage.refreshFrequency.5m')}</option>
-                <option value={900_000}>{t('usage.agentUsage.refreshFrequency.15m')}</option>
-                <option value={1_800_000}>{t('usage.agentUsage.refreshFrequency.30m')}</option>
-              </Select>
-            </label>
+      <div className="agent-usage-toolbar">
+        <div className="agent-usage-title-row">
+          <h2>{t('usage.agentUsage.title')}</h2>
+          <div aria-live="polite" className={`agent-usage-sync-status${syncing ? ' syncing' : ''}`}>
+            <span className="agent-usage-sync-dot" aria-hidden="true" />
+            {syncing
+              ? progress
+                ? t('usage.agentUsage.syncProgress', { source: sourceLabel(progress.source), scanned: progress.scanned, total: progress.total })
+                : t('usage.agentUsage.syncing')
+              : lastSyncAt && !Number.isNaN(lastSyncAt.getTime())
+                ? <>{t('usage.agentUsage.lastSynced')} <time dateTime={report.lastSyncAt}>{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(lastSyncAt)}</time></>
+                : t('usage.agentUsage.neverSynced')}
           </div>
         </div>
-        <div className="surface-card agent-usage-stat-grid">
-          <div className="agent-usage-stat primary tokens"><span>{t('usage.agentUsage.totalTokens')}</span><strong>{formatUsageNumber(totals.totalTokens, locale)}</strong></div>
-          <div className="agent-usage-stat primary cost"><span>{t('usage.agentUsage.estimatedTotalCost')}</span><strong>{money(totals.costUSD)}</strong></div>
-          <div className="agent-usage-stat input"><span>{t('usage.agentUsage.inputTokens')}</span><strong>{formatUsageNumber(totals.inputTokens, locale)}</strong></div>
-          <div className="agent-usage-stat output"><span>{t('usage.agentUsage.outputTokens')}</span><strong>{formatUsageNumber(totals.outputTokens, locale)}</strong></div>
-          <div className="agent-usage-stat cache-read"><span>{t('usage.agentUsage.cacheReadTokens')}</span><strong>{formatUsageNumber(totals.cacheReadTokens, locale)}</strong></div>
-          <div className="agent-usage-stat cache-write"><span>{t('usage.agentUsage.cacheCreationTokens')}</span><strong>{formatUsageNumber(totals.cacheCreationTokens, locale)}</strong></div>
+        <div className="agent-usage-toolbar-actions">
+          <SegmentedControl className="usage-analysis-metric agent-usage-range" aria-label={t('usage.agentUsage.timeRange')}
+            value={timeRange} onChange={changeRange}
+            items={AGENT_USAGE_TIME_RANGES.map((range) => ({ value: range, label: t(`usage.agentUsage.range.${range}`) }))} />
+          <SegmentedControl className="usage-analysis-metric agent-usage-granularity" aria-label={t('usage.agentUsage.granularity')}
+            value={report.bucket} onChange={(next) => setGranularity(next as AgentUsageGranularity)}
+            items={AGENT_USAGE_GRANULARITIES.map((item) => ({
+              value: item,
+              label: t(`usage.agentUsage.granularity.${item}`),
+              disabled: item === 'hour' && timeRange === 'all',
+              title: item === 'hour' && timeRange === 'all' ? t('usage.agentUsage.hourUnavailable') : undefined,
+            }))} />
+          <button type="button" className="secondary-button compact-button agent-usage-sync" disabled={syncing} onClick={() => void runSync()}>
+            <RefreshCw size={14} className={syncing ? 'agent-usage-spin' : ''} aria-hidden="true" />{t('usage.agentUsage.syncNow')}
+          </button>
         </div>
       </div>
 
-      <section className="panel surface-card agent-usage-sources">
-        <div className="agent-usage-section-heading">
-          <h3>{t('usage.agentUsage.sources')}</h3>
-          <div className="agent-usage-source-filter">
-            <span>{t('usage.agentUsage.sourceCount', { count: availableSources.length })}</span>
-          </div>
-        </div>
-        <div className="agent-usage-source-list" role="group" aria-label={t('usage.agentUsage.sourceFilter')}>
-          <button type="button" className={`agent-usage-source-row ${!selectedSource ? 'selected' : ''}`} aria-pressed={!selectedSource} onClick={() => setSelectedSource('')}>
-            <span className="agent-usage-source-icon"><Layers size={17} aria-hidden="true" /></span>
-            <div className="agent-usage-source-body">
-              <div className="agent-usage-source-top">
-                <strong>{t('usage.agentUsage.sourceAll')}</strong>
-                {rangeTotals.totalTokens > 0 ? (
-                  <span className="agent-usage-source-share">100%</span>
-                ) : (
-                  <span className="agent-usage-status ok">{money(rangeTotals.costUSD)}</span>
-                )}
-              </div>
-              <div className="agent-usage-source-bottom">
-                <div className="agent-usage-source-volume">
-                  <strong>{formatUsageNumber(rangeTotals.totalTokens, locale)}</strong>
-                  <span>{t('usage.agentUsage.tokens')}</span>
-                  <span className="agent-usage-source-cost">{money(rangeTotals.costUSD)}</span>
-                </div>
-              </div>
-            </div>
-            {rangeTotals.totalTokens > 0 ? (
-              <div className="agent-usage-source-track" aria-hidden="true"><span style={{ width: '100%' }} /></div>
-            ) : null}
+      {usedSources.length ? (
+        <div className="agent-usage-chips" role="group" aria-label={t('usage.agentUsage.sourceFilter')}>
+          <button type="button" className={`agent-usage-chip${selectedSources.length ? '' : ' selected'}`}
+            aria-pressed={!selectedSources.length} onClick={() => setSelectedSources([])}>
+            {t('usage.agentUsage.allSources')}
           </button>
-          {visibleSources.map((source) => {
-            const sourceTotal = sourceTotals(source, pricing);
-            const hasData = source.daily.length > 0;
-            const status = !hasData && source.status === 'ok' ? 'empty' : source.status;
-            const contribution = rangeTotals.totalTokens > 0 ? sourceTotal.totalTokens / rangeTotals.totalTokens : 0;
-            const days = new Set(source.daily.map((row) => row.date)).size;
-            const label = sourceLabel(source.source);
-            const percent = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(contribution);
+          {usedSources.map((source) => {
+            const selected = selectedSources.includes(source.source);
             return (
               <button
                 type="button"
-                className={`agent-usage-source-row ${hasData ? 'has-data' : 'is-empty'} ${selectedSource === source.source ? 'selected' : ''}`}
                 key={source.source}
+                className={`agent-usage-chip${selected ? ' selected' : ''}`}
                 data-source={source.source}
-                aria-pressed={selectedSource === source.source}
-                onClick={() => setSelectedSource((current) => current === source.source ? '' : source.source)}
+                data-status={source.status}
+                aria-pressed={selected}
+                title={source.status === 'archived' ? archivedLabel(source) : undefined}
+                onClick={() => toggleSource(source.source)}
               >
-                <span className="agent-usage-source-icon"><BrandIcon name={source.source} size={18} /></span>
-                <div className="agent-usage-source-body">
-                  <div className="agent-usage-source-top">
-                    <strong title={label}>{label}</strong>
-                    {hasData ? (
-                      <span className="agent-usage-source-share">{percent}</span>
-                    ) : (
-                      <span className={`agent-usage-status ${status}`}>{t(statusLabelKey(status))}</span>
-                    )}
-                  </div>
-                  <div className="agent-usage-source-bottom">
-                    {hasData ? (
-                      <div className="agent-usage-source-volume">
-                        <strong>{formatUsageNumber(sourceTotal.totalTokens, locale)}</strong>
-                        <span>{t('usage.agentUsage.tokens')}</span>
-                        <span className="agent-usage-source-metrics">
-                          <span>{days} {t('usage.agentUsage.days')}</span>
-                          <span> · </span>
-                          <span>{money(sourceTotal.costUSD)}</span>
-                        </span>
-                      </div>
-                    ) : source.status === 'error' && source.error ? (
-                      <small title={source.error}>{source.error}</small>
-                    ) : (
-                      <span className="agent-usage-source-empty-hint">0 {t('usage.agentUsage.tokens')}</span>
-                    )}
-                  </div>
-                </div>
-                {hasData ? (
-                  <div className="agent-usage-source-track" aria-hidden="true">
-                    <span style={{ width: `${Math.min(100, Math.max(0, contribution * 100))}%` }} />
-                  </div>
-                ) : null}
+                <span className="agent-usage-chip-dot" style={{ background: agentSourceColor(source.source, sourceOrder) }} aria-hidden="true" />
+                <BrandIcon name={source.source} size={14} />
+                <span>{sourceLabel(source.source)}</span>
+                <small>{formatAgentUsageCompact(source.totals.totalTokens)}</small>
               </button>
             );
           })}
-          {!visibleSources.length && <EmptyState variant="compact">{t('usage.agentUsage.empty')}</EmptyState>}
         </div>
+      ) : null}
+
+      {failedSources.length ? (
+        <Notice tone="warn">{failedSources.map((source) => `${sourceLabel(source.source)}: ${source.error}`).join(' · ')}</Notice>
+      ) : null}
+
+      <div className="agent-usage-kpis">
+        <div className="surface-card agent-usage-kpi" data-kpi="tokens">
+          <span>{t('usage.agentUsage.totalTokens')}</span>
+          <strong title={full(totals.totalTokens)}>{formatAgentUsageCompact(totals.totalTokens)}</strong>
+          <div className="agent-usage-kpi-trend">
+            <small className={changeTone(totals.totalTokens, report.previous?.totalTokens)}>
+              {changeText(totals.totalTokens, report.previous?.totalTokens) || t('usage.agentUsage.activeDays', { count: totals.days })}
+            </small>
+            <Sparkline values={report.timeline.map((row) => row.totalTokens)} tone="tokens" />
+          </div>
+          <div className="agent-usage-kpi-split">
+            <span className="agent-usage-stack" aria-hidden="true">
+              {tokenParts.map((part) => (
+                <span key={part.kind} style={{ width: `${shareOf(part.value, tokenPartsTotal) * 100}%`, background: part.color }} />
+              ))}
+            </span>
+            <span className="agent-usage-stack-legend">
+              {tokenParts.filter((part) => part.value > 0).map((part) => (
+                <span key={part.kind} title={full(part.value)}>
+                  <i style={{ background: part.color }} aria-hidden="true" />
+                  {t(`usage.agentUsage.token.${part.kind}`)} {percent(shareOf(part.value, tokenPartsTotal), 0)}
+                </span>
+              ))}
+            </span>
+          </div>
+        </div>
+        <div className="surface-card agent-usage-kpi cost" data-kpi="cost">
+          <span title={t('usage.agentUsage.costHint')}>{t('usage.agentUsage.estimatedCost')}</span>
+          <strong>{money(totals.costUSD)}</strong>
+          <div className="agent-usage-kpi-trend">
+            <small className={changeTone(totals.costUSD, report.previous?.costUSD)}>
+              {changeText(totals.costUSD, report.previous?.costUSD)}
+            </small>
+            <Sparkline values={report.timeline.map((row) => row.costUSD)} tone="cost" />
+          </div>
+          <small className="agent-usage-kpi-foot">
+            {[t('usage.agentUsage.activeDays', { count: totals.days }),
+              totals.days > 0 ? t('usage.agentUsage.dailyAverage', { value: money(totals.costUSD / totals.days) }) : ''].filter(Boolean).join(' · ')}
+          </small>
+        </div>
+        <div className="surface-card agent-usage-kpi" data-kpi="cache">
+          <span>{t('usage.agentUsage.cacheHitRate')}</span>
+          <strong>{percent(hitRate)}</strong>
+          <span className="agent-usage-meter" aria-hidden="true"><span style={{ width: `${hitRate * 100}%` }} /></span>
+          <small className="agent-usage-kpi-foot">
+            {t('usage.agentUsage.cacheHitDetail', { read: formatAgentUsageCompact(totals.cacheReadTokens), write: formatAgentUsageCompact(totals.cacheCreationTokens) })}
+          </small>
+        </div>
+      </div>
+
+      <section className="panel surface-card agent-usage-charts-panel">
+        <div className="agent-usage-section-heading agent-usage-chart-heading">
+          <SegmentedControl className="usage-analysis-metric agent-usage-view-tabs" aria-label={t('usage.agentUsage.viewLabel')}
+            value={view} onChange={(next) => setView(next as AgentUsageViewMode)}
+            items={AGENT_USAGE_VIEWS.map((item) => ({ value: item, label: t(`usage.agentUsage.view.${item}`) }))} />
+          {view === 'trend' ? (
+            <div className="agent-usage-chart-controls">
+              <SegmentedControl className="usage-analysis-metric agent-usage-group-tabs" aria-label={t('usage.agentUsage.groupBy')}
+                value={groupBy} onChange={(next) => setGroupBy(next as AgentUsageGroupBy)}
+                items={AGENT_USAGE_GROUP_BY.map((item) => ({ value: item, label: t(`usage.agentUsage.groupBy.${item}`) }))} />
+              <SegmentedControl className="usage-analysis-metric agent-usage-metric-tabs" aria-label={t('usage.agentUsage.metricLabel')}
+                value={metric} onChange={(next) => setMetric(next as AgentUsageMetric)}
+                items={[
+                  { value: 'totalTokens', label: t('usage.agentUsage.metric.tokens') },
+                  { value: 'costUSD', label: t('usage.agentUsage.metric.cost') },
+                ]} />
+            </div>
+          ) : null}
+        </div>
+        <AgentUsageChart view={view} metric={metric} report={report} groupBy={groupBy} locale={locale}
+          seriesLabel={groupBy === 'source' || view !== 'trend' ? sourceLabel : (key) => key || t('usage.agentUsage.unknownModel')} />
       </section>
 
-      <div className="agent-usage-columns">
-        <section className="panel surface-card agent-usage-daily">
-          <div className="agent-usage-section-heading"><h3>{t('usage.agentUsage.daily')}</h3><span>{t('usage.agentUsage.dayCount', { count: daily.length })}</span></div>
-          {daily.length ? <div className="agent-usage-table-wrap" tabIndex={0} role="region" aria-label={t('usage.agentUsage.daily')}><table>
-            <thead><tr>
-              <th>{t('usage.agentUsage.date')}</th>
-              <th>{t('usage.agentUsage.inputTokens')}</th>
-              <th>{t('usage.agentUsage.outputTokens')}</th>
-              <th>{t('usage.agentUsage.cacheReadTokens')}</th>
-              <th>{t('usage.agentUsage.cacheCreationTokens')}</th>
-              <th>{t('usage.agentUsage.totalTokens')}</th>
-              <th>{t('usage.agentUsage.estimatedCost')}</th>
-            </tr></thead>
-            <tbody>{daily.map(([date, row]) => <tr key={date}>
-              <td>{date}</td>
-              <td>{formatUsageNumber(row.inputTokens, locale)}</td>
-              <td>{formatUsageNumber(row.outputTokens, locale)}</td>
-              <td>{formatUsageNumber(row.cacheReadTokens, locale)}</td>
-              <td>{formatUsageNumber(row.cacheCreationTokens, locale)}</td>
-              <td><strong>{formatUsageNumber(row.totalTokens, locale)}</strong></td>
-              <td>{money(row.costUSD)}</td>
-            </tr>)}</tbody>
-          </table></div> : <EmptyState variant="compact">{t('usage.agentUsage.empty')}</EmptyState>}
-        </section>
-      <AgentUsagePricingView rows={priceRows} loading={pricingLoading} locale={locale} />
-      </div>
+      <section className="panel surface-card agent-usage-activity">
+        <div className="agent-usage-section-heading">
+          <h3>{t('usage.agentUsage.activityTitle')}</h3>
+          <span>{t('usage.agentUsage.activityHint')}</span>
+        </div>
+        <AgentUsageActivity report={report} locale={locale} />
+      </section>
+
+      <section className="panel surface-card agent-usage-ranking">
+        <SegmentedControl className="usage-analysis-metric agent-usage-ranking-tabs" aria-label={t('usage.agentUsage.rankingLabel')}
+          value={ranking} onChange={(next) => setRanking(next as RankingTab)}
+          items={[
+            { value: 'models', label: `${t('usage.agentUsage.models')} ${models.length}` },
+            { value: 'sources', label: `${t('usage.agentUsage.sources')} ${usedSources.length}` },
+            { value: 'details', label: t('usage.agentUsage.details') },
+          ]} />
+        {ranking === 'models' ? (
+          models.length ? (
+            <>
+              <div className="agent-usage-table-wrap">
+                <table className="agent-usage-table" data-table="models">
+                  <thead><tr>
+                    <th>{t('usage.agentUsage.models')}</th>
+                    <th className="share">{t('usage.agentUsage.column.share')}</th>
+                    <th>{t('usage.agentUsage.totalTokens')}</th>
+                    <th>{t('usage.agentUsage.estimatedCost')}</th>
+                  </tr></thead>
+                  <tbody>
+                    {visibleModels.map((model) => {
+                      const share = shareOf(model.totalTokens, modelTotal);
+                      return (
+                        <tr key={model.model} data-model={model.model}>
+                          <td className="name" title={model.model || t('usage.agentUsage.unknownModel')}>{model.model || t('usage.agentUsage.unknownModel')}</td>
+                          <td className="share"><ShareBar share={share} label={percent(share)} /></td>
+                          <td title={full(model.totalTokens)}>{formatAgentUsageCompact(model.totalTokens)}</td>
+                          <td className={model.priced ? undefined : 'unpriced'} title={model.priced ? undefined : t('usage.agentUsage.unpriced')}>{money(model.costUSD)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {models.length > MODEL_PREVIEW_COUNT ? (
+                <button type="button" className="link-button" onClick={() => setShowAllModels((current) => !current)}>
+                  {showAllModels ? t('usage.agentUsage.showFewerModels') : t('usage.agentUsage.showAllModels', { count: models.length })}
+                </button>
+              ) : null}
+            </>
+          ) : <EmptyState variant="compact">{emptyText}</EmptyState>
+        ) : null}
+        {ranking === 'sources' ? (
+          usedSources.length ? (
+            <div className="agent-usage-table-wrap">
+              <table className="agent-usage-table" data-table="sources">
+                <thead><tr>
+                  <th>{t('usage.agentUsage.sources')}</th>
+                  <th className="share">{t('usage.agentUsage.column.share')}</th>
+                  <th>{t('usage.agentUsage.totalTokens')}</th>
+                  <th>{t('usage.agentUsage.column.days')}</th>
+                  <th>{t('usage.agentUsage.estimatedCost')}</th>
+                </tr></thead>
+                <tbody>
+                  {usedSources.map((source) => {
+                    const share = shareOf(source.totals.totalTokens, allSourceTokens);
+                    const dimmed = selectedSources.length > 0 && !selectedSources.includes(source.source);
+                    return (
+                      <tr key={source.source} data-source={source.source} className={dimmed ? 'dimmed' : undefined}>
+                        <td className="name">
+                          <span className="agent-usage-source-name">
+                            <span className="agent-usage-chip-dot" style={{ background: agentSourceColor(source.source, sourceOrder) }} aria-hidden="true" />
+                            <BrandIcon name={source.source} size={14} />
+                            {sourceLabel(source.source)}
+                            {source.status === 'archived' ? <small>{archivedLabel(source)}</small> : null}
+                          </span>
+                        </td>
+                        <td className="share"><ShareBar share={share} label={percent(share)} color={agentSourceColor(source.source, sourceOrder)} /></td>
+                        <td title={full(source.totals.totalTokens)}>{formatAgentUsageCompact(source.totals.totalTokens)}</td>
+                        <td>{source.totals.days}</td>
+                        <td>{money(source.totals.costUSD)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : <EmptyState variant="compact">{emptyText}</EmptyState>
+        ) : null}
+        {ranking === 'details' ? (
+          detailRows.length ? (
+            <div className="agent-usage-table-wrap scroll" tabIndex={0} role="region" aria-label={t('usage.agentUsage.details')}>
+              <table className="agent-usage-table" data-table="details">
+                <thead><tr>
+                  <th>{t(`usage.agentUsage.bucketColumn.${report.bucket}`)}</th>
+                  <th>{t('usage.agentUsage.inputTokens')}</th>
+                  <th>{t('usage.agentUsage.outputTokens')}</th>
+                  <th>{t('usage.agentUsage.cacheReadTokens')}</th>
+                  <th>{t('usage.agentUsage.cacheCreationTokens')}</th>
+                  <th>{t('usage.agentUsage.totalTokens')}</th>
+                  <th>{t('usage.agentUsage.estimatedCost')}</th>
+                </tr></thead>
+                <tbody>
+                  {detailRows.map((row) => (
+                    <tr key={row.bucket}>
+                      <td className="name">{formatAgentUsageBucket(row.bucket, report.bucket)}</td>
+                      <td title={full(row.inputTokens)}>{formatAgentUsageCompact(row.inputTokens)}</td>
+                      <td title={full(row.outputTokens)}>{formatAgentUsageCompact(row.outputTokens)}</td>
+                      <td title={full(row.cacheReadTokens)}>{formatAgentUsageCompact(row.cacheReadTokens)}</td>
+                      <td title={full(row.cacheCreationTokens)}>{formatAgentUsageCompact(row.cacheCreationTokens)}</td>
+                      <td title={full(row.totalTokens)}><strong>{formatAgentUsageCompact(row.totalTokens)}</strong></td>
+                      <td>{money(row.costUSD)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <EmptyState variant="compact">{emptyText}</EmptyState>
+        ) : null}
+      </section>
     </section>
   );
 }
 
-function AgentUsagePricingView({
-  rows,
-  loading,
-  locale,
-}: {
-  rows: AgentUsagePriceRow[];
-  loading: boolean;
-  locale: string;
-}) {
-  const { t } = useI18n();
+function ShareBar({ share, label, color }: { share: number; label: string; color?: string }) {
   return (
-    <section className="panel surface-card agent-usage-pricing">
-      <div className="agent-usage-section-heading">
-        <div>
-          <h3>{t('usage.agentUsage.pricingTitle')}</h3>
-          <span>{t('usage.agentUsage.pricingDescription')}</span>
-        </div>
-        <span>{t('usage.agentUsage.modelCount', { count: rows.length })}</span>
-      </div>
-      {loading ? (
-        <EmptyState variant="compact">{t('usage.agentUsage.pricingLoading')}</EmptyState>
-      ) : rows.length ? (
-        <div className="agent-usage-table-wrap" tabIndex={0} role="region" aria-label={t('usage.agentUsage.pricingTitle')}>
-          <table>
-            <thead>
-              <tr>
-                <th>{t('usage.pricing.model')}</th>
-                <th>{t('usage.agentUsage.days')}</th>
-                <th>{t('usage.agentUsage.totalTokens')}</th>
-                <th>{t('usage.pricing.prompt')}</th>
-                <th>{t('usage.pricing.completion')}</th>
-                <th>{t('usage.pricing.cost')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.model}>
-                  <td title={row.model}>{row.model}</td>
-                  <td>{formatUsageNumber(row.days, locale)} {t('usage.agentUsage.days')}</td>
-                  <td>{formatUsageNumber(row.totalTokens, locale)}</td>
-                  <td>{row.price ? rate(row.price.prompt) : '—'}</td>
-                  <td>{row.price ? rate(row.price.completion) : '—'}</td>
-                  <td>
-                    <strong>
-                      {row.estimatedCostUSD !== null
-                        ? money(row.estimatedCostUSD)
-                        : row.recordedCostUSD !== null
-                          ? money(row.recordedCostUSD)
-                          : '—'}
-                    </strong>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <EmptyState variant="compact">{t('usage.agentUsage.pricingEmpty')}</EmptyState>
-      )}
-    </section>
+    <span className="agent-usage-share">
+      <span className="agent-usage-share-track" aria-hidden="true">
+        <span style={{ width: `${Math.max(share > 0 ? 2 : 0, share * 100)}%`, background: color }} />
+      </span>
+      <span className="agent-usage-share-value">{label}</span>
+    </span>
   );
 }

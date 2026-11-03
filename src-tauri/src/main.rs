@@ -2,6 +2,7 @@
 
 mod agents;
 mod agent_usage;
+mod agent_usage_store;
 mod app_settings;
 mod app_update;
 mod claude_catalog;
@@ -2599,6 +2600,7 @@ fn main() {
         )))
         .manage(DeepSeekHarnessProcessState::default())
         .manage(usage::UsageCollectorState::default())
+        .manage(agent_usage::AgentUsageState::default())
         .manage(GuiConfigState::new(gui_config))
         .manage(plugin_webview::PluginWebviewState::default())
         .manage(MainWindowState::new(
@@ -2746,6 +2748,7 @@ fn main() {
             network_proxy::start_monitor(app.handle().clone());
             core_recovery::start(app.handle().clone());
             start_codex_model_catalog_sync(app.handle().clone());
+            agent_usage::start_background_sync(app.handle().clone());
 
             let usage_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -2881,6 +2884,9 @@ fn main() {
             get_usage_view_preferences,
             save_usage_view_preferences,
             agent_usage::get_agent_usage,
+            agent_usage::sync_agent_usage,
+            agent_usage::get_agent_usage_storage,
+            agent_usage::clear_agent_usage_history,
             resolve_api_access_remarks,
             save_api_access_remark,
             set_app_locale,
