@@ -1189,6 +1189,12 @@ pub(crate) fn release_tag_from_url(url: &reqwest::Url) -> Option<String> {
 }
 
 pub(crate) fn is_app_update_available(current: &str, latest: &str) -> Result<bool, String> {
+    if current.to_ascii_lowercase().contains("preview")
+        && latest.to_ascii_lowercase().contains("preview")
+    {
+        return Ok(true);
+    }
+
     let parse = |value: &str| {
         semver::Version::parse(value.trim().trim_start_matches('v'))
             .map_err(|error| format!("Failed to parse version {value}: {error}"))
