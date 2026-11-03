@@ -1396,7 +1396,7 @@ export function createBrowserMockRuntime(
           else if (key === 'requestLog' || key === 'pluginsEnabled') syncValues[key] = false;
         }
         Object.assign(state.coreConfig, syncValues);
-        const restartRequired = changes.some((change) => !sameTemplateValue(readTemplatePath(before, change.path), readTemplatePath(state.extendedConfig, change.path)) && ['server.host', 'server.port', 'server.tls', 'management', 'oauth.auth-dir'].some((prefix) => change.path.join('.') === prefix || change.path.join('.').startsWith(`${prefix}.`)));
+        const restartRequired = changes.some((change) => !sameTemplateValue(readTemplatePath(before, change.path), readTemplatePath(state.extendedConfig, change.path)) && ['server.host', 'server.port', 'server.tls', 'server.trusted-proxies', 'server.discovery', 'management', 'oauth.auth-dir'].some((prefix) => change.path.join('.') === prefix || change.path.join('.').startsWith(`${prefix}.`)));
         emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
         return { config: clone(state.extendedConfig), restartRequired };
       }
