@@ -9,7 +9,7 @@ import { commitFetchedQuota } from '../services/quotaEnrichment';
 import { ResetCreditExpiries } from '../components/ResetCreditExpiries';
 import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Gauge, ListRestart, LoaderCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, Check, Gauge, LayoutList, ListRestart, LoaderCircle, Pencil, RefreshCw, X } from 'lucide-react';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { OAuthPageToolbar } from '../components/OAuthPageToolbar';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
@@ -23,7 +23,7 @@ import devinIcon from '../assets/icons/devin.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import metaIcon from '../assets/icons/meta.svg';
-import { managementApi, readBoolean, responseList } from '../services/managementApi';
+import { managementApi, readBoolean, readString, responseList } from '../services/managementApi';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import {
   formatQuotaTimestamp,
@@ -60,6 +60,7 @@ const providerMeta: Record<QuotaDisplayProvider, { label: string; icon: string }
 
 const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin', 'meta', 'plugin'];
 const REFRESH_CONCURRENCY = 4;
+export const QUOTA_COMPACT_STORAGE_KEY = 'cpa.quota.compact';
 
 export function QuotaPage() {
   const { t } = useI18n();
@@ -70,6 +71,38 @@ export function QuotaPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [category, setCategory] = useState<'all' | QuotaDisplayProvider>('all');
+  const [compactView, setCompactView] = useState(() => {
+    try {
+      return typeof localStorage !== 'undefined' && localStorage.getItem(QUOTA_COMPACT_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCompactView = useCallback(() => {
+    setCompactView((current) => {
+      const next = !current;
+      try {
+        if (typeof localStorage !== 'undefined') {
+          if (next) localStorage.setItem(QUOTA_COMPACT_STORAGE_KEY, '1');
+          else localStorage.removeItem(QUOTA_COMPACT_STORAGE_KEY);
+        }
+      } catch {
+        // Ignore storage write errors in restricted contexts.
+      }
+      return next;
+    });
+  }, []);
+
+  const saveCredentialNote = useCallback(async (file: AuthFile, nextNote: string) => {
+    const credentialName = readString(file, 'name');
+    if (!credentialName) return;
+    const trimmed = nextNote.trim();
+    await managementApi.patch('/credentials/fields', { name: credentialName, note: trimmed });
+    setFiles((current) => current.map((item) => readString(item, 'name') === credentialName
+      ? { ...item, note: trimmed }
+      : item));
+  }, []);
   const querying = Object.values(quotas).some((quota) => quota.status === 'loading');
 
   const loadFiles = useCallback(async () => {
@@ -162,6 +195,14 @@ export function QuotaPage() {
         icon={<Gauge size={18} />}
         summary={t(files.length === 1 ? 'quota.queryableCredentials.one' : 'quota.queryableCredentials.other', { count: files.length })}
       >
+        <button
+          type="button"
+          className={`secondary-button compact-button${compactView ? ' active' : ''}`}
+          aria-pressed={compactView}
+          onClick={toggleCompactView}
+        >
+          <LayoutList size={16} />{t('quota.compactView')}
+        </button>
         <button type="button" className="secondary-button compact-button" onClick={() => void loadFiles()} disabled={loading || refreshing || querying}>
           {loading ? <RefreshCw size={16} className="spin" /> : <ListRestart size={16} />}{t('quota.readList')}
         </button>
@@ -183,14 +224,26 @@ export function QuotaPage() {
                 <span>{label}</span><span className="quota-filter-count">{count}</span>
               </> };
             })} />
-          <div className="real-quota-grid">{visibleItems.map(({ provider, file, quota }) => <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' || provider === 'claude' ? () => void resetQuota(file, quota) : undefined} />)}</div>
+          <div className={`real-quota-grid${compactView ? ' is-compact' : ''}`}>{visibleItems.map(({ provider, file, quota }) => <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' || provider === 'claude' ? () => void resetQuota(file, quota) : undefined} onSaveNote={(nextNote) => saveCredentialNote(file, nextNote)} />)}</div>
         </>
       )}
     </section>
   );
 }
 
-export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile; quota: QuotaState; onRefresh: () => void; onReset?: () => void }) {
+export function QuotaCard({
+  file,
+  quota,
+  onRefresh,
+  onReset,
+  onSaveNote,
+}: {
+  file: AuthFile;
+  quota: QuotaState;
+  onRefresh: () => void;
+  onReset?: () => void;
+  onSaveNote?: (note: string) => Promise<void> | void;
+}) {
   const { locale, t } = useI18n();
   const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
   const provider = quotaProviderForFile(file);
@@ -198,7 +251,27 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
   const plugins = usePluginList();
   const privacy = usePrivacyMask();
   const name = privacy.credentialName(file);
+  const rawNote = readString(file, 'note');
+  const note = privacy.text(rawNote);
   const disabled = readBoolean(file, 'disabled');
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(rawNote);
+  const [savingNote, setSavingNote] = useState(false);
+
+  useEffect(() => {
+    if (!editingNote) setNoteDraft(rawNote);
+  }, [editingNote, rawNote]);
+
+  const commitNote = async () => {
+    if (!onSaveNote || savingNote) return;
+    setSavingNote(true);
+    try {
+      await onSaveNote(noteDraft);
+      setEditingNote(false);
+    } finally {
+      setSavingNote(false);
+    }
+  };
   const groups = quota.rows.reduce<{ label?: string; description?: string; rows: QuotaState['rows'] }[]>((result, row) => {
     const previous = result[result.length - 1];
     if (previous && previous.label === row.groupLabel) previous.rows.push(row);
@@ -221,8 +294,66 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
             ? <img src={providerMeta[provider].icon} alt="" className="quota-account-icon" />
             : providerId === 'gemini' ? <img src={geminiIcon} alt="" className="quota-account-icon" />
             : <PluginLogo src={findPluginLogo(plugins, providerId, credentialQuotaPlugin(file))} size={22} className="quota-account-icon" />}
-          <div><strong title={name}>{name}</strong></div>
+          <div className="quota-identity-text">
+            <div className="quota-identity-title-row">
+              <strong title={name}>{name}</strong>
+              {onSaveNote && !editingNote ? (
+                <button
+                  type="button"
+                  className="icon-button quiet tiny-button quota-note-edit"
+                  title={t(rawNote ? 'quota.note.edit' : 'quota.note.add')}
+                  aria-label={t(rawNote ? 'quota.note.edit' : 'quota.note.add')}
+                  onClick={() => { setNoteDraft(rawNote); setEditingNote(true); }}
+                >
+                  <Pencil size={12} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+            {note && !editingNote ? <small className="quota-account-note" title={note}>{note}</small> : null}
+          </div>
         </div>
+        {editingNote && onSaveNote ? (
+          <div className="quota-note-editor">
+            <input
+              type="text"
+              value={noteDraft}
+              placeholder={t('quota.note.placeholder')}
+              aria-label={t('authFiles.settings.note')}
+              disabled={savingNote}
+              onChange={(event) => setNoteDraft(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void commitNote();
+                } else if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setEditingNote(false);
+                  setNoteDraft(rawNote);
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="primary-button tiny-button"
+              disabled={savingNote}
+              aria-label={t('common.save')}
+              title={t('common.save')}
+              onClick={() => void commitNote()}
+            >
+              {savingNote ? <LoaderCircle size={12} className="spin" aria-hidden="true" /> : <Check size={12} aria-hidden="true" />}
+            </button>
+            <button
+              type="button"
+              className="secondary-button tiny-button"
+              disabled={savingNote}
+              aria-label={t('common.cancel')}
+              title={t('common.cancel')}
+              onClick={() => { setEditingNote(false); setNoteDraft(rawNote); }}
+            >
+              <X size={12} aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
         {quota.plan || quota.subscriptionActiveUntil ? <div className="quota-plan">
           {quota.plan ? <span>{t('quota.planLabel')} <strong>{quota.plan}</strong></span> : null}
           {quota.subscriptionActiveUntil ? <span>{t('quota.expiresAt', { time: formatQuotaTimestamp(quota.subscriptionActiveUntil, locale) })}</span> : null}
