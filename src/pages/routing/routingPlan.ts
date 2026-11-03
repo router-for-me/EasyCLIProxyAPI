@@ -25,7 +25,9 @@ export function tiersFromMembers(members: readonly RoutingMember[]): RoutingTier
     .sort(([left], [right]) => right - left)
     .map(([priority, peers]) => ({
       id: `p${priority}`,
-      memberKeys: peers.sort((left, right) => left.name.localeCompare(right.name)).map((member) => member.key),
+      memberKeys: peers
+        .sort((left, right) => left.name.localeCompare(right.name) || (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+        .map((member) => member.key),
     }));
 }
 
@@ -238,10 +240,16 @@ export function diffPlan(board: RoutingBoard, draft: RoutingDraft): RoutingPlanD
     return { ...member, priority, weights: [...weights] };
   });
   if (members.some(member => !member)) return null;
+  const normalizedSettings: RoutingSettings = {
+    ...draft.settings,
+    session_affinity_ttl: typeof draft.settings.session_affinity_ttl === 'string'
+      ? draft.settings.session_affinity_ttl.trim()
+      : draft.settings.session_affinity_ttl,
+  };
   for (const field of Object.keys(routingSettingPaths) as (keyof RoutingSettings)[]) {
-    if (draft.settings[field] !== board.settings[field]) changes.push({ key: 'settings', kind: 'setting', field, from: board.settings[field], to: draft.settings[field] });
+    if (normalizedSettings[field] !== board.settings[field]) changes.push({ key: 'settings', kind: 'setting', field, from: board.settings[field], to: normalizedSettings[field] });
   }
-  return { priorities, tierPriorities, changes, plan: { revision: board.revision, settings: { ...draft.settings }, members: members as RoutingMember[] } };
+  return { priorities, tierPriorities, changes, plan: { revision: board.revision, settings: normalizedSettings, members: members as RoutingMember[] } };
 }
 
 export type RouteMemberState = 'serving' | 'standby' | 'excluded' | 'blocked' | 'ineligible';
@@ -266,7 +274,7 @@ export function resolveRoute(board: RoutingBoard, draft: RoutingDraft): RoutePre
         const weights = draft.weights[key] ?? member.weights;
         const count = member.keyCount ?? member.weights.length;
         const amount = draft.settings.strategy === 'weighted-round-robin'
-          ? weights.reduce<number>((sum, value) => sum + (value ?? 1), 0) + Math.max(0, count - weights.length) : count;
+          ? weights.reduce<number>((sum, value) => sum + Math.max(0, value ?? 1), 0) + Math.max(0, count - weights.length) : count;
         if (amount <= 0) state = 'excluded';
         else { unitsByKey.set(key, amount); units += amount; }
       }
