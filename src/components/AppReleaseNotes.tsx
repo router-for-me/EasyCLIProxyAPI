@@ -29,6 +29,7 @@ export function AppReleaseNotes({ info, checking, failed, onOpenUrl }: Props) {
   const publishedAt = info?.publishedAt && Number.isFinite(Date.parse(info.publishedAt))
     ? info.publishedAt
     : null;
+  const showBuildTime = /preview/i.test(info?.latestVersion ?? '');
   const emptyMessage = info
     ? t('appUpdate.notes.empty')
     : checking
@@ -64,14 +65,16 @@ export function AppReleaseNotes({ info, checking, failed, onOpenUrl }: Props) {
               {publishedAt ? (
                 <time dateTime={publishedAt}>
                   {t('appUpdate.notes.publishedAt', {
-                    date: formatDate(publishedAt, {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false,
-                    }),
+                    date: formatDate(publishedAt, showBuildTime
+                      ? {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        }
+                      : { year: 'numeric', month: 'long', day: 'numeric' }),
                   })}
                 </time>
               ) : null}

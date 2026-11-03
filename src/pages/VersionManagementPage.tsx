@@ -673,7 +673,7 @@ export function VersionManagementPage() {
                   {appUpdate?.autoUpdateSupported
                     ? t('kernel.versions.autoUpdateSupported')
                     : t('appUpdate.manualFallback')}
-                  {latestAppPublishedAt
+                  {appIsPreview && latestAppPublishedAt
                     ? ` · ${t('appUpdate.publishedAt', { date: latestAppPublishedAt })}`
                     : ''}
                 </span>
