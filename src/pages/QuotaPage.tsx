@@ -31,6 +31,7 @@ import {
   loadQuota,
   quotaProviderForFile,
   quotaKey,
+  quotaResetExpiries,
   type AuthFile,
   type QuotaDisplayProvider,
   type QuotaState,
@@ -199,6 +200,8 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
   const privacy = usePrivacyMask();
   const name = privacy.credentialName(file);
   const disabled = readBoolean(file, 'disabled');
+  const hasCreditBalance = Boolean(quota.creditsUnlimited) || quota.creditBalance !== undefined;
+  const hasResetCreditSummary = hasCreditBalance || quotaResetExpiries(quota).length > 0;
   const groups = quota.rows.reduce<{ label?: string; description?: string; rows: QuotaState['rows'] }[]>((result, row) => {
     const previous = result[result.length - 1];
     if (previous && previous.label === row.groupLabel) previous.rows.push(row);
@@ -234,11 +237,12 @@ export function QuotaCard({ file, quota, onRefresh, onReset }: { file: AuthFile;
       {quota.status === 'error' ? <>
         <Notice tone="error" variant="text" className="quota-card-error" icon={<AlertCircle size={18} />}>{t('authFiles.quota.failed')}{quota.error ? <small>{privacy.text(quota.error)}</small> : null}</Notice>
       </> : null}
-      {quota.status === 'success' && (provider === 'codex' || provider === 'claude') ? <div className="quota-reset-credit-summary surface-section surface-muted">
-        {(quota.creditsUnlimited || quota.creditBalance !== undefined) ? <span>{t('quota.creditBalance')} <strong>{quota.creditsUnlimited ? t('quota.creditUnlimited') : quota.creditBalance}</strong></span> : null}
+      {quota.status === 'success' && (provider === 'codex' || provider === 'claude') && hasResetCreditSummary ? <div className="quota-reset-credit-summary surface-section surface-muted">
+        {hasCreditBalance ? <span>{t('quota.creditBalance')} <strong>{quota.creditsUnlimited ? t('quota.creditUnlimited') : quota.creditBalance}</strong></span> : null}
         <ResetCreditExpiries quota={quota} />
-        <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} />
       </div> : null}
+      {quota.status === 'success' && (provider === 'codex' || provider === 'claude')
+        ? <MessageNotice message={quota.resetCreditsError ? name + ': ' + t('quota.resetCreditsWarning', { error: quota.resetCreditsError }) : null} /> : null}
       {quota.status === 'success' ? <div className="quota-row-list">{groups.map((group, groupIndex) => <section className="quota-model-group" key={groupIndex}>
         {group.label ? <div className="quota-model-heading"><h3>{group.label}</h3>{group.description ? <p>{group.description}</p> : null}</div> : null}
         {group.rows.map((row, index) => {

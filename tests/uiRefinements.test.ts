@@ -25,6 +25,10 @@ const declarations = (sheet: postcss.Root, selector: string, property: string, r
 };
 
 describe('shared UI refinements', () => {
+  it('paints the quota credit summary with the theme soft surface, not the fixed dark muted token', () => {
+    expect(declarations(quota, '.quota-page .quota-reset-credit-summary', 'background')).toEqual(['var(--bg-tertiary)']);
+  });
+
 
 
   it('keeps motion keyframes out of layout and leaves enter transforms temporary', () => {

@@ -97,7 +97,7 @@
 .quota-page .real-quota-row > div:first-child strong { flex-shrink: 0; }
 .quota-page .real-quota-track { height: 6px; background: var(--bg-tertiary); }
 .quota-page .real-quota-row small { font-size: 11px; }
-.quota-page .quota-reset-credit-summary { order: 2; gap: 5px 10px; padding: 8px; }
+.quota-page .quota-reset-credit-summary { order: 2; gap: 5px 10px; padding: 8px; background: var(--bg-tertiary); }
 .quota-page .quota-reset-credit-summary span { white-space: normal; overflow-wrap: anywhere; }
 .quota-page .quota-reset-footer { margin-right: auto; }
 .quota-page .quota-card-message, .quota-page .quota-card-error { min-height: 36px; flex-wrap: wrap; }
