@@ -78,7 +78,7 @@ export function displayAppVersion(version: string) {
 }
 
 export function VersionManagementPage() {
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const {
     info: appUpdate,
     error: appUpdateError,
@@ -443,6 +443,16 @@ export function VersionManagementPage() {
   const resolvedAppVersion = appUpdate?.currentVersion || installedAppVersion;
   const currentAppVersion = resolvedAppVersion ? displayAppVersion(resolvedAppVersion) : t('common.detecting');
   const latestAppVersion = appUpdate?.latestVersion ? displayAppVersion(appUpdate.latestVersion) : '';
+  const latestAppPublishedAt = appUpdate?.publishedAt && Number.isFinite(Date.parse(appUpdate.publishedAt))
+    ? formatDate(appUpdate.publishedAt, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : null;
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
   const appVersionStatusLabel: string | null = appUpdateTask.running
@@ -630,6 +640,9 @@ export function VersionManagementPage() {
                   {appUpdate?.autoUpdateSupported
                     ? t('kernel.versions.autoUpdateSupported')
                     : t('appUpdate.manualFallback')}
+                  {latestAppPublishedAt
+                    ? ` · ${t('appUpdate.publishedAt', { date: latestAppPublishedAt })}`
+                    : ''}
                 </span>
               </div>
             </div>
