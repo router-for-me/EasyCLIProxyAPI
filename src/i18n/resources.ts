@@ -15,6 +15,7 @@ export const zhTW: Record<MessageKey, string> = {
   ...routingZhTW,
   ...themeDiyZhTW,
   ...authFileTagsZhTW,
+  'app.nav.mcpSkills': 'MCP 與技能',
   'quota.service.kimi.monthlyTotal': '月總額度',
   'quota.service.kimi.monthlyCode': '月程式設計額度',
   'quota.service.kimi.domainUnavailable': '無法讀取 Kimi 憑證以確定額度查詢網域',
