@@ -3668,6 +3668,80 @@ pub(crate) fn validate_codex_catalog(catalog: &str, model: &str) -> Result<(), S
     Ok(())
 }
 
+pub(crate) fn opencode_model_entry(
+    model: &AgentModelOption,
+    existing: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut entry = existing
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let display_name = model.alias.as_deref().unwrap_or(&model.name).to_string();
+    entry.insert("name".to_string(), serde_json::json!(display_name));
+
+    let lower = model.name.to_ascii_lowercase();
+    let declared_image = model
+        .input_modalities
+        .as_ref()
+        .map(|m| m.iter().any(|v| v.eq_ignore_ascii_case("image")));
+    let heuristic_image = [
+        "claude",
+        "gemini",
+        "gpt-4o",
+        "gpt-4.1",
+        "gpt-5",
+        "o3",
+        "o4",
+        "qwen-vl",
+        "qwen2.5-vl",
+        "qwen3-vl",
+        "glm-4v",
+        "glm-4.5v",
+        "pixtral",
+        "llama-4",
+        "kimi-vl",
+        "doubao-vision",
+        "step-1v",
+        "internvl",
+        "phi-4-multimodal",
+    ]
+    .iter()
+    .any(|k| lower.contains(k));
+    let supports_image = declared_image.unwrap_or(heuristic_image);
+    let image_output = lower.contains("-image")
+        || lower.starts_with("imagen")
+        || lower.contains("dall-e")
+        || lower.contains("gpt-image")
+        || lower.contains("seedream")
+        || lower.contains("flux");
+
+    if image_output || supports_image {
+        entry.insert("attachment".to_string(), serde_json::json!(true));
+        entry.insert(
+            "modalities".to_string(),
+            serde_json::json!({
+                "input": ["text", "image", "pdf"],
+                "output": if image_output {
+                    vec!["text", "image"]
+                } else {
+                    vec!["text"]
+                }
+            }),
+        );
+    } else {
+        entry.remove("attachment");
+        entry.insert(
+            "modalities".to_string(),
+            serde_json::json!({
+                "input": ["text"],
+                "output": ["text"]
+            }),
+        );
+    }
+
+    serde_json::Value::Object(entry)
+}
+
 pub(crate) fn build_opencode_agent_config(
     existing: Option<&str>,
     base_url: &str,
@@ -3679,14 +3753,20 @@ pub(crate) fn build_opencode_agent_config(
     root.entry("$schema".to_string())
         .or_insert_with(|| serde_json::json!("https://opencode.ai/config.json"));
     let providers = ensure_json_object_entry(&mut root, "provider");
+    let managed_provider = ensure_json_object_entry(providers, MANAGED_AGENT_PROVIDER_ID);
+    let existing_models = managed_provider
+        .get("models")
+        .and_then(serde_json::Value::as_object)
+        .cloned();
     let models = ordered_agent_models(available_models, model)
         .into_iter()
         .map(|model| {
-            let display_name = model.alias.as_deref().unwrap_or(&model.name).to_string();
-            (model.name, serde_json::json!({ "name": display_name }))
+            let existing_entry = existing_models
+                .as_ref()
+                .and_then(|models| models.get(&model.name));
+            (model.name.clone(), opencode_model_entry(&model, existing_entry))
         })
         .collect::<serde_json::Map<_, _>>();
-    let managed_provider = ensure_json_object_entry(providers, MANAGED_AGENT_PROVIDER_ID);
     managed_provider.insert(
         "npm".to_string(),
         serde_json::json!("@ai-sdk/openai-compatible"),
