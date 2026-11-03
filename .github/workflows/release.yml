@@ -449,6 +449,7 @@ jobs:
               --repository "${{ github.repository }}" \
               --gitcode-repository "${{ vars.GITCODE_GUI_REPOSITORY }}" \
               --tag "$RELEASE_TAG" \
+              --version "${{ needs.version.outputs.version }}" \
               --release-notes "$RUNNER_TEMP/easycli-release-notes.json"
           done
       - name: Publish release
