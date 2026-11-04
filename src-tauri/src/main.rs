@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agents;
+mod agent_skills;
 mod agent_usage;
 mod agent_usage_store;
 mod app_settings;
@@ -17,6 +18,7 @@ mod instance_lock;
 #[cfg(any(target_os = "linux", test))]
 mod linux_graphics;
 mod management_api;
+mod mcp_servers;
 mod network_proxy;
 #[cfg(any(
     target_os = "linux",
@@ -2918,6 +2920,16 @@ fn main() {
             agent_usage::sync_agent_usage,
             agent_usage::get_agent_usage_storage,
             agent_usage::clear_agent_usage_history,
+            mcp_servers::list_mcp_servers,
+            mcp_servers::save_mcp_server,
+            mcp_servers::delete_mcp_server,
+            mcp_servers::set_mcp_server_enabled,
+            mcp_servers::import_mcp_servers_json,
+            mcp_servers::export_mcp_servers_json,
+            mcp_servers::open_mcp_skills_directory,
+            agent_skills::list_skills,
+            agent_skills::get_skill_detail,
+            agent_skills::set_skill_enabled,
             resolve_api_access_remarks,
             save_api_access_remark,
             set_app_locale,
