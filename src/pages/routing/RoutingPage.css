@@ -43,6 +43,8 @@
 .routing-change-list { position: absolute; z-index: 10; top: calc(100% + 8px); right: 0; width: min(380px, 80vw); max-height: 360px; overflow: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; box-shadow: 0 8px 24px var(--color-accent-shadow); }
 .routing-change-list > div { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--border-color); font-size: 12px; }
 .routing-change-list span { color: var(--text-secondary); }
+.routing-review-dialog .routing-change-list { max-height: 46vh; overflow-y: auto; margin-top: 12px; }
+.routing-review-hint { margin: 0; font-size: 13px; color: var(--text-secondary); }
 .routing-flow-entry, .routing-flow-exit { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 14px; min-height: 40px; font-size: 12px; }
 .routing-flow-entry > span:last-child, .routing-flow-exit > span:last-child { color: var(--text-tertiary); }
 .routing-flow-node { width: 12px; height: 12px; margin: 0 4px; border-radius: var(--radius-full); background: var(--primary-color); flex-shrink: 0; }
