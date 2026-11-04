@@ -312,7 +312,12 @@ async fn resolve_app_update(
     let requested_source = config.selected_download_candidate();
     let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
     let update_channel = normalize_update_channel(&config.update_channel);
-    let channel_tag = update_channel_tag(&update_channel);
+    let mut channel_tag = update_channel_tag(&update_channel);
+    if channel_tag.as_deref() == Some("only-preview") {
+        if let Some(tag) = fetch_latest_preview_tag(&client).await {
+            channel_tag = Some(tag);
+        }
+    }
     let is_preview = channel_tag.is_some();
     let (manifest, resolved_source) = fetch_portable_update_manifest(
         &client,
@@ -776,6 +781,48 @@ pub(crate) fn portable_update_target() -> Option<(&'static str, &'static str)> {
         ("darwin", "aarch64") => Some(("darwin-aarch64", "aarch64")),
         _ => None,
     }
+}
+
+/// Returns the newest `preview-<stamp>` release tag from the GitHub releases list.
+async fn fetch_latest_preview_tag(client: &reqwest::Client) -> Option<String> {
+    let response = client
+        .get(GUI_RELEASES_API_URL)
+        .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let releases = response.json::<Vec<serde_json::Value>>().await.ok()?;
+    let tags: Vec<String> = releases
+        .iter()
+        .filter_map(|release| release.get("tag_name")?.as_str().map(str::to_string))
+        .collect();
+    select_latest_preview_tag(&tags)
+}
+
+/// Parses a `preview-<YYYYMMDD>-<HHMM>` tag into a sortable `YYYYMMDDHHMM` number.
+fn preview_stamp_key(tag: &str) -> Option<u64> {
+    let rest = tag.strip_prefix("preview-")?;
+    let (date, time) = rest.split_once('-')?;
+    if date.len() != 8
+        || time.len() != 4
+        || !date.bytes().all(|b| b.is_ascii_digit())
+        || !time.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    format!("{date}{time}").parse::<u64>().ok()
+}
+
+/// Picks the newest time-stamped preview tag, ignoring every other tag shape.
+pub(crate) fn select_latest_preview_tag(tags: &[String]) -> Option<String> {
+    tags.iter()
+        .filter_map(|tag| preview_stamp_key(tag).map(|key| (key, tag)))
+        .max_by_key(|(key, _)| *key)
+        .map(|(_, tag)| tag.clone())
 }
 
 /// Maps a configured update channel to the git tag carrying its manifest.
