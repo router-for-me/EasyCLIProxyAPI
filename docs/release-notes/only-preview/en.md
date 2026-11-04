@@ -11,4 +11,8 @@
 
 ## Added
 
+- **MCP servers and agent skills in one page**: a new "MCP & Skills" page lists the MCP servers and the agent skills the app can see, with a detail panel for each.
+  - Servers show their transport (stdio, HTTP or SSE), command or URL, the arguments and environment they run with, and whether they are enabled. You can add, edit, delete, enable or disable a server, and import or export the whole list as JSON.
+  - Skills are grouped by where they come from (OpenClaw, the project, the workshop or a custom directory), show their description, path and file count, and can be toggled on or off. Files from a skill are shown in a reading pane.
+  - A chip filter on each tab narrows the list by transport or by source, and the page keeps working down to the 640px window minimum.
 - **Built-in reverse proxy**: an optional reverse proxy service can now terminate TLS for the local core service, configurable from the settings page with certificate and listen port.
