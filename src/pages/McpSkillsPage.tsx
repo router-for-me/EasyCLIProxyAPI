@@ -257,7 +257,9 @@ export function McpSkillsPage() {
 
   // Errors and action feedback
   const [serversError, setServersError] = useState<string | null>(null);
+  const [serversTone, setServersTone] = useState<'warn' | 'error'>('error');
   const [skillsError, setSkillsError] = useState<string | null>(null);
+  const [skillsTone, setSkillsTone] = useState<'warn' | 'error'>('error');
   const [actionNotice, setActionNotice] = useState<{ tone: NoticeLevel; message: string } | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
 
@@ -344,7 +346,9 @@ export function McpSkillsPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     setServersError(null);
+    setServersTone('error');
     setSkillsError(null);
+    setSkillsTone('error');
 
     try {
       const serversRes = await listMcpServers();
@@ -354,6 +358,7 @@ export function McpSkillsPage() {
       }
     } catch (err) {
       const isMissing = isBackendMissingError(err);
+      setServersTone(isMissing ? 'warn' : 'error');
       setServersError(isMissing ? t('backendNotReady') : `${t('loadFailed')}: ${errorMessage(err)}`);
       setServers([]);
     }
@@ -363,6 +368,7 @@ export function McpSkillsPage() {
       setSkills(Array.isArray(skillsRes) ? skillsRes : []);
     } catch (err) {
       const isMissing = isBackendMissingError(err);
+      setSkillsTone(isMissing ? 'warn' : 'error');
       setSkillsError(isMissing ? t('backendNotReady') : `${t('loadFailed')}: ${errorMessage(err)}`);
       setSkills([]);
     }
@@ -946,40 +952,46 @@ export function McpSkillsPage() {
                       <div key={idx} className="mcp-skeleton-row" />
                     ))}
                   </div>
-                ) : serversError ? (
-                  <div className="mcp-inline-error-strip" role="alert">
-                    <div className="mcp-inline-error-body">
-                      <Info size={14} className="mcp-inline-error-icon" aria-hidden="true" />
-                      <span className="mcp-inline-error-msg">{serversError}</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="secondary-button compact-button"
-                      onClick={() => void loadData()}
-                    >
-                      <RotateCw size={12} aria-hidden="true" />
-                      <span>{t('retry')}</span>
-                    </button>
-                  </div>
-                ) : servers.length === 0 ? (
-                  <EmptyState
-                    variant="compact"
-                    icon={<Blocks size={28} />}
-                    title={t('noServers')}
-                    action={
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={handleOpenAddDialog}
+                ) : (
+                  <>
+                    {serversError && (
+                      <div
+                        className={`mcp-inline-error-strip${serversTone === 'warn' ? ' mcp-inline-error-strip--warn' : ''}`}
+                        role="alert"
                       >
-                        <Plus size={14} aria-hidden="true" />
-                        <span>{t('addServer')}</span>
-                      </button>
-                    }
-                  >
-                    {t('noServersHint')}
-                  </EmptyState>
-                ) : filteredServers.length === 0 ? (
+                        <div className="mcp-inline-error-body">
+                          <Info size={14} className="mcp-inline-error-icon" aria-hidden="true" />
+                          <span className="mcp-inline-error-msg">{serversError}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="secondary-button compact-button"
+                          onClick={() => void loadData()}
+                        >
+                          <RotateCw size={12} aria-hidden="true" />
+                          <span>{t('retry')}</span>
+                        </button>
+                      </div>
+                    )}
+                    {servers.length === 0 ? (
+                      <EmptyState
+                        variant="compact"
+                        icon={<Blocks size={28} />}
+                        title={t('noServers')}
+                        action={
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={handleOpenAddDialog}
+                          >
+                            <Plus size={14} aria-hidden="true" />
+                            <span>{t('addServer')}</span>
+                          </button>
+                        }
+                      >
+                        {t('noServersHint')}
+                      </EmptyState>
+                    ) : filteredServers.length === 0 ? (
                   <EmptyState
                     variant="compact"
                     title={t('noSearchResults')}
@@ -1057,6 +1069,8 @@ export function McpSkillsPage() {
                       </button>
                     );
                   })
+                )}
+                  </>
                 )}
               </div>
             </aside>
@@ -1373,30 +1387,37 @@ export function McpSkillsPage() {
                       <div key={idx} className="mcp-skeleton-card" />
                     ))}
                   </div>
-                ) : skillsError ? (
-                  <div className="mcp-inline-error-strip" role="alert" style={{ marginBottom: 16 }}>
-                    <div className="mcp-inline-error-body">
-                      <Info size={14} className="mcp-inline-error-icon" aria-hidden="true" />
-                      <span className="mcp-inline-error-msg">{skillsError}</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="secondary-button compact-button"
-                      onClick={() => void loadData()}
-                    >
-                      <RotateCw size={12} aria-hidden="true" />
-                      <span>{t('retry')}</span>
-                    </button>
-                  </div>
-                ) : skills.length === 0 ? (
-                  <EmptyState
-                    variant="compact"
-                    icon={<Sparkles size={36} />}
-                    title={t('noSkills')}
-                  >
-                    {t('noSkillsHint')}
-                  </EmptyState>
-                ) : filteredSkills.length === 0 ? (
+                ) : (
+                  <>
+                    {skillsError && (
+                      <div
+                        className={`mcp-inline-error-strip${skillsTone === 'warn' ? ' mcp-inline-error-strip--warn' : ''}`}
+                        role="alert"
+                        style={{ marginBottom: 16 }}
+                      >
+                        <div className="mcp-inline-error-body">
+                          <Info size={14} className="mcp-inline-error-icon" aria-hidden="true" />
+                          <span className="mcp-inline-error-msg">{skillsError}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="secondary-button compact-button"
+                          onClick={() => void loadData()}
+                        >
+                          <RotateCw size={12} aria-hidden="true" />
+                          <span>{t('retry')}</span>
+                        </button>
+                      </div>
+                    )}
+                    {skills.length === 0 ? (
+                      <EmptyState
+                        variant="compact"
+                        icon={<Sparkles size={36} />}
+                        title={t('noSkills')}
+                      >
+                        {t('noSkillsHint')}
+                      </EmptyState>
+                    ) : filteredSkills.length === 0 ? (
                   <EmptyState
                     variant="compact"
                     title={t('noSkillSearchResults')}
@@ -1472,6 +1493,8 @@ export function McpSkillsPage() {
                       );
                     })}
                   </div>
+                )}
+                  </>
                 )}
               </div>
 

@@ -467,6 +467,11 @@
     line-height: 1.4;
   }
 
+  .mcp-inline-error-strip--warn {
+    background: color-mix(in srgb, var(--warning-color, #f59e0b) 10%, var(--bg-secondary));
+    border-color: color-mix(in srgb, var(--warning-color, #f59e0b) 25%, transparent);
+  }
+
   .mcp-inline-error-body {
     display: flex;
     align-items: center;
@@ -478,6 +483,10 @@
   .mcp-inline-error-icon {
     flex-shrink: 0;
     color: var(--danger-color, #ef4444);
+  }
+
+  .mcp-inline-error-strip--warn .mcp-inline-error-icon {
+    color: var(--warning-color, #f59e0b);
   }
 
   .mcp-inline-error-msg {
