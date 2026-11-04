@@ -6670,31 +6670,54 @@ textarea:focus-visible {
   overflow-x: hidden !important;
 }
 
-.codex-catalog-row {
-  display: flex;
-  align-items: stretch;
+.codex-catalog-models > .codex-catalog-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 4px;
+  width: 100%;
 }
 
 .codex-catalog-row > button[role='option'] {
-  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+  width: 100%;
   min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.codex-catalog-row > button[role='option']:hover {
+  background: var(--color-surface);
+}
+
+.codex-catalog-row > button[role='option'].active {
+  border-color: var(--color-border-default);
+  background: var(--ui-accent-soft);
 }
 
 .codex-catalog-order {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
+  padding-right: 2px;
 }
 
 .codex-catalog-order button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 18px;
+  width: 24px;
+  height: 20px;
   padding: 0;
+  flex: 0 0 auto;
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
