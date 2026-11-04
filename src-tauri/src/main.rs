@@ -2964,6 +2964,8 @@ fn main() {
             apply_agent_config_template,
             refresh_agent_config_statuses,
             get_agent_models,
+            read_agent_model_fallback,
+            save_agent_model_fallback,
             check_pi_provider_update,
             install_pi_provider,
             update_pi_provider,

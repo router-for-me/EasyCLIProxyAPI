@@ -480,6 +480,7 @@ function createState(scenario: BrowserMockScenario) {
       requests: { 'proxy-url': '', streaming: { 'bootstrap-retries': 0 } },
       observability: { logs: { debug: false, 'logging-to-file': true, 'logs-max-total-size-mb': 256, 'error-logs-max-files': 10 }, usage: { 'usage-statistics-enabled': true, 'redis-usage-queue-retention-seconds': 60 } },
     } as JsonObject,
+    agentModelFallbacks: {} as Record<string, { client: string; slot: string; primary: string; fallbacks: string[] }>,
     softwareSettings: {
       closeBehavior: 'ask',
       autostartEnabled: false,
@@ -897,6 +898,18 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   }
   if (method === 'GET' && path === '/credentials/models') return mockModelDefinitions();
   if (method === 'GET' && path.startsWith('/routing/model-definitions/')) return mockModelDefinitions();
+  if (method === 'GET' && path === '/config/routing') return clone(asObject(state.extendedConfig.routing));
+  if (path === '/config/routing/model-fallback') {
+    const routing = asObject(state.extendedConfig.routing);
+    if (method === 'GET') {
+      if (!routing['model-fallback']) throw new Error('Management API error (404): not_found');
+      return clone(asObject(routing['model-fallback']));
+    }
+    if (method === 'PUT') {
+      state.extendedConfig.routing = { ...routing, 'model-fallback': clone(asObject(body)) };
+      return { status: 'ok', 'config-version': 8 };
+    }
+  }
   if (method === 'GET' && path === '/config/oauth/excluded-models') {
     return clone(state.oauthExcludedModels);
   }
@@ -1705,7 +1718,37 @@ export function createBrowserMockRuntime(
         if (!state.coreStatus.ready) throw new Error('Browser Mock: the core is not ready');
         return invoke('get_agent_models', {});
       }
+      case 'read_agent_model_fallback': {
+        const model = readString(payload.model);
+        const entry = state.agentModelFallbacks[model];
+        const owned = entry?.client === payload.client && entry?.slot === payload.slot ? entry : undefined;
+        return { model, primary: owned?.primary ?? model, fallbacks: owned?.fallbacks ?? [], revision: JSON.stringify([state.extendedConfig, state.agentModelFallbacks]) };
+      }
+      case 'save_agent_model_fallback': {
+        const currentRevision = JSON.stringify([state.extendedConfig, state.agentModelFallbacks]);
+        if (payload.revision !== currentRevision) throw new Error('Kernel configuration changed. Refresh the mapping and retry');
+        const primary = readString(payload.primary).trim();
+        const fallbacks = asArray(payload.fallbacks).map(item => readString(item).trim());
+        const names = fallbacks.map(item => item.toLowerCase());
+        if (!primary || fallbacks.length > 8 || names.some(item => !item || item === primary.toLowerCase()) || new Set(names).size !== names.length) throw new Error('Invalid model fallback chain');
+        if (!fallbacks.length) return { model: primary, primary, fallbacks, revision: currentRevision };
+        const client = readString(payload.client), slot = readString(payload.slot);
+        const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([client, slot, primary, fallbacks]))));
+        const suffix = Array.from(hash).map(byte => String(byte).padStart(3, '0')).join('');
+        const model = `claude-cpa-fallback-${suffix}`;
+        const routing = asObject(state.extendedConfig.routing);
+        const policy = asObject(routing['model-fallback']);
+        const hops = readNumber(policy['max-hops'], 2) || 2;
+        if (fallbacks.length > hops) throw new Error(`Increase routing.model-fallback.max-hops (currently ${hops}) before using this chain`);
+        state.agentModelFallbacks[model] = { client, slot, primary, fallbacks };
+        state.extendedConfig.routing = { ...routing, 'model-fallback': {
+          ...policy, enabled: true, chains: { ...asObject(policy.chains), [model]: fallbacks },
+        } };
+        return { model, primary, fallbacks, revision: JSON.stringify([state.extendedConfig, state.agentModelFallbacks]) };
+      }
       case 'get_agent_models': return [
+        ...Object.entries(state.agentModelFallbacks).map(([name, entry]) => ({ name, alias: entry.primary, isAlias: true, contextWindow: 200_000 })),
+
         { name: 'gpt-5.2-codex', alias: 'codex-latest', displayName: 'GPT-5.2 Codex', isAlias: true, contextWindow: 272_000, inputModalities: ['text', 'image'] },
         { name: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', contextWindow: 200_000, inputModalities: ['text', 'image'] },
         { name: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', contextWindow: 200_000, inputModalities: ['text', 'image'] },
@@ -1714,7 +1757,18 @@ export function createBrowserMockRuntime(
         { name: 'deepseek-chat', displayName: 'DeepSeek Chat', contextWindow: 64_000, inputModalities: ['text'] },
       ];
       case 'update_agent_config':
-      case 'apply_agent_config_template':
+      case 'apply_agent_config_template': {
+        const status = state.agentStatuses.find(item => item.id === payload.client);
+        if (status) {
+          Object.assign(status, {
+            currentModel: readString(payload.model), appliedModel: readString(payload.model),
+            configured: true, configurationSynchronized: true, connectionState: 'configured',
+            ...(payload.claudeCodeModelMappings ? { claudeCodeModelMappings: clone(asObject(payload.claudeCodeModelMappings)) } : {}),
+            ...(payload.claudeDesktopModelMappings ? { claudeDesktopModelMappings: clone(asObject(payload.claudeDesktopModelMappings)) } : {}),
+          });
+        }
+        return createActionResult(payload);
+      }
       case 'install_pi_provider':
       case 'update_pi_provider':
       case 'repair_pi_provider':

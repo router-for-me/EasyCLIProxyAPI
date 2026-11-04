@@ -1,0 +1,16 @@
+@layer components {
+  .agent-model-route { display: grid; min-width: 0; gap: 6px; }
+  .agent-model-route-details { display: grid; min-width: 0; gap: 10px; padding-top: 6px; }
+  .agent-model-route-target { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; min-width: 0; }
+  .agent-model-route-index { grid-column: 1 / -1; color: var(--color-text-muted); font-size: var(--font-size-caption); }
+  .agent-model-route-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .agent-model-route-details .agent-model-hint { margin: 0; }
+  @media (max-width: 640px) {
+    .agent-model-route-target { grid-template-columns: minmax(0, 1fr); }
+  }
+}
+@layer components {
+  .claude-role-row:has(.agent-model-route) { align-items: start; }
+  .claude-role-row:has(.agent-model-route) > strong,
+  .claude-role-row:has(.agent-model-route) > .claude-inline-context { padding-top: 10px; }
+}
