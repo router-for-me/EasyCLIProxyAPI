@@ -44,6 +44,8 @@ mod usage;
 mod windows_frame;
 mod window_material;
 mod window_activity;
+#[cfg(any(windows, test))]
+mod webview_recovery;
 
 #[cfg(test)]
 use configuration_watcher::nearest_existing_watch_directory;
@@ -2650,6 +2652,16 @@ fn main() {
             return;
         }
 
+        #[cfg(windows)]
+        if matches!(
+            event,
+            tauri::WindowEvent::Resized(_)
+                | tauri::WindowEvent::ScaleFactorChanged { .. }
+                | tauri::WindowEvent::Focused(true)
+        ) {
+            webview_recovery::request(window.app_handle());
+        }
+
         if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
             window_activity::sync(window.app_handle());
         }
@@ -2722,6 +2734,7 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 windows_frame::install(&window)?;
                 window.set_decorations(false)?;
+                webview_recovery::install(&window)?;
             }
             if let Some(window) = app.get_webview_window("main") {
                 window.set_background_color(Some(tauri::window::Color(255, 255, 255, 255)))?;
@@ -3101,6 +3114,8 @@ fn main() {
             ..
         } => show_main_window(app_handle),
         tauri::RunEvent::ExitRequested { api, code, .. } => {
+            #[cfg(windows)]
+            webview_recovery::stop(app_handle);
             let process_state = app_handle.state::<CoreProcessState>();
             if process_state.shutdown_complete.load(Ordering::Acquire) {
                 return;
@@ -3129,6 +3144,8 @@ fn main() {
             });
         }
         tauri::RunEvent::Exit => {
+            #[cfg(windows)]
+            webview_recovery::stop(app_handle);
             usage::stop_usage_collector(app_handle);
             let deepseek_process_state = app_handle.state::<DeepSeekHarnessProcessState>();
             if let Err(error) = stop_managed_deepseek_harness(deepseek_process_state.inner()) {
