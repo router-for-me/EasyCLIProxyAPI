@@ -264,8 +264,8 @@ function AppContent() {
   }, [active, coreReady]);
 
   useEffect(() => {
-    if (!coreReady) void closePluginWebview().catch(() => undefined);
-  }, [coreReady]);
+    if (status !== null && !status.ready) void closePluginWebview().catch(() => undefined);
+  }, [status]);
 
   useEffect(() => {
     if (pluginEntriesFetched && isPluginRoute(active) && !pluginEntry) {
