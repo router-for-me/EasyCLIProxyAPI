@@ -121,7 +121,7 @@ pub fn read_core_hardening(document: &serde_norway::Value) -> ReverseProxyHarden
 
 pub fn apply_core_hardening() -> Result<ReverseProxyHardening, String> {
     let install_dir = crate::core_runtime::core_install_dir()?;
-    let config_path = install_dir.join(super::CORE_CONFIG_FILE);
+    let config_path = install_dir.join(crate::CORE_CONFIG_FILE);
     if !config_path.is_file() {
         return Err("Kernel configuration has not been generated. Start the CPA kernel first".to_string());
     }
@@ -645,7 +645,10 @@ pub async fn reverse_proxy_get_state(
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
     let mut current = state.get_state()?;
-    current.hardening = read_installed_core_hardening();
+    let previous_restart_required = current.hardening.restart_required;
+    let mut hardening = read_installed_core_hardening();
+    hardening.restart_required = previous_restart_required;
+    current.hardening = hardening;
     if let Ok(mut guard) = state.inner.lock() {
         guard.hardening = current.hardening.clone();
     }
@@ -1274,5 +1277,28 @@ server:
         assert!(!h.loopback_bind);
         assert!(!h.trusted_proxies);
         assert!(!h.restart_required);
+    }
+
+    #[tokio::test]
+    async fn test_reverse_proxy_get_state_preserves_restart_required() {
+        use tauri::Manager;
+        let app = tauri::test::mock_app();
+        let manager = ReverseProxyManagerState::new();
+        {
+            let mut guard = manager.inner.lock().unwrap();
+            guard.hardening.restart_required = true;
+        }
+        app.manage(manager);
+        let state = app.state::<ReverseProxyManagerState>();
+        let res = reverse_proxy_get_state(state).await.unwrap();
+        assert!(res.hardening.restart_required);
+
+        // When not required, it remains false
+        let app2 = tauri::test::mock_app();
+        let manager2 = ReverseProxyManagerState::new();
+        app2.manage(manager2);
+        let state2 = app2.state::<ReverseProxyManagerState>();
+        let res2 = reverse_proxy_get_state(state2).await.unwrap();
+        assert!(!res2.hardening.restart_required);
     }
 }
