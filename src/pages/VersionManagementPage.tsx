@@ -20,8 +20,9 @@ import type {
   BundledCoreInfo,
   CoreVersionOption,
 } from '../services/coreVersions';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getVersion } from '../services/platform';
+import { getUpdateChannel, listUpdateChannels, setUpdateChannel } from '../services/appUpdates';
 import {
   Download,
   ExternalLink,
@@ -78,7 +79,7 @@ export function displayAppVersion(version: string) {
 }
 
 export function VersionManagementPage() {
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const {
     info: appUpdate,
     error: appUpdateError,
@@ -443,6 +444,66 @@ export function VersionManagementPage() {
   const resolvedAppVersion = appUpdate?.currentVersion || installedAppVersion;
   const currentAppVersion = resolvedAppVersion ? displayAppVersion(resolvedAppVersion) : t('common.detecting');
   const latestAppVersion = appUpdate?.latestVersion ? displayAppVersion(appUpdate.latestVersion) : '';
+  const latestAppPublishedAt = appUpdate?.publishedAt && Number.isFinite(Date.parse(appUpdate.publishedAt))
+    ? formatDate(appUpdate.publishedAt, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : null;
+  const [updateChannel, setUpdateChannelState] = useState('');
+  const [channelDraft, setChannelDraft] = useState('');
+  const [availableChannels, setAvailableChannels] = useState<string[]>(['stable', 'preview']);
+  const [channelListLoading, setChannelListLoading] = useState(true);
+  const [channelError, setChannelError] = useState('');
+  const activeChannel = updateChannel || appUpdate?.updateChannel || '';
+  const currentAppBuiltAt = appUpdate?.currentBuildAt && Number.isFinite(Date.parse(appUpdate.currentBuildAt))
+    ? formatDate(appUpdate.currentBuildAt, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : null;
+  const appIsPreview = /preview/i.test(resolvedAppVersion || '') || /preview/i.test(appUpdate?.latestVersion || '');
+
+  useEffect(() => {
+    let cancelled = false;
+    setChannelListLoading(true);
+    void listUpdateChannels()
+      .then((channels) => {
+        if (!cancelled && Array.isArray(channels) && channels.length > 0) {
+          setAvailableChannels(channels);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setChannelListLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeChannel) setChannelDraft(activeChannel);
+  }, [activeChannel]);
+
+  const channelOptions: SelectMenuOption[] = useMemo(
+    () => [
+      { value: 'stable', label: t('appUpdate.channel.stable') },
+      { value: 'preview', label: t('appUpdate.channel.preview') },
+      ...availableChannels
+        .filter((channel) => channel !== 'stable' && channel !== 'preview')
+        .map((channel) => ({ value: channel, label: channel })),
+    ],
+    [availableChannels, t],
+  );
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
   const appVersionStatusLabel: string | null = appUpdateTask.running
@@ -454,6 +515,9 @@ export function VersionManagementPage() {
         : checkingAppUpdate || !appUpdate
           ? t('appUpdate.phase.checking')
           : null;
+  const resolvedAppVersionStatusLabel = appIsPreview && appHasUpdate && latestAppPublishedAt
+    ? t('appUpdate.buildTime')
+    : appVersionStatusLabel;
   const appVersionStatusTone = appUpdateError
     ? 'error'
     : appUpdateTask.running || checkingAppUpdate || !appUpdate
@@ -526,6 +590,19 @@ export function VersionManagementPage() {
     setCustomMirrorDialogOpen(false);
     setCustomMirrorDraft('');
     setVersionSourceError('');
+  };
+
+  const applyChannel = async (next: string) => {
+    const value = next.trim();
+    if (!value) return;
+    setChannelError('');
+    try {
+      const applied = await setUpdateChannel(value);
+      setUpdateChannelState(applied);
+      await (checkAppUpdate)();
+    } catch (error) {
+      setChannelError(String(error));
+    }
   };
 
   const downloadSourceOptions: SelectMenuOption[] = [
@@ -602,25 +679,44 @@ export function VersionManagementPage() {
           <div className="version-item-content">
             <div className="version-card-top">
               <h2>{t('kernel.versions.appCardTitle')}</h2>
-              {appVersionStatusLabel ? (
-                <span className={`version-row-status ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
-                  {appVersionStatusLabel}
+              {resolvedAppVersionStatusLabel ? (
+                <span className={`version-row-status ${appVersionStatusTone}`} title={appUpdateError || resolvedAppVersionStatusLabel}>
+                  {resolvedAppVersionStatusLabel}
                 </span>
               ) : null}
             </div>
 
-            <dl className="version-metrics-comparison">
-              <div className="surface-section surface-muted version-metric-tile">
-                <dt className="version-metric-label">{t('appUpdate.current')}</dt>
-                <dd className="version-metric-value">{currentAppVersion}</dd>
-              </div>
-              <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
-                <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
-                <dd className="version-metric-value">
-                  {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
-                </dd>
-              </div>
-            </dl>
+            {appIsPreview ? (
+              <dl className="version-metrics-comparison">
+                <div className="surface-section surface-muted version-metric-tile">
+                  <dt className="version-metric-label">{t('appUpdate.currentBuild')}</dt>
+                  <dd className="version-metric-value" title={currentAppBuiltAt || ''}>
+                    {currentAppBuiltAt ?? t('common.detecting')}
+                  </dd>
+                  <span className="version-metric-sub">{currentAppVersion}</span>
+                </div>
+                <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
+                  <dt className="version-metric-label">{t('appUpdate.buildTime')}</dt>
+                  <dd className="version-metric-value" title={latestAppPublishedAt || ''}>
+                    {latestAppPublishedAt ?? (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+                  </dd>
+                  <span className="version-metric-sub">{latestAppVersion || currentAppVersion}</span>
+                </div>
+              </dl>
+            ) : (
+              <dl className="version-metrics-comparison">
+                <div className="surface-section surface-muted version-metric-tile">
+                  <dt className="version-metric-label">{t('appUpdate.current')}</dt>
+                  <dd className="version-metric-value">{currentAppVersion}</dd>
+                </div>
+                <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
+                  <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
+                  <dd className="version-metric-value">
+                    {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+                  </dd>
+                </div>
+              </dl>
+            )}
 
             <div className="app-version-info-section">
               <MessageNotice message={appUpdateError} />
@@ -630,8 +726,35 @@ export function VersionManagementPage() {
                   {appUpdate?.autoUpdateSupported
                     ? t('kernel.versions.autoUpdateSupported')
                     : t('appUpdate.manualFallback')}
+                  {appIsPreview && latestAppPublishedAt
+                    ? ` · ${t('appUpdate.publishedAt', { date: latestAppPublishedAt })}`
+                    : ''}
                 </span>
               </div>
+              {activeChannel.startsWith('preview') ? (
+                <div className="version-alert-banner neutral version-channel-row">
+                  <Info size={14} aria-hidden="true" />
+                  <span>{t('appUpdate.previewChannel', { channel: activeChannel })}</span>
+                  <SelectMenu
+                    className="version-channel-select"
+                    value={channelDraft}
+                    disabled={channelListLoading}
+                    ariaLabel={t('appUpdate.previewChannelSwitch')}
+                    onChange={setChannelDraft}
+                    options={channelOptions}
+                    maxDropdownHeight={260}
+                  />
+                  <button
+                    type="button"
+                    className="link-button muted"
+                    disabled={!channelDraft || channelDraft === activeChannel || channelListLoading}
+                    onClick={() => void applyChannel(channelDraft)}
+                  >
+                    {t('appUpdate.previewChannelSwitch')}
+                  </button>
+                </div>
+              ) : null}
+              {channelError ? <MessageNotice message={channelError} /> : null}
             </div>
           </div>
 

@@ -162,4 +162,36 @@ describe('跨平台便携更新清单', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test('only-preview 标签保留发布标签并引用带版本号文件名', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'easycli-preview-manifest-test-'));
+    try {
+      for (const arch of ['amd64', 'aarch64']) {
+        await writeFile(
+          join(root, `EasyCLIProxyAPI-v0.3.6-preview-Windows-${arch}.zip`),
+          `windows ${arch} preview package`,
+        );
+      }
+      const manifest = await generatePortableUpdateManifest({
+        directory: root,
+        output: join(root, 'portable-update-windows.json'),
+        repository: 'router-for-me/EasyCLIProxyAPI',
+        tag: 'only-preview',
+        version: '0.3.6-preview',
+        publishedAt: '2026-11-03T00:00:00.000Z',
+      });
+
+      for (const arch of ['amd64', 'aarch64']) {
+        expect(manifest.assets[`windows-${arch}`].url).toEndWith(
+          `/releases/download/only-preview/EasyCLIProxyAPI-v0.3.6-preview-Windows-${arch}.zip`,
+        );
+      }
+      expect(manifest.releaseUrl).toBe(
+        'https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/only-preview',
+      );
+      expect(manifest.version).toBe('0.3.6-preview');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

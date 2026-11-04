@@ -42,16 +42,16 @@ describe('Muse quota', () => {
 
   it('keeps absent quota unknown, clamps usage, and ignores invalid numeric fields', () => {
     expect(quotaRowsFor('meta', {})).toEqual([
-      { label: 'Usage window', remainingPercent: null, resetAtMs: undefined },
-      { label: 'Weekly quota', remainingPercent: null, resetAtMs: undefined },
+      { label: 'Usage limit', remainingPercent: null, resetAtMs: undefined },
+      { label: 'Weekly limit', remainingPercent: null, resetAtMs: undefined },
     ]);
     expect(quotaRowsFor('meta', payload)).toEqual([
-      { label: '5-hour window', remainingPercent: 75, resetAtMs: 1800000000000 },
-      { label: 'Weekly quota', remainingPercent: 40, resetAtMs: 1800600000000 },
+      { label: '5-hour limit', remainingPercent: 75, resetAtMs: 1800000000000 },
+      { label: 'Weekly limit', remainingPercent: 40, resetAtMs: 1800600000000 },
     ]);
     for (const [used, expected] of [[-5, 100], [150, 0], ['', null], [true, null], [Infinity, null], [{ val: 1 }, null]] as const) {
       const rows = quotaRowsFor('meta', { subs_usage: { window: { used_percent: used, resets_at: -1, window_duration_mins: 90 } } });
-      expect(rows[0]).toEqual({ label: '90-minute window', remainingPercent: expected, resetAtMs: undefined });
+      expect(rows[0]).toEqual({ label: '90-minute limit', remainingPercent: expected, resetAtMs: undefined });
     }
   });
 

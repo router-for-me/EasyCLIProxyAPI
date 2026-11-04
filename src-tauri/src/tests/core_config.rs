@@ -2066,6 +2066,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         api_access_remarks: Vec::new(),
         management_secret_key: String::new(),
         debug: true,
+        update_channel: "stable".to_string(),
         commercial_mode: true,
         logging_to_file: true,
         logs_max_total_size_mb: 512,

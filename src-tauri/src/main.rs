@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agents;
+mod agent_skills;
 mod agent_usage;
 mod agent_usage_store;
 mod app_settings;
@@ -17,6 +18,7 @@ mod instance_lock;
 #[cfg(any(target_os = "linux", test))]
 mod linux_graphics;
 mod management_api;
+mod mcp_servers;
 mod network_proxy;
 #[cfg(any(
     target_os = "linux",
@@ -30,6 +32,7 @@ mod plugins;
 mod privacy_mode;
 mod progress;
 mod provider_health;
+mod reverse_proxy;
 #[cfg(any(
     target_os = "linux",
     target_os = "macos",
@@ -122,6 +125,12 @@ const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIP
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-linux.json";
 #[cfg(target_os = "macos")]
 const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-darwin-v2.json";
+#[cfg(windows)]
+const APP_UPDATE_MANIFEST_FILE: &str = "portable-update-windows.json";
+#[cfg(target_os = "linux")]
+const APP_UPDATE_MANIFEST_FILE: &str = "portable-update-linux.json";
+#[cfg(target_os = "macos")]
+const APP_UPDATE_MANIFEST_FILE: &str = "portable-update-darwin-v2.json";
 const APP_RELEASE_DOWNLOAD_PREFIX: &str =
     "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/";
 #[cfg(windows)]
@@ -469,9 +478,11 @@ struct AppUpdateInfo {
     release_url: String,
     release_notes: HashMap<String, String>,
     published_at: String,
+    current_build_at: Option<String>,
     auto_update_supported: bool,
     download_size_bytes: Option<u64>,
     unsupported_reason: Option<String>,
+    update_channel: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -509,6 +520,8 @@ struct PortableAppManifest {
     schema_version: u32,
     application: String,
     version: String,
+    #[serde(default)]
+    built_at: Option<String>,
     platform: String,
     arch: String,
     #[serde(default)]
@@ -647,6 +660,8 @@ struct GuiConfigFile {
     api_access_remarks: Vec<GuiApiAccessRemark>,
     management_secret_key: String,
     debug: bool,
+    #[serde(default = "default_update_channel")]
+    update_channel: String,
     commercial_mode: bool,
     logging_to_file: bool,
     logs_max_total_size_mb: u32,
@@ -958,6 +973,7 @@ impl Default for GuiConfigFile {
             api_access_remarks: Vec::new(),
             management_secret_key: LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string(),
             debug: false,
+            update_channel: default_update_channel(),
             commercial_mode: false,
             logging_to_file: false,
             logs_max_total_size_mb: DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
@@ -1261,6 +1277,15 @@ fn default_claude_auto_compact_pct() -> u8 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_update_channel() -> String {
+    // A preview binary keeps following the preview channel until switched explicitly.
+    if env!("CARGO_PKG_VERSION").to_ascii_lowercase().contains("preview") {
+        "preview".to_string()
+    } else {
+        "stable".to_string()
+    }
 }
 
 impl ClaudeDesktopModelMappings {
@@ -2246,6 +2271,13 @@ impl GuiConfigState {
         self.set_download_candidate(VersionDownloadCandidate::builtin(download_source))
     }
 
+    fn set_update_channel(&self, update_channel: &str) -> Result<GuiConfigFile, String> {
+        self.update(|config| {
+            config.update_channel = update_channel.to_string();
+            Ok(())
+        })
+    }
+
     fn set_download_candidate(
         &self,
         candidate: VersionDownloadCandidate,
@@ -2607,7 +2639,8 @@ fn main() {
             initial_window_size,
             initial_window_position,
         ))
-        .manage(AgentConfigStatusCache::default());
+        .manage(AgentConfigStatusCache::default())
+        .manage(reverse_proxy::ReverseProxyManagerState::default());
 
     let app = app.on_window_event(|window, event| {
         if window.label() != "main" {
@@ -2887,6 +2920,16 @@ fn main() {
             agent_usage::sync_agent_usage,
             agent_usage::get_agent_usage_storage,
             agent_usage::clear_agent_usage_history,
+            mcp_servers::list_mcp_servers,
+            mcp_servers::save_mcp_server,
+            mcp_servers::delete_mcp_server,
+            mcp_servers::set_mcp_server_enabled,
+            mcp_servers::import_mcp_servers_json,
+            mcp_servers::export_mcp_servers_json,
+            mcp_servers::open_mcp_skills_directory,
+            agent_skills::list_skills,
+            agent_skills::get_skill_detail,
+            agent_skills::set_skill_enabled,
             resolve_api_access_remarks,
             save_api_access_remark,
             set_app_locale,
@@ -3001,6 +3044,9 @@ fn main() {
             add_custom_download_mirror,
             remove_custom_download_mirror,
             set_prefer_gitcode_downloads,
+            get_update_channel,
+            list_update_channels,
+            set_update_channel,
             check_app_update,
             get_app_update_task,
             start_app_update,
@@ -3036,7 +3082,11 @@ fn main() {
             codex_sessions::apply_codex_session_index_cleanup,
             codex_sessions::context::get_codex_session_context,
             codex_sessions::context::save_codex_session_context,
-            codex_sessions::context::open_codex_session_rollout
+            codex_sessions::context::open_codex_session_rollout,
+            reverse_proxy::reverse_proxy_get_state,
+            reverse_proxy::reverse_proxy_apply,
+            reverse_proxy::reverse_proxy_start,
+            reverse_proxy::reverse_proxy_stop
         ])
         .build(context)
         .expect("failed to build app");

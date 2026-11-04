@@ -968,7 +968,7 @@ fn opencode_agent_config_preserves_other_providers() {
     let models = test_agent_models(&["gpt-test", "deepseek-test"]);
     let rendered = build_opencode_agent_config(
             Some(
-                r#"{"theme":"dark","provider":{"other":{"npm":"other"},"cpa-gui":{"custom":"keep","options":{"timeout":30}}}}"#,
+                r#"{"theme":"dark","provider":{"other":{"npm":"other"},"cpa-gui":{"custom":"keep","options":{"timeout":30},"models":{"gpt-test":{"custom_field":"preserve_me","name":"old-name"}}}}}"#,
             ),
             "http://127.0.0.1:8317/v1",
             DEFAULT_API_KEY,
@@ -993,8 +993,196 @@ fn opencode_agent_config_preserves_other_providers() {
         "http://127.0.0.1:8317/v1"
     );
     assert_eq!(value["model"], "cpa-gui/gpt-test");
-    assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["gpt-test"].is_object());
+    let gpt_entry = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["gpt-test"];
+    assert!(gpt_entry.is_object());
+    assert_eq!(gpt_entry["name"], "gpt-test");
+    assert_eq!(gpt_entry["custom_field"], "preserve_me");
+    assert!(gpt_entry.get("attachment").is_none());
+    assert_eq!(
+        gpt_entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
     assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["deepseek-test"].is_object());
+}
+
+#[test]
+fn opencode_agent_config_declares_attachment_and_modalities_for_models() {
+    let mut multimodal_model = test_agent_models(&["custom-vision"])[0].clone();
+    multimodal_model.input_modalities = Some(vec!["text".to_string(), "image".to_string()]);
+
+    let models = vec![
+        multimodal_model,
+        test_agent_models(&["gemini-3.1-flash-image"])[0].clone(),
+        test_agent_models(&["deepseek-chat"])[0].clone(),
+    ];
+
+    let rendered = build_opencode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "custom-vision",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let provider_models = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"];
+
+    // a model with input_modalities Some(["text","image"]) gets attachment true and modalities input ["text","image","pdf"], output ["text"]
+    let custom_entry = &provider_models["custom-vision"];
+    assert_eq!(custom_entry["name"], "custom-vision");
+    assert_eq!(custom_entry["attachment"], true);
+    assert_eq!(
+        custom_entry["modalities"],
+        serde_json::json!({
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
+        })
+    );
+
+    // name "gemini-3.1-flash-image" gets output ["text","image"]
+    let gemini_entry = &provider_models["gemini-3.1-flash-image"];
+    assert_eq!(gemini_entry["name"], "gemini-3.1-flash-image");
+    assert_eq!(gemini_entry["attachment"], true);
+    assert_eq!(
+        gemini_entry["modalities"],
+        serde_json::json!({
+            "input": ["text", "image", "pdf"],
+            "output": ["text", "image"]
+        })
+    );
+
+    // name "deepseek-chat" (no modalities) gets modalities input ["text"] and no attachment key
+    let deepseek_entry = &provider_models["deepseek-chat"];
+    assert_eq!(deepseek_entry["name"], "deepseek-chat");
+    assert!(deepseek_entry.get("attachment").is_none());
+    assert_eq!(
+        deepseek_entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
+}
+
+#[test]
+fn opencode_agent_config_preserves_existing_user_fields_under_model_entries() {
+    let models = test_agent_models(&["gpt-test", "deepseek-chat"]);
+    let existing = serde_json::json!({
+        "provider": {
+            MANAGED_AGENT_PROVIDER_ID: {
+                "models": {
+                    "gpt-test": {
+                        "name": "Outdated Display",
+                        "customField": "preserved-value",
+                        "temperature": 0.3
+                    },
+                    "deepseek-chat": {
+                        "name": "Old deepseek",
+                        "customField": "preserved",
+                        "attachment": true
+                    }
+                }
+            }
+        }
+    })
+    .to_string();
+
+    let rendered = build_opencode_agent_config(
+        Some(&existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-test",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let gpt_entry = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["gpt-test"];
+
+    assert_eq!(gpt_entry["name"], "gpt-test");
+    assert_eq!(gpt_entry["customField"], "preserved-value");
+    assert_eq!(gpt_entry["temperature"], 0.3);
+    assert!(gpt_entry.get("attachment").is_none());
+    assert_eq!(
+        gpt_entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
+
+    let deepseek_entry = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["deepseek-chat"];
+    assert_eq!(deepseek_entry["name"], "deepseek-chat");
+    assert_eq!(deepseek_entry["customField"], "preserved");
+    // Pure text model omits attachment even if previously present in existing config
+    assert!(deepseek_entry.get("attachment").is_none());
+    assert_eq!(
+        deepseek_entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
+}
+
+#[test]
+fn opencode_model_entry_heuristics_and_modality_resolution() {
+    // claude heuristic image
+    let claude = test_agent_models(&["claude-3-7-sonnet"])[0].clone();
+    let entry = opencode_model_entry(&claude, None);
+    assert_eq!(entry["attachment"], true);
+    assert_eq!(
+        entry["modalities"],
+        serde_json::json!({
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
+        })
+    );
+
+    // gpt-4o heuristic image
+    let gpt4o = test_agent_models(&["gpt-4o-mini"])[0].clone();
+    let entry = opencode_model_entry(&gpt4o, None);
+    assert_eq!(entry["attachment"], true);
+    assert_eq!(
+        entry["modalities"],
+        serde_json::json!({
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
+        })
+    );
+
+    // declared input_modalities overrides heuristic (e.g. declared text-only for gpt-4o)
+    let mut gpt4o_text_only = test_agent_models(&["gpt-4o"])[0].clone();
+    gpt4o_text_only.input_modalities = Some(vec!["text".to_string()]);
+    let entry = opencode_model_entry(&gpt4o_text_only, None);
+    assert!(entry.get("attachment").is_none());
+    assert_eq!(
+        entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
+
+    // image output families: dall-e, flux, imagen, seedream, gpt-image
+    for model_name in [
+        "dall-e-3",
+        "flux-1-schnell",
+        "imagen-3.0-generate-002",
+        "seedream-v1",
+        "gpt-image-1",
+    ] {
+        let model = test_agent_models(&[model_name])[0].clone();
+        let entry = opencode_model_entry(&model, None);
+        assert_eq!(entry["attachment"], true, "Failed for {model_name}");
+        assert_eq!(
+            entry["modalities"]["output"],
+            serde_json::json!(["text", "image"]),
+            "Failed output for {model_name}"
+        );
+    }
 }
 
 #[test]

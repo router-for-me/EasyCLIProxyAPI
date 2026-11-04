@@ -390,9 +390,13 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
         }
         "copilot" => {
             extensions.push("json");
-            roots.push(home.join(".copilot"));
+            roots.push(home.join(".copilot").join("session-state"));
             if let Some(app_data) = env::var_os("APPDATA") {
-                roots.push(PathBuf::from(app_data).join("GitHub Copilot"));
+                roots.push(
+                    PathBuf::from(app_data)
+                        .join("GitHub Copilot")
+                        .join("session-state"),
+                );
             }
         }
         _ => return Vec::new(),
@@ -1108,6 +1112,19 @@ mod tests {
         }
         assert_eq!(source_files(&home, "gemini").len(), 1);
         assert_eq!(source_files(&home, "antigravity").len(), 2);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn copilot_session_state_root_ignores_unrelated_trees() {
+        let home = test_directory("copilot-root");
+        fs::create_dir_all(home.join(".copilot")).unwrap();
+        fs::write(home.join(".copilot/config.json"), "{not json").unwrap();
+        fs::create_dir_all(home.join(".copilot/session-state")).unwrap();
+        fs::write(home.join(".copilot/session-state/events.jsonl"), "{}\n").unwrap();
+        let files = source_files(&home, "copilot");
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(files[0].ends_with("session-state/events.jsonl"));
         fs::remove_dir_all(home).unwrap();
     }
 

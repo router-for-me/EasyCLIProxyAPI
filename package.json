@@ -21,6 +21,8 @@
     "test:ui:credential-tags": "node tests/credential-tags-ui.cjs",
     "screenshots": "node scripts/capture-readme-screenshots.cjs",
     "theme:schema": "bun scripts/theme-schema.mjs",
+    "sync:kernel-version": "node scripts/update-bundled-core.mjs",
+    "check:kernel-version": "node scripts/update-bundled-core.mjs --check",
     "tauri": "tauri"
   },
   "dependencies": {

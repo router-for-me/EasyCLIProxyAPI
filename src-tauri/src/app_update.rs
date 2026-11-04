@@ -310,26 +310,37 @@ async fn resolve_app_update(
         "Failed to create version check client",
     )?;
     let requested_source = config.selected_download_candidate();
+    let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
+    let update_channel = normalize_update_channel(&config.update_channel);
+    let channel_tag = update_channel_tag(&update_channel);
+    let is_preview = channel_tag.is_some();
     let (manifest, resolved_source) = fetch_portable_update_manifest(
         &client,
         requested_source.clone(),
         &config.custom_download_mirrors,
+        channel_tag.as_deref(),
     )
     .await?;
-    persist_automatic_download_source_switch(
-        app,
-        gui_config_state,
-        &requested_source,
-        &resolved_source,
-    )?;
+    if !(is_preview && resolved_source.source == VersionDownloadSource::Gitcode) {
+        persist_automatic_download_source_switch(
+            app,
+            gui_config_state,
+            &requested_source,
+            &resolved_source,
+        )?;
+    }
     let latest_version = normalize_version(&manifest.version);
-    let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
+    let current_build_at = local_portable_app_built_at();
     let update_available = is_app_update_available(&current_version, &latest_version)?;
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
     let portable_support = target
-        .map(|(_, arch)| validate_local_portable_app_manifest(arch))
+        .map(|(_, arch)| {
+            validate_local_portable_app_manifest(arch)
+                .map(|supported| supported || is_preview)
+                .or_else(|error| if is_preview { Ok(true) } else { Err(error) })
+        })
         .transpose()?;
     let auto_update_supported = portable_support == Some(true) && asset.is_some();
     let unsupported_reason = if auto_update_supported {
@@ -357,9 +368,11 @@ async fn resolve_app_update(
         release_url: manifest.release_url,
         release_notes: manifest.release_notes,
         published_at: manifest.published_at,
+        current_build_at,
         auto_update_supported,
         download_size_bytes: asset.map(|value| value.size_bytes),
         unsupported_reason,
+        update_channel: update_channel.clone(),
     };
     Ok((info, pending))
 }
@@ -368,12 +381,15 @@ pub(crate) async fn fetch_portable_update_manifest(
     client: &reqwest::Client,
     source: VersionDownloadCandidate,
     custom_mirrors: &[String],
+    channel_tag: Option<&str>,
 ) -> Result<(PortableUpdateManifest, VersionDownloadCandidate), String> {
     let gitcode_repository = configured_gitcode_gui_repository();
     let mut failures = Vec::new();
-    for candidate in
-        version_download_source_candidates(source, gitcode_repository.is_some(), custom_mirrors)
-    {
+    for candidate in version_download_source_candidates(
+        source,
+        gitcode_repository.is_some() && channel_tag.is_none(),
+        custom_mirrors,
+    ) {
         let result = match candidate.source {
             VersionDownloadSource::Gitcode => {
                 fetch_portable_update_manifest_from_gitcode(
@@ -384,12 +400,12 @@ pub(crate) async fn fetch_portable_update_manifest(
             }
             VersionDownloadSource::Github
             | VersionDownloadSource::GhProxy
-            | VersionDownloadSource::GhFast => {
-                let url = version_source_url(&candidate, APP_UPDATE_MANIFEST_URL);
-                fetch_portable_update_manifest_url(client, &url).await
-            }
-            VersionDownloadSource::Custom => {
-                let url = version_source_url(&candidate, APP_UPDATE_MANIFEST_URL);
+            | VersionDownloadSource::GhFast
+            | VersionDownloadSource::Custom => {
+                let url = match channel_tag {
+                    Some(tag) => version_source_url(&candidate, &preview_manifest_url(tag)),
+                    None => version_source_url(&candidate, APP_UPDATE_MANIFEST_URL),
+                };
                 fetch_portable_update_manifest_url(client, &url).await
             }
         };
@@ -583,9 +599,19 @@ pub(crate) fn validate_portable_update_manifest(
         || release_url.password().is_some()
         || release_url.query().is_some()
         || release_url.fragment().is_some()
-        || !release_url
-            .path()
-            .starts_with("/router-for-me/EasyCLIProxyAPI/releases/tag/v")
+    {
+        return Err("Untrusted application update release URL".to_string());
+    }
+    let release_tag = release_url
+        .path()
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    if !(release_tag.starts_with('v')
+        || release_tag == "only-preview"
+        || release_tag.starts_with("preview-"))
     {
         return Err("Untrusted application update release URL".to_string());
     }
@@ -633,7 +659,18 @@ fn validate_portable_update_asset_catalog(
         return Err(format!("The application update manifest must include both {display_platform} architectures"));
     }
     let version = manifest.version.trim().trim_start_matches('v');
-    let tag = format!("v{version}");
+    let url_tag = manifest
+        .release_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    let tag = if url_tag.is_empty() {
+        format!("v{version}")
+    } else {
+        url_tag
+    };
     for arch in ["amd64", "aarch64"] {
         let key = format!("{platform}-{arch}");
         let asset = assets
@@ -738,6 +775,45 @@ pub(crate) fn portable_update_target() -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// Maps a configured update channel to the git tag carrying its manifest.
+/// `stable` uses `releases/latest` and therefore has no tag.
+pub(crate) fn update_channel_tag(channel: &str) -> Option<String> {
+    let channel = channel.trim();
+    if channel.eq_ignore_ascii_case("preview") {
+        return Some("only-preview".to_string());
+    }
+    let lower = channel.to_ascii_lowercase();
+    let rest = lower.strip_prefix("preview-")?.trim();
+    if rest.is_empty()
+        || rest.len() > 64
+        || !rest
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+    {
+        return None;
+    }
+    Some(format!("preview-{rest}"))
+}
+
+pub(crate) fn normalize_update_channel(channel: &str) -> String {
+    let channel = channel.trim();
+    if channel.is_empty() || channel.eq_ignore_ascii_case("stable") {
+        return "stable".to_string();
+    }
+    match update_channel_tag(channel) {
+        Some(tag) if tag == "only-preview" => "preview".to_string(),
+        Some(tag) => tag,
+        None => "stable".to_string(),
+    }
+}
+
+fn preview_manifest_url(tag: &str) -> String {
+    format!(
+        "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/{tag}/{}",
+        APP_UPDATE_MANIFEST_FILE
+    )
+}
+
 pub(crate) fn portable_update_platform_key() -> Option<&'static str> {
     match env::consts::OS {
         "windows" => Some("windows"),
@@ -756,6 +832,16 @@ pub(crate) fn local_portable_app_manifest_path() -> Result<PathBuf, String> {
     Ok(executable_dir.join(PORTABLE_APP_MANIFEST_FILE))
 }
 
+pub(crate) fn local_portable_app_built_at() -> Option<String> {
+    let path = local_portable_app_manifest_path().ok()?;
+    let contents = fs::read_to_string(path).ok()?;
+    let manifest = serde_json::from_str::<PortableAppManifest>(&contents).ok()?;
+    manifest
+        .built_at
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && chrono::DateTime::parse_from_rfc3339(value).is_ok())
+}
+
 pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Result<bool, String> {
     let path = local_portable_app_manifest_path()?;
     if !path.is_file() {
@@ -770,7 +856,9 @@ pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Resul
         && Some(manifest.platform.as_str()) == portable_update_platform_key()
         && manifest.arch == expected_arch
         && manifest.auto_update
-        && normalize_version(&manifest.version) == normalize_version(env!("CARGO_PKG_VERSION")))
+        && (normalize_version(&manifest.version) == normalize_version(env!("CARGO_PKG_VERSION"))
+            || env!("CARGO_PKG_VERSION").to_ascii_lowercase().contains("preview")
+            || manifest.version.to_ascii_lowercase().contains("preview")))
 }
 
 #[tauri::command]
@@ -2804,4 +2892,80 @@ pub(crate) fn portable_update_ack_argument() -> Option<PathBuf> {
         }
     }
     None
+}
+
+const GUI_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/router-for-me/EasyCLIProxyAPI/releases?per_page=100";
+
+/// Lists selectable update channels: the two built-ins plus one entry per
+/// `preview-*` release tag. Network failures fall back to the built-ins so the
+/// picker always renders.
+#[tauri::command]
+pub(crate) async fn list_update_channels(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<Vec<String>, String> {
+    let config = gui_config_state.snapshot()?;
+    let proxy_url = config.proxy_url.clone();
+    let client = build_http_client_with_proxy(
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(6))
+            .read_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(15)),
+        &proxy_url,
+        "Failed to create channel list client",
+    )?;
+    let mut channels = vec!["stable".to_string(), "preview".to_string()];
+    if let Ok(response) = client
+        .get(GUI_RELEASES_API_URL)
+        .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .await
+    {
+        if response.status().is_success() {
+            if let Ok(releases) = response.json::<Vec<serde_json::Value>>().await {
+                for release in releases {
+                    let Some(tag) = release.get("tag_name").and_then(|value| value.as_str()) else {
+                        continue;
+                    };
+                    if tag.starts_with("preview-") && update_channel_tag(tag).is_some() {
+                        channels.push(tag.to_string());
+                    }
+                }
+            }
+        }
+    }
+    channels.sort();
+    channels.dedup();
+    // Keep built-ins first, then extras alphabetically.
+    channels.sort_by(|a, b| {
+        let rank = |value: &str| match value {
+            "stable" => 0,
+            "preview" => 1,
+            _ => 2,
+        };
+        rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
+    });
+    if !channels.iter().any(|value| value == &normalize_update_channel(&config.update_channel)) {
+        channels.push(normalize_update_channel(&config.update_channel));
+    }
+    Ok(channels)
+}
+
+#[tauri::command]
+pub(crate) fn get_update_channel(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<String, String> {
+    let config = gui_config_state.snapshot()?;
+    Ok(normalize_update_channel(&config.update_channel))
+}
+
+#[tauri::command]
+pub(crate) fn set_update_channel(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    channel: String,
+) -> Result<String, String> {
+    let channel = normalize_update_channel(&channel);
+    gui_config_state.set_update_channel(&channel)?;
+    Ok(channel)
 }
