@@ -26,7 +26,6 @@ import type { CoreConfigSettings, CoreApiKey, SoftwareSettings, CloseBehavior, C
 import {
   getReverseProxyState,
   applyReverseProxyConfig,
-  startReverseProxy,
   stopReverseProxy,
   type ReverseProxyConfig,
   type ReverseProxyState,
@@ -284,28 +283,20 @@ export function ConfigPanelPage() {
     }
   };
 
-  const handleProxyStart = async () => {
-    if (proxyAction !== null) return;
-    setProxyAction('start');
+  const handleProxyToggle = async (enabled: boolean) => {
+    if (controlsDisabled || proxyAction !== null) return;
+    const nextDraft = { ...proxyDraft, enabled };
+    setProxyDraft(nextDraft);
+    setProxyAction(enabled ? 'save' : 'stop');
+    proxyFeedback.clearNotice();
     try {
-      const state = await startReverseProxy(proxyDraft);
+      const state = enabled
+        ? await applyReverseProxyConfig(nextDraft)
+        : await stopReverseProxy();
       setProxyState(state);
       setBackendNotReady(false);
       setProxyDirty(false);
-    } catch {
-      setBackendNotReady(true);
-    } finally {
-      setProxyAction(null);
-    }
-  };
-
-  const handleProxyStop = async () => {
-    if (proxyAction !== null) return;
-    setProxyAction('stop');
-    try {
-      const state = await stopReverseProxy();
-      setProxyState(state);
-      setBackendNotReady(false);
+      proxyFeedback.showNotice(st('reverseProxySaved'), 'success');
     } catch {
       setBackendNotReady(true);
     } finally {
@@ -1669,9 +1660,9 @@ export function ConfigPanelPage() {
                 </Notice>
               ) : null}
 
-              <Notice tone="warn" variant="box" className="config-reverse-proxy-warning">
-                {st('reverseProxySecurityWarning')}
-              </Notice>
+              <p className="config-diagnostics-intro">
+                {st('reverseProxyIntro')}
+              </p>
 
               <div className="config-software-setting-row config-tls-toggle-row">
                 <div className="config-software-setting-copy">
@@ -1692,30 +1683,32 @@ export function ConfigPanelPage() {
                   checked={proxyDraft.enabled}
                   disabled={controlsDisabled || proxyAction !== null}
                   onChange={(event) => {
-                    setProxyDraft(prev => ({ ...prev, enabled: event.currentTarget.checked }));
-                    setProxyDirty(true);
+                    void handleProxyToggle(event.currentTarget.checked);
                   }}
                 />
+              </div>
+
+              <div className="config-network-label">
+                <strong>{st('reverseProxyRouteTitle')}</strong>
               </div>
 
               <div className="config-network-grid">
                 <div className="config-network-field">
                   <span className="config-field-label">
-                    <label htmlFor="config-input-reverse-proxy-listen-host">{st('reverseProxyListenHost')}</label>
-                    <SettingsHelp label={st('reverseProxyListenHost')}>{st('reverseProxyListenHostHint')}</SettingsHelp>
+                    <span>{st('reverseProxyRoutePublic')}</span>
                   </span>
-                  <input
-                    id="config-input-reverse-proxy-listen-host"
-                    className="config-network-input"
-                    type="text"
-                    value={proxyDraft.listenHost}
-                    disabled={controlsDisabled || proxyAction !== null}
-                    placeholder="0.0.0.0"
-                    onChange={(event) => {
-                      setProxyDraft(prev => ({ ...prev, listenHost: event.currentTarget.value }));
-                      setProxyDirty(true);
-                    }}
-                  />
+                  <span>
+                    {`https://${(!proxyDraft.listenHost || proxyDraft.listenHost === '0.0.0.0') ? (window.location.hostname || 'your-domain') : proxyDraft.listenHost}:${proxyDraft.listenPort || 443}`} <span aria-hidden="true">→</span>
+                  </span>
+                </div>
+
+                <div className="config-network-field">
+                  <span className="config-field-label">
+                    <span>{st('reverseProxyRouteLocal')}</span>
+                  </span>
+                  <span>
+                    {`127.0.0.1:${proxyDraft.targetPort || settings?.port || 8317}`}
+                  </span>
                 </div>
 
                 <div className="config-network-field">
@@ -1739,29 +1732,16 @@ export function ConfigPanelPage() {
                     }}
                   />
                 </div>
+              </div>
 
-                <div className="config-network-field">
-                  <span className="config-field-label">
-                    <label htmlFor="config-input-reverse-proxy-target-port">{st('reverseProxyTargetPort')}</label>
-                    <SettingsHelp label={st('reverseProxyTargetPort')}>{st('reverseProxyTargetPortHint')}</SettingsHelp>
-                  </span>
-                  <input
-                    id="config-input-reverse-proxy-target-port"
-                    className="config-network-input"
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={proxyDraft.targetPort || ''}
-                    disabled={controlsDisabled || proxyAction !== null}
-                    placeholder={String(settings?.port ?? 8317)}
-                    onChange={(event) => {
-                      const val = parseInt(event.currentTarget.value, 10);
-                      setProxyDraft(prev => ({ ...prev, targetPort: Number.isNaN(val) ? 0 : val }));
-                      setProxyDirty(true);
-                    }}
-                  />
-                </div>
+              <div className="config-network-label">
+                <strong>{st('reverseProxyCertTitle')}</strong>
+              </div>
+              <p className="config-diagnostics-intro">
+                {st('reverseProxyCertIntro')}
+              </p>
 
+              <div className="config-network-grid">
                 <div className="config-network-field">
                   <span className="config-field-label">
                     <label htmlFor="config-input-reverse-proxy-cert-path">{st('reverseProxyCertPath')}</label>
@@ -1828,45 +1808,84 @@ export function ConfigPanelPage() {
               <div className="config-network-grid" aria-label={st('reverseProxyStatus')}>
                 <div className="config-network-field">
                   <span className="config-field-label"><span>{st('reverseProxyStatusRunning')}</span></span>
-                  <input
-                    type="text"
-                    readOnly
-                    className="config-network-input"
-                    value={proxyState?.running ? st('reverseProxyRunning') : st('reverseProxyStopped')}
-                    aria-label={st('reverseProxyStatusRunning')}
-                  />
+                  <span>{proxyState?.running ? st('reverseProxyRunning') : st('reverseProxyStopped')}</span>
                 </div>
                 <div className="config-network-field">
                   <span className="config-field-label"><span>{st('reverseProxyStatusListening')}</span></span>
-                  <input
-                    type="text"
-                    readOnly
-                    className="config-network-input"
-                    value={proxyState?.listening ?? '—'}
-                    aria-label={st('reverseProxyStatusListening')}
-                  />
+                  <span>{proxyState?.listening ?? '—'}</span>
                 </div>
                 <div className="config-network-field">
                   <span className="config-field-label"><span>{st('reverseProxyStatusTarget')}</span></span>
-                  <input
-                    type="text"
-                    readOnly
-                    className="config-network-input"
-                    value={proxyState?.target ?? '—'}
-                    aria-label={st('reverseProxyStatusTarget')}
-                  />
+                  <span>{proxyState?.target ?? '—'}</span>
                 </div>
                 <div className="config-network-field">
                   <span className="config-field-label"><span>{st('reverseProxyStatusRequests')}</span></span>
-                  <input
-                    type="text"
-                    readOnly
-                    className="config-network-input"
-                    value={String(proxyState?.requestsTotal ?? 0)}
-                    aria-label={st('reverseProxyStatusRequests')}
-                  />
+                  <span>{String(proxyState?.requestsTotal ?? 0)}</span>
                 </div>
               </div>
+
+              {proxyState ? (
+                proxyState.hardening?.loopbackBind && proxyState.hardening?.trustedProxies && !proxyState.hardening?.restartRequired ? (
+                  <Notice tone="success">
+                    {st('reverseProxyHardeningOk')}
+                  </Notice>
+                ) : proxyState.hardening?.restartRequired ? (
+                  <Notice tone="warn">
+                    {st('reverseProxyHardeningPending')}
+                  </Notice>
+                ) : (
+                  <Notice tone="warn">
+                    {st('reverseProxyHardeningFailed')}
+                  </Notice>
+                )
+              ) : null}
+
+              <details>
+                <summary>{st('reverseProxyAdvancedTitle')}</summary>
+                <p className="config-diagnostics-intro">{st('reverseProxyAdvancedHint')}</p>
+                <div className="config-network-grid">
+                  <div className="config-network-field">
+                    <span className="config-field-label">
+                      <label htmlFor="config-input-reverse-proxy-listen-host">{st('reverseProxyListenHost')}</label>
+                      <SettingsHelp label={st('reverseProxyListenHost')}>{st('reverseProxyListenHostHint')}</SettingsHelp>
+                    </span>
+                    <input
+                      id="config-input-reverse-proxy-listen-host"
+                      className="config-network-input"
+                      type="text"
+                      value={proxyDraft.listenHost}
+                      disabled={controlsDisabled || proxyAction !== null}
+                      placeholder="0.0.0.0"
+                      onChange={(event) => {
+                        setProxyDraft(prev => ({ ...prev, listenHost: event.currentTarget.value }));
+                        setProxyDirty(true);
+                      }}
+                    />
+                  </div>
+
+                  <div className="config-network-field">
+                    <span className="config-field-label">
+                      <label htmlFor="config-input-reverse-proxy-target-port">{st('reverseProxyTargetPort')}</label>
+                      <SettingsHelp label={st('reverseProxyTargetPort')}>{st('reverseProxyTargetPortHint')}</SettingsHelp>
+                    </span>
+                    <input
+                      id="config-input-reverse-proxy-target-port"
+                      className="config-network-input"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={proxyDraft.targetPort || ''}
+                      disabled={controlsDisabled || proxyAction !== null}
+                      placeholder={String(settings?.port ?? 8317)}
+                      onChange={(event) => {
+                        const val = parseInt(event.currentTarget.value, 10);
+                        setProxyDraft(prev => ({ ...prev, targetPort: Number.isNaN(val) ? 0 : val }));
+                        setProxyDirty(true);
+                      }}
+                    />
+                  </div>
+                </div>
+              </details>
 
               {proxyState?.error ? (
                 <Notice tone="error" className="config-reverse-proxy-error">
@@ -1879,24 +1898,6 @@ export function ConfigPanelPage() {
           )}
 
           <div className="config-settings-save-row">
-            <button
-              type="button"
-              className="secondary-button compact-button"
-              disabled={controlsDisabled || proxyAction !== null || proxyInitialLoading || proxyState?.running}
-              onClick={() => void handleProxyStart()}
-            >
-              <Power size={16} aria-hidden="true" />
-              {proxyAction === 'start' ? t('common.processing') : st('reverseProxyStart')}
-            </button>
-            <button
-              type="button"
-              className="secondary-button compact-button"
-              disabled={controlsDisabled || proxyAction !== null || proxyInitialLoading || !proxyState?.running}
-              onClick={() => void handleProxyStop()}
-            >
-              <Power size={16} aria-hidden="true" />
-              {proxyAction === 'stop' ? t('common.processing') : st('reverseProxyStop')}
-            </button>
             <button
               type="button"
               className="primary-button compact-button"

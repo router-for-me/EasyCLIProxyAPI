@@ -9,12 +9,19 @@ export type ReverseProxyConfig = {
   keyPath: string;
 };
 
+export type ReverseProxyHardening = {
+  loopbackBind: boolean;
+  trustedProxies: boolean;
+  restartRequired: boolean;
+};
+
 export type ReverseProxyState = {
   running: boolean;
   listening: string | null;
   target: string | null;
   requestsTotal: number;
   error: string | null;
+  hardening?: ReverseProxyHardening;
 };
 
 export const getReverseProxyState = async (): Promise<ReverseProxyState> => {

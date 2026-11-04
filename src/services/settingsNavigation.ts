@@ -42,8 +42,43 @@ export const settingsMessages = {
   nativeRouting: text('凭据选择与会话', 'Credential selection & sessions', '認証情報の選択とセッション'),
   nativeRetry: text('重试与冷却', 'Retries & cooldowns', '再試行とクールダウン'),
   reverseProxyTitle: text('对外访问', 'External access', '外部アクセス'),
+  reverseProxyIntro: text(
+    '让外部设备通过 HTTPS 访问本机内核：请求先到这里的端口，再转发给只监听本机的内核。',
+    'Allow external devices to reach this machine over HTTPS: requests land on this port and are forwarded to the core, which only listens on this machine.',
+    '外部デバイスから HTTPS 経由でローカルコアにアクセスできるようにします。リクエストはこのポートに届き、ローカルでのみ待ち受けるコアに転送されます。'
+  ),
   reverseProxyEnable: text('启用反向代理', 'Enable reverse proxy', 'リバースプロキシを有効にする'),
-  reverseProxyEnableHint: text('在本机明文 HTTP 之外提供对外 HTTPS 接入', 'Expose an external HTTPS endpoint alongside local plaintext HTTP', 'ローカルの平文 HTTP に加えて外部向け HTTPS を公開します'),
+  reverseProxyEnableHint: text(
+    '开启后自动把内核绑定到 127.0.0.1 并设置 trusted-proxies，管理接口仍然只允许本机访问。',
+    'When enabled, automatically binds the core to 127.0.0.1 and configures trusted-proxies, keeping the management API local-only.',
+    '有効にすると自動的にコアを 127.0.0.1 にバインドして trusted-proxies を設定し、管理インターフェースは引き続きローカルからのみアクセスを許可します。'
+  ),
+  reverseProxyRouteTitle: text('访问路径', 'Access route', 'アクセス経路'),
+  reverseProxyRoutePublic: text('对外地址', 'Public address', '公開アドレス'),
+  reverseProxyRouteLocal: text('本机内核', 'Local core', 'ローカルコア'),
+  reverseProxyCertTitle: text('HTTPS 证书', 'HTTPS certificate', 'HTTPS 証明書'),
+  reverseProxyCertIntro: text(
+    '证书与私钥用于提供 HTTPS。自签名证书仅适合内网测试。',
+    'Certificate and private key are required for HTTPS. Self-signed certificates are only suitable for local network testing.',
+    'HTTPS を提供するには証明書と秘密鍵が必要です。自己署名証明書はローカルネットワークでのテストにのみ適しています。'
+  ),
+  reverseProxyAdvancedTitle: text('高级设置', 'Advanced settings', '高度な設定'),
+  reverseProxyAdvancedHint: text('通常保持默认即可。', 'Usually keeping default values is recommended.', '通常はデフォルトのままで問題ありません。'),
+  reverseProxyHardeningOk: text(
+    '内核保护已就绪：只监听 127.0.0.1，trusted-proxies 已设置。',
+    'Core protection is ready: listening only on 127.0.0.1, trusted-proxies configured.',
+    'コア保護の準備が完了しました: 127.0.0.1 のみでリッスンし、trusted-proxies が設定されています。'
+  ),
+  reverseProxyHardeningPending: text(
+    '内核保护将在内核重启后生效。',
+    'Core protection will take effect after core restarts.',
+    'コア保護はコアの再起動後に有効になります。'
+  ),
+  reverseProxyHardeningFailed: text(
+    '内核保护尚未生效，请检查内核配置。',
+    'Core hardening is not yet active. Please check core configuration.',
+    'コア保護がまだ有効になっていません。コアの設定を確認してください。'
+  ),
   reverseProxyListenHost: text('监听地址', 'Listen host', 'リッスンホスト'),
   reverseProxyListenHostHint: text('反向代理监听绑定的主机地址，默认 0.0.0.0', 'Host address the reverse proxy listens on, default 0.0.0.0', 'リバースプロキシが待ち受けるホストアドレス（デフォルト: 0.0.0.0）'),
   reverseProxyListenPort: text('监听端口', 'Listen port', 'リッスンポート'),
@@ -69,11 +104,6 @@ export const settingsMessages = {
   reverseProxyStatusListening: text('监听地址', 'Listening', 'リッスン'),
   reverseProxyStatusTarget: text('目标地址', 'Target', '転送先'),
   reverseProxyStatusRequests: text('请求总数', 'Total requests', 'リクエスト総数'),
-  reverseProxySecurityWarning: text(
-    '内核必须绑定 127.0.0.1 并设置 trusted-proxies: ["127.0.0.1"]，否则将绕过 allow-remote: false 安全限制。',
-    'The core must bind to 127.0.0.1 and set trusted-proxies: ["127.0.0.1"], otherwise allow-remote: false is bypassed.',
-    'コアは 127.0.0.1 にバインドし trusted-proxies: ["127.0.0.1"] を設定する必要があります。設定しない場合、allow-remote: false がバイパスされます。'
-  ),
   reverseProxyBackendNotReady: text('反向代理后端服务未就绪。', 'Reverse proxy backend not ready.', 'リバースプロキシのバックエンドが準備できていません。'),
   reverseProxySaved: text('反向代理设置已保存', 'Reverse proxy settings saved', 'リバースプロキシ設定を保存しました'),
 } satisfies Record<string, TemplateText>;
