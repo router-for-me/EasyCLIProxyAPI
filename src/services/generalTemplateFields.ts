@@ -58,6 +58,7 @@ export const routingTemplateGroups: readonly TemplateConfigGroup[] = [
       field('routing.force-model-prefix', 'boolean', '强制模型前缀匹配', 'Enforce model prefix matching', 'モデル接頭辞の一致を必須にする', false, text('无前缀模型请求只使用无前缀凭据，前缀等于模型名的情况除外。', 'Unprefixed requests only use credentials without a prefix, except when prefix equals model name.', '接頭辞のないモデル要求には接頭辞のない認証情報のみを使用します。接頭辞とモデル名が一致する場合を除きます。')),
       field('routing.cooldown.save-cooldown-status', 'boolean', '持久保存冷却状态', 'Persist cooldown status', 'クールダウン状態を永続化', false, text('将凭据冷却状态保存到认证文件旁的 .cds 文件。', 'Save per-credential cooldown state in .cds files next to auth files.', '認証情報ごとのクールダウン状態を認証ファイルと同じ場所の .cds ファイルに保存します。')),
       field('routing.cooldown.transient-error-cooldown-seconds', 'number', '瞬时错误冷却秒数', 'Transient error cooldown (seconds)', '一時的なエラーのクールダウン秒数', 0, text('0 沿用 60 秒；-1 禁用瞬时错误冷却。', 'Zero uses the legacy 60 seconds; -1 disables transient error cooldown.', '0 は従来の 60 秒を使用し、-1 は一時的なエラーのクールダウンを無効化します。'), { min: -1, max: 2147483647 }),
+      field('routing.cooldown.quota-response-mode', 'boolean', '额度用尽时报告用量上限', 'Report usage limit on quota exhaustion', 'クォータ枯渇時に使用量上限を通知', false, text('所有凭据额度用尽时，告知客户端重置时间，让其暂停并在重置后继续，而不是反复重试。', 'When every credential is out of quota, tell clients the reset time so they pause and resume instead of retrying.', 'すべての認証情報のクォータが尽きたとき、クライアントにリセット時刻を伝え、再試行せずに一時停止してリセット後に再開させます。'), { checkedValue: 'usage-limit' }),
     ],
   },
 ];

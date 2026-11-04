@@ -10,6 +10,8 @@ import {
   templateFieldKey,
   templateFieldValidation,
   templateFieldSaveValue,
+  templateSwitchChange,
+  templateSwitchChecked,
   type TemplateConfigChange,
   type TemplateConfigDraft,
   type TemplateConfigField,
@@ -164,7 +166,7 @@ export function TemplateConfigSection({ groups, visibleGroups, onDirtyGroupsChan
     const onChange = (next: unknown) => changeField(group, field, next);
     const common = { id, disabled, 'aria-invalid': invalid || undefined, 'aria-describedby': invalid ? `${id}-error` : undefined };
     if (field.type === 'custom' && field.render) return field.render({ value, onChange, disabled, id });
-    if (field.type === 'boolean') return <Switch {...common} checked={value === true} onChange={(event) => onChange(event.currentTarget.checked)} />;
+    if (field.type === 'boolean') return <Switch {...common} checked={templateSwitchChecked(field, value)} onChange={(event) => { const next = templateSwitchChange(field, event.currentTarget.checked); changeField(group, field, next.value, next.remove); }} />;
     if (field.type === 'select') {
       const selected = field.options?.findIndex((option) => Object.is(option.value, value)) ?? -1;
       return <Select {...common} className="config-network-input" value={String(selected)} onChange={(event) => onChange(field.options?.[Number(event.currentTarget.value)]?.value)}>

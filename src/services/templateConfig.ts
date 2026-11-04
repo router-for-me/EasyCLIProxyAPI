@@ -9,6 +9,8 @@ export type TemplateConfigField = {
   description?: TemplateText;
   defaultValue?: unknown;
   options?: readonly { value: string | number | boolean; label: TemplateText }[];
+  /** A boolean field that stores this value when on and removes the key when off. */
+  checkedValue?: string;
   min?: number;
   max?: number;
   step?: number;
@@ -85,6 +87,10 @@ export function draftTemplateField(field: TemplateConfigField, config: Record<st
   if (remove ? !original.exists : original.exists && sameTemplateValue(original.value, value)) return undefined;
   return { value, remove, expectedExists: original.exists, expected: original.value ?? null };
 }
+
+export const templateSwitchChecked = (field: TemplateConfigField, value: unknown) => value === (field.checkedValue ?? true);
+export const templateSwitchChange = (field: TemplateConfigField, checked: boolean) =>
+  field.checkedValue === undefined ? { value: checked, remove: false } : { value: checked ? field.checkedValue : null, remove: !checked };
 
 export function templateFieldValidation(field: TemplateConfigField, value: unknown): TemplateText | null {
   if (field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value) || ((field.step ?? 1) === 1 && !Number.isInteger(value)) || (field.min !== undefined && value < field.min) || (field.max !== undefined && value > field.max))) {
