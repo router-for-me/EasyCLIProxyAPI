@@ -50,7 +50,10 @@ export function validateReleaseNotes(notes) {
 
 export function releaseNotesBody(notes) {
   validateReleaseNotes(notes);
-  const languages = ['en', 'zh-CN'].map((locale) => releaseNotesLanguages.find((language) => language.locale === locale));
+  const order = ['en', 'zh-CN', 'zh-TW', 'ja'];
+  const authored = order.filter((locale) => notes[locale]?.trim());
+  const published = authored.length ? authored : ['en'];
+  const languages = published.map((locale) => releaseNotesLanguages.find((language) => language.locale === locale));
   return `${languages.map(({ locale, label, missing }) => (
     `# ${label}\n\n${notes[locale]?.trim() || missing}`
   )).join('\n\n---\n\n')}\n`;
