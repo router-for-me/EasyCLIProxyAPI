@@ -147,6 +147,20 @@ describe('routing components', () => {
     expect(render(<PolicyStrip settings={board.settings} disabled onChange={() => {}} />)).toContain('placeholder="1h"');
   });
 
+  it('validates session affinity ttl duration format', () => {
+    const board = boardWith();
+    board.settings.session_affinity = true;
+    board.settings.session_affinity_ttl = '3';
+    const invalidMarkup = render(<PolicyStrip settings={board.settings} disabled={false} onChange={() => {}} />);
+    expect(invalidMarkup).toContain('routing-ttl-error');
+    expect(invalidMarkup).toContain('role="alert"');
+
+    board.settings.session_affinity_ttl = '1h30m';
+    const validMarkup = render(<PolicyStrip settings={board.settings} disabled={false} onChange={() => {}} />);
+    expect(validMarkup).not.toContain('routing-ttl-error');
+    expect(validMarkup).not.toContain('role="alert"');
+  });
+
   it('shows serving shares, standby status, metadata and quick tier controls', () => {
     const html = ladder(boardWith(member('a', 10, { kind: 'provider', prefix: 'team', keyCount: 2, weights: [null, null] }), member('b', 10, { kind: 'credential' }), member('c', 0, { runtimeOnly: true })));
     expect(html).toContain('Request entry');

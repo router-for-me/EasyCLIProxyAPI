@@ -32,6 +32,7 @@
 .routing-setting-row input:not([type="checkbox"]) { width: 76px; flex-shrink: 0; }
 .routing-ttl { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-secondary); }
 .routing-ttl input { width: 76px; font-family: monospace; }
+.routing-ttl-error { color: var(--danger-color, #d83636); font-size: 12px; line-height: 1.4; }
 .routing-failover-details { border-top: 1px solid var(--border-color); padding-top: 16px; }
 .routing-failover-details summary { cursor: pointer; font-size: 12px; }
 .routing-failover-details summary .routing-summary-pill { display: block; margin-top: 8px; width: fit-content; }
