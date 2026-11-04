@@ -6670,6 +6670,48 @@ textarea:focus-visible {
   overflow-x: hidden !important;
 }
 
+.codex-catalog-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.codex-catalog-row > button[role='option'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.codex-catalog-order {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.codex-catalog-order button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.codex-catalog-order button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+
+.codex-catalog-order button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .codex-subagent-fields {
   display: grid;
   gap: 14px;

@@ -4,7 +4,7 @@ import { homeZhCN } from '../home';
 import { authFileListZhCN } from '../authFileList';
 import { themeDiyZhCN } from '../themeDiy';
 
-export const zhCN = {
+export const zhCN: Record<string, string> = {
   'agents.responseLanguage.label': '回复语言',
   'agents.responseLanguage.unmanaged': '保留现有设置（不管理）',
   'agents.responseLanguage.default': 'Claude 默认（移除覆盖）',
@@ -370,6 +370,9 @@ export const zhCN = {
   'agents.catalog.fallback': '默认模板',
   'agents.catalog.customized': '已自定义',
   'agents.catalog.reload': '重新加载',
+  'agents.catalog.moveUp': '上移',
+  'agents.catalog.moveDown': '下移',
+  'agents.catalog.resetOrder': '恢复默认排序',
   'agents.catalog.loading': '正在读取模型列表…',
   'agents.catalog.empty': '当前没有可用模型，请先连接内核并配置模型来源。',
   'agents.catalog.displayName': '显示名称',
@@ -2395,4 +2398,4 @@ export const zhCN = {
   'agents.zcode.subagents.description': '配置 ZCode 子智能体（Sub-agent）的默认模型、思考强度，以及各智能体的专属模型映射。',
 } as const;
 
-export type MessageKey = keyof typeof zhCN;
+export type MessageKey = string;
