@@ -85,3 +85,6 @@
 .routing-empty { padding: 24px; color: var(--text-tertiary); text-align: center; }
 @media (max-width: 1100px) { .routing-workspace { grid-template-columns: minmax(0, 1fr); } .routing-aside { position: static; } }
 @media (max-width: 600px) { .routing-tier { grid-template-columns: minmax(0, 1fr); gap: 12px; } .routing-tier-gutter { align-items: center; } .routing-tier-gutter > div { display: flex; align-items: center; gap: 10px; } .routing-tier-name { margin: 0; } .routing-card { max-width: none; } .routing-actions { margin-left: 0; } .routing-flow-entry > span:last-child, .routing-flow-exit > span:last-child { padding-left: 32px; width: 100%; } }
+.routing-setting-row-described .routing-setting-text { display: flex; flex-direction: column; gap: 2px; }
+.routing-setting-hint { font-size: 11px; line-height: 1.35; color: var(--text-secondary); max-width: 42ch; }
+
