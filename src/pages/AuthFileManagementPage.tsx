@@ -4,6 +4,7 @@ import { mergeCredentialTags } from '../services/credentialTags';
 import { EmptyState } from '../components/EmptyState';
 import { Checkbox } from '../components/Checkbox';
 import { commitFetchedQuota } from '../services/quotaEnrichment';
+import { applyQuotaRoutingChange, subscribeQuotaRoutingChanges } from '../services/quotaAutoBalance';
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
@@ -142,6 +143,12 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
     observedAt?: string;
   }>({ files: [], receivedAtMs: 0 });
   const { files, receivedAtMs, observedAt } = fileSnapshot;
+  useEffect(() => subscribeQuotaRoutingChanges((name, fields) => {
+    setFileSnapshot((current) => {
+      const nextFiles = applyQuotaRoutingChange(current.files, name, fields);
+      return nextFiles === current.files ? current : { ...current, files: nextFiles };
+    });
+  }), []);
   const [filter, setFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
 

@@ -1,3 +1,4 @@
+import { getQuotaAutoBalanceEnabled, syncCredentialQuotaRouting } from './quotaAutoBalance';
 import { enrichXaiQuotaPlan, providerForFile, quotaKey, type AuthFile, type QuotaState } from './quotaService';
 import { commitQuotaCacheIfCurrent, getQuotaCacheSnapshot, updateQuotaCache } from './quotaCache';
 
@@ -6,12 +7,19 @@ export function commitFetchedQuota(generation: number, file: AuthFile, quota: Qu
   const committed = commitQuotaCacheIfCurrent(generation, () => {
     updateQuotaCache((current) => ({ ...current, [key]: quota }));
   });
-  if (committed && quota.status === 'success' && providerForFile(file) === 'xai') {
-    void enrichXaiQuotaPlan(file, quota).then((enriched) => {
-      if (enriched === quota || getQuotaCacheSnapshot()[key] !== quota) return;
-      commitQuotaCacheIfCurrent(generation, () => {
-        updateQuotaCache((current) => ({ ...current, [key]: enriched }));
+  if (committed && quota.status === 'success') {
+    if (getQuotaAutoBalanceEnabled()) {
+      void syncCredentialQuotaRouting(file, quota).catch(() => {
+        /* Keep quota updates resilient if routing sync fails. */
       });
-    }).catch(() => { /* Optional plan failures preserve the original quota. */ });
+    }
+    if (providerForFile(file) === 'xai') {
+      void enrichXaiQuotaPlan(file, quota).then((enriched) => {
+        if (enriched === quota || getQuotaCacheSnapshot()[key] !== quota) return;
+        commitQuotaCacheIfCurrent(generation, () => {
+          updateQuotaCache((current) => ({ ...current, [key]: enriched }));
+        });
+      }).catch(() => { /* Optional plan failures preserve the original quota. */ });
+    }
   }
 }
