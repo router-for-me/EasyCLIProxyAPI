@@ -226,6 +226,17 @@ function AppContent() {
     : resolvePluginNavLayout(autoPluginLayout, pluginEntries.length, pluginNavOverride);
   const pluginNavExpanded = pluginNavLayout === 'expanded';
   const pluginChildActive = pluginEntries.some((entry) => entry.route === active);
+  // The top bar's nav row scrolls sideways on phones: keep the active item inside it.
+  useLayoutEffect(() => {
+    const row = navElement?.querySelector<HTMLElement>('button.active');
+    if (!navElement || !row) return;
+    const box = navElement.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    // Line the item up with the row's start, where the row's scroll snapping puts it anyway.
+    if (rect.left < box.left || rect.right > box.right) navElement.scrollLeft += rect.left - box.left;
+    if (rect.top < box.top) navElement.scrollTop += rect.top - box.top;
+    else if (rect.bottom > box.bottom) navElement.scrollTop += rect.bottom - box.bottom;
+  }, [navElement, active, pluginEntries.length, pluginNavExpanded]);
   const activePage = pages.find((page) => page.id === active);
   const ActivePage = activePage?.component;
   const selectedLanguage = languageOptions.find((option) => option.value === locale)
