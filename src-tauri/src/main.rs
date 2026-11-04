@@ -30,6 +30,7 @@ mod plugins;
 mod privacy_mode;
 mod progress;
 mod provider_health;
+mod reverse_proxy;
 #[cfg(any(
     target_os = "linux",
     target_os = "macos",
@@ -2636,7 +2637,8 @@ fn main() {
             initial_window_size,
             initial_window_position,
         ))
-        .manage(AgentConfigStatusCache::default());
+        .manage(AgentConfigStatusCache::default())
+        .manage(reverse_proxy::ReverseProxyManagerState::default());
 
     let app = app.on_window_event(|window, event| {
         if window.label() != "main" {
@@ -3068,7 +3070,11 @@ fn main() {
             codex_sessions::apply_codex_session_index_cleanup,
             codex_sessions::context::get_codex_session_context,
             codex_sessions::context::save_codex_session_context,
-            codex_sessions::context::open_codex_session_rollout
+            codex_sessions::context::open_codex_session_rollout,
+            reverse_proxy::reverse_proxy_get_state,
+            reverse_proxy::reverse_proxy_apply,
+            reverse_proxy::reverse_proxy_start,
+            reverse_proxy::reverse_proxy_stop
         ])
         .build(context)
         .expect("failed to build app");
