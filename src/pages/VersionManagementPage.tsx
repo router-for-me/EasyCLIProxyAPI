@@ -69,7 +69,20 @@ function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof
 }
 
 export type MessageType = 'info' | 'success' | 'error';
-const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+export const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+export const APP_PREVIEW_RELEASES_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases?q=preview-&expanded=true';
+export const APP_RELEASE_TAG_BASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag';
+
+export function getAppReleaseUrl(channel = 'stable'): string {
+  const normalized = channel.trim();
+  if (normalized === 'preview') {
+    return APP_PREVIEW_RELEASES_URL;
+  }
+  if (normalized.startsWith('preview-')) {
+    return `${APP_RELEASE_TAG_BASE_URL}/${normalized}`;
+  }
+  return APP_RELEASE_URL;
+}
 export const DEFAULT_VERSION_DOWNLOAD_SOURCE = 'github';
 const recordVersionManagementVisit = createVersionManagementVisitTracker();
 
@@ -351,9 +364,10 @@ export function VersionManagementPage() {
     setCancellingInstall(false);
   };
 
-  const openAppRelease = async (url = appUpdate?.releaseUrl || APP_RELEASE_URL) => {
+  const openAppRelease = async (url?: string) => {
+    const targetUrl = url || appUpdate?.releaseUrl || getAppReleaseUrl(activeChannel);
     try {
-      await openExternalUrl({ url });
+      await openExternalUrl({ url: targetUrl });
     } catch (error) {
       showNotice({ key: 'kernel.error.openUpdate', variables: { error: String(error) } }, 'error');
     }
@@ -732,27 +746,40 @@ export function VersionManagementPage() {
                 </span>
               </div>
               {activeChannel.startsWith('preview') ? (
-                <div className="version-alert-banner neutral version-channel-row">
-                  <Info size={14} aria-hidden="true" />
-                  <span>{t('appUpdate.previewChannel', { channel: activeChannel })}</span>
-                  <SelectMenu
-                    className="version-channel-select"
-                    value={channelDraft}
-                    disabled={channelListLoading}
-                    ariaLabel={t('appUpdate.previewChannelSwitch')}
-                    onChange={setChannelDraft}
-                    options={channelOptions}
-                    maxDropdownHeight={260}
-                  />
-                  <button
-                    type="button"
-                    className="link-button muted"
-                    disabled={!channelDraft || channelDraft === activeChannel || channelListLoading}
-                    onClick={() => void applyChannel(channelDraft)}
+                <>
+                  <div className="version-alert-banner neutral version-channel-row">
+                    <Info size={14} aria-hidden="true" />
+                    <span>{t('appUpdate.previewChannel', { channel: activeChannel })}</span>
+                    <SelectMenu
+                      className="version-channel-select"
+                      value={channelDraft}
+                      disabled={channelListLoading}
+                      ariaLabel={t('appUpdate.previewChannelSwitch')}
+                      onChange={setChannelDraft}
+                      options={channelOptions}
+                      maxDropdownHeight={260}
+                    />
+                    <button
+                      type="button"
+                      className="link-button muted"
+                      disabled={!channelDraft || channelDraft === activeChannel || channelListLoading}
+                      onClick={() => void applyChannel(channelDraft)}
+                    >
+                      {t('appUpdate.previewChannelSwitch')}
+                    </button>
+                  </div>
+                  <div
+                    className="version-channel-hint"
+                    style={{
+                      fontSize: 'var(--font-size-meta)',
+                      color: 'var(--color-text-tertiary)',
+                      lineHeight: 'var(--line-height-body)',
+                      paddingLeft: '4px',
+                    }}
                   >
-                    {t('appUpdate.previewChannelSwitch')}
-                  </button>
-                </div>
+                    {t((channelDraft || activeChannel) === 'stable' ? 'appUpdate.channelHint.stable' : 'appUpdate.channelHint.preview')}
+                  </div>
+                </>
               ) : null}
               {channelError ? <MessageNotice message={channelError} /> : null}
             </div>
@@ -787,7 +814,7 @@ export function VersionManagementPage() {
               onClick={() => void openAppRelease()}
             >
               <ExternalLink size={15} aria-hidden="true" />
-              <span>{t('appUpdate.openRelease')}</span>
+              <span>{t(activeChannel.startsWith('preview') ? 'appUpdate.downloadPreview' : 'appUpdate.downloadStable')}</span>
             </button>
           </div>
         </article>
