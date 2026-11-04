@@ -8,6 +8,8 @@
 ## Improved
 
 - **Gateway policy field descriptions**: request retries, retry credentials, maximum retry wait, transient cooldown and the disable-cooldown switch each gained a one-line description, instead of a bare label and number box.
+- **Review changes before applying**: clicking "Apply plan" now opens a confirmation dialog that lists every pending change, and only confirming writes them to the gateway configuration.
+- **Release notes in all four languages**: the GitHub release page now publishes Simplified Chinese, Traditional Chinese, English and Japanese notes together; previously only English and Simplified Chinese were included.
 
 ## Added
 
