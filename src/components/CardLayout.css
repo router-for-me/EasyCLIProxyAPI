@@ -1,0 +1,10 @@
+@layer components {
+/* Shared card layouts (CardLayout.tsx). Even rows uses each page's own grid rule; Stacked and Compact use columns.
+   Doubled classes outrank a page's scoped grid rule (such as `.quota-page .real-quota-grid`) and the shared two-column
+   `.routing-segmented` rule, whatever the import order. */
+.card-layout-control.card-layout-control { flex: none; grid-template-columns: repeat(3, 36px); }
+.card-layout-control svg { display: block; margin: auto; }
+.card-layout-grid.card-layout-grid[data-layout='even'] { align-items: stretch; }
+.card-layout-grid.card-layout-grid:is([data-layout='stacked'], [data-layout='compact']) { display: flex; align-items: flex-start; gap: var(--card-layout-gap, 12px); }
+.card-layout-column { display: flex; flex: 1 1 0; flex-direction: column; gap: var(--card-layout-gap, 12px); min-width: 0; }
+}

@@ -130,4 +130,23 @@
 .quota-page .real-quota-track span { background: var(--color-success); }
 .quota-page .quota-card-actions { display: flex; order: 4; align-items: center; justify-content: flex-end; gap: 16px; margin-top: auto; }
 
+/* Card layouts come from components/CardLayout; this page adds the view bar and the Compact glance card. */
+.quota-page .quota-view-bar { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.quota-page .quota-view-bar .quota-category-filter { flex: 1 1 auto; }
+.quota-page .quota-glance-plan { flex: none; max-width: 8em; overflow: hidden; color: var(--text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.quota-page .quota-glance-toggle { flex: none; width: auto; margin-left: auto; }
+.quota-page .quota-glance-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
+/* Compact glance: name, group names and one line per quota (label, remaining, bar); the rest appears when a card is expanded. */
+.quota-page .real-quota-card[data-glance] { gap: 6px; padding: 8px 10px; }
+.quota-page .real-quota-card[data-glance] :is(.quota-plan, .quota-reset-credit-summary, .quota-card-actions, .quota-model-heading p, .quota-window-status small, .real-quota-row > small, .quota-card-error small) { display: none; }
+.quota-page .real-quota-card[data-glance] .quota-row-list,
+.quota-page .real-quota-card[data-glance] .quota-model-group { gap: 3px; }
+.quota-page .real-quota-card[data-glance] .quota-model-group + .quota-model-group { padding-top: 5px; }
+.quota-page .real-quota-card[data-glance] .quota-model-heading h3 { font-size: 10px; }
+.quota-page .real-quota-card[data-glance] .real-quota-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 8px; align-items: center; }
+.quota-page .real-quota-card[data-glance] .quota-window-summary { flex-wrap: nowrap; min-width: 0; font-size: 11px; }
+.quota-page .real-quota-card[data-glance] .quota-window-summary > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.quota-page .real-quota-card[data-glance] .quota-window-status { flex-wrap: nowrap; }
+.quota-page .real-quota-card[data-glance] .quota-window-status strong { font-size: 11px; font-variant-numeric: tabular-nums; }
+
 }

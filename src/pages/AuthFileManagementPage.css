@@ -109,6 +109,26 @@
 .auth-file-card > .auth-credential-row { flex: 1 0 auto; grid-template-rows: auto auto auto auto 1fr auto; }
 /* An expanded cooldown list grows its card; do not stretch the neighbours' main rows with it. */
 .auth-file-card-grid:has(.auth-file-health-compact > details[open]) .auth-file-card > .auth-credential-row { flex: none; }
+/* Card layouts (components/CardLayout): only Even rows (the default) lines the action rows up across a row. */
+.auth-file-card-grid:not([data-layout='even']) .auth-file-card > .auth-credential-row { flex: none; }
+.auth-file-card-grid[data-layout='compact'] .auth-file-card { padding: 10px 12px; }
+/* Compact glance card: logo, name, plan and the lowest quota, with status; the rest opens from the toggle. */
+.auth-file-card[data-glance] > .auth-credential-row { grid-template-areas: "identity status"; grid-template-rows: auto; }
+.auth-file-card[data-glance] :is(.auth-list-plan, .auth-list-recent, .auth-list-usage, .auth-list-quota, .auth-card-actions, .auth-list-status small, .auth-card-filename, .auth-card-provider),
+.auth-file-card[data-glance] > :not(.auth-credential-row) { display: none; }
+.auth-file-card[data-glance] .auth-card-header .provider-logo { width: 28px; height: 28px; }
+.auth-file-card[data-glance] .auth-card-identity { gap: 4px; }
+.auth-card-glance-line { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--auth-muted); font-size: 12px; line-height: 18px; white-space: nowrap; }
+.auth-card-glance-line > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.auth-card-glance-line:empty { display: none; }
+.auth-card-glance-line > .auth-card-glance-plan { flex: none; max-width: 9em; text-transform: capitalize; }
+.auth-list-status .auth-card-glance-toggle { flex: none; width: auto; margin-top: 4px; }
+.auth-file-card[data-glance] .auth-list-status { flex-direction: row; align-items: center; gap: 6px; }
+.auth-file-card[data-glance] .auth-list-status .auth-card-glance-toggle { margin-top: 0; }
+.auth-file-card[data-glance] .auth-status-badge { padding: 1px 6px; font-size: 11px; }
+.auth-card-glance-toggle svg { transition: transform .15s ease; }
+.auth-card-glance-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
+.auth-files-toolbar .auth-files-layout-control { margin-left: auto; }
 /* The enable switch sits beside small buttons, so it uses their height instead of the 34px compact size. */
 .auth-list-main-actions .auth-card-toggle { min-height: auto; margin-top: 0; padding: 5px 10px; }
 .auth-card-header { display: flex; gap: 10px; align-items: center; min-width: 0; }
