@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Switch } from '../src/components/Switch';
-import { settingsMessages } from '../src/services/settingsNavigation';
+import { settingsCategories, settingsMessages } from '../src/services/settingsNavigation';
 import type { ReverseProxyConfig, ReverseProxyState } from '../src/services/reverseProxy';
 
 const root = join(import.meta.dir, '..');
@@ -91,7 +91,13 @@ describe('reverse proxy contract and settings card', () => {
   });
 
   it('places config-native-reverse-proxy after config-native-tls with expected classes', () => {
+    expect(settingsCategories.some(category => category.id === 'proxy')).toBe(true);
+    expect(settingsMessages.reverseProxyTitle.zh).toBe('对外访问');
+    expect(JSON.stringify(settingsMessages)).not.toContain('内置反向代理');
+
     const configPanelSrc = readFileSync(join(root, 'src/pages/ConfigPanel.tsx'), 'utf8');
+
+    expect(configPanelSrc).toContain("activeSubpage !== 'proxy'");
 
     // Section placement immediately after TLS
     const tlsIndex = configPanelSrc.indexOf('id="config-native-tls"');

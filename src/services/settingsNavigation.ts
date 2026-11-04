@@ -7,6 +7,7 @@ import { payloadTemplateGroups } from './payloadTemplateFields';
 const text = (zh: string, en: string, ja: string): TemplateText => ({ zh, en, ja });
 export const settingsCategories = [
   { id: 'general', title: text('服务与访问', 'Service & access', 'サービスとアクセス') },
+  { id: 'proxy', title: text('对外访问', 'External access', '外部アクセス') },
   { id: 'aliases', title: text('模型别名', 'Model aliases', 'モデル別名') },
   { id: 'routing', title: text('路由与稳定性', 'Routing & reliability', 'ルーティングと安定性') },
   { id: 'requests', title: text('模型与请求', 'Models & requests', 'モデルとリクエスト') },
@@ -17,6 +18,7 @@ export const settingsCategories = [
 export type SettingsCategory = typeof settingsCategories[number]['id'];
 export const settingsTemplateGroups = {
   general: generalTemplateGroups.filter(group => group.id === 'management'),
+  proxy: [],
   aliases: [],
   routing: [...routingTemplateGroups, ...extensionTemplateGroups.filter(group => group.id === 'extensions-concurrency')],
   requests: [...requestTemplateGroups, ...payloadTemplateGroups],
@@ -39,9 +41,9 @@ export const settingsMessages = {
   nativeNetwork: text('监听与上游代理', 'Listening & upstream proxy', '待ち受けと上流プロキシ'),
   nativeRouting: text('凭据选择与会话', 'Credential selection & sessions', '認証情報の選択とセッション'),
   nativeRetry: text('重试与冷却', 'Retries & cooldowns', '再試行とクールダウン'),
-  reverseProxyTitle: text('内置反向代理', 'Built-in reverse proxy', '組み込みリバースプロキシ'),
+  reverseProxyTitle: text('对外访问', 'External access', '外部アクセス'),
   reverseProxyEnable: text('启用反向代理', 'Enable reverse proxy', 'リバースプロキシを有効にする'),
-  reverseProxyEnableHint: text('通过内置反向代理提供 HTTPS 流量转发与访问', 'Serve HTTPS traffic and forward requests through the built-in reverse proxy', '組み込みリバースプロキシ経由で HTTPS トラフィックの転送とアクセスを提供します'),
+  reverseProxyEnableHint: text('在本机明文 HTTP 之外提供对外 HTTPS 接入', 'Expose an external HTTPS endpoint alongside local plaintext HTTP', 'ローカルの平文 HTTP に加えて外部向け HTTPS を公開します'),
   reverseProxyListenHost: text('监听地址', 'Listen host', 'リッスンホスト'),
   reverseProxyListenHostHint: text('反向代理监听绑定的主机地址，默认 0.0.0.0', 'Host address the reverse proxy listens on, default 0.0.0.0', 'リバースプロキシが待ち受けるホストアドレス（デフォルト: 0.0.0.0）'),
   reverseProxyListenPort: text('监听端口', 'Listen port', 'リッスンポート'),
