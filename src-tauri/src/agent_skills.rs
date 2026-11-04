@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -483,6 +484,59 @@ pub(crate) fn get_skill_detail(path: String) -> Result<SkillDetail, String> {
     Ok(SkillDetail { entry, body })
 }
 
+fn read_openclaw_config(path: &Path) -> Result<serde_json::Map<String, Value>, String> {
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read OpenClaw config file: {e}"))?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Ok(serde_json::Map::new());
+    }
+    let parsed: Value = serde_json::from_str(trimmed)
+        .or_else(|_| json5::from_str(trimmed))
+        .map_err(|e| format!("Corrupt OpenClaw configuration file: {e}"))?;
+    match parsed {
+        Value::Object(map) => Ok(map),
+        _ => Err("Corrupt OpenClaw configuration file: root must be an object".to_string()),
+    }
+}
+
+fn write_openclaw_config(path: &Path, root: &serde_json::Map<String, Value>) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(&Value::Object(root.clone()))
+        .map_err(|e| format!("Failed to serialize OpenClaw configuration: {e}"))?;
+    write_bytes_atomically(path, &bytes)
+}
+
+pub(crate) fn sync_skill_enabled_to_openclaw(skill_name: &str, enabled: bool) -> Result<(), String> {
+    let home = home_directory().ok_or_else(|| "Failed to resolve home directory".to_string())?;
+    let config_path = openclaw_agent_config_path(&home);
+    sync_skill_enabled_to_openclaw_at_path(skill_name, enabled, &config_path)
+}
+
+pub(crate) fn sync_skill_enabled_to_openclaw_at_path(
+    skill_name: &str,
+    enabled: bool,
+    config_path: &Path,
+) -> Result<(), String> {
+    let sanitized_name = skill_name.trim();
+    if sanitized_name.is_empty() {
+        return Err("Skill name cannot be empty".to_string());
+    }
+    if sanitized_name == "__proto__" {
+        return Err("Skill name cannot be '__proto__'".to_string());
+    }
+
+    let mut root = read_openclaw_config(config_path)?;
+    let skills = ensure_json_object_entry(&mut root, "skills");
+    let entries = ensure_json_object_entry(skills, "entries");
+    let skill_obj = ensure_json_object_entry(entries, sanitized_name);
+    skill_obj.insert("enabled".to_string(), Value::Bool(enabled));
+
+    write_openclaw_config(config_path, &root)
+}
+
 #[tauri::command]
 pub(crate) fn set_skill_enabled(path: String, enabled: bool) -> Result<SkillEntry, String> {
     let canonical_path = fs::canonicalize(&path)
@@ -493,13 +547,18 @@ pub(crate) fn set_skill_enabled(path: String, enabled: bool) -> Result<SkillEntr
     }
 
     let (root, source) = find_canonical_root(&canonical_path)?;
+    let entry = build_entry_from_file(&canonical_path, &root, &source, enabled)?;
+
+    if source == "openclaw" {
+        sync_skill_enabled_to_openclaw(&entry.id, enabled)?;
+    }
 
     let mut states = load_skill_states().unwrap_or_default();
     let path_key = canonical_path.to_string_lossy().to_string();
     states.insert(path_key, enabled);
     save_skill_states(&states)?;
 
-    build_entry_from_file(&canonical_path, &root, &source, enabled)
+    Ok(entry)
 }
 
 #[cfg(test)]
@@ -629,5 +688,158 @@ mod tests {
         assert_eq!(matched_source, "custom");
 
         let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TempHomeGuard {
+        home_dir: PathBuf,
+        prev_home: Option<std::ffi::OsString>,
+        prev_userprofile: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TempHomeGuard {
+        fn new(name: &str) -> Self {
+            let lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let dir = create_test_dir(name);
+            let prev_home = std::env::var_os("HOME");
+            let prev_userprofile = std::env::var_os("USERPROFILE");
+            std::env::set_var("HOME", &dir);
+            std::env::set_var("USERPROFILE", &dir);
+            Self {
+                home_dir: dir,
+                prev_home,
+                prev_userprofile,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for TempHomeGuard {
+        fn drop(&mut self) {
+            match &self.prev_home {
+                Some(val) => std::env::set_var("HOME", val),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.prev_userprofile {
+                Some(val) => std::env::set_var("USERPROFILE", val),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            let _ = fs::remove_dir_all(&self.home_dir);
+        }
+    }
+
+    #[test]
+    fn set_skill_enabled_writes_openclaw_config_while_preserving_keys() {
+        let guard = TempHomeGuard::new("skill_openclaw_sync");
+        let openclaw_skills = guard.home_dir.join(".openclaw").join("skills");
+        let skill_dir = openclaw_skills.join("weather-reporter");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_file = skill_dir.join("SKILL.md");
+        fs::write(
+            &skill_file,
+            "---\nname: Weather Reporter\ndescription: Reports weather\n---\n# Docs\n",
+        )
+        .unwrap();
+
+        let config_file = guard.home_dir.join(".openclaw").join("openclaw.json");
+        let initial_json = r#"{
+            "preserveRoot": "yes",
+            "skills": {
+                "preserveSkillSetting": 99,
+                "entries": {
+                    "existing-skill": {
+                        "enabled": true
+                    }
+                }
+            }
+        }"#;
+        fs::write(&config_file, initial_json).unwrap();
+
+        // Disable skill
+        let entry = set_skill_enabled(skill_file.to_string_lossy().to_string(), false).unwrap();
+        assert!(!entry.enabled);
+        assert_eq!(entry.id, "weather-reporter");
+        assert_eq!(entry.source, "openclaw");
+
+        let updated_content = fs::read_to_string(&config_file).unwrap();
+        let parsed: Value = serde_json::from_str(&updated_content).unwrap();
+
+        // Other keys preserved
+        assert_eq!(parsed["preserveRoot"], "yes");
+        assert_eq!(parsed["skills"]["preserveSkillSetting"], 99);
+        assert_eq!(parsed["skills"]["entries"]["existing-skill"]["enabled"], true);
+
+        // Entry updated
+        assert_eq!(parsed["skills"]["entries"]["weather-reporter"]["enabled"], false);
+
+        // Local skill-states.json is also maintained
+        let states = load_skill_states().unwrap_or_default();
+        let canon_path = fs::canonicalize(&skill_file).unwrap();
+        assert_eq!(states.get(&canon_path.to_string_lossy().to_string()), Some(&false));
+
+        // Re-enable skill
+        let entry2 = set_skill_enabled(skill_file.to_string_lossy().to_string(), true).unwrap();
+        assert!(entry2.enabled);
+
+        let re_updated_content = fs::read_to_string(&config_file).unwrap();
+        let parsed2: Value = serde_json::from_str(&re_updated_content).unwrap();
+        assert_eq!(parsed2["skills"]["entries"]["weather-reporter"]["enabled"], true);
+        assert_eq!(parsed2["preserveRoot"], "yes");
+    }
+
+    #[test]
+    fn set_skill_enabled_corrupt_openclaw_config_returns_err_and_leaves_file_untouched() {
+        let guard = TempHomeGuard::new("skill_corrupt_config");
+        let openclaw_skills = guard.home_dir.join(".openclaw").join("skills");
+        let skill_dir = openclaw_skills.join("test-corrupt-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_file = skill_dir.join("SKILL.md");
+        fs::write(&skill_file, "---\nname: Test Corrupt\n---\n").unwrap();
+
+        let config_file = guard.home_dir.join(".openclaw").join("openclaw.json");
+        let corrupt_content = "{ corrupt : json [[{";
+        fs::write(&config_file, corrupt_content).unwrap();
+
+        let result = set_skill_enabled(skill_file.to_string_lossy().to_string(), false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Corrupt OpenClaw configuration"));
+
+        let file_after = fs::read_to_string(&config_file).unwrap();
+        assert_eq!(file_after, corrupt_content);
+    }
+
+    #[test]
+    fn set_skill_enabled_proto_and_empty_rejected() {
+        let guard = TempHomeGuard::new("skill_proto_rejected");
+        let config_file = guard.home_dir.join(".openclaw").join("openclaw.json");
+
+        let err1 = sync_skill_enabled_to_openclaw_at_path("__proto__", true, &config_file).unwrap_err();
+        assert!(err1.contains("__proto__"));
+
+        let err2 = sync_skill_enabled_to_openclaw_at_path("   ", true, &config_file).unwrap_err();
+        assert!(err2.contains("empty"));
+
+        assert!(!config_file.exists());
+    }
+
+    #[test]
+    fn set_skill_enabled_missing_openclaw_config_created() {
+        let guard = TempHomeGuard::new("skill_missing_config");
+        let openclaw_skills = guard.home_dir.join(".openclaw").join("skills");
+        let skill_dir = openclaw_skills.join("auto-create-config");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_file = skill_dir.join("SKILL.md");
+        fs::write(&skill_file, "---\nname: Auto Create\n---\n").unwrap();
+
+        let config_file = guard.home_dir.join(".openclaw").join("openclaw.json");
+        assert!(!config_file.exists());
+
+        set_skill_enabled(skill_file.to_string_lossy().to_string(), true).unwrap();
+
+        assert!(config_file.exists());
+        let parsed: Value = serde_json::from_str(&fs::read_to_string(&config_file).unwrap()).unwrap();
+        assert_eq!(parsed["skills"]["entries"]["auto-create-config"]["enabled"], true);
     }
 }
