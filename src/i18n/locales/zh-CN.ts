@@ -5,6 +5,11 @@ import { authFileListZhCN } from '../authFileList';
 import { themeDiyZhCN } from '../themeDiy';
 
 export const zhCN = {
+  'agents.responseLanguage.label': '回复语言',
+  'agents.responseLanguage.unmanaged': '保留现有设置（不管理）',
+  'agents.responseLanguage.default': 'Claude 默认（移除覆盖）',
+  'agents.responseLanguage.custom': '自定义语言',
+  'agents.responseLanguage.hint': '仅用于 Claude Code：写入 settings.json 的 language。预设仅供参考，并非完整列表；可输入任意语言或方言。不管理会保留现有设置；默认或空白自定义文本会移除覆盖。不会改变应用界面语言。',
   ...routingZhCN,
   ...themeDiyZhCN,
   'app.window.minimize': '最小化',
@@ -975,6 +980,7 @@ export const zhCN = {
   'usage.analysis.modelTitle': '模型消耗',
   'usage.analysis.modelHint': '对比各模型的用量与占比',
   'usage.analysis.metricLabel': '模型排序指标',
+  'usage.analysis.keyMetricLabel': '密钥排序指标',
   'usage.analysis.metricTokens': 'Token',
   'usage.analysis.metricRequests': '请求量',
   'usage.analysis.otherModels': '其他 {count} 个模型',

@@ -611,6 +611,99 @@ fn portable_update_asset_accepts_only_the_configured_gitcode_fallback() {
         Some("another-owner/EasyCLIProxyAPI"),
     )
     .is_err());
+
+    for fallback in [
+        gitcode_release_attachment_url("mirror-owner/EasyCLIProxyAPI", "v9.9.9", &filename),
+        gitcode_release_attachment_url("mirror-owner/EasyCLIProxyAPI", "v1.2.3", "wrong.zip"),
+        "https://untrusted.example.com/package.zip".to_string(),
+    ] {
+        asset.fallback_urls = vec![fallback];
+        assert!(validate_portable_update_asset_fallbacks_for_repository(
+            &asset,
+            "v1.2.3",
+            &[&filename],
+            Some("mirror-owner/EasyCLIProxyAPI"),
+        )
+        .is_err());
+    }
+
+    let fallback = gitcode_release_attachment_url(
+        "mirror-owner/EasyCLIProxyAPI",
+        "v1.2.3",
+        &filename,
+    );
+    asset.fallback_urls = vec![fallback.clone(), fallback];
+    assert!(validate_portable_update_asset_fallbacks_for_repository(
+        &asset,
+        "v1.2.3",
+        &[&filename],
+        Some("mirror-owner/EasyCLIProxyAPI"),
+    )
+    .is_err());
+}
+
+#[test]
+fn portable_update_unconfigured_fallbacks_are_accepted_but_never_downloaded() {
+    let mut asset = portable_update_test_asset("1.2.3", "amd64");
+    let (_, display, suffix) = portable_update_asset_platform().unwrap();
+    let filename = format!("EasyCLIProxyAPI-v1.2.3-{display}-amd64.{suffix}");
+    let fallback = gitcode_release_attachment_url(
+        "mirror-owner/EasyCLIProxyAPI",
+        "v1.2.3",
+        &filename,
+    );
+    for fallbacks in [
+        vec![],
+        vec![fallback.clone()],
+        vec![fallback.clone(), fallback],
+        vec!["https://untrusted.example.com/package.zip".to_string()],
+        vec!["not a URL".to_string()],
+    ] {
+        asset.fallback_urls = fallbacks;
+        validate_portable_update_asset_fallbacks_for_repository(
+            &asset,
+            "v1.2.3",
+            &[&filename],
+            None,
+        )
+        .unwrap();
+
+        let mut manifest = portable_update_test_manifest("1.2.3");
+        for manifest_asset in manifest.assets.values_mut() {
+            manifest_asset.fallback_urls = asset.fallback_urls.clone();
+        }
+        manifest.full_assets = Some(manifest.assets.clone());
+        validate_portable_update_manifest_for_repository(&manifest, None).unwrap();
+
+        for source in [
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+            VersionDownloadCandidate::custom("https://mirror.example.com/"),
+        ] {
+            let mut expected = vec![asset.url.clone()];
+            if source.proxy_prefix().is_some() {
+                expected.insert(0, version_source_url(&source, &asset.url));
+            }
+            assert_eq!(
+                portable_update_download_urls_for_repository(&asset, &source, None),
+                expected,
+                "{source:?}",
+            );
+        }
+
+        for invalid_primary in [
+            "https://untrusted.example.com/package.zip".to_string(),
+            asset.url.replace("v1.2.3/", "v9.9.9/"),
+        ] {
+            let mut invalid_manifest = manifest.clone();
+            invalid_manifest.assets.values_mut().next().unwrap().url = invalid_primary;
+            assert!(
+                validate_portable_update_manifest_for_repository(&invalid_manifest, None).is_err()
+            );
+        }
+    }
 }
 
 #[test]
@@ -624,23 +717,26 @@ fn portable_update_download_order_respects_gitcode_preference() {
         &filename,
     )];
 
-    let github_first = portable_update_download_urls(
+    let github_first = portable_update_download_urls_for_repository(
         &asset,
         &VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+        Some("mirror-owner/EasyCLIProxyAPI"),
     );
     assert_eq!(update_download_source_name(&github_first[0]), "GitHub");
     assert_eq!(update_download_source_name(&github_first[1]), "GitCode");
 
-    let gitcode_first = portable_update_download_urls(
+    let gitcode_first = portable_update_download_urls_for_repository(
         &asset,
         &VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+        Some("mirror-owner/EasyCLIProxyAPI"),
     );
     assert_eq!(update_download_source_name(&gitcode_first[0]), "GitCode");
     assert_eq!(update_download_source_name(&gitcode_first[1]), "GitHub");
 
-    let mirror_first = portable_update_download_urls(
+    let mirror_first = portable_update_download_urls_for_repository(
         &asset,
         &VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+        Some("mirror-owner/EasyCLIProxyAPI"),
     );
     assert_eq!(
         update_download_source_name(&mirror_first[0]),
@@ -648,6 +744,25 @@ fn portable_update_download_order_respects_gitcode_preference() {
     );
     assert_eq!(update_download_source_name(&mirror_first[1]), "GitHub");
     assert_eq!(update_download_source_name(&mirror_first[2]), "GitCode");
+
+    for source in [
+        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+        VersionDownloadCandidate::custom("https://mirror.example.com/"),
+    ] {
+        assert_eq!(
+            portable_update_download_urls_for_repository(
+                &asset,
+                &source,
+                Some("mirror-owner/EasyCLIProxyAPI"),
+            ),
+            vec![
+                version_source_url(&source, &asset.url),
+                asset.url.clone(),
+                asset.fallback_urls[0].clone(),
+            ],
+        );
+    }
 }
 
 #[test]
