@@ -23,6 +23,14 @@ import {
   saveSoftwareSettings as saveSoftwareSettingsCommand,
 } from '../services/coreSettings';
 import type { CoreConfigSettings, CoreApiKey, SoftwareSettings, CloseBehavior, CoreTlsSettings } from '../services/coreSettings';
+import {
+  getReverseProxyState,
+  applyReverseProxyConfig,
+  startReverseProxy,
+  stopReverseProxy,
+  type ReverseProxyConfig,
+  type ReverseProxyState,
+} from '../services/reverseProxy';
 import { CoolingToggle } from '../components/settings/CoolingToggle';
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { open } from '../services/platform';
@@ -179,6 +187,7 @@ export function ConfigPanelPage() {
   const routingFeedback = useAppNotice();
   const retryFeedback = useAppNotice();
   const tlsFeedback = useAppNotice();
+  const proxyFeedback = useAppNotice();
   const softwareFeedback = useAppNotice();
   const renderFeedback = (feedback: ReturnType<typeof useAppNotice>) => (
     <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
@@ -247,12 +256,117 @@ export function ConfigPanelPage() {
   const otherDraftDirtyRef = useRef({ software: false, tls: false });
   const copyTimerRef = useRef<number | null>(null);
 
+  const [proxyState, setProxyState] = useState<ReverseProxyState | null>(null);
+  const [proxyInitialLoading, setProxyInitialLoading] = useState(true);
+  const [proxyAction, setProxyAction] = useState<'start' | 'stop' | 'save' | null>(null);
+  const [proxyDirty, setProxyDirty] = useState(false);
+  const [backendNotReady, setBackendNotReady] = useState(false);
+  const [proxyFileSelecting, setProxyFileSelecting] = useState<'cert' | 'key' | null>(null);
+  const [proxyDraft, setProxyDraft] = useState<ReverseProxyConfig>({
+    enabled: false,
+    listenHost: '0.0.0.0',
+    listenPort: 443,
+    targetPort: 8317,
+    certPath: '',
+    keyPath: '',
+  });
+
+  const loadReverseProxy = async () => {
+    setProxyInitialLoading(true);
+    try {
+      const state = await getReverseProxyState();
+      setProxyState(state);
+      setBackendNotReady(false);
+    } catch {
+      setBackendNotReady(true);
+    } finally {
+      setProxyInitialLoading(false);
+    }
+  };
+
+  const handleProxyStart = async () => {
+    if (proxyAction !== null) return;
+    setProxyAction('start');
+    try {
+      const state = await startReverseProxy(proxyDraft);
+      setProxyState(state);
+      setBackendNotReady(false);
+      setProxyDirty(false);
+    } catch {
+      setBackendNotReady(true);
+    } finally {
+      setProxyAction(null);
+    }
+  };
+
+  const handleProxyStop = async () => {
+    if (proxyAction !== null) return;
+    setProxyAction('stop');
+    try {
+      const state = await stopReverseProxy();
+      setProxyState(state);
+      setBackendNotReady(false);
+    } catch {
+      setBackendNotReady(true);
+    } finally {
+      setProxyAction(null);
+    }
+  };
+
+  const handleProxySave = async () => {
+    if (proxyAction !== null) return;
+    setProxyAction('save');
+    proxyFeedback.clearNotice();
+    try {
+      const state = await applyReverseProxyConfig(proxyDraft);
+      setProxyState(state);
+      setBackendNotReady(false);
+      setProxyDirty(false);
+      proxyFeedback.showNotice(st('reverseProxySaved'), 'success');
+    } catch {
+      setBackendNotReady(true);
+    } finally {
+      setProxyAction(null);
+    }
+  };
+
+  const selectProxyFile = async (target: 'cert' | 'key') => {
+    if (controlsDisabled || proxyAction !== null || proxyFileSelecting !== null) return;
+    setProxyFileSelecting(target);
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: target === 'cert'
+          ? st('reverseProxySelectCertTitle')
+          : st('reverseProxySelectKeyTitle'),
+        filters: [{
+          name: target === 'cert' ? st('reverseProxyCertFile') : st('reverseProxyKeyFile'),
+          extensions: target === 'cert' ? ['pem', 'crt', 'cer'] : ['pem', 'key'],
+        }],
+      });
+      if (typeof selected !== 'string') return;
+      if (target === 'cert') {
+        setProxyDraft(prev => ({ ...prev, certPath: selected }));
+      } else {
+        setProxyDraft(prev => ({ ...prev, keyPath: selected }));
+      }
+      setProxyDirty(true);
+    } catch (error) {
+      const message = t('config.tls.error.selectFileFailed', { error: String(error) });
+      proxyFeedback.showNotice(message, 'error');
+    } finally {
+      setProxyFileSelecting(null);
+    }
+  };
+
   useEffect(() => {
     let disposed = false;
     let stop: (() => void) | null = null;
     void loadSettings();
     void loadSoftwareSettings();
     void loadTlsSettings();
+    void loadReverseProxy();
     void onConfigFilesChanged(() => {
       if (!disposed) {
         void loadSettings('preserve');
@@ -1020,6 +1134,7 @@ export function ConfigPanelPage() {
     { category: 'general', target: 'config-native-management', title: t('config.webuiKey.title'), context: '', keywords: 'WebUI secret-key 密钥 管理接口 面板 密码 management security' },
     { category: 'general', target: 'config-native-network', title: st('nativeNetwork'), context: '', keywords: [t('config.network.port'), t('config.network.listenHost'), t('config.network.proxyUrl'), t('config.network.systemProxy'), 'server host port proxy URL 8317 127.0.0.1 0.0.0.0 监听 地址 系统代理'].join(' ') },
     { category: 'general', target: 'config-native-tls', title: t('config.tls.enable'), context: '', keywords: [t('config.tls.cert'), t('config.tls.key'), 'TLS HTTPS cert key certificate 证书 私钥 加密'].join(' ') },
+    { category: 'general', target: 'config-native-reverse-proxy', title: st('reverseProxyTitle'), context: '', keywords: [st('reverseProxyListenHost'), st('reverseProxyListenPort'), st('reverseProxyTargetPort'), st('reverseProxyCertPath'), st('reverseProxyKeyPath'), 'reverse proxy 反向代理 HTTPS 转发 监听 端口'].join(' ') },
     { category: 'routing', target: 'config-native-routing', title: st('nativeRouting'), context: '', keywords: [t('config.network.sessionAffinity'), t('config.network.sessionTtl'), t('config.routing.title'), 'session affinity ttl routing strategy round-robin 会话 粘性 加权 轮询'].join(' ') },
     { category: 'requests', target: 'config-native-retry', title: st('nativeRetry'), context: '', keywords: [t('config.network.enableCooling'), t('config.network.disableCooling'), t('config.network.requestRetry'), t('config.network.maxRetryCredentials'), t('config.network.maxRetryInterval'), t('config.network.streamingBootstrapRetries'), 'retry retries cooldown 重试 冷却 流式 失败 fallback'].join(' ') },
     { category: 'diagnostics', target: 'config-native-logging', title: t('config.diagnostics.title'), context: '', keywords: [t('config.diagnostics.debug.title'), t('config.diagnostics.commercial.title'), t('config.diagnostics.fileLogging.title'), t('config.diagnostics.usage.title'), t('config.diagnostics.maxSize.title'), t('config.diagnostics.errorFiles.title'), t('config.diagnostics.redisRetention.title'), 'debug commercial-mode logging logs usage statistics redis retention 日志 调试 商业模式 用量 统计 留存 文件 容量'].join(' ') },
@@ -1508,6 +1623,289 @@ export function ConfigPanelPage() {
                 <Check size={16} aria-hidden="true" />
                 {busyAction === 'tls' ? t('common.saving') : t('common.save')}
               </button></div>
+        </section>
+        <section
+          id="config-native-reverse-proxy"
+          tabIndex={-1}
+          hidden={searching || activeSubpage !== 'general'}
+          className="surface-card config-network-section"
+          aria-labelledby="config-reverse-proxy-section-title"
+        >
+          <div className="config-network-section-heading config-tls-section-heading">
+            <div className="config-tls-section-title">
+              <Network size={18} aria-hidden="true" />
+              <h3 id="config-reverse-proxy-section-title">{st('reverseProxyTitle')}</h3>
+            </div>
+            <div className="config-heading-actions">
+              {proxyState ? (
+                <span className={`state-pill ${proxyState.running ? 'success' : ''}`}>
+                  {proxyState.running ? st('reverseProxyRunning') : st('reverseProxyStopped')}
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          {proxyInitialLoading ? (
+            <div className="config-tls-content" aria-busy="true">
+              <div className="config-key-row skeleton" aria-hidden="true">
+                <span />
+                <span />
+              </div>
+              <div className="config-key-row skeleton" aria-hidden="true">
+                <span />
+                <span />
+              </div>
+              <div className="config-key-row skeleton" aria-hidden="true">
+                <span />
+                <span />
+              </div>
+            </div>
+          ) : (
+            <div className="config-tls-content">
+              {backendNotReady ? (
+                <Notice tone="warn" className="config-reverse-proxy-backend-notice">
+                  {st('reverseProxyBackendNotReady')}
+                </Notice>
+              ) : null}
+
+              <Notice tone="warn" variant="box" className="config-reverse-proxy-warning">
+                {st('reverseProxySecurityWarning')}
+              </Notice>
+
+              <div className="config-software-setting-row config-tls-toggle-row">
+                <div className="config-software-setting-copy">
+                  <span className="config-software-setting-icon" aria-hidden="true">
+                    <Network size={18} />
+                  </span>
+                  <div>
+                    <span className="config-field-label">
+                      <strong>{st('reverseProxyEnable')}</strong>
+                      <SettingsHelp label={st('reverseProxyEnable')}>{st('reverseProxyEnableHint')}</SettingsHelp>
+                    </span>
+                  </div>
+                </div>
+                <Switch
+                  title={st('reverseProxyEnable')}
+                  aria-label={st('reverseProxyEnable')}
+                  aria-checked={proxyDraft.enabled}
+                  checked={proxyDraft.enabled}
+                  disabled={controlsDisabled || proxyAction !== null}
+                  onChange={(event) => {
+                    setProxyDraft(prev => ({ ...prev, enabled: event.currentTarget.checked }));
+                    setProxyDirty(true);
+                  }}
+                />
+              </div>
+
+              <div className="config-network-grid">
+                <div className="config-network-field">
+                  <span className="config-field-label">
+                    <label htmlFor="config-input-reverse-proxy-listen-host">{st('reverseProxyListenHost')}</label>
+                    <SettingsHelp label={st('reverseProxyListenHost')}>{st('reverseProxyListenHostHint')}</SettingsHelp>
+                  </span>
+                  <input
+                    id="config-input-reverse-proxy-listen-host"
+                    className="config-network-input"
+                    type="text"
+                    value={proxyDraft.listenHost}
+                    disabled={controlsDisabled || proxyAction !== null}
+                    placeholder="0.0.0.0"
+                    onChange={(event) => {
+                      setProxyDraft(prev => ({ ...prev, listenHost: event.currentTarget.value }));
+                      setProxyDirty(true);
+                    }}
+                  />
+                </div>
+
+                <div className="config-network-field">
+                  <span className="config-field-label">
+                    <label htmlFor="config-input-reverse-proxy-listen-port">{st('reverseProxyListenPort')}</label>
+                    <SettingsHelp label={st('reverseProxyListenPort')}>{st('reverseProxyListenPortHint')}</SettingsHelp>
+                  </span>
+                  <input
+                    id="config-input-reverse-proxy-listen-port"
+                    className="config-network-input"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={proxyDraft.listenPort || ''}
+                    disabled={controlsDisabled || proxyAction !== null}
+                    placeholder="443"
+                    onChange={(event) => {
+                      const val = parseInt(event.currentTarget.value, 10);
+                      setProxyDraft(prev => ({ ...prev, listenPort: Number.isNaN(val) ? 0 : val }));
+                      setProxyDirty(true);
+                    }}
+                  />
+                </div>
+
+                <div className="config-network-field">
+                  <span className="config-field-label">
+                    <label htmlFor="config-input-reverse-proxy-target-port">{st('reverseProxyTargetPort')}</label>
+                    <SettingsHelp label={st('reverseProxyTargetPort')}>{st('reverseProxyTargetPortHint')}</SettingsHelp>
+                  </span>
+                  <input
+                    id="config-input-reverse-proxy-target-port"
+                    className="config-network-input"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={proxyDraft.targetPort || ''}
+                    disabled={controlsDisabled || proxyAction !== null}
+                    placeholder={String(settings?.port ?? 8317)}
+                    onChange={(event) => {
+                      const val = parseInt(event.currentTarget.value, 10);
+                      setProxyDraft(prev => ({ ...prev, targetPort: Number.isNaN(val) ? 0 : val }));
+                      setProxyDirty(true);
+                    }}
+                  />
+                </div>
+
+                <div className="config-network-field">
+                  <span className="config-field-label">
+                    <label htmlFor="config-input-reverse-proxy-cert-path">{st('reverseProxyCertPath')}</label>
+                    <SettingsHelp label={st('reverseProxyCertPath')}>{st('reverseProxyCertPathHint')}</SettingsHelp>
+                  </span>
+                  <div className="config-tls-path-control">
+                    <input
+                      id="config-input-reverse-proxy-cert-path"
+                      className="config-network-input"
+                      type="text"
+                      value={proxyDraft.certPath}
+                      disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
+                      placeholder={st('reverseProxyCertPlaceholder')}
+                      onChange={(event) => {
+                        setProxyDraft(prev => ({ ...prev, certPath: event.currentTarget.value }));
+                        setProxyDirty(true);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="secondary-button compact-button config-tls-browse-button"
+                      disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
+                      title={st('reverseProxySelectCertTitle')}
+                      onClick={() => void selectProxyFile('cert')}
+                    >
+                      <FolderOpen size={16} aria-hidden="true" />
+                      {proxyFileSelecting === 'cert' ? t('common.processing') : t('config.tls.browse')}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="config-network-field">
+                  <span className="config-field-label">
+                    <label htmlFor="config-input-reverse-proxy-key-path">{st('reverseProxyKeyPath')}</label>
+                    <SettingsHelp label={st('reverseProxyKeyPath')}>{st('reverseProxyKeyPathHint')}</SettingsHelp>
+                  </span>
+                  <div className="config-tls-path-control">
+                    <input
+                      id="config-input-reverse-proxy-key-path"
+                      className="config-network-input"
+                      type="text"
+                      value={proxyDraft.keyPath}
+                      disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
+                      placeholder={st('reverseProxyKeyPlaceholder')}
+                      onChange={(event) => {
+                        setProxyDraft(prev => ({ ...prev, keyPath: event.currentTarget.value }));
+                        setProxyDirty(true);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="secondary-button compact-button config-tls-browse-button"
+                      disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
+                      title={st('reverseProxySelectKeyTitle')}
+                      onClick={() => void selectProxyFile('key')}
+                    >
+                      <FolderOpen size={16} aria-hidden="true" />
+                      {proxyFileSelecting === 'key' ? t('common.processing') : t('config.tls.browse')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="config-network-grid" aria-label={st('reverseProxyStatus')}>
+                <div className="config-network-field">
+                  <span className="config-field-label"><span>{st('reverseProxyStatusRunning')}</span></span>
+                  <input
+                    type="text"
+                    readOnly
+                    className="config-network-input"
+                    value={proxyState?.running ? st('reverseProxyRunning') : st('reverseProxyStopped')}
+                    aria-label={st('reverseProxyStatusRunning')}
+                  />
+                </div>
+                <div className="config-network-field">
+                  <span className="config-field-label"><span>{st('reverseProxyStatusListening')}</span></span>
+                  <input
+                    type="text"
+                    readOnly
+                    className="config-network-input"
+                    value={proxyState?.listening ?? '—'}
+                    aria-label={st('reverseProxyStatusListening')}
+                  />
+                </div>
+                <div className="config-network-field">
+                  <span className="config-field-label"><span>{st('reverseProxyStatusTarget')}</span></span>
+                  <input
+                    type="text"
+                    readOnly
+                    className="config-network-input"
+                    value={proxyState?.target ?? '—'}
+                    aria-label={st('reverseProxyStatusTarget')}
+                  />
+                </div>
+                <div className="config-network-field">
+                  <span className="config-field-label"><span>{st('reverseProxyStatusRequests')}</span></span>
+                  <input
+                    type="text"
+                    readOnly
+                    className="config-network-input"
+                    value={String(proxyState?.requestsTotal ?? 0)}
+                    aria-label={st('reverseProxyStatusRequests')}
+                  />
+                </div>
+              </div>
+
+              {proxyState?.error ? (
+                <Notice tone="error" className="config-reverse-proxy-error">
+                  {proxyState.error}
+                </Notice>
+              ) : null}
+
+              {renderFeedback(proxyFeedback)}
+            </div>
+          )}
+
+          <div className="config-settings-save-row">
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              disabled={controlsDisabled || proxyAction !== null || proxyInitialLoading || proxyState?.running}
+              onClick={() => void handleProxyStart()}
+            >
+              <Power size={16} aria-hidden="true" />
+              {proxyAction === 'start' ? t('common.processing') : st('reverseProxyStart')}
+            </button>
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              disabled={controlsDisabled || proxyAction !== null || proxyInitialLoading || !proxyState?.running}
+              onClick={() => void handleProxyStop()}
+            >
+              <Power size={16} aria-hidden="true" />
+              {proxyAction === 'stop' ? t('common.processing') : st('reverseProxyStop')}
+            </button>
+            <button
+              type="button"
+              className="primary-button compact-button"
+              disabled={controlsDisabled || proxyAction !== null || proxyInitialLoading || !proxyDirty}
+              onClick={() => void handleProxySave()}
+            >
+              <Check size={16} aria-hidden="true" />
+              {proxyAction === 'save' ? t('common.saving') : t('common.save')}
+            </button>
+          </div>
         </section>
 <section id="config-native-routing" tabIndex={-1} hidden={searching || activeSubpage !== 'routing'}
             className="surface-card config-network-section"

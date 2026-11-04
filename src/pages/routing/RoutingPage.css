@@ -4,7 +4,8 @@
 .routing-heading h1 { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
 .routing-heading h1 svg { color: var(--primary-color); }
 .routing-heading p { color: var(--text-secondary); margin: 0; max-width: 680px; font-size: 13px; line-height: 1.6; }
-.routing-actions { margin-left: auto; }
+.routing-actions { margin-left: auto; flex-wrap: wrap; }
+.routing-action-hint { flex-basis: 100%; margin: 6px 0 0; text-align: right; font-size: 12px; line-height: 1.4; color: var(--danger-color, #d83636); }
 .routing-actions > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .routing-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); gap: 18px; align-items: start; }
 .routing-board, .routing-tier-body { min-width: 0; }
@@ -32,6 +33,7 @@
 .routing-setting-row input:not([type="checkbox"]) { width: 76px; flex-shrink: 0; }
 .routing-ttl { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-secondary); }
 .routing-ttl input { width: 76px; font-family: monospace; }
+.routing-ttl-error { color: var(--danger-color, #d83636); font-size: 12px; line-height: 1.4; }
 .routing-failover-details { border-top: 1px solid var(--border-color); padding-top: 16px; }
 .routing-failover-details summary { cursor: pointer; font-size: 12px; }
 .routing-failover-details summary .routing-summary-pill { display: block; margin-top: 8px; width: fit-content; }

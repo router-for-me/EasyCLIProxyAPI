@@ -4,6 +4,7 @@ import { SegmentedControl } from '../../components/SegmentedControl';
 import type { RoutingSettings } from '../../services/routing';
 
 const strategies = ['round-robin', 'weighted-round-robin', 'fill-first'] as const;
+const ttlPattern = /^(?:\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h))+$/;
 const descriptions = { 'round-robin': 'routing.roundRobinDesc', 'weighted-round-robin': 'routing.weightedRoundRobinDesc', 'fill-first': 'routing.fillFirstDesc' } as const;
 
 function StrategyGlyph({ strategy }: { strategy: RoutingSettings['strategy'] }) {
@@ -16,6 +17,7 @@ export function PolicyStrip({ settings, disabled, onChange }: {
 }) {
   const { t } = useI18n();
   const set = <Key extends keyof RoutingSettings>(key: Key, value: RoutingSettings[Key]) => onChange({ ...settings, [key]: value });
+  const ttlValid = settings.session_affinity_ttl === '' || ttlPattern.test(settings.session_affinity_ttl);
   return <section className="panel surface-panel routing-policy">
     <header><h2>{t('routing.policyTitle')}</h2><p>{t('routing.policyDescription')}</p></header>
     <div className="routing-policy-strategy"><span className="routing-policy-label">{t('routing.strategy')}</span>
@@ -23,7 +25,7 @@ export function PolicyStrip({ settings, disabled, onChange }: {
       <p className="routing-policy-hint">{t(descriptions[settings.strategy])}</p>
     </div>
     <div className="routing-setting-row"><div><strong>{t('routing.session_affinity')}</strong><p>{t('routing.affinityDesc')}</p></div><Switch disabled={disabled} checked={settings.session_affinity} aria-label={t('routing.session_affinity')} onChange={event => set('session_affinity', event.target.checked)} /></div>
-    {settings.session_affinity && <label className="routing-ttl">{t('routing.session_affinity_ttl')}<input disabled={disabled} placeholder="1h" value={settings.session_affinity_ttl} onChange={event => set('session_affinity_ttl', event.target.value)} /></label>}
+    {settings.session_affinity && <label className="routing-ttl">{t('routing.session_affinity_ttl')}<input disabled={disabled} placeholder="1h" value={settings.session_affinity_ttl} aria-invalid={!ttlValid} aria-describedby={ttlValid ? undefined : 'routing-ttl-error'} onChange={event => set('session_affinity_ttl', event.target.value)} />{ttlValid ? null : <span id="routing-ttl-error" role="alert" className="routing-ttl-error">{t('routing.invalidTtl')}</span>}</label>}
     <details className="routing-failover-details"><summary><strong>{t('routing.failover')}</strong><span className="routing-summary-pill">{t('routing.failoverSummary', { rounds: settings.request_retry, credentials: settings.max_retry_credentials || t('routing.unlimited') })}</span></summary>
       <div className="routing-failover-fields">{(['request_retry', 'max_retry_credentials', 'max_retry_interval', 'transient_error_cooldown_seconds'] as const).map(key => <label className="routing-setting-row routing-setting-row-described" key={key}><span className="routing-setting-text"><span>{t(`routing.${key}`)}</span><span className="routing-setting-hint">{t(`routing.${key}Desc`)}</span></span><input type="number" step={1} min={key === 'transient_error_cooldown_seconds' ? -1 : 0} max={2147483647} disabled={disabled} value={Number.isNaN(settings[key]) ? '' : settings[key]} onChange={event => set(key, event.target.valueAsNumber)} /></label>)}
         <div className="routing-setting-row routing-setting-row-described"><span className="routing-setting-text"><span>{t('routing.disable_cooling')}</span><span className="routing-setting-hint">{t('routing.disable_coolingDesc')}</span></span><Switch disabled={disabled} checked={settings.disable_cooling} aria-label={t('routing.disable_cooling')} onChange={event => set('disable_cooling', event.target.checked)} /></div>
