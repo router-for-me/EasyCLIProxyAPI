@@ -26,6 +26,10 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
   const name = privacy.credentialName(file);
   const error = privacy.text(quota.error ?? '');
   const compactLayout = compact || dense;
+  const visibleRows = compactLayout
+    ? quota.rows.filter((row, index) => index < 2 || row.kind === 'cloud-credits') : quota.rows;
+  const hiddenRows = compactLayout
+    ? quota.rows.filter((row, index) => index >= 2 && row.kind !== 'cloud-credits') : [];
   const showReset = Boolean(onReset && ((quota.resetCredits ?? 0) > 0 || hasPendingClaudeReset(file)));
   const accountCreditsLabel = quota.creditsUnlimited
     ? t('quota.creditUnlimited')
@@ -42,13 +46,14 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
       : reset;
     const tone = percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
     return <div className={`credential-quota-row ${tone}`} style={percent === null ? undefined : { '--quota-color': requestRateColor(percent / 100) } as CSSProperties} key={`${row.label}-${index}`}>
-      <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{row.quotaAvailable ? t('quota.service.antigravity.available') : percent === null ? '—' : `${Math.round(percent)}%`}</strong></div>
+      <div className="credential-quota-label"><span title={row.help || row.label}>{row.label}</span><strong>{row.quotaAvailable ? t('quota.service.antigravity.available') : percent === null ? '—' : `${Math.round(percent)}%`}</strong></div>
       <div className="credential-quota-track" role={percent === null ? undefined : 'progressbar'} aria-label={`${row.label} · ${t('authFiles.settings.quotaRemaining')}`}
         aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined}>
         {percent === null ? <span className="sr-only">{t('authFiles.settings.quotaUnknown')}</span> : <i style={{ width: `${percent}%` }} />}
       </div>
       {reset ? <small className={dense ? 'credential-quota-reset-time' : undefined} title={dense ? reset : undefined}>{resetText}</small> : null}
       {row.detail ? <small className={dense ? 'credential-quota-row-detail' : undefined} title={dense ? row.detail : undefined}>{row.detail}</small> : null}
+      {row.help ? <details><summary>{t('quota.service.cloud.how')}</summary><small>{row.help}</small></details> : null}
     </div>;
   };
   return (
@@ -72,10 +77,10 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
       </div> : null}
       {quota.status === 'success' ? <>
         {quota.rows.length ? <>
-          <div className="credential-quota-rows">{(compactLayout ? quota.rows.slice(0, 2) : quota.rows).map(renderRow)}</div>
-          {compactLayout && quota.rows.length > 2 ? <details className="credential-quota-more">
-            <summary>{t('authFiles.health.details')} (+{quota.rows.length - 2})</summary>
-            <div className="credential-quota-rows">{quota.rows.slice(2).map((row, index) => renderRow(row, index + 2))}</div>
+          <div className="credential-quota-rows">{visibleRows.map(renderRow)}</div>
+          {hiddenRows.length > 0 ? <details className="credential-quota-more">
+            <summary>{t('authFiles.health.details')} (+{hiddenRows.length})</summary>
+            <div className="credential-quota-rows">{hiddenRows.map(renderRow)}</div>
           </details> : null}
         </> : <p className="credential-quota-empty">{t('authFiles.quota.empty')}</p>}
         {!dense ? <div className="credential-quota-footnotes">
