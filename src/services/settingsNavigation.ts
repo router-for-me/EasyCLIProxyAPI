@@ -17,7 +17,7 @@ export const settingsCategories = [
 ] as const;
 export type SettingsCategory = typeof settingsCategories[number]['id'];
 export const settingsTemplateGroups = {
-  general: generalTemplateGroups.filter(group => group.id === 'management'),
+  general: generalTemplateGroups.filter(group => group.id === 'management' || group.id === 'server'),
   proxy: [],
   aliases: [],
   routing: [...routingTemplateGroups, ...extensionTemplateGroups.filter(group => group.id === 'extensions-concurrency')],

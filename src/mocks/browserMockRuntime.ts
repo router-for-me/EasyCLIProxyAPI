@@ -4,6 +4,7 @@ import { requestBucketRangeLabel } from '../services/authFileRequests';
 import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
 import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
+import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
 
 export type BrowserMockScenario = 'running' | 'stopped' | 'empty' | 'error';
 export type BrowserMockMode = BrowserMockScenario | 'off';
@@ -1302,7 +1303,13 @@ export function createBrowserMockRuntime(
       case 'restore_codex_official_config':
       case 'create_agent_config_backup':
       case 'restore_agent_config_backup':
-      case 'launch_agent': return null;
+      case 'launch_agent': {
+        const arguments_ = parseAgentLaunchArguments(String(payload.customArguments ?? ''));
+        if (!arguments_) throw new Error('Invalid startup arguments');
+        if (payload.target === 'app' && arguments_.length) throw new Error('Custom arguments require a CLI target');
+        if (payload.client === 'deepseek-harness' && hasDeepSeekArgumentConflict(arguments_)) throw new Error('Use structured DeepSeek controls for these options');
+        return null;
+      }
 
       case 'get_core_status': return clone(state.coreStatus);
       case 'main_window_active': return !document.hidden;
@@ -1397,7 +1404,7 @@ export function createBrowserMockRuntime(
           else if (key === 'requestLog' || key === 'pluginsEnabled') syncValues[key] = false;
         }
         Object.assign(state.coreConfig, syncValues);
-        const restartRequired = changes.some((change) => !sameTemplateValue(readTemplatePath(before, change.path), readTemplatePath(state.extendedConfig, change.path)) && ['server.host', 'server.port', 'server.tls', 'management', 'oauth.auth-dir'].some((prefix) => change.path.join('.') === prefix || change.path.join('.').startsWith(`${prefix}.`)));
+        const restartRequired = changes.some((change) => !sameTemplateValue(readTemplatePath(before, change.path), readTemplatePath(state.extendedConfig, change.path)) && ['server.host', 'server.port', 'server.tls', 'server.trusted-proxies', 'server.discovery', 'management', 'oauth.auth-dir'].some((prefix) => change.path.join('.') === prefix || change.path.join('.').startsWith(`${prefix}.`)));
         emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
         return { config: clone(state.extendedConfig), restartRequired };
       }

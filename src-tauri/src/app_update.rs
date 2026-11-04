@@ -427,12 +427,12 @@ pub(crate) async fn fetch_portable_update_manifest_from_gitcode(
         .header(reqwest::header::USER_AGENT, APP_USER_AGENT)
         .send()
         .await
-        .map_err(|error| format!("query GitCode latest release: {error}"))?
+        .map_err(|error| format!("query GitCode latest release: {}", update_request_error(error)))?
         .error_for_status()
-        .map_err(|error| format!("read GitCode latest release: {error}"))?
+        .map_err(|error| format!("read GitCode latest release: {}", update_request_error(error)))?
         .json::<GitcodeRelease>()
         .await
-        .map_err(|error| format!("parse GitCode latest release: {error}"))?;
+        .map_err(|error| format!("parse GitCode latest release: {}", update_request_error(error)))?;
     validate_release_tag(&release.tag_name)?;
     let manifest_url =
         gitcode_release_attachment_url(repository, &release.tag_name, APP_UPDATE_MANIFEST_NAME);
@@ -448,12 +448,12 @@ pub(crate) async fn fetch_portable_update_manifest_url(
         .header(reqwest::header::USER_AGENT, APP_USER_AGENT)
         .send()
         .await
-        .map_err(|error| format!("request update manifest: {error}"))?
+        .map_err(|error| format!("request update manifest: {}", update_request_error(error)))?
         .error_for_status()
-        .map_err(|error| format!("read update manifest: {error}"))?
+        .map_err(|error| format!("read update manifest: {}", update_request_error(error)))?
         .json::<PortableUpdateManifest>()
         .await
-        .map_err(|error| format!("parse update manifest: {error}"))?;
+        .map_err(|error| format!("parse update manifest: {}", update_request_error(error)))?;
     validate_portable_update_manifest(&manifest)?;
     Ok(manifest)
 }
@@ -1435,9 +1435,9 @@ pub(crate) async fn download_portable_update_archive_url(
         .header(reqwest::header::USER_AGENT, APP_USER_AGENT)
         .send()
         .await
-        .map_err(|error| format!("Failed to download application update: {error}"))?
+        .map_err(|error| format!("Failed to download application update: {}", update_request_error(error)))?
         .error_for_status()
-        .map_err(|error| format!("Failed to download application update: {error}"))?;
+        .map_err(|error| format!("Failed to download application update: {}", update_request_error(error)))?;
     let mut stream = response.bytes_stream();
     let mut file =
         File::create(destination).map_err(|error| format!("Failed to create temporary application update file: {error}"))?;
@@ -1447,7 +1447,7 @@ pub(crate) async fn download_portable_update_archive_url(
         if token.is_cancelled() {
             return Err("Application update download canceled".to_string());
         }
-        let chunk = chunk.map_err(|error| format!("Failed to read application update download data: {error}"))?;
+        let chunk = chunk.map_err(|error| format!("Failed to read application update download data: {}", update_request_error(error)))?;
         file.write_all(&chunk)
             .map_err(|error| format!("Failed to write temporary application update file: {error}"))?;
         downloaded = downloaded.saturating_add(chunk.len() as u64);

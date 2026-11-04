@@ -246,10 +246,21 @@ pub(crate) fn antigravity_helper_requested(args: &[std::ffi::OsString]) -> bool 
     args.get(1).is_some_and(|a| a == "--cpa-antigravity-cli")
 }
 
+pub(super) fn validate_managed_antigravity_arguments(arguments: &[String]) -> Result<(), String> {
+    if arguments.iter().any(|argument| {
+        matches!(argument.split('=').next(), Some("--model" | "--gemini_dir"))
+    }) {
+        return Err("Managed Antigravity model and gemini_dir options cannot be overridden".into());
+    }
+    Ok(())
+}
+
 fn antigravity_helper_command(args: &[std::ffi::OsString]) -> Result<Command, String> {
     if !args.get(1).is_some_and(|a| a == "--cpa-antigravity-cli") {
         return Err("Unknown Antigravity launch argument".into());
     }
+    let custom_arguments = args.iter().skip(3).map(|argument| argument.to_string_lossy().into_owned()).collect::<Vec<_>>();
+    validate_managed_antigravity_arguments(&custom_arguments)?;
     let home = args
         .get(2)
         .map(PathBuf::from)
@@ -291,12 +302,13 @@ fn antigravity_helper_command(args: &[std::ffi::OsString]) -> Result<Command, St
         return Err("Antigravity CLI configuration has changed. Apply the configuration again".into());
     }
     let executable = find_antigravity_cli(&home).ok_or("Antigravity CLI not found")?;
-    let mut command = Command::new(executable);
-    command
-        .arg(format!("--gemini_dir={}", home.join(".gemini").display()))
-        .arg(format!("--model={CLI_MODEL_LABEL}"))
-        .args(args.iter().skip(3))
-        .env("GEMINI_API_KEY", key)
+    let mut forwarded = vec![format!("--gemini_dir={}", home.join(".gemini").display()), format!("--model={CLI_MODEL_LABEL}")];
+    forwarded.extend(custom_arguments);
+    #[cfg(windows)]
+    let mut command = windows_literal_cli_command(&executable, &forwarded)?;
+    #[cfg(not(windows))]
+    let mut command = { let mut command = Command::new(executable); command.args(&forwarded); command };
+    command.env("GEMINI_API_KEY", key)
         .env("GOOGLE_GEMINI_BASE_URL", url);
     command.env_remove("GOOGLE_API_KEY");
     Ok(command)
