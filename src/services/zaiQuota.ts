@@ -7,7 +7,7 @@ import {
   readString,
 } from './managementApi';
 import { providerKeyIsDisabled } from './providerGroups';
-import { getCurrentLocale, translate } from '../i18n';
+import { getCurrentLocale, translate, type AppLocale } from '../i18n';
 
 type AuthFile = Record<string, unknown>;
 type QuotaRow = {
@@ -31,7 +31,8 @@ const ZAI_SUBSCRIPTION_PATH = '/api/biz/subscription/list';
 const zaiText = (
   key: Parameters<typeof translate>[1],
   variables?: Parameters<typeof translate>[2],
-) => translate(getCurrentLocale(), key, variables);
+  locale: AppLocale = getCurrentLocale(),
+) => translate(locale, key, variables);
 
 const aliases = new Set([
   'zai', 'z-ai', 'z.ai', 'zhipu', 'zhipuai', 'glm', 'bigmodel', 'glm-cn',
@@ -104,10 +105,10 @@ const quotaSucceeded = (payload: unknown): boolean => {
   return body.success === true && integerCode(body.code) === 200;
 };
 
-const failureMessage = (payload: unknown): string => {
+const failureMessage = (payload: unknown, locale: AppLocale = getCurrentLocale()): string => {
   const body = envelope(payload);
   const message = body ? readString(body, 'msg', 'message') : '';
-  return message || zaiText('quota.service.zai.invalidResponse');
+  return message || zaiText('quota.service.zai.invalidResponse', undefined, locale);
 };
 
 // unit 3 is hours and unit 6 is weeks. The weekly row arrives with number 1 or 7,
@@ -131,7 +132,7 @@ const usageDetail = (limit: Record<string, unknown>): string => {
   }).slice(0, 6).join(', ');
 };
 
-export function zaiQuotaRows(payload: unknown): QuotaRow[] {
+export function zaiQuotaRows(payload: unknown, locale: AppLocale = getCurrentLocale()): QuotaRow[] {
   const data = quotaData(payload);
   const limits = data && Array.isArray(data.limits) ? data.limits : [];
   const indexed = limits.flatMap((item, index) => isRecord(item) ? [{ item, index }] : []);
@@ -145,6 +146,10 @@ export function zaiQuotaRows(payload: unknown): QuotaRow[] {
     const rightReset = finiteNumber(right.item.nextResetTime) ?? 0;
     return leftReset - rightReset || left.index - right.index;
   });
+  const text = (
+    key: Parameters<typeof translate>[1],
+    variables?: Parameters<typeof translate>[2],
+  ) => zaiText(key, variables, locale);
   return indexed.flatMap(({ item, index }): QuotaRow[] => {
     const allowance = finiteNumber(item.usage);
     const consumed = finiteNumber(item.currentValue);
@@ -161,19 +166,19 @@ export function zaiQuotaRows(payload: unknown): QuotaRow[] {
     const seconds = windowSeconds(unit, number);
     const duration = seconds === null ? ''
       : seconds % 604_800 === 0
-        ? zaiText('quota.service.duration.days', { count: seconds / 86_400 })
+        ? text('quota.service.duration.days', { count: seconds / 86_400 })
         : seconds % 3_600 === 0
-          ? zaiText('quota.service.duration.hours', { count: seconds / 3_600 })
+          ? text('quota.service.duration.hours', { count: seconds / 3_600 })
           : '';
     const label = type === 'TIME_LIMIT'
-      ? zaiText('quota.service.zai.mcp')
+      ? text('quota.service.zai.mcp')
       : unit === 3
-        ? zaiText('quota.service.limit.fiveHours')
+        ? text('quota.service.limit.fiveHours')
         : unit === 6
-          ? zaiText('quota.service.weekly')
+          ? text('quota.service.weekly')
           : duration
-            ? zaiText('quota.service.limit.duration', { duration })
-            : zaiText('quota.service.limit.numbered', { index: index + 1 });
+            ? text('quota.service.limit.duration', { duration })
+            : text('quota.service.limit.numbered', { index: index + 1 });
     const resetAtMs = finiteNumber(item.nextResetTime);
     const counts = allowance === null ? '' : `${countText(consumed ?? (remaining !== null ? allowance - remaining : 0))} / ${countText(allowance)}`;
     const tools = type === 'TIME_LIMIT' ? usageDetail(item) : '';
@@ -209,11 +214,11 @@ const requestJson = async (authIndex: string, url: string): Promise<unknown> => 
   return parseBody(response.body ?? response.bodyText);
 };
 
-const assertCurrent = (generation: number) => {
-  if (captureQuotaCacheGeneration() !== generation) throw new Error(zaiText('quota.service.zai.staleRequest'));
+const assertCurrent = (generation: number, locale: AppLocale = getCurrentLocale()) => {
+  if (captureQuotaCacheGeneration() !== generation) throw new Error(zaiText('quota.service.zai.staleRequest', undefined, locale));
 };
 
-async function resolveZaiOrigin(file: AuthFile, generation: number): Promise<string> {
+async function resolveZaiOrigin(file: AuthFile, generation: number, locale: AppLocale = getCurrentLocale()): Promise<string> {
   const direct = zaiMonitorOrigin(readString(file, 'base_url', 'base-url', 'baseUrl'));
   if (direct) return direct;
   const runtimeOnly = [file.runtimeOnly, file.runtime_only].some((value) => value === true || value === 'true');
@@ -221,37 +226,40 @@ async function resolveZaiOrigin(file: AuthFile, generation: number): Promise<str
   if (!runtimeOnly && name) {
     try {
       const downloaded = parseBody(await managementApi.get('/credentials/download', { name }));
-      assertCurrent(generation);
+      assertCurrent(generation, locale);
       if (isRecord(downloaded)) {
         const origin = zaiMonitorOrigin(readString(downloaded, 'base_url', 'base-url', 'baseUrl'));
         if (origin) return origin;
       }
     } catch (error) {
-      assertCurrent(generation);
-      if (error instanceof Error && error.message === zaiText('quota.service.zai.staleRequest')) throw error;
+      assertCurrent(generation, locale);
+      if (error instanceof Error && error.message === zaiText('quota.service.zai.staleRequest', undefined, locale)) throw error;
     }
   }
   return ZAI_DEFAULT_ORIGIN;
 }
 
-export async function callZaiQuota(file: AuthFile): Promise<{ payload: unknown; plan?: string }> {
+export async function callZaiQuota(
+  file: AuthFile,
+  locale: AppLocale = getCurrentLocale(),
+): Promise<{ payload: unknown; plan?: string }> {
   const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
-  if (!authIndex) throw new Error(zaiText('quota.service.error.missingAuthIndex'));
+  if (!authIndex) throw new Error(zaiText('quota.service.error.missingAuthIndex', undefined, locale));
   const generation = captureQuotaCacheGeneration();
-  const origin = await resolveZaiOrigin(file, generation);
-  assertCurrent(generation);
+  const origin = await resolveZaiOrigin(file, generation, locale);
+  assertCurrent(generation, locale);
   const payload = await requestJson(authIndex, `${origin}${ZAI_QUOTA_PATH}`);
-  assertCurrent(generation);
-  if (!quotaSucceeded(payload)) throw new Error(zaiText('quota.service.zai.rejected', { message: failureMessage(payload) }));
-  if (zaiQuotaRows(payload).length === 0) throw new Error(zaiText('quota.service.zai.empty'));
+  assertCurrent(generation, locale);
+  if (!quotaSucceeded(payload)) throw new Error(zaiText('quota.service.zai.rejected', { message: failureMessage(payload, locale) }, locale));
+  if (zaiQuotaRows(payload, locale).length === 0) throw new Error(zaiText('quota.service.zai.empty', undefined, locale));
   let plan = readString(quotaData(payload) ?? {}, 'level') || undefined;
   try {
     const subscription = await requestJson(authIndex, `${origin}${ZAI_SUBSCRIPTION_PATH}`);
-    assertCurrent(generation);
+    assertCurrent(generation, locale);
     if (quotaSucceeded(subscription)) plan = zaiPlanFromPayloads(payload, subscription) ?? plan;
   } catch (error) {
-    assertCurrent(generation);
-    if (error instanceof Error && error.message === zaiText('quota.service.zai.staleRequest')) throw error;
+    assertCurrent(generation, locale);
+    if (error instanceof Error && error.message === zaiText('quota.service.zai.staleRequest', undefined, locale)) throw error;
   }
   return { payload, plan };
 }
