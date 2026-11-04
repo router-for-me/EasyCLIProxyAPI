@@ -1,7 +1,7 @@
 name: Build portable releases
 
 run-name: >-
-  ${{ github.event_name == 'pull_request' && 'PR test build' || github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'preview' && 'Warm build caches' || 'Portable release' }} ${{ github.event.pull_request.number || (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag || github.ref_name }}
+  ${{ github.event_name == 'pull_request' && 'PR test build' || 'Portable release' }} ${{ github.event.pull_request.number || (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag || github.ref_name }}
 
 on:
   workflow_call:
@@ -29,7 +29,6 @@ on:
         type: boolean
   push:
     branches:
-      - main
       - preview
     tags:
       - 'v*'
@@ -188,7 +187,7 @@ jobs:
           key: ${{ matrix.runner }}
           workspaces: src-tauri -> target
           cache-workspace-crates: true
-          save-if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: Sync bundled core version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -233,13 +232,13 @@ jobs:
           --download true
         shell: bash
       - name: Save Bun packages
-        if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.bun-cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name != 'pull_request' && steps.bun-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: ~/.bun/install/cache
           key: ${{ steps.bun-cache.outputs.cache-primary-key }}
       - name: Save bundled core archive
-        if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.core-cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name != 'pull_request' && steps.core-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: cpa-core
