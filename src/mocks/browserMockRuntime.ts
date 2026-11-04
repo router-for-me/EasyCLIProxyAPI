@@ -895,6 +895,30 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   }
   if (method === 'GET' && path === '/credentials/models') return mockModelDefinitions();
   if (method === 'GET' && path.startsWith('/routing/model-definitions/')) return mockModelDefinitions();
+  if (method === 'GET' && path === '/config/routing') {
+    return clone(asObject(state.extendedConfig.routing));
+  }
+  if (method === 'PUT' && path.startsWith('/config/routing/')) {
+    const subPath = path.slice('/config/'.length).split('/').filter(Boolean);
+    state.extendedConfig = applyTemplateChanges(state.extendedConfig, [{
+      path: subPath,
+      value: body,
+      remove: false,
+      expected: null,
+      expectedExists: false,
+    }]);
+    const routing = asObject(state.extendedConfig.routing);
+    const retry = asObject(routing.retry);
+    const cooldown = asObject(routing.cooldown);
+    if (typeof routing.strategy === 'string') state.coreConfig.routingStrategy = routing.strategy;
+    if (typeof routing['session-affinity'] === 'boolean') state.coreConfig.routingSessionAffinity = routing['session-affinity'];
+    if (typeof routing['session-affinity-ttl'] === 'string') state.coreConfig.routingSessionAffinityTtl = routing['session-affinity-ttl'];
+    if (typeof retry['request-retry'] === 'number') state.coreConfig.requestRetry = retry['request-retry'];
+    if (typeof retry['max-retry-credentials'] === 'number') state.coreConfig.maxRetryCredentials = retry['max-retry-credentials'];
+    if (typeof retry['max-retry-interval'] === 'number') state.coreConfig.maxRetryInterval = retry['max-retry-interval'];
+    if (typeof cooldown['disable-cooling'] === 'boolean') state.coreConfig.disableCooling = cooldown['disable-cooling'];
+    return { status: 'ok', 'config-version': 8 };
+  }
   if (method === 'GET' && path === '/config/oauth/excluded-models') {
     return clone(state.oauthExcludedModels);
   }
@@ -1528,7 +1552,16 @@ export function createBrowserMockRuntime(
       }
       case 'set_prefer_gitcode_downloads': return clone(state.versionSource);
 
-      case 'management_request': return clone(managementResponse(state, payload));
+      case 'management_request': {
+        const result = clone(managementResponse(state, payload));
+        const request = asObject(payload.request);
+        const method = readString(request.method).toUpperCase();
+        const path = readString(request.path);
+        if (method !== 'GET' && path.startsWith('/config')) {
+          emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
+        }
+        return result;
+      }
       case 'import_vertex_credential': {
         const parsed: unknown = JSON.parse(new TextDecoder().decode(Uint8Array.from(asArray(payload.data) as number[])));
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid json');

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { I18nProvider, supportedLocales, translate } from '../src/i18n';
-import { readRoutingBoard, validateRoutingPlan, type RoutingBoard, type RoutingMember } from '../src/services/routing';
+import { createBrowserMockRuntime } from '../src/mocks/browserMockRuntime';
+import { applyRoutingPlan, readRoutingBoard, validateRoutingPlan, type RoutingBoard, type RoutingMember } from '../src/services/routing';
 import { RoutingPage } from '../src/pages/routing/RoutingPage';
 import { PolicyStrip } from '../src/pages/routing/PolicyStrip';
 import { TierLadder } from '../src/pages/routing/TierLadder';
@@ -203,4 +204,140 @@ it('reads provider and credential metadata while keeping existing fields', async
   expect(board.members.find(item => item.family === 'openai-compatibility')).toMatchObject({ keyCount: 2, prefix: 'group', weights: [null, null] });
   expect(board.members.find(item => item.family === 'codex')).toMatchObject({ prefix: '' });
   expect(board.members.find(item => item.kind === 'credential')).toMatchObject({ keyCount: 1, prefix: 'oauth', credentialName: 'oauth.json' });
+});
+
+describe('routing plan application and sticky session saves', () => {
+  it('saves session_affinity without false conflict when /credentials order or runtime health fluctuates', async () => {
+    let call = 0;
+    let sessionAffinity = false;
+    let sessionAffinityTtl = '';
+    const orders = [
+      [
+        { id: 'zcode-bbaa---logx.json', auth_index: 'idx-lower', name: 'zcode-bbaa---logx.json', provider: 'freetier', priority: 0, unavailable: false },
+        { id: 'zcode-bbaa---Logx.json', auth_index: 'idx-upper', name: 'zcode-bbaa---Logx.json', provider: 'freetier', priority: 0, unavailable: false },
+      ],
+      [
+        { id: 'zcode-bbaa---Logx.json', auth_index: 'idx-upper', name: 'zcode-bbaa---Logx.json', provider: 'freetier', priority: 0, unavailable: true },
+        { id: 'zcode-bbaa---logx.json', auth_index: 'idx-lower', name: 'zcode-bbaa---logx.json', provider: 'freetier', priority: 0, unavailable: false },
+      ],
+    ];
+    const writes: Array<[string, unknown]> = [];
+    const api = {
+      get: async <T,>(path: string) => {
+        if (path === '/credentials') return { files: orders[call++ % orders.length] } as T;
+        if (path === '/config/routing') {
+          return {
+            strategy: 'weighted-round-robin',
+            'session-affinity': sessionAffinity,
+            'session-affinity-ttl': sessionAffinityTtl,
+            retry: { 'request-retry': 3, 'max-retry-credentials': 0, 'max-retry-interval': -1 },
+            cooldown: { 'disable-cooling': false, 'transient-error-cooldown-seconds': -1 },
+          } as T;
+        }
+        if (path === '/config/api-keys/openai-compatibility') {
+          return [{
+            name: 'iCOMPIFY',
+            'auth-index': call % 2 === 0 ? 'runtime-idx-1' : 'runtime-idx-2',
+            keys: [{ 'api-key': 'k1', weight: -2, 'auth-index': `key-idx-${call}` }],
+          }] as T;
+        }
+        return [] as T;
+      },
+      put: async <T,>(path: string, body?: unknown) => {
+        writes.push([path, body]);
+        if (path === '/config/routing/session-affinity') sessionAffinity = Boolean(body);
+        if (path === '/config/routing/session-affinity-ttl') sessionAffinityTtl = String(body ?? '');
+        return { status: 'ok', 'config-version': 8 } as T;
+      },
+      patch: async <T,>() => ({ status: 'ok' } as T),
+    };
+
+    const board = await readRoutingBoard(api);
+    const draft = draftFromBoard(board);
+    draft.settings.session_affinity = true;
+    draft.settings.session_affinity_ttl = ' 1h ';
+    const diff = diffPlan(board, draft)!;
+    expect(diff).not.toBeNull();
+    const updated = await applyRoutingPlan(diff.plan, api);
+    expect(updated.settings.session_affinity).toBe(true);
+    expect(updated.settings.session_affinity_ttl).toBe('1h');
+    expect(writes).toEqual([
+      ['/config/routing/session-affinity', true],
+      ['/config/routing/session-affinity-ttl', '1h'],
+    ]);
+  });
+
+  it('still rejects saving when persisted routing configuration changed externally', async () => {
+    let externalPriority = 0;
+    const api = {
+      get: async <T,>(path: string) => {
+        if (path === '/credentials') {
+          return { files: [{ id: 'codex.json', name: 'codex.json', provider: 'codex', priority: externalPriority }] } as T;
+        }
+        if (path === '/config/routing') return { strategy: 'round-robin', 'session-affinity': false } as T;
+        return [] as T;
+      },
+      put: async <T,>() => ({ status: 'ok' } as T),
+      patch: async <T,>() => ({ status: 'ok' } as T),
+    };
+
+    const board = await readRoutingBoard(api);
+    const draft = draftFromBoard(board);
+    draft.settings.session_affinity = true;
+    const diff = diffPlan(board, draft)!;
+    externalPriority = 10;
+    await expect(applyRoutingPlan(diff.plan, api)).rejects.toThrow();
+  });
+
+  it('disambiguates duplicate credential names and orders unnamed runtime credentials deterministically', async () => {
+    let flip = false;
+    const api = {
+      get: async <T,>(path: string) => {
+        if (path === '/credentials') {
+          const items = [
+            { id: 'dup-file', auth_index: 'idx-1', name: 'dup.json', provider: 'freetier', runtime_only: false },
+            { id: 'dup-runtime', auth_index: 'idx-2', name: 'dup.json', provider: 'freetier', runtime_only: true },
+            { id: 'anon-b', auth_index: 'idx-b', name: '', provider: 'codex', runtime_only: true },
+            { id: 'anon-a', auth_index: 'idx-a', name: '', provider: 'codex', runtime_only: true },
+          ];
+          flip = !flip;
+          return { files: flip ? items : [...items].reverse() } as T;
+        }
+        if (path === '/config/routing') return {} as T;
+        return [] as T;
+      },
+      put: async <T,>() => ({} as T),
+      patch: async <T,>() => ({} as T),
+    };
+
+    const first = await readRoutingBoard(api);
+    const second = await readRoutingBoard(api);
+    expect(first.revision).toBe(second.revision);
+    expect(first.members.map(item => item.key)).toEqual(second.members.map(item => item.key));
+    expect(new Set(first.members.map(item => item.key)).size).toBe(first.members.length);
+    for (const dup of first.members.filter(item => item.name === 'dup.json')) {
+      expect(dup.runtimeOnly).toBe(true);
+      expect(dup.credentialName).toBe('');
+    }
+  });
+
+  it('round-trips session affinity and TTL through the browser mock runtime', async () => {
+    const runtime = createBrowserMockRuntime();
+    const api = {
+      get: <T,>(path: string, query?: Record<string, string | number | boolean | undefined>) =>
+        runtime.invoke('management_request', { request: { method: 'GET', path, query } }) as Promise<T>,
+      put: <T,>(path: string, body?: unknown) =>
+        runtime.invoke('management_request', { request: { method: 'PUT', path, body } }) as Promise<T>,
+      patch: <T,>(path: string, body?: unknown) =>
+        runtime.invoke('management_request', { request: { method: 'PATCH', path, body } }) as Promise<T>,
+    };
+    const board = await readRoutingBoard(api);
+    const draft = draftFromBoard(board);
+    draft.settings.session_affinity = !board.settings.session_affinity;
+    draft.settings.session_affinity_ttl = '2h';
+    const diff = diffPlan(board, draft)!;
+    const saved = await applyRoutingPlan(diff.plan, api);
+    expect(saved.settings.session_affinity).toBe(!board.settings.session_affinity);
+    expect(saved.settings.session_affinity_ttl).toBe('2h');
+  });
 });

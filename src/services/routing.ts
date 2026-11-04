@@ -30,6 +30,17 @@ export type RoutingPlan = Pick<RoutingBoard, 'revision' | 'settings' | 'members'
 type RoutingApi = Pick<typeof managementApi, 'get' | 'put' | 'patch'>;
 const number = (value: unknown) => Number.isSafeInteger(value) ? value as number : 0;
 const weight = (value: unknown) => value == null ? null : number(value);
+const compareText = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+const compareCredentialFiles = (left: Record<string, unknown>, right: Record<string, unknown>) => {
+  const leftName = readString(left, 'name');
+  const rightName = readString(right, 'name');
+  return compareText(leftName.toLowerCase(), rightName.toLowerCase())
+    || compareText(leftName, rightName)
+    || compareText(String(left.runtime_only === true), String(right.runtime_only === true))
+    || compareText(readString(left, 'id'), readString(right, 'id'))
+    || compareText(readString(left, 'auth_index'), readString(right, 'auth_index'))
+    || compareText(readString(left, 'provider', 'type'), readString(right, 'provider', 'type'));
+};
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) =>
   isRecord(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 const message = (key: 'conflict' | 'invalid' | 'partial' | 'writeFailed') => translate(getCurrentLocale(), `routing.${key}`);
@@ -63,14 +74,27 @@ export async function readRoutingBoard(api: RoutingApi = managementApi): Promise
   }));
   const credentials = await api.get<unknown>('/credentials');
   if (!isRecord(credentials) || !Array.isArray(credentials.files) || !credentials.files.every(isRecord)) throw new Error(message('invalid'));
-  const members = [...sources.flat(), ...credentials.files.map((file, index): RoutingMember => {
+  const sortedFiles = [...credentials.files].sort(compareCredentialFiles);
+  const nameCounts = new Map<string, number>();
+  for (const file of sortedFiles) {
     const name = readString(file, 'name');
+    if (name) nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+  }
+  const usedKeys = new Set<string>();
+  const members = [...sources.flat(), ...sortedFiles.map((file, index): RoutingMember => {
+    const name = readString(file, 'name');
+    const identity = readString(file, 'id', 'auth_index');
+    const duplicateName = !!name && (nameCounts.get(name) ?? 0) > 1;
+    const baseKey = `credential:${name || identity || index}`;
+    let key = (duplicateName || usedKeys.has(baseKey)) && identity ? `${baseKey}#${identity}` : baseKey;
+    if (usedKeys.has(key)) key = `${baseKey}#${index}`;
+    usedKeys.add(key);
     return {
-      key: `credential:${name || readString(file, 'auth_index') || index}`, name: name || readString(file, 'provider'),
-      credentialName: name, family: readString(file, 'provider', 'type'), priority: number(file.priority), weights: [weight(file.weight)],
+      key, name: name || readString(file, 'provider'),
+      credentialName: duplicateName ? '' : name, family: readString(file, 'provider', 'type'), priority: number(file.priority), weights: [weight(file.weight)],
       kind: 'credential', keyCount: 1, prefix: readString(file, 'prefix'),
       disabled: file.disabled === true, unavailable: file.unavailable === true,
-      runtimeOnly: file.runtime_only === true || !name,
+      runtimeOnly: file.runtime_only === true || !name || duplicateName,
     };
   })];
   let raw: unknown;
@@ -91,7 +115,9 @@ export async function readRoutingBoard(api: RoutingApi = managementApi): Promise
     transient_error_cooldown_seconds: number(cooldown['transient-error-cooldown-seconds']),
   };
   partial.sort();
-  const sealed = canonical({ groups, raw, members, partial });
+  const sealedGroups = Object.fromEntries(Object.entries(groups).map(([family, list]) => [family, list.map(cleanProviderGroup)]));
+  const sealedMembers = members.map(({ unavailable: _unavailable, ...member }) => member);
+  const sealed = canonical({ groups: sealedGroups, raw, members: sealedMembers, partial });
   const revision = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sealed))))
     .map(byte => byte.toString(16).padStart(2, '0')).join('');
   return { revision, members, settings, groups, partial };
@@ -105,26 +131,35 @@ export function validateRoutingPlan(board: RoutingBoard, plan: RoutingPlan) {
     const original = board.members.find(item => item.key === member.key);
     if (!original || !Number.isSafeInteger(member.priority) || member.priority < -2147483648 || member.priority > 2147483647
       || member.weights.length !== original.weights.length
-      || member.weights.some(value => value !== null && (!Number.isSafeInteger(value) || value < 0 || value > 1_000_000))
+      || member.weights.some((value, index) => value !== null && (!Number.isSafeInteger(value) || value > 1_000_000 || (value < 0 && value !== original.weights[index])))
       || (original.runtimeOnly && (member.priority !== original.priority || canonical(member.weights) !== canonical(original.weights)))) throw new Error(message('invalid'));
   }
+  const ttl = typeof plan.settings.session_affinity_ttl === 'string' ? plan.settings.session_affinity_ttl.trim() : '';
   if (!['round-robin', 'weighted-round-robin', 'fill-first'].includes(plan.settings.strategy)
     || typeof plan.settings.session_affinity !== 'boolean' || typeof plan.settings.disable_cooling !== 'boolean'
     || typeof plan.settings.session_affinity_ttl !== 'string'
-    || (plan.settings.session_affinity_ttl !== '' && !/^(?:\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h))+$/.test(plan.settings.session_affinity_ttl))) throw new Error(message('invalid'));
+    || (ttl !== '' && !/^(?:\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h))+$/.test(ttl))) throw new Error(message('invalid'));
   for (const key of ['request_retry', 'max_retry_credentials', 'max_retry_interval', 'transient_error_cooldown_seconds'] as const) {
-    if (!Number.isSafeInteger(plan.settings[key]) || plan.settings[key] < (key === 'transient_error_cooldown_seconds' ? -1 : 0) || plan.settings[key] > 2147483647) throw new Error(message('invalid'));
+    const min = key === 'transient_error_cooldown_seconds' ? -1 : key === 'max_retry_interval' ? -2147483648 : 0;
+    if (!Number.isSafeInteger(plan.settings[key]) || plan.settings[key] < min || plan.settings[key] > 2147483647) throw new Error(message('invalid'));
   }
 }
 
 export async function applyRoutingPlan(plan: RoutingPlan, api: RoutingApi = managementApi): Promise<RoutingBoard> {
+  const normalizedPlan: RoutingPlan = {
+    ...plan,
+    settings: {
+      ...plan.settings,
+      session_affinity_ttl: typeof plan.settings.session_affinity_ttl === 'string' ? plan.settings.session_affinity_ttl.trim() : plan.settings.session_affinity_ttl,
+    },
+  };
   const current = await readRoutingBoard(api);
-  validateRoutingPlan(current, plan);
+  validateRoutingPlan(current, normalizedPlan);
   const groups = structuredClone(current.groups);
   const changedFamilies = new Set<string>();
   const writes: (() => Promise<unknown>)[] = [];
   for (const original of current.members) {
-    const edited = plan.members.find(member => member.key === original.key)!;
+    const edited = normalizedPlan.members.find(member => member.key === original.key)!;
     if (original.priority === edited.priority && canonical(original.weights) === canonical(edited.weights)) continue;
     if (original.credentialName) {
       const fields: Record<string, ManagementJson> = { name: original.credentialName };
@@ -146,7 +181,7 @@ export async function applyRoutingPlan(plan: RoutingPlan, api: RoutingApi = mana
   }
   for (const family of changedFamilies) writes.push(() => api.put(`/config/api-keys/${family}`, groups[family].map(cleanProviderGroup) as ManagementJson));
   for (const key of Object.keys(routingSettingPaths) as (keyof RoutingSettings)[]) {
-    if (plan.settings[key] !== current.settings[key]) writes.push(() => api.put(`/config/routing/${routingSettingPaths[key]}`, plan.settings[key]));
+    if (normalizedPlan.settings[key] !== current.settings[key]) writes.push(() => api.put(`/config/routing/${routingSettingPaths[key]}`, normalizedPlan.settings[key]));
   }
   try { for (const write of writes) await write(); }
   catch (error) { throw new Error(`${message('writeFailed')} ${String(error)}`); }

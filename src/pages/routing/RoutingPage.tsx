@@ -52,14 +52,14 @@ export function RoutingPage() {
         return <div key={index}><strong>{name}</strong><span>{field}</span><span>{t('routing.changeDetail', { from: display(change.from), to: display(change.to) })}</span></div>;
       })}</div></details>}
       <button type="button" className="secondary-button" disabled={busy} onClick={() => { if (!dirty || window.confirm(t('routing.leave'))) void refresh(); }}><RefreshCw size={15} />{t('routing.refresh')}</button>
-      <button type="button" className="secondary-button" disabled={!dirty || busy} onClick={() => { if (board) { setPlan(draftFromBoard(board)); setSaved(false); } }}>{t('routing.reset')}</button>
+      <button type="button" className="secondary-button" disabled={!dirty || busy} onClick={() => { if (board) { setPlan(draftFromBoard(board)); setSaved(false); setError(''); } }}>{t('routing.reset')}</button>
       <button type="button" className="primary-button" disabled={disabled || !dirty || !valid} onClick={() => void apply()}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button>
     </div></header>
     {error && <p role="alert" className="routing-error">{error}</p>}
     {board?.partial.length ? <p role="alert" className="routing-error">{t('routing.partial')} ({board.partial.join(', ')})</p> : null}
     <div role="status" className="routing-status">{saved ? t('routing.saved') : dirty ? t('routing.dirty') : busy ? t('routing.loading') : ''}</div>
     {board && plan && diff && <div className="routing-workspace"><div className="routing-board"><TierLadder board={board} draft={plan} tierPriorities={diff.tierPriorities} preview={resolveRoute(board, plan)} disabled={disabled} onChange={next => { if (diffPlan(board, next)) { setPlan(next); setSaved(false); setError(''); } else setError(t('routing.fixedConflict')); }} /></div>
-      <aside className="routing-aside"><PolicyStrip settings={plan.settings} disabled={disabled} onChange={settings => { setPlan({ ...plan, settings }); setSaved(false); }} /></aside>
+      <aside className="routing-aside"><PolicyStrip settings={plan.settings} disabled={disabled} onChange={settings => { setPlan({ ...plan, settings }); setSaved(false); setError(''); }} /></aside>
     </div>}
   </section>;
 }
