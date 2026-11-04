@@ -70,6 +70,83 @@ external editor.
 - Core and desktop app are separate builds. Replacing only `cli-proxy-api` enables
   YAML/API configuration but does not add new controls to an older installed UI.
 
+## Build and run matching source branches on Linux
+
+Use matching feature-enabled checkouts of **both** repositories. Updating only
+this UI cannot add fallback to an older core. The example below targets Linux
+amd64 and uses a separate runtime directory; it does not replace an existing
+installation.
+
+Prerequisites: Go 1.26.10+, Rust/Cargo stable, Node.js 22+, and Bun 1.3.14.
+On Ubuntu, install the native build dependencies:
+
+```bash
+sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev patchelf
+```
+
+From a workspace containing sibling `CLIProxyAPI` and `EasyCLIProxyAPI`
+checkouts, run:
+
+```bash
+export WORK="$PWD"
+export RUN="$WORK/run-fallback"
+export CORE_VERSION="8.0.54+fallback.1"
+export APP_VERSION="0.3.73+fallback.1"
+mkdir -p "$RUN/cpa-core"
+
+cd "$WORK/CLIProxyAPI"
+CGO_ENABLED=1 go build \
+  -ldflags="-s -w -X main.Version=$CORE_VERSION -X main.Commit=$(git rev-parse --short HEAD) -X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o "$RUN/cpa-core/cli-proxy-api" ./cmd/server
+
+cd "$WORK/EasyCLIProxyAPI"
+bun install --frozen-lockfile
+# This release step updates Cargo.toml and Cargo.lock in the build checkout.
+node scripts/set-version.mjs "$APP_VERSION"
+bun run tauri build --no-bundle -- --locked
+install -m 755 src-tauri/target/release/cpa-gui "$RUN/EasyCLIProxyAPI"
+
+node --input-type=module <<'JS'
+import { writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+const { RUN, CORE_VERSION, APP_VERSION } = process.env;
+writeFileSync(join(RUN, 'cpa-core', 'cpa-gui-meta.json'), JSON.stringify({
+  version: `v${CORE_VERSION}`, assetName: 'local-source-build',
+  installedAtUnix: Math.floor(Date.now() / 1000),
+}, null, 2));
+writeFileSync(join(RUN, 'portable-app.json'), JSON.stringify({
+  schemaVersion: 1, application: 'EasyCLIProxyAPI', version: APP_VERSION,
+  builtAt: new Date().toISOString(), platform: 'linux', arch: 'amd64',
+  autoUpdate: false,
+}, null, 2));
+const settings = join(RUN, 'config.toml');
+if (!existsSync(settings)) writeFileSync(settings,
+  'port = 18317\nstart-core-on-launch = false\nrun-on-startup = false\n');
+JS
+
+cd "$RUN"
+./EasyCLIProxyAPI
+```
+
+The example uses port **18317** and disables automatic startup for the first
+launch, avoiding an existing core on the usual port 8317. Check the port is free,
+start the core from **Home**, then configure credentials on that machine.
+Credentials and client settings are not included in Git.
+
+The separate runtime directory keeps automatic application updates disabled so
+the official distribution cannot silently replace the feature build. It contains
+no official bundled-core archive. Do not use `build.sh` or the portable download
+step for this workflow: those can bundle an official core instead of your locally
+built one. Future branch updates should rebuild both components into this same
+layout after stopping the app/core, preserving `config.toml`, `cpa-core/config.yaml`,
+and OAuth data. Use a fresh build checkout, or deliberately discard only the
+version script's changes before updating that checkout.
+
+On Windows, macOS, or ARM systems, build natively with the repository's platform
+prerequisites and adapt executable names and manifest platform/architecture.
+Do not copy the Linux amd64 binaries to a different platform.
+
 ## Development verification
 
 ```bash
