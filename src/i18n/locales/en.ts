@@ -990,6 +990,7 @@ export const en: Record<MessageKey, string> = {
   'usage.analysis.modelTitle': 'Model Consumption',
   'usage.analysis.modelHint': 'Compare usage and share across models',
   'usage.analysis.metricLabel': 'Model ranking metric',
+  'usage.analysis.keyMetricLabel': 'API key ranking metric',
   'usage.analysis.metricTokens': 'Token',
   'usage.analysis.metricRequests': 'Requests',
   'usage.analysis.otherModels': '{count} other models',

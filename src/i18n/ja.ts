@@ -1006,6 +1006,7 @@ export const jaOverrides = {
   'usage.analysis.modelTitle': 'モデル別使用量',
   'usage.analysis.modelHint': 'モデルごとの使用量と割合を比較',
   'usage.analysis.metricLabel': 'モデルの並べ替え基準',
+  'usage.analysis.keyMetricLabel': 'API キーの並べ替え基準',
   'usage.analysis.metricTokens': 'Token',
   'usage.analysis.metricRequests': 'リクエスト数',
   'usage.analysis.otherModels': 'その他 {count} モデル',
