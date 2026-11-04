@@ -2,9 +2,11 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { AgentsPage } from '../../src/pages/AgentsPage';
+import { createBrowserMockRuntime } from '../../src/mocks/browserMockRuntime';
 import { I18nProvider } from '../../src/i18n';
 import '../../src/styles/index.css';
 const params = new URLSearchParams(location.search);
+const launchRuntime = createBrowserMockRuntime('running');
 if(params.has('reset-selections'))localStorage.removeItem('cpa-gui.agent-model-selections.v1');
 localStorage.setItem('easy-cli-proxy-api.locale',params.get('locale') || 'zh-CN');
 document.documentElement.dataset.theme = params.get('theme') || 'light';
@@ -120,7 +122,7 @@ mockIPC(async (cmd,args:any) => {
    return null;
  }
  if(cmd==='stop_deepseek_harness_process')return harnessStatus={running:false,pid:null,mode:null};
- if(cmd==='launch_agent')return null;
+ if(cmd==='launch_agent')return launchRuntime.invoke(cmd,args);
  if(cmd==='clear_codex_config') { currentModel=null; return []; }
  if(cmd==='set_agent_config_enabled' && !args.enabled) {
    if(params.has('fail-clear'))throw new Error('模拟清除失败，已回滚');

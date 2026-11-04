@@ -4,6 +4,7 @@ import { requestBucketRangeLabel } from '../services/authFileRequests';
 import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
 import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
+import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
 
 export type BrowserMockScenario = 'running' | 'stopped' | 'empty' | 'error';
 export type BrowserMockMode = BrowserMockScenario | 'off';
@@ -1302,7 +1303,13 @@ export function createBrowserMockRuntime(
       case 'restore_codex_official_config':
       case 'create_agent_config_backup':
       case 'restore_agent_config_backup':
-      case 'launch_agent': return null;
+      case 'launch_agent': {
+        const arguments_ = parseAgentLaunchArguments(String(payload.customArguments ?? ''));
+        if (!arguments_) throw new Error('Invalid startup arguments');
+        if (payload.target === 'app' && arguments_.length) throw new Error('Custom arguments require a CLI target');
+        if (payload.client === 'deepseek-harness' && hasDeepSeekArgumentConflict(arguments_)) throw new Error('Use structured DeepSeek controls for these options');
+        return null;
+      }
 
       case 'get_core_status': return clone(state.coreStatus);
       case 'main_window_active': return !document.hidden;

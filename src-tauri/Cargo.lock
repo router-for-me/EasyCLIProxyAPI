@@ -694,6 +694,7 @@ dependencies = [
  "serde_norway",
  "serde_yaml",
  "sha2",
+ "shlex",
  "tar",
  "tauri",
  "tauri-build",
