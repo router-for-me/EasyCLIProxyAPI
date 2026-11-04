@@ -21,7 +21,7 @@ hyper-util = { version = "0.1", features = ["tokio", "server"] }
 json5 = "0.4"
 notify = "7"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["gzip", "json", "multipart", "rustls-tls", "socks", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["gzip", "json", "multipart", "rustls-tls", "rustls-tls-native-roots", "socks", "stream"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 rustls = "0.23"
 rustls-pemfile = "2"
