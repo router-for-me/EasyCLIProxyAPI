@@ -2155,6 +2155,8 @@ export const en: Record<MessageKey, string> = {
   'appUpdate.previewChannelPlaceholder': 'e.g. preview-fix-login',
   'appUpdate.previewChannelSwitch': 'Switch channel',
   'appUpdate.previewChannelToStable': 'Back to stable',
+  'appUpdate.channel.stable': 'Stable',
+  'appUpdate.channel.preview': 'Preview (latest)',
   'appUpdate.currentBuild': 'Installed build',
   'appUpdate.notes.openRelease': 'View full release notes',
   'appUpdate.notes.empty': 'Release notes are not available in the current language.',

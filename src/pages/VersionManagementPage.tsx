@@ -20,9 +20,9 @@ import type {
   BundledCoreInfo,
   CoreVersionOption,
 } from '../services/coreVersions';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getVersion } from '../services/platform';
-import { getUpdateChannel, setUpdateChannel } from '../services/appUpdates';
+import { getUpdateChannel, listUpdateChannels, setUpdateChannel } from '../services/appUpdates';
 import {
   Download,
   ExternalLink,
@@ -456,6 +456,8 @@ export function VersionManagementPage() {
     : null;
   const [updateChannel, setUpdateChannelState] = useState('');
   const [channelDraft, setChannelDraft] = useState('');
+  const [availableChannels, setAvailableChannels] = useState<string[]>(['stable', 'preview']);
+  const [channelListLoading, setChannelListLoading] = useState(true);
   const [channelError, setChannelError] = useState('');
   const activeChannel = updateChannel || appUpdate?.updateChannel || '';
   const currentAppBuiltAt = appUpdate?.currentBuildAt && Number.isFinite(Date.parse(appUpdate.currentBuildAt))
@@ -469,6 +471,39 @@ export function VersionManagementPage() {
       })
     : null;
   const appIsPreview = /preview/i.test(resolvedAppVersion || '') || /preview/i.test(appUpdate?.latestVersion || '');
+
+  useEffect(() => {
+    let cancelled = false;
+    setChannelListLoading(true);
+    void listUpdateChannels()
+      .then((channels) => {
+        if (!cancelled && Array.isArray(channels) && channels.length > 0) {
+          setAvailableChannels(channels);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setChannelListLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeChannel) setChannelDraft(activeChannel);
+  }, [activeChannel]);
+
+  const channelOptions: SelectMenuOption[] = useMemo(
+    () => [
+      { value: 'stable', label: t('appUpdate.channel.stable') },
+      { value: 'preview', label: t('appUpdate.channel.preview') },
+      ...availableChannels
+        .filter((channel) => channel !== 'stable' && channel !== 'preview')
+        .map((channel) => ({ value: channel, label: channel })),
+    ],
+    [availableChannels, t],
+  );
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
   const appVersionStatusLabel: string | null = appUpdateTask.running
@@ -697,31 +732,25 @@ export function VersionManagementPage() {
                 </span>
               </div>
               {activeChannel.startsWith('preview') ? (
-                <div className="version-alert-banner neutral">
+                <div className="version-alert-banner neutral version-channel-row">
                   <Info size={14} aria-hidden="true" />
                   <span>{t('appUpdate.previewChannel', { channel: activeChannel })}</span>
-                  <input
-                    className="text-input"
+                  <SelectMenu
+                    className="version-channel-select"
                     value={channelDraft}
-                    onChange={(event) => setChannelDraft(event.currentTarget.value)}
-                    placeholder={t('appUpdate.previewChannelPlaceholder')}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') void applyChannel(channelDraft);
-                    }}
+                    disabled={channelListLoading}
+                    ariaLabel={t('appUpdate.previewChannelSwitch')}
+                    onChange={setChannelDraft}
+                    options={channelOptions}
+                    maxDropdownHeight={260}
                   />
                   <button
                     type="button"
                     className="link-button muted"
+                    disabled={!channelDraft || channelDraft === activeChannel || channelListLoading}
                     onClick={() => void applyChannel(channelDraft)}
                   >
                     {t('appUpdate.previewChannelSwitch')}
-                  </button>
-                  <button
-                    type="button"
-                    className="link-button muted"
-                    onClick={() => void applyChannel('stable')}
-                  >
-                    {t('appUpdate.previewChannelToStable')}
                   </button>
                 </div>
               ) : null}

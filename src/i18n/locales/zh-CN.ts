@@ -2154,6 +2154,8 @@ export const zhCN = {
   'appUpdate.previewChannelPlaceholder': '如 preview-fix-login',
   'appUpdate.previewChannelSwitch': '切换通道',
   'appUpdate.previewChannelToStable': '切回正式版',
+  'appUpdate.channel.stable': '正式版',
+  'appUpdate.channel.preview': '预览版（最新）',
   'appUpdate.currentBuild': '上次升级时间',
   'appUpdate.notes.openRelease': '查看完整发布说明',
   'appUpdate.notes.empty': '暂未获取到当前语言的更新说明。',

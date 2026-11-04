@@ -3031,6 +3031,7 @@ fn main() {
             remove_custom_download_mirror,
             set_prefer_gitcode_downloads,
             get_update_channel,
+            list_update_channels,
             set_update_channel,
             check_app_update,
             get_app_update_task,

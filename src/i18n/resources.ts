@@ -120,6 +120,8 @@ export const zhTW: Record<MessageKey, string> = {
   'appUpdate.previewChannelPlaceholder': '如 preview-fix-login',
   'appUpdate.previewChannelSwitch': '切換通道',
   'appUpdate.previewChannelToStable': '切回正式版',
+  'appUpdate.channel.stable': '正式版',
+  'appUpdate.channel.preview': '預覽（最新）',
   'appUpdate.currentBuild': '上次升級時間',
   'appUpdate.notes.openRelease': '查看完整發布說明',
   'appUpdate.notes.empty': '尚未取得目前語言的更新說明。',
