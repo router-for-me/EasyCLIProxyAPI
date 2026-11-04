@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { setCurrentLocale } from '../src/i18n';
 import { managementApi } from '../src/services/managementApi';
 import { updateQuotaCache } from '../src/services/quotaCache';
 import { loadQuota, providerForFile, quotaRowsFor } from '../src/services/quotaService';
@@ -55,10 +56,14 @@ const subscription = {
 
 let get: ReturnType<typeof spyOn> | undefined;
 let post: ReturnType<typeof spyOn> | undefined;
+beforeEach(() => {
+  setCurrentLocale('en');
+});
 afterEach(() => {
   get?.mockRestore();
   post?.mockRestore();
   updateQuotaCache({});
+  setCurrentLocale('en');
 });
 
 describe('z.ai Coding Plan quota', () => {

@@ -407,12 +407,16 @@ const metaQuotaRows = (quota: MetaQuotaData): QuotaRow[] => quota.windows.map((w
   resetAtMs: quotaResetInstant(window.resetAt),
 }));
 
-export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRow[] => {
+export const quotaRowsFor = (
+  provider: QuotaProvider,
+  payload: unknown,
+  locale: AppLocale = getCurrentLocale(),
+): QuotaRow[] => {
   if (provider === 'meta') {
     const quota = parseMetaQuotaPayload(payload);
     return quota ? metaQuotaRows(quota) : [];
   }
-  if (provider === 'zai') return zaiQuotaRows(payload);
+  if (provider === 'zai') return zaiQuotaRows(payload, locale);
   if (provider === 'devin') return readDevinQuota(payload).windows.map((window) => ({
     label: quotaText(window.id === 'daily' ? 'quota.service.daily' : 'quota.service.weekly'),
     remainingPercent: window.remainingPercent,
@@ -1072,7 +1076,7 @@ async function callMetaQuota(file: AuthFile): Promise<QuotaState> {
   return { status: 'success', rows: metaQuotaRows(quota), plan: quota.plan, fetchedAt: Date.now() };
 }
 
-async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
+async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentLocale()): Promise<QuotaState> {
   if (quotaProviderForFile(file) === 'plugin') return loadPluginCredentialQuota(file);
   const provider = providerForFile(file);
   if (!provider) {
@@ -1089,7 +1093,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
     const codexAccountId = codexMetadata?.accountId || '';
     const responseClock: { serverTimeOffsetMs?: number } = {};
     const kimi = provider === 'kimi' ? await callKimiQuota(file) : undefined;
-    const zai = provider === 'zai' ? await callZaiQuota(file) : undefined;
+    const zai = provider === 'zai' ? await callZaiQuota(file, locale) : undefined;
     const payloadPromise = zai ? Promise.resolve(zai.payload) : kimi ? Promise.resolve(kimi.payload) : provider === 'xai'
       ? callXaiQuota(file)
       : callUpstreamQuota(file, provider, codexAccountId, responseClock);
@@ -1116,7 +1120,7 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
       resetCreditsPromise,
       claudeGrantsPromise,
     ]);
-    const rows = quotaRowsFor(provider, payload);
+    const rows = quotaRowsFor(provider, payload, locale);
     if (rows.length === 0) {
       return {
         status: 'error',
@@ -1194,7 +1198,7 @@ async function consumeCodexResetCreditSnapshot(file: AuthFile): Promise<QuotaSta
 const quotaRequests = new Map<string, Promise<QuotaState>>();
 const quotaMutationRequests = new Map<string, Promise<QuotaState>>();
 
-export function loadQuota(file: AuthFile): Promise<QuotaState> {
+export function loadQuota(file: AuthFile, locale: AppLocale = getCurrentLocale()): Promise<QuotaState> {
   const key = quotaKey(file);
   const reset = quotaMutationRequests.get(key);
   if (reset) return reset.catch((error): QuotaState => ({
@@ -1202,7 +1206,7 @@ export function loadQuota(file: AuthFile): Promise<QuotaState> {
   }));
   const existing = quotaRequests.get(key);
   if (existing) return existing;
-  const request = loadQuotaSnapshot(file).finally(() => {
+  const request = loadQuotaSnapshot(file, locale).finally(() => {
     if (quotaRequests.get(key) === request) quotaRequests.delete(key);
   });
   quotaRequests.set(key, request);
