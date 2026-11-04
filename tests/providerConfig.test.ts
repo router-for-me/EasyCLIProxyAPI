@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { ZAI_CODING_PLAN_BASE_URL, ZAI_CODING_PLAN_BASE_URL_CN } from '../src/services/zaiQuota';
 import {
   apiAccessRemarkLocatorFromRecord,
   applyProviderRemarkIdentity,
@@ -282,6 +283,7 @@ describe('API 接入配置合并', () => {
     expect(providerSectionOrder).toEqual([
       'codex-api-key',
       'openai-compatibility',
+      'zai',
       'deepseek',
       'claude-api-key',
       'gemini-api-key',
@@ -355,6 +357,22 @@ describe('API 接入配置合并', () => {
     expect(providerCategoryMatchesRecord('codex-api-key', codexRecord, 'codex-api-key')).toBe(false);
     expect(providerCategoryMatchesRecord('deepseek', legacyRecord, 'openai-compatibility')).toBe(false);
     expect(providerCategoryMatchesRecord('openai-compatibility', legacyRecord, 'openai-compatibility')).toBe(true);
+  });
+
+  it('z.ai Coding Plan 预填国际编码接口，并按主机从 OpenAI 兼容列表中分开', () => {
+    const draft = applyProviderRemarkIdentity('zai', createProviderDraft('zai'));
+    expect(draft.name).toBe('z.ai');
+    expect(draft.baseUrl).toBe(ZAI_CODING_PLAN_BASE_URL);
+    const global = { name: 'z.ai', 'base-url': ZAI_CODING_PLAN_BASE_URL };
+    const mainland = { name: 'glm-cn', 'base-url': `${ZAI_CODING_PLAN_BASE_URL_CN}/` };
+    const other = { name: 'relay', 'base-url': 'https://relay.example/v1' };
+    expect(providerCategoryMatchesRecord('zai', global, 'openai-compatibility')).toBe(true);
+    expect(providerCategoryMatchesRecord('openai-compatibility', global, 'openai-compatibility')).toBe(false);
+    expect(providerCategoryMatchesRecord('zai', mainland, 'openai-compatibility')).toBe(true);
+    expect(providerCategoryMatchesRecord('zai', other, 'openai-compatibility')).toBe(false);
+    expect(providerCategoryMatchesRecord('openai-compatibility', other, 'openai-compatibility')).toBe(true);
+    expect(providerRowsFromGroups('openai-compatibility', [global, other]).map((row) => row.category))
+      .toEqual(['zai', 'openai-compatibility']);
   });
 
   it('OpenAI 兼容接入把选定思考等级写入全部开放模型', () => {

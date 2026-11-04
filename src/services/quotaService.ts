@@ -18,6 +18,7 @@ import { antigravityProjectFor, codexMetadataFor, isPaidXaiFile } from './quotaM
 import { quotaResetFor, quotaResetInstant } from './quotaTime';
 import { parseKimiPlanName, parseKimiQuotaUrl } from './kimiQuota';
 import { parseMetaQuotaPayload, type MetaQuotaData } from './metaQuota';
+import { callZaiQuota, isZaiProviderAlias, zaiMonitorOrigin, zaiQuotaRows } from './zaiQuota';
 import { getCurrentLocale, translate, type AppLocale } from '../i18n';
 
 const quotaText = (
@@ -26,7 +27,7 @@ const quotaText = (
 ) => translate(getCurrentLocale(), key, variables);
 
 export type AuthFile = Record<string, unknown>;
-export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin' | 'meta';
+export type QuotaProvider = 'claude' | 'codex' | 'kimi' | 'xai' | 'antigravity' | 'devin' | 'meta' | 'zai';
 export type QuotaStatus = 'idle' | 'loading' | 'success' | 'error';
 export type QuotaRow = {
   label: string;
@@ -67,6 +68,7 @@ const endpointByProvider: Record<QuotaProvider, string> = {
   claude: 'https://api.anthropic.com/api/oauth/usage',
   codex: 'https://chatgpt.com/backend-api/wham/usage',
   kimi: 'https://api.kimi.com/coding/v1/usages',
+  zai: 'https://api.z.ai/api/monitor/usage/quota/limit',
   xai: 'https://cli-chat-proxy.grok.com/v1/billing',
   antigravity: 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
 };
@@ -98,6 +100,7 @@ const headersByProvider: Record<QuotaProvider, Record<string, string>> = {
     'User-Agent': 'codex-tui/0.149.1 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.149.1)',
   },
   kimi: { Authorization: 'Bearer $TOKEN$' },
+  zai: { Authorization: 'Bearer $TOKEN$', Accept: 'application/json' },
   xai: {
     Authorization: 'Bearer $TOKEN$',
     'x-xai-token-auth': 'xai-grok-cli',
@@ -121,9 +124,11 @@ export const providerForFile = (file: AuthFile): QuotaProvider | null => {
   if (value === 'anti-gravity') return 'antigravity';
   if (value === 'kimi-ai') return 'kimi';
   if (value === 'muse') return 'meta';
-  return ['claude', 'codex', 'kimi', 'xai', 'antigravity', 'devin', 'meta'].includes(value)
-    ? (value as QuotaProvider)
-    : null;
+  if (isZaiProviderAlias(value)) return 'zai';
+  if (['claude', 'codex', 'kimi', 'xai', 'antigravity', 'devin', 'meta'].includes(value)) {
+    return value as QuotaProvider;
+  }
+  return zaiMonitorOrigin(readString(file, 'base_url', 'base-url', 'baseUrl')) ? 'zai' : null;
 };
 
 export type QuotaDisplayProvider = QuotaProvider | 'plugin';
@@ -407,6 +412,7 @@ export const quotaRowsFor = (provider: QuotaProvider, payload: unknown): QuotaRo
     const quota = parseMetaQuotaPayload(payload);
     return quota ? metaQuotaRows(quota) : [];
   }
+  if (provider === 'zai') return zaiQuotaRows(payload);
   if (provider === 'devin') return readDevinQuota(payload).windows.map((window) => ({
     label: quotaText(window.id === 'daily' ? 'quota.service.daily' : 'quota.service.weekly'),
     remainingPercent: window.remainingPercent,
@@ -1083,14 +1089,15 @@ async function loadQuotaSnapshot(file: AuthFile): Promise<QuotaState> {
     const codexAccountId = codexMetadata?.accountId || '';
     const responseClock: { serverTimeOffsetMs?: number } = {};
     const kimi = provider === 'kimi' ? await callKimiQuota(file) : undefined;
-    const payloadPromise = kimi ? Promise.resolve(kimi.payload) : provider === 'xai'
+    const zai = provider === 'zai' ? await callZaiQuota(file) : undefined;
+    const payloadPromise = zai ? Promise.resolve(zai.payload) : kimi ? Promise.resolve(kimi.payload) : provider === 'xai'
       ? callXaiQuota(file)
       : callUpstreamQuota(file, provider, codexAccountId, responseClock);
     const planPromise = provider === 'claude'
       ? loadClaudePlan(file)
       : provider === 'antigravity'
         ? loadAntigravityPlan(file)
-        : Promise.resolve(kimi?.plan);
+        : Promise.resolve(zai?.plan ?? kimi?.plan);
     let resetCreditsError: string | undefined;
     const resetCreditsPromise = provider === 'codex'
       ? callCodexResetCredits(file, codexAccountId).catch((error) => {
