@@ -23,7 +23,9 @@ import devinIcon from '../assets/icons/devin.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import metaIcon from '../assets/icons/meta.svg';
-import { managementApi, readBoolean, responseList } from '../services/managementApi';
+import zaiIcon from '../assets/icons/zai.svg';
+import { loadZaiCodingPlanFiles } from '../services/zaiQuota';
+import { managementApi, normalizeAuthIndex, readBoolean, responseList } from '../services/managementApi';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import {
   formatQuotaTimestamp,
@@ -58,10 +60,11 @@ const providerMeta: Record<QuotaDisplayProvider, { label: string; icon: string }
   xai: { label: 'xAI', icon: grokIcon },
   devin: { label: 'Devin', icon: devinIcon },
   meta: { label: 'Muse', icon: metaIcon },
+  zai: { label: 'z.ai', icon: zaiIcon },
   antigravity: { label: 'Antigravity', icon: antigravityIcon },
 };
 
-const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin', 'meta', 'plugin'];
+const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'zai', 'devin', 'meta', 'plugin'];
 const REFRESH_CONCURRENCY = 4;
 
 // Stacked matches .real-quota-grid (minmax(min(300px, 100%), 1fr), 12px gap); Compact uses narrower columns and 8px gaps.
@@ -85,8 +88,19 @@ export function QuotaPage() {
     setLoading(true);
     setError('');
     try {
-      const payload = await managementApi.get('/credentials');
-      const allFiles = sortAuthFilesByPriority(dedupeAuthFiles(responseList(payload, 'files')));
+      const [payload, zaiFiles] = await Promise.all([
+        managementApi.get('/credentials'),
+        loadZaiCodingPlanFiles(),
+      ]);
+      const listed = dedupeAuthFiles(responseList(payload, 'files'));
+      const listedIndexes = new Set(listed.map((file) => normalizeAuthIndex(file.auth_index ?? file.authIndex)).filter(Boolean));
+      const allFiles = sortAuthFilesByPriority([
+        ...listed,
+        ...zaiFiles.filter((file) => {
+          const authIndex = normalizeAuthIndex(file.auth_index);
+          return authIndex && !listedIndexes.has(authIndex);
+        }),
+      ]);
       const nextFiles = allFiles.filter((file) => !readBoolean(file, 'disabled') && quotaProviderForFile(file));
       setFiles(nextFiles);
       const validQuotaKeys = new Set(allFiles.map(quotaKey));
