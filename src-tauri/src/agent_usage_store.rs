@@ -2021,4 +2021,74 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn copilot_jsonc_config_does_not_cause_sync_error_and_counts_session_usage() {
+        let root = test_root("copilot-sync");
+        let home = root.join("home");
+        let copilot_dir = home.join(".copilot");
+        fs::create_dir_all(&copilot_dir).unwrap();
+
+        // 1. Only config.json with // comments exists (no session files present)
+        fs::write(
+            copilot_dir.join("config.json"),
+            "// User settings belong in settings.json.\n{\"firstLaunchAt\": \"2026-01-01T00:00:00.000Z\"}\n",
+        )
+        .unwrap();
+
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        let sync_result = sync(&mut connection, &home, None, |_| {}).unwrap();
+        assert_eq!(sync_result.changed_files, 0);
+
+        let report_result = report(&connection, &query("all")).unwrap();
+        let copilot = report_result
+            .sources
+            .iter()
+            .find(|source| source.source == "copilot")
+            .unwrap();
+        assert_ne!(copilot.status, "error");
+        assert_ne!(copilot.error, "Unable to read local usage records");
+
+        // 2. Add valid session-state/events.jsonl and extra.json with comments
+        let session_dir = copilot_dir.join("session-state");
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(
+            session_dir.join("extra.json"),
+            "// Session notes or metadata\n{\"customInfo\": \"value\"}\n",
+        )
+        .unwrap();
+        let timestamp = Local
+            .with_ymd_and_hms(2026, 10, 29, 12, 0, 0)
+            .unwrap()
+            .to_rfc3339();
+        fs::write(
+            session_dir.join("events.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "timestamp": timestamp,
+                    "model": "copilot-model",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "total_tokens": 150
+                    }
+                })
+            ),
+        )
+        .unwrap();
+
+        sync(&mut connection, &home, None, |_| {}).unwrap();
+        let report_after = report(&connection, &query("all")).unwrap();
+        let copilot_after = report_after
+            .sources
+            .iter()
+            .find(|source| source.source == "copilot")
+            .unwrap();
+        assert_eq!(copilot_after.status, "ok");
+        assert_eq!(copilot_after.error, "");
+        assert_eq!(copilot_after.totals.total_tokens, 150);
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }
