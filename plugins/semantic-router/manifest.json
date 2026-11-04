@@ -1,0 +1,13 @@
+{
+  "id": "semantic-router",
+  "name": "Semantic Router / 语义自动路由",
+  "version": "0.1.0",
+  "license": "MIT",
+  "abi_version": 1,
+  "schema_version": 6,
+  "minimum_kernel": "8.0.48",
+  "install_type": "local-native-library",
+  "entrypoints": {"linux": "semantic-router.so", "darwin": "semantic-router.dylib", "windows": "semantic-router.dll"},
+  "capabilities": ["model_router"],
+  "default_enabled": false
+}
