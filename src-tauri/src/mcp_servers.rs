@@ -473,6 +473,119 @@ pub(crate) fn open_mcp_skills_directory() -> Result<(), String> {
     super::management_api::open_directory_in_file_manager(&path)
 }
 
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn read_openclaw_config(path: &Path) -> Result<serde_json::Map<String, Value>, String> {
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read OpenClaw config file: {e}"))?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Ok(serde_json::Map::new());
+    }
+    let parsed: Value = serde_json::from_str(trimmed)
+        .or_else(|_| json5::from_str(trimmed))
+        .map_err(|e| format!("Corrupt OpenClaw configuration file: {e}"))?;
+    match parsed {
+        Value::Object(map) => Ok(map),
+        _ => Err("Corrupt OpenClaw configuration file: root must be an object".to_string()),
+    }
+}
+
+fn write_openclaw_config(path: &Path, root: &serde_json::Map<String, Value>) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(&Value::Object(root.clone()))
+        .map_err(|e| format!("Failed to serialize OpenClaw configuration: {e}"))?;
+    write_bytes_atomically(path, &bytes)
+}
+
+pub(crate) fn sync_mcp_server_to_openclaw_config(
+    server: &McpServer,
+    config_path: &Path,
+) -> Result<String, String> {
+    let sanitized_name = server.name.trim();
+    if sanitized_name.is_empty() {
+        return Err("Server name cannot be empty".to_string());
+    }
+    if sanitized_name == "__proto__" {
+        return Err("Server name cannot be '__proto__'".to_string());
+    }
+
+    let transport = server.transport.trim().to_lowercase();
+    let mut server_obj = serde_json::Map::new();
+
+    match transport.as_str() {
+        "stdio" => {
+            let command = match &server.command {
+                Some(cmd) if !cmd.trim().is_empty() => cmd.trim().to_string(),
+                _ => return Err("stdio transport requires a command".to_string()),
+            };
+            server_obj.insert("command".to_string(), Value::String(command));
+            server_obj.insert(
+                "args".to_string(),
+                serde_json::to_value(&server.args).map_err(|e| e.to_string())?,
+            );
+            server_obj.insert(
+                "env".to_string(),
+                serde_json::to_value(&server.env).map_err(|e| e.to_string())?,
+            );
+            server_obj.insert("enabled".to_string(), Value::Bool(server.enabled));
+        }
+        "http" | "sse" => {
+            let url = match &server.url {
+                Some(u) if !u.trim().is_empty() => u.trim().to_string(),
+                _ => return Err(format!("{transport} transport requires a url")),
+            };
+            let mapped_transport = if transport == "http" {
+                "streamable-http"
+            } else {
+                "sse"
+            };
+            server_obj.insert("url".to_string(), Value::String(url));
+            server_obj.insert(
+                "transport".to_string(),
+                Value::String(mapped_transport.to_string()),
+            );
+            server_obj.insert(
+                "headers".to_string(),
+                serde_json::to_value(&server.headers).map_err(|e| e.to_string())?,
+            );
+            server_obj.insert("enabled".to_string(), Value::Bool(server.enabled));
+        }
+        other => {
+            return Err(format!(
+                "Unsupported transport: '{other}'. Expected stdio, sse, or http"
+            ));
+        }
+    }
+
+    let mut root = read_openclaw_config(config_path)?;
+    let mcp = ensure_json_object_entry(&mut root, "mcp");
+    let servers = ensure_json_object_entry(mcp, "servers");
+    servers.insert(sanitized_name.to_string(), Value::Object(server_obj));
+
+    write_openclaw_config(config_path, &root)?;
+    Ok(config_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn sync_mcp_server_to_openclaw(id: String) -> Result<String, String> {
+    let servers = read_servers()?;
+    let server = servers
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| format!("MCP server with id '{id}' not found"))?;
+
+    let home = home_directory().ok_or_else(|| "Failed to resolve home directory".to_string())?;
+    let config_path = openclaw_agent_config_path(&home);
+    sync_mcp_server_to_openclaw_config(&server, &config_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,5 +841,295 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&dir2);
+    }
+
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct TempHomeGuard {
+        home_dir: PathBuf,
+        prev_home: Option<std::ffi::OsString>,
+        prev_userprofile: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl TempHomeGuard {
+        fn new(name: &str) -> Self {
+            let lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let dir = temp_test_dir(name);
+            let prev_home = std::env::var_os("HOME");
+            let prev_userprofile = std::env::var_os("USERPROFILE");
+            std::env::set_var("HOME", &dir);
+            std::env::set_var("USERPROFILE", &dir);
+            Self {
+                home_dir: dir,
+                prev_home,
+                prev_userprofile,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for TempHomeGuard {
+        fn drop(&mut self) {
+            match &self.prev_home {
+                Some(val) => std::env::set_var("HOME", val),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.prev_userprofile {
+                Some(val) => std::env::set_var("USERPROFILE", val),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            let _ = fs::remove_dir_all(&self.home_dir);
+        }
+    }
+
+    #[test]
+    fn sync_creates_mcp_servers_without_dropping_unrelated_keys() {
+        let guard = TempHomeGuard::new("sync_preserves_keys");
+        let openclaw_dir = guard.home_dir.join(".openclaw");
+        fs::create_dir_all(&openclaw_dir).unwrap();
+        let config_file = openclaw_dir.join("openclaw.json");
+
+        let initial_json = r#"{
+            "unrelated_root": 42,
+            "mcp": {
+                "unrelated_mcp_key": "persisted",
+                "servers": {
+                    "existing_server": {
+                        "command": "cat",
+                        "args": ["-n"],
+                        "env": {"TEST_VAR": "true"},
+                        "enabled": true
+                    }
+                }
+            }
+        }"#;
+        fs::write(&config_file, initial_json).unwrap();
+
+        let stdio_server = McpServer {
+            id: "mcp-test-stdio".to_string(),
+            name: "test-stdio".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("npx".to_string()),
+            args: vec!["-y".to_string(), "test-pkg".to_string()],
+            env: BTreeMap::from([("ENV_KEY".to_string(), "env_val".to_string())]),
+            url: None,
+            headers: BTreeMap::new(),
+            enabled: true,
+            description: None,
+        };
+
+        let resolved_path = sync_mcp_server_to_openclaw_config(&stdio_server, &config_file).unwrap();
+        assert_eq!(resolved_path, config_file.to_string_lossy().to_string());
+
+        let http_server = McpServer {
+            id: "mcp-test-http".to_string(),
+            name: "test-http".to_string(),
+            transport: "http".to_string(),
+            command: None,
+            args: vec![],
+            env: BTreeMap::new(),
+            url: Some("https://example.com/mcp-endpoint".to_string()),
+            headers: BTreeMap::from([("Authorization".to_string(), "Bearer secret".to_string())]),
+            enabled: false,
+            description: None,
+        };
+        sync_mcp_server_to_openclaw_config(&http_server, &config_file).unwrap();
+
+        let sse_server = McpServer {
+            id: "mcp-test-sse".to_string(),
+            name: "test-sse".to_string(),
+            transport: "sse".to_string(),
+            command: None,
+            args: vec![],
+            env: BTreeMap::new(),
+            url: Some("https://example.com/sse-endpoint".to_string()),
+            headers: BTreeMap::new(),
+            enabled: true,
+            description: None,
+        };
+        sync_mcp_server_to_openclaw_config(&sse_server, &config_file).unwrap();
+
+        let updated_content = fs::read_to_string(&config_file).unwrap();
+        let parsed: Value = serde_json::from_str(&updated_content).unwrap();
+
+        // Unrelated root and mcp keys preserved
+        assert_eq!(parsed["unrelated_root"], 42);
+        assert_eq!(parsed["mcp"]["unrelated_mcp_key"], "persisted");
+
+        // Existing server entry preserved
+        let existing = &parsed["mcp"]["servers"]["existing_server"];
+        assert_eq!(existing["command"], "cat");
+        assert_eq!(existing["args"], serde_json::json!(["-n"]));
+        assert_eq!(existing["enabled"], true);
+
+        // Stdio server properly mapped
+        let stdio_entry = &parsed["mcp"]["servers"]["test-stdio"];
+        assert_eq!(stdio_entry["command"], "npx");
+        assert_eq!(stdio_entry["args"], serde_json::json!(["-y", "test-pkg"]));
+        assert_eq!(stdio_entry["env"]["ENV_KEY"], "env_val");
+        assert_eq!(stdio_entry["enabled"], true);
+        assert!(stdio_entry.get("transport").is_none());
+
+        // HTTP server mapped with "streamable-http"
+        let http_entry = &parsed["mcp"]["servers"]["test-http"];
+        assert_eq!(http_entry["url"], "https://example.com/mcp-endpoint");
+        assert_eq!(http_entry["transport"], "streamable-http");
+        assert_eq!(http_entry["headers"]["Authorization"], "Bearer secret");
+        assert_eq!(http_entry["enabled"], false);
+
+        // SSE server mapped with "sse"
+        let sse_entry = &parsed["mcp"]["servers"]["test-sse"];
+        assert_eq!(sse_entry["url"], "https://example.com/sse-endpoint");
+        assert_eq!(sse_entry["transport"], "sse");
+        assert_eq!(sse_entry["enabled"], true);
+    }
+
+    #[test]
+    fn repeated_sync_replaces_rather_than_duplicates() {
+        let guard = TempHomeGuard::new("sync_replaces");
+        let openclaw_dir = guard.home_dir.join(".openclaw");
+        fs::create_dir_all(&openclaw_dir).unwrap();
+        let config_file = openclaw_dir.join("openclaw.json");
+
+        let mut server = McpServer {
+            id: "mcp-test-repeat".to_string(),
+            name: "repeat-server".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("cmd1".to_string()),
+            args: vec!["--v1".to_string()],
+            env: BTreeMap::new(),
+            url: None,
+            headers: BTreeMap::new(),
+            enabled: false,
+            description: None,
+        };
+
+        sync_mcp_server_to_openclaw_config(&server, &config_file).unwrap();
+
+        let content_v1 = fs::read_to_string(&config_file).unwrap();
+        let parsed_v1: Value = serde_json::from_str(&content_v1).unwrap();
+        let servers_map_v1 = parsed_v1["mcp"]["servers"].as_object().unwrap();
+        assert_eq!(servers_map_v1.len(), 1);
+        assert_eq!(servers_map_v1["repeat-server"]["args"], serde_json::json!(["--v1"]));
+        assert_eq!(servers_map_v1["repeat-server"]["enabled"], false);
+
+        // Update server and sync again
+        server.command = Some("cmd2".to_string());
+        server.args = vec!["--v2".to_string()];
+        server.enabled = true;
+
+        sync_mcp_server_to_openclaw_config(&server, &config_file).unwrap();
+
+        let content_v2 = fs::read_to_string(&config_file).unwrap();
+        let parsed_v2: Value = serde_json::from_str(&content_v2).unwrap();
+        let servers_map_v2 = parsed_v2["mcp"]["servers"].as_object().unwrap();
+        assert_eq!(servers_map_v2.len(), 1);
+        assert_eq!(servers_map_v2["repeat-server"]["command"], "cmd2");
+        assert_eq!(servers_map_v2["repeat-server"]["args"], serde_json::json!(["--v2"]));
+        assert_eq!(servers_map_v2["repeat-server"]["enabled"], true);
+    }
+
+    #[test]
+    fn corrupt_config_returns_error_and_leaves_file_untouched() {
+        let guard = TempHomeGuard::new("corrupt_config");
+        let openclaw_dir = guard.home_dir.join(".openclaw");
+        fs::create_dir_all(&openclaw_dir).unwrap();
+        let config_file = openclaw_dir.join("openclaw.json");
+
+        let corrupt_content = "{ corrupt json: [unclosed";
+        fs::write(&config_file, corrupt_content).unwrap();
+
+        let server = McpServer {
+            id: "mcp-test".to_string(),
+            name: "test-server".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("echo".to_string()),
+            args: vec![],
+            env: BTreeMap::new(),
+            url: None,
+            headers: BTreeMap::new(),
+            enabled: true,
+            description: None,
+        };
+
+        let result = sync_mcp_server_to_openclaw_config(&server, &config_file);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Corrupt OpenClaw configuration"));
+
+        let file_after = fs::read_to_string(&config_file).unwrap();
+        assert_eq!(file_after, corrupt_content);
+    }
+
+    #[test]
+    fn proto_and_empty_names_rejected() {
+        let guard = TempHomeGuard::new("proto_rejected");
+        let config_file = guard.home_dir.join(".openclaw").join("openclaw.json");
+
+        let proto_server = McpServer {
+            id: "mcp-proto".to_string(),
+            name: "__proto__".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("echo".to_string()),
+            args: vec![],
+            env: BTreeMap::new(),
+            url: None,
+            headers: BTreeMap::new(),
+            enabled: true,
+            description: None,
+        };
+
+        let err = sync_mcp_server_to_openclaw_config(&proto_server, &config_file).unwrap_err();
+        assert!(err.contains("__proto__"));
+
+        let empty_server = McpServer {
+            id: "mcp-empty".to_string(),
+            name: "   ".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("echo".to_string()),
+            args: vec![],
+            env: BTreeMap::new(),
+            url: None,
+            headers: BTreeMap::new(),
+            enabled: true,
+            description: None,
+        };
+
+        let err2 = sync_mcp_server_to_openclaw_config(&empty_server, &config_file).unwrap_err();
+        assert!(err2.contains("empty"));
+        assert!(!config_file.exists());
+    }
+
+    #[test]
+    fn sync_command_resolves_home_and_saves() {
+        let guard = TempHomeGuard::new("cmd_sync");
+        let openclaw_dir = guard.home_dir.join(".openclaw");
+        fs::create_dir_all(&openclaw_dir).unwrap();
+        let config_file = openclaw_dir.join("openclaw.json");
+
+        let server = McpServer {
+            id: "mcp-live-test".to_string(),
+            name: "live-test".to_string(),
+            transport: "stdio".to_string(),
+            command: Some("echo".to_string()),
+            args: vec!["hello".to_string()],
+            env: BTreeMap::new(),
+            url: None,
+            headers: BTreeMap::new(),
+            enabled: true,
+            description: None,
+        };
+
+        // Save server using regular save_mcp_server
+        let saved = save_mcp_server(server).unwrap();
+
+        let resolved_path = sync_mcp_server_to_openclaw(saved.id.clone()).unwrap();
+        assert_eq!(resolved_path, config_file.to_string_lossy().to_string());
+
+        let parsed: Value = serde_json::from_str(&fs::read_to_string(&config_file).unwrap()).unwrap();
+        assert_eq!(parsed["mcp"]["servers"]["live-test"]["command"], "echo");
+
+        // Clean up stored server
+        let _ = delete_mcp_server(saved.id);
     }
 }

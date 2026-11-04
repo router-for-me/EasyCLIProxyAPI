@@ -2940,6 +2940,7 @@ fn main() {
             mcp_servers::save_mcp_server,
             mcp_servers::delete_mcp_server,
             mcp_servers::set_mcp_server_enabled,
+            mcp_servers::sync_mcp_server_to_openclaw,
             mcp_servers::import_mcp_servers_json,
             mcp_servers::export_mcp_servers_json,
             mcp_servers::open_mcp_skills_directory,
