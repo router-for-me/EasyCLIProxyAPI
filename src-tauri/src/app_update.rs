@@ -2894,6 +2894,64 @@ pub(crate) fn portable_update_ack_argument() -> Option<PathBuf> {
     None
 }
 
+const GUI_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/router-for-me/EasyCLIProxyAPI/releases?per_page=100";
+
+/// Lists selectable update channels: the two built-ins plus one entry per
+/// `preview-*` release tag. Network failures fall back to the built-ins so the
+/// picker always renders.
+#[tauri::command]
+pub(crate) async fn list_update_channels(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<Vec<String>, String> {
+    let config = gui_config_state.snapshot()?;
+    let proxy_url = config.proxy_url.clone();
+    let client = build_http_client_with_proxy(
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(6))
+            .read_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(15)),
+        &proxy_url,
+        "Failed to create channel list client",
+    )?;
+    let mut channels = vec!["stable".to_string(), "preview".to_string()];
+    if let Ok(response) = client
+        .get(GUI_RELEASES_API_URL)
+        .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .await
+    {
+        if response.status().is_success() {
+            if let Ok(releases) = response.json::<Vec<serde_json::Value>>().await {
+                for release in releases {
+                    let Some(tag) = release.get("tag_name").and_then(|value| value.as_str()) else {
+                        continue;
+                    };
+                    if tag.starts_with("preview-") && update_channel_tag(tag).is_some() {
+                        channels.push(tag.to_string());
+                    }
+                }
+            }
+        }
+    }
+    channels.sort();
+    channels.dedup();
+    // Keep built-ins first, then extras alphabetically.
+    channels.sort_by(|a, b| {
+        let rank = |value: &str| match value {
+            "stable" => 0,
+            "preview" => 1,
+            _ => 2,
+        };
+        rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
+    });
+    if !channels.iter().any(|value| value == &normalize_update_channel(&config.update_channel)) {
+        channels.push(normalize_update_channel(&config.update_channel));
+    }
+    Ok(channels)
+}
+
 #[tauri::command]
 pub(crate) fn get_update_channel(
     gui_config_state: tauri::State<'_, GuiConfigState>,

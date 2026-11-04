@@ -2161,6 +2161,8 @@ export const jaOverrides = {
   'appUpdate.previewChannelPlaceholder': '例: preview-fix-login',
   'appUpdate.previewChannelSwitch': 'チャンネル切替',
   'appUpdate.previewChannelToStable': '正式版に戻す',
+  'appUpdate.channel.stable': '正式版',
+  'appUpdate.channel.preview': 'プレビュー（最新）',
   'appUpdate.currentBuild': '前回更新日時',
   'appUpdate.notes.openRelease': 'リリースノート全体を見る',
   'appUpdate.notes.empty': '現在の言語の更新内容を取得できませんでした。',

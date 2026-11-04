@@ -745,6 +745,9 @@ textarea:focus-visible {
   border-color: var(--color-success-text);
 }
 
+.version-channel-row .version-channel-select { min-width: 220px; }
+.version-channel-row { flex-wrap: wrap; }
+
 .core-version-picker {
   gap: 8px;
 }
