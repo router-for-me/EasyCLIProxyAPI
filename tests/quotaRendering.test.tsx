@@ -32,6 +32,20 @@ describe('quota card rendering', () => {
     expect(html).not.toContain('Subscription expires:');
   });
 
+  it('does not draw the credit summary box when there is nothing to show in it', () => {
+    const rows = [{ label: 'Window', remainingPercent: 50 }];
+    for (const provider of ['claude', 'codex']) {
+      expect(render({ status: 'success', rows }, provider)).not.toContain('quota-reset-credit-summary');
+      // A failed reset-credit lookup is reported as a floating notice, not inside the card.
+      expect(render({ status: 'success', rows, resetCreditsError: 'Unable to read reset grants' }, provider))
+        .not.toContain('quota-reset-credit-summary');
+    }
+    expect(render({ status: 'success', rows, creditBalance: '0' })).toContain('quota-reset-credit-summary');
+    expect(render({ status: 'success', rows, creditsUnlimited: true })).toContain('quota-reset-credit-summary');
+    expect(render({ status: 'success', rows, resetCreditExpiries: ['2030-10-10T00:00:00Z'] }, 'claude'))
+      .toContain('quota-reset-credit-summary');
+  });
+
   it.each(['error', 'refresh-error'] as const)('重置结果为 %s 时仍可再次点击重置', (status) => {
     const html = render({
       status: 'success', rows: [], resetCredits: 2,
