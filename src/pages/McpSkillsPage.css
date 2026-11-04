@@ -1471,3 +1471,38 @@
     }
   }
 }
+
+/* These overrides must stay outside `@layer components`: .config-dialog in
+   src/styles.css is unlayered, and layered rules lose to unlayered ones no
+   matter how specific they are. */
+.mcp-form-dialog.config-dialog {
+  display: flex;
+  flex-direction: column;
+  grid-template-rows: none;
+  height: auto;
+  width: min(600px, 100%);
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.mcp-form-dialog.config-dialog > .mcp-dialog-header {
+  flex: 0 0 auto;
+}
+
+.mcp-form-dialog.config-dialog > .mcp-dialog-scroll-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mcp-form-dialog.config-dialog > .config-dialog-actions {
+  flex: 0 0 auto;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border-color);
+}
+
+.mcp-form-dialog.config-dialog > .config-dialog-actions button {
+  height: auto;
+  min-height: 36px;
+}
+
