@@ -96,6 +96,22 @@ describe('z.ai Coding Plan quota', () => {
     expect(zaiPlanFromPayloads(limits, { code: 200, success: false, msg: 'no' })).toBe('max');
   });
 
+  it('labels a 7-week row and an unnumbered team window like the proxy core does', () => {
+    const rows = zaiQuotaRows({
+      success: true,
+      code: 200,
+      data: {
+        limits: [
+          { type: 'TOKENS_LIMIT', unit: 6, number: 7, percentage: 40 },
+          { type: 'TOKENS_LIMIT', unit: 3, number: 0, percentage: 12 },
+        ],
+      },
+    });
+    expect(rows.map((row) => row.label)).toEqual(['5-hour limit', 'Weekly limit']);
+    expect(rows[0].remainingPercent).toBe(88);
+    expect(rows[1].remainingPercent).toBe(60);
+  });
+
   it('keeps a percentage-only credit window and skips rows with no measurement', () => {
     const rows = zaiQuotaRows({
       success: true,

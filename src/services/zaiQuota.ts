@@ -110,12 +110,12 @@ const failureMessage = (payload: unknown): string => {
   return message || zaiText('quota.service.zai.invalidResponse');
 };
 
-// unit 3 is hours and unit 6 is weeks: the two window lengths the coding plan
-// advertises. Any other unit stays unlabeled rather than being called 5-hour.
+// unit 3 is hours and unit 6 is weeks. The weekly row arrives with number 1 or 7,
+// and a team account's five-hour row can carry number 0 or no number at all, so
+// the unit fixes the window length and the number only refines an hour count.
 const windowSeconds = (unit: number | null, number: number | null): number | null => {
-  if (unit === null || number === null || number <= 0) return null;
-  if (unit === 3) return number * 3_600;
-  if (unit === 6) return number * 604_800;
+  if (unit === 3) return (number !== null && number > 0 ? number : 5) * 3_600;
+  if (unit === 6) return 604_800;
   return null;
 };
 
@@ -167,9 +167,9 @@ export function zaiQuotaRows(payload: unknown): QuotaRow[] {
           : '';
     const label = type === 'TIME_LIMIT'
       ? zaiText('quota.service.zai.mcp')
-      : unit === 3 && number === 5
+      : unit === 3
         ? zaiText('quota.service.limit.fiveHours')
-        : unit === 6 && number === 1
+        : unit === 6
           ? zaiText('quota.service.weekly')
           : duration
             ? zaiText('quota.service.limit.duration', { duration })
