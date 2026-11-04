@@ -13,6 +13,7 @@ const messages = {
   import: ['导入', 'Import', 'インポート'],
   export: ['导出', 'Export', 'エクスポート'],
   openFolder: ['打开目录', 'Open folder', 'フォルダを開く'],
+  more: ['更多', 'More', 'その他'],
   addServer: ['添加服务器', 'Add server', 'サーバーを追加'],
   edit: ['编辑', 'Edit', '編集'],
   duplicate: ['复制配置', 'Duplicate', '設定を複製'],
