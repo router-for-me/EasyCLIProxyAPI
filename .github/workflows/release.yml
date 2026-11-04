@@ -33,6 +33,7 @@ on:
     tags:
       - 'v*'
       - 'only-preview'
+      - 'preview-*'
 
 concurrency:
   group: portable-${{ github.ref }}-${{ inputs.preview && inputs.source_sha || (github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref_type == 'branch' && 'cache' || 'release') }}
@@ -92,7 +93,7 @@ jobs:
               esac
             else
               base_version="${source_version%%[-+]*}"
-              version="${base_version}-preview"
+              version="${base_version}-preview.$(date -u +%Y%m%d)-$(date -u +%H%M)"
             fi
           fi
 
@@ -166,6 +167,11 @@ jobs:
           workspaces: src-tauri -> target
           cache-workspace-crates: true
           save-if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      - name: Sync bundled core version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITCODE_CORE_REPOSITORY: ${{ vars.GITCODE_CORE_REPOSITORY }}
+        run: node scripts/update-bundled-core.mjs
       - name: Restore bundled core archive
         id: core-cache
         uses: actions/cache/restore@v5
@@ -433,7 +439,9 @@ jobs:
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
         run: |
           set -euo pipefail
-          if ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1; then
+          if ! node scripts/version.mjs "${RELEASE_TAG#v}" >/dev/null 2>&1 \
+            && [ "$RELEASE_TAG" != "only-preview" ] \
+            && [[ "$RELEASE_TAG" != preview-* ]]; then
             echo "Skipping portable update manifests for non-semver release tag: $RELEASE_TAG"
             exit 0
           fi
@@ -444,6 +452,7 @@ jobs:
               --repository "${{ github.repository }}" \
               --gitcode-repository "${{ vars.GITCODE_GUI_REPOSITORY }}" \
               --tag "$RELEASE_TAG" \
+              --version "${{ needs.version.outputs.version }}" \
               --release-notes "$RUNNER_TEMP/easycli-release-notes.json"
           done
       - name: Publish release

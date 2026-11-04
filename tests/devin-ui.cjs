@@ -62,7 +62,7 @@ const base = process.env.DEVIN_TEST_BASE_URL || 'http://127.0.0.1:1421';
 
     await open('view=quota');
     await page.getByRole('button', { name: 'Fetch Quota', exact: true }).click();
-    await page.getByText('Daily quota', { exact: true }).waitFor();
+    await page.getByText('Daily limit', { exact: true }).waitFor();
     assert.ok((await page.locator('.real-quota-card').innerText()).includes('Pro'));
     assert.equal(await page.locator('.real-quota-track').count(), 2);
     assert.equal(await page.locator('.real-quota-track span').last().evaluate(node => node.style.width), '0%');

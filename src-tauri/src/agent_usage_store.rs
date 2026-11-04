@@ -639,7 +639,6 @@ pub(crate) fn sync(
         let files = newest_first(source_files(home, source));
         let total = files.len() as u64;
         let mut readable = 0u64;
-        let mut failed = 0u64;
         let existing = {
             let transaction = connection
                 .transaction()
@@ -680,7 +679,7 @@ pub(crate) fn sync(
                     changed_files += 1;
                     pending += 1;
                 }
-                Err(()) => failed += 1,
+                Err(()) => {},
             }
             if pending >= SYNC_BATCH_FILES {
                 transaction.commit().map_err(|error| {
@@ -722,18 +721,15 @@ pub(crate) fn sync(
             .map_err(|error| format!("Failed to commit agent usage transaction: {error}"))?;
 
         let previous = previous_sources.get(*source);
-        let status = if failed > 0 && readable == 0 {
-            "error"
-        } else if files.is_empty() {
-            previous.map(|meta| meta.status.as_str()).unwrap_or("empty")
+        let status = if files.is_empty() || readable == 0 {
+            previous
+                .map(|meta| meta.status.as_str())
+                .filter(|status| *status != "error")
+                .unwrap_or("empty")
         } else {
             "ok"
         };
-        let error = if status == "error" {
-            "Unable to read local usage records"
-        } else {
-            ""
-        };
+        let error = "";
         let last_present_at = if files.is_empty() {
             previous.map(|meta| meta.last_present_at).unwrap_or(0)
         } else {

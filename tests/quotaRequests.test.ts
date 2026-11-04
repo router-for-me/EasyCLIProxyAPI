@@ -80,7 +80,7 @@ describe('quota API compatibility', () => {
       ? { status_code: 500 }
       : success({ limits: [{ kind: 'weekly_scoped', percent: 40, scope: { model: { display_name: 'Fable 5' } } }] });
     expect(await loadQuota({ name: 'claude.json', provider: 'claude', auth_index: 'c' })).toMatchObject({
-      status: 'success', rows: [{ label: '7-day Fable window', remainingPercent: 60 }],
+      status: 'success', rows: [{ label: 'Weekly Fable limit', remainingPercent: 60 }],
     });
   });
 
