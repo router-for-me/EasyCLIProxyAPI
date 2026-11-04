@@ -2,6 +2,9 @@ use super::*;
 
 pub(crate) const PORTABLE_UPDATE_HELPER_ACK_FILE: &str = "update-helper-started.ack";
 const PORTABLE_UPDATE_HELPER_START_TIMEOUT: Duration = Duration::from_secs(10);
+/// Internal marker for the rolling `preview` channel before it is resolved to
+/// a concrete `preview-<stamp>` release tag.
+pub(crate) const PREVIEW_CHANNEL_MARKER: &str = "preview";
 
 #[derive(Serialize, Deserialize)]
 struct UpdateRuntimeAck {
@@ -313,9 +316,19 @@ async fn resolve_app_update(
     let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
     let update_channel = normalize_update_channel(&config.update_channel);
     let mut channel_tag = update_channel_tag(&update_channel);
-    if channel_tag.as_deref() == Some("only-preview") {
-        if let Some(tag) = fetch_latest_preview_tag(&client).await {
-            channel_tag = Some(tag);
+    if channel_tag.as_deref() == Some(PREVIEW_CHANNEL_MARKER) {
+        // Resolve the rolling preview channel to the newest timestamped release.
+        // Never fall back to a fixed tag: a preview build must not be silently
+        // offered the stable release, and a deleted rolling tag would otherwise
+        // turn every update check into a 404.
+        match fetch_latest_preview_tag(&client).await {
+            Some(tag) => channel_tag = Some(tag),
+            None => {
+                return Err(
+                    "No preview release is available right now. Try again after a preview build is published."
+                        .to_string(),
+                )
+            }
         }
     }
     let is_preview = channel_tag.is_some();
@@ -621,10 +634,7 @@ pub(crate) fn validate_portable_update_manifest_for_repository(
         .next()
         .unwrap_or_default()
         .to_string();
-    if !(release_tag.starts_with('v')
-        || release_tag == "only-preview"
-        || release_tag.starts_with("preview-"))
-    {
+    if !(release_tag.starts_with('v') || release_tag.starts_with("preview-")) {
         return Err("Untrusted application update release URL".to_string());
     }
     let (platform, display_platform, suffix) = portable_update_asset_platform()?;
@@ -830,7 +840,7 @@ pub(crate) fn select_latest_preview_tag(tags: &[String]) -> Option<String> {
 pub(crate) fn update_channel_tag(channel: &str) -> Option<String> {
     let channel = channel.trim();
     if channel.eq_ignore_ascii_case("preview") {
-        return Some("only-preview".to_string());
+        return Some(PREVIEW_CHANNEL_MARKER.to_string());
     }
     let lower = channel.to_ascii_lowercase();
     let rest = lower.strip_prefix("preview-")?.trim();
@@ -851,7 +861,7 @@ pub(crate) fn normalize_update_channel(channel: &str) -> String {
         return "stable".to_string();
     }
     match update_channel_tag(channel) {
-        Some(tag) if tag == "only-preview" => "preview".to_string(),
+        Some(tag) if tag == PREVIEW_CHANNEL_MARKER => "preview".to_string(),
         Some(tag) => tag,
         None => "stable".to_string(),
     }

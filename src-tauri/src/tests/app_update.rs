@@ -675,17 +675,36 @@ fn portable_update_manifest_requires_both_matching_github_assets() {
 
     let mut preview_manifest = portable_update_test_manifest("0.3.6-preview");
     preview_manifest.release_url =
-        "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/only-preview".to_string();
+        "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/preview-20261104-1623".to_string();
     for arch in ["amd64", "aarch64"] {
         preview_manifest
             .assets
             .get_mut(&format!("{platform}-{arch}"))
             .unwrap()
             .url = format!(
-            "{APP_RELEASE_DOWNLOAD_PREFIX}only-preview/EasyCLIProxyAPI-v0.3.6-preview-{display}-{arch}.{suffix}"
+            "{APP_RELEASE_DOWNLOAD_PREFIX}preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-{display}-{arch}.{suffix}"
         );
     }
     assert!(validate_portable_update_manifest(&preview_manifest).is_ok());
+}
+
+#[test]
+fn preview_channel_marker_is_not_a_release_tag() {
+    assert_eq!(
+        update_channel_tag("preview"),
+        Some(PREVIEW_CHANNEL_MARKER.to_string())
+    );
+    assert_eq!(normalize_update_channel("preview"), "preview");
+    // A deleted rolling tag must never be produced as a channel tag.
+    assert_ne!(update_channel_tag("preview").as_deref(), Some("only-preview"));
+}
+
+#[test]
+fn preview_url_whitelist_rejects_the_retired_rolling_tag() {
+    assert!(select_latest_preview_tag(&["preview-20261104-1623".to_string()]).is_some());
+    // Anything that is not a `v*` tag, a `preview-*` tag or a timestamp is not a
+    // preview release the client should trust.
+    assert!(select_latest_preview_tag(&["only-preview".to_string()]).is_none());
 }
 
 #[test]
