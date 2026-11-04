@@ -2,4 +2,13 @@
 
 ## Fixed
 
-- **OpenCode Image Paste and Attachment Support**: Declared `attachment` and `modalities` metadata for generated custom provider models in the OpenCode configuration. Multimodal models now support `text`, `image`, and `pdf` inputs, while image generation models declare `image` output capabilities. This resolves an issue where OpenCode treated custom provider models as text-only and blocked pasting images or attaching PDFs (#567).
+- **The apply button no longer greys out silently**: on the routing page, when the plan fails validation the reason now appears next to "Apply plan" instead of leaving a disabled button with no explanation.
+- **Session lifetime format guidance**: entering a session lifetime without a unit (for example `3`) now highlights the field and shows "Session lifetime must be a duration with a unit, e.g. 1h, 30m or 1h30m." The field still only accepts durations with a unit; `1h`, `30m` and `1h30m` all apply normally.
+
+## Improved
+
+- **Gateway policy field descriptions**: request retries, retry credentials, maximum retry wait, transient cooldown and the disable-cooldown switch each gained a one-line description, instead of a bare label and number box.
+
+## Added
+
+- **Built-in reverse proxy**: an optional reverse proxy service can now terminate TLS for the local core service, configurable from the settings page with certificate and listen port.
