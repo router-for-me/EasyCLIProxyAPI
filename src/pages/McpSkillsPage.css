@@ -76,7 +76,7 @@
     flex-wrap: wrap;
   }
 
-  .mcp-chip {
+  .mcp-filter-chip {
     appearance: none;
     border: 1px solid var(--border-color);
     background: var(--bg-card);
@@ -93,20 +93,20 @@
     user-select: none;
   }
 
-  .mcp-chip:hover:not(:disabled) {
+  .mcp-filter-chip:hover:not(:disabled) {
     background: var(--bg-hover);
     color: var(--text-primary);
     border-color: var(--border-hover);
   }
 
-  .mcp-chip.active {
+  .mcp-filter-chip.active {
     background: var(--ui-accent-soft);
     color: var(--primary-color);
     border-color: color-mix(in srgb, var(--primary-color) 40%, transparent);
     font-weight: 600;
   }
 
-  .mcp-chip:focus-visible {
+  .mcp-filter-chip:focus-visible {
     outline: 2px solid var(--primary-color);
     outline-offset: 2px;
   }
@@ -275,8 +275,8 @@
   }
 
   .mcp-status-dot.active {
-    background: #10b981;
-    box-shadow: 0 0 0 2px color-mix(in srgb, #10b981 25%, transparent);
+    background: var(--theme-meter-high);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-meter-high) 25%, transparent);
   }
 
   .mcp-status-dot.inactive {
@@ -321,17 +321,17 @@
   }
 
   .mcp-transport-badge.transport-stdio {
-    background: rgba(59, 130, 246, 0.12);
+    background: var(--theme-soft-surface);
     color: #3b82f6;
   }
 
   .mcp-transport-badge.transport-http {
-    background: rgba(16, 185, 129, 0.12);
+    background: var(--theme-soft-surface);
     color: #10b981;
   }
 
   .mcp-transport-badge.transport-sse {
-    background: rgba(245, 158, 11, 0.12);
+    background: var(--theme-soft-surface);
     color: #f59e0b;
   }
 
@@ -673,7 +673,7 @@
     .skill-detail-desktop-wrapper {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.5);
+      background: var(--theme-scrim);
       z-index: 1000;
       display: flex;
       justify-content: flex-end;
@@ -775,22 +775,22 @@
   }
 
   .skill-source-badge.source-openclaw {
-    background: rgba(168, 85, 247, 0.12);
+    background: var(--theme-soft-surface);
     color: #a855f7;
   }
 
   .skill-source-badge.source-workshop {
-    background: rgba(236, 72, 153, 0.12);
+    background: var(--theme-soft-surface);
     color: #ec4899;
   }
 
   .skill-source-badge.source-project {
-    background: rgba(59, 130, 246, 0.12);
+    background: var(--theme-soft-surface);
     color: #3b82f6;
   }
 
   .skill-source-badge.source-custom {
-    background: rgba(16, 185, 129, 0.12);
+    background: var(--theme-soft-surface);
     color: #10b981;
   }
 
@@ -944,7 +944,7 @@
   .skill-overlay-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--theme-scrim);
     z-index: 1000;
     display: flex;
     justify-content: flex-end;

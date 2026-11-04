@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { Tabs } from '../components/Tabs';
+import { SegmentedControl } from '../components/SegmentedControl';
 import { Switch } from '../components/Switch';
 import { Notice, type NoticeLevel } from '../components/Notice';
 import { EmptyState } from '../components/EmptyState';
@@ -796,30 +797,29 @@ export function McpSkillsPage() {
               </div>
 
               {/* Filter chips */}
-              <div className="mcp-filter-chips" role="radiogroup" aria-label="Server filter">
-                {(['all', 'enabled', 'stdio', 'http', 'sse'] as const).map((filterKey) => {
-                  const count =
-                    filterKey === 'all'
-                      ? servers.length
-                      : filterKey === 'enabled'
-                      ? servers.filter((s) => s.enabled).length
-                      : servers.filter((s) => s.transport === filterKey).length;
-                  const isActive = serverFilter === filterKey;
-                  return (
-                    <button
-                      key={filterKey}
-                      type="button"
-                      role="radio"
-                      aria-checked={isActive}
-                      className={`mcp-chip ${isActive ? 'active' : ''}`}
-                      onClick={() => setServerFilter(filterKey)}
-                    >
+              <SegmentedControl
+                className="mcp-filter-chips"
+                aria-label="Server filter"
+                value={serverFilter}
+                onChange={setServerFilter}
+                buttonClassName="mcp-filter-chip"
+                selectedClassName="active"
+                items={(['all', 'enabled', 'stdio', 'http', 'sse'] as const).map((filterKey) => ({
+                  value: filterKey,
+                  label: (
+                    <>
                       <span>{t(filterKey)}</span>
-                      <span className="mcp-chip-count">{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
+                      <span className="mcp-chip-count">
+                        {filterKey === 'all'
+                          ? servers.length
+                          : filterKey === 'enabled'
+                          ? servers.filter((s) => s.enabled).length
+                          : servers.filter((s) => s.transport === filterKey).length}
+                      </span>
+                    </>
+                  ),
+                }))}
+              />
 
               {/* Server count bar */}
               <div className="mcp-list-meta-bar">
@@ -1171,41 +1171,39 @@ export function McpSkillsPage() {
                 </div>
 
                 {/* Source Filter chips */}
-                <div className="mcp-filter-chips" role="radiogroup" aria-label="Skill source">
-                  {(['all', 'openclaw', 'workshop', 'project', 'custom'] as const).map(
-                    (sourceKey) => {
-                      const count =
-                        sourceKey === 'all'
-                          ? skills.length
-                          : skills.filter((s) => s.source === sourceKey).length;
-                      const isActive = skillSourceFilter === sourceKey;
-                      const label =
-                        sourceKey === 'all'
-                          ? t('all')
-                          : sourceKey === 'openclaw'
-                          ? t('sourceOpenClaw')
-                          : sourceKey === 'workshop'
-                          ? t('sourceWorkshop')
-                          : sourceKey === 'project'
-                          ? t('sourceProject')
-                          : t('sourceCustom');
-
-                      return (
-                        <button
-                          key={sourceKey}
-                          type="button"
-                          role="radio"
-                          aria-checked={isActive}
-                          className={`mcp-chip ${isActive ? 'active' : ''}`}
-                          onClick={() => setSkillSourceFilter(sourceKey)}
-                        >
-                          <span>{label}</span>
-                          <span className="mcp-chip-count">{count}</span>
-                        </button>
-                      );
-                    }
+                <SegmentedControl
+                  className="mcp-filter-chips"
+                  aria-label="Skill source"
+                  value={skillSourceFilter}
+                  onChange={setSkillSourceFilter}
+                  buttonClassName="mcp-filter-chip"
+                  selectedClassName="active"
+                  items={(['all', 'openclaw', 'workshop', 'project', 'custom'] as const).map(
+                    (sourceKey) => ({
+                      value: sourceKey,
+                      label: (
+                        <>
+                          <span>
+                            {sourceKey === 'all'
+                              ? t('all')
+                              : sourceKey === 'openclaw'
+                              ? t('sourceOpenClaw')
+                              : sourceKey === 'workshop'
+                              ? t('sourceWorkshop')
+                              : sourceKey === 'project'
+                              ? t('sourceProject')
+                              : t('sourceCustom')}
+                          </span>
+                          <span className="mcp-chip-count">
+                            {sourceKey === 'all'
+                              ? skills.length
+                              : skills.filter((s) => s.source === sourceKey).length}
+                          </span>
+                        </>
+                      ),
+                    })
                   )}
-                </div>
+                />
               </div>
 
               <div className="skills-toolbar-right">
