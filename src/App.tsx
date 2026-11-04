@@ -28,6 +28,7 @@ import {
   MessageCircle,
   Network,
   PackageOpen,
+  Blocks,
   Puzzle,
   ServerCog,
   Settings,
@@ -48,6 +49,7 @@ import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
 import { RoutingPage } from './pages/routing/RoutingPage';
 import { PluginsPage } from './pages/PluginsPage';
+import { McpSkillsPage } from './pages/McpSkillsPage';
 import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
 import { usePluginNavLayout } from './components/usePluginNavLayout';
@@ -137,6 +139,12 @@ const pages = [
     labelKey: 'app.nav.plugins',
     icon: Puzzle,
     component: PluginsPage,
+  },
+  {
+    id: 'mcp-skills',
+    labelKey: 'app.nav.mcpSkills',
+    icon: Blocks,
+    component: McpSkillsPage,
   },
 ] as const;
 
