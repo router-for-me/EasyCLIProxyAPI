@@ -128,6 +128,7 @@ import { Dialog } from '../components/Dialog';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { requestAppNavigation } from '../navigation';
 import { Select } from '../components/Select';
+import { ClaudeResponseLanguage } from './ClaudeResponseLanguage';
 
 const setupErrors: Record<string, MessageKey> = {
   COPILOT_SETUP_REQUIRED: 'agents.copilotSetup.required',
@@ -992,6 +993,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         manageSubagentModel: source.manageSubagentModel !== false,
         startupModel: source.startupModel?.trim() || 'opus',
         subagentModel: source.subagentModel ?? '',
+        responseLanguage: source.responseLanguage ?? null,
       };
       return sameAgentModelMappings(currentClientDraft, next)
         ? current
@@ -1255,6 +1257,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     resolved.disableAutoCompact = claudeModelMappingsDraft.disableAutoCompact;
     resolved.startupModel = claudeModelMappingsDraft.startupModel.trim() || 'opus';
     resolved.subagentModel = claudeModelMappingsDraft.subagentModel.trim();
+    resolved.responseLanguage = claudeModelMappingsDraft.responseLanguage ?? null;
     resolved.manageDefaultModel = resolved.startupModel.length > 0;
     resolved.manageSubagentModel = resolved.subagentModel.length > 0;
     return resolved;
@@ -2198,6 +2201,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       </label>
                     </div>
                   </div>
+                  <ClaudeResponseLanguage
+                    value={claudeModelMappingsDraft.responseLanguage}
+                    disabled={busy || loading}
+                    onChange={(responseLanguage) => editClaudeModelMappings((current) => ({ ...current, responseLanguage }))}
+                  />
                   <ClaudeCodeModelInputs
                         routes={claudeModelMappingsDraft}
                         models={models}

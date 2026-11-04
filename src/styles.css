@@ -6428,6 +6428,16 @@ textarea:focus-visible {
   font-weight: var(--font-weight-semibold);
 }
 
+.claude-response-language {
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
+.claude-response-language .select-control {
+  width: 100%;
+  min-width: 0;
+}
+
 .agent-claude-code-number-field > input,
 .agent-claude-code-percent-input input {
   width: 100%;

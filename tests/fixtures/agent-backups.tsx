@@ -15,6 +15,7 @@ let nativeOauth=params.has('native-oauth'); let nativeSwitchCount=0; let codexCl
 let openaiProvider=false;
 let remoteCompaction=false;
 let currentOauth=false; const currentMappings:Record<string,any>={};
+if(params.has('response-language'))currentMappings['claude-code']=JSON.parse(sessionStorage.getItem('fixture-response-language')||'null')??{opus:'gpt-one',sonnet:'gpt-one',haiku:'gpt-one',fable:'gpt-one',responseLanguage:params.get('response-language')||null};
 const claudeAliasLayoutModels = [
  {name:'gpt-6.1-sol-high-fast',alias:'gpt-6.1-sol',isAlias:true},
  {name:'gpt-6.1-sol',isAlias:true},
@@ -131,7 +132,10 @@ mockIPC(async (cmd,args:any) => {
  if(['update_agent_config','repair_pi_provider','install_pi_provider','update_pi_provider'].includes(cmd)) {
    count++;if(params.has('fail-apply')&&count===1)throw new Error('模拟配置写入失败');
    currentModel=args.model;currentOauth=!!args.oauthConfiguration;nativeOauth=false;codexClosed=false;
+   const previousLanguage=currentMappings[args.client]?.responseLanguage;
    currentMappings[args.client]=args.claudeCodeModelMappings??args.claudeDesktopModelMappings;
+   if(params.has('response-language')&&args.client==='claude-code')currentMappings[args.client]={...currentMappings[args.client],responseLanguage:currentMappings[args.client]?.responseLanguage===null?previousLanguage:currentMappings[args.client]?.responseLanguage||null};
+   if(params.has('response-language')&&args.client==='claude-code')sessionStorage.setItem('fixture-response-language',JSON.stringify(currentMappings[args.client]));
    return {outcome:count>1?'unchanged':'updated',model:currentModel,enabled:true,changedFiles:[],conflictFiles:[]};
  }
  if(cmd==='create_agent_config_backup') {
