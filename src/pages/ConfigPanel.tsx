@@ -285,20 +285,25 @@ export function ConfigPanelPage() {
 
   const handleProxyToggle = async (enabled: boolean) => {
     if (controlsDisabled || proxyAction !== null) return;
+    const previousDraft = proxyDraft;
     const nextDraft = { ...proxyDraft, enabled };
     setProxyDraft(nextDraft);
     setProxyAction(enabled ? 'save' : 'stop');
     proxyFeedback.clearNotice();
     try {
-      const state = enabled
-        ? await applyReverseProxyConfig(nextDraft)
-        : await stopReverseProxy();
+      let state = await applyReverseProxyConfig(nextDraft);
+      if (!enabled && state.running) {
+        state = await stopReverseProxy();
+      }
       setProxyState(state);
       setBackendNotReady(false);
       setProxyDirty(false);
       proxyFeedback.showNotice(st('reverseProxySaved'), 'success');
-    } catch {
+    } catch (error) {
+      setProxyDraft(previousDraft);
       setBackendNotReady(true);
+      const errorText = error instanceof Error ? error.message : String(error);
+      proxyFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: errorText } }, 'error');
     } finally {
       setProxyAction(null);
     }
@@ -1824,20 +1829,20 @@ export function ConfigPanelPage() {
                 </div>
               </div>
 
-              {proxyState ? (
-                proxyState.hardening?.loopbackBind && proxyState.hardening?.trustedProxies && !proxyState.hardening?.restartRequired ? (
+              {proxyState?.hardening ? (
+                proxyState.hardening.loopbackBind && proxyState.hardening.trustedProxies && !proxyState.hardening.restartRequired ? (
                   <Notice tone="success">
                     {st('reverseProxyHardeningOk')}
                   </Notice>
-                ) : proxyState.hardening?.restartRequired ? (
+                ) : proxyState.running && proxyState.hardening.restartRequired ? (
                   <Notice tone="warn">
                     {st('reverseProxyHardeningPending')}
                   </Notice>
-                ) : (
+                ) : proxyState.running && (!proxyState.hardening.loopbackBind || !proxyState.hardening.trustedProxies) ? (
                   <Notice tone="warn">
                     {st('reverseProxyHardeningFailed')}
                   </Notice>
-                )
+                ) : null
               ) : null}
 
               <details>
