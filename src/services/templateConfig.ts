@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ReactNode } from 'react';
+import { managementApi } from './managementApi';
 
 export type TemplateText = string | { zh: string; en: string; ja?: string };
 export type TemplateConfigField = {
@@ -91,6 +92,40 @@ export function draftTemplateField(field: TemplateConfigField, config: Record<st
 export const templateSwitchChecked = (field: TemplateConfigField, value: unknown) => value === (field.checkedValue ?? true);
 export const templateSwitchChange = (field: TemplateConfigField, checked: boolean) =>
   field.checkedValue === undefined ? { value: checked, remove: false } : { value: checked ? field.checkedValue : null, remove: !checked };
+
+const QUOTA_RESPONSE_MODE = 'routing/cooldown/quota-response-mode';
+
+export const QUOTA_RESPONSE_MODE_UNSUPPORTED: TemplateText = {
+  zh: '未保存：正在运行的内核不支持“额度用尽时报告用量上限”。未做任何更改。关闭此开关即可保存其他更改。',
+  en: 'Not saved: the running core does not support “Report usage limit on quota exhaustion”. Nothing was changed. Turn it off to save your other changes.',
+  ja: '保存されていません：実行中のコアは「クォータ枯渇時に使用量上限を通知」に対応していません。何も変更されていません。オフにすると他の変更を保存できます。',
+};
+
+/** The refusal of a core without routing.cooldown.quota-response-mode; it writes nothing. */
+export const isQuotaResponseModeUnsupported = (error: unknown) =>
+  /^Management API error \(400\): invalid_config: [\s\S]*(quota-response-mode|field cooldown not found)/.test(error instanceof Error ? error.message : String(error));
+
+/**
+ * Turning usage-limit on goes through the running core first, because a core without the
+ * setting ignores the key in its file but refuses it here. Returns null when the core
+ * refused, otherwise the changes for the file save, which then finds the core's value.
+ */
+export async function confirmQuotaResponseModeWithCore(
+  changes: TemplateConfigChange[],
+  put: (path: string, value: string) => Promise<unknown> = (path, value) => managementApi.put(path, value),
+): Promise<TemplateConfigChange[] | null> {
+  const index = changes.findIndex((change) => change.path.join('/') === QUOTA_RESPONSE_MODE && !change.remove && change.value === 'usage-limit');
+  if (index < 0) return changes;
+  try {
+    await put(`/config/${QUOTA_RESPONSE_MODE}`, 'usage-limit');
+  } catch (error) {
+    if (isQuotaResponseModeUnsupported(error)) return null;
+    // shortcut: a core that cannot be reached (stopped, starting) is not asked; the key is
+    // written to the file as before. Upgrade if the core reports the settings it supports.
+    return changes;
+  }
+  return changes.map((change, i) => (i === index ? { ...change, expected: 'usage-limit', expectedExists: true } : change));
+}
 
 export function templateFieldValidation(field: TemplateConfigField, value: unknown): TemplateText | null {
   if (field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value) || ((field.step ?? 1) === 1 && !Number.isInteger(value)) || (field.min !== undefined && value < field.min) || (field.max !== undefined && value > field.max))) {

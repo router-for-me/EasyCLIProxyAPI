@@ -899,6 +899,10 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   if (method === 'GET' && path === '/config/oauth/excluded-models') {
     return clone(state.oauthExcludedModels);
   }
+  if (method === 'PUT' && path === '/config/routing/cooldown/quota-response-mode') {
+    state.extendedConfig = applyTemplateChanges(state.extendedConfig, [{ path: ['routing', 'cooldown', 'quota-response-mode'], value: body, remove: false, expected: null, expectedExists: false }]);
+    return { status: 'ok', 'config-version': 8 };
+  }
   if (method === 'PUT' && path === '/config/oauth/excluded-models') {
     state.oauthExcludedModels = clone(asObject(body)) as Record<string, string[]>;
     return { status: 'ok', 'config-version': 8 };

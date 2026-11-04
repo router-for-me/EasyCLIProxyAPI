@@ -5,7 +5,9 @@ import {
   getExtendedCoreConfig,
   saveExtendedCoreConfig,
   applyTemplateChanges,
+  confirmQuotaResponseModeWithCore,
   draftTemplateField,
+  QUOTA_RESPONSE_MODE_UNSUPPORTED,
   readTemplatePath,
   templateFieldKey,
   templateFieldValidation,
@@ -126,7 +128,12 @@ export function TemplateConfigSection({ groups, visibleGroups, onDirtyGroupsChan
     setBusy(group.id);
     setGroupErrors((previous) => ({ ...previous, [group.id]: '' }));
     try {
-      const result = await saveExtendedCoreConfig({ changes });
+      const confirmed = await confirmQuotaResponseModeWithCore(changes);
+      if (!confirmed) {
+        setGroupErrors((previous) => ({ ...previous, [group.id]: templateText(QUOTA_RESPONSE_MODE_UNSUPPORTED, locale) }));
+        return;
+      }
+      const result = await saveExtendedCoreConfig({ changes: confirmed });
       ++revision.current;
       setConfig(result.config);
       setLoadError('');

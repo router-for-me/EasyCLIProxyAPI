@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createBrowserMockRuntime } from '../src/mocks/browserMockRuntime';
 import { routingTemplateGroups } from '../src/services/generalTemplateFields';
-import { applyTemplateChanges, draftTemplateField, readTemplatePath, templateSwitchChange, templateSwitchChecked } from '../src/services/templateConfig';
+import { applyTemplateChanges, confirmQuotaResponseModeWithCore, draftTemplateField, readTemplatePath, templateSwitchChange, templateSwitchChecked } from '../src/services/templateConfig';
 
 const group = routingTemplateGroups.find(item => item.id === 'routing-advanced')!;
 const field = group.fields.find(item => item.path.join('.') === 'routing.cooldown.quota-response-mode')!;
@@ -45,5 +45,36 @@ describe('quota response mode toggle', () => {
     const off = toggle(result.config, false)!;
     await runtime.invoke('save_extended_core_config', { changes: [{ ...off, path }] });
     expect(readTemplatePath(await runtime.invoke('get_extended_core_config'), path).exists).toBe(false);
+  });
+
+  // What the app's management client reports for the 400 a core without the setting returns.
+  const unsupported = new Error('Management API error (400): invalid_config: yaml: unmarshal errors:\n  line 2: field cooldown not found in type config.RoutingConfig');
+
+  test('a core without the setting refuses it, so nothing is saved', async () => {
+    const puts: string[] = [];
+    const on = toggle({}, true)!;
+    const result = await confirmQuotaResponseModeWithCore([{ ...on, path }], async (target) => { puts.push(target); throw unsupported; });
+    expect(result).toBeNull();
+    expect(puts).toEqual(['/config/routing/cooldown/quota-response-mode']);
+  });
+
+  test('a core with the setting stores it first, and the file save then succeeds', async () => {
+    const runtime = createBrowserMockRuntime('running');
+    const put = (target: string, value: string) => runtime.invoke('management_request', { request: { method: 'PUT', path: target, body: value } });
+    const on = toggle(await runtime.invoke('get_extended_core_config') as Record<string, unknown>, true)!;
+    const neighbourOn = draftTemplateField(neighbour, {}, undefined, true, false)!;
+    const changes = await confirmQuotaResponseModeWithCore([{ ...on, path }, { ...neighbourOn, path: [...neighbour.path] }], put);
+    expect(changes).not.toBeNull();
+    const result = await runtime.invoke('save_extended_core_config', { changes }) as { config: Record<string, unknown> };
+    expect(readTemplatePath(result.config, path).value).toBe('usage-limit');
+    expect(readTemplatePath(result.config, [...neighbour.path]).value).toBe(true);
+  });
+
+  test('other failures and turning it off keep the plain file save', async () => {
+    const on = [{ ...toggle({}, true)!, path }];
+    expect(await confirmQuotaResponseModeWithCore(on, async () => { throw new Error('Management API error (400): invalid_config: invalid port'); })).toEqual(on);
+    expect(await confirmQuotaResponseModeWithCore(on, async () => { throw new Error('Failed to send management API request: connection refused'); })).toEqual(on);
+    const off = [{ ...toggle(stored('usage-limit'), false)!, path }];
+    expect(await confirmQuotaResponseModeWithCore(off, async () => { throw new Error('must not be called'); })).toEqual(off);
   });
 });
