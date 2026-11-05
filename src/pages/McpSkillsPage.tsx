@@ -88,8 +88,8 @@ const BUILTIN_SKILLS: SkillEntry[] = [
     id: 'code-review',
     name: 'code-review',
     description: 'Structured code review checklist for correctness, security, and maintainability.',
-    path: '~/.easy-cli-proxy-api/skills/code-review/SKILL.md',
-    root: '~/.easy-cli-proxy-api/skills',
+    path: '<app-dir>/skills/code-review/SKILL.md',
+    root: '<app-dir>/skills',
     source: 'openclaw',
     enabled: true,
     fileCount: 2,
@@ -98,8 +98,8 @@ const BUILTIN_SKILLS: SkillEntry[] = [
     id: 'mcp-inspector',
     name: 'mcp-inspector',
     description: 'Inspect and verify MCP server tool schemas, stdio commands, and SSE endpoints.',
-    path: '~/.easy-cli-proxy-api/skills/mcp-inspector/SKILL.md',
-    root: '~/.easy-cli-proxy-api/skills',
+    path: '<app-dir>/skills/mcp-inspector/SKILL.md',
+    root: '<app-dir>/skills',
     source: 'project',
     enabled: true,
     fileCount: 3,
@@ -107,7 +107,7 @@ const BUILTIN_SKILLS: SkillEntry[] = [
 ];
 
 const BUILTIN_SKILL_DOCS: Record<string, string> = {
-  '~/.easy-cli-proxy-api/skills/code-review/SKILL.md': `# Code Review Skill
+  '<app-dir>/skills/code-review/SKILL.md': `# Code Review Skill
 
 Perform a structured review before merging changes into the main branch.
 
@@ -127,7 +127,7 @@ bun test tests/uiLocalization.test.ts tests/i18n.test.ts
 1. Inspect modified components and localization keys
 2. Run static type checks and unit tests
 3. Record verification results`,
-  '~/.easy-cli-proxy-api/skills/mcp-inspector/SKILL.md': `# MCP Inspector Skill
+  '<app-dir>/skills/mcp-inspector/SKILL.md': `# MCP Inspector Skill
 
 Diagnose Model Context Protocol servers across \`stdio\`, \`http\`, and \`sse\` transports.
 
