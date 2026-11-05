@@ -71,7 +71,10 @@ export function ProviderErrorRules({ value, onChange, inherited }: { value: Valu
           <button type="button" className="secondary-button compact-button" onClick={() => set(rules.filter((_, i) => i !== index))}><Trash2 size={14} />{p('remove')}</button>
         </fieldset>;
       })}
-      <button type="button" className="secondary-button compact-button" onClick={() => set([...rules, { status: 400, action: 'stop' }])}><Plus size={14} />{p('addRule')}</button>
+      <div className="provider-template-rule-actions">
+        <button type="button" className="secondary-button compact-button" onClick={() => set([...rules, { status: 400, action: 'stop' }])}><Plus size={14} />{p('addRule')}</button>
+        <button type="button" className="secondary-button compact-button" onClick={() => set([...rules, { status: 400, action: 'continue-and-cooldown' }])}><Plus size={14} />{p('add400Cooldown')}</button>
+      </div>
     </div> : null}
   </details>;
 }

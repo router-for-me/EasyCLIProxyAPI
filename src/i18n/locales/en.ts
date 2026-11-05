@@ -1087,6 +1087,8 @@ export const en: Record<MessageKey, string> = {
   'usage.column.effort': 'Reasoning Effort',
   'usage.speedMode.fast': 'fast',
   'usage.column.request': 'Request',
+  'usage.column.client': 'Client',
+  'usage.client.unknown': 'Unknown',
   'usage.column.tokens': 'Token',
   'usage.column.provider': 'Provider',
   'usage.column.source': 'Source',

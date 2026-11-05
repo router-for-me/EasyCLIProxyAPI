@@ -13,6 +13,7 @@
 .provider-template-rule { margin: 0; padding: 10px; min-width: 0; }
 .provider-template-rule legend { font-size: 11px; padding: 0 4px; }
 .provider-template-rule > button { margin-top: 10px; }
+.provider-template-rule-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .provider-model-config { display: grid; gap: 6px; min-width: 0; }
 /* Let CJK labels and larger system fonts determine the row height. */
 .api-provider-dialog .provider-template-field > label,

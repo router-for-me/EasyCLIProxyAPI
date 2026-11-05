@@ -15,6 +15,7 @@ const messages = {
   errors: ['请求错误规则', 'Request error rules', 'リクエストエラー規則'],
   errorsHint: ['按 HTTP 状态码与正文匹配；空列表明确清除继承的规则。', 'Match HTTP status and body patterns. An empty list clears inherited rules.', 'HTTP ステータスと本文を照合します。空のリストは継承した規則を解除します。'],
   addRule: ['添加规则', 'Add rule', '規則を追加'],
+  add400Cooldown: ['添加 400 冷却换号规则', 'Add 400 cooldown & rotate rule', '400 冷却・切替規則を追加'],
   remove: ['删除', 'Remove', '削除'],
   status: ['HTTP 状态码', 'HTTP status', 'HTTP ステータス'],
   match: ['正文包含（每行一项）', 'Body contains (one per line)', '本文に含む文字列（行ごと）'],

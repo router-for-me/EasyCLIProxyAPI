@@ -203,6 +203,7 @@ function createUsageEvents() {
       api_key_hash: 'mock-key-hash',
       api_key_display: 'sk-mock••••••••2026',
       api_key_remark: 'Browser Mock key',
+      user_agent: index % 3 === 0 ? 'codex-tui/0.160.1 (Mac OS 26.5; arm64)' : index % 3 === 1 ? 'claude-cli/2.1.12 (external, cli)' : 'opencode/1.2.0',
       tokens: {
         input_tokens: input,
         output_tokens: output,

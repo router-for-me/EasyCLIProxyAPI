@@ -1103,6 +1103,8 @@ export const jaOverrides = {
   'usage.column.effort': '推論レベル',
   'usage.speedMode.fast': 'fast',
   'usage.column.request': 'リクエスト',
+  'usage.column.client': 'クライアント',
+  'usage.client.unknown': '不明',
   'usage.column.tokens': 'Token',
   'usage.column.provider': 'プロバイダー',
   'usage.column.source': 'ソース',

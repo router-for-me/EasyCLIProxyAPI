@@ -14,7 +14,7 @@ import type { MessageKey } from '../i18n/resources';
 import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
 import { formatDuration, formatUsageNumber } from '../services/usageNumber';
 import { Dialog } from '../components/Dialog';
-import { usageProviderDetails } from '../services/usageProvider';
+import { usageClientDetails, usageProviderDetails } from '../services/usageProvider';
 import { usageModelDetails } from '../services/usageModel';
 import { Select } from '../components/Select';
 
@@ -52,7 +52,8 @@ type EventColumnKey =
   | 'result'
   | 'latency'
   | 'speed'
-  | 'request';
+  | 'request'
+  | 'client';
 
 type EventColumnDef = {
   key: EventColumnKey;
@@ -75,6 +76,7 @@ const EVENT_COLUMNS: readonly EventColumnDef[] = [
   { key: 'speed', labelKey: 'usage.column.speed', defaultWidth: 82, minWidth: 72, align: 'left' },
   { key: 'cost', labelKey: 'usage.column.cost', defaultWidth: 96, minWidth: 86, align: 'left' },
   { key: 'request', labelKey: 'usage.column.request', defaultWidth: 128, minWidth: 88, align: 'left' },
+  { key: 'client', labelKey: 'usage.column.client', defaultWidth: 104, minWidth: 84, align: 'left' },
 ] as const;
 
 const DEFAULT_EVENT_VISIBLE_COLUMNS: readonly EventColumnKey[] = [
@@ -169,13 +171,13 @@ function usageEventsExportName(date = new Date()) {
 }
 
 function usageEventsCsv(records: UsageRecord[]) {
-  const headers = ['id', 'row_id', 'timestamp', 'api_key_display', 'api_key_remark', 'api_key_hash', 'source', 'source_display', 'provider', 'model', 'alias', 'response_model', 'reasoning_effort', 'endpoint', 'failed', 'canceled', 'failure_status', 'failure_body', 'latency_ms', 'ttft_ms', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens', 'estimated_cost_usd', 'pricing_model'];
+  const headers = ['id', 'row_id', 'timestamp', 'api_key_display', 'api_key_remark', 'api_key_hash', 'client', 'user_agent', 'source', 'source_display', 'provider', 'model', 'alias', 'response_model', 'reasoning_effort', 'endpoint', 'failed', 'canceled', 'failure_status', 'failure_body', 'latency_ms', 'ttft_ms', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'total_tokens', 'estimated_cost_usd', 'pricing_model'];
   const csvCell = (value: string | number | boolean | null) => {
     const text = value == null ? '' : String(value);
     const safe = typeof value === 'string' && /^[\s\u0000-\u001f]*[=+@-]/.test(text) ? `'${text}` : text;
     return `"${safe.replace(/"/g, '""')}"`;
   };
-  const rows = records.map((record) => [record.id, record.row_id, record.timestamp, record.api_key_display, record.api_key_remark, record.api_key_hash, record.source, record.source_display, record.provider, record.model, record.alias, record.response_model ?? '', record.reasoning_effort, record.endpoint, record.failed, record.canceled, record.failure_status, record.failure_body, record.latency_ms, record.ttft_ms, record.tokens.input_tokens, record.tokens.output_tokens, record.tokens.reasoning_tokens, record.tokens.cache_read_tokens, record.tokens.cache_creation_tokens, record.tokens.total_tokens, record.cost?.total ?? null, record.cost?.pricing_model ?? '']);
+  const rows = records.map((record) => [record.id, record.row_id, record.timestamp, record.api_key_display, record.api_key_remark, record.api_key_hash, usageClientDetails(record.user_agent).name, record.user_agent ?? '', record.source, record.source_display, record.provider, record.model, record.alias, record.response_model ?? '', record.reasoning_effort, record.endpoint, record.failed, record.canceled, record.failure_status, record.failure_body, record.latency_ms, record.ttft_ms, record.tokens.input_tokens, record.tokens.output_tokens, record.tokens.reasoning_tokens, record.tokens.cache_read_tokens, record.tokens.cache_creation_tokens, record.tokens.total_tokens, record.cost?.total ?? null, record.cost?.pricing_model ?? '']);
   return '\uFEFF' + [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
 }
 
@@ -376,9 +378,21 @@ function UsageEventCell({
         </td>
       );
     }
+    case 'client': {
+      const client = usageClientDetails(record.user_agent);
+      const label = client.name || t('usage.client.unknown');
+      return (
+        <td className="usage-stacked-cell usage-td-client align-left" title={client.raw || label}>
+          <strong>{label}</strong>
+        </td>
+      );
+    }
     case 'source':
       {
-        const credentialLabel = privacy.text(record.source_display || record.provider || '—');
+        const rawSource = record.source_display && record.source_display !== 'Unknown source'
+          ? record.source_display
+          : record.source || record.provider || '—';
+        const credentialLabel = privacy.text(rawSource);
       return (
         <td className="usage-td-source align-left" title={credentialLabel}>
           <span className="usage-event-source" title={credentialLabel}>

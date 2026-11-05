@@ -1072,6 +1072,8 @@ export const zhCN: Record<string, string> = {
   'usage.column.effort': '推理强度',
   'usage.speedMode.fast': 'fast',
   'usage.column.request': '请求',
+  'usage.column.client': '客户端',
+  'usage.client.unknown': '未知',
   'usage.column.tokens': 'Token',
   'usage.column.provider': '提供商',
   'usage.column.source': '来源',

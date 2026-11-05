@@ -244,7 +244,7 @@ pub(crate) struct UsageRecord {
     client_ip: Option<String>,
     #[serde(default, skip_serializing)]
     x_forwarded_for: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     user_agent: Option<String>,
     #[serde(default)]
     reasoning_effort: String,

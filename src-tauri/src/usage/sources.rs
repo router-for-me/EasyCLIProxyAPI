@@ -380,10 +380,12 @@ pub(super) fn apply_events(
     for record in &mut page.items {
         record.source_display = if let Some(source) = sources.get(record.auth_index.trim()) {
             source.label.clone()
-        } else if record.auth_type == "oauth" {
+        } else if record.auth_type == "oauth" && !record.source.trim().is_empty() {
             usage_source_display(config, &record.provider, &record.source)
-        } else {
+        } else if !record.provider.trim().is_empty() {
             record.provider.clone()
+        } else {
+            usage_source_display(config, &record.provider, &record.source)
         };
     }
 }

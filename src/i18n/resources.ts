@@ -177,5 +177,7 @@ export const zhTW: Record<MessageKey, string> = {
   'ecpaPlugins.copied': '已複製',
   'ecpaPlugins.emptyFiltered': '沒有匹配的插件',
   'ecpaPlugins.clearFilters': '清除篩選',
+  'usage.column.client': '用戶端',
+  'usage.client.unknown': '未知',
 };
 export const ja: Record<MessageKey, string> = jaOverrides;
