@@ -137,6 +137,15 @@ const ROUTING_OPTIONS = [
 
 const SESSION_TTL_PATTERN = /^(\d+(?:\.\d+)?(?:ms|s|m|h))+$/;
 
+const DEFAULT_REVERSE_PROXY_DRAFT: ReverseProxyConfig = {
+  enabled: false,
+  listenHost: '0.0.0.0',
+  listenPort: 443,
+  targetPort: 8317,
+  certPath: '',
+  keyPath: '',
+};
+
 const isValidPort = (value: number) => Number.isInteger(value) && value >= 1 && value <= 65535;
 
 type ReverseProxyFieldError = Partial<Record<'listenPort' | 'targetPort' | 'certPath' | 'keyPath', string>>;
@@ -270,14 +279,7 @@ export function ConfigPanelPage() {
   const [proxyDirty, setProxyDirty] = useState(false);
   const [backendNotReady, setBackendNotReady] = useState(false);
   const [proxyFileSelecting, setProxyFileSelecting] = useState<'cert' | 'key' | null>(null);
-  const [proxyDraft, setProxyDraft] = useState<ReverseProxyConfig>({
-    enabled: false,
-    listenHost: '0.0.0.0',
-    listenPort: 443,
-    targetPort: 8317,
-    certPath: '',
-    keyPath: '',
-  });
+  const [proxyDraft, setProxyDraft] = useState<ReverseProxyConfig>(DEFAULT_REVERSE_PROXY_DRAFT);
 
   const loadReverseProxy = async () => {
     setProxyInitialLoading(true);
@@ -1074,6 +1076,81 @@ export function ConfigPanelPage() {
     }
   };
 
+  const discardNetworkEndpointDraft = () => {
+    if (!settings) return;
+    setPortDraft(String(settings.port));
+    setHostDraft(settings.host);
+    setProxyUrlDraft(settings.proxyUrl);
+    setProxyOverrideDraft(settings.proxyOverride);
+    clearDraftDirty('port');
+    clearDraftDirty('host');
+    clearDraftDirty('proxyUrl');
+    clearDraftDirty('proxyOverride');
+    setPortError('');
+    setHostError('');
+    setProxyUrlError('');
+  };
+
+  const discardTlsDraft = () => {
+    if (!tlsSettings) return;
+    setTlsEnabledDraft(tlsSettings.enabled);
+    setTlsCertDraft(tlsSettings.cert);
+    setTlsKeyDraft(tlsSettings.key);
+    setTlsError('');
+  };
+
+  const discardProxyDraft = () => {
+    setProxyDraft(proxyState?.config ?? DEFAULT_REVERSE_PROXY_DRAFT);
+    setProxyDirty(false);
+    setProxyFieldErrors({});
+  };
+
+  const discardSessionRoutingDraft = () => {
+    if (!settings) return;
+    setSessionAffinityDraft(settings.routingSessionAffinity);
+    setSessionTtlDraft(settings.routingSessionAffinityTtl);
+    clearDraftDirty('sessionAffinity');
+    clearDraftDirty('sessionTtl');
+    setSessionTtlError('');
+  };
+
+  const discardRetryDraft = () => {
+    if (!settings) return;
+    setDisableCoolingDraft(settings.disableCooling);
+    setRequestRetryDraft(String(settings.requestRetry));
+    setMaxRetryCredentialsDraft(String(settings.maxRetryCredentials));
+    setMaxRetryIntervalDraft(String(settings.maxRetryInterval));
+    setStreamingBootstrapRetriesDraft(String(settings.streamingBootstrapRetries));
+    clearDraftDirty('disableCooling');
+    clearDraftDirty('requestRetry');
+    clearDraftDirty('maxRetryCredentials');
+    clearDraftDirty('maxRetryInterval');
+    clearDraftDirty('streamingBootstrapRetries');
+    setRetryError('');
+  };
+
+  const discardLoggingDraft = () => {
+    if (!settings) return;
+    setDebugDraft(settings.debug);
+    setCommercialModeDraft(settings.commercialMode);
+    setLoggingToFileDraft(settings.loggingToFile);
+    setLogsMaxTotalSizeDraft(String(settings.logsMaxTotalSizeMb));
+    setErrorLogsMaxFilesDraft(String(settings.errorLogsMaxFiles));
+    setUsageStatisticsDraft(settings.usageStatisticsEnabled);
+    setRedisUsageRetentionDraft(String(settings.redisUsageQueueRetentionSeconds));
+    loggingDraftDirtyRef.current = false;
+    setLoggingError('');
+  };
+
+  const discardSoftwareDraft = () => {
+    if (!softwareSettings) return;
+    setSoftwareCloseBehaviorDraft(softwareSettings.closeBehavior);
+    setSoftwareAutostartDraft(softwareSettings.autostartEnabled);
+    setSoftwareStartCoreDraft(softwareSettings.startCoreOnLaunch);
+    setSoftwareSilentStartDraft(softwareSettings.silentStartEnabled);
+    setSoftwareDefaultTerminalDraft(softwareSettings.defaultTerminal);
+  };
+
   const coreUnavailable = loading || settings === null;
   const nativeSectionsPending = loading || loadError !== '';
   const renderNativeSkeleton = () => (
@@ -1493,14 +1570,6 @@ export function ConfigPanelPage() {
                 setPortDraft(event.currentTarget.value.replace(/\D/g, '').slice(0, 5));
                 setPortError('');
               }}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape' && settings) {
-                  clearDraftDirty('port');
-                  setPortDraft(String(settings.port));
-                  setPortError('');
-                  event.currentTarget.blur();
-                }
-              }}
             />
             <span id="config-network-port-error" className="config-field-error" role="alert">{portError || ' '}</span>
 
@@ -1522,14 +1591,6 @@ export function ConfigPanelPage() {
                     markDraftDirty('host');
                     setHostDraft(event.currentTarget.value);
                     setHostError('');
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape' && settings) {
-                      clearDraftDirty('host');
-                      setHostDraft(settings.host);
-                      setHostError('');
-                      event.currentTarget.blur();
-                    }
                   }}
                 />
                 <span id="config-network-host-error" className="config-field-error" role="alert">{hostError || ' '}</span>
@@ -1565,21 +1626,24 @@ export function ConfigPanelPage() {
                     setProxyUrlDraft(event.currentTarget.value);
                     setProxyUrlError('');
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape' && settings) {
-                      clearDraftDirty('proxyUrl');
-                      setProxyUrlDraft(settings.proxyUrl);
-                      setProxyUrlError('');
-                      event.currentTarget.blur();
-                    }
-                  }}
                 />
                 <span id="config-network-proxy-url-error" className="config-field-error" role="alert">{proxyUrlError || ' '}</span>
 
               </div>
             </div>
 
+          {settings && (hostDraft.trim() !== settings.host || portDraft !== String(settings.port)) ? (
+            <Notice tone="warn" icon={<AlertCircle size={16} />}>{st('restart')}</Notice>
+          ) : null}
+
           <div className="config-settings-save-row"><button
+                type="button"
+                className="secondary-button compact-button"
+                disabled={networkControlsDisabled || !networkSettingsDirty}
+                onClick={discardNetworkEndpointDraft}
+              >
+                {t('agents.catalog.discard')}
+              </button><button
                 type="button"
                 className="primary-button compact-button"
                 disabled={networkControlsDisabled || !networkSettingsDirty}
@@ -1697,7 +1761,18 @@ export function ConfigPanelPage() {
             {renderFeedback(tlsFeedback)}
           </div>
 
+          {tlsSettingsDirty ? (
+            <Notice tone="warn" icon={<AlertCircle size={16} />}>{st('restart')}</Notice>
+          ) : null}
+
           <div className="config-settings-save-row"><button
+                type="button"
+                className="secondary-button compact-button"
+                disabled={tlsControlsDisabled || tlsFileSelecting !== null || !tlsSettingsDirty}
+                onClick={discardTlsDraft}
+              >
+                {t('agents.catalog.discard')}
+              </button><button
                 type="button"
                 className="primary-button compact-button"
                 disabled={tlsControlsDisabled || tlsFileSelecting !== null || !tlsSettingsDirty}
@@ -1999,6 +2074,14 @@ export function ConfigPanelPage() {
           <div className="config-settings-save-row">
             <button
               type="button"
+              className="secondary-button compact-button"
+              disabled={proxyControlsDisabled || proxyInitialLoading || !proxyDirty}
+              onClick={discardProxyDraft}
+            >
+              {t('agents.catalog.discard')}
+            </button>
+            <button
+              type="button"
               className="primary-button compact-button"
               disabled={proxyControlsDisabled || proxyInitialLoading || !proxyDirty}
               onClick={() => void handleProxySave()}
@@ -2053,14 +2136,6 @@ export function ConfigPanelPage() {
                     setSessionTtlDraft(event.currentTarget.value);
                     setSessionTtlError('');
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape' && settings) {
-                      clearDraftDirty('sessionTtl');
-                      setSessionTtlDraft(settings.routingSessionAffinityTtl);
-                      setSessionTtlError('');
-                      event.currentTarget.blur();
-                    }
-                  }}
                 />
                 <small id="config-network-sessionTtl-format">{t('config.network.sessionTtlFormat')}</small>
                 <span id="config-network-sessionTtl-error" className="config-field-error" role="alert">{sessionTtlError || ' '}</span>
@@ -2087,6 +2162,13 @@ export function ConfigPanelPage() {
             </div>
 
           <div className="config-settings-save-row"><button
+                type="button"
+                className="secondary-button compact-button"
+                disabled={routingControlsDisabled || !sessionRoutingDirty}
+                onClick={discardSessionRoutingDraft}
+              >
+                {t('agents.catalog.discard')}
+              </button><button
                 type="button"
                 className="primary-button compact-button"
                 disabled={routingControlsDisabled || !sessionRoutingDirty}
@@ -2134,14 +2216,6 @@ export function ConfigPanelPage() {
                     setRequestRetryDraft(event.currentTarget.value.replace(/\D/g, '').slice(0, 10));
                     setRetryError('');
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape' && settings) {
-                      clearDraftDirty('requestRetry');
-                      setRequestRetryDraft(String(settings.requestRetry));
-                      setRetryError('');
-                      event.currentTarget.blur();
-                    }
-                  }}
                 />
 
               </div>
@@ -2162,14 +2236,6 @@ export function ConfigPanelPage() {
                     markDraftDirty('maxRetryCredentials');
                     setMaxRetryCredentialsDraft(event.currentTarget.value.replace(/\D/g, '').slice(0, 10));
                     setRetryError('');
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape' && settings) {
-                      clearDraftDirty('maxRetryCredentials');
-                      setMaxRetryCredentialsDraft(String(settings.maxRetryCredentials));
-                      setRetryError('');
-                      event.currentTarget.blur();
-                    }
                   }}
                 />
 
@@ -2194,14 +2260,6 @@ export function ConfigPanelPage() {
                     setMaxRetryIntervalDraft(`${raw.startsWith('-') ? '-' : ''}${raw.replace(/\D/g, '').slice(0, 10)}`);
                     setRetryError('');
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape' && settings) {
-                      clearDraftDirty('maxRetryInterval');
-                      setMaxRetryIntervalDraft(String(settings.maxRetryInterval));
-                      setRetryError('');
-                      event.currentTarget.blur();
-                    }
-                  }}
                 />
                 <span className="config-input-unit" aria-hidden="true">{t('config.unit.seconds')}</span>
                 </span>
@@ -2225,20 +2283,19 @@ export function ConfigPanelPage() {
                     setStreamingBootstrapRetriesDraft(event.currentTarget.value.replace(/\D/g, '').slice(0, 10));
                     setRetryError('');
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape' && settings) {
-                      clearDraftDirty('streamingBootstrapRetries');
-                      setStreamingBootstrapRetriesDraft(String(settings.streamingBootstrapRetries));
-                      setRetryError('');
-                      event.currentTarget.blur();
-                    }
-                  }}
                 />
 
               </div>
             </div>
 
           <div className="config-settings-save-row"><button
+                type="button"
+                className="secondary-button compact-button"
+                disabled={retryControlsDisabled || !retrySettingsDirty}
+                onClick={discardRetryDraft}
+              >
+                {t('agents.catalog.discard')}
+              </button><button
                 type="button"
                 className="primary-button compact-button"
                 disabled={retryControlsDisabled || !retrySettingsDirty}
@@ -2394,6 +2451,14 @@ export function ConfigPanelPage() {
               </button>
               <button
                 type="button"
+                className="secondary-button compact-button"
+                disabled={diagnosticsControlsDisabled || !loggingSettingsDirty}
+                onClick={discardLoggingDraft}
+              >
+                {t('agents.catalog.discard')}
+              </button>
+              <button
+                type="button"
                 className="primary-button compact-button"
                 disabled={diagnosticsControlsDisabled || !loggingSettingsDirty}
                 onClick={() => void saveCoreLoggingSettings()}
@@ -2527,6 +2592,13 @@ export function ConfigPanelPage() {
             </div>
 
           <div className="config-settings-save-row"><button
+                  type="button"
+                  className="secondary-button compact-button"
+                  disabled={softwareControlsDisabled || !softwareSettingsDirty}
+                  onClick={discardSoftwareDraft}
+                >
+                  {t('agents.catalog.discard')}
+                </button><button
                   type="button"
                   className="primary-button compact-button"
                   disabled={softwareControlsDisabled || !softwareSettingsDirty}
