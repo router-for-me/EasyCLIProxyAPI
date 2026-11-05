@@ -355,16 +355,25 @@ async fn resolve_app_update(
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
-    let portable_support = target
-        .map(|(_, arch)| {
-            validate_local_portable_app_manifest(arch)
-                .map(|supported| supported || is_preview)
-                .or_else(|error| if is_preview { Ok(true) } else { Err(error) })
-        })
-        .transpose()?;
+    let download_url = asset.as_ref().map(|value| value.url.clone());
+    let download_file_name = download_url
+        .as_deref()
+        .and_then(portable_update_asset_file_name);
+    let download_size_bytes = asset.as_ref().map(|value| value.size_bytes);
+    let mut manifest_error = None;
+    let portable_support = target.map(|(_, arch)| match validate_local_portable_app_manifest(arch) {
+        Ok(supported) => supported || is_preview,
+        Err(_) if is_preview => true,
+        Err(error) => {
+            manifest_error = Some(error);
+            false
+        }
+    });
     let auto_update_supported = portable_support == Some(true) && asset.is_some();
     let unsupported_reason = if auto_update_supported {
         None
+    } else if let Some(error) = manifest_error {
+        Some(error)
     } else if portable_support != Some(true) {
         Some("This application is not a portable version that supports automatic upgrades. Manually download the first supported version".to_string())
     } else {
@@ -375,7 +384,7 @@ async fn resolve_app_update(
         let (_, arch) = target.expect("portable target checked above");
         Some(PendingAppUpdate {
             version: latest_version.clone(),
-            asset: asset.clone().expect("portable asset checked above"),
+            asset: asset.expect("portable asset checked above"),
             arch: arch.to_string(),
         })
     } else {
@@ -390,7 +399,9 @@ async fn resolve_app_update(
         published_at: manifest.published_at,
         current_build_at,
         auto_update_supported,
-        download_size_bytes: asset.map(|value| value.size_bytes),
+        download_url,
+        download_file_name,
+        download_size_bytes,
         unsupported_reason,
         update_channel: update_channel.clone(),
     };
@@ -743,6 +754,21 @@ fn validate_portable_update_asset_catalog(
         )?;
     }
     Ok(())
+}
+
+pub(crate) fn portable_update_asset_file_name(url: &str) -> Option<String> {
+    if let Ok(parsed) = reqwest::Url::parse(url) {
+        if let Some(segments) = parsed.path_segments() {
+            if let Some(name) = segments.rev().find(|segment| !segment.is_empty()) {
+                return Some(name.to_string());
+            }
+        }
+    }
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
 }
 
 pub(crate) fn validate_portable_update_asset(asset: &PortableUpdateAsset) -> Result<(), String> {

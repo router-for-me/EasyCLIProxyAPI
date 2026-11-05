@@ -701,6 +701,22 @@ fn preview_channel_marker_is_not_a_release_tag() {
 }
 
 #[test]
+fn portable_update_asset_file_name_extracts_package_name() {
+    assert_eq!(
+        portable_update_asset_file_name(
+            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip"
+        ),
+        Some("EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip".to_string())
+    );
+    assert_eq!(
+        portable_update_asset_file_name(
+            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz"
+        ),
+        Some("EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz".to_string())
+    );
+}
+
+#[test]
 fn preview_url_whitelist_rejects_the_retired_rolling_tag() {
     assert!(select_latest_preview_tag(&["preview-20261104-1623".to_string()]).is_some());
     // Anything that is not a `v*` tag, a `preview-*` tag or a timestamp is not a

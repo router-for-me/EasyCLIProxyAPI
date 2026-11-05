@@ -2,8 +2,13 @@ import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import {
+  APP_PREVIEW_RELEASES_URL,
+  APP_RELEASE_TAG_BASE_URL,
+  APP_RELEASE_URL,
   DEFAULT_VERSION_DOWNLOAD_SOURCE,
   displayAppVersion,
+  getAppReleaseUrl,
+  resolveAppDownloadUrl,
 } from '../src/pages/VersionManagementPage';
 import { coreUpdateAvailable } from '../src/coreUpdate';
 import { appUpdateIndicatorState } from '../src/appUpdateModel';
@@ -103,6 +108,27 @@ describe('VersionManagement helper functions', () => {
     expect(displayAppVersion('v1.2.3')).toBe('v1.2.3');
     expect(displayAppVersion('  2.3.4  ')).toBe('v2.3.4');
     expect(displayAppVersion('  v3.4.5  ')).toBe('v3.4.5');
+  });
+
+  it('prefers direct package download URL over release page and channel fallback', () => {
+    expect(resolveAppDownloadUrl({
+      downloadUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
+      releaseUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/v0.3.0',
+      updateChannel: 'stable',
+    }, 'stable')).toBe('https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip');
+
+    expect(resolveAppDownloadUrl({
+      downloadUrl: null,
+      releaseUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/preview-20261104-1623',
+      updateChannel: 'preview',
+    }, 'preview')).toBe('https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/preview-20261104-1623');
+
+    expect(resolveAppDownloadUrl(null, 'stable')).toBe(APP_RELEASE_URL);
+    expect(resolveAppDownloadUrl(null, 'preview')).toBe(APP_PREVIEW_RELEASES_URL);
+    expect(resolveAppDownloadUrl(null, 'preview-20261104-1623')).toBe(`${APP_RELEASE_TAG_BASE_URL}/preview-20261104-1623`);
+    expect(getAppReleaseUrl('stable')).toBe(APP_RELEASE_URL);
+    expect(getAppReleaseUrl('preview')).toBe(APP_PREVIEW_RELEASES_URL);
+    expect(getAppReleaseUrl('preview-20261104-1623')).toBe(`${APP_RELEASE_TAG_BASE_URL}/preview-20261104-1623`);
   });
 
   it('resolves update indicators based on availability and processing state', () => {

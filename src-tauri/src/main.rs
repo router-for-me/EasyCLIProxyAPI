@@ -482,6 +482,8 @@ struct AppUpdateInfo {
     published_at: String,
     current_build_at: Option<String>,
     auto_update_supported: bool,
+    download_url: Option<String>,
+    download_file_name: Option<String>,
     download_size_bytes: Option<u64>,
     unsupported_reason: Option<String>,
     update_channel: String,
