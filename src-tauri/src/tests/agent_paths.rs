@@ -48,14 +48,14 @@ fn executable_directories_preserve_path_precedence_and_package_manager_locations
     let directories = agent_executable_directories_from_environment(
         &home,
         |name| match name {
-            "PATH" => Some(env::join_paths([&inherited, &inherited]).unwrap()),
+            "PATH" => Some(env::join_paths([&inherited, &inherited.join(".")]).unwrap()),
             "NPM_CONFIG_PREFIX" => Some(npm.clone().into_os_string()),
             "UV_TOOL_BIN_DIR" => Some(uv.clone().into_os_string()),
             "VOLTA_HOME" => Some(volta.clone().into_os_string()),
             "BUN_INSTALL" => Some(std::ffi::OsString::new()),
             _ => None,
         },
-        &[registered.clone(), inherited.clone()],
+        &[registered.clone(), inherited.clone(), PathBuf::new()],
     );
     assert_eq!(&directories[..2], &[inherited.clone(), registered]);
     assert_eq!(

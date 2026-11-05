@@ -2931,8 +2931,9 @@ pub(crate) fn agent_executable_directories_from_environment(
     registered: &[PathBuf],
 ) -> Vec<PathBuf> {
     let mut directories = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     let mut push = |path: PathBuf| {
-        if !path.as_os_str().is_empty() && !directories.iter().any(|item| item == &path) {
+        if !path.as_os_str().is_empty() && seen.insert(path.clone()) {
             directories.push(path);
         }
     };
