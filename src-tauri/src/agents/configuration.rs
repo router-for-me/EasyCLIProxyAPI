@@ -1300,17 +1300,20 @@ pub(crate) fn claude_desktop_inference_model(
     serde_json::Value::Object(entry)
 }
 
-// Claude Desktop 4.29+ reads behavesAs from a profile's inferenceModels to
-// pick which Claude model's prompt profile, capabilities and effort
-// defaults a listed route runs under. The values are the newest model of
-// each tier in Desktop's own catalog. A tier with no entry here is left
-// out rather than guessed, and a route that is already a real Claude model
-// needs no mapping. Older Desktop builds ignore the key.
+// Claude Desktop resolves a listed model's effort levels by looking the
+// behavesAs id up in its own table (eyn in its app.asar), keyed on the
+// lowercased id with a date suffix and an "anthropic." prefix removed.
+// These are that table's keys: opus 5, sonnet 5 and fable 5.1 report the
+// full low/medium/high/xhigh/max ladder, while haiku 4.5 reports thinking
+// modes and no effort ladder at all. An id the table has no entry for gets
+// no effort picker, so a "newer" sounding name such as claude-opus-5-5 is
+// worse than useless here. A route that is already a real Claude model
+// needs no mapping, and older Desktop builds ignore the key.
 pub(crate) fn claude_desktop_behaves_as(tier: &str) -> Option<&'static str> {
     match tier {
-        "opus" => Some("claude-opus-5-5"),
-        "sonnet" => Some("claude-sonnet-5-5"),
-        "haiku" => Some("claude-haiku-5-5"),
+        "opus" => Some("claude-opus-5"),
+        "sonnet" => Some("claude-sonnet-5"),
+        "haiku" => Some("claude-haiku-4-5"),
         "fable" => Some("claude-fable-5-1"),
         _ => None,
     }
