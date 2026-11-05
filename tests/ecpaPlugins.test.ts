@@ -7,9 +7,8 @@ describe('ecpaPlugins parser', () => {
     const parsedBundled = parseEcpaRegistry(bundledRegistry);
     expect(parsedBundled).not.toBeNull();
     expect(parsedBundled?.schema_version).toBe(1);
-    expect(parsedBundled?.plugins).toHaveLength(1);
-    expect(parsedBundled?.plugins[0]?.id).toBe('tls-loopback-http');
-    expect(getBundledEcpaRegistry().plugins).toHaveLength(1);
+    expect(parsedBundled?.plugins).toHaveLength(0);
+    expect(getBundledEcpaRegistry().plugins).toHaveLength(0);
 
     expect(parseEcpaRegistry({ schema_version: 2, plugins: [] })).toBeNull();
 

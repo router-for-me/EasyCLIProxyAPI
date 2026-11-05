@@ -1,18 +1,1 @@
-{
-  "schema_version": 1,
-  "plugins": [
-    {
-      "id": "tls-loopback-http",
-      "name": "TLS Loopback HTTP",
-      "description": "Allows plaintext HTTP on the loopback interface over the existing TLS port, while external clients still require HTTPS.",
-      "author": "lzt404",
-      "version": "0.1.0",
-      "repository": "https://github.com/lzt404/cpa-plugin-tls-loopback-http",
-      "logo": "https://avatars.githubusercontent.com/u/352786132?s=64&v=4",
-      "homepage": "https://github.com/lzt404/cpa-plugin-tls-loopback-http",
-      "license": "MIT",
-      "tags": ["Interceptor"],
-      "locales": { "zh-CN": { "description": "在现有 TLS 端口上放行本机回环的明文 HTTP 请求，外部客户端仍强制使用 HTTPS。" } }
-    }
-  ]
-}
+{ "schema_version": 1, "plugins": [] }

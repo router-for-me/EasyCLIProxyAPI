@@ -9,7 +9,6 @@ import {
   clearEcpaGitHubToken,
   fetchEcpaRegistry,
   getBundledEcpaRegistry,
-  getEcpaPluginDescription,
   readEcpaGitHubToken,
   writeEcpaGitHubToken,
   type EcpaPluginEntry,
@@ -21,7 +20,7 @@ const COPY_FEEDBACK_MS = 1500;
 const ALL_TAG = '';
 
 export function EcpaPluginsPage() {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const [plugins, setPlugins] = useState<EcpaPluginEntry[]>(() => getBundledEcpaRegistry().plugins);
   const [token, setToken] = useState<string>(() => readEcpaGitHubToken());
   const [showToken, setShowToken] = useState(false);
@@ -91,13 +90,7 @@ export function EcpaPluginsPage() {
         return false;
       }
       if (!query) return true;
-      const zhDescription = plugin.locales['zh-CN']?.description ?? '';
-      const haystack = [
-        plugin.id,
-        plugin.name,
-        plugin.description,
-        zhDescription,
-      ]
+      const haystack = [plugin.id, plugin.name, plugin.description]
         .join(' ')
         .toLowerCase();
       return haystack.includes(query);
@@ -268,7 +261,7 @@ export function EcpaPluginsPage() {
       {filteredPlugins.length > 0 ? (
         <div className="ecpa-plugin-grid">
           {filteredPlugins.map((plugin) => {
-            const description = getEcpaPluginDescription(plugin, locale);
+            const description = plugin.description;
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
             return (

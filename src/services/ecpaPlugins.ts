@@ -7,10 +7,6 @@ export const ECPA_REGISTRY_CACHE_KEY = 'ecpa.registry.cache';
 export const ECPA_REGISTRY_CACHE_TTL_MS = 15 * 60 * 1000;
 export const ECPA_REGISTRY_FETCH_TIMEOUT_MS = 5000;
 
-export interface EcpaPluginLocaleEntry {
-  description?: string;
-}
-
 export interface EcpaPluginEntry {
   id: string;
   name: string;
@@ -22,7 +18,6 @@ export interface EcpaPluginEntry {
   homepage: string;
   license: string;
   tags: string[];
-  locales: Record<string, EcpaPluginLocaleEntry>;
 }
 
 export interface EcpaRegistry {
@@ -52,19 +47,6 @@ export interface FetchEcpaRegistryOptions {
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
-function parseLocales(value: unknown): Record<string, EcpaPluginLocaleEntry> {
-  if (!isRecord(value)) return {};
-  const result: Record<string, EcpaPluginLocaleEntry> = {};
-  for (const [locale, entry] of Object.entries(value)) {
-    if (!isRecord(entry)) continue;
-    const description = text(entry.description);
-    if (description) {
-      result[locale] = { description };
-    }
-  }
-  return result;
-}
-
 function parsePluginEntry(value: unknown): EcpaPluginEntry | null {
   if (!isRecord(value)) return null;
   const id = text(value.id);
@@ -84,7 +66,6 @@ function parsePluginEntry(value: unknown): EcpaPluginEntry | null {
     homepage: text(value.homepage),
     license: text(value.license),
     tags,
-    locales: parseLocales(value.locales),
   };
 }
 
@@ -105,14 +86,6 @@ export function parseEcpaRegistry(value: unknown): EcpaRegistry | null {
 
 export function getBundledEcpaRegistry(): EcpaRegistry {
   return parseEcpaRegistry(bundledRegistry) ?? { schema_version: 1, plugins: [] };
-}
-
-export function getEcpaPluginDescription(plugin: EcpaPluginEntry, locale: string): string {
-  if (locale === 'zh-CN' || locale === 'zh-TW') {
-    const localized = plugin.locales['zh-CN']?.description?.trim();
-    if (localized) return localized;
-  }
-  return plugin.description;
 }
 
 export function readEcpaGitHubToken(): string {
