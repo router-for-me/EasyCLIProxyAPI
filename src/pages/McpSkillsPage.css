@@ -1337,7 +1337,8 @@
     gap: 6px;
   }
 
-  .mcp-form-field label {
+  .mcp-form-field label,
+  .mcp-form-field-label {
     font-size: 12px;
     font-weight: 600;
     color: var(--text-primary);

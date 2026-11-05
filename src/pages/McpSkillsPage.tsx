@@ -331,6 +331,8 @@ export function McpSkillsPage() {
   const [formHeaders, setFormHeaders] = useState<Array<{ id: string; key: string; value: string }>>([]);
   const [formEnabled, setFormEnabled] = useState(true);
   const [formDescription, setFormDescription] = useState('');
+  const [formTouched, setFormTouched] = useState<Record<string, boolean>>({});
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [savingServer, setSavingServer] = useState(false);
 
   // Raw JSON disclosure copy state
@@ -673,6 +675,8 @@ export function McpSkillsPage() {
     setFormHeaders([]);
     setFormEnabled(true);
     setFormDescription('');
+    setFormTouched({});
+    setSubmitAttempted(false);
     setServerDialogOpen(true);
   };
 
@@ -701,6 +705,8 @@ export function McpSkillsPage() {
     );
     setFormEnabled(server.enabled);
     setFormDescription(server.description ?? '');
+    setFormTouched({});
+    setSubmitAttempted(false);
     setServerDialogOpen(true);
   };
 
@@ -729,6 +735,8 @@ export function McpSkillsPage() {
     );
     setFormEnabled(server.enabled);
     setFormDescription(server.description ?? '');
+    setFormTouched({});
+    setSubmitAttempted(false);
     setServerDialogOpen(true);
   };
 
@@ -766,8 +774,16 @@ export function McpSkillsPage() {
     return { isValid, nameError, commandError, urlError };
   }, [formName, formTransport, formCommand, formUrl, dialogServerId, servers, locale]);
 
+  const markFieldTouched = (field: 'name' | 'command' | 'url') => {
+    setFormTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  };
+
+  const showFieldError = (field: 'name' | 'command' | 'url') =>
+    submitAttempted || Boolean(formTouched[field]);
+
   // Save server
   const handleSaveServer = async () => {
+    setSubmitAttempted(true);
     if (!formValidation.isValid) return;
     setSavingServer(true);
 
@@ -991,69 +1007,6 @@ export function McpSkillsPage() {
           <h1>{t('title')}</h1>
           <p>{t('description')}</p>
         </div>
-        <div className="mcp-header-actions">
-          <button
-            type="button"
-            className="secondary-button ghost"
-            onClick={() => {
-              setImportRaw('');
-              setImportResult(null);
-              setImportError(null);
-              setImportDialogOpen(true);
-            }}
-          >
-            <Upload size={14} aria-hidden="true" />
-            <span>{t('import')}</span>
-          </button>
-          <button
-            type="button"
-            className="secondary-button ghost"
-            onClick={() => void handleExport()}
-          >
-            {exportCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-            <span>{exportCopied ? t('copied') : t('export')}</span>
-          </button>
-          <div className="mcp-more-menu-wrap" ref={moreMenuRef}>
-            <button
-              type="button"
-              className="secondary-button compact-button"
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              onClick={() => setMoreOpen((v) => !v)}
-            >
-              <span>{t('more')}</span>
-              <ChevronDown size={13} aria-hidden="true" />
-            </button>
-            {moreOpen && (
-              <div className="mcp-more-dropdown surface-panel" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="mcp-menu-item"
-                  onClick={() => {
-                    setMoreOpen(false);
-                    void handleExport();
-                  }}
-                >
-                  {exportCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-                  <span>{exportCopied ? t('copied') : t('export')}</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="mcp-menu-item"
-                  onClick={() => {
-                    setMoreOpen(false);
-                    void handleOpenFolder();
-                  }}
-                >
-                  <FolderOpen size={14} aria-hidden="true" />
-                  <span>{t('openFolder')}</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
       </header>
 
       {/* Action error notice */}
@@ -1080,7 +1033,7 @@ export function McpSkillsPage() {
               value: 'mcp',
               id: 'mcp-subpage-tab-servers',
               panelId: 'mcp-panel-servers',
-              label: t('tabMcp'),
+              label: `${t('tabMcp')} (${servers.length})`,
             },
             {
               value: 'skills',
@@ -1127,6 +1080,59 @@ export function McpSkillsPage() {
                   <Plus size={15} aria-hidden="true" />
                   <span>{t('addServer')}</span>
                 </button>
+              </div>
+
+              {/* Server-level actions */}
+              <div className="mcp-header-actions">
+                <button
+                  type="button"
+                  className="secondary-button ghost"
+                  onClick={() => {
+                    setImportRaw('');
+                    setImportResult(null);
+                    setImportError(null);
+                    setImportDialogOpen(true);
+                  }}
+                >
+                  <Upload size={14} aria-hidden="true" />
+                  <span>{t('import')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button ghost"
+                  onClick={() => void handleExport()}
+                >
+                  {exportCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                  <span>{exportCopied ? t('copied') : t('export')}</span>
+                </button>
+                <div className="mcp-more-menu-wrap" ref={moreMenuRef}>
+                  <button
+                    type="button"
+                    className="secondary-button compact-button"
+                    aria-haspopup="menu"
+                    aria-expanded={moreOpen}
+                    onClick={() => setMoreOpen((v) => !v)}
+                  >
+                    <span>{t('more')}</span>
+                    <ChevronDown size={13} aria-hidden="true" />
+                  </button>
+                  {moreOpen && (
+                    <div className="mcp-more-dropdown surface-panel" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="mcp-menu-item"
+                        onClick={() => {
+                          setMoreOpen(false);
+                          void handleOpenFolder();
+                        }}
+                      >
+                        <FolderOpen size={14} aria-hidden="true" />
+                        <span>{t('openFolder')}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Filter chips */}
@@ -1579,6 +1585,14 @@ export function McpSkillsPage() {
               </div>
 
               <div className="skills-toolbar-right">
+                <button
+                  type="button"
+                  className="secondary-button ghost"
+                  onClick={() => void handleOpenFolder()}
+                >
+                  <FolderOpen size={14} aria-hidden="true" />
+                  <span>{t('openFolder')}</span>
+                </button>
                 <span className="skills-count-text">
                   {t('skillsCount', {
                     count: filteredSkills.length,
@@ -1844,7 +1858,7 @@ export function McpSkillsPage() {
             <div className="mcp-form-field">
               <label htmlFor="mcp-field-name">
                 <span>{t('serverName')}</span>
-                {formValidation.nameError && (
+                {showFieldError('name') && formValidation.nameError && (
                   <span className="mcp-field-error">{formValidation.nameError}</span>
                 )}
               </label>
@@ -1855,19 +1869,26 @@ export function McpSkillsPage() {
                 placeholder={t('serverNamePlaceholder')}
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
+                onBlur={() => markFieldTouched('name')}
               />
             </div>
 
             {/* Transport Selector */}
             <div className="mcp-form-field">
-              <label>
+              <div className="mcp-form-field-label" id="mcp-transport-label">
                 <span>{t('transport')}</span>
-              </label>
-              <div className="mcp-transport-selector">
+              </div>
+              <div
+                className="mcp-transport-selector"
+                role="radiogroup"
+                aria-labelledby="mcp-transport-label"
+              >
                 {(['stdio', 'http', 'sse'] as const).map((trans) => (
                   <button
                     key={trans}
                     type="button"
+                    role="radio"
+                    aria-checked={formTransport === trans}
                     className={`mcp-transport-option ${formTransport === trans ? 'selected' : ''}`}
                     onClick={() => setFormTransport(trans)}
                   >
@@ -1887,7 +1908,7 @@ export function McpSkillsPage() {
                 <div className="mcp-form-field">
                   <label htmlFor="mcp-field-command">
                     <span>{t('command')}</span>
-                    {formValidation.commandError && (
+                    {showFieldError('command') && formValidation.commandError && (
                       <span className="mcp-field-error">{formValidation.commandError}</span>
                     )}
                   </label>
@@ -1898,6 +1919,7 @@ export function McpSkillsPage() {
                     placeholder={t('commandPlaceholder')}
                     value={formCommand}
                     onChange={(e) => setFormCommand(e.target.value)}
+                    onBlur={() => markFieldTouched('command')}
                   />
                 </div>
 
@@ -1921,7 +1943,7 @@ export function McpSkillsPage() {
               <div className="mcp-form-field">
                 <label htmlFor="mcp-field-url">
                   <span>{t('url')}</span>
-                  {formValidation.urlError && (
+                  {showFieldError('url') && formValidation.urlError && (
                     <span className="mcp-field-error">{formValidation.urlError}</span>
                   )}
                 </label>
@@ -1932,13 +1954,14 @@ export function McpSkillsPage() {
                   placeholder={t('urlPlaceholder')}
                   value={formUrl}
                   onChange={(e) => setFormUrl(e.target.value)}
+                  onBlur={() => markFieldTouched('url')}
                 />
               </div>
             )}
 
             {/* Environment Variables */}
             <div className="mcp-form-field">
-              <label>
+              <div className="mcp-form-field-label">
                 <span>{t('env')}</span>
                 <button
                   type="button"
@@ -1953,7 +1976,7 @@ export function McpSkillsPage() {
                   <Plus size={13} aria-hidden="true" />
                   <span>{t('addEnv')}</span>
                 </button>
-              </label>
+              </div>
               <div className="mcp-kv-editor">
                 {formEnv.map((pair, index) => (
                   <div key={pair.id} className="mcp-kv-row">
@@ -1998,7 +2021,7 @@ export function McpSkillsPage() {
 
             {/* Headers */}
             <div className="mcp-form-field">
-              <label>
+              <div className="mcp-form-field-label">
                 <span>{t('headers')}</span>
                 <button
                   type="button"
@@ -2013,7 +2036,7 @@ export function McpSkillsPage() {
                   <Plus size={13} aria-hidden="true" />
                   <span>{t('addHeader')}</span>
                 </button>
-              </label>
+              </div>
               <div className="mcp-kv-editor">
                 {formHeaders.map((pair, index) => (
                   <div key={pair.id} className="mcp-kv-row">
