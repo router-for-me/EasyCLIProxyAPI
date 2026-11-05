@@ -1549,8 +1549,7 @@ mod tests {
             (local_timestamp(2026, 10, 30, 12), 160, 30, 50),
         ] {
             writeln!(file, "{}", json!({"timestamp": timestamp, "payload": {"type": "token_count", "info": {
-                "total_token_usage": {"input_tokens": input, "cached_input_tokens": cached, "output_tokens": output},
-                "last_token_usage": {"input_tokens": 9999}
+                "total_token_usage": {"input_tokens": input, "cached_input_tokens": cached, "output_tokens": output}
             }}})).unwrap();
         }
         drop(file);
@@ -1568,6 +1567,61 @@ mod tests {
             .unwrap();
         assert_eq!(second.input_tokens, 50);
         assert_eq!(second.total_tokens, 80);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn counts_codex_last_token_usage_when_present() {
+        let root = test_directory("codex-last-usage");
+        let path = root.join("rollout.jsonl");
+        let mut file = File::create(&path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"type": "turn_context", "payload": {"model": "gpt-test"}})
+        )
+        .unwrap();
+        for (timestamp, total, last) in [
+            (
+                local_timestamp(2026, 10, 29, 12),
+                (1000, 200, 600),
+                (40, 10, 12),
+            ),
+            (
+                local_timestamp(2026, 10, 29, 12),
+                (2500, 500, 1400),
+                (60, 15, 18),
+            ),
+            (
+                local_timestamp(2026, 10, 30, 12),
+                (9000, 900, 4000),
+                (25, 5, 7),
+            ),
+        ] {
+            writeln!(file, "{}", json!({"timestamp": timestamp, "payload": {"type": "token_count", "info": {
+                "total_token_usage": {"input_tokens": total.0, "cached_input_tokens": total.1, "output_tokens": total.2},
+                "last_token_usage": {"input_tokens": last.0, "cached_input_tokens": last.1, "output_tokens": last.2}
+            }}})).unwrap();
+        }
+        drop(file);
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "codex", &mut delta).unwrap();
+        let first = delta
+            .daily
+            .get(&("2026-10-29".to_string(), "gpt-test".to_string()))
+            .unwrap();
+        assert_eq!(first.input_tokens, 75);
+        assert_eq!(first.output_tokens, 30);
+        assert_eq!(first.cache_read_tokens, 25);
+        assert_eq!(first.total_tokens, 130);
+        let second = delta
+            .daily
+            .get(&("2026-10-30".to_string(), "gpt-test".to_string()))
+            .unwrap();
+        assert_eq!(second.input_tokens, 20);
+        assert_eq!(second.output_tokens, 7);
+        assert_eq!(second.cache_read_tokens, 5);
+        assert_eq!(second.total_tokens, 32);
         fs::remove_dir_all(root).unwrap();
     }
 
