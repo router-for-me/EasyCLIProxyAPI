@@ -527,7 +527,7 @@ export function ConfigPanelPage() {
       const result = await mutation();
       setSettings(result);
       setLoadError('');
-      if (action !== 'routing') mutationFeedback.showNotice(successMessage, 'success');
+      mutationFeedback.showNotice(successMessage, 'success');
       return true;
     } catch (error) {
       if (settings) setSettings(settings);
@@ -1162,7 +1162,7 @@ export function ConfigPanelPage() {
     { category: 'general', target: 'config-native-tls', title: t('config.tls.enable'), context: '', keywords: [t('config.tls.cert'), t('config.tls.key'), 'TLS HTTPS cert key certificate 证书 私钥 加密'].join(' ') },
     { category: 'proxy', target: 'config-native-reverse-proxy', title: st('reverseProxyTitle'), context: '', keywords: [st('reverseProxyListenHost'), st('reverseProxyListenPort'), st('reverseProxyTargetPort'), st('reverseProxyCertPath'), st('reverseProxyKeyPath'), 'reverse proxy 反向代理 HTTPS 转发 监听 端口'].join(' ') },
     { category: 'routing', target: 'config-native-routing', title: st('nativeRouting'), context: '', keywords: [t('config.network.sessionAffinity'), t('config.network.sessionTtl'), t('config.routing.title'), 'session affinity ttl routing strategy round-robin 会话 粘性 加权 轮询'].join(' ') },
-    { category: 'requests', target: 'config-native-retry', title: st('nativeRetry'), context: '', keywords: [t('config.network.enableCooling'), t('config.network.disableCooling'), t('config.network.requestRetry'), t('config.network.maxRetryCredentials'), t('config.network.maxRetryInterval'), t('config.network.streamingBootstrapRetries'), 'retry retries cooldown 重试 冷却 流式 失败 fallback'].join(' ') },
+    { category: 'routing', target: 'config-native-retry', title: st('nativeRetry'), context: '', keywords: [t('config.network.enableCooling'), t('config.network.disableCooling'), t('config.network.requestRetry'), t('config.network.maxRetryCredentials'), t('config.network.maxRetryInterval'), t('config.network.streamingBootstrapRetries'), 'retry retries cooldown 重试 冷却 流式 失败 fallback'].join(' ') },
     { category: 'diagnostics', target: 'config-native-logging', title: t('config.diagnostics.title'), context: '', keywords: [t('config.diagnostics.debug.title'), t('config.diagnostics.commercial.title'), t('config.diagnostics.fileLogging.title'), t('config.diagnostics.usage.title'), t('config.diagnostics.maxSize.title'), t('config.diagnostics.errorFiles.title'), t('config.diagnostics.redisRetention.title'), 'debug commercial-mode logging logs usage statistics redis retention 日志 调试 商业模式 用量 统计 留存 文件 容量'].join(' ') },
     { category: 'software', target: 'config-native-software', title: t('config.software.title'), context: '', keywords: [t('config.software.autostart'), t('config.software.startCoreOnLaunch'), t('config.software.silentStart'), t('config.software.closeBehavior'), t('config.software.defaultTerminal'), 'startup autostart silent tray close terminal 软件 自启动 启动 静默 托盘 关闭 终端'].join(' ') },
     { category: 'aliases', target: 'config-native-aliases', title: t('app.nav.thinkingAliases'), context: '', keywords: 'thinking reasoning speed aliases effort 思考 推理 速度 别名 模型' },
@@ -1172,8 +1172,8 @@ export function ConfigPanelPage() {
     general: nativeDirty.management || networkSettingsDirty || tlsSettingsDirty,
     proxy: proxyDirty,
     aliases: false,
-    routing: sessionRoutingDirty,
-    requests: sensitiveWordsDirty || retrySettingsDirty,
+    routing: sessionRoutingDirty || retrySettingsDirty,
+    requests: sensitiveWordsDirty,
     diagnostics: loggingSettingsDirty,
     oauth: false,
     software: softwareSettingsDirty,
@@ -1743,7 +1743,7 @@ export function ConfigPanelPage() {
               <div className={`config-network-grid config-network-route${proxyDraft.enabled ? '' : ' is-muted'}`}>
                 <div className="config-network-field">
                   <span>
-                    <code>{`0.0.0.0:${proxyDraft.listenPort || 443}（HTTPS）`}</code>
+                    <code>{`0.0.0.0:${proxyDraft.listenPort || 443}(HTTPS)`}</code>
                     {' '}
                     <ArrowRight size={14} aria-hidden="true" />
                     {' '}
@@ -2025,7 +2025,7 @@ export function ConfigPanelPage() {
                 {busyAction === 'routing' ? t('common.saving') : t('common.save')}
               </button></div></>)}
         </section>
-<section id="config-native-retry" tabIndex={-1} hidden={searching || activeSubpage !== 'requests'}
+<section id="config-native-retry" tabIndex={-1} hidden={searching || activeSubpage !== 'routing'}
             className="surface-card config-network-section"
             aria-labelledby="config-retry-section-title"
           >
