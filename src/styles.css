@@ -6735,6 +6735,9 @@ textarea:focus-visible {
   align-items: center;
   gap: 4px;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .codex-catalog-row > button[role='option'] {
@@ -6742,6 +6745,8 @@ textarea:focus-visible {
   gap: 2px;
   width: 100%;
   min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
   padding: 9px 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
