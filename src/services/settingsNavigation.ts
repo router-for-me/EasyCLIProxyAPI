@@ -132,13 +132,25 @@ export const getLanIpv4 = async (): Promise<string | null> => {
   return value ? value : null;
 };
 
-// Disabling only needs enabled=false to stop the listener; reuse the last saved
-// values so invalid draft ports or paths cannot block the request.
+const isReverseProxyPort = (value: number): boolean =>
+  Number.isInteger(value) && value >= 1 && value <= 65535;
+
+// A disabled draft keeps its own edits whenever its ports are still usable, so
+// certificate paths and ports can be staged before the proxy is enabled. Only
+// while switching a previously enabled (or still running) proxy off does an
+// invalid draft fall back to the last saved values, keeping the stop request
+// unblocked; an already disabled proxy keeps the invalid draft so field
+// validation can report it instead of silently discarding it.
 export const resolveReverseProxySaveConfig = (
   draft: ReverseProxyConfig,
   saved?: ReverseProxyConfig | null,
-): ReverseProxyConfig =>
-  draft.enabled ? draft : { ...draft, ...(saved ?? {}), enabled: false };
+  running?: boolean,
+): ReverseProxyConfig => {
+  if (draft.enabled) return draft;
+  const wasActive = saved?.enabled === true || running === true;
+  const portsValid = isReverseProxyPort(draft.listenPort) && isReverseProxyPort(draft.targetPort);
+  return !portsValid && wasActive && saved ? { ...draft, ...saved, enabled: false } : draft;
+};
 
 // The settings page is mounted only while active, so another page hands over the
 // field to open once instead of dispatching an event nobody is listening to yet.

@@ -328,13 +328,15 @@ export function ConfigPanelPage() {
 
   const validateReverseProxyDraft = (draft: ReverseProxyConfig): ReverseProxyFieldError => {
     const errors: ReverseProxyFieldError = {};
+    // Ports stay validated while disabled so an already stopped proxy reports
+    // field errors instead of silently discarding an unusable draft.
+    if (!isValidPort(draft.listenPort)) {
+      errors.listenPort = t('config.error.portRange');
+    }
+    if (!isValidPort(draft.targetPort)) {
+      errors.targetPort = t('config.error.portRange');
+    }
     if (draft.enabled) {
-      if (!isValidPort(draft.listenPort)) {
-        errors.listenPort = t('config.error.portRange');
-      }
-      if (!isValidPort(draft.targetPort)) {
-        errors.targetPort = t('config.error.portRange');
-      }
       if (!draft.certPath.trim()) errors.certPath = t('config.error.reverseProxyPathsRequired');
       if (!draft.keyPath.trim()) errors.keyPath = t('config.error.reverseProxyPathsRequired');
     }
@@ -378,7 +380,7 @@ export function ConfigPanelPage() {
       keyPath: proxyDraft.keyPath.trim(),
     };
     proxyFeedback.clearNotice();
-    const saveConfig = resolveReverseProxySaveConfig(normalizedDraft, proxyState?.config);
+    const saveConfig = resolveReverseProxySaveConfig(normalizedDraft, proxyState?.config, proxyState?.running);
     const fieldErrors = validateReverseProxyDraft(saveConfig);
     setProxyFieldErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) {

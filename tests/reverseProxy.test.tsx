@@ -216,7 +216,7 @@ describe('reverse proxy contract and settings card', () => {
     expect(configPanelSrc).toContain('setProxyDraft({ ...DEFAULT_REVERSE_PROXY_DRAFT, ...state.config })');
   });
 
-  it('lets a disabled save with an invalid draft reach the backend using the last saved config', () => {
+  it('stops a running proxy with last good values when the disabled draft is invalid', () => {
     const saved: ReverseProxyConfig = {
       enabled: true,
       listenHost: '0.0.0.0',
@@ -226,9 +226,10 @@ describe('reverse proxy contract and settings card', () => {
       keyPath: '/saved/key.pem',
     };
     // The user cleared the listen port (draft port 0) and emptied the PEM paths,
-    // then toggled the switch off: the apply payload must carry enabled=false with
-    // the last saved values, discarding the invalid draft fields entirely.
-    const draft: ReverseProxyConfig = {
+    // then toggled the switch off while the proxy was running: the apply payload
+    // must carry enabled=false with the last saved values so the stop is not
+    // blocked by the invalid draft fields.
+    const invalidDraft: ReverseProxyConfig = {
       enabled: false,
       listenHost: '0.0.0.0',
       listenPort: 0,
@@ -236,25 +237,93 @@ describe('reverse proxy contract and settings card', () => {
       certPath: '',
       keyPath: '',
     };
-    const payload = resolveReverseProxySaveConfig(draft, saved);
+    const payload = resolveReverseProxySaveConfig(invalidDraft, saved, true);
     expect(payload).toEqual({ ...saved, enabled: false });
     expect(payload.listenPort).toBe(443);
     expect(payload.certPath).toBe('/saved/cert.pem');
-    // Without a saved config the draft still goes through untouched except enabled=false.
-    expect(resolveReverseProxySaveConfig(draft, null)).toEqual(draft);
-    // Enabled drafts keep strict validation semantics and pass through unchanged.
-    expect(resolveReverseProxySaveConfig(saved, null)).toEqual(saved);
+    // The fallback also applies when the proxy was enabled but is no longer
+    // running, and when only the running flag reports activity.
+    expect(resolveReverseProxySaveConfig(invalidDraft, saved, false)).toEqual({ ...saved, enabled: false });
+    expect(resolveReverseProxySaveConfig(invalidDraft, { ...saved, enabled: false }, true)).toEqual({ ...saved, enabled: false });
+  });
+
+  it('preserves valid edits on a disabled save so PEM and ports can be staged before enabling', () => {
+    const saved: ReverseProxyConfig = {
+      enabled: false,
+      listenHost: '0.0.0.0',
+      listenPort: 443,
+      targetPort: 8317,
+      certPath: '/saved/cert.pem',
+      keyPath: '/saved/key.pem',
+    };
+    // The proxy is already disabled and the draft only swaps in edited fields:
+    // the draft itself must be saved instead of being overwritten by saved values.
+    const stagedDraft: ReverseProxyConfig = {
+      enabled: false,
+      listenHost: '0.0.0.0',
+      listenPort: 8443,
+      targetPort: 9000,
+      certPath: '/staged/cert.pem',
+      keyPath: '/staged/key.pem',
+    };
+    const payload = resolveReverseProxySaveConfig(stagedDraft, saved, false);
+    expect(payload).toEqual(stagedDraft);
+    expect(payload.listenPort).toBe(8443);
+    expect(payload.certPath).toBe('/staged/cert.pem');
+    expect(payload.keyPath).toBe('/staged/key.pem');
+  });
+
+  it('keeps an invalid disabled draft for field validation when the proxy is already disabled', () => {
+    const saved: ReverseProxyConfig = {
+      enabled: false,
+      listenHost: '0.0.0.0',
+      listenPort: 443,
+      targetPort: 8317,
+      certPath: '/saved/cert.pem',
+      keyPath: '/saved/key.pem',
+    };
+    const invalidDraft: ReverseProxyConfig = {
+      enabled: false,
+      listenHost: '0.0.0.0',
+      listenPort: 0,
+      targetPort: 0,
+      certPath: '',
+      keyPath: '',
+    };
+    // Already disabled: the draft is returned unchanged so field validation can
+    // surface port errors instead of silently swapping in the saved values.
+    expect(resolveReverseProxySaveConfig(invalidDraft, saved, false)).toEqual(invalidDraft);
+    // Without a saved config the draft still goes through untouched.
+    expect(resolveReverseProxySaveConfig(invalidDraft, null)).toEqual(invalidDraft);
 
     const configPanelSrc = readFileSync(join(root, 'src/pages/ConfigPanel.tsx'), 'utf8');
-    // Save resolves the disabled payload from the last saved config before applying.
-    expect(configPanelSrc).toContain('resolveReverseProxySaveConfig(normalizedDraft, proxyState?.config)');
+    // Save resolves the payload (passing the running flag) before applying.
+    expect(configPanelSrc).toContain('resolveReverseProxySaveConfig(normalizedDraft, proxyState?.config, proxyState?.running)');
     expect(configPanelSrc).toContain('validateReverseProxyDraft(saveConfig)');
-    // Port validation only runs while the draft is enabled so clearing a port
-    // cannot block toggling the listener off.
+    // Port validation runs outside the enabled gate so an invalid disabled
+    // draft gets inline field errors; PEM requirements stay enabled-only.
     const validator = configPanelSrc.match(/const validateReverseProxyDraft = \(draft: ReverseProxyConfig\): ReverseProxyFieldError => \{([\s\S]*?)return errors;/)?.[1];
     expect(validator).toBeDefined();
-    expect(validator!.indexOf('if (draft.enabled)')).toBeGreaterThanOrEqual(0);
-    expect(validator!.indexOf('isValidPort(draft.listenPort)')).toBeGreaterThan(validator!.indexOf('if (draft.enabled)'));
+    const enabledGate = validator!.indexOf('if (draft.enabled)');
+    expect(enabledGate).toBeGreaterThanOrEqual(0);
+    expect(validator!.indexOf('isValidPort(draft.listenPort)')).toBeGreaterThanOrEqual(0);
+    expect(validator!.indexOf('isValidPort(draft.listenPort)')).toBeLessThan(enabledGate);
+    expect(validator!.indexOf('isValidPort(draft.targetPort)')).toBeLessThan(enabledGate);
+    expect(validator!.indexOf('certPath')).toBeGreaterThan(enabledGate);
+  });
+
+  it('keeps enabled drafts on the strict validation path unchanged', () => {
+    const enabledDraft: ReverseProxyConfig = {
+      enabled: true,
+      listenHost: '0.0.0.0',
+      listenPort: 443,
+      targetPort: 8317,
+      certPath: '/saved/cert.pem',
+      keyPath: '/saved/key.pem',
+    };
+    // Enabled drafts pass through untouched so strict validation still applies.
+    expect(resolveReverseProxySaveConfig(enabledDraft, null)).toEqual(enabledDraft);
+    expect(resolveReverseProxySaveConfig(enabledDraft, { ...enabledDraft, enabled: false }, true)).toEqual(enabledDraft);
   });
 
   it('labels the draft route as a listen-bind preview and only advertises real client addresses', () => {
