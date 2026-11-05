@@ -48,6 +48,12 @@ const messages = {
   noSearchResults: ['没有匹配的服务器', 'No matching servers', '一致するサーバーがありません'],
   noSearchResultsHint: ['请尝试调整搜索关键词或重置筛选条件。', 'Try adjusting your search terms or resetting filters.', '検索キーワードを変更するかフィルターをリセットしてください。'],
   resetFilters: ['重置筛选', 'Reset filters', 'フィルターをリセット'],
+  loading: ['正在加载…', 'Loading…', '読み込み中…'],
+  noServersDetailHint: [
+    '添加服务器后将在此显示详情。',
+    'Server details will appear here after you add one.',
+    'サーバーを追加すると、ここに詳細が表示されます。',
+  ],
   selectServerHint: [
     '从左侧列表选择一个 MCP 服务器查看详情，或点击新建服务器。',
     'Select an MCP server from the list to view details, or add a new server.',
@@ -67,7 +73,11 @@ const messages = {
   searchSkillsPlaceholder: ['搜索技能名称或描述…', 'Search skills by name or description...', 'スキル名または説明を検索…'],
   skillsCount: ['显示 {count} / {total} 个技能', 'Showing {count} / {total} skills', '{count} / {total} 件のスキルを表示'],
   noSkills: ['暂无可用技能', 'No skills found', '利用可能なスキルがありません'],
-  noSkillsHint: ['将技能文件夹放入技能目录中，核心将自动加载识别。', 'Place skill folders in the skills directory to make them available.', 'スキルフォルダをスキルディレクトリに配置すると自動認識されます。'],
+  noSkillsHint: [
+    '将技能文件夹放入应用同级目录的 skills 文件夹，或 ~/.openclaw/skills、~/.openclaw/agents/*/agent/workshop-skills 目录中，核心将自动加载识别。',
+    'Place skill folders in the skills folder next to the app executable, or in ~/.openclaw/skills and ~/.openclaw/agents/*/agent/workshop-skills. The core loads them automatically.',
+    'アプリと同じディレクトリの skills フォルダ、または ~/.openclaw/skills、~/.openclaw/agents/*/agent/workshop-skills にスキルフォルダを配置すると自動で認識されます。',
+  ],
   noSkillSearchResults: ['没有匹配的技能', 'No matching skills', '一致するスキルがありません'],
   noSkillSearchResultsHint: ['请尝试调整搜索关键词或重置筛选。', 'Try adjusting your search terms or resetting filters.', '検索キーワードまたはフィルターを変更してください。'],
   filesCount: ['{count} 个文件', '{count} files', '{count} 個のファイル'],
