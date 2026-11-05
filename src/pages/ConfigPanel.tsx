@@ -136,6 +136,12 @@ const ROUTING_OPTIONS = [
   { value: 'fill-first', labelKey: 'config.routing.fillFirst' },
 ] as const;
 
+const SESSION_TTL_PATTERN = /^(\d+(?:\.\d+)?(?:ms|s|m|h))+$/;
+
+const isValidPort = (value: number) => Number.isInteger(value) && value >= 1 && value <= 65535;
+
+type ReverseProxyFieldError = Partial<Record<'listenPort' | 'targetPort' | 'certPath' | 'keyPath', string>>;
+
 export function ConfigPanelPage() {
   const { t, locale } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -250,6 +256,9 @@ export function ConfigPanelPage() {
   const [streamingBootstrapRetriesDraft, setStreamingBootstrapRetriesDraft] = useState('0');
   const [portError, setPortError] = useState('');
   const [hostError, setHostError] = useState('');
+  const [proxyUrlError, setProxyUrlError] = useState('');
+  const [sessionTtlError, setSessionTtlError] = useState('');
+  const [proxyFieldErrors, setProxyFieldErrors] = useState<ReverseProxyFieldError>({});
   const [retryError, setRetryError] = useState('');
   const networkDraftDirtyRef = useRef<NetworkDraftDirty>(cleanNetworkDraft());
   const loggingDraftDirtyRef = useRef(false);
@@ -287,13 +296,43 @@ export function ConfigPanelPage() {
     }
   };
 
+  const validateReverseProxyDraft = (draft: ReverseProxyConfig): ReverseProxyFieldError => {
+    const errors: ReverseProxyFieldError = {};
+    if (!isValidPort(draft.listenPort)) {
+      errors.listenPort = t('config.error.portRange');
+    }
+    if (!isValidPort(draft.targetPort)) {
+      errors.targetPort = t('config.error.portRange');
+    }
+    if (draft.enabled) {
+      if (!draft.certPath.trim()) errors.certPath = t('config.error.reverseProxyPathsRequired');
+      if (!draft.keyPath.trim()) errors.keyPath = t('config.error.reverseProxyPathsRequired');
+    }
+    return errors;
+  };
+
+  const clearProxyFieldError = (field: keyof ReverseProxyFieldError) => {
+    setProxyFieldErrors(prev => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
   const handleProxyToggle = async (enabled: boolean) => {
     if (controlsDisabled || proxyAction !== null) return;
     const previousDraft = proxyDraft;
     const nextDraft = { ...proxyDraft, enabled };
+    proxyFeedback.clearNotice();
+    const fieldErrors = enabled ? validateReverseProxyDraft(nextDraft) : {};
+    setProxyFieldErrors(fieldErrors);
+    if (Object.keys(fieldErrors).length > 0) {
+      proxyFeedback.showNotice(Object.values(fieldErrors)[0], 'error');
+      return;
+    }
     setProxyDraft(nextDraft);
     setProxyAction(enabled ? 'save' : 'stop');
-    proxyFeedback.clearNotice();
     try {
       let state = await applyReverseProxyConfig(nextDraft);
       if (!enabled && state.running) {
@@ -319,9 +358,15 @@ export function ConfigPanelPage() {
       ...proxyDraft,
       listenHost: proxyDraft.listenHost.trim() || '0.0.0.0',
     };
+    proxyFeedback.clearNotice();
+    const fieldErrors = validateReverseProxyDraft(normalizedDraft);
+    setProxyFieldErrors(fieldErrors);
+    if (Object.keys(fieldErrors).length > 0) {
+      proxyFeedback.showNotice(Object.values(fieldErrors)[0], 'error');
+      return;
+    }
     setProxyDraft(normalizedDraft);
     setProxyAction('save');
-    proxyFeedback.clearNotice();
     try {
       const state = await applyReverseProxyConfig(normalizedDraft);
       setProxyState(state);
@@ -357,6 +402,7 @@ export function ConfigPanelPage() {
         setProxyDraft(prev => ({ ...prev, keyPath: selected }));
       }
       setProxyDirty(true);
+      clearProxyFieldError(target === 'cert' ? 'certPath' : 'keyPath');
     } catch (error) {
       const message = t('config.tls.error.selectFileFailed', { error: String(error) });
       proxyFeedback.showNotice(message, 'error');
@@ -441,6 +487,9 @@ export function ConfigPanelPage() {
     setRedisUsageRetentionDraft(String(result.redisUsageQueueRetentionSeconds));
     setPortError('');
     setHostError('');
+    setProxyUrlError('');
+    setSessionTtlError('');
+    setProxyFieldErrors({});
     setRetryError('');
     setLoggingError('');
   };
@@ -877,16 +926,27 @@ export function ConfigPanelPage() {
     if (!settings || busyAction !== null) return;
     const host = hostDraft.trim();
     const port = Number(portDraft);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    const proxyUrl = proxyUrlDraft.trim();
+    setHostError('');
+    setPortError('');
+    setProxyUrlError('');
+    if (!host) {
+      setHostError(t('config.error.hostRequired'));
+      networkFeedback.showNotice({ key: 'config.error.hostRequired' }, 'error');
+      return;
+    }
+    if (!isValidPort(port)) {
       setPortError(t('config.error.portRange'));
       networkFeedback.showNotice({ key: 'config.error.portRange' }, 'error');
       return;
     }
+    if (proxyOverrideDraft && proxyUrl && !/^https?:\/\//i.test(proxyUrl)) {
+      setProxyUrlError(t('config.error.proxyUrlScheme'));
+      networkFeedback.showNotice({ key: 'config.error.proxyUrlScheme' }, 'error');
+      return;
+    }
 
-    const proxyUrl = proxyUrlDraft.trim();
     const networkChanged = port !== settings.port || host !== settings.host;
-    setHostError('');
-    setPortError('');
     setBusyAction('network');
     try {
       const result = await saveNetworkEndpointSettingsCommand({
@@ -974,6 +1034,12 @@ export function ConfigPanelPage() {
     routingFeedback.clearNotice();
     if (!settings || busyAction !== null) return;
     const routingSessionAffinityTtl = sessionTtlDraft.trim();
+    if (routingSessionAffinityTtl && !SESSION_TTL_PATTERN.test(routingSessionAffinityTtl)) {
+      setSessionTtlError(t('config.error.sessionTtlFormat'));
+      routingFeedback.showNotice({ key: 'config.error.sessionTtlFormat' }, 'error');
+      return;
+    }
+    setSessionTtlError('');
     setBusyAction('routing');
     try {
       const result = await saveSessionRoutingSettingsCommand({
@@ -1421,6 +1487,7 @@ export function ConfigPanelPage() {
               value={portDraft}
               disabled={controlsDisabled}
               aria-invalid={Boolean(portError)}
+              aria-describedby={portError ? 'config-network-port-error' : undefined}
               title={portError || t('config.network.portHint')}
               onChange={(event) => {
                 markDraftDirty('port');
@@ -1436,6 +1503,7 @@ export function ConfigPanelPage() {
                 }
               }}
             />
+            <span id="config-network-port-error" className="config-field-error" role="alert">{portError || ' '}</span>
 
               </div>
 
@@ -1449,6 +1517,7 @@ export function ConfigPanelPage() {
                   disabled={controlsDisabled}
                   placeholder="127.0.0.1"
                   aria-invalid={Boolean(hostError)}
+                  aria-describedby={hostError ? 'config-network-host-error' : undefined}
                   title={hostError || templateText(templateMessages.hostHint, locale)}
                   onChange={(event) => {
                     markDraftDirty('host');
@@ -1464,6 +1533,7 @@ export function ConfigPanelPage() {
                     }
                   }}
                 />
+                <span id="config-network-host-error" className="config-field-error" role="alert">{hostError || ' '}</span>
 
               </div>
 
@@ -1484,23 +1554,28 @@ export function ConfigPanelPage() {
                 </div>
                 <input
                   id="config-network-proxy-url"
-                  className="config-network-input"
+                  className={`config-network-input ${proxyUrlError ? 'error' : ''}`}
                   type="text"
                   value={proxyUrlDraft}
                   disabled={controlsDisabled || !proxyOverrideDraft}
                   placeholder={t('config.network.proxyPlaceholder')}
+                  aria-invalid={Boolean(proxyUrlError)}
+                  aria-describedby={proxyUrlError ? 'config-network-proxy-url-error' : undefined}
                   onChange={(event) => {
                     markDraftDirty('proxyUrl');
                     setProxyUrlDraft(event.currentTarget.value);
+                    setProxyUrlError('');
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Escape' && settings) {
                       clearDraftDirty('proxyUrl');
                       setProxyUrlDraft(settings.proxyUrl);
+                      setProxyUrlError('');
                       event.currentTarget.blur();
                     }
                   }}
                 />
+                <span id="config-network-proxy-url-error" className="config-field-error" role="alert">{proxyUrlError || ' '}</span>
 
               </div>
             </div>
@@ -1728,19 +1803,23 @@ export function ConfigPanelPage() {
                   </span>
                   <input
                     id="config-input-reverse-proxy-listen-port"
-                    className="config-network-input"
+                    className={`config-network-input ${proxyFieldErrors.listenPort ? 'error' : ''}`}
                     type="number"
                     min={1}
                     max={65535}
                     value={proxyDraft.listenPort || ''}
                     disabled={controlsDisabled || proxyAction !== null}
                     placeholder="443"
+                    aria-invalid={Boolean(proxyFieldErrors.listenPort)}
+                    aria-describedby={proxyFieldErrors.listenPort ? 'config-reverse-proxy-listen-port-error' : undefined}
                     onChange={(event) => {
                       const val = parseInt(event.currentTarget.value, 10);
                       setProxyDraft(prev => ({ ...prev, listenPort: Number.isNaN(val) ? 0 : val }));
                       setProxyDirty(true);
+                      clearProxyFieldError('listenPort');
                     }}
                   />
+                  <span id="config-reverse-proxy-listen-port-error" className="config-field-error" role="alert">{proxyFieldErrors.listenPort || ' '}</span>
                 </div>
               </div>
 
@@ -1760,15 +1839,18 @@ export function ConfigPanelPage() {
                   <div className="config-tls-path-control">
                     <input
                       id="config-input-reverse-proxy-cert-path"
-                      className="config-network-input"
+                      className={`config-network-input ${proxyFieldErrors.certPath ? 'error' : ''}`}
                       type="text"
                       value={proxyDraft.certPath}
                       disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
                       placeholder={st('reverseProxyCertPlaceholder')}
+                      aria-invalid={Boolean(proxyFieldErrors.certPath)}
+                      aria-describedby={proxyFieldErrors.certPath ? 'config-reverse-proxy-cert-path-error' : undefined}
                       onChange={(event) => {
                         const value = event.currentTarget.value;
                         setProxyDraft(prev => ({ ...prev, certPath: value }));
                         setProxyDirty(true);
+                        clearProxyFieldError('certPath');
                       }}
                     />
                     <button
@@ -1782,6 +1864,7 @@ export function ConfigPanelPage() {
                       {proxyFileSelecting === 'cert' ? t('common.processing') : t('config.tls.browse')}
                     </button>
                   </div>
+                  <span id="config-reverse-proxy-cert-path-error" className="config-field-error" role="alert">{proxyFieldErrors.certPath || ' '}</span>
                 </div>
 
                 <div className="config-network-field">
@@ -1792,15 +1875,18 @@ export function ConfigPanelPage() {
                   <div className="config-tls-path-control">
                     <input
                       id="config-input-reverse-proxy-key-path"
-                      className="config-network-input"
+                      className={`config-network-input ${proxyFieldErrors.keyPath ? 'error' : ''}`}
                       type="text"
                       value={proxyDraft.keyPath}
                       disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
                       placeholder={st('reverseProxyKeyPlaceholder')}
+                      aria-invalid={Boolean(proxyFieldErrors.keyPath)}
+                      aria-describedby={proxyFieldErrors.keyPath ? 'config-reverse-proxy-key-path-error' : undefined}
                       onChange={(event) => {
                         const value = event.currentTarget.value;
                         setProxyDraft(prev => ({ ...prev, keyPath: value }));
                         setProxyDirty(true);
+                        clearProxyFieldError('keyPath');
                       }}
                     />
                     <button
@@ -1814,6 +1900,7 @@ export function ConfigPanelPage() {
                       {proxyFileSelecting === 'key' ? t('common.processing') : t('config.tls.browse')}
                     </button>
                   </div>
+                  <span id="config-reverse-proxy-key-path-error" className="config-field-error" role="alert">{proxyFieldErrors.keyPath || ' '}</span>
                 </div>
               </div>
 
@@ -1872,19 +1959,23 @@ export function ConfigPanelPage() {
                     </span>
                     <input
                       id="config-input-reverse-proxy-target-port"
-                      className="config-network-input"
+                      className={`config-network-input ${proxyFieldErrors.targetPort ? 'error' : ''}`}
                       type="number"
                       min={1}
                       max={65535}
                       value={proxyDraft.targetPort || ''}
                       disabled={controlsDisabled || proxyAction !== null}
                       placeholder={String(settings?.port ?? 8317)}
+                      aria-invalid={Boolean(proxyFieldErrors.targetPort)}
+                      aria-describedby={proxyFieldErrors.targetPort ? 'config-reverse-proxy-target-port-error' : undefined}
                       onChange={(event) => {
                         const val = parseInt(event.currentTarget.value, 10);
                         setProxyDraft(prev => ({ ...prev, targetPort: Number.isNaN(val) ? 0 : val }));
                         setProxyDirty(true);
+                        clearProxyFieldError('targetPort');
                       }}
                     />
+                    <span id="config-reverse-proxy-target-port-error" className="config-field-error" role="alert">{proxyFieldErrors.targetPort || ' '}</span>
                   </div>
                 </div>
               </details>
@@ -1945,23 +2036,29 @@ export function ConfigPanelPage() {
                 </label><SettingsHelp label={t('config.network.sessionTtl')}>{t('config.network.sessionTtlHint')}</SettingsHelp></span>
                 <input
                   id="config-input-config-network-sessionTtl"
-                  className="config-network-input"
+                  className={`config-network-input ${sessionTtlError ? 'error' : ''}`}
                   type="text"
                   value={sessionTtlDraft}
                   disabled={controlsDisabled}
                   placeholder="1h"
+                  aria-invalid={Boolean(sessionTtlError)}
+                  aria-describedby={sessionTtlError ? 'config-network-sessionTtl-format config-network-sessionTtl-error' : 'config-network-sessionTtl-format'}
                   onChange={(event) => {
                     markDraftDirty('sessionTtl');
                     setSessionTtlDraft(event.currentTarget.value);
+                    setSessionTtlError('');
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Escape' && settings) {
                       clearDraftDirty('sessionTtl');
                       setSessionTtlDraft(settings.routingSessionAffinityTtl);
+                      setSessionTtlError('');
                       event.currentTarget.blur();
                     }
                   }}
                 />
+                <small id="config-network-sessionTtl-format">{t('config.network.sessionTtlFormat')}</small>
+                <span id="config-network-sessionTtl-error" className="config-field-error" role="alert">{sessionTtlError || ' '}</span>
 
               </div>
 
@@ -2074,6 +2171,7 @@ export function ConfigPanelPage() {
 
               <div className="config-network-field">
                 <span className="config-field-label"><label htmlFor="config-input-config-network-maxRetryInterval">{t('config.network.maxRetryInterval')}</label><SettingsHelp label={t('config.network.maxRetryInterval')}>{templateText(templateMessages.waitHint, locale)}</SettingsHelp></span>
+                <span className="config-input-with-unit">
                 <input
                   id="config-input-config-network-maxRetryInterval"
                   className={`config-network-input ${retryError ? 'error' : ''}`}
@@ -2099,6 +2197,8 @@ export function ConfigPanelPage() {
                     }
                   }}
                 />
+                <span className="config-input-unit" aria-hidden="true">{t('config.unit.seconds')}</span>
+                </span>
 
               </div>
 
@@ -2203,6 +2303,7 @@ export function ConfigPanelPage() {
           <div className="config-diagnostics-fields">
             <div className="config-diagnostics-field">
               <span className="config-field-label"><label htmlFor="config-input-config-diagnostics-maxSize-title">{t('config.diagnostics.maxSize.title')}</label><SettingsHelp label={t('config.diagnostics.maxSize.title')}>{t('config.diagnostics.maxSize.hint')}</SettingsHelp></span>
+              <span className="config-input-with-unit">
               <input
                   id="config-input-config-diagnostics-maxSize-title"
                 className="config-dialog-text-input"
@@ -2216,10 +2317,13 @@ export function ConfigPanelPage() {
                   markLoggingDraftDirty();
                 }}
               />
+              <span className="config-input-unit" aria-hidden="true">{t('config.unit.mb')}</span>
+              </span>
 
             </div>
             <div className="config-diagnostics-field">
               <span className="config-field-label"><label htmlFor="config-input-config-diagnostics-errorFiles-title">{t('config.diagnostics.errorFiles.title')}</label><SettingsHelp label={t('config.diagnostics.errorFiles.title')}>{t('config.diagnostics.errorFiles.hint')}</SettingsHelp></span>
+              <span className="config-input-with-unit">
               <input
                   id="config-input-config-diagnostics-errorFiles-title"
                 className="config-dialog-text-input"
@@ -2233,10 +2337,13 @@ export function ConfigPanelPage() {
                   markLoggingDraftDirty();
                 }}
               />
+              <span className="config-input-unit" aria-hidden="true">{t('config.unit.count')}</span>
+              </span>
 
             </div>
             <div className="config-diagnostics-field">
               <span className="config-field-label"><label htmlFor="config-input-config-diagnostics-redisRetention-title">{t('config.diagnostics.redisRetention.title')}</label><SettingsHelp label={t('config.diagnostics.redisRetention.title')}>{t('config.diagnostics.redisRetention.hint')}</SettingsHelp></span>
+              <span className="config-input-with-unit">
               <input
                   id="config-input-config-diagnostics-redisRetention-title"
                 className="config-dialog-text-input"
@@ -2251,6 +2358,8 @@ export function ConfigPanelPage() {
                   markLoggingDraftDirty();
                 }}
               />
+              <span className="config-input-unit" aria-hidden="true">{t('config.unit.seconds')} · 1–3600</span>
+              </span>
 
             </div>
           </div>
