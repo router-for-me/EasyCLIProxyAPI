@@ -1321,6 +1321,7 @@ export const jaOverrides = {
   'config.tls.error.selectFileFailed': 'ファイルを選択できませんでした: {error}',
   'config.tls.restartHint': 'TLS 設定を保存すると、実行中のコアは自動的に再起動します。',
   'config.tls.error.pathsRequired': 'TLS を有効にする前に証明書と秘密鍵のパスを入力してください',
+  'config.reverseProxy.error.pathsRequired': 'リバースプロキシを有効にする前に証明書と秘密鍵のパスを入力してください',
   'config.tls.notice.saved': 'TLS 設定を保存しました。次回のコア起動時に反映されます',
   'config.tls.notice.savedAndRestarted': 'TLS 設定を保存し、コアを再起動しました',
   'config.software.title': 'ソフトウェア設定',

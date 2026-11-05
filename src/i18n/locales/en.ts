@@ -1226,6 +1226,7 @@ export const en: Record<MessageKey, string> = {
   'config.tls.error.selectFileFailed': 'Failed to select file: {error}',
   'config.tls.restartHint': 'Saving TLS settings automatically restarts a running core.',
   'config.tls.error.pathsRequired': 'Certificate and private key paths are required before enabling TLS',
+  'config.reverseProxy.error.pathsRequired': 'Certificate and private key paths are required before enabling the reverse proxy',
   'config.tls.notice.saved': 'TLS settings saved and will apply on the next core start',
   'config.tls.notice.savedAndRestarted': 'TLS settings saved and the core restarted',
   'config.software.title': 'Software Settings',
