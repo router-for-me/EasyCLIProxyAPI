@@ -75,8 +75,8 @@ fn candidate_roots() -> Vec<(PathBuf, &'static str)> {
         roots.push((cwd.join(".agents").join("skills"), "project"));
     }
 
-    // 6. <core_base_dir>/skills -> source custom
-    if let Ok(dir) = core_base_dir() {
+    // 6. <exe dir>/skills -> source custom
+    if let Ok(dir) = executable_dir() {
         roots.push((dir.join("skills"), "custom"));
     }
 
