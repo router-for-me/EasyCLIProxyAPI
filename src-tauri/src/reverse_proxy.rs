@@ -18,6 +18,11 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
 use tokio_rustls::TlsAcceptor;
 
+type ProxyClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, hyper::body::Incoming>;
+
+#[cfg(test)]
+mod real_kernel_tests;
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReverseProxyConfig {
@@ -48,6 +53,69 @@ fn patch_proxy_config_document(
     let value = serde_norway::to_value(config)
         .map_err(|error| format!("Failed to serialize reverse proxy configuration: {error}"))?;
     set_core_yaml_path_value(document, &["reverse-proxy"], value)
+}
+
+pub(crate) fn prepare_core_start(document: &mut serde_norway::Value) -> Result<bool, String> {
+    let Some(mut config) = read_proxy_config_document(document)? else {
+        return Ok(false);
+    };
+    if !config.enabled {
+        return Ok(false);
+    }
+    let mut changed = harden_core_config_document(document)?;
+    if let Some(port) = configured_core_port(document)? {
+        config.target_port = port;
+        changed |= patch_proxy_config_document(document, &config)?;
+    }
+    Ok(changed)
+}
+
+fn configured_core_port(document: &serde_norway::Value) -> Result<Option<u16>, String> {
+    let port = if core_config_uses_v8(document) {
+        document.get("server").and_then(|server| server.get("port"))
+    } else {
+        document.get("port")
+    };
+    port.map(|port| {
+        port.as_u64()
+            .and_then(|port| u16::try_from(port).ok())
+            .filter(|port| *port != 0)
+            .ok_or_else(|| "Kernel port must be between 1 and 65535".to_string())
+    }).transpose()
+}
+
+fn core_forward_client(config: &mut ReverseProxyConfig) -> Result<(ProxyClient, bool), String> {
+    let mut roots = rustls::RootCertStore::empty();
+    let mut tls_enabled = false;
+    {
+        let _config_guard = lock_core_config_file()?;
+        let install_dir = crate::core_runtime::core_install_dir()?;
+        if install_dir.join(crate::CORE_CONFIG_FILE).is_file() {
+            let (_, document) = read_core_config_document()?;
+            if let Some(port) = configured_core_port(document.get())? {
+                config.target_port = port;
+            }
+            let tls = crate::core_config::core_tls_settings_from_value(document.get())?;
+            tls_enabled = tls.enabled;
+            if tls_enabled {
+                let cert_path = install_dir.join(&tls.cert);
+                let file = File::open(&cert_path).map_err(|error| {
+                    format!("Failed to read kernel TLS certificate '{}': {error}", cert_path.display())
+                })?;
+                for certificate in rustls_pemfile::certs(&mut BufReader::new(file)) {
+                    roots.add(certificate.map_err(|error| format!("Invalid kernel TLS certificate: {error}"))?)
+                        .map_err(|error| format!("Invalid kernel TLS certificate: {error}"))?;
+                }
+                if roots.is_empty() {
+                    return Err("Kernel TLS certificate file contains no certificates".to_string());
+                }
+            }
+        }
+    }
+    let tls = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
+    let connector = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(tls)
+        .https_or_http().enable_http1().build();
+    Ok((Client::builder(TokioExecutor::new()).build(connector), tls_enabled))
 }
 
 fn read_installed_proxy_config() -> Result<Option<ReverseProxyConfig>, String> {
@@ -294,6 +362,10 @@ pub fn prepare_response_headers(headers: &hyper::HeaderMap) -> hyper::HeaderMap 
 }
 
 pub fn build_target_uri(target_port: u16, original_uri: &hyper::Uri) -> Result<hyper::Uri, String> {
+    build_target_uri_with_scheme(target_port, original_uri, "http")
+}
+
+fn build_target_uri_with_scheme(target_port: u16, original_uri: &hyper::Uri, scheme: &str) -> Result<hyper::Uri, String> {
     let path_and_query = match original_uri.path_and_query() {
         Some(pq) => {
             let s = pq.as_str();
@@ -314,7 +386,7 @@ pub fn build_target_uri(target_port: u16, original_uri: &hyper::Uri) -> Result<h
             }
         }
     };
-    let url_str = format!("http://127.0.0.1:{}{}", target_port, path_and_query);
+    let url_str = format!("{scheme}://127.0.0.1:{}{}", target_port, path_and_query);
     url_str
         .parse::<hyper::Uri>()
         .map_err(|e| format!("Failed to build target URI from '{}': {e}", original_uri))
@@ -381,15 +453,16 @@ pub fn load_tls_config(config: &ReverseProxyConfig) -> Result<Arc<rustls::Server
 
 async fn handle_forward(
     req: hyper::Request<hyper::body::Incoming>,
-    client: Client<HttpConnector, hyper::body::Incoming>,
+    client: ProxyClient,
     target_port: u16,
+    target_tls: bool,
     peer_ip: String,
     requests_total: Arc<AtomicU64>,
 ) -> Result<hyper::Response<BoxBody<Bytes, hyper::Error>>, std::convert::Infallible> {
     requests_total.fetch_add(1, Ordering::Relaxed);
 
     let (parts, body) = req.into_parts();
-    let target_uri = match build_target_uri(target_port, &parts.uri) {
+    let target_uri = match build_target_uri_with_scheme(target_port, &parts.uri, if target_tls { "https" } else { "http" }) {
         Ok(uri) => uri,
         Err(err) => {
             let resp = hyper::Response::builder()
@@ -587,7 +660,7 @@ impl ReverseProxyManagerState {
 
     async fn start_inner(
         &self,
-        config: ReverseProxyConfig,
+        mut config: ReverseProxyConfig,
         app: Option<tauri::AppHandle>,
     ) -> Result<ReverseProxyState, String> {
         self.stop_inner().await?;
@@ -623,14 +696,9 @@ impl ReverseProxyManagerState {
             .local_addr()
             .map_err(|error| format!("Failed to read listener address: {error}"))?
             .to_string();
-        let target_addr = format!("127.0.0.1:{}", config.target_port);
-
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let acceptor = TlsAcceptor::from(tls_config);
-        let client: Client<HttpConnector, hyper::body::Incoming> =
-            Client::builder(TokioExecutor::new()).build_http();
         let requests_total = self.requests_total.clone();
-        let target_port = config.target_port;
 
         let (mut hardening, mut restart_error) = match apply_core_hardening() {
             Ok(h) => (h, None),
@@ -639,7 +707,7 @@ impl ReverseProxyManagerState {
 
         if hardening.restart_required {
             if let Some(app_handle) = app {
-                if let Err(err) = crate::core_runtime::restart_core_process(app_handle).await {
+                if let Err(err) = crate::core_runtime::restart_core_for_proxy(app_handle).await {
                     restart_error = Some(format!("Failed to restart CPA kernel: {err}"));
                 } else {
                     hardening.restart_required = false;
@@ -649,6 +717,13 @@ impl ReverseProxyManagerState {
         if let Some(error) = &restart_error {
             eprintln!("Reverse proxy hardening failed: {error}");
         }
+
+        let (client, target_tls) = match core_forward_client(&mut config) {
+            Ok(target) => target,
+            Err(error) => return self.fail_start(error),
+        };
+        let target_port = config.target_port;
+        let target_addr = format!("127.0.0.1:{target_port}");
 
         let inner = Arc::downgrade(&self.inner);
         let mut guard = self
@@ -687,7 +762,7 @@ impl ReverseProxyManagerState {
                                         let peer_ip = peer_ip.clone();
                                         let requests_total = requests_total.clone();
                                         async move {
-                                            handle_forward(req, client, target_port, peer_ip, requests_total).await
+                                            handle_forward(req, client, target_port, target_tls, peer_ip, requests_total).await
                                         }
                                     });
 
@@ -785,7 +860,10 @@ impl ReverseProxyManagerState {
         let _operation = self.operation.lock().await;
         let persisted = persist_proxy_config(&config);
         if config.enabled {
-            persisted?;
+            if let Err(error) = persisted {
+                self.stop_inner().await?;
+                return self.fail_start(error);
+            }
             self.apply_inner(config, app).await
         } else {
             let stopped = self.apply_inner(config, app).await?;
@@ -841,7 +919,22 @@ impl ReverseProxyManagerState {
         match read_installed_proxy_config() {
             Ok(Some(config)) => self.apply_inner(config, Some(app)).await,
             Ok(None) => self.get_state(),
-            Err(error) => self.fail_start(error),
+            Err(error) => {
+                self.stop_inner().await?;
+                self.fail_start(error)
+            }
+        }
+    }
+
+    pub(crate) async fn restore_after_core_start(&self) -> Result<ReverseProxyState, String> {
+        let _operation = self.operation.lock().await;
+        match read_installed_proxy_config() {
+            Ok(Some(config)) => self.apply_inner(config, None).await,
+            Ok(None) => self.get_state(),
+            Err(error) => {
+                self.stop_inner().await?;
+                self.fail_start(error)
+            }
         }
     }
 }

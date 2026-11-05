@@ -31,6 +31,8 @@ pub(crate) fn merge_core_config_for_start(
         None
     };
     let merged = merge_core_config_yaml(&template, current.as_deref(), gui_config)?;
+    let merged = patch_core_yaml_document(&merged, crate::reverse_proxy::prepare_core_start)?
+        .unwrap_or(merged);
     write_core_config_if_changed(&config_path, &merged)?;
 
     Ok(config_path)

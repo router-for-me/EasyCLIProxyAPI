@@ -120,8 +120,23 @@ pub(crate) fn spawn_core_child_on_lifetime_thread(command: Command) -> Result<Ch
         .map_err(|error| format!("Failed to start CPA kernel: {error}"))
 }
 
-async fn run_core_command(
-    app: tauri::AppHandle,
+pub(crate) async fn run_core_command<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    operation: fn(&CoreProcessState, &GuiConfigState) -> Result<CoreStatus, String>,
+) -> Result<CoreStatus, String> {
+    let status = run_core_command_without_proxy(app.clone(), operation).await?;
+    if status.running {
+        if let Some(manager) = app.try_state::<crate::reverse_proxy::ReverseProxyManagerState>() {
+            if let Err(error) = manager.restore_after_core_start().await {
+                eprintln!("Failed to restore reverse proxy after kernel start: {error}");
+            }
+        }
+    }
+    Ok(status)
+}
+
+async fn run_core_command_without_proxy<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     operation: fn(&CoreProcessState, &GuiConfigState) -> Result<CoreStatus, String>,
 ) -> Result<CoreStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -130,7 +145,6 @@ async fn run_core_command(
             app.state::<CoreProcessState>().inner(),
             app.state::<GuiConfigState>().inner(),
         )?;
-        emit_core_status(&app, &status);
         Ok(status)
     })
     .await
@@ -674,7 +688,9 @@ fn emit_current_core_status(app: &tauri::AppHandle, process_state: &CoreProcessS
 
 #[tauri::command]
 pub(crate) async fn start_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
-    run_core_command(app, start_core_process_with_state).await
+    let status = run_core_command(app.clone(), start_core_process_with_state).await?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 pub(crate) fn start_core_process_with_state(
@@ -694,7 +710,9 @@ pub(crate) fn start_core_process_with_state(
 
 #[tauri::command]
 pub(crate) async fn stop_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
-    run_core_command(app, stop_core_process_with_state).await
+    let status = run_core_command(app.clone(), stop_core_process_with_state).await?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 pub(crate) fn stop_core_process_with_state(
@@ -708,7 +726,15 @@ pub(crate) fn stop_core_process_with_state(
 
 #[tauri::command]
 pub(crate) async fn restart_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
-    run_core_command(app, restart_core_process_with_state).await
+    let status = run_core_command(app.clone(), restart_core_process_with_state).await?;
+    emit_core_status(&app, &status);
+    Ok(status)
+}
+
+pub(crate) async fn restart_core_for_proxy(app: tauri::AppHandle) -> Result<CoreStatus, String> {
+    let status = run_core_command_without_proxy(app.clone(), restart_core_process_with_state).await?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 pub(crate) fn restart_core_process_with_state(
