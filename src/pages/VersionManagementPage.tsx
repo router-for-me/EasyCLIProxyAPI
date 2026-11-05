@@ -712,7 +712,12 @@ export function VersionManagementPage() {
                 <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
                   <dt className="version-metric-label">{t('appUpdate.buildTime')}</dt>
                   <dd className="version-metric-value" title={latestAppPublishedAt || ''}>
-                    {latestAppPublishedAt ?? (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+                    {latestAppPublishedAt ??
+                      (checkingAppUpdate
+                        ? t('appUpdate.checking')
+                        : appUpdateError
+                          ? t('kernel.update.failed')
+                          : t('common.detecting'))}
                   </dd>
                   <span className="version-metric-sub">{latestAppVersion || currentAppVersion}</span>
                 </div>
@@ -726,7 +731,13 @@ export function VersionManagementPage() {
                 <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
                   <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
                   <dd className="version-metric-value">
-                    {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
+                    {appUpdate
+                      ? (latestAppVersion || currentAppVersion)
+                      : checkingAppUpdate
+                        ? t('appUpdate.checking')
+                        : appUpdateError
+                          ? t('kernel.update.failed')
+                          : t('common.detecting')}
                   </dd>
                 </div>
               </dl>

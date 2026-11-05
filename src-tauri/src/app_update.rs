@@ -795,6 +795,13 @@ pub(crate) fn portable_update_target() -> Option<(&'static str, &'static str)> {
 
 /// Returns the newest `preview-<stamp>` release tag from the GitHub releases list.
 async fn fetch_latest_preview_tag(client: &reqwest::Client) -> Option<String> {
+    if let Some(tag) = fetch_preview_tags_from_api(client).await {
+        return Some(tag);
+    }
+    fetch_preview_tags_from_atom(client).await
+}
+
+async fn fetch_preview_tags_from_api(client: &reqwest::Client) -> Option<String> {
     let response = client
         .get(GUI_RELEASES_API_URL)
         .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
@@ -809,6 +816,41 @@ async fn fetch_latest_preview_tag(client: &reqwest::Client) -> Option<String> {
     let tags: Vec<String> = releases
         .iter()
         .filter_map(|release| release.get("tag_name")?.as_str().map(str::to_string))
+        .collect();
+    select_latest_preview_tag(&tags)
+}
+
+/// The REST API is rate limited to 60 requests an hour for anonymous callers, so
+/// a failed or throttled lookup must not be reported as "no preview exists".
+/// The Atom feed carries the same tags without that quota.
+async fn fetch_preview_tags_from_atom(client: &reqwest::Client) -> Option<String> {
+    let response = client
+        .get(GUI_RELEASES_ATOM_URL)
+        .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
+        .header(
+            reqwest::header::ACCEPT,
+            "application/atom+xml,application/xml,text/xml",
+        )
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body = response.text().await.ok()?;
+    let tags: Vec<String> = body
+        .split("<entry>")
+        .skip(1)
+        .filter_map(|entry| {
+            let entry = entry.split_once("</entry>")?.0;
+            let path = entry.split_once("/releases/tag/")?.1;
+            let tag = path
+                .split(['"', '<', '?', '#'])
+                .next()
+                .unwrap_or_default()
+                .trim_matches('/');
+            (!tag.is_empty()).then(|| tag.to_string())
+        })
         .collect();
     select_latest_preview_tag(&tags)
 }
@@ -2970,6 +3012,8 @@ pub(crate) fn portable_update_ack_argument() -> Option<PathBuf> {
 
 const GUI_RELEASES_API_URL: &str =
     "https://api.github.com/repos/router-for-me/EasyCLIProxyAPI/releases?per_page=100";
+const GUI_RELEASES_ATOM_URL: &str =
+    "https://github.com/router-for-me/EasyCLIProxyAPI/releases.atom";
 
 /// Lists selectable update channels: the two built-ins plus one entry per
 /// `preview-*` release tag. Network failures fall back to the built-ins so the
