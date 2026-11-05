@@ -226,3 +226,24 @@ it('reads provider and credential metadata while keeping existing fields', async
   expect(board.members.find(item => item.family === 'codex')).toMatchObject({ prefix: '' });
   expect(board.members.find(item => item.kind === 'credential')).toMatchObject({ keyCount: 1, prefix: 'oauth', credentialName: 'oauth.json' });
 });
+
+it('resolves provider remarks and displays them on routing cards', async () => {
+  const api = {
+    get: async <T,>(path: string) => (path === '/credentials' ? { files: [] }
+      : path === '/config/routing' ? {}
+      : path === '/config/api-keys/codex' ? [{ name: 'codex-4', prefix: 'group', keys: [{ 'api-key': 'sk-test' }] }]
+      : []) as T,
+    put: async () => ({}), patch: async () => ({}),
+  };
+  const board = await readRoutingBoard(api, async queries => {
+    expect(queries[0].providerSection).toBe('codex-api-key');
+    expect(queries[0].providerName).toBe('codex-4');
+    return ['清汤面', ''];
+  });
+  const member = board.members.find(item => item.name === 'codex-4');
+  expect(member?.remark).toBe('清汤面');
+
+  const rendered = ladder(board);
+  expect(rendered).toContain('清汤面');
+  expect(rendered).toContain('codex-4');
+});
