@@ -1273,6 +1273,42 @@ export function McpSkillsPage() {
                               {rowErrors[server.id]}
                             </span>
                           )}
+                          <div className="mcp-server-row-actions">
+                            <button
+                              type="button"
+                              className="mcp-row-action-btn"
+                              aria-label={t('editServer', { name: server.name })}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenEditDialog(server);
+                              }}
+                            >
+                              <Edit3 size={13} aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              className="mcp-row-action-btn"
+                              aria-label={t('duplicateServer', { name: server.name })}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDuplicateServer(server);
+                              }}
+                            >
+                              <Copy size={13} aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              className="mcp-row-action-btn mcp-row-action-btn--danger"
+                              aria-label={t('deleteServer', { name: server.name })}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedServerId(server.id);
+                                setConfirmingDeleteServerId(server.id);
+                              }}
+                            >
+                              <Trash2 size={13} aria-hidden="true" />
+                            </button>
+                          </div>
                           <Switch
                             checked={server.enabled}
                             aria-checked={server.enabled}

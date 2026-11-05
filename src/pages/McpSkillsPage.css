@@ -445,6 +445,50 @@
     gap: 8px;
   }
 
+  .mcp-server-row-actions {
+    display: none;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .mcp-server-row-button:hover .mcp-server-row-actions,
+  .mcp-server-row-button:focus-within .mcp-server-row-actions,
+  .mcp-server-row-button.active .mcp-server-row-actions {
+    display: inline-flex;
+  }
+
+  .mcp-row-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .mcp-row-action-btn:hover {
+    background: var(--bg-card);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+  }
+
+  .mcp-row-action-btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 1px;
+  }
+
+  .mcp-row-action-btn--danger:hover {
+    color: var(--danger-color, #ef4444);
+    border-color: color-mix(in srgb, var(--danger-color, #ef4444) 40%, transparent);
+    background: color-mix(in srgb, var(--danger-color, #ef4444) 10%, transparent);
+  }
+
   .mcp-row-error {
     font-size: 11px;
     color: var(--danger-color, #ef4444);
