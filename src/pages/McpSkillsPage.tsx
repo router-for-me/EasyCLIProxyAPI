@@ -83,74 +83,6 @@ async function copyTextToClipboard(text: string): Promise<void> {
   document.body.removeChild(textarea);
 }
 
-const BUILTIN_SKILLS: SkillEntry[] = [
-  {
-    id: 'code-review',
-    name: 'code-review',
-    description: 'Structured code review checklist for correctness, security, and maintainability.',
-    path: '<app-dir>/skills/code-review/SKILL.md',
-    root: '<app-dir>/skills',
-    source: 'openclaw',
-    enabled: true,
-    fileCount: 2,
-  },
-  {
-    id: 'mcp-inspector',
-    name: 'mcp-inspector',
-    description: 'Inspect and verify MCP server tool schemas, stdio commands, and SSE endpoints.',
-    path: '<app-dir>/skills/mcp-inspector/SKILL.md',
-    root: '<app-dir>/skills',
-    source: 'project',
-    enabled: true,
-    fileCount: 3,
-  },
-];
-
-const BUILTIN_SKILL_DOCS: Record<string, string> = {
-  '<app-dir>/skills/code-review/SKILL.md': `# Code Review Skill
-
-Perform a structured review before merging changes into the main branch.
-
-## Review Checklist
-
-- Verify input validation and boundary conditions
-- Confirm error handling and user-facing feedback notices
-- Check responsive layout at **1280px** and **1024px** widths
-
-## Verification Commands
-
-\`\`\`bash
-bun run check
-bun test tests/uiLocalization.test.ts tests/i18n.test.ts
-\`\`\`
-
-1. Inspect modified components and localization keys
-2. Run static type checks and unit tests
-3. Record verification results`,
-  '<app-dir>/skills/mcp-inspector/SKILL.md': `# MCP Inspector Skill
-
-Diagnose Model Context Protocol servers across \`stdio\`, \`http\`, and \`sse\` transports.
-
-## Supported Transports
-
-- **stdio**: Launch local CLI processes such as \`npx\` or \`uvx\`
-- **http**: Connect to Streamable HTTP endpoints
-- **sse**: Subscribe to Server-Sent Events streams
-
-## Example Configuration
-
-\`\`\`json
-{
-  "mcpServers": {
-    "smoke-test": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
-    }
-  }
-}
-\`\`\``,
-};
-
 function formatExportMcpServers(servers: McpServer[]): string {
   const mcpServers: Record<string, Record<string, unknown>> = {};
   for (const server of servers) {
@@ -477,16 +409,14 @@ export function McpSkillsPage() {
 
     try {
       const skillsRes = await listSkills();
-      setSkills(Array.isArray(skillsRes) && skillsRes.length > 0 ? skillsRes : BUILTIN_SKILLS);
+      setSkills(Array.isArray(skillsRes) ? skillsRes : []);
     } catch (err) {
       const isMissing = isBackendMissingError(err);
-      if (isMissing) {
-        setSkills(BUILTIN_SKILLS);
-      } else {
+      if (!isMissing) {
         setSkillsTone('error');
         setSkillsError(`${t('loadFailed')}: ${errorMessage(err)}`);
-        setSkills(BUILTIN_SKILLS);
       }
+      setSkills([]);
     }
 
     setLoading(false);
@@ -544,11 +474,6 @@ export function McpSkillsPage() {
     setLoadingSkillDetail(true);
     setSkillDetailError(null);
     setSkillDetail(null);
-    if (BUILTIN_SKILL_DOCS[path]) {
-      setSkillDetail(BUILTIN_SKILL_DOCS[path]);
-      setLoadingSkillDetail(false);
-      return;
-    }
     try {
       const detail = await getSkillDetail(path);
       setSkillDetail(detail);
@@ -632,17 +557,6 @@ export function McpSkillsPage() {
       delete copy[skill.path];
       return copy;
     });
-
-    if (BUILTIN_SKILL_DOCS[skill.path]) {
-      setActionNotice({
-        tone: 'success',
-        message: t('skillToggled', {
-          name: skill.name,
-          status: t(nextEnabled ? 'enabled' : 'disabled'),
-        }),
-      });
-      return;
-    }
 
     try {
       await setSkillEnabled(skill.path, nextEnabled);
