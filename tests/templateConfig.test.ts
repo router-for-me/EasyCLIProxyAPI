@@ -7,6 +7,7 @@ import { createBrowserMockRuntime } from '../src/mocks/browserMockRuntime';
 import { generalTemplateGroups, requestTemplateGroups, routingTemplateGroups } from '../src/services/generalTemplateFields';
 import { templateMessages } from '../src/i18n/templateConfig';
 import { oauthTemplateGroups } from '../src/services/oauthTemplateFields';
+import { settingsCategories, settingsTemplateGroups } from '../src/services/settingsNavigation';
 
 const field: TemplateConfigField = { path: ['oauth', 'providers', 'codex', 'response-steering'], type: 'boolean', label: 'Steering', defaultValue: false };
 const change = (path: string[], value: unknown, expected: unknown = null, expectedExists = false, remove = false) => ({ path, value, expected, expectedExists, remove });
@@ -75,6 +76,80 @@ describe('template configuration drafts', () => {
     expect(templateFieldValidation(imageModel, '')).toBeNull();
     expect(templateFieldValidation(imageModel, 'gpt-5.4-mini')).toBeNull();
     expect(templateFieldValidation(imageModel, 'invalid')).not.toBeNull();
+  });
+
+  test('exposes missing v8 core options and organizes them in categories', () => {
+    // 1. Server settings
+    const serverGroup = generalTemplateGroups.find(g => g.id === 'server')!;
+    expect(serverGroup).toBeDefined();
+    const serverPaths = serverGroup.fields.map(f => f.path.join('.'));
+    expect(serverPaths).toContain('server.max-request-body-bytes');
+    expect(serverPaths).toContain('server.response-compression.enabled');
+    expect(serverPaths).toContain('server.response-compression.min-bytes');
+    expect(serverPaths).toContain('server.discovery.enabled');
+    expect(serverGroup.fields.find(f => f.path.join('.') === 'server.discovery.enabled')?.restart).toBe(true);
+
+    // 2. Requests & streaming
+    const requestGroup = requestTemplateGroups.find(g => g.id === 'request-behavior')!;
+    const requestPaths = requestGroup.fields.map(f => f.path.join('.'));
+    expect(requestPaths).toContain('requests.tls-handshake-timeout-seconds');
+    expect(requestPaths).toContain('requests.streaming.send-keepalive-before-ft');
+    expect(requestPaths).toContain('requests.streaming.bootstrap-retries');
+
+    // 3. Routing
+    const routingGroup = routingTemplateGroups.find(g => g.id === 'routing-advanced')!;
+    const routingPaths = routingGroup.fields.map(f => f.path.join('.'));
+    expect(routingPaths).toContain('routing.session-affinity-rebind-on');
+    expect(routingPaths).toContain('routing.retry.max-retry-credentials');
+    expect(routingPaths).toContain('routing.retry.max-retry-interval');
+    const rebindField = routingGroup.fields.find(f => f.path.join('.') === 'routing.session-affinity-rebind-on')!;
+    expect(rebindField.type).toBe('select');
+    expect(rebindField.options?.map(o => o.value)).toEqual(['quota', 'any']);
+
+    // 4. Client Codex
+    const codexClientGroup = requestTemplateGroups.find(g => g.id === 'codex-client')!;
+    const codexClientPaths = codexClientGroup.fields.map(f => f.path.join('.'));
+    expect(codexClientPaths).toContain('client.codex.web-search-result-cache.enabled');
+    expect(codexClientPaths).toContain('client.codex.web-search-result-cache.ttl');
+    expect(codexClientPaths).toContain('client.codex.web-search-result-cache.limit');
+    const cacheTtlField = codexClientGroup.fields.find(f => f.path.join('.') === 'client.codex.web-search-result-cache.ttl')!;
+    expect(templateFieldValidation(cacheTtlField, '24h')).toBeNull();
+    expect(templateFieldValidation(cacheTtlField, '30m')).toBeNull();
+    expect(templateFieldValidation(cacheTtlField, 'invalid-ttl')).not.toBeNull();
+
+    // 5. Upstream in OAuth groups
+    const codexOauthGroup = oauthTemplateGroups.find(g => g.id === 'oauth-codex')!;
+    const codexOauthPaths = codexOauthGroup.fields.map(f => f.path.join('.'));
+    expect(codexOauthPaths).toContain('upstream.codex.upstream-request-compression');
+    expect(codexOauthPaths).toContain('upstream.codex.websocket-compression');
+
+    const claudeOauthGroup = oauthTemplateGroups.find(g => g.id === 'oauth-claude')!;
+    const claudeOauthPaths = claudeOauthGroup.fields.map(f => f.path.join('.'));
+    expect(claudeOauthPaths).toContain('upstream.claude.tool-search');
+    expect(claudeOauthPaths).toContain('upstream.claude.session-date-pin-days');
+    expect(claudeOauthPaths).toContain('upstream.claude.disable-cloaking-model-list');
+
+    // 6. Check categories mapping
+    expect(settingsCategories.map(c => c.id)).toEqual(['general', 'proxy', 'aliases', 'routing', 'requests', 'oauth', 'diagnostics', 'software']);
+    expect(settingsTemplateGroups.general.map(g => g.id)).toContain('server');
+    expect(settingsTemplateGroups.general.map(g => g.id)).toContain('management');
+    expect(settingsTemplateGroups.routing.map(g => g.id)).toContain('routing-advanced');
+    expect(settingsTemplateGroups.requests.map(g => g.id)).toContain('request-behavior');
+    expect(settingsTemplateGroups.requests.map(g => g.id)).toContain('codex-client');
+    expect(settingsTemplateGroups.oauth.map(g => g.id)).toContain('oauth-codex');
+    expect(settingsTemplateGroups.oauth.map(g => g.id)).toContain('oauth-claude');
+
+    // 7. Verify all OAuth group fields have Japanese translations as well
+    for (const group of oauthTemplateGroups) {
+      for (const f of group.fields) {
+        if (typeof f.label === 'object') {
+          expect(f.label.ja?.length).toBeGreaterThan(0);
+        }
+        if (f.description && typeof f.description === 'object') {
+          expect(f.description.ja?.length).toBeGreaterThan(0);
+        }
+      }
+    }
   });
 
   test('rejects unsafe path writes', () => {

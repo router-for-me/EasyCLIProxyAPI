@@ -1,0 +1,5 @@
+- If you have any questions or suggestions about the app, please contact us through our [QQ group](https://qm.qq.com/q/3queDaIG) or [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues). We will respond as soon as possible.
+
+## Fixed
+
+- Linux Window Activation on Repeated Launch & Silent Startup Improvements: Fixed an issue where clicking the launcher or desktop shortcut again did nothing while the app was running in the background or system tray on Linux; the process holding the instance lock now listens for activation requests over a local Unix socket, and subsequent launch attempts request that the running instance show, restore, and bring the main window to the foreground. Silent startup on Linux now applies only to automatic startup at login (via the `--autostart` argument, gnome-session's `DESKTOP_AUTOSTART_ID`, or a systemd autostart service); manual launches from the application menu or shortcuts show the main window normally, resolving window activation issues in some desktop environments without a system tray or using Waybar ([#550](https://github.com/router-for-me/EasyCLIProxyAPI/pull/550)).

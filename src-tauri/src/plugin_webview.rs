@@ -18,6 +18,8 @@ struct Inner {
     owner: Option<u64>,
     placed: Option<PlacedBounds>,
     session: Option<Session>,
+    #[cfg(any(windows, test))]
+    browser_pid: Option<u32>,
 }
 
 impl Inner {
@@ -54,7 +56,24 @@ impl Inner {
 
     fn clear(&mut self) {
         self.owner = None;
+        self.placed = None;
         self.session = None;
+        #[cfg(any(windows, test))]
+        {
+            self.browser_pid = None;
+        }
+    }
+
+    #[cfg(any(windows, test))]
+    fn frontend_lost(&mut self, exited_pid: u32) -> bool {
+        self.owner = None;
+        self.placed = None;
+        let dead = self.browser_pid == Some(exited_pid);
+        if dead {
+            self.session = None;
+            self.browser_pid = None;
+        }
+        dead
     }
 }
 
@@ -237,6 +256,43 @@ fn plugin_webview(app: &AppHandle) -> Option<Webview> {
     app.get_webview(PLUGIN_WEBVIEW)
 }
 
+#[cfg(windows)]
+fn browser_pid(webview: &Webview) -> Result<u32, String> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    webview
+        .with_webview(move |native| {
+            let result = (|| -> windows::core::Result<u32> {
+                let mut pid = 0;
+                unsafe {
+                    native.controller().CoreWebView2()?.BrowserProcessId(&mut pid)?;
+                }
+                Ok(pid)
+            })();
+            let _ = sender.send(result.map_err(|error| error.to_string()));
+        })
+        .map_err(|error| error.to_string())?;
+    receiver.recv().map_err(|error| error.to_string())?
+}
+
+#[cfg(windows)]
+pub(crate) fn recover_main_frontend(app: &AppHandle, exited_pid: u32) -> Result<bool, String> {
+    let state = app.state::<PluginWebviewState>();
+    let mut inner = match state.0.try_lock() {
+        Ok(inner) => inner,
+        Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    let dead = inner.frontend_lost(exited_pid);
+    if let Some(webview) = plugin_webview(app) {
+        if dead || inner.session.is_none() {
+            webview.close().map_err(|error| error.to_string())?;
+        } else {
+            webview.hide().map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn sync_window_activity(app: &AppHandle) -> Result<(), String> {
     // Called on a worker, like the plugin commands. Serialize with navigation
     // and read current placement; apply_bounds checks current native visibility.
@@ -316,8 +372,11 @@ pub(crate) async fn show_plugin_webview(
     reload: bool,
     token: u64,
 ) -> Result<String, String> {
+    if !state.lock()?.begin(token, None) {
+        return Err(SUPERSEDED.to_string());
+    }
     let placed = main_webview_bounds(&app).and_then(|main| place_bounds(bounds, main));
-    if !state.lock()?.begin(token, placed.clone().unwrap_or(None)) {
+    if !state.lock()?.place(token, placed.clone().unwrap_or(None)) {
         return Err(SUPERSEDED.to_string());
     }
     let result = match placed {
@@ -336,7 +395,8 @@ pub(crate) async fn show_plugin_webview(
         }
         Err(error) => Err(error),
     };
-    if result.is_err() && state.lock()?.release(token) {
+    let mut inner = state.lock()?;
+    if result.is_err() && inner.release(token) {
         if let Some(webview) = plugin_webview(&app) {
             let _ = webview.hide();
         }
@@ -398,11 +458,21 @@ async fn open_plugin_page(
         }
         None => {
             inner.session = None;
+            #[cfg(windows)]
+            {
+                inner.browser_pid = None;
+            }
             if let Some(webview) = existing {
                 webview.close().map_err(|error| error.to_string())?;
             }
             let script = plugin_page_script(&origin, &key, &labels);
-            build_webview(app, &url, script, placed)?;
+            let webview = build_webview(app, &url, script, placed)?;
+            #[cfg(windows)]
+            {
+                inner.browser_pid = Some(browser_pid(&webview)?);
+            }
+            #[cfg(not(windows))]
+            let _ = webview;
         }
     }
     inner.session = Some(Session {
@@ -464,6 +534,61 @@ pub(crate) async fn close_plugin_webview(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn abrupt_frontend_loss_releases_ownership_but_keeps_healthy_session() {
+        let mut inner = Inner::default();
+        let placed = Some(main_bounds(768.0));
+        assert!(inner.begin(10, placed));
+        inner.browser_pid = Some(200);
+        inner.session = Some(Session {
+            origin: "http://127.0.0.1:8317".to_string(),
+            key: "k".to_string(),
+            labels: labels(),
+            url: "http://127.0.0.1:8317/a".to_string(),
+        });
+        assert!(!inner.frontend_lost(100));
+        assert_eq!(inner.owner, None);
+        assert_eq!(inner.placed, None);
+        assert_eq!(inner.browser_pid, Some(200));
+        assert!(inner.session.is_some());
+        assert!(!inner.owns(10));
+        assert!(!inner.place(10, placed));
+        assert!(!inner.begin(10, placed));
+        assert!(inner.begin(11, placed));
+        assert!(
+            inner.session.is_some(),
+            "next show may reuse the healthy session"
+        );
+        assert!(!inner.place(10, None));
+        assert!(!inner.release(10));
+        assert_eq!(inner.placed, placed);
+        assert!(inner.owns(11));
+    }
+
+    #[test]
+    fn abrupt_frontend_loss_invalidates_only_the_exited_browser_session() {
+        let mut inner = Inner::default();
+        assert!(inner.begin(10, Some(main_bounds(768.0))));
+        inner.browser_pid = Some(100);
+        inner.session = Some(Session {
+            origin: "http://127.0.0.1:8317".to_string(),
+            key: "k".to_string(),
+            labels: labels(),
+            url: "http://127.0.0.1:8317/a".to_string(),
+        });
+        assert!(inner.frontend_lost(100));
+        assert_eq!(inner.owner, None);
+        assert_eq!(inner.placed, None);
+        assert_eq!(inner.browser_pid, None);
+        assert!(inner.session.is_none());
+        assert!(!inner.owns(10), "pending old show cannot finish");
+        assert!(inner.begin(11, Some(main_bounds(768.0))));
+        assert!(inner.session.is_none(), "next show must build a controller");
+        assert!(!inner.release(10));
+        assert!(!inner.place(10, None));
+        assert!(inner.owns(11));
+    }
 
     fn bounds(x: f64, y: f64, width: f64, height: f64) -> Bounds {
         Bounds {

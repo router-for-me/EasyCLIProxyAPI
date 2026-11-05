@@ -926,6 +926,8 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
         port: 9000,
         auth_dir: "/tmp/external-auth".to_string(),
         api_keys: vec!["existing-key".to_string()],
+        auth_dir_configured: true,
+        api_keys_configured: true,
         management_secret_configured: true,
         debug: true,
         commercial_mode: true,
@@ -944,6 +946,7 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
         request_retry: 1,
         max_retry_credentials: 2,
         max_retry_interval: 5,
+        transient_error_cooldown_seconds: 30,
         streaming_bootstrap_retries: 1,
         management_secret_key: Some("management-secret".to_string()),
     };
@@ -985,6 +988,42 @@ fn legacy_gui_config_can_seed_managed_core_settings() {
     assert_eq!(config.max_retry_interval, 5);
     assert_eq!(config.streaming_bootstrap_retries, 1);
     assert!(config.run_on_startup);
+}
+
+#[test]
+fn kernel_config_without_auth_dir_or_api_keys_keeps_gui_values() {
+    let gui_config = || GuiConfigFile {
+        auth_dir: "/srv/cpa-auth".to_string(),
+        api_keys: vec![GuiApiKeyEntry {
+            key: "gui-key".to_string(),
+            remark: "laptop".to_string(),
+        }],
+        ..GuiConfigFile::default()
+    };
+    let apply = |input: &str| {
+        let document = serde_norway::from_str::<serde_norway::Value>(input).unwrap();
+        let settings = core_config_settings_from_value(&document).unwrap();
+        let mut config = gui_config();
+        apply_core_settings_to_gui_config(&mut config, &settings);
+        config
+    };
+
+    for input in [
+        "port: 8317\n",
+        "port: 8317\napi-keys:\n  - your-api-key-1\n  - your-api-key-2\n",
+    ] {
+        let config = apply(input);
+        assert_eq!(config.auth_dir, "/srv/cpa-auth", "{input}");
+        assert_eq!(config.api_keys, gui_config().api_keys, "{input}");
+    }
+
+    let config = apply("oauth:\n  auth-dir: ~/.cli-proxy-api\naccess:\n  api-keys: [core-key]\n");
+    assert_eq!(config.auth_dir, "~/.cli-proxy-api");
+    assert_eq!(gui_api_key_values(&config.api_keys), vec!["core-key"]);
+
+    let config = apply("auth-dir: /tmp/external-auth\napi-keys: []\n");
+    assert_eq!(config.auth_dir, "/tmp/external-auth");
+    assert!(config.api_keys.is_empty());
 }
 
 #[test]
@@ -1697,6 +1736,10 @@ fn core_config_reads_retry_fields_and_uses_core_defaults() {
 #[test]
 fn cooling_defaults_only_fill_missing_settings() {
     assert!(GuiConfigFile::default().disable_cooling);
+    assert_eq!(
+        GuiConfigFile::default().transient_error_cooldown_seconds,
+        DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS
+    );
     let gui: GuiConfigFile = toml::from_str("disable-cooling = false").unwrap();
     assert!(!gui.disable_cooling);
     let template = "config-version: 8\nserver: {port: 8317}\nrouting:\n  cooldown: {disable-cooling: false}\n";
@@ -1719,6 +1762,36 @@ fn cooling_defaults_only_fill_missing_settings() {
         let second = merge_core_config_yaml(template, Some(&rendered), &config).unwrap();
         assert_eq!(second, rendered);
     }
+}
+
+#[test]
+fn transient_error_cooldown_defaults_off_and_preserves_existing_values() {
+    let template = "config-version: 8\nserver: {port: 8317}\n";
+    let config = GuiConfigFile::default();
+
+    let fresh = merge_core_config_yaml(template, None, &config).unwrap();
+    let fresh_document = serde_norway::from_str::<serde_norway::Value>(&fresh).unwrap();
+    assert_eq!(
+        fresh_document["routing"]["cooldown"]["transient-error-cooldown-seconds"],
+        -1
+    );
+
+    let current = "config-version: 8\nrouting:\n  cooldown:\n    transient-error-cooldown-seconds: 30\n";
+    let merged = merge_core_config_yaml(template, Some(current), &config).unwrap();
+    let merged_document = serde_norway::from_str::<serde_norway::Value>(&merged).unwrap();
+    assert_eq!(
+        merged_document["routing"]["cooldown"]["transient-error-cooldown-seconds"],
+        30
+    );
+    let second = merge_core_config_yaml(template, Some(&merged), &config).unwrap();
+    assert_eq!(second, merged);
+
+    let patched = patch_core_retry_yaml(template, &config).unwrap().unwrap();
+    let patched_document = serde_norway::from_str::<serde_norway::Value>(&patched).unwrap();
+    assert_eq!(
+        patched_document["routing"]["cooldown"]["transient-error-cooldown-seconds"],
+        -1
+    );
 }
 
 #[test]
@@ -2028,6 +2101,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         api_access_remarks: Vec::new(),
         management_secret_key: String::new(),
         debug: true,
+        update_channel: "stable".to_string(),
         commercial_mode: true,
         logging_to_file: true,
         logs_max_total_size_mb: 512,
@@ -2051,6 +2125,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         request_retry: 1,
         max_retry_credentials: 2,
         max_retry_interval: 5,
+        transient_error_cooldown_seconds: 30,
         streaming_bootstrap_retries: 1,
     };
     let merged = merge_core_config_yaml(template, Some(current), &config).unwrap();

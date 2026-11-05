@@ -24,6 +24,18 @@ const config: PluginConfigObject = {
   active: false, modes: ['chat'], headers: { old: 'value' }, algorithm: 'fast',
   undeclared: { preserved: true },
 };
+if (params.has('semanticRouter')) {
+  for (const key of Object.keys(config)) delete config[key];
+  Object.assign(config, {
+    enabled: true, alias: 'semantic-auto', timeout_ms: 3000,
+    classifier: { provider: 'openai-compatible-local', model: 'classifier' },
+    fallback: { provider: 'openai-compatible-local', model: 'general' },
+    candidates: [
+      { provider: 'openai-compatible-local', model: 'coder', description: '程序设计、调试和代码审查' },
+      { provider: 'openai-compatible-local', model: 'writer', description: '翻译、文学创作和文案写作' },
+    ],
+  });
+}
 pluginsApi.getConfig = async () => {
   fixture.loads += 1;
   if (params.has('loadError') && fixture.loads === 1) throw new Error('Fixture load failure');
@@ -43,6 +55,16 @@ const plugin: PluginListEntry = {
     ['modes', 'array'], ['headers', 'object'], ['algorithm', 'enum'], ['inherited', 'boolean'],
   ].map(([name, type]) => ({ name, type, description: `${name} configuration`, enumValues: type === 'enum' ? ['fast', 'accurate'] : [] })),
 };
+if (params.has('semanticRouter')) {
+  plugin.id = 'semantic-router';
+  plugin.configFields = [
+    ['alias', 'string', '自动路由别名（勿用内核保留名 auto）/ Exact alias, not reserved name auto'],
+    ['classifier', 'object', '分类模型 / Existing classifier: {"provider":"openai-compatible-local","model":"classifier"}'],
+    ['fallback', 'object', '安全回退 / Existing fallback: {"provider":"openai-compatible-local","model":"general"}'],
+    ['candidates', 'array', '候选模型及语义描述 / Existing candidates: [{"provider":"openai-compatible-local","model":"coder","description":"编程任务"}]'],
+    ['timeout_ms', 'integer', '分类等待上限，50–30000 毫秒 / Classifier wait timeout (ms)'],
+  ].map(([name, type, description]) => ({ name, type, description, enumValues: [] }));
+}
 
 function Fixture() {
   const [open, setOpen] = useState(false);

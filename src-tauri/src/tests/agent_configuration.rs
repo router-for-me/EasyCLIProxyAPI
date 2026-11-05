@@ -2,6 +2,62 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn claude_response_language_round_trip_preserves_custom_and_unrelated_settings() {
+    let directory = agent_test_home("response-language");
+    let path = directory.join("settings.json");
+    let models = test_agent_models(&["route-model"]);
+    let existing = r#"{"language":"  日本語（関西弁）  ","permissions":{"allow":["Read"]},"env":{"KEEP":"yes"}}"#;
+    let mut mappings = ClaudeDesktopModelMappings::all("route-model");
+    for language in [None, Some("Japanese"), Some("  日本語（関西弁）  ")] {
+        mappings.response_language = language.map(str::to_string);
+        let rendered = build_claude_agent_config(Some(existing), "http://localhost:8317", "fixture-key", "route-model", &models, Some(&mappings)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(value["language"], language.unwrap_or("  日本語（関西弁）  "));
+        assert_eq!(value["permissions"]["allow"][0], "Read");
+        assert_eq!(value["env"]["KEEP"], "yes");
+        assert!(value["env"].get("language").is_none());
+        fs::write(&path, &rendered).unwrap();
+        let inspected = inspect_claude_code_model_mappings(&path).unwrap().unwrap();
+        assert_eq!(inspected.response_language.as_deref(), value["language"].as_str());
+        let serialized = serde_json::to_string(&inspected).unwrap();
+        let mut reloaded: ClaudeDesktopModelMappings = serde_json::from_str(&serialized).unwrap();
+        reloaded.sonnet = "another-model".into();
+        let updated = build_claude_agent_config(Some(&rendered), "http://localhost:8317", "fixture-key", "route-model", &models, Some(&reloaded)).unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&updated).unwrap()["language"], value["language"]);
+    }
+    fs::write(&path, r#"{"language":"Cymraeg"}"#).unwrap();
+    assert_eq!(inspect_claude_code_model_mappings(&path).unwrap().unwrap().response_language.as_deref(), Some("Cymraeg"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn claude_response_language_reset_unmanaged_and_old_state() {
+    let models = test_agent_models(&["route-model"]);
+    let mut mappings: ClaudeDesktopModelMappings = serde_json::from_str(r#"{"opus":"route-model","sonnet":"route-model","haiku":"route-model"}"#).unwrap();
+    assert_eq!(mappings.response_language, None);
+    for existing in [r#"{"language":"custom dialect"}"#, r#"{"language":{"future":"format"}}"#, "{}"] {
+        let rendered = build_claude_agent_config(Some(existing), "http://localhost:8317", "fixture-key", "route-model", &models, Some(&mappings)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(value.get("language"), serde_json::from_str::<serde_json::Value>(existing).unwrap().get("language"));
+    }
+    for reset in ["", "  "] {
+        mappings.response_language = Some(reset.into());
+        let rendered = build_claude_agent_config(Some(r#"{"language":"custom dialect","unrelated":true}"#), "http://localhost:8317", "fixture-key", "route-model", &models, Some(&mappings)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert!(value.get("language").is_none());
+        assert_eq!(value["unrelated"], true);
+    }
+    mappings.response_language = Some("Gaeilge".into());
+    assert!(resolve_claude_code_model_mappings(AgentClient::ClaudeDesktop, &models, "route-model", Some(mappings.clone())).unwrap().is_none());
+    let desktop = resolve_claude_desktop_model_mappings(AgentClient::ClaudeDesktop, &models, "route-model", Some(mappings.clone())).unwrap().unwrap();
+    assert_eq!(desktop.response_language, None);
+    let profile = build_claude_desktop_profile(None, "http://localhost:8317", "fixture-key", "route-model", &models, Some(&mappings)).unwrap();
+    assert!(serde_json::from_str::<serde_json::Value>(&profile).unwrap().get("language").is_none());
+    let code = resolve_claude_code_model_mappings(AgentClient::ClaudeCode, &models, "route-model", Some(mappings)).unwrap().unwrap();
+    assert_eq!(code.response_language.as_deref(), Some("Gaeilge"));
+}
+
+#[test]
 fn claude_code_explicit_model_inputs_replace_clear_and_round_trip() {
     let directory = agent_test_home("claude-code-explicit-models");
     let path = directory.join("settings.json");
@@ -237,6 +293,7 @@ fn claude_code_role_mappings_drive_settings() {
         fable_1m: false,
         startup_model: None,
         subagent_model: None,
+        response_language: None,
     };
     let models = vec![
         AgentModelOption {
@@ -363,6 +420,7 @@ fn claude_code_runtime_settings_keep_per_role_1m_suffixes() {
         fable_1m: false,
         startup_model: None,
         subagent_model: None,
+        response_language: None,
     };
     let models = vec![
         AgentModelOption {
@@ -968,7 +1026,7 @@ fn opencode_agent_config_preserves_other_providers() {
     let models = test_agent_models(&["gpt-test", "deepseek-test"]);
     let rendered = build_opencode_agent_config(
             Some(
-                r#"{"theme":"dark","provider":{"other":{"npm":"other"},"cpa-gui":{"custom":"keep","options":{"timeout":30}}}}"#,
+                r#"{"theme":"dark","provider":{"other":{"npm":"other"},"cpa-gui":{"custom":"keep","options":{"timeout":30},"models":{"gpt-test":{"custom_field":"preserve_me","name":"old-name"}}}}}"#,
             ),
             "http://127.0.0.1:8317/v1",
             DEFAULT_API_KEY,
@@ -993,8 +1051,196 @@ fn opencode_agent_config_preserves_other_providers() {
         "http://127.0.0.1:8317/v1"
     );
     assert_eq!(value["model"], "cpa-gui/gpt-test");
-    assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["gpt-test"].is_object());
+    let gpt_entry = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["gpt-test"];
+    assert!(gpt_entry.is_object());
+    assert_eq!(gpt_entry["name"], "gpt-test");
+    assert_eq!(gpt_entry["custom_field"], "preserve_me");
+    assert!(gpt_entry.get("attachment").is_none());
+    assert_eq!(
+        gpt_entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
     assert!(value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["deepseek-test"].is_object());
+}
+
+#[test]
+fn opencode_agent_config_declares_attachment_and_modalities_for_models() {
+    let mut multimodal_model = test_agent_models(&["custom-vision"])[0].clone();
+    multimodal_model.input_modalities = Some(vec!["text".to_string(), "image".to_string()]);
+
+    let models = vec![
+        multimodal_model,
+        test_agent_models(&["gemini-3.1-flash-image"])[0].clone(),
+        test_agent_models(&["deepseek-chat"])[0].clone(),
+    ];
+
+    let rendered = build_opencode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "custom-vision",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let provider_models = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"];
+
+    // a model with input_modalities Some(["text","image"]) gets attachment true and modalities input ["text","image","pdf"], output ["text"]
+    let custom_entry = &provider_models["custom-vision"];
+    assert_eq!(custom_entry["name"], "custom-vision");
+    assert_eq!(custom_entry["attachment"], true);
+    assert_eq!(
+        custom_entry["modalities"],
+        serde_json::json!({
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
+        })
+    );
+
+    // name "gemini-3.1-flash-image" gets output ["text","image"]
+    let gemini_entry = &provider_models["gemini-3.1-flash-image"];
+    assert_eq!(gemini_entry["name"], "gemini-3.1-flash-image");
+    assert_eq!(gemini_entry["attachment"], true);
+    assert_eq!(
+        gemini_entry["modalities"],
+        serde_json::json!({
+            "input": ["text", "image", "pdf"],
+            "output": ["text", "image"]
+        })
+    );
+
+    // name "deepseek-chat" (no modalities) gets modalities input ["text"] and no attachment key
+    let deepseek_entry = &provider_models["deepseek-chat"];
+    assert_eq!(deepseek_entry["name"], "deepseek-chat");
+    assert!(deepseek_entry.get("attachment").is_none());
+    assert_eq!(
+        deepseek_entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
+}
+
+#[test]
+fn opencode_agent_config_preserves_existing_user_fields_under_model_entries() {
+    let models = test_agent_models(&["gpt-test", "deepseek-chat"]);
+    let existing = serde_json::json!({
+        "provider": {
+            MANAGED_AGENT_PROVIDER_ID: {
+                "models": {
+                    "gpt-test": {
+                        "name": "Outdated Display",
+                        "customField": "preserved-value",
+                        "temperature": 0.3
+                    },
+                    "deepseek-chat": {
+                        "name": "Old deepseek",
+                        "customField": "preserved",
+                        "attachment": true
+                    }
+                }
+            }
+        }
+    })
+    .to_string();
+
+    let rendered = build_opencode_agent_config(
+        Some(&existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-test",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let gpt_entry = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["gpt-test"];
+
+    assert_eq!(gpt_entry["name"], "gpt-test");
+    assert_eq!(gpt_entry["customField"], "preserved-value");
+    assert_eq!(gpt_entry["temperature"], 0.3);
+    assert!(gpt_entry.get("attachment").is_none());
+    assert_eq!(
+        gpt_entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
+
+    let deepseek_entry = &value["provider"][MANAGED_AGENT_PROVIDER_ID]["models"]["deepseek-chat"];
+    assert_eq!(deepseek_entry["name"], "deepseek-chat");
+    assert_eq!(deepseek_entry["customField"], "preserved");
+    // Pure text model omits attachment even if previously present in existing config
+    assert!(deepseek_entry.get("attachment").is_none());
+    assert_eq!(
+        deepseek_entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
+}
+
+#[test]
+fn opencode_model_entry_heuristics_and_modality_resolution() {
+    // claude heuristic image
+    let claude = test_agent_models(&["claude-3-7-sonnet"])[0].clone();
+    let entry = opencode_model_entry(&claude, None);
+    assert_eq!(entry["attachment"], true);
+    assert_eq!(
+        entry["modalities"],
+        serde_json::json!({
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
+        })
+    );
+
+    // gpt-4o heuristic image
+    let gpt4o = test_agent_models(&["gpt-4o-mini"])[0].clone();
+    let entry = opencode_model_entry(&gpt4o, None);
+    assert_eq!(entry["attachment"], true);
+    assert_eq!(
+        entry["modalities"],
+        serde_json::json!({
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
+        })
+    );
+
+    // declared input_modalities overrides heuristic (e.g. declared text-only for gpt-4o)
+    let mut gpt4o_text_only = test_agent_models(&["gpt-4o"])[0].clone();
+    gpt4o_text_only.input_modalities = Some(vec!["text".to_string()]);
+    let entry = opencode_model_entry(&gpt4o_text_only, None);
+    assert!(entry.get("attachment").is_none());
+    assert_eq!(
+        entry["modalities"],
+        serde_json::json!({
+            "input": ["text"],
+            "output": ["text"]
+        })
+    );
+
+    // image output families: dall-e, flux, imagen, seedream, gpt-image
+    for model_name in [
+        "dall-e-3",
+        "flux-1-schnell",
+        "imagen-3.0-generate-002",
+        "seedream-v1",
+        "gpt-image-1",
+    ] {
+        let model = test_agent_models(&[model_name])[0].clone();
+        let entry = opencode_model_entry(&model, None);
+        assert_eq!(entry["attachment"], true, "Failed for {model_name}");
+        assert_eq!(
+            entry["modalities"]["output"],
+            serde_json::json!(["text", "image"]),
+            "Failed output for {model_name}"
+        );
+    }
 }
 
 #[test]
@@ -2099,7 +2345,7 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
         let mut paths = Vec::new();
-        for _ in 0..2 {
+        for _ in 0..3 {
             let (mut socket, _) = listener.accept().unwrap();
             socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
             let mut request = Vec::new();
@@ -2113,7 +2359,10 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
             let path = request.split_whitespace().nth(1).unwrap().to_string();
             let body = if path == "/v1/models" {
                 assert!(request.to_lowercase().contains("authorization: bearer public-test-key\r\n"));
-                r#"{"data":[{"id":"public-model","alias":"not-an-id","slug":"not-public","context_length":64000},{"id":"another-model"}]}"#
+                r#"{"data":[{"id":"public-model","alias":"not-an-id","slug":"not-public"},{"id":"another-model"}]}"#
+            } else if path.starts_with("/v1/models?client_version=") {
+                assert!(request.to_lowercase().contains("authorization: bearer public-test-key\r\n"));
+                r#"{"models":[{"id":"public-model","context_window":1048576,"supported_reasoning_levels":["low","medium","high"],"default_reasoning_level":"medium"},{"id":"client-only-model","context_window":1048576}]}"#
             } else {
                 assert_eq!(path, "/v8/management/config.yaml");
                 "config-version: 8\n"
@@ -2122,6 +2371,8 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
             paths.push(path);
         }
         assert!(paths.iter().any(|path| path == "/v1/models"));
+        assert!(paths.iter().any(|path| path.starts_with("/v1/models?client_version=")));
+        assert!(paths.iter().any(|path| path == "/v8/management/config.yaml"));
     });
     let config = GuiConfigFile {
         port,
@@ -2138,6 +2389,11 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
     let mut written: Vec<_> = catalog["models"].as_array().unwrap().iter().map(|model| model["slug"].as_str().unwrap()).collect();
     written.sort();
     assert_eq!(ids, written);
+    let public_model = catalog["models"].as_array().unwrap().iter().find(|model| model["slug"] == "public-model").unwrap();
+    assert_eq!(public_model["context_window"], 1_048_576);
+    assert_eq!(public_model["max_context_window"], 1_048_576);
+    assert_eq!(public_model["default_reasoning_level"], "medium");
+    assert_eq!(public_model["supported_reasoning_levels"].as_array().unwrap().len(), 3);
 }
 
 #[test]

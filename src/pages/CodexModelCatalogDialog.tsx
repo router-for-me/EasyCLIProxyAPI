@@ -6,6 +6,9 @@ import {
   cloneCodexModelConfiguration,
   codexContextSourceHint,
   codexReasoningEfforts,
+  hasCodexModelOrderChanged,
+  moveCodexModel,
+  orderCodexModelsBySlugs,
   sameCodexModelConfiguration,
   toggleCodexReasoningLevel,
   validateCodexModelConfiguration,
@@ -16,7 +19,7 @@ import {
 } from '../services/codexModelCatalog';
 import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, LoaderCircle, RefreshCw, Search, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, LoaderCircle, RefreshCw, Search, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { Dialog } from '../components/Dialog';
 import { useConfirmation } from '../components/ConfirmationDialog';
@@ -78,6 +81,7 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
   const dirty = useMemo(() => {
     if (defaultsRestored) return true;
     if (!snapshot || snapshot.models.length !== models.length) return false;
+    if (hasCodexModelOrderChanged(models, snapshot.models)) return true;
     return models.some((model) => {
       const saved = snapshot.models.find((candidate) => candidate.slug === model.slug);
       return !saved || !sameCodexModelConfiguration(model.configuration, saved.configuration);
@@ -108,6 +112,23 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
     field: Key,
     value: CodexModelConfiguration[Key],
   ) => updateActive((current) => ({ ...current, [field]: value }));
+
+  const reorderModel = (slug: string, offset: number) => {
+    const from = models.findIndex((model) => model.slug === slug);
+    if (from < 0) return;
+    const to = from + offset;
+    if (to < 0 || to >= models.length) return;
+    setModels((current) => moveCodexModel(current, from, to));
+    setError('');
+    setNotice('');
+  };
+
+  const resetOrder = () => {
+    if (!snapshot) return;
+    setModels((current) => orderCodexModelsBySlugs(current, snapshot.defaultOrder ?? []));
+    setError('');
+    setNotice('');
+  };
 
   const toggleReasoning = (
     effort: CodexReasoningEffort,
@@ -206,28 +227,56 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
               <div className="codex-catalog-state"><LoaderCircle size={18} className="spin" />{t('agents.catalog.loading')}</div>
             ) : filteredModels.length ? filteredModels.map((model) => {
               const customized = !sameCodexModelConfiguration(model.configuration, model.defaults);
+              const index = models.findIndex((candidate) => candidate.slug === model.slug);
+              const reorderable = !search.trim();
               return (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={model.slug === selectedSlug}
-                  className={model.slug === selectedSlug ? 'active' : ''}
-                  key={model.slug}
-                  onClick={() => setSelectedSlug(model.slug)}
-                >
-                  <strong>{model.configuration.display_name}</strong>
-                  <span>{model.slug}</span>
-                  <small>
-                    {model.hasOfficialTemplate ? t('agents.catalog.official') : t('agents.catalog.fallback')}
-                    {customized ? ` · ${t('agents.catalog.customized')}` : ''}
-                  </small>
-                </button>
+                <div className="codex-catalog-row" key={model.slug}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={model.slug === selectedSlug}
+                    className={model.slug === selectedSlug ? 'active' : ''}
+                    onClick={() => setSelectedSlug(model.slug)}
+                  >
+                    <strong>{model.configuration.display_name}</strong>
+                    <span>{model.slug}</span>
+                    <small>
+                      {model.hasOfficialTemplate ? t('agents.catalog.official') : t('agents.catalog.fallback')}
+                      {customized ? ` · ${t('agents.catalog.customized')}` : ''}
+                    </small>
+                  </button>
+                  {reorderable ? (
+                    <div className="codex-catalog-order">
+                      <button
+                        type="button"
+                        aria-label={t('agents.catalog.moveUp')}
+                        title={t('agents.catalog.moveUp')}
+                        disabled={loading || saving || index <= 0}
+                        onClick={() => reorderModel(model.slug, -1)}
+                      >
+                        <ChevronUp size={13} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={t('agents.catalog.moveDown')}
+                        title={t('agents.catalog.moveDown')}
+                        disabled={loading || saving || index < 0 || index >= models.length - 1}
+                        onClick={() => reorderModel(model.slug, 1)}
+                      >
+                        <ChevronDown size={13} aria-hidden="true" />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               );
             }) : <div className="codex-catalog-state">{t('agents.catalog.empty')}</div>}
           </div>
           <button type="button" className="secondary-button codex-catalog-reload" onClick={() => void load()} disabled={loading || saving || dirty}>
             <RefreshCw size={15} className={loading ? 'spin' : ''} />
             {t('agents.catalog.reload')}
+          </button>
+          <button type="button" className="secondary-button codex-catalog-reset-order" onClick={resetOrder} disabled={loading || saving || !snapshot}>
+            {t('agents.catalog.resetOrder')}
           </button>
         </aside>
 

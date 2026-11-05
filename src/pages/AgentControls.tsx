@@ -1,6 +1,8 @@
 import { Notice } from '../components/Notice';
 import { MessageNotice } from '../appNotice';
 import type { ReactNode } from 'react';
+import { AgentEnvironmentDirectory } from './AgentEnvironmentDirectory';
+import type { AgentClientId } from '../services/agents';
 import { AppWindow, FolderOpen, LoaderCircle, Play, RefreshCw, Square, Terminal, Trash2 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
@@ -90,6 +92,7 @@ export function AgentConfigManagementPanel({
   pi, codex, busyAction, canTemplate, canUpdatePi, canUninstallPi, pluginInstalled, pluginVersion, updateLabel,
   executablePath, onChooseExecutablePath, onClearExecutablePath, onBackup, onRestore, onTemplate, onClear, onUpdatePi, onUninstallPi, canClearIntegration, onClearIntegration,
   dualTargets, desktopExecutablePath, onChooseDesktopExecutablePath, onClearDesktopExecutablePath,
+  client, configDirectory, onSaveConfigDirectory, onChooseConfigDirectory,
 }: {
   codexProviderControl?: ReactNode;
   codexRemoteCompactionControl?: ReactNode;
@@ -102,10 +105,13 @@ export function AgentConfigManagementPanel({
   onBackup: () => void; onRestore: () => void; onTemplate: () => void; onClear: () => void;
   onUpdatePi: () => void; onUninstallPi: () => void;
   canClearIntegration: boolean; onClearIntegration: () => void;
+  client: AgentClientId; configDirectory: string; onSaveConfigDirectory: (directory: string) => void; onChooseConfigDirectory: () => void;
 }) {
   const { t } = useI18n();
   const busy = busyAction !== null;
   return <div className="agent-management-sections">
+    <AgentEnvironmentDirectory client={client} directory={configDirectory} busy={busy}
+      onSave={onSaveConfigDirectory} onBrowse={onChooseConfigDirectory} />
     <section className="agent-management-row">
       <div><h3>{t(dualTargets ? 'agents.executablePath.cliTitle' : 'agents.executablePath.title')}</h3><p>{t('agents.executablePath.description')}</p>
         {executablePath ? <small className="agent-path-value" title={executablePath}>{executablePath}</small> : null}</div>

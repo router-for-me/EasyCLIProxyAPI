@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog } from "./Dialog";
 import { Checkbox } from "./Checkbox";
 import { Select } from "./Select";
@@ -24,6 +24,7 @@ import {
 } from "../services/authFileOperations";
 import { managementApi, readString } from "../services/managementApi";
 import { quotaKey } from "../services/quotaService";
+import { mergeCredentialTags, parseCredentialTagInput } from "../services/credentialTags";
 import "./AuthFileBatchDialog.css";
 
 export function AuthFileBatchDialog({
@@ -38,11 +39,13 @@ export function AuthFileBatchDialog({
   const { t } = useI18n();
   const privacy = usePrivacyMask();
   const { askConfirmation, confirmationDialog } = useConfirmation();
-  const eligible = useMemo(() => files.filter(isOAuthCredentialFile), [files]);
+  const [tagRevision, setTagRevision] = useState(0);
+  const eligible = useMemo(() => mergeCredentialTags(files.filter(isOAuthCredentialFile)), [files, tagRevision]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagFilter, setTagFilter] = useState("");
   const [batchAddInput, setBatchAddInput] = useState("");
   const [batchRemoveTag, setBatchRemoveTag] = useState("");
+  const [tagSearch, setTagSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [results, setResults] = useState<CredentialResult[]>([]);
@@ -55,14 +58,17 @@ export function AuthFileBatchDialog({
     [eligible],
   );
   const tagCounts = useMemo(() => countAuthFileTags(eligible), [eligible]);
+  useEffect(() => {
+    if (tagFilter && !tagCounts.has(tagFilter)) setTagFilter("");
+  }, [tagFilter, tagCounts]);
   const tagIdentities = useMemo(() => files.flatMap(authFileIdentities), [files]);
   const matching = useMemo(
     () => eligible.filter((file) => !tagFilter || normalizeAuthFileTags(file.tags).includes(tagFilter)),
     [eligible, tagFilter],
   );
   const targets = useMemo(
-    () => matching.filter((file) => selected.has(quotaKey(file))),
-    [matching, selected],
+    () => eligible.filter((file) => selected.has(quotaKey(file))),
+    [eligible, selected],
   );
 
   const allMatchingSelected = matching.length > 0 && matching.every((file) => selected.has(quotaKey(file)));
@@ -71,40 +77,37 @@ export function AuthFileBatchDialog({
     () => [...new Set(targets.flatMap((f) => normalizeAuthFileTags(f.tags)))].sort((a, b) => a.localeCompare(b)),
     [targets],
   );
+  const addAffectedCount = targets.filter(file => parseCredentialTagInput(batchAddInput).some(tag => !normalizeAuthFileTags(file.tags).includes(tag))).length;
+  const removeAffectedCount = targets.filter(file => normalizeAuthFileTags(file.tags).includes(batchRemoveTag)).length;
 
   const selectAllMatching = () => {
-    setSelected((current) => {
-      const next = new Set(current);
-      matching.forEach((file) => next.add(quotaKey(file)));
-      return next;
-    });
+    setSelected(new Set(matching.map(quotaKey)));
   };
 
   const clearSelection = () => {
-    setSelected((current) => {
-      const next = new Set(current);
-      matching.forEach((file) => next.delete(quotaKey(file)));
-      return next;
-    });
+    setSelected(new Set());
   };
 
   const runBatchAddTag = async (tagOverride?: string) => {
-    const tag = (tagOverride ?? batchAddInput).trim();
-    if (!tag || !targets.length || busy || pending.current) return;
+    const tagsToAdd = tagOverride === undefined ? parseCredentialTagInput(batchAddInput) : [tagOverride];
+    const tag = tagsToAdd.join(", ");
+    if (!tagsToAdd.length || !targets.length || busy || pending.current) return;
     pending.current = true;
     setBusy(true);
     setError("");
     setFeedbackNotice("");
     setResults([]);
     try {
-      const batchRes = await batchAddCredentialTag(targets, tag);
+      const batchRes = await batchAddCredentialTag(targets, tagsToAdd);
+      setTagRevision(current => current + 1);
       const succeeded = batchRes.filter((r) => r.success).length;
       const failed = batchRes.filter((r) => !r.success).length;
-      if (succeeded > 0) {
+      if (succeeded > 0 && failed === 0) {
         setFeedbackNotice(t("authFiles.tags.batchAddSuccess", { count: succeeded, tag }));
         setBatchAddInput("");
       }
       if (failed > 0) {
+        setResults(batchRes);
         setError(batchRes.filter((r) => !r.success).map((r) => `${r.id}: ${r.error}`).join("; "));
       }
       await onChanged();
@@ -126,13 +129,15 @@ export function AuthFileBatchDialog({
     setResults([]);
     try {
       const batchRes = await batchRemoveCredentialTag(targets, tag);
+      setTagRevision(current => current + 1);
       const succeeded = batchRes.filter((r) => r.success).length;
       const failed = batchRes.filter((r) => !r.success).length;
-      if (succeeded > 0) {
+      if (succeeded > 0 && failed === 0) {
         setFeedbackNotice(t("authFiles.tags.batchRemoveSuccess", { count: succeeded, tag }));
         setBatchRemoveTag("");
       }
       if (failed > 0) {
+        setResults(batchRes);
         setError(batchRes.filter((r) => !r.success).map((r) => `${r.id}: ${r.error}`).join("; "));
       }
       await onChanged();
@@ -199,14 +204,8 @@ export function AuthFileBatchDialog({
               disabled={busy || !matching.length}
               onChange={(event) => {
                 const checked = event.currentTarget.checked;
-                setSelected((current) => {
-                  const next = new Set(current);
-                  matching.forEach((file) => {
-                    if (checked) next.add(quotaKey(file));
-                    else next.delete(quotaKey(file));
-                  });
-                  return next;
-                });
+                if (checked) selectAllMatching();
+                else clearSelection();
               }}
               label={`${t("authFiles.operations.selectAll")} (${targets.length}/${matching.length})`}
             />
@@ -238,10 +237,12 @@ export function AuthFileBatchDialog({
               value={tagFilter}
               disabled={busy}
               onChange={(event) => {
-                setTagFilter(event.currentTarget.value);
+                const tag = event.currentTarget.value;
+                setTagFilter(tag);
+                setSelected(new Set(eligible.filter(file => tag && normalizeAuthFileTags(file.tags).includes(tag)).map(quotaKey)));
               }}
             >
-              <option value="">{t("authFiles.tags.all")} ({eligible.length})</option>
+              <option value="">{t("authFiles.tags.all")}</option>
               {tags.map((tag) => (
                 <option key={tag} value={tag}>
                   {privacy.text(tag, tagIdentities)} ({tagCounts.get(tag) ?? 0})
@@ -270,7 +271,7 @@ export function AuthFileBatchDialog({
                     onChange={(event) => {
                       const checked = event.currentTarget.checked;
                       setSelected((current) => {
-                        const next = new Set(current);
+                        const next = new Set(matching.map(quotaKey).filter(key => current.has(key)));
                         if (checked) next.add(quotaKey(file));
                         else next.delete(quotaKey(file));
                         return next;
@@ -294,6 +295,7 @@ export function AuthFileBatchDialog({
             })}
           </div>
 
+          {!targets.length ? <p role="status">{t('authFiles.tags.noSelection')}</p> : null}
           {targets.length > 0 ? (
             <div className="auth-batch-tag-ops surface-section">
               <strong className="auth-batch-tag-ops-title">
@@ -307,10 +309,18 @@ export function AuthFileBatchDialog({
                     disabled={busy}
                     onChange={(e) => setBatchAddInput(e.currentTarget.value)}
                     onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                       if (e.key === "Enter") {
                         e.preventDefault();
                         void runBatchAddTag();
                       }
+                    }}
+                    onPaste={event => {
+                      const pasted = event.clipboardData.getData('text');
+                      if (!/[,，\r\n]/.test(pasted)) return;
+                      event.preventDefault();
+                      const input = event.currentTarget;
+                      setBatchAddInput(parseCredentialTagInput(batchAddInput.slice(0, input.selectionStart ?? batchAddInput.length) + pasted + batchAddInput.slice(input.selectionEnd ?? batchAddInput.length)).join(', '));
                     }}
                     placeholder={t("authFiles.tags.batchAddPlaceholder")}
                     className="auth-batch-tag-input"
@@ -319,16 +329,19 @@ export function AuthFileBatchDialog({
                   <button
                     type="button"
                     className="secondary-button small-button"
-                    disabled={busy || !batchAddInput.trim()}
+                    disabled={busy || !addAffectedCount}
                     onClick={() => void runBatchAddTag()}
                   >
                     + {t("authFiles.tags.batchAdd")}
                   </button>
                 </div>
+                <small>{t('authFiles.tags.affected', { selected: targets.length, count: addAffectedCount })}</small>
 
                 {tags.length > 0 ? (
                   <div className="auth-batch-tag-chips" aria-label={t("authFiles.tags.poolLabel")}>
-                    {tags.slice(0, 10).map((tag) => (
+                    <input type="search" value={tagSearch} disabled={busy} onChange={event => setTagSearch(event.currentTarget.value)} aria-label={t('authFiles.tags.search')} placeholder={t('authFiles.tags.search')} />
+                    {!tags.some(tag => tag.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase())) ? <small role="status">{t('authFiles.tags.noMatches')}</small> : null}
+                    {tags.filter(tag => tag.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase())).map((tag) => (
                       <button
                         key={tag}
                         type="button"
@@ -337,7 +350,7 @@ export function AuthFileBatchDialog({
                         onClick={() => void runBatchAddTag(tag)}
                         title={t("authFiles.tags.addFromPool", { tag })}
                       >
-                        + {privacy.text(tag, tagIdentities)}
+                        + {privacy.text(tag, tagIdentities)} ({tagCounts.get(tag) ?? 0})
                       </button>
                     ))}
                   </div>
@@ -361,11 +374,12 @@ export function AuthFileBatchDialog({
                     <button
                       type="button"
                       className="danger-button small-button"
-                      disabled={busy || !batchRemoveTag}
+                      disabled={busy || !removeAffectedCount}
                       onClick={() => void runBatchRemoveTag()}
                     >
                       - {t("authFiles.tags.batchRemove")}
                     </button>
+                    <small>{t('authFiles.tags.affected', { selected: targets.length, count: removeAffectedCount })}</small>
                   </div>
                 ) : null}
               </div>

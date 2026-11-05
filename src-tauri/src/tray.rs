@@ -406,6 +406,8 @@ impl WindowsTrayState {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn show_windows_main_window(app_handle: &tauri::AppHandle) {
+    #[cfg(windows)]
+    crate::webview_recovery::request(app_handle);
     let Some(window) = main_window(app_handle) else {
         return;
     };

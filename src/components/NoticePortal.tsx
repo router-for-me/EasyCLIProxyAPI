@@ -40,15 +40,20 @@ function acquireHost(doc: Document) {
         element.style.setProperty('--notice-bottom', value);
       }
     };
+    const onDialogAnimationEnd = (event: AnimationEvent) => {
+      if (event.target === observedDialog) placeHost();
+    };
     const observer = new MutationObserver(placeHost);
     placeHost();
     observer.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'class', 'hidden'] });
     resizeObserver.observe(element);
     doc.defaultView?.addEventListener('resize', placeHost);
+    doc.addEventListener('animationend', onDialogAnimationEnd, true);
     host = { element, users: 0, dispose() {
       observer.disconnect();
       resizeObserver.disconnect();
       doc.defaultView?.removeEventListener('resize', placeHost);
+      doc.removeEventListener('animationend', onDialogAnimationEnd, true);
       element.remove();
     } };
     hosts.set(doc, host);

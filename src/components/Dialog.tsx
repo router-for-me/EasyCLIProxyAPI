@@ -23,6 +23,7 @@ type DialogProps = {
   describedBy?: string;
   label?: string;
   busy?: boolean;
+  inert?: boolean;
   tabIndex?: number;
   onClose?: () => void;
   onBackdropClose?: () => void;
@@ -49,6 +50,7 @@ export function Dialog({
   describedBy,
   label,
   busy,
+  inert,
   tabIndex,
   onClose,
   onBackdropClose = onClose,
@@ -81,6 +83,7 @@ export function Dialog({
         aria-describedby={describedBy}
         aria-label={label}
         aria-busy={busy}
+        inert={inert}
         data-tone={tone}
         tabIndex={tabIndex}
         onSubmit={onSubmit}

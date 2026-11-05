@@ -17,6 +17,7 @@ export type UsageRecord = {
   ttft_ms: number | null;
   source: string;
   source_display: string;
+  auth_index?: string;
   failed: boolean;
   canceled: boolean;
   failure_status: number;

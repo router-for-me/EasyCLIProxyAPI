@@ -177,6 +177,18 @@ fn antigravity_cli_template_covers_settings_and_credentials() {
 }
 
 #[test]
+fn antigravity_helper_rejects_only_managed_option_overrides() {
+    for option in ["--model", "--gemini_dir", "--model=other", "--gemini_dir=elsewhere"] {
+        assert!(validate_managed_antigravity_arguments(&[option.into()]).is_err());
+        let args = ["cpa".into(), "--cpa-antigravity-cli".into(), "home".into(), option.into()];
+        assert!(antigravity_helper_command(&args).unwrap_err().contains("cannot be overridden"));
+    }
+    let arguments = ["--cpa-antigravity-cli".into(), "--cpa-copilot-cli".into(), "--portable-update-helper".into(), "--model-name=literal".into()];
+    validate_managed_antigravity_arguments(&arguments).unwrap();
+    assert!(!antigravity_helper_requested(&["cpa".into(), "ordinary".into(), "--cpa-antigravity-cli".into()]));
+}
+
+#[test]
 fn antigravity_cli_helper_uses_managed_credentials_and_model() {
     let home = Home::new();
     home.apply(AgentClient::AntigravityCli, "model-one");
@@ -194,8 +206,14 @@ fn antigravity_cli_helper_uses_managed_credentials_and_model() {
         "--cpa-antigravity-cli".into(),
         home.0.clone().into_os_string(),
         "--print=hello".into(),
+        "".into(),
+        "two words 日本語 $(literal); & | %PATH% !bang!".into(),
+        "a\"b".into(),
+        "C:\\Work files\\".into(),
+        "--verbose".into(),
+        "--verbose".into(),
     ];
-    let command = antigravity_helper_command(&args).unwrap();
+    let mut command = antigravity_helper_command(&args).unwrap();
     assert_eq!(Path::new(command.get_program()), binary.as_path());
     assert_eq!(
         command.get_args().collect::<Vec<_>>(),
@@ -206,6 +224,12 @@ fn antigravity_cli_helper_uses_managed_credentials_and_model() {
             )),
             std::ffi::OsStr::new(&format!("--model={CLI_MODEL_LABEL}")),
             std::ffi::OsStr::new("--print=hello"),
+            std::ffi::OsStr::new(""),
+            std::ffi::OsStr::new("two words 日本語 $(literal); & | %PATH% !bang!"),
+            std::ffi::OsStr::new("a\"b"),
+            std::ffi::OsStr::new("C:\\Work files\\"),
+            std::ffi::OsStr::new("--verbose"),
+            std::ffi::OsStr::new("--verbose"),
         ]
     );
     let variables = command
@@ -220,6 +244,17 @@ fn antigravity_cli_helper_uses_managed_credentials_and_model() {
         Some(std::ffi::OsStr::new("http://127.0.0.1:8317"))
     );
     assert_eq!(variables[std::ffi::OsStr::new("GOOGLE_API_KEY")], None);
+    #[cfg(unix)]
+    {
+        fs::write(&binary, "#!/bin/sh\nprintf '%s\\0' \"$@\"; printf '%s\\0' \"$GEMINI_API_KEY\" \"$GOOGLE_GEMINI_BASE_URL\" \"${GOOGLE_API_KEY-unset}\"\n").unwrap();
+        let expected = command.get_args().map(|value| value.to_str().unwrap().to_string())
+            .chain(["test-key".into(), "http://127.0.0.1:8317".into(), "unset".into()]).collect::<Vec<_>>();
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        let received = output.stdout.strip_suffix(&[0]).unwrap().split(|byte| *byte == 0)
+            .map(|value| String::from_utf8(value.to_vec()).unwrap()).collect::<Vec<_>>();
+        assert_eq!(received, expected);
+    }
     let paths = antigravity_config_paths(AgentClient::AntigravityCli, &home.0);
     let valid = fs::read_to_string(&paths[1]).unwrap();
     for key in ["apiKey", "baseUrl", "model", "provider"] {

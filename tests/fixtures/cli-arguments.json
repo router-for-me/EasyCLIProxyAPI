@@ -1,0 +1,20 @@
+[
+  {"source":"", "expected":[]},
+  {"source":" \t", "expected":[]},
+  {"source":"--name 'two words' --name \"日本語 中文\" '' \"\"", "expected":["--name","two words","--name","日本語 中文","",""]},
+  {"source":"'C:\\Program Files\\CLI\\' \"C:\\Users\\test\"", "expected":["C:\\Program Files\\CLI\\","C:\\Users\\test"]},
+  {"source":"\"it's literal\" 'a\"b' a\\ b a\\\"b", "expected":["it's literal","a\"b","a b","a\"b"]},
+  {"source":"'$(touch nope)' '`touch nope`' ';' '&' '|' '%PATH%' '!test!'", "expected":["$(touch nope)","`touch nope`",";","&","|","%PATH%","!test!"]},
+  {"source":"a\nb 'line\nvalue' # comment\nc#d", "expected":null},
+  {"source":"\\\n", "expected":null},
+  {"source":"a\rb", "expected":null},
+  {"source":"'line\nvalue'", "expected":null},
+  {"source":"a\u001bb", "expected":null},
+  {"source":"a\u007fb", "expected":null},
+  {"source":"--cpa-antigravity-cli --cpa-copilot-cli --portable-update-helper", "expected":["--cpa-antigravity-cli","--cpa-copilot-cli","--portable-update-helper"]},
+  {"source":"--x=a --x=b", "expected":["--x=a","--x=b"]},
+  {"source":"'unclosed", "expected":null},
+  {"source":"\"unclosed", "expected":null},
+  {"source":"trailing\\", "expected":null},
+  {"source":"a\u0000b", "expected":null}
+]

@@ -129,6 +129,12 @@ For supported clients, the application can synchronize the available model catal
 default model, back up the original configuration before applying managed settings, and restore the
 previous configuration.
 
+In **Agents → Management → Configuration directory**, enter or browse to the directory containing
+the client's configuration files, such as `.claude` or `.codex` (not the home directory).
+Windows also accepts WSL UNC paths such as `\\wsl$\Ubuntu\home\user\.claude` and
+`\\wsl.localhost\Ubuntu\home\user\.codex`. Each client remembers its own directory; clearing it
+restores the default. This setting changes configuration access, not how executables are launched.
+
 Antigravity CLI connects through CPA's Gemini-compatible API. Launch the CLI from CPA to supply its endpoint and API key for that process. Running `agy` directly requires setting those environment variables yourself.
 
 Codex **Session Management → Edit Context (Experimental)** reads messages only after a session is selected.
@@ -155,6 +161,10 @@ Manually renamed files without a session ID in their filename or a database path
 5. Return to **Home**, start the core, then copy the required local endpoint or configure an OAuth/API provider.
 
 ## Upgrading
+
+Behind an enterprise proxy, administrators should install the corporate root CA
+in the OS trust store, not disable TLS validation. See
+[enterprise proxy certificates and regression testing](docs/enterprise-proxy.md).
 
 Every Windows release publishes both the complete ZIP and the legacy `update` ZIP. This keeps in-app updates available to older clients that have not migrated yet, while newer clients use the complete package so the bundled core can be updated too.
 

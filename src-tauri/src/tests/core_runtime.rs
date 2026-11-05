@@ -2,6 +2,188 @@ use super::support::*;
 use super::*;
 
 #[test]
+fn core_install_restores_runtime_for_either_startup_setting_or_running_core() {
+    for was_running in [false, true] {
+        for start_core_on_launch in [false, true] {
+            for run_on_startup in [false, true] {
+                let config = GuiConfigFile {
+                    start_core_on_launch,
+                    run_on_startup,
+                    ..GuiConfigFile::default()
+                };
+                assert_eq!(
+                    should_restore_core_after_install(was_running, &config, false),
+                    was_running || start_core_on_launch || run_on_startup
+                );
+                assert!(!should_restore_core_after_install(was_running, &config, true));
+            }
+        }
+    }
+}
+
+#[test]
+fn core_startup_retries_transient_failures_and_stops_after_success() {
+    let mut calls = 0;
+    let result = retry_core_operation(3, Duration::ZERO, || {
+        calls += 1;
+        if calls < 3 {
+            Err("port busy")
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(result, Ok(()));
+    assert_eq!(calls, 3);
+
+    calls = 0;
+    let result = retry_core_operation(3, Duration::ZERO, || {
+        calls += 1;
+        Ok::<_, String>(())
+    });
+    assert!(result.is_ok());
+    assert_eq!(calls, 1);
+}
+
+#[test]
+fn core_startup_retry_returns_last_failure() {
+    let mut calls = 0;
+    let result = retry_core_operation(3, Duration::ZERO, || {
+        calls += 1;
+        Err::<(), _>(calls)
+    });
+    assert_eq!(result, Err(3));
+    assert_eq!(calls, 3);
+}
+
+#[test]
+fn core_port_check_waits_for_release_and_rejects_busy_ports() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    assert!(!wait_for_core_port_release(address));
+    drop(listener);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        listener.accept().unwrap();
+        drop(listener);
+    });
+    assert!(wait_for_core_port_release(address));
+    server.join().unwrap();
+}
+
+#[test]
+fn core_adoption_requires_a_live_process_and_ready_management_port() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    assert!(!core_processes_ready(&[], address));
+    assert!(core_processes_ready(&[std::process::id()], address));
+    assert!(!core_processes_ready(
+        &[std::process::id()],
+        SocketAddr::from(([127, 0, 0, 1], 0))
+    ));
+
+    let mut child = Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+        .args(if cfg!(windows) {
+            ["/C", "exit 0"]
+        } else {
+            ["-c", "exit 0"]
+        })
+        .spawn()
+        .unwrap();
+    let process_id = child.id();
+    child.wait().unwrap();
+    assert!(!core_processes_ready(&[process_id], address));
+}
+
+#[test]
+fn core_version_list_normalizes_sorts_and_filters_releases() {
+    let releases = serde_json::from_str::<Vec<CoreReleaseVersion>>(
+        r#"[
+        {"tag_name":"v1.9.0"},
+        {"tag_name":"1.10.0"},
+        {"tag_name":"v1.10.0"},
+        {"tag_name":"v2.0.0-beta.1"},
+        {"tag_name":"v3.0.0","draft":true},
+        {"tag_name":"invalid"},
+        {"tag_name":"v1.8.0","prerelease":true}
+    ]"#,
+    )
+    .unwrap();
+    let versions = core_version_options(releases, &current_core_platform().unwrap());
+    assert_eq!(
+        versions
+            .iter()
+            .map(|version| version.version.as_str())
+            .collect::<Vec<_>>(),
+        ["v2.0.0-beta.1", "v1.10.0", "v1.9.0", "v1.8.0"]
+    );
+    assert!(versions[0].prerelease);
+    assert!(versions[3].prerelease);
+    assert!(!versions[1].prerelease);
+    assert!(!versions[1].asset_name.is_empty());
+}
+
+#[test]
+fn core_version_list_falls_back_to_multiple_atom_entries() {
+    for (status, api_body) in [
+        ("403 Forbidden", r#"{"message":"rate limit exceeded"}"#),
+        ("429 Too Many Requests", "rate limited"),
+        ("200 OK", "invalid json"),
+        ("200 OK", "[]"),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let source = VersionDownloadCandidate::custom(&format!(
+            "http://{}/",
+            listener.local_addr().unwrap()
+        ));
+        let server = thread::spawn(move || {
+            let feed = r#"<feed>
+                <entry><link href="https://github.com/router-for-me/CLIProxyAPI/releases/tag/v1.9.0"/></entry>
+                <entry><title>v2.0.0-rc.1</title></entry>
+                <entry><title>v1.10.0</title></entry>
+                <entry><title>v1.10.0</title></entry>
+                <entry><title>invalid</title></entry>
+            </feed>"#;
+            for (path, response_status, body) in [
+                (CORE_RELEASES_API_URL, status, api_body),
+                (RELEASE_ATOM_URL, "200 OK", feed),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut buffer = [0; 8192];
+                let count = stream.read(&mut buffer).unwrap();
+                assert!(String::from_utf8_lossy(&buffer[..count]).contains(path));
+                write!(stream, "HTTP/1.1 {response_status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let releases = runtime
+            .block_on(fetch_core_versions_from_source(&client, &source, None))
+            .unwrap();
+        let versions = core_version_options(releases, &current_core_platform().unwrap());
+        assert_eq!(
+            versions
+                .iter()
+                .map(|version| version.version.as_str())
+                .collect::<Vec<_>>(),
+            ["v2.0.0-rc.1", "v1.10.0", "v1.9.0"]
+        );
+        assert!(versions[0].prerelease);
+        server.join().unwrap();
+    }
+}
+
+#[test]
 fn archived_failed_rollback_survives_a_successful_retry_without_installed_binary() {
     let root = agent_test_home("archive-failed-rollback-retry");
     let install = root.join("cpa-core");
@@ -1112,6 +1294,43 @@ fn handled_bundled_core_does_not_undo_a_manual_rollback_on_restart() {
 
     fs::remove_file(binary).unwrap();
     assert!(core_needs_bundled_install(&install_dir, "v7.3.17"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn manual_core_install_prevents_bundled_core_auto_install_on_restart() {
+    let root = agent_test_home("manual-core-install-older");
+    let install_dir = root.join("cpa-core");
+    let staging_dir = root.join("cpa-core.staging");
+    let rollback_dir = root.join("cpa-core.rollback");
+    fs::create_dir_all(&install_dir).unwrap();
+    fs::create_dir_all(&staging_dir).unwrap();
+
+    let bundled_version = "v8.0.52";
+    let older_manual_version = "v8.0.50";
+
+    fs::write(staging_dir.join(core_binary_name()), b"manual-older-core-binary").unwrap();
+    write_core_metadata(
+        &staging_dir,
+        &CoreMetadata {
+            version: older_manual_version.to_string(),
+            asset_name: "CLIProxyAPI_8.0.50_linux_amd64.tar.gz".to_string(),
+            installed_at_unix: 1,
+        },
+    )
+    .unwrap();
+
+    assert!(core_needs_bundled_install(&install_dir, bundled_version));
+
+    apply_staged_core_with_rollback(&install_dir, &staging_dir, &rollback_dir, || Ok(())).unwrap();
+    mark_bundled_core_version_handled(&install_dir, bundled_version).unwrap();
+
+    let installed_metadata = read_core_metadata(&install_dir).unwrap();
+    assert_eq!(installed_metadata.version, older_manual_version);
+
+    assert!(!core_needs_bundled_install(&install_dir, bundled_version));
+    assert!(core_needs_bundled_install(&install_dir, "v8.0.53"));
+
     fs::remove_dir_all(root).unwrap();
 }
 

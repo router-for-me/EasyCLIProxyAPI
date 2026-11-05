@@ -2,6 +2,7 @@ import { onCoreInstallProgress, onConfigFilesChanged, onVersionDownloadSourceCha
 import { openExternalUrl } from '../services/appSettings';
 import {
   getVersionSourceSettings,
+  listCoreVersions,
   getCoreInstallTask,
   setDownloadSource,
   addCustomDownloadMirror,
@@ -17,12 +18,13 @@ import type {
   CoreInstallTask,
   CoreInstallResult,
   BundledCoreInfo,
+  CoreVersionOption,
 } from '../services/coreVersions';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getVersion } from '../services/platform';
+import { getUpdateChannel, listUpdateChannels, setUpdateChannel, type AppUpdateInfo } from '../services/appUpdates';
 import {
   Download,
-  ExternalLink,
   Info,
   RefreshCw,
   Package,
@@ -37,7 +39,7 @@ import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
 import { AppReleaseNotes } from '../components/AppReleaseNotes';
 import { Dialog } from '../components/Dialog';
-import { Select } from '../components/Select';
+import { SelectMenu, type SelectMenuOption } from '../components/SelectMenu';
 
 export type { CoreInstallResult } from '../services/coreVersions';
 
@@ -66,7 +68,29 @@ function downloadSourceLabel(source: VersionDownloadSource, t: ReturnType<typeof
 }
 
 export type MessageType = 'info' | 'success' | 'error';
-const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+export const APP_RELEASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+export const APP_PREVIEW_RELEASES_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases?q=preview-&expanded=true';
+export const APP_RELEASE_TAG_BASE_URL = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag';
+
+export function getAppReleaseUrl(channel = 'stable'): string {
+  const normalized = channel.trim();
+  if (normalized === 'preview') {
+    return APP_PREVIEW_RELEASES_URL;
+  }
+  if (normalized.startsWith('preview-')) {
+    return `${APP_RELEASE_TAG_BASE_URL}/${normalized}`;
+  }
+  return APP_RELEASE_URL;
+}
+
+export function resolveAppDownloadUrl(
+  info: Pick<AppUpdateInfo, 'downloadUrl' | 'releaseUrl' | 'updateChannel'> | null | undefined,
+  channel = 'stable',
+): string {
+  return info?.downloadUrl?.trim()
+    || info?.releaseUrl?.trim()
+    || getAppReleaseUrl(channel || info?.updateChannel || 'stable');
+}
 export const DEFAULT_VERSION_DOWNLOAD_SOURCE = 'github';
 const recordVersionManagementVisit = createVersionManagementVisitTracker();
 
@@ -76,7 +100,7 @@ export function displayAppVersion(version: string) {
 }
 
 export function VersionManagementPage() {
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const {
     info: appUpdate,
     error: appUpdateError,
@@ -102,11 +126,16 @@ export function VersionManagementPage() {
   const [installedAppVersion, setInstalledAppVersion] = useState('');
   const [bundledCore, setBundledCore] = useState<BundledCoreInfo | null>(null);
   const [bundledCoreError, setBundledCoreError] = useState('');
+  const [coreVersions, setCoreVersions] = useState<CoreVersionOption[]>([]);
+  const [coreVersionsLoading, setCoreVersionsLoading] = useState(false);
+  const [coreVersionsError, setCoreVersionsError] = useState('');
+  const [selectedCoreVersion, setSelectedCoreVersion] = useState('');
 
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<CoreInstallTask | null>(null);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [confirmUpdateOpen, setConfirmUpdateOpen] = useState(false);
+  const [confirmInstallVersion, setConfirmInstallVersion] = useState('');
   const [cancellingInstall, setCancellingInstall] = useState(false);
 
   const [versionSource, setVersionSource] = useState<VersionSourceSettings | null>(null);
@@ -188,6 +217,20 @@ export function VersionManagementPage() {
     } catch {}
   };
 
+  const loadCoreVersions = async () => {
+    setCoreVersionsLoading(true);
+    try {
+      const versions = await listCoreVersions();
+      setCoreVersions(versions);
+      setCoreVersionsError('');
+      setSelectedCoreVersion((current) => current || versions[0]?.version || '');
+    } catch (error) {
+      setCoreVersionsError(String(error));
+    } finally {
+      setCoreVersionsLoading(false);
+    }
+  };
+
   const updateVersionSource = async (source: VersionDownloadSource) => {
     setVersionSourceSaving(true);
     setVersionSourceError('');
@@ -195,6 +238,7 @@ export function VersionManagementPage() {
       const settings = await setDownloadSource({ source });
       setVersionSource(settings);
       resetLatest();
+      void loadCoreVersions();
       showNotice({ key: 'kernel.versions.sourceSwitched', variables: {
         source: downloadSourceLabel(settings.source, t),
       } }, 'info');
@@ -328,9 +372,10 @@ export function VersionManagementPage() {
     setCancellingInstall(false);
   };
 
-  const openAppRelease = async (url = appUpdate?.releaseUrl || APP_RELEASE_URL) => {
+  const openAppRelease = async (url?: string) => {
+    const targetUrl = url || appUpdate?.releaseUrl || getAppReleaseUrl(activeChannel);
     try {
-      await openExternalUrl({ url });
+      await openExternalUrl({ url: targetUrl });
     } catch (error) {
       showNotice({ key: 'kernel.error.openUpdate', variables: { error: String(error) } }, 'error');
     }
@@ -387,6 +432,7 @@ export function VersionManagementPage() {
     });
 
     loadInstallTask();
+    void loadCoreVersions();
     void loadVersionSourceSettings();
     void detectBundledCore()
       .then((info) => {
@@ -420,8 +466,85 @@ export function VersionManagementPage() {
   const resolvedAppVersion = appUpdate?.currentVersion || installedAppVersion;
   const currentAppVersion = resolvedAppVersion ? displayAppVersion(resolvedAppVersion) : t('common.detecting');
   const latestAppVersion = appUpdate?.latestVersion ? displayAppVersion(appUpdate.latestVersion) : '';
+  const latestAppPublishedAt = appUpdate?.publishedAt && Number.isFinite(Date.parse(appUpdate.publishedAt))
+    ? formatDate(appUpdate.publishedAt, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : null;
+  const [updateChannel, setUpdateChannelState] = useState('');
+  const [channelDraft, setChannelDraft] = useState('');
+  const [availableChannels, setAvailableChannels] = useState<string[]>(['stable', 'preview']);
+  const [channelListLoading, setChannelListLoading] = useState(true);
+  const [channelError, setChannelError] = useState('');
+  const activeChannel = appUpdate?.updateChannel || updateChannel || '';
+  const currentAppBuiltAt = appUpdate?.currentBuildAt && Number.isFinite(Date.parse(appUpdate.currentBuildAt))
+    ? formatDate(appUpdate.currentBuildAt, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : null;
+  const appIsPreview = /preview/i.test(resolvedAppVersion || '') || /preview/i.test(appUpdate?.latestVersion || '');
+
+  useEffect(() => {
+    let cancelled = false;
+    setChannelListLoading(true);
+    void getUpdateChannel()
+      .then((channel) => {
+        if (!cancelled && channel) {
+          setUpdateChannelState(channel);
+        }
+      })
+      .catch(() => {});
+    void listUpdateChannels()
+      .then((channels) => {
+        if (!cancelled && Array.isArray(channels) && channels.length > 0) {
+          setAvailableChannels(channels);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setChannelListLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeChannel) setChannelDraft(activeChannel);
+  }, [activeChannel]);
+
+  const channelOptions: SelectMenuOption[] = useMemo(
+    () => [
+      { value: 'stable', label: t('appUpdate.channel.stable') },
+      { value: 'preview', label: t('appUpdate.channel.preview') },
+      ...availableChannels
+        .filter((channel) => channel !== 'stable' && channel !== 'preview')
+        .map((channel) => ({ value: channel, label: channel })),
+    ],
+    [availableChannels, t],
+  );
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
+  const showInstallNow = Boolean(appHasUpdate && appUpdate?.autoUpdateSupported);
+  const appActionCount = showInstallNow ? 3 : 2;
+  const appDownloadLabel = t(activeChannel.startsWith('preview') ? 'appUpdate.downloadPreview' : 'appUpdate.downloadStable');
+  const appDownloadTitle = latestAppVersion
+    ? [
+        t('appUpdate.downloadTitle', { version: latestAppVersion }),
+        appUpdate?.downloadFileName,
+      ].filter(Boolean).join(' · ')
+    : appDownloadLabel;
+  const appUnsupportedReason = localizeAppUpdateUnsupportedReason(appUpdate?.unsupportedReason, t);
   const appVersionStatusLabel: string | null = appUpdateTask.running
     ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
     : appUpdateError
@@ -431,6 +554,9 @@ export function VersionManagementPage() {
         : checkingAppUpdate || !appUpdate
           ? t('appUpdate.phase.checking')
           : null;
+  const resolvedAppVersionStatusLabel = appIsPreview && appHasUpdate && latestAppPublishedAt
+    ? t('appUpdate.buildTime')
+    : appVersionStatusLabel;
   const appVersionStatusTone = appUpdateError
     ? 'error'
     : appUpdateTask.running || checkingAppUpdate || !appUpdate
@@ -505,6 +631,47 @@ export function VersionManagementPage() {
     setVersionSourceError('');
   };
 
+  const applyChannel = async (next: string) => {
+    const value = next.trim();
+    if (!value) return;
+    setChannelError('');
+    try {
+      const applied = await setUpdateChannel(value);
+      setUpdateChannelState(applied);
+      await (checkAppUpdate)();
+    } catch (error) {
+      setChannelError(String(error));
+    }
+  };
+
+  const downloadSourceOptions: SelectMenuOption[] = [
+    { value: 'github', label: t('kernel.versions.source.github') },
+    ...(versionSource?.gitcodeAvailable !== false
+      ? [{ value: 'gitcode', label: t('kernel.versions.source.gitcode') }]
+      : [{ value: 'gitcode', label: t('kernel.versions.source.gitcode'), disabled: true }]),
+    { value: 'gh-proxy', label: t('kernel.versions.source.ghProxy') },
+    { value: 'gh-fast', label: t('kernel.versions.source.ghFast') },
+    ...(versionSource?.customMirrors.map((url) => ({
+      value: `custom:${url}`,
+      label: downloadSourceLabel(`custom:${url}`, t),
+    })) ?? []),
+  ];
+
+  const coreVersionOptions: SelectMenuOption[] = coreVersions.length === 0
+    ? [
+        {
+          value: '',
+          label: coreVersionsLoading
+            ? t('kernel.versions.loadingVersions')
+            : t('kernel.versions.noVersions'),
+          disabled: true,
+        },
+      ]
+    : coreVersions.map((version) => ({
+        value: version.version,
+        label: `${version.version}${version.prerelease ? ` · ${t('kernel.versions.prerelease')}` : ''}`,
+      }));
+
   return (
     <section className="page management-page version-management-page">
       <MessageNotice message={versionSourceError} onDismiss={() => setVersionSourceError('')} />
@@ -518,32 +685,19 @@ export function VersionManagementPage() {
             ) : null}
           </div>
           <div className="version-source-control">
-            <label>
-              <span className="sr-only">{t('kernel.versions.downloadSource')}</span>
-              <Select
-                value={versionSource?.source ?? DEFAULT_VERSION_DOWNLOAD_SOURCE}
-                disabled={
-                  !versionSource
-                  || versionSourceSaving
-                  || appUpdateTask.running
-                  || installing
-                }
-                aria-label={t('kernel.versions.downloadSource')}
-                onChange={(event) => void updateVersionSource(event.currentTarget.value as VersionDownloadSource)}
-              >
-                <option value="github">{t('kernel.versions.source.github')}</option>
-                <option value="gitcode" disabled={!versionSource?.gitcodeAvailable}>
-                  {t('kernel.versions.source.gitcode')}
-                </option>
-                <option value="gh-proxy">{t('kernel.versions.source.ghProxy')}</option>
-                <option value="gh-fast">{t('kernel.versions.source.ghFast')}</option>
-                {versionSource?.customMirrors.map((url) => (
-                  <option key={url} value={`custom:${url}`}>
-                    {downloadSourceLabel(`custom:${url}`, t)}
-                  </option>
-                ))}
-              </Select>
-            </label>
+            <SelectMenu
+              className="version-source-select"
+              value={versionSource?.source ?? DEFAULT_VERSION_DOWNLOAD_SOURCE}
+              disabled={
+                !versionSource
+                || versionSourceSaving
+                || appUpdateTask.running
+                || installing
+              }
+              ariaLabel={t('kernel.versions.downloadSource')}
+              onChange={(value) => void updateVersionSource(value as VersionDownloadSource)}
+              options={downloadSourceOptions}
+            />
             <button
               type="button"
               className="primary-button version-source-add-button"
@@ -564,36 +718,116 @@ export function VersionManagementPage() {
           <div className="version-item-content">
             <div className="version-card-top">
               <h2>{t('kernel.versions.appCardTitle')}</h2>
-              {appVersionStatusLabel ? (
-                <span className={`version-row-status ${appVersionStatusTone}`} title={appUpdateError || appVersionStatusLabel}>
-                  {appVersionStatusLabel}
+              {resolvedAppVersionStatusLabel ? (
+                <span className={`version-row-status ${appVersionStatusTone}`} title={appUpdateError || resolvedAppVersionStatusLabel}>
+                  {resolvedAppVersionStatusLabel}
                 </span>
               ) : null}
             </div>
 
-            <dl className="version-metrics-comparison">
-              <div className="surface-section surface-muted version-metric-tile">
-                <dt className="version-metric-label">{t('appUpdate.current')}</dt>
-                <dd className="version-metric-value">{currentAppVersion}</dd>
-              </div>
-              <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
-                <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
-                <dd className="version-metric-value">
-                  {appUpdate ? (latestAppVersion || currentAppVersion) : (checkingAppUpdate ? t('appUpdate.checking') : t('common.detecting'))}
-                </dd>
-              </div>
-            </dl>
+            {appIsPreview ? (
+              <dl className="version-metrics-comparison">
+                <div className="surface-section surface-muted version-metric-tile">
+                  <dt className="version-metric-label">{t('appUpdate.currentBuild')}</dt>
+                  <dd className="version-metric-value" title={currentAppBuiltAt || ''}>
+                    {currentAppBuiltAt ?? t('common.detecting')}
+                  </dd>
+                  <span className="version-metric-sub">{currentAppVersion}</span>
+                </div>
+                <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
+                  <dt className="version-metric-label">{t('appUpdate.buildTime')}</dt>
+                  <dd className="version-metric-value" title={latestAppPublishedAt || ''}>
+                    {latestAppPublishedAt ??
+                      (checkingAppUpdate
+                        ? t('appUpdate.checking')
+                        : appUpdateError
+                          ? t('kernel.update.failed')
+                          : t('common.detecting'))}
+                  </dd>
+                  <span className="version-metric-sub">{latestAppVersion || currentAppVersion}</span>
+                </div>
+              </dl>
+            ) : (
+              <dl className="version-metrics-comparison">
+                <div className="surface-section surface-muted version-metric-tile">
+                  <dt className="version-metric-label">{t('appUpdate.current')}</dt>
+                  <dd className="version-metric-value">{currentAppVersion}</dd>
+                </div>
+                <div className={`surface-section surface-muted version-metric-tile ${appHasUpdate ? 'has-update' : ''}`}>
+                  <dt className="version-metric-label">{t('appUpdate.latest')}</dt>
+                  <dd className="version-metric-value">
+                    {appUpdate
+                      ? (latestAppVersion || currentAppVersion)
+                      : checkingAppUpdate
+                        ? t('appUpdate.checking')
+                        : appUpdateError
+                          ? t('kernel.update.failed')
+                          : t('common.detecting')}
+                  </dd>
+                </div>
+              </dl>
+            )}
 
-            <MessageNotice message={appUpdateError} />
-            {!appUpdate?.autoUpdateSupported ? (
+            <div className="app-version-info-section">
+              <MessageNotice message={appUpdateError} />
               <div className="version-alert-banner neutral">
-                <Info size={14} />
-                <span>{t('appUpdate.manualFallback')}</span>
+                <Info size={14} aria-hidden="true" />
+                <span>
+                  {appUpdate?.autoUpdateSupported
+                    ? t('kernel.versions.autoUpdateSupported')
+                    : t('appUpdate.manualFallback')}
+                  {appIsPreview && latestAppPublishedAt
+                    ? ` · ${t('appUpdate.publishedAt', { date: latestAppPublishedAt })}`
+                    : ''}
+                </span>
               </div>
-            ) : null}
+              {appUpdate && !appUpdate.autoUpdateSupported && appUnsupportedReason ? (
+                <div className="version-alert-banner neutral version-unsupported-reason">
+                  <Info size={14} aria-hidden="true" />
+                  <span title={appUpdate.unsupportedReason ?? undefined}>{appUnsupportedReason}</span>
+                </div>
+              ) : null}
+              {activeChannel.startsWith('preview') ? (
+                <>
+                  <div className="version-alert-banner neutral version-channel-row">
+                    <Info size={14} aria-hidden="true" />
+                    <span>{t('appUpdate.previewChannel', { channel: activeChannel })}</span>
+                    <SelectMenu
+                      className="version-channel-select"
+                      value={channelDraft}
+                      disabled={channelListLoading}
+                      ariaLabel={t('appUpdate.previewChannelSwitch')}
+                      onChange={setChannelDraft}
+                      options={channelOptions}
+                      maxDropdownHeight={260}
+                    />
+                    <button
+                      type="button"
+                      className="link-button muted"
+                      disabled={!channelDraft || channelDraft === activeChannel || channelListLoading}
+                      onClick={() => void applyChannel(channelDraft)}
+                    >
+                      {t('appUpdate.previewChannelSwitch')}
+                    </button>
+                  </div>
+                  <div
+                    className="version-channel-hint"
+                    style={{
+                      fontSize: 'var(--font-size-meta)',
+                      color: 'var(--color-text-tertiary)',
+                      lineHeight: 'var(--line-height-body)',
+                      paddingLeft: '4px',
+                    }}
+                  >
+                    {t((channelDraft || activeChannel) === 'stable' ? 'appUpdate.channelHint.stable' : 'appUpdate.channelHint.preview')}
+                  </div>
+                </>
+              ) : null}
+              {channelError ? <MessageNotice message={channelError} /> : null}
+            </div>
           </div>
 
-          <div className="version-card-actions">
+          <div className={`version-card-actions app-actions actions-count-${appActionCount}${showInstallNow ? ' has-install-now' : ''}`}>
             <button
               type="button"
               className="secondary-button"
@@ -604,7 +838,7 @@ export function VersionManagementPage() {
               <span>{checkingAppUpdate ? t('appUpdate.checking') : t('appUpdate.check')}</span>
             </button>
 
-            {appHasUpdate && appUpdate?.autoUpdateSupported ? (
+            {showInstallNow ? (
               <button
                 type="button"
                 className="primary-button"
@@ -618,11 +852,12 @@ export function VersionManagementPage() {
 
             <button
               type="button"
-              className={appHasUpdate && !appUpdate?.autoUpdateSupported ? 'primary-button' : 'secondary-button'}
-              onClick={() => void openAppRelease()}
+              className={appUpdate?.autoUpdateSupported ? 'secondary-button' : 'primary-button'}
+              title={appDownloadTitle}
+              onClick={() => void openAppRelease(resolveAppDownloadUrl(appUpdate, activeChannel))}
             >
-              <ExternalLink size={15} aria-hidden="true" />
-              <span>{t('appUpdate.openRelease')}</span>
+              <Download size={15} aria-hidden="true" />
+              <span>{appDownloadLabel}</span>
             </button>
           </div>
         </article>
@@ -653,9 +888,38 @@ export function VersionManagementPage() {
               </div>
             </dl>
 
-            {latestError ? (
-              <MessageNotice message={latestError} />
-            ) : null}
+            <div className="core-version-picker">
+              {latestError ? <MessageNotice message={latestError} /> : null}
+              <div className="core-version-picker-label">
+                <span>{t('kernel.versions.chooseVersion')}</span>
+              </div>
+              <div className="core-version-picker-row">
+                <div className="core-version-select-wrap">
+                  <SelectMenu
+                    className="core-version-select"
+                    value={selectedCoreVersion}
+                    disabled={coreVersionsLoading || busy || coreVersions.length === 0}
+                    ariaLabel={t('kernel.versions.chooseVersion')}
+                    onChange={setSelectedCoreVersion}
+                    options={coreVersionOptions}
+                    maxDropdownHeight={280}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button core-version-install-btn"
+                  disabled={!selectedCoreVersion || busy}
+                  onClick={() => {
+                    setConfirmInstallVersion(selectedCoreVersion);
+                    setConfirmUpdateOpen(false);
+                  }}
+                >
+                  <Download size={15} aria-hidden="true" />
+                  <span>{t('kernel.versions.installSelected')}</span>
+                </button>
+              </div>
+              {coreVersionsError ? <MessageNotice message={coreVersionsError} /> : null}
+            </div>
           </div>
 
           <div className="version-card-actions core-actions">
@@ -663,7 +927,10 @@ export function VersionManagementPage() {
               type="button"
               className="secondary-button"
               disabled={busy}
-              onClick={() => void checkLatest(true)}
+              onClick={() => {
+                void checkLatest(true);
+                void loadCoreVersions();
+              }}
             >
               <RefreshCw size={15} className={checkingLatest ? 'spin' : ''} aria-hidden="true" />
               <span>{checkingLatest ? t('kernel.update.checking') : t('kernel.versions.check')}</span>
@@ -674,7 +941,10 @@ export function VersionManagementPage() {
               className={latestVersion && (!coreInstalled || coreHasUpdate) ? 'primary-button' : 'secondary-button'}
               title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
               disabled={!latestVersion || busy}
-              onClick={() => setConfirmUpdateOpen(true)}
+              onClick={() => {
+                setConfirmInstallVersion(latestVersion);
+                setConfirmUpdateOpen(true);
+              }}
             >
               <Download size={15} aria-hidden="true" />
               <span>{!coreInstalled ? t('kernel.versions.installLatestMissing') : t('kernel.versions.installLatest')}</span>
@@ -785,12 +1055,15 @@ export function VersionManagementPage() {
         </Dialog>
       ) : null}
 
-      {confirmUpdateOpen ? (
+      {confirmUpdateOpen || confirmInstallVersion ? (
         <Dialog
           className="install-dialog app-update-dialog"
           backdropClassName="install-dialog-backdrop app-update-dialog-backdrop"
           labelledBy="core-update-confirm-title"
-          onClose={() => setConfirmUpdateOpen(false)}
+          onClose={() => {
+            setConfirmUpdateOpen(false);
+            setConfirmInstallVersion('');
+          }}
         >
           <div className="install-dialog-heading">
             <span className="install-dialog-eyebrow">{t('kernel.dialog.install')}</span>
@@ -800,14 +1073,17 @@ export function VersionManagementPage() {
           </div>
 
           <p className="app-update-confirm-copy">
-            {t('kernel.versions.stopAndConfirmDescription', { version: latestVersion })}
+            {t('kernel.versions.stopAndConfirmDescription', { version: confirmInstallVersion })}
           </p>
 
           <div className="app-update-dialog-actions">
             <button
               type="button"
               className="secondary-button"
-              onClick={() => setConfirmUpdateOpen(false)}
+              onClick={() => {
+                setConfirmUpdateOpen(false);
+                setConfirmInstallVersion('');
+              }}
             >
               {t('common.cancel')}
             </button>
@@ -815,8 +1091,10 @@ export function VersionManagementPage() {
               type="button"
               className="primary-button"
               onClick={() => {
+                const version = confirmInstallVersion;
                 setConfirmUpdateOpen(false);
-                void installCore({ kind: 'release', version: latestVersion });
+                setConfirmInstallVersion('');
+                void installCore({ kind: 'release', version });
               }}
             >
               <Download size={15} aria-hidden="true" />
@@ -889,6 +1167,21 @@ export function VersionManagementPage() {
 
     </section>
   );
+}
+
+function localizeAppUpdateUnsupportedReason(
+  reason: string | null | undefined,
+  t: ReturnType<typeof useI18n>['t'],
+): string | null {
+  const trimmed = reason?.trim();
+  if (!trimmed) return null;
+  if (trimmed === 'This application is not a portable version that supports automatic upgrades. Manually download the first supported version') {
+    return t('appUpdate.unsupported.notPortable');
+  }
+  if (trimmed === 'The update manifest does not include the current platform or architecture') {
+    return t('appUpdate.unsupported.platformArch');
+  }
+  return trimmed;
 }
 
 function localizeInstallPhase(

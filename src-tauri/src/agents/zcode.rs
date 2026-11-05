@@ -214,8 +214,7 @@ fn parse_zcode_rule_reasoning(rule: &Value) -> (Option<Vec<String>>, Option<Stri
     let option_specs = rule.get("config").and_then(|c| c.get("optionSpecs"));
     let reasoning = option_specs.and_then(|o| o.get("reasoningLevel"));
     let values = reasoning.and_then(|r| r.get("values")).and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>())
-        .filter(|v| !v.is_empty());
+        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>());
     let map = reasoning.and_then(|r| r.get("map")).and_then(Value::as_str).map(String::from);
     (values, map)
 }
@@ -250,18 +249,14 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     } else {
         option_specs.remove("maxOutputTokens");
     }
-    if !config.reasoning_levels.is_empty() {
-        let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
-        rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
-        if let Some(ref m) = config.reasoning_map {
-            rl.insert("map".into(), serde_json::json!(m));
-        } else {
-            rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
-        }
-        option_specs.insert("reasoningLevel".into(), Value::Object(rl));
+    let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
+    rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
+    if let Some(ref m) = config.reasoning_map {
+        rl.insert("map".into(), serde_json::json!(m));
     } else {
-        option_specs.insert("reasoningLevel".into(), Value::Null);
+        rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
     }
+    option_specs.insert("reasoningLevel".into(), Value::Object(rl));
 
     cfg.insert("properties".into(), Value::Object(properties));
     if !option_specs.is_empty() {
@@ -375,7 +370,7 @@ pub(crate) fn zcode_editor_snapshot(
         let configuration = if let Some(manual_rule) = manual_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(manual_rule);
             let (rl, map) = parse_zcode_rule_reasoning(manual_rule);
-            let effective_cw = if cw == Some(500000) || cw.is_none() { default_config.context_window } else { cw };
+            let effective_cw = cw.or(default_config.context_window);
             ZCodeModelConfig {
                 context_window: effective_cw,
                 max_output_tokens: mot.or(default_config.max_output_tokens),
@@ -670,14 +665,23 @@ pub(crate) fn zcode_subagent_snapshot(home: &Path) -> Result<ZCodeSubagentConfig
     let mut seen_paths = std::collections::HashSet::new();
 
     let mut candidate_dirs = Vec::new();
-    if let Some(base) = zcode_data_base_dir(home) {
-        candidate_dirs.push(base.join(".zcode/agents"));
-        candidate_dirs.push(base.join(".zcode/cli/plugins/cache"));
-        candidate_dirs.push(base.join(".zcode/skills"));
+    if agent_config_directory("zcode").is_some() {
+        let root = if config_dir.file_name().is_some_and(|name| name == "v2") {
+            config_dir.parent().unwrap_or(&config_dir)
+        } else {
+            &config_dir
+        };
+        candidate_dirs.extend([root.join("agents"), root.join("cli/plugins/cache"), root.join("skills")]);
+    } else {
+        if let Some(base) = zcode_data_base_dir(home) {
+            candidate_dirs.push(base.join(".zcode/agents"));
+            candidate_dirs.push(base.join(".zcode/cli/plugins/cache"));
+            candidate_dirs.push(base.join(".zcode/skills"));
+        }
+        candidate_dirs.push(home.join(".zcode/agents"));
+        candidate_dirs.push(home.join(".zcode/cli/plugins/cache"));
+        candidate_dirs.push(home.join(".zcode/skills"));
     }
-    candidate_dirs.push(home.join(".zcode/agents"));
-    candidate_dirs.push(home.join(".zcode/cli/plugins/cache"));
-    candidate_dirs.push(home.join(".zcode/skills"));
 
     for dir in candidate_dirs {
         if !dir.is_dir() { continue; }
@@ -837,6 +841,19 @@ fn update_subagent_frontmatter(content: &str, model: Option<&str>, thought_level
 pub(crate) async fn get_zcode_model_catalog_editor(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<ZCodeCatalogEditorSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            get_zcode_model_catalog_editor_in_directories(app, gui_config_state).await
+        })
+        .await
+}
+
+pub(crate) async fn get_zcode_model_catalog_editor_in_directories(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<ZCodeCatalogEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
     let models = fetch_prepared_agent_models(AgentClient::ZCode, &config).await?;
@@ -849,6 +866,20 @@ pub(crate) async fn get_zcode_model_catalog_editor(
 
 #[tauri::command]
 pub(crate) async fn save_zcode_model_catalog_editor(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    request: ZCodeCatalogEditorSaveRequest,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<ZCodeCatalogEditorSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            save_zcode_model_catalog_editor_in_directories(app, gui_config_state, request).await
+        })
+        .await
+}
+
+pub(crate) async fn save_zcode_model_catalog_editor_in_directories(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     request: ZCodeCatalogEditorSaveRequest,
@@ -865,6 +896,18 @@ pub(crate) async fn save_zcode_model_catalog_editor(
 #[tauri::command]
 pub(crate) async fn get_zcode_subagent_config(
     app: tauri::AppHandle,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<ZCodeSubagentConfigSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            get_zcode_subagent_config_in_directories(app).await
+        })
+        .await
+}
+
+pub(crate) async fn get_zcode_subagent_config_in_directories(
+    app: tauri::AppHandle,
 ) -> Result<ZCodeSubagentConfigSnapshot, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = crate::AGENT_CONFIG_FILE_LOCK
@@ -875,6 +918,19 @@ pub(crate) async fn get_zcode_subagent_config(
 
 #[tauri::command]
 pub(crate) async fn save_zcode_subagent_config(
+    app: tauri::AppHandle,
+    request: ZCodeSubagentConfigSaveRequest,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<ZCodeSubagentConfigSnapshot, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            save_zcode_subagent_config_in_directories(app, request).await
+        })
+        .await
+}
+
+pub(crate) async fn save_zcode_subagent_config_in_directories(
     app: tauri::AppHandle,
     request: ZCodeSubagentConfigSaveRequest,
 ) -> Result<ZCodeSubagentConfigSnapshot, String> {

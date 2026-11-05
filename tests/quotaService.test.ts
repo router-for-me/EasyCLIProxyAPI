@@ -184,7 +184,7 @@ describe('quotaRowsFor', () => {
       limits: [null, limit(null, true), limit(12, false, 'Fable 5'), limit(64, true), limit(99, true, 'Sonnet')],
     });
     expect(rows.map((row) => [row.label, row.remainingPercent])).toEqual([
-      ['5-hour window', 90], ['7-day Fable window', 36],
+      ['5-hour limit', 90], ['Weekly Fable limit', 36],
     ]);
     expect(rows[1].resetAtMs).toBe(Date.parse('2030-01-01T00:00:00Z'));
   });
@@ -195,7 +195,7 @@ describe('quotaRowsFor', () => {
       limits: [{ kind: 'weekly_scoped', percent: null, scope: { model: { display_name: 'Fable' } } }],
     });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ label: '7-day Fable window', remainingPercent: 59 });
+    expect(rows[0]).toMatchObject({ label: 'Weekly Fable limit', remainingPercent: 59 });
   });
 
   it('显示 Claude 已启用的额外用量', () => {
@@ -244,7 +244,7 @@ describe('quotaRowsFor', () => {
         { window: { duration: 90, timeUnit: 'TIME_UNIT_SECOND' }, detail: { limit: 100, used: 0 } },
       ],
     });
-    expect(rows.map((row) => row.label)).toEqual(['5 hours window', '7 days window', '5 hours window', '90 seconds window', 'Weekly quota']);
+    expect(rows.map((row) => row.label)).toEqual(['5 hours limit', '7 days limit', '5 hours limit', '90 seconds limit', 'Weekly limit']);
     expect(rows.at(-1)?.remainingPercent).toBeCloseTo(0.5);
     expect(rows[0].remainingPercent).toBe(80);
     expect(rows[0].resetAtMs).toBeGreaterThan(Date.now());
@@ -313,7 +313,7 @@ describe('quotaRowsFor', () => {
       },
     });
 
-    expect(rows.find((row) => row.label === 'Weekly quota')?.remainingPercent).toBe(75);
+    expect(rows.find((row) => row.label === 'Weekly limit')?.remainingPercent).toBe(75);
     expect(rows.find((row) => row.label === 'grok-code')?.remainingPercent).toBe(60);
     expect(rows.find((row) => row.label === 'Monthly included quota')?.remainingPercent).toBe(0);
     expect(rows.find((row) => row.label === 'On-demand quota')?.remainingPercent).toBe(60);
@@ -345,7 +345,7 @@ describe('quotaRowsFor', () => {
           weekly: { config: { currentPeriod: { type: 'weekly', end: '2030-01-08T00:00:00Z' }, creditUsagePercent } },
           monthly: { config: { monthlyLimit: 10000, used } },
         });
-        expect(rows[0]).toMatchObject({ label: 'Weekly quota', remainingPercent: null });
+        expect(rows[0]).toMatchObject({ label: 'Weekly limit', remainingPercent: null });
         expect(rows[1].remainingPercent).toBe(100 - used / 100);
       }
     }
