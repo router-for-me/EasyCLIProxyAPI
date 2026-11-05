@@ -30,6 +30,10 @@ pub(crate) struct AgentUsageQuery {
     pub(crate) group_by: String,
     #[serde(default)]
     pub(crate) granularity: String,
+    #[serde(default)]
+    pub(crate) start: String,
+    #[serde(default)]
+    pub(crate) end: String,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -997,15 +1001,6 @@ impl Window {
     }
 }
 
-fn hours_back(now: DateTime<Local>, from: i64, count: i64) -> BTreeSet<(String, u8)> {
-    (from..from + count)
-        .map(|offset| {
-            let time = now - Duration::hours(offset);
-            (time.format("%Y-%m-%d").to_string(), time.hour() as u8)
-        })
-        .collect()
-}
-
 fn hours_of_day(date: NaiveDate, last: u32) -> BTreeSet<(String, u8)> {
     let day = date.format("%Y-%m-%d").to_string();
     (0..=last).map(|hour| (day.clone(), hour as u8)).collect()
@@ -1023,18 +1018,15 @@ fn earliest_day(connection: &Connection) -> Option<NaiveDate> {
         .and_then(|value| parse_day(&value))
 }
 
-fn resolve_kind(range: &str, granularity: &str, span_days: i64) -> &'static str {
-    let hour_allowed = range != "all";
+fn resolve_kind(granularity: &str, hour_allowed: bool, span_days: i64) -> &'static str {
     match granularity {
         "hour" if hour_allowed => "hour",
         "hour" | "day" => "day",
         "week" => "week",
         "month" => "month",
-        _ => match range {
-            "today" | "24h" => "hour",
-            "all" if span_days > 92 => "week",
-            _ => "day",
-        },
+        _ if hour_allowed && span_days <= 1 => "hour",
+        _ if span_days > 92 => "week",
+        _ => "day",
     }
 }
 
@@ -1052,7 +1044,7 @@ fn resolve_windows(
     };
     match query.range.as_str() {
         "today" => {
-            let kind = resolve_kind("today", &query.granularity, 1);
+            let kind = resolve_kind(&query.granularity, true, 1);
             let yesterday = today - Duration::days(1);
             (
                 Window {
@@ -1070,27 +1062,9 @@ fn resolve_windows(
                 kind,
             )
         }
-        "24h" => {
-            let kind = resolve_kind("24h", &query.granularity, 1);
-            (
-                Window {
-                    start: today - Duration::days(1),
-                    end: today,
-                    hours: Some(hours_back(now, 0, 24)),
-                    hourly: true,
-                },
-                Some(Window {
-                    start: today - Duration::days(2),
-                    end: today - Duration::days(1),
-                    hours: Some(hours_back(now, 24, 24)),
-                    hourly: true,
-                }),
-                kind,
-            )
-        }
         "7d" | "30d" => {
             let count = if query.range == "7d" { 7 } else { 30 };
-            let kind = resolve_kind(&query.range, &query.granularity, count);
+            let kind = resolve_kind(&query.granularity, true, count);
             let hourly = kind == "hour";
             (
                 days(count, 0, hourly),
@@ -1098,10 +1072,32 @@ fn resolve_windows(
                 kind,
             )
         }
+        "custom" => {
+            let end = parse_day(&query.end).unwrap_or(today).min(today);
+            let start = parse_day(&query.start).unwrap_or(end).min(end);
+            let count = (end - start).num_days() + 1;
+            let hour_allowed = start > today - Duration::days(HOURLY_RETENTION_DAYS);
+            let kind = resolve_kind(&query.granularity, hour_allowed, count);
+            (
+                Window {
+                    start,
+                    end,
+                    hours: None,
+                    hourly: kind == "hour",
+                },
+                Some(Window {
+                    start: start - Duration::days(count),
+                    end: start - Duration::days(1),
+                    hours: None,
+                    hourly: false,
+                }),
+                kind,
+            )
+        }
         _ => {
             let start = earliest_day(connection).unwrap_or(today).min(today);
             let span = (today - start).num_days() + 1;
-            let kind = resolve_kind("all", &query.granularity, span);
+            let kind = resolve_kind(&query.granularity, false, span);
             (
                 Window {
                     start,
@@ -1427,8 +1423,7 @@ mod tests {
         AgentUsageQuery {
             range: range.to_string(),
             sources: Vec::new(),
-            group_by: String::new(),
-            granularity: String::new(),
+            ..AgentUsageQuery::default()
         }
     }
 
@@ -1876,6 +1871,39 @@ mod tests {
             report_hours.timeline.len() as u32,
             6 * 24 + Local::now().hour() + 1
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reports_a_custom_date_range_against_the_previous_period() {
+        let root = test_root("custom-range");
+        let connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        insert_daily(&connection, "f1", "pi", &day_offset(2), 10);
+        insert_daily(&connection, "f2", "pi", &day_offset(5), 7);
+        insert_daily(&connection, "f3", "pi", &day_offset(10), 100);
+        let mut custom = query("custom");
+        custom.start = day_offset(4);
+        custom.end = day_offset(2);
+        let report_range = report(&connection, &custom).unwrap();
+        assert_eq!(report_range.bucket, "day");
+        assert_eq!(report_range.timeline.len(), 3);
+        assert_eq!(report_range.totals.total_tokens, 10);
+        assert_eq!(report_range.previous.as_ref().unwrap().total_tokens, 7);
+        let mut one_day = query("custom");
+        one_day.start = day_offset(2);
+        one_day.end = day_offset(2);
+        let report_day = report(&connection, &one_day).unwrap();
+        assert_eq!(report_day.bucket, "hour");
+        assert_eq!(report_day.timeline.len(), 24);
+        let mut old_hours = query("custom");
+        old_hours.start = day_offset(40);
+        old_hours.end = day_offset(1);
+        old_hours.granularity = "hour".to_string();
+        assert_eq!(report(&connection, &old_hours).unwrap().bucket, "day");
+        let mut future = query("custom");
+        future.start = day_offset(3);
+        future.end = day_offset(-5);
+        assert_eq!(report(&connection, &future).unwrap().timeline.len(), 4);
         fs::remove_dir_all(root).unwrap();
     }
 

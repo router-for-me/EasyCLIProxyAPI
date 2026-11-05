@@ -315,6 +315,11 @@ export function UsageRecordsPage() {
       if (!quiet) setLoading(true);
       if (activeTab === 'agent-usage') {
         setLoading(false);
+        try {
+          const nextStatus = await getUsageCollectorStatus();
+          if (requestId === requestIdRef.current) setStatus(nextStatus);
+        } catch {
+        }
         return;
       }
       try {

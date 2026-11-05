@@ -109,7 +109,7 @@ export type AgentUsageStorage = {
   lastSyncAt: string;
 };
 
-export const AGENT_USAGE_TIME_RANGES = ['today', '24h', '7d', '30d', 'all'] as const;
+export const AGENT_USAGE_TIME_RANGES = ['today', '7d', '30d', 'all', 'custom'] as const;
 export type AgentUsageTimeRange = (typeof AGENT_USAGE_TIME_RANGES)[number];
 
 export const AGENT_USAGE_GRANULARITIES = ['hour', 'day', 'week', 'month'] as const;
@@ -121,11 +121,56 @@ export type AgentUsageMetric = (typeof AGENT_USAGE_METRICS)[number];
 export const AGENT_USAGE_GROUP_BY = ['source', 'model'] as const;
 export type AgentUsageGroupBy = (typeof AGENT_USAGE_GROUP_BY)[number];
 
+export const AGENT_USAGE_HOURLY_DAYS = 30;
+
+export const AGENT_USAGE_PRESETS = ['yesterday', 'thisWeek', 'lastWeek', 'thisMonth', 'lastMonth', 'last90Days', 'thisYear', 'lastYear'] as const;
+export type AgentUsagePreset = (typeof AGENT_USAGE_PRESETS)[number];
+
+export type AgentUsageDateRange = { start: string; end: string };
+
+export const agentUsageDay = (date: Date): string => [
+  date.getFullYear(),
+  String(date.getMonth() + 1).padStart(2, '0'),
+  String(date.getDate()).padStart(2, '0'),
+].join('-');
+
+export function agentUsagePresetRange(preset: AgentUsagePreset, now: Date): AgentUsageDateRange {
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const date = now.getDate();
+  const day = (offset: number) => new Date(year, month, date + offset);
+  const monday = -((now.getDay() + 6) % 7);
+  const ranges: Record<AgentUsagePreset, [Date, Date]> = {
+    yesterday: [day(-1), day(-1)],
+    thisWeek: [day(monday), day(0)],
+    lastWeek: [day(monday - 7), day(monday - 1)],
+    thisMonth: [new Date(year, month, 1), day(0)],
+    lastMonth: [new Date(year, month - 1, 1), new Date(year, month, 0)],
+    last90Days: [day(-89), day(0)],
+    thisYear: [new Date(year, 0, 1), day(0)],
+    lastYear: [new Date(year - 1, 0, 1), new Date(year - 1, 11, 31)],
+  };
+  const [start, end] = ranges[preset];
+  return { start: agentUsageDay(start), end: agentUsageDay(end) };
+}
+
+export function agentUsageHourAvailable(range: AgentUsageTimeRange, start: string, now: Date): boolean {
+  if (range === 'all') return false;
+  if (range !== 'custom') return true;
+  return start > agentUsageDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - AGENT_USAGE_HOURLY_DAYS));
+}
+
+export function rangeGranularity(current: AgentUsageGranularity | '', hourAvailable: boolean): AgentUsageGranularity | '' {
+  return !hourAvailable && current === 'hour' ? 'day' : current;
+}
+
 export type AgentUsageQuery = {
   range: AgentUsageTimeRange;
   sources?: string[];
   groupBy?: AgentUsageGroupBy;
   granularity?: AgentUsageGranularity | '';
+  start?: string;
+  end?: string;
 };
 
 const tokenValue = (value: unknown, ...keys: string[]): number => {
@@ -310,7 +355,8 @@ export function formatAgentUsageBucket(bucket: string, kind: AgentUsageReport['b
   return bucket;
 }
 
-export function formatAgentUsageAxisLabel(bucket: string, kind: AgentUsageReport['bucket']): string {
+export function formatAgentUsageAxisLabel(bucket: string, kind: AgentUsageReport['bucket'], previous?: string): string {
+  if (kind !== 'month' && previous && previous.slice(0, 4) !== bucket.slice(0, 4)) return formatAgentUsageBucket(bucket, kind);
   if (kind === 'hour') {
     const [date, hour] = bucket.split('T');
     return `${date.slice(5)} ${hour}:00`;
