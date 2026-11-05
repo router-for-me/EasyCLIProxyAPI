@@ -144,13 +144,6 @@ export function EcpaPluginsPage() {
 
   return (
     <div className="ecpa-plugins-page" role="region" aria-label={t('ecpaPlugins.title')}>
-      <header className="ecpa-plugins-header">
-        <div className="ecpa-plugins-heading">
-          <h1>{t('ecpaPlugins.title')}</h1>
-          <p className="ecpa-plugins-subtitle">{t('ecpaPlugins.subtitle')}</p>
-        </div>
-      </header>
-
       <div className="ecpa-plugins-controls">
         <div className="ecpa-plugin-search search-control" data-size="default">
           <Search size={17} aria-hidden="true" />

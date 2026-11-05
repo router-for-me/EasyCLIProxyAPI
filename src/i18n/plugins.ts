@@ -15,6 +15,7 @@ const messages = {
   configOnly: ['仅配置', 'Configuration only', '設定のみ'],
   store: ['插件商店', 'Plugin store', 'ストア'],
   settings: ['插件设置', 'Plugin settings', '設定'],
+  featured: ['ECPA 精选', 'ECPA Featured', 'ECPA 厳選'],
   developmentGuide: ['开发指南', 'Development guide', '開発ガイド'],
   search: ['搜索名称、作者或插件 ID', 'Search name, author or ID', '名前・作者・ID を検索'],
   all: ['全部', 'All', 'すべて'],

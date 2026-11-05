@@ -9,37 +9,6 @@
   padding: 0 0 24px;
 }
 
-.ecpa-plugins-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.ecpa-plugins-heading {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.ecpa-plugins-heading h1 {
-  margin: 0;
-  font-size: var(--font-size-panel-title);
-  line-height: var(--line-height-tight);
-  color: var(--text-primary);
-}
-
-.ecpa-plugins-subtitle {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
-
 .ecpa-plugins-controls {
   display: flex;
   flex-wrap: wrap;
