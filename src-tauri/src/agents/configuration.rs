@@ -1286,12 +1286,52 @@ pub(crate) fn claude_desktop_inference_model(
     if let Some(tier) = claude_desktop_family_tier(route_model) {
         entry.insert("anthropicFamilyTier".to_string(), serde_json::json!(tier));
         entry.insert("isFamilyDefault".to_string(), serde_json::json!(true));
+        let listed = if use_source { source_model } else { route_model };
+        if !is_recognized_claude_model_id(listed) {
+            if let Some(behaves_as) = claude_desktop_behaves_as(tier) {
+                entry.insert("behavesAs".to_string(), serde_json::json!(behaves_as));
+            }
+        }
     }
     if enable_1m {
         entry.insert("supports1m".to_string(), serde_json::json!(true));
         entry.insert("prefer1m".to_string(), serde_json::json!(true));
     }
     serde_json::Value::Object(entry)
+}
+
+// Claude Desktop 4.29+ reads behavesAs from a profile's inferenceModels to
+// pick which Claude model's prompt profile, capabilities and effort
+// defaults a listed route runs under. The values are the newest model of
+// each tier in Desktop's own catalog. A tier with no entry here is left
+// out rather than guessed, and a route that is already a real Claude model
+// needs no mapping. Older Desktop builds ignore the key.
+pub(crate) fn claude_desktop_behaves_as(tier: &str) -> Option<&'static str> {
+    match tier {
+        "opus" => Some("claude-opus-5-5"),
+        "sonnet" => Some("claude-sonnet-5-5"),
+        "haiku" => Some("claude-haiku-5-5"),
+        "fable" => Some("claude-fable-5-1"),
+        _ => None,
+    }
+}
+
+// A Claude model id Desktop and Claude Code both recognize:
+// claude-<tier>-<digits>(-<digits>)*. Our generated route ids carry a
+// trailing word (`claude-opus-5-cpa`), which is not recognized.
+fn is_recognized_claude_model_id(name: &str) -> bool {
+    let lowered = name.trim().to_ascii_lowercase();
+    let Some(rest) = lowered.strip_prefix("claude-") else { return false };
+    let mut parts = rest.split('-');
+    let Some(tier) = parts.next() else { return false };
+    if !matches!(tier, "opus" | "sonnet" | "haiku" | "fable" | "mythos") {
+        return false;
+    }
+    let Some(version) = parts.next() else { return false };
+    if version.is_empty() || !version.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    parts.all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
 }
 
 pub(crate) fn claude_desktop_family_tier(route_model: &str) -> Option<&'static str> {
