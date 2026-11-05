@@ -2671,7 +2671,7 @@ pub(crate) fn read_codex_asar_version(path: &Path) -> Option<String> {
     normalize_detected_agent_version(package.get("version")?.as_str()?)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 pub(crate) fn windows_powershell_single_quoted_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
@@ -3256,9 +3256,8 @@ pub(crate) fn inspect_claude_code_model_mappings(
             .map_err(|error| format!("Failed to read Claude Code configuration: {error}"))?,
     )
     .map_err(|error| format!("Failed to parse Claude Code configuration: {error}"))?;
-    let Some(env) = root.get("env").and_then(serde_json::Value::as_object) else {
-        return Ok(None);
-    };
+    let empty_env = serde_json::Map::new();
+    let env = root.get("env").and_then(serde_json::Value::as_object).unwrap_or(&empty_env);
     let fallback = env
         .get("ANTHROPIC_MODEL")
         .and_then(serde_json::Value::as_str)
@@ -3271,7 +3270,8 @@ pub(crate) fn inspect_claude_code_model_mappings(
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .or(fallback)?;
+            .or(fallback)
+            .or_else(|| root.get("language").and_then(serde_json::Value::as_str).map(|_| ""))?;
         let normalized = strip_claude_code_context_suffix(value);
         Some((normalized.to_string(), normalized.len() != value.len()))
     };
@@ -3344,6 +3344,7 @@ pub(crate) fn inspect_claude_code_model_mappings(
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_string()),
+        response_language: root.get("language").and_then(serde_json::Value::as_str).map(str::to_string),
     }))
 }
 
@@ -3476,6 +3477,7 @@ pub(crate) fn claude_code_model_settings(
         manage_subagent_model: mappings.manage_subagent_model,
         startup_model: mappings.startup_model.clone(),
         subagent_model: mappings.subagent_model.clone(),
+        response_language: mappings.response_language.clone(),
     }
 }
 

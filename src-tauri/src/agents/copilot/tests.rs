@@ -167,18 +167,37 @@ fn copilot_helper_uses_environment_without_putting_key_in_arguments() {
     let home = Home::new();
     home.apply(AgentClient::CopilotCli, "model with spaces");
     let path = copilot_config_paths(AgentClient::CopilotCli, &home.0).remove(0);
+    #[cfg(not(unix))]
     let executable = env::current_exe().unwrap();
+    #[cfg(unix)]
+    let executable = {
+        use std::os::unix::fs::PermissionsExt;
+        let executable = home.0.join("copilot argv recorder");
+        fs::write(&executable, "#!/bin/sh\nprintf '%s\\0' \"$@\"; printf '%s\\0' \"$COPILOT_MODEL\" \"$COPILOT_PROVIDER_API_KEY\" \"${COPILOT_PROVIDER_BEARER_TOKEN-unset}\"\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        executable
+    };
     let args = [
         "ezcpa".into(),
         "--cpa-copilot-cli".into(),
         path.into_os_string(),
         executable.into_os_string(),
         "--help".into(),
+        "two words".into(),
+        "".into(),
+        "$(literal); & | %PATH% !bang! 日本語".into(),
+        "--cpa-antigravity-cli".into(),
+        "--cpa-copilot-cli".into(),
+        "--portable-update-helper".into(),
+        "a\"b".into(),
+        "C:\\Work files\\".into(),
+        "--verbose".into(),
+        "--verbose".into(),
     ];
-    let command = copilot_helper_command(&args).unwrap();
+    let mut command = copilot_helper_command(&args).unwrap();
     assert_eq!(
         command.get_args().collect::<Vec<_>>(),
-        vec![std::ffi::OsStr::new("--help")]
+        args.iter().skip(4).map(|value| value.as_os_str()).collect::<Vec<_>>()
     );
     let environment = command
         .get_envs()
@@ -195,6 +214,16 @@ fn copilot_helper_uses_environment_without_putting_key_in_arguments() {
         environment[std::ffi::OsStr::new("COPILOT_PROVIDER_BEARER_TOKEN")],
         None
     );
+    #[cfg(unix)]
+    {
+        let expected = args.iter().skip(4).map(|value| value.to_str().unwrap().to_string())
+            .chain(["model with spaces".into(), "fixture-key".into(), "unset".into()]).collect::<Vec<_>>();
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        let received = output.stdout.strip_suffix(&[0]).unwrap().split(|byte| *byte == 0)
+            .map(|value| String::from_utf8(value.to_vec()).unwrap()).collect::<Vec<_>>();
+        assert_eq!(received, expected);
+    }
 }
 
 #[test]

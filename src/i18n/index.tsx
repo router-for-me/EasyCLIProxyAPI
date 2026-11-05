@@ -24,6 +24,10 @@ export function getCurrentLocale(): AppLocale {
   return currentLocale;
 }
 
+export function setCurrentLocale(locale: AppLocale): void {
+  currentLocale = normalizeLocale(locale);
+}
+
 export function normalizeLocale(value: string | null | undefined): AppLocale {
   const normalized = value?.trim().toLowerCase() ?? '';
   if (normalized.startsWith('ja')) return 'ja';
@@ -70,7 +74,7 @@ const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, updateLocale] = useState<AppLocale>(detectInitialLocale);
-  currentLocale = locale;
+  setCurrentLocale(locale);
 
   const setLocale = useCallback((nextLocale: AppLocale) => {
     updateLocale(normalizeLocale(nextLocale));

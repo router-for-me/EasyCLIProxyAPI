@@ -4,6 +4,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::core_config::{
+    core_config_uses_v8, lock_core_config_file, nested_yaml_value,
+    patch_existing_core_config, read_core_config_document, set_core_yaml_path_value,
+};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -27,12 +31,126 @@ pub struct ReverseProxyConfig {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ReverseProxyHardening {
+    pub loopback_bind: bool,
+    pub trusted_proxies: bool,
+    pub restart_required: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ReverseProxyState {
     pub running: bool,
     pub listening: Option<String>, // "0.0.0.0:443"
     pub target: Option<String>,    // "127.0.0.1:8317"
     pub requests_total: u64,
     pub error: Option<String>, // last failure, user-facing and specific
+    pub hardening: ReverseProxyHardening,
+}
+
+pub fn harden_core_config_document(document: &mut serde_norway::Value) -> Result<bool, String> {
+    let v8 = core_config_uses_v8(document);
+    let (host_path, proxies_path): (&[&str], &[&str]) = if v8 {
+        (&["server", "host"], &["server", "trusted-proxies"])
+    } else {
+        (&["host"], &["trusted-proxies"])
+    };
+
+    let mut changed = set_core_yaml_path_value(
+        document,
+        host_path,
+        serde_norway::Value::String("127.0.0.1".to_string()),
+    )?;
+
+    let (already_contains, existing_items) = {
+        let root = document
+            .as_mapping()
+            .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+        match nested_yaml_value(root, proxies_path).and_then(|v| v.as_sequence()) {
+            Some(seq) => {
+                let contains = seq.iter().any(|item| item.as_str() == Some("127.0.0.1"));
+                (contains, seq.clone())
+            }
+            None => (false, Vec::new()),
+        }
+    };
+
+    if !already_contains {
+        let mut new_seq = existing_items;
+        new_seq.push(serde_norway::Value::String("127.0.0.1".to_string()));
+        let proxies_changed = set_core_yaml_path_value(
+            document,
+            proxies_path,
+            serde_norway::Value::Sequence(new_seq),
+        )?;
+        changed |= proxies_changed;
+    }
+
+    Ok(changed)
+}
+
+pub fn read_core_hardening(document: &serde_norway::Value) -> ReverseProxyHardening {
+    let (host_val, proxies_val) = if let Some(root) = document.as_mapping() {
+        if core_config_uses_v8(document) {
+            (
+                nested_yaml_value(root, &["server", "host"]),
+                nested_yaml_value(root, &["server", "trusted-proxies"]),
+            )
+        } else {
+            (
+                nested_yaml_value(root, &["host"]),
+                nested_yaml_value(root, &["trusted-proxies"]),
+            )
+        }
+    } else {
+        (None, None)
+    };
+
+    let loopback_bind = host_val.and_then(|v| v.as_str()) == Some("127.0.0.1");
+    let trusted_proxies = proxies_val
+        .and_then(|v| v.as_sequence())
+        .map(|seq| seq.iter().any(|item| item.as_str() == Some("127.0.0.1")))
+        .unwrap_or(false);
+
+    ReverseProxyHardening {
+        loopback_bind,
+        trusted_proxies,
+        restart_required: false,
+    }
+}
+
+pub fn apply_core_hardening() -> Result<ReverseProxyHardening, String> {
+    let install_dir = crate::core_runtime::core_install_dir()?;
+    let config_path = install_dir.join(crate::CORE_CONFIG_FILE);
+    if !config_path.is_file() {
+        return Err("Kernel configuration has not been generated. Start the CPA kernel first".to_string());
+    }
+
+    let mut changed = false;
+    patch_existing_core_config(|document| {
+        changed = harden_core_config_document(document)?;
+        Ok(changed)
+    })?;
+
+    let _config_guard = lock_core_config_file()?;
+    let (_, document) = read_core_config_document()?;
+    let mut hardening = read_core_hardening(document.get());
+    hardening.restart_required = changed;
+    Ok(hardening)
+}
+
+pub fn read_installed_core_hardening() -> ReverseProxyHardening {
+    let Ok(_config_guard) = lock_core_config_file() else {
+        return ReverseProxyHardening::default();
+    };
+    match read_core_config_document() {
+        Ok((_, document)) => {
+            let mut hardening = read_core_hardening(document.get());
+            hardening.restart_required = false;
+            hardening
+        }
+        Err(_) => ReverseProxyHardening::default(),
+    }
 }
 
 pub fn is_hop_by_hop(name: &hyper::header::HeaderName) -> bool {
@@ -306,6 +424,7 @@ struct ReverseProxyInner {
     target: Option<String>,
     error: Option<String>,
     stored_config: ReverseProxyConfig,
+    hardening: ReverseProxyHardening,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     server_task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -333,6 +452,7 @@ impl ReverseProxyManagerState {
             target: guard.target.clone(),
             requests_total: self.requests_total.load(Ordering::Relaxed),
             error: guard.error.clone(),
+            hardening: guard.hardening.clone(),
         })
     }
 
@@ -358,7 +478,12 @@ impl ReverseProxyManagerState {
         self.get_state()
     }
 
-    pub async fn start(&self, config: ReverseProxyConfig) -> Result<ReverseProxyState, String> {
+    pub async fn start<A: Into<Option<tauri::AppHandle>>>(
+        &self,
+        config: ReverseProxyConfig,
+        app: A,
+    ) -> Result<ReverseProxyState, String> {
+        let app = app.into();
         self.stop().await?;
 
         if let Err(err) = validate_config(&config) {
@@ -459,6 +584,22 @@ impl ReverseProxyManagerState {
             }
         });
 
+        let (mut hardening, mut restart_error) = match apply_core_hardening() {
+            Ok(h) => (h, None),
+            Err(err) => (ReverseProxyHardening::default(), Some(err)),
+        };
+
+        if hardening.restart_required {
+            if let Some(app_handle) = app {
+                if let Err(err) = crate::core_runtime::restart_core_process(app_handle).await {
+                    restart_error = Some(format!("Failed to restart CPA kernel: {err}"));
+                    hardening.restart_required = true;
+                } else {
+                    hardening.restart_required = false;
+                }
+            }
+        }
+
         {
             let mut guard = self
                 .inner
@@ -467,8 +608,9 @@ impl ReverseProxyManagerState {
             guard.running = true;
             guard.listening = Some(listening_addr);
             guard.target = Some(target_addr);
-            guard.error = None;
+            guard.error = restart_error;
             guard.stored_config = config;
+            guard.hardening = hardening;
             guard.shutdown_tx = Some(shutdown_tx);
             guard.server_task = Some(server_task);
         }
@@ -476,7 +618,12 @@ impl ReverseProxyManagerState {
         self.get_state()
     }
 
-    pub async fn apply(&self, config: ReverseProxyConfig) -> Result<ReverseProxyState, String> {
+    pub async fn apply<A: Into<Option<tauri::AppHandle>>>(
+        &self,
+        config: ReverseProxyConfig,
+        app: A,
+    ) -> Result<ReverseProxyState, String> {
+        let app = app.into();
         {
             let mut guard = self
                 .inner
@@ -486,7 +633,7 @@ impl ReverseProxyManagerState {
         }
 
         if config.enabled {
-            self.start(config).await
+            self.start(config, app).await
         } else {
             self.stop().await
         }
@@ -497,23 +644,33 @@ impl ReverseProxyManagerState {
 pub async fn reverse_proxy_get_state(
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
-    state.get_state()
+    let mut current = state.get_state()?;
+    let previous_restart_required = current.hardening.restart_required;
+    let mut hardening = read_installed_core_hardening();
+    hardening.restart_required = previous_restart_required;
+    current.hardening = hardening;
+    if let Ok(mut guard) = state.inner.lock() {
+        guard.hardening = current.hardening.clone();
+    }
+    Ok(current)
 }
 
 #[tauri::command]
 pub async fn reverse_proxy_apply(
+    app: tauri::AppHandle,
     config: ReverseProxyConfig,
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
-    state.apply(config).await
+    state.apply(config, app).await
 }
 
 #[tauri::command]
 pub async fn reverse_proxy_start(
+    app: tauri::AppHandle,
     config: ReverseProxyConfig,
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
-    state.start(config).await
+    state.start(config, app).await
 }
 
 #[tauri::command]
@@ -803,7 +960,7 @@ mod tests {
             key_path: key_file.to_str().unwrap().to_string(),
         };
 
-        let state = manager.start(config.clone()).await.unwrap();
+        let state = manager.start(config.clone(), None).await.unwrap();
         assert!(state.running);
         assert_eq!(state.listening, Some(format!("127.0.0.1:{proxy_port}")));
         assert_eq!(state.target, Some(format!("127.0.0.1:{target_port}")));
@@ -870,7 +1027,7 @@ mod tests {
             cert_path: "/tmp/cert.pem".to_string(),
             key_path: "/tmp/key.pem".to_string(),
         };
-        let state = manager.apply(cfg).await.unwrap();
+        let state = manager.apply(cfg, None).await.unwrap();
         assert!(!state.running);
 
         // Apply enabled config with invalid/missing cert fails closed
@@ -882,7 +1039,7 @@ mod tests {
             cert_path: "/tmp/nonexistent_cert.pem".to_string(),
             key_path: "/tmp/nonexistent_key.pem".to_string(),
         };
-        let res = manager.apply(cfg_enabled).await;
+        let res = manager.apply(cfg_enabled, None).await;
         assert!(res.is_err());
 
         // State remains running = false and records specific error
@@ -890,5 +1047,258 @@ mod tests {
         assert!(!state.running);
         assert!(state.error.is_some());
         assert!(state.error.unwrap().contains("Certificate file does not exist"));
+    }
+
+    #[test]
+    fn test_hardening_already_correct_document_is_idempotent() {
+        // Legacy document
+        let mut legacy: serde_norway::Value = serde_norway::from_str(
+            r#"
+host: "127.0.0.1"
+trusted-proxies:
+  - "127.0.0.1"
+port: 8317
+"#,
+        )
+        .unwrap();
+        let changed = harden_core_config_document(&mut legacy).unwrap();
+        assert!(!changed);
+        assert_eq!(legacy["host"].as_str().unwrap(), "127.0.0.1");
+        let proxies = legacy["trusted-proxies"].as_sequence().unwrap();
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0].as_str().unwrap(), "127.0.0.1");
+
+        // v8 document
+        let mut v8: serde_norway::Value = serde_norway::from_str(
+            r#"
+config-version: 8
+server:
+  host: "127.0.0.1"
+  trusted-proxies:
+    - "127.0.0.1"
+  port: 8317
+"#,
+        )
+        .unwrap();
+        let changed = harden_core_config_document(&mut v8).unwrap();
+        assert!(!changed);
+        assert_eq!(v8["server"]["host"].as_str().unwrap(), "127.0.0.1");
+        let proxies = v8["server"]["trusted-proxies"].as_sequence().unwrap();
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0].as_str().unwrap(), "127.0.0.1");
+    }
+
+    #[test]
+    fn test_hardening_legacy_vs_v8_document_layout() {
+        // Legacy document gets top-level host and trusted-proxies
+        let mut legacy: serde_norway::Value = serde_norway::from_str(
+            r#"
+host: "0.0.0.0"
+port: 8317
+"#,
+        )
+        .unwrap();
+        let changed = harden_core_config_document(&mut legacy).unwrap();
+        assert!(changed);
+        assert_eq!(legacy["host"].as_str().unwrap(), "127.0.0.1");
+        let proxies = legacy["trusted-proxies"].as_sequence().unwrap();
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0].as_str().unwrap(), "127.0.0.1");
+        assert!(legacy.get("server").is_none());
+
+        // v8 document gets server.host and server.trusted-proxies
+        let mut v8: serde_norway::Value = serde_norway::from_str(
+            r#"
+config-version: 8
+server:
+  host: "0.0.0.0"
+  port: 8317
+"#,
+        )
+        .unwrap();
+        let changed = harden_core_config_document(&mut v8).unwrap();
+        assert!(changed);
+        assert_eq!(v8["server"]["host"].as_str().unwrap(), "127.0.0.1");
+        let proxies = v8["server"]["trusted-proxies"].as_sequence().unwrap();
+        assert_eq!(proxies.len(), 1);
+        assert_eq!(proxies[0].as_str().unwrap(), "127.0.0.1");
+        assert!(v8.get("host").is_none());
+    }
+
+    #[test]
+    fn test_hardening_preserves_existing_trusted_proxies_no_duplicate() {
+        // v8 document with existing proxies
+        let mut v8: serde_norway::Value = serde_norway::from_str(
+            r#"
+config-version: 8
+server:
+  host: "0.0.0.0"
+  trusted-proxies:
+    - "10.0.0.1"
+    - "192.168.1.50"
+"#,
+        )
+        .unwrap();
+        let changed = harden_core_config_document(&mut v8).unwrap();
+        assert!(changed);
+        assert_eq!(v8["server"]["host"].as_str().unwrap(), "127.0.0.1");
+        let proxies = v8["server"]["trusted-proxies"].as_sequence().unwrap();
+        assert_eq!(proxies.len(), 3);
+        assert_eq!(proxies[0].as_str().unwrap(), "10.0.0.1");
+        assert_eq!(proxies[1].as_str().unwrap(), "192.168.1.50");
+        assert_eq!(proxies[2].as_str().unwrap(), "127.0.0.1");
+
+        // Second run should be idempotent and not duplicate 127.0.0.1
+        let changed_again = harden_core_config_document(&mut v8).unwrap();
+        assert!(!changed_again);
+        let proxies_again = v8["server"]["trusted-proxies"].as_sequence().unwrap();
+        assert_eq!(proxies_again.len(), 3);
+        assert_eq!(proxies_again[0].as_str().unwrap(), "10.0.0.1");
+        assert_eq!(proxies_again[1].as_str().unwrap(), "192.168.1.50");
+        assert_eq!(proxies_again[2].as_str().unwrap(), "127.0.0.1");
+
+        // Legacy document with existing proxies
+        let mut legacy: serde_norway::Value = serde_norway::from_str(
+            r#"
+host: "127.0.0.1"
+trusted-proxies:
+  - "172.16.0.1"
+"#,
+        )
+        .unwrap();
+        let changed = harden_core_config_document(&mut legacy).unwrap();
+        assert!(changed);
+        let proxies = legacy["trusted-proxies"].as_sequence().unwrap();
+        assert_eq!(proxies.len(), 2);
+        assert_eq!(proxies[0].as_str().unwrap(), "172.16.0.1");
+        assert_eq!(proxies[1].as_str().unwrap(), "127.0.0.1");
+
+        // Second run
+        let changed_again = harden_core_config_document(&mut legacy).unwrap();
+        assert!(!changed_again);
+        let proxies_again = legacy["trusted-proxies"].as_sequence().unwrap();
+        assert_eq!(proxies_again.len(), 2);
+    }
+
+    #[test]
+    fn test_read_core_hardening_truth_table() {
+        // 1. Both correct (v8)
+        let doc_both_ok: serde_norway::Value = serde_norway::from_str(
+            r#"
+config-version: 8
+server:
+  host: "127.0.0.1"
+  trusted-proxies:
+    - "10.0.0.1"
+    - "127.0.0.1"
+"#,
+        )
+        .unwrap();
+        let h = read_core_hardening(&doc_both_ok);
+        assert!(h.loopback_bind);
+        assert!(h.trusted_proxies);
+        assert!(!h.restart_required);
+
+        // 2. Both correct (legacy)
+        let doc_legacy_ok: serde_norway::Value = serde_norway::from_str(
+            r#"
+host: "127.0.0.1"
+trusted-proxies:
+  - "127.0.0.1"
+"#,
+        )
+        .unwrap();
+        let h = read_core_hardening(&doc_legacy_ok);
+        assert!(h.loopback_bind);
+        assert!(h.trusted_proxies);
+        assert!(!h.restart_required);
+
+        // 3. Host wrong (0.0.0.0), trusted-proxies correct
+        let doc_host_wrong: serde_norway::Value = serde_norway::from_str(
+            r#"
+config-version: 8
+server:
+  host: "0.0.0.0"
+  trusted-proxies:
+    - "127.0.0.1"
+"#,
+        )
+        .unwrap();
+        let h = read_core_hardening(&doc_host_wrong);
+        assert!(!h.loopback_bind);
+        assert!(h.trusted_proxies);
+
+        // 4. Host correct (127.0.0.1), trusted-proxies missing
+        let doc_proxies_missing: serde_norway::Value = serde_norway::from_str(
+            r#"
+config-version: 8
+server:
+  host: "127.0.0.1"
+"#,
+        )
+        .unwrap();
+        let h = read_core_hardening(&doc_proxies_missing);
+        assert!(h.loopback_bind);
+        assert!(!h.trusted_proxies);
+
+        // 5. Host correct, trusted-proxies does not contain 127.0.0.1
+        let doc_proxies_wrong: serde_norway::Value = serde_norway::from_str(
+            r#"
+config-version: 8
+server:
+  host: "127.0.0.1"
+  trusted-proxies:
+    - "10.0.0.1"
+"#,
+        )
+        .unwrap();
+        let h = read_core_hardening(&doc_proxies_wrong);
+        assert!(h.loopback_bind);
+        assert!(!h.trusted_proxies);
+
+        // 6. Both wrong
+        let doc_both_wrong: serde_norway::Value = serde_norway::from_str(
+            r#"
+config-version: 8
+server:
+  host: "0.0.0.0"
+  trusted-proxies:
+    - "10.0.0.1"
+"#,
+        )
+        .unwrap();
+        let h = read_core_hardening(&doc_both_wrong);
+        assert!(!h.loopback_bind);
+        assert!(!h.trusted_proxies);
+
+        // 7. Non-mapping / empty value
+        let doc_empty = serde_norway::Value::Null;
+        let h = read_core_hardening(&doc_empty);
+        assert!(!h.loopback_bind);
+        assert!(!h.trusted_proxies);
+        assert!(!h.restart_required);
+    }
+
+    #[tokio::test]
+    async fn test_reverse_proxy_get_state_preserves_restart_required() {
+        use tauri::Manager;
+        let app = tauri::test::mock_app();
+        let manager = ReverseProxyManagerState::new();
+        {
+            let mut guard = manager.inner.lock().unwrap();
+            guard.hardening.restart_required = true;
+        }
+        app.manage(manager);
+        let state = app.state::<ReverseProxyManagerState>();
+        let res = reverse_proxy_get_state(state).await.unwrap();
+        assert!(res.hardening.restart_required);
+
+        // When not required, it remains false
+        let app2 = tauri::test::mock_app();
+        let manager2 = ReverseProxyManagerState::new();
+        app2.manage(manager2);
+        let state2 = app2.state::<ReverseProxyManagerState>();
+        let res2 = reverse_proxy_get_state(state2).await.unwrap();
+        assert!(!res2.hardening.restart_required);
     }
 }

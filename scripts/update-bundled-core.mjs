@@ -169,7 +169,27 @@ export async function updateBundledCore({
   fetchLatest = fetchLatestUpstreamVersion,
 } = {}) {
   const currentVersion = await readCurrentCoreVersion(coreVersionFile);
-  const latestVersion = await fetchLatest();
+
+  let latestVersion;
+  try {
+    latestVersion = await fetchLatest();
+  } catch (err) {
+    // The released build bundles whichever version core-version.txt pins, and
+    // the core archive is restored from a cache keyed by that file. A flaky
+    // upstream lookup therefore must not block a release; only a checkout with
+    // nothing pinned has no usable version to build against.
+    if (checkOnly || !currentVersion) {
+      throw err;
+    }
+    console.warn(`Keeping pinned core version ${currentVersion}: ${err.message}`);
+    return {
+      updated: false,
+      updateAvailable: false,
+      currentVersion,
+      latestVersion: currentVersion,
+      fetchFailed: true,
+    };
+  }
 
   const isNewer = !currentVersion || compareSemver(latestVersion, currentVersion) > 0;
 

@@ -1,6 +1,6 @@
 import { isRecord, managementApi, readString } from './managementApi';
 import { authFileCooldownResetIndex, isOAuthCredentialFile, normalizeAuthFileTags, type AuthFileRecord } from './authFiles';
-import { resolveCredentialTags, setCredentialTags } from './credentialTags';
+import { parseCredentialTagInput, replaceCredentialTag, resolveCredentialTags, setCredentialTags } from './credentialTags';
 
 export type CredentialResult = { id: string; success: boolean; error?: string };
 type RefreshApi = Pick<typeof managementApi, 'post'>;
@@ -38,14 +38,14 @@ export async function runCredentialBatch(files: AuthFileRecord[], action: (file:
 
 export async function batchAddCredentialTag(
   files: AuthFileRecord[],
-  tag: string,
+  tag: string | string[],
   api: Pick<typeof managementApi, 'patch'> = managementApi,
 ): Promise<CredentialResult[]> {
-  const normalized = tag.trim();
-  if (!normalized) return [];
-  const targets = files.filter(file => !resolveCredentialTags(readString(file, 'name'), file.tags).includes(normalized));
+  const normalized = Array.isArray(tag) ? normalizeAuthFileTags(tag) : parseCredentialTagInput(tag);
+  if (!normalized.length) return [];
+  const targets = files.filter(file => normalized.some(tag => !resolveCredentialTags(readString(file, 'name'), file.tags).includes(tag)));
   return runCredentialBatch(targets, async file => {
-    await updateCredentialTags(file, [...resolveCredentialTags(readString(file, 'name'), file.tags), normalized], api);
+    await updateCredentialTags(file, [...resolveCredentialTags(readString(file, 'name'), file.tags), ...normalized], api);
   });
 }
 
@@ -68,8 +68,18 @@ export async function updateCredentialTags(
   api: Pick<typeof managementApi, 'patch'> = managementApi,
 ): Promise<string[]> {
   const normalized = normalizeAuthFileTags(tags);
-  setCredentialTags(readString(file, 'name'), normalized);
   await api.patch('/credentials/fields', { name: readString(file, 'name'), tags: normalized });
+  setCredentialTags(readString(file, 'name'), normalized);
   file.tags = normalized;
   return normalized;
+}
+
+export async function renameCredentialTag(
+  files: AuthFileRecord[], source: string, target: string,
+  api: Pick<typeof managementApi, 'patch'> = managementApi,
+): Promise<CredentialResult[]> {
+  const normalized = target.trim();
+  if (!normalized || normalized === source || /[,，\r\n]/.test(normalized)) return [];
+  return runCredentialBatch(files.filter(file => resolveCredentialTags(readString(file, 'name'), file.tags).includes(source)),
+    file => updateCredentialTags(file, replaceCredentialTag(resolveCredentialTags(readString(file, 'name'), file.tags), source, normalized), api));
 }

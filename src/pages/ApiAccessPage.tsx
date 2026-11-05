@@ -52,6 +52,8 @@ import metaIcon from '../assets/icons/meta.svg';
 import openaiIcon from '../assets/icons/openai-light.svg';
 import vertexIcon from '../assets/icons/vertex.svg';
 import grokIcon from '../assets/icons/grok.svg';
+import zaiIcon from '../assets/icons/zai.svg';
+import { isZaiCodingPlanRecord, ZAI_CODING_PLAN_BASE_URL } from '../services/zaiQuota';
 import {
   isRecord,
   managementApi,
@@ -101,7 +103,7 @@ import { Select } from '../components/Select';
 
 export type { ProviderSection } from '../services/apiAccessRemarks';
 
-export type ProviderCategory = ProviderSection | 'deepseek';
+export type ProviderCategory = ProviderSection | 'deepseek' | 'zai';
 
 export const OPENAI_THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 export { DEEPSEEK_BASE_URL };
@@ -257,6 +259,14 @@ const providerDefinitions: ProviderDefinition[] = [
     openAi: true,
   },
   {
+    id: 'zai',
+    section: 'openai-compatibility',
+    responseKey: 'openai-compatibility',
+    labelKey: 'apiAccess.provider.zai',
+    icon: zaiIcon,
+    openAi: true,
+  },
+  {
     id: 'deepseek',
     section: 'codex-api-key',
     responseKey: 'codex-api-key',
@@ -332,8 +342,11 @@ export const providerCategoryMatchesRecord = (
   if (category === 'codex-api-key') {
     return section === 'codex-api-key' && !isDeepSeekRecord(record);
   }
+  if (category === 'zai') {
+    return section === 'openai-compatibility' && isZaiCodingPlanRecord(record);
+  }
   if (category === 'openai-compatibility') {
-    return section === 'openai-compatibility';
+    return section === 'openai-compatibility' && !isZaiCodingPlanRecord(record);
   }
   return true;
 };
@@ -381,6 +394,7 @@ const rowFromRecord = (
 export const providerRowsFromGroups = (section: ProviderSection, groups: Record<string, unknown>[]): ProviderRow[] =>
   providerEntries(section, groups).map(({ record, source }, index) => {
     const deepSeek = section === 'codex-api-key' && (isDeepSeekRecord(record) || isDeepSeekRecord(source.group));
+    const zai = section === 'openai-compatibility' && (isZaiCodingPlanRecord(record) || isZaiCodingPlanRecord(source.group));
     const row = rowFromRecord(section, record, index);
     const key = source.keyIndex !== undefined && Array.isArray(source.group.keys)
       ? source.group.keys[source.keyIndex]
@@ -388,7 +402,7 @@ export const providerRowsFromGroups = (section: ProviderSection, groups: Record<
     return {
       ...row,
       source,
-      category: deepSeek ? 'deepseek' : section,
+      category: deepSeek ? 'deepseek' : zai ? 'zai' : section,
       name: deepSeek ? 'DeepSeek' : row.name,
       disabled: isRecord(key) ? providerKeyIsDisabled(source.group, key) : row.disabled,
     };
@@ -764,7 +778,14 @@ const emptyProviderDraft = (): ProviderDraft => ({
 
 export const createProviderDraft = (category: ProviderCategory): ProviderDraft => {
   const draft = emptyProviderDraft();
-  if (category === 'openai-compatibility') return { ...draft, thinkingLevels: [], thinkingLevelsEdited: false };
+  if (category === 'openai-compatibility' || category === 'zai') {
+    return {
+      ...draft,
+      ...(category === 'zai' ? { name: 'z.ai', baseUrl: ZAI_CODING_PLAN_BASE_URL } : {}),
+      thinkingLevels: [],
+      thinkingLevelsEdited: false,
+    };
+  }
   if (category !== 'deepseek') return draft;
   return {
     ...draft,
@@ -779,6 +800,8 @@ export const applyProviderRemarkIdentity = (
   draft: ProviderDraft,
 ): ProviderDraft => draft.groupKeys ? draft : category === 'deepseek'
   ? { ...draft, name: draft.name.trim() || 'DeepSeek' }
+  : category === 'zai'
+    ? { ...draft, name: draft.name.trim() || 'z.ai', baseUrl: draft.baseUrl.trim() || ZAI_CODING_PLAN_BASE_URL }
   : definitionFor(category).openAi
     ? { ...draft, name: draft.remark.trim() }
     : draft;
@@ -2262,7 +2285,7 @@ export function ApiProviderDialog({
         <div className="provider-dialog-basic-grid">
         {definition.openAi ? <label><span>{t('apiAccess.entries.name')}</span><input autoFocus value={draft.name} maxLength={80} onChange={(event) => updateTextField('name', event.currentTarget.value)} placeholder={t('apiAccess.entries.namePlaceholder')} /></label> : null}
         <label><span>{t('apiAccess.field.remark')}</span><input value={draft.remark} maxLength={80} onChange={(event) => updateTextField('remark', event.currentTarget.value)} placeholder={t('apiAccess.remarkPlaceholder')} /></label>
-        <label><span>{t('apiAccess.field.baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
+        <label><span>{t('apiAccess.field.baseUrl')}</span><input value={draft.baseUrl} onChange={(event) => updateTextField('baseUrl', event.currentTarget.value)} placeholder={activeCategory === 'zai' ? t('apiAccess.zai.basePlaceholder') : activeSection === 'codex-api-key' || activeSection === 'openai-compatibility' ? t('apiAccess.baseRequiredPlaceholder') : t('apiAccess.baseOptionalPlaceholder')} /></label>
         </div>
         {!definition.openAi ? <div className="provider-dialog-secret">
           <label><span>{t('apiAccess.field.key')}</span><input autoFocus type={keyVisible ? 'text' : 'password'} autoComplete="off" spellCheck={false}

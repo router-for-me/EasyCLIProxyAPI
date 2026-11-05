@@ -78,6 +78,7 @@ export type AgentLaunchTarget = {
 export type AgentModificationState = 'unconfigured' | 'applied' | 'invalid';
 
 export type ClaudeModelMappings = {
+  responseLanguage?: string | null;
   desktopModels?: ClaudeDesktopModelMapping[];
   opus: string;
   sonnet: string;
@@ -176,7 +177,7 @@ export const setAgentConfigEnabled = (args: { client: Exclude<AgentClientId, 'co
 export const clearCodexConfig = (): Promise<string[]> =>
   invoke<string[]>('clear_codex_config');
 
-export const launchAgent = (args: { client: AgentClientId; target: "app" | "cli"; executablePath: string | null; desktopExecutablePath: string | null; workingDirectory: string | null; deepseekHarnessOptions: DeepSeekHarnessLaunchOptions | null; }): Promise<void> =>
+export const launchAgent = (args: { client: AgentClientId; target: "app" | "cli"; executablePath: string | null; desktopExecutablePath: string | null; workingDirectory: string | null; deepseekHarnessOptions: DeepSeekHarnessLaunchOptions | null; customArguments?: string | null; }): Promise<void> =>
   invoke<void>('launch_agent', args);
 
 export const stopDeepSeekHarnessProcess = (): Promise<DeepSeekHarnessProcessStatus> =>

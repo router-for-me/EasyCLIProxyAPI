@@ -81,6 +81,8 @@ export function createQuotaMock() {
     if (path.endsWith('/api/oauth/usage')) return success({
       five_hour: { utilization: used ? 0 : 24, resets_at: future(3) },
       seven_day: { utilization: used ? 0 : 41, resets_at: future(72) },
+      iguana_necktie: { limit_dollars: '100.00', used_dollars: '23.50', remaining_dollars: '76.50', utilization: 23.5, resets_at: '2030-12-01T00:00:00Z' },
+      limits: [{ kind: 'weekly_scoped', percent: 32, is_active: true, scope: { model: { display_name: 'Fable 5' } }, resets_at: future(72) }],
       cedar_ember: { eligible: true, at_limit: false, next_grant_id: remaining ? 'mock-grant' : null,
         grants: [{ id: 'mock-grant', label: 'Preview quota resets', resets_total: 2, resets_left: remaining, ends_at: future(72), clears: ['five_hour', 'seven_day'], usable_now: remaining > 0, use_requires_limit: false }] },
     });

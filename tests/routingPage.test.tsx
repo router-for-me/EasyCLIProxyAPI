@@ -202,6 +202,14 @@ describe('routing components', () => {
       expect(translate(locale, 'routing.serving')).not.toBe('routing.serving');
     }
   });
+
+  it('translates routing review dialog copy in every supported locale', () => {
+    for (const locale of supportedLocales) {
+      expect(translate(locale, 'routing.reviewTitle')).not.toBe('routing.reviewTitle');
+      expect(translate(locale, 'routing.reviewHint', { count: 3 })).toContain('3');
+      expect(translate(locale, 'routing.reviewHint', { count: 3 })).not.toContain('{');
+    }
+  });
 });
 
 it('reads provider and credential metadata while keeping existing fields', async () => {
