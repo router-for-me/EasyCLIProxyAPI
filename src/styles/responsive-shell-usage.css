@@ -146,6 +146,10 @@
   min-height: 0;
 }
 
+.usage-live-routing-layout > .usage-stat-grid {
+  flex: none;
+}
+
 .usage-live-routing-layout > .live-routing-panel {
   flex: 1 1 auto;
   display: flex;
