@@ -39,6 +39,33 @@ fn message(stream: bool) -> serde_json::Value {
         "messages":[{"role":"user","content":"ping"}]})
 }
 
+async fn assert_proxy_serves(
+    manager: &ReverseProxyManagerState,
+    config: &ReverseProxyConfig,
+    url: &str,
+    error: Option<&str>,
+) {
+    let state = manager.get_state().unwrap();
+    assert!(state.running, "{state:?}");
+    assert_eq!(state.config.as_ref(), Some(config));
+    assert_eq!(state.error.as_deref(), error);
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .danger_accept_invalid_certs(true)
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap()
+        .post(url)
+        .header("x-api-key", "local-client-key")
+        .header("anthropic-version", "2023-06-01")
+        .json(&message(false))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(response.text().await.unwrap().contains("pong-proof"));
+}
+
 #[test]
 fn enabled_proxy_startup_preserves_tls_and_management_while_hardening_both_schemas() {
     for yaml in [
@@ -229,18 +256,15 @@ async fn real_kernel_messages_chain() {
     };
     fixture.app.manage(crate::GuiConfigState::new(gui.clone()));
     if case == "manual" {
-        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let config = ReverseProxyConfig {
             enabled: true,
             listen_host: "127.0.0.1".into(),
-            listen_port: occupied.local_addr().unwrap().port(),
+            listen_port: free_port(),
             target_port: port,
             cert_path: cert.to_str().unwrap().into(),
             key_path: key.to_str().unwrap().into(),
         };
-        let manager = fixture.app.state::<ReverseProxyManagerState>();
-        assert!(manager.save_and_apply(config, None).await.is_err());
-        drop(occupied);
+        persist_proxy_config(&config).unwrap();
     }
     crate::core_runtime::run_core_command(
         fixture.app.handle().clone(),
@@ -435,21 +459,106 @@ async fn real_kernel_messages_chain() {
     );
     println!("SSE completed after release: {events}");
     if case == "save" {
-        let mut invalid = config.clone();
-        invalid.cert_path = directory.join("missing.pem").to_str().unwrap().into();
-        assert!(manager.save_and_apply(invalid, None).await.is_err());
-        assert!(!manager.get_state().unwrap().running);
-        manager.save_and_apply(config.clone(), None).await.unwrap();
+        let good_document = std::fs::read_to_string(&config_path).unwrap();
+        let bad_pem = directory.join("invalid.pem");
+        std::fs::write(&bad_pem, "not a PEM certificate or key").unwrap();
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        for failure in [
+            "missing certificate",
+            "invalid certificate",
+            "missing key",
+            "invalid key",
+            "occupied port",
+        ] {
+            let mut invalid = config.clone();
+            match failure {
+                "missing certificate" => {
+                    invalid.cert_path = directory.join("missing.pem").to_str().unwrap().into();
+                }
+                "invalid certificate" => invalid.cert_path = bad_pem.to_str().unwrap().into(),
+                "missing key" => {
+                    invalid.key_path = directory.join("missing.key").to_str().unwrap().into();
+                }
+                "invalid key" => invalid.key_path = bad_pem.to_str().unwrap().into(),
+                _ => invalid.listen_port = occupied.local_addr().unwrap().port(),
+            }
+            let error = manager.save_and_apply(invalid, None).await.unwrap_err();
+            println!("rejected {failure}: {error}");
+            assert_proxy_serves(&manager, &config, &url, Some(&error)).await;
+            assert_eq!(std::fs::read_to_string(&config_path).unwrap(), good_document);
+            assert_eq!(read_installed_proxy_config().unwrap(), Some(config.clone()));
+        }
+
+        let overlap = tokio::net::TcpListener::bind(("127.0.0.2", config.listen_port)).await.unwrap();
+        let mut wildcard = config.clone();
+        wildcard.listen_host = "0.0.0.0".into();
+        let error = manager.save_and_apply(wildcard, None).await.unwrap_err();
+        assert!(error.contains("Failed to bind listener"), "{error}");
+        assert_proxy_serves(&manager, &config, &url, Some(&error)).await;
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), good_document);
+        drop(overlap);
+
+        let mut replacement = config.clone();
+        replacement.cert_path = directory.join("replacement-cert.pem").to_str().unwrap().into();
+        replacement.key_path = directory.join("replacement-key.pem").to_str().unwrap().into();
+        std::fs::copy(&config.cert_path, &replacement.cert_path).unwrap();
+        std::fs::copy(&config.key_path, &replacement.key_path).unwrap();
+        #[cfg(unix)]
+        for same_port in [false, true] {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::metadata(&directory).unwrap().permissions();
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o555)).unwrap();
+            let mut candidate = replacement.clone();
+            if same_port {
+                candidate.listen_host = "0.0.0.0".into();
+            } else {
+                candidate.listen_port = free_port();
+            }
+            let result = manager.save_and_apply(candidate.clone(), None).await;
+            std::fs::set_permissions(&directory, permissions).unwrap();
+            let error = result.unwrap_err();
+            assert!(error.contains("write configuration"), "{error}");
+            assert_proxy_serves(&manager, &config, &url, Some(&error)).await;
+            assert_eq!(std::fs::read_to_string(&config_path).unwrap(), good_document);
+            assert_eq!(read_installed_proxy_config().unwrap(), Some(config.clone()));
+            if !same_port {
+                assert_eq!(
+                    tokio::net::TcpStream::connect(("127.0.0.1", candidate.listen_port))
+                        .await.unwrap_err().kind(),
+                    std::io::ErrorKind::ConnectionRefused
+                );
+            }
+        }
+
         std::fs::write(&config_path, "reverse-proxy: [invalid YAML").unwrap();
-        assert!(manager.save_and_apply(config, None).await.is_err());
-        let state = manager.get_state().unwrap();
-        println!("invalid save state: {state:?}");
-        assert!(!state.running, "invalid save left running state");
-        assert!(state.error.is_some());
-        assert!(
-            tokio::net::TcpStream::connect(address).await.is_err(),
-            "invalid save left listener open"
-        );
+        let error = manager.save_and_apply(replacement.clone(), None).await.unwrap_err();
+        assert!(error.contains("parse kernel configuration"), "{error}");
+        assert_proxy_serves(&manager, &config, &url, Some(&error)).await;
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "reverse-proxy: [invalid YAML");
+        std::fs::write(&config_path, &good_document).unwrap();
+
+        let applied = manager.save_and_apply(replacement.clone(), None).await.unwrap();
+        assert!(applied.running && applied.error.is_none(), "{applied:?}");
+        assert_eq!(applied.listening, Some(address.to_string()));
+        assert_eq!(read_installed_proxy_config().unwrap(), Some(replacement.clone()));
+        assert_proxy_serves(&manager, &replacement, &url, None).await;
+        replacement.listen_host = "0.0.0.0".into();
+        manager.save_and_apply(replacement.clone(), None).await.unwrap();
+        assert_proxy_serves(&manager, &replacement, &url, None).await;
+        assert_eq!(read_installed_proxy_config().unwrap(), Some(replacement.clone()));
+        replacement.listen_host = "127.0.0.1".into();
+        replacement.listen_port = free_port();
+        let applied = manager.save_and_apply(replacement.clone(), None).await.unwrap();
+        assert!(applied.running && applied.error.is_none(), "{applied:?}");
+        assert_eq!(read_installed_proxy_config().unwrap(), Some(replacement.clone()));
+        assert!(tokio::net::TcpStream::connect(address).await.is_err());
+        let new_address = applied.listening.unwrap();
+        let new_url = format!("https://localhost:{}/v1/messages", replacement.listen_port);
+        assert_proxy_serves(&manager, &replacement, &new_url, None).await;
+        let stopped = manager.stop_and_save().await.unwrap();
+        assert!(!stopped.running && stopped.error.is_none(), "{stopped:?}");
+        assert!(!read_installed_proxy_config().unwrap().unwrap().enabled);
+        assert!(tokio::net::TcpStream::connect(new_address).await.is_err());
     }
     manager.stop().await.unwrap();
 }

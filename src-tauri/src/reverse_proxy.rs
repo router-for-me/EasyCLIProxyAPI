@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use crate::core_config::{
     core_config_uses_v8, lock_core_config_file, nested_yaml_value,
-    patch_existing_core_config, read_core_config_document, set_core_yaml_path_value,
+    patch_core_yaml_document, patch_existing_core_config, read_core_config_document,
+    set_core_yaml_path_value, write_bytes_atomically,
 };
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
@@ -129,13 +130,19 @@ fn read_installed_proxy_config() -> Result<Option<ReverseProxyConfig>, String> {
 }
 
 fn persist_proxy_config(config: &ReverseProxyConfig) -> Result<(), String> {
-    let mut patched = false;
-    patch_existing_core_config(|document| {
-        patched = true;
-        patch_proxy_config_document(document, config)
+    let _config_guard = lock_core_config_file()?;
+    let config_path = crate::core_runtime::core_install_dir()?.join(crate::CORE_CONFIG_FILE);
+    let content = std::fs::read_to_string(&config_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "Kernel configuration has not been generated. Start the CPA kernel first".to_string()
+        } else {
+            format!("Failed to read kernel configuration {}: {error}", config_path.display())
+        }
     })?;
-    if !patched {
-        return Err("Kernel configuration has not been generated. Start the CPA kernel first".to_string());
+    if let Some(updated) = patch_core_yaml_document(&content, |document| {
+        patch_proxy_config_document(document, config)
+    })? {
+        write_bytes_atomically(&config_path, updated.as_bytes())?;
     }
     Ok(())
 }
@@ -541,6 +548,7 @@ struct ReverseProxyInner {
     hardening: ReverseProxyHardening,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     server_task: Option<tokio::task::JoinHandle<()>>,
+    listener: Option<Arc<tokio::net::TcpListener>>,
 }
 
 fn accept_retry_delay(error: &std::io::Error, consecutive_errors: u32) -> Option<std::time::Duration> {
@@ -593,6 +601,7 @@ impl ReverseProxyManagerState {
             guard.running = false;
             guard.listening = None;
             guard.target = None;
+            guard.listener = None;
             guard.error = Some("Reverse proxy listener task stopped unexpectedly".to_string());
             eprintln!("Reverse proxy listener task stopped unexpectedly");
         }
@@ -622,6 +631,7 @@ impl ReverseProxyManagerState {
             guard.running = false;
             guard.listening = None;
             guard.target = None;
+            guard.listener = None;
             (guard.shutdown_tx.take(), guard.server_task.take())
         };
 
@@ -652,23 +662,44 @@ impl ReverseProxyManagerState {
             .lock()
             .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
         guard.error = Some(error.clone());
-        guard.running = false;
-        guard.listening = None;
-        guard.target = None;
         Err(error)
     }
 
     async fn start_inner(
         &self,
-        mut config: ReverseProxyConfig,
+        config: ReverseProxyConfig,
         app: Option<tauri::AppHandle>,
     ) -> Result<ReverseProxyState, String> {
-        self.stop_inner().await?;
-        self.inner
-            .lock()
-            .map_err(|e| format!("Failed to acquire state lock: {e}"))?
-            .stored_config = Some(config.clone());
+        self.start_candidate(config, app, false).await
+    }
 
+    async fn start_candidate(
+        &self,
+        config: ReverseProxyConfig,
+        app: Option<tauri::AppHandle>,
+        persist: bool,
+    ) -> Result<ReverseProxyState, String> {
+        let previous = self.get_state()?;
+        let result = self.start_candidate_inner(config, app, persist).await;
+        if let Err(error) = result {
+            if previous.running && !self.get_state()?.running {
+                if let Some(config) = previous.config {
+                    if let Err(rollback) = Box::pin(self.start_inner(config, None)).await {
+                        return self.fail_start(format!("{error}; failed to restore previous listener: {rollback}"));
+                    }
+                }
+            }
+            return self.fail_start(error);
+        }
+        result
+    }
+
+    async fn start_candidate_inner(
+        &self,
+        mut config: ReverseProxyConfig,
+        app: Option<tauri::AppHandle>,
+        persist: bool,
+    ) -> Result<ReverseProxyState, String> {
         if let Err(err) = validate_config(&config) {
             return self.fail_start(err);
         }
@@ -681,16 +712,49 @@ impl ReverseProxyManagerState {
         };
 
         let bind_addr = format!("{}:{}", config.listen_host, config.listen_port);
-        let listener =
+        let retained_listener = {
+            let guard = self
+                .inner
+                .lock()
+                .map_err(|error| format!("Failed to acquire state lock: {error}"))?;
+            guard
+                .stored_config
+                .as_ref()
+                .filter(|previous| {
+                    previous.listen_host == config.listen_host
+                        && previous.listen_port == config.listen_port
+                        && guard.running
+                        && guard.server_task.as_ref().is_some_and(|task| !task.is_finished())
+                })
+                .and(guard.listener.clone())
+        };
+        let listener = if let Some(listener) = retained_listener {
+            listener
+        } else {
             match tokio::net::TcpListener::bind((config.listen_host.as_str(), config.listen_port))
                 .await
             {
-                Ok(l) => l,
+                Ok(listener) => Arc::new(listener),
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                    let previous = self.get_state()?;
+                    if !previous.running || !previous.config.as_ref().is_some_and(|previous| {
+                        previous.listen_port == config.listen_port
+                            && previous.listen_host != config.listen_host
+                    }) {
+                        return self.fail_start(format!("Failed to bind listener on {bind_addr}: {error}"));
+                    }
+                    self.stop_inner().await?;
+                    match tokio::net::TcpListener::bind((config.listen_host.as_str(), config.listen_port)).await {
+                        Ok(listener) => Arc::new(listener),
+                        Err(error) => return self.fail_start(format!("Failed to bind listener on {bind_addr}: {error}")),
+                    }
+                }
                 Err(err) => {
                     let err_msg = format!("Failed to bind listener on {bind_addr}: {err}");
                     return self.fail_start(err_msg);
                 }
-            };
+            }
+        };
 
         let listening_addr = listener
             .local_addr()
@@ -722,15 +786,22 @@ impl ReverseProxyManagerState {
             Ok(target) => target,
             Err(error) => return self.fail_start(error),
         };
+        if persist {
+            if let Err(error) = persist_proxy_config(&config) {
+                return self.fail_start(error);
+            }
+        }
         let target_port = config.target_port;
         let target_addr = format!("127.0.0.1:{target_port}");
 
+        self.stop_inner().await?;
         let inner = Arc::downgrade(&self.inner);
         let mut guard = self
             .inner
             .lock()
             .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
 
+        guard.listener = Some(listener.clone());
         let server_task = tokio::spawn(async move {
             let mut consecutive_errors = 0;
             loop {
@@ -799,6 +870,7 @@ impl ReverseProxyManagerState {
                     guard.running = false;
                     guard.listening = None;
                     guard.target = None;
+                    guard.listener = None;
                 }
             }
         });
@@ -832,22 +904,17 @@ impl ReverseProxyManagerState {
         config: ReverseProxyConfig,
         app: Option<tauri::AppHandle>,
     ) -> Result<ReverseProxyState, String> {
-        {
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
-            guard.stored_config = Some(config.clone());
-        }
-
         if config.enabled {
             self.start_inner(config, app).await
         } else {
             self.stop_inner().await?;
-            self.inner
+            let mut guard = self
+                .inner
                 .lock()
-                .map_err(|e| format!("Failed to acquire state lock: {e}"))?
-                .error = None;
+                .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
+            guard.stored_config = Some(config);
+            guard.error = None;
+            drop(guard);
             self.get_state()
         }
     }
@@ -858,14 +925,10 @@ impl ReverseProxyManagerState {
         app: Option<tauri::AppHandle>,
     ) -> Result<ReverseProxyState, String> {
         let _operation = self.operation.lock().await;
-        let persisted = persist_proxy_config(&config);
         if config.enabled {
-            if let Err(error) = persisted {
-                self.stop_inner().await?;
-                return self.fail_start(error);
-            }
-            self.apply_inner(config, app).await
+            self.start_candidate(config, app, true).await
         } else {
+            let persisted = persist_proxy_config(&config);
             let stopped = self.apply_inner(config, app).await?;
             match persisted {
                 Ok(()) => Ok(stopped),
