@@ -248,7 +248,7 @@
 }
 .config-page .config-settings-content .template-config-fields { margin-top: 0; }
 .config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions) { margin-top: 12px; }
-.config-page .config-settings-content .config-network-grid { row-gap: 12px; }
+.config-page .config-settings-content .config-network-grid { row-gap: 12px; transition: opacity 150ms ease; }
 @media (min-width: 1160px) {
   .config-page .config-settings-content { --settings-label-width: 210px; --settings-row-gap: 14px; }
   .config-page .config-settings-content :is(.config-network-grid, .config-diagnostics-toggle-grid, .config-diagnostics-fields, .template-config-fields) {
@@ -413,6 +413,8 @@
 .config-page .config-settings-content :is(.template-config-fields, .config-network-grid) {
   gap: 16px 28px;
 }
+.config-page .config-settings-content .config-network-grid.is-muted { opacity: .55; }
+.config-page .config-settings-content .config-network-route { grid-template-columns: minmax(0, 1fr); }
 .config-page .config-settings-content .template-config-field:not(.template-config-field-wide) {
   /* A card can contain multiple fields per row. Size from the field itself so
      the control cannot consume the label column in a wide, multi-column card. */
