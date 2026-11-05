@@ -182,6 +182,7 @@ const DEFAULT_MAX_RETRY_CREDENTIALS: u32 = 0;
 const DEFAULT_MAX_RETRY_INTERVAL: i64 = 30;
 const DEFAULT_STREAMING_BOOTSTRAP_RETRIES: u32 = 0;
 const DEFAULT_DISABLE_COOLING: bool = true;
+const DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS: i64 = -1;
 const DEFAULT_LOGS_MAX_TOTAL_SIZE_MB: u32 = 0;
 const DEFAULT_ERROR_LOGS_MAX_FILES: u32 = 10;
 const DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS: u32 = 60;
@@ -689,6 +690,7 @@ struct GuiConfigFile {
     request_retry: u32,
     max_retry_credentials: u32,
     max_retry_interval: i64,
+    transient_error_cooldown_seconds: i64,
     streaming_bootstrap_retries: u32,
 }
 
@@ -1000,6 +1002,7 @@ impl Default for GuiConfigFile {
             request_retry: DEFAULT_REQUEST_RETRY,
             max_retry_credentials: DEFAULT_MAX_RETRY_CREDENTIALS,
             max_retry_interval: DEFAULT_MAX_RETRY_INTERVAL,
+            transient_error_cooldown_seconds: DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
         }
     }
@@ -1042,6 +1045,7 @@ struct GuiConfigPresence {
     request_retry: Option<u32>,
     max_retry_credentials: Option<u32>,
     max_retry_interval: Option<i64>,
+    transient_error_cooldown_seconds: Option<i64>,
     streaming_bootstrap_retries: Option<u32>,
 }
 
@@ -1628,7 +1632,14 @@ struct GuiRetrySettings {
     request_retry: u32,
     max_retry_credentials: u32,
     max_retry_interval: i64,
+    #[allow(dead_code)]
+    #[serde(default = "default_transient_error_cooldown_seconds")]
+    transient_error_cooldown_seconds: i64,
     streaming_bootstrap_retries: u32,
+}
+
+fn default_transient_error_cooldown_seconds() -> i64 {
+    DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS
 }
 
 #[derive(Deserialize)]
@@ -1699,6 +1710,7 @@ struct CoreConfigSettings {
     request_retry: u32,
     max_retry_credentials: u32,
     max_retry_interval: i64,
+    transient_error_cooldown_seconds: i64,
     streaming_bootstrap_retries: u32,
     #[allow(dead_code)]
     #[serde(skip_serializing)]
@@ -2196,6 +2208,7 @@ impl GuiConfigState {
             config.request_retry = settings.request_retry;
             config.max_retry_credentials = settings.max_retry_credentials;
             config.max_retry_interval = settings.max_retry_interval;
+            config.transient_error_cooldown_seconds = settings.transient_error_cooldown_seconds;
             config.streaming_bootstrap_retries = settings.streaming_bootstrap_retries;
             Ok(())
         })
@@ -2218,6 +2231,7 @@ impl GuiConfigState {
             config.request_retry = settings.request_retry;
             config.max_retry_credentials = settings.max_retry_credentials;
             config.max_retry_interval = settings.max_retry_interval;
+            config.transient_error_cooldown_seconds = settings.transient_error_cooldown_seconds;
             config.streaming_bootstrap_retries = settings.streaming_bootstrap_retries;
             Ok(())
         })
@@ -2417,6 +2431,7 @@ impl GuiConfigState {
             config.request_retry = settings.request_retry;
             config.max_retry_credentials = settings.max_retry_credentials;
             config.max_retry_interval = settings.max_retry_interval;
+            config.transient_error_cooldown_seconds = settings.transient_error_cooldown_seconds;
             config.streaming_bootstrap_retries = settings.streaming_bootstrap_retries;
             if apply_external_proxy {
                 apply_external_core_proxy_override(config, settings)?;
@@ -2481,6 +2496,7 @@ impl From<&GuiConfigFile> for CoreConfigSettings {
             request_retry: config.request_retry,
             max_retry_credentials: config.max_retry_credentials,
             max_retry_interval: config.max_retry_interval,
+            transient_error_cooldown_seconds: config.transient_error_cooldown_seconds,
             streaming_bootstrap_retries: config.streaming_bootstrap_retries,
             management_secret_key: Some(config.management_secret_key.clone()),
         }

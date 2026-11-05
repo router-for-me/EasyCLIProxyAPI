@@ -1942,6 +1942,17 @@ pub(crate) fn core_config_settings_from_value(
         })
         .transpose()?
         .unwrap_or(0);
+    let transient_error_cooldown_seconds = v8_or_legacy(
+        &["routing", "cooldown", "transient-error-cooldown-seconds"],
+        &["transient-error-cooldown-seconds"],
+    )
+    .map(|value| {
+        value
+            .as_i64()
+            .ok_or_else(|| "transient-error-cooldown-seconds must be an integer".to_string())
+    })
+    .transpose()?
+    .unwrap_or(DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS);
     let streaming_bootstrap_retries = v8_or_legacy(&["requests", "streaming", "bootstrap-retries"], &["streaming", "bootstrap-retries"])
         .map(|value| {
             value
@@ -1979,6 +1990,7 @@ pub(crate) fn core_config_settings_from_value(
         request_retry,
         max_retry_credentials,
         max_retry_interval,
+        transient_error_cooldown_seconds,
         streaming_bootstrap_retries,
         management_secret_key,
     })
