@@ -318,8 +318,6 @@
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
     background: var(--bg-card);
-    text-align: left;
-    cursor: pointer;
     transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
     box-sizing: border-box;
   }
@@ -335,17 +333,25 @@
     box-shadow: 0 0 0 1px var(--primary-color);
   }
 
-  .mcp-server-row-button:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 2px;
-  }
-
-  .mcp-server-row-left {
+  .mcp-server-row-select {
     display: flex;
     align-items: center;
     gap: 10px;
     min-width: 0;
     flex: 1;
+    padding: 0;
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+  }
+
+  .mcp-server-row-select:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
   }
 
   .mcp-status-dot {
@@ -440,10 +446,12 @@
     background: color-mix(in srgb, var(--danger-color, #ef4444) 10%, transparent);
     padding: 1px 6px;
     border-radius: var(--radius-sm);
-    max-width: 140px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    min-width: 0;
     line-height: 1.4;
     animation: mcpFadeIn 150ms ease;
   }
@@ -581,20 +589,39 @@
 
   .mcp-delete-confirm-box {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
     padding: 10px 14px;
     border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--danger-color, #ef4444) 10%, var(--bg-secondary));
     border: 1px solid color-mix(in srgb, var(--danger-color, #ef4444) 30%, transparent);
     color: var(--text-primary);
     font-size: 12px;
+    min-width: 0;
+  }
+
+  .mcp-delete-confirm-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .mcp-delete-confirm-title {
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  .mcp-delete-confirm-desc {
+    color: var(--text-tertiary);
+    overflow-wrap: anywhere;
   }
 
   .mcp-delete-confirm-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 6px;
     flex-shrink: 0;
   }
@@ -876,14 +903,12 @@
   /* Skill Card */
   .skill-card {
     display: flex;
-    flex-direction: column;
+    align-items: flex-start;
     gap: 10px;
     padding: 14px 16px;
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
     background: var(--bg-card);
-    text-align: left;
-    cursor: pointer;
     transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
     box-sizing: border-box;
     position: relative;
@@ -901,17 +926,25 @@
     background: var(--ui-accent-soft);
   }
 
-  .skill-card:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 2px;
+  .skill-card-select {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
   }
 
-  .skill-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-width: 0;
+  .skill-card-select:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
   }
 
   .skill-card-heading {
@@ -923,6 +956,7 @@
   }
 
   .skill-card-name {
+    display: block;
     margin: 0;
     font-size: 14px;
     font-weight: 600;
@@ -937,6 +971,7 @@
     align-items: center;
     gap: 6px;
     flex-shrink: 0;
+    align-self: flex-start;
   }
 
   .skill-source-badge {
