@@ -46,6 +46,7 @@ pub struct ReverseProxyState {
     pub requests_total: u64,
     pub error: Option<String>, // last failure, user-facing and specific
     pub hardening: ReverseProxyHardening,
+    pub config: Option<ReverseProxyConfig>,
 }
 
 pub fn harden_core_config_document(document: &mut serde_norway::Value) -> Result<bool, String> {
@@ -423,7 +424,7 @@ struct ReverseProxyInner {
     listening: Option<String>,
     target: Option<String>,
     error: Option<String>,
-    stored_config: ReverseProxyConfig,
+    stored_config: Option<ReverseProxyConfig>,
     hardening: ReverseProxyHardening,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     server_task: Option<tokio::task::JoinHandle<()>>,
@@ -453,6 +454,7 @@ impl ReverseProxyManagerState {
             requests_total: self.requests_total.load(Ordering::Relaxed),
             error: guard.error.clone(),
             hardening: guard.hardening.clone(),
+            config: guard.stored_config.clone(),
         })
     }
 
@@ -609,7 +611,7 @@ impl ReverseProxyManagerState {
             guard.listening = Some(listening_addr);
             guard.target = Some(target_addr);
             guard.error = restart_error;
-            guard.stored_config = config;
+            guard.stored_config = Some(config);
             guard.hardening = hardening;
             guard.shutdown_tx = Some(shutdown_tx);
             guard.server_task = Some(server_task);
@@ -629,7 +631,7 @@ impl ReverseProxyManagerState {
                 .inner
                 .lock()
                 .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
-            guard.stored_config = config.clone();
+            guard.stored_config = Some(config.clone());
         }
 
         if config.enabled {

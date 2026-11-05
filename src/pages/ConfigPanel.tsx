@@ -276,6 +276,9 @@ export function ConfigPanelPage() {
     try {
       const state = await getReverseProxyState();
       setProxyState(state);
+      if (state.config) {
+        setProxyDraft(state.config);
+      }
       setBackendNotReady(false);
     } catch {
       setBackendNotReady(true);
@@ -1763,7 +1766,8 @@ export function ConfigPanelPage() {
                       disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
                       placeholder={st('reverseProxyCertPlaceholder')}
                       onChange={(event) => {
-                        setProxyDraft(prev => ({ ...prev, certPath: event.currentTarget.value }));
+                        const value = event.currentTarget.value;
+                        setProxyDraft(prev => ({ ...prev, certPath: value }));
                         setProxyDirty(true);
                       }}
                     />
@@ -1794,7 +1798,8 @@ export function ConfigPanelPage() {
                       disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
                       placeholder={st('reverseProxyKeyPlaceholder')}
                       onChange={(event) => {
-                        setProxyDraft(prev => ({ ...prev, keyPath: event.currentTarget.value }));
+                        const value = event.currentTarget.value;
+                        setProxyDraft(prev => ({ ...prev, keyPath: value }));
                         setProxyDirty(true);
                       }}
                     />
