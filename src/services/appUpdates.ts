@@ -10,8 +10,6 @@ export type AppUpdateInfo = {
   publishedAt: string;
   currentBuildAt: string | null;
   autoUpdateSupported: boolean;
-  downloadUrl: string | null;
-  downloadFileName: string | null;
   downloadSizeBytes: number | null;
   unsupportedReason: string | null;
   updateChannel: string;

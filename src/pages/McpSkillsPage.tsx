@@ -53,118 +53,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isPreviewCommandMissing(error: unknown): boolean {
-  const lower = errorMessage(error).toLowerCase();
-  return (
-    lower.includes('not implemented')
-    || lower.includes('unknown command')
-    || lower.includes('cannot find command')
-  );
-}
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Fall back to textarea copy in headless / restricted webview contexts
-    }
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  textarea.style.pointerEvents = 'none';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
-}
-
-const BUILTIN_SKILLS: SkillEntry[] = [
-  {
-    id: 'code-review',
-    name: 'code-review',
-    description: 'Structured code review checklist for correctness, security, and maintainability.',
-    path: '~/.easy-cli-proxy-api/skills/code-review/SKILL.md',
-    root: '~/.easy-cli-proxy-api/skills',
-    source: 'openclaw',
-    enabled: true,
-    fileCount: 2,
-  },
-  {
-    id: 'mcp-inspector',
-    name: 'mcp-inspector',
-    description: 'Inspect and verify MCP server tool schemas, stdio commands, and SSE endpoints.',
-    path: '~/.easy-cli-proxy-api/skills/mcp-inspector/SKILL.md',
-    root: '~/.easy-cli-proxy-api/skills',
-    source: 'project',
-    enabled: true,
-    fileCount: 3,
-  },
-];
-
-const BUILTIN_SKILL_DOCS: Record<string, string> = {
-  '~/.easy-cli-proxy-api/skills/code-review/SKILL.md': `# Code Review Skill
-
-Perform a structured review before merging changes into the main branch.
-
-## Review Checklist
-
-- Verify input validation and boundary conditions
-- Confirm error handling and user-facing feedback notices
-- Check responsive layout at **1280px** and **1024px** widths
-
-## Verification Commands
-
-\`\`\`bash
-bun run check
-bun test tests/uiLocalization.test.ts tests/i18n.test.ts
-\`\`\`
-
-1. Inspect modified components and localization keys
-2. Run static type checks and unit tests
-3. Record verification results`,
-  '~/.easy-cli-proxy-api/skills/mcp-inspector/SKILL.md': `# MCP Inspector Skill
-
-Diagnose Model Context Protocol servers across \`stdio\`, \`http\`, and \`sse\` transports.
-
-## Supported Transports
-
-- **stdio**: Launch local CLI processes such as \`npx\` or \`uvx\`
-- **http**: Connect to Streamable HTTP endpoints
-- **sse**: Subscribe to Server-Sent Events streams
-
-## Example Configuration
-
-\`\`\`json
-{
-  "mcpServers": {
-    "smoke-test": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
-    }
-  }
-}
-\`\`\``,
-};
-
-function formatExportMcpServers(servers: McpServer[]): string {
-  const mcpServers: Record<string, Record<string, unknown>> = {};
-  for (const server of servers) {
-    const entry: Record<string, unknown> = { type: server.transport };
-    if (server.command?.trim()) entry.command = server.command.trim();
-    if (server.args?.length) entry.args = server.args;
-    if (server.env && Object.keys(server.env).length > 0) entry.env = server.env;
-    if (server.url?.trim()) entry.url = server.url.trim();
-    if (server.headers && Object.keys(server.headers).length > 0) entry.headers = server.headers;
-    mcpServers[server.name] = entry;
-  }
-  return JSON.stringify({ mcpServers }, null, 2);
-}
-
 // Lightweight Markdown Renderer (no dependencies)
 type MarkdownBlock =
   | { type: 'h1' | 'h2' | 'h3' | 'h4' | 'quote' | 'p'; text: string }
@@ -477,16 +365,12 @@ export function McpSkillsPage() {
 
     try {
       const skillsRes = await listSkills();
-      setSkills(Array.isArray(skillsRes) && skillsRes.length > 0 ? skillsRes : BUILTIN_SKILLS);
+      setSkills(Array.isArray(skillsRes) ? skillsRes : []);
     } catch (err) {
       const isMissing = isBackendMissingError(err);
-      if (isMissing) {
-        setSkills(BUILTIN_SKILLS);
-      } else {
-        setSkillsTone('error');
-        setSkillsError(`${t('loadFailed')}: ${errorMessage(err)}`);
-        setSkills(BUILTIN_SKILLS);
-      }
+      setSkillsTone(isMissing ? 'warn' : 'error');
+      setSkillsError(isMissing ? t('backendNotReady') : `${t('loadFailed')}: ${errorMessage(err)}`);
+      setSkills([]);
     }
 
     setLoading(false);
@@ -495,6 +379,12 @@ export function McpSkillsPage() {
   useEffect(() => {
     void loadData();
   }, []);
+
+  // Sync selected server
+  const selectedServer = useMemo(
+    () => servers.find((s) => s.id === selectedServerId) ?? (servers.length > 0 ? servers[0] : null),
+    [servers, selectedServerId]
+  );
 
   // Filter MCP servers
   const filteredServers = useMemo(() => {
@@ -514,14 +404,6 @@ export function McpSkillsPage() {
       return true;
     });
   }, [servers, serverFilter, serverSearch]);
-
-  // Sync selected server with filtered list
-  const selectedServer = useMemo(
-    () =>
-      filteredServers.find((s) => s.id === selectedServerId) ??
-      (filteredServers.length > 0 ? filteredServers[0] : null),
-    [filteredServers, selectedServerId]
-  );
 
   // Filter skills
   const filteredSkills = useMemo(() => {
@@ -544,11 +426,6 @@ export function McpSkillsPage() {
     setLoadingSkillDetail(true);
     setSkillDetailError(null);
     setSkillDetail(null);
-    if (BUILTIN_SKILL_DOCS[path]) {
-      setSkillDetail(BUILTIN_SKILL_DOCS[path]);
-      setLoadingSkillDetail(false);
-      return;
-    }
     try {
       const detail = await getSkillDetail(path);
       setSkillDetail(detail);
@@ -581,29 +458,11 @@ export function McpSkillsPage() {
 
     try {
       await setMcpServerEnabled(server.id, nextEnabled);
-      setActionNotice({
-        tone: 'success',
-        message: t('serverToggled', {
-          name: server.name,
-          status: t(nextEnabled ? 'enabled' : 'disabled'),
-        }),
-      });
     } catch (err) {
-      if (isPreviewCommandMissing(err)) {
-        setActionNotice({
-          tone: 'success',
-          message: t('serverToggled', {
-            name: server.name,
-            status: t(nextEnabled ? 'enabled' : 'disabled'),
-          }),
-        });
-        return;
-      }
       setServers((prev) =>
         prev.map((s) => (s.id === server.id ? { ...s, enabled: previousEnabled } : s))
       );
       const errText = errorMessage(err) || t('toggleFailed');
-      setActionNotice({ tone: 'error', message: `${t('toggleFailed')}: ${errText}` });
       setRowErrors((prev) => ({ ...prev, [server.id]: errText }));
       setTimeout(() => {
         setRowErrors((prev) => {
@@ -633,37 +492,9 @@ export function McpSkillsPage() {
       return copy;
     });
 
-    if (BUILTIN_SKILL_DOCS[skill.path]) {
-      setActionNotice({
-        tone: 'success',
-        message: t('skillToggled', {
-          name: skill.name,
-          status: t(nextEnabled ? 'enabled' : 'disabled'),
-        }),
-      });
-      return;
-    }
-
     try {
       await setSkillEnabled(skill.path, nextEnabled);
-      setActionNotice({
-        tone: 'success',
-        message: t('skillToggled', {
-          name: skill.name,
-          status: t(nextEnabled ? 'enabled' : 'disabled'),
-        }),
-      });
     } catch (err) {
-      if (isPreviewCommandMissing(err)) {
-        setActionNotice({
-          tone: 'success',
-          message: t('skillToggled', {
-            name: skill.name,
-            status: t(nextEnabled ? 'enabled' : 'disabled'),
-          }),
-        });
-        return;
-      }
       setSkills((prev) =>
         prev.map((s) => (s.path === skill.path ? { ...s, enabled: previousEnabled } : s))
       );
@@ -671,7 +502,6 @@ export function McpSkillsPage() {
         setSelectedSkill((prev) => (prev ? { ...prev, enabled: previousEnabled } : null));
       }
       const errText = errorMessage(err) || t('toggleFailed');
-      setActionNotice({ tone: 'error', message: `${t('toggleFailed')}: ${errText}` });
       setRowErrors((prev) => ({ ...prev, [skill.path]: errText }));
       setTimeout(() => {
         setRowErrors((prev) => {
@@ -686,18 +516,13 @@ export function McpSkillsPage() {
   // Delete server
   const handleDeleteServer = async (id: string) => {
     try {
-      try {
-        await deleteMcpServer(id);
-      } catch (err) {
-        if (!isPreviewCommandMissing(err)) throw err;
-      }
+      await deleteMcpServer(id);
       setServers((prev) => prev.filter((s) => s.id !== id));
       setConfirmingDeleteServerId(null);
       if (selectedServerId === id) {
         const remaining = servers.filter((s) => s.id !== id);
         setSelectedServerId(remaining.length > 0 ? remaining[0].id : null);
       }
-      setActionNotice({ tone: 'success', message: t('serverDeleted') });
     } catch (err) {
       setActionNotice({ tone: 'error', message: `${t('delete')}: ${errorMessage(err)}` });
     }
@@ -715,16 +540,9 @@ export function McpSkillsPage() {
   // Export servers
   const handleExport = async () => {
     try {
-      let json: string;
-      try {
-        json = await exportMcpServersJson();
-      } catch (err) {
-        if (!isPreviewCommandMissing(err)) throw err;
-        json = formatExportMcpServers(servers);
-      }
-      await copyTextToClipboard(json);
+      const json = await exportMcpServersJson();
+      await navigator.clipboard.writeText(json);
       setExportCopied(true);
-      setActionNotice({ tone: 'success', message: t('copied') });
       setTimeout(() => setExportCopied(false), 2500);
     } catch (err) {
       setActionNotice({ tone: 'error', message: `${t('exportFailed')}: ${errorMessage(err)}` });
@@ -888,11 +706,7 @@ export function McpSkillsPage() {
     };
 
     try {
-      try {
-        await saveMcpServer(serverToSave);
-      } catch (err) {
-        if (!isPreviewCommandMissing(err)) throw err;
-      }
+      await saveMcpServer(serverToSave);
       setServers((prev) => {
         const idx = prev.findIndex((s) => s.id === serverToSave.id);
         if (idx >= 0) {
@@ -902,26 +716,8 @@ export function McpSkillsPage() {
         }
         return [...prev, serverToSave];
       });
-      if (
-        (serverFilter === 'enabled' && !serverToSave.enabled) ||
-        (serverFilter !== 'all' &&
-          serverFilter !== 'enabled' &&
-          serverToSave.transport !== serverFilter)
-      ) {
-        setServerFilter('all');
-      }
-      if (serverSearch.trim()) {
-        const q = serverSearch.toLowerCase();
-        const matches =
-          serverToSave.name.toLowerCase().includes(q) ||
-          (serverToSave.command ?? '').toLowerCase().includes(q) ||
-          (serverToSave.url ?? '').toLowerCase().includes(q) ||
-          (serverToSave.description ?? '').toLowerCase().includes(q);
-        if (!matches) setServerSearch('');
-      }
       setSelectedServerId(serverToSave.id);
       setServerDialogOpen(false);
-      setActionNotice({ tone: 'success', message: t('serverSaved') });
     } catch (err) {
       setActionNotice({ tone: 'error', message: `${t('save')}: ${errorMessage(err)}` });
     } finally {
@@ -932,14 +728,9 @@ export function McpSkillsPage() {
   // Submit Import
   const handleImportSubmit = async () => {
     if (!importRaw.trim()) return;
-    let parsed: unknown;
     try {
-      parsed = JSON.parse(importRaw);
+      JSON.parse(importRaw);
     } catch {
-      setImportError(t('invalidJson'));
-      return;
-    }
-    if (!parsed || typeof parsed !== 'object') {
       setImportError(t('invalidJson'));
       return;
     }
@@ -947,99 +738,9 @@ export function McpSkillsPage() {
     setImporting(true);
     setImportError(null);
     try {
-      let result: ImportResult;
-      try {
-        result = await importMcpServersJson(importRaw.trim());
-        void loadData();
-      } catch (err) {
-        if (!isPreviewCommandMissing(err)) throw err;
-        const root = parsed as Record<string, unknown>;
-        const entries: Array<[string, Record<string, unknown>]> = [];
-        const rawMap =
-          root.mcpServers && typeof root.mcpServers === 'object' && !Array.isArray(root.mcpServers)
-            ? (root.mcpServers as Record<string, unknown>)
-            : !Array.isArray(parsed)
-            ? root
-            : null;
-        if (rawMap) {
-          for (const [k, v] of Object.entries(rawMap)) {
-            if (v && typeof v === 'object' && !Array.isArray(v)) {
-              entries.push([k, v as Record<string, unknown>]);
-            }
-          }
-        } else if (Array.isArray(parsed)) {
-          for (const item of parsed) {
-            if (item && typeof item === 'object' && !Array.isArray(item)) {
-              const obj = item as Record<string, unknown>;
-              entries.push([String(obj.name ?? ''), obj]);
-            }
-          }
-        }
-        let added = 0;
-        let updated = 0;
-        let skipped = 0;
-        const errors: string[] = [];
-        const nextServers = [...servers];
-        for (const [fallbackName, obj] of entries) {
-          const name = String(obj.name ?? fallbackName).trim();
-          const transportRaw = String(obj.type ?? obj.transport ?? 'stdio').trim().toLowerCase();
-          const transport: McpTransport =
-            transportRaw === 'http' || transportRaw === 'sse' ? transportRaw : 'stdio';
-          const command = typeof obj.command === 'string' ? obj.command.trim() : null;
-          const url = typeof obj.url === 'string' ? obj.url.trim() : null;
-          if (!name || (transport === 'stdio' && !command) || (transport !== 'stdio' && !url)) {
-            skipped += 1;
-            errors.push(`${name || 'unnamed'}: invalid server configuration`);
-            continue;
-          }
-          const existingIdx = nextServers.findIndex(
-            (s) => s.name.toLowerCase() === name.toLowerCase()
-          );
-          const candidate: McpServer = {
-            id: existingIdx >= 0 ? nextServers[existingIdx].id : `mcp-${name}-${Date.now()}`,
-            name,
-            transport,
-            command: transport === 'stdio' ? command : null,
-            args: Array.isArray(obj.args) ? obj.args.map(String) : [],
-            env:
-              obj.env && typeof obj.env === 'object' && !Array.isArray(obj.env)
-                ? Object.fromEntries(
-                    Object.entries(obj.env as Record<string, unknown>).map(([k, v]) => [k, String(v ?? '')])
-                  )
-                : {},
-            url: transport !== 'stdio' ? url : null,
-            headers:
-              obj.headers && typeof obj.headers === 'object' && !Array.isArray(obj.headers)
-                ? Object.fromEntries(
-                    Object.entries(obj.headers as Record<string, unknown>).map(([k, v]) => [k, String(v ?? '')])
-                  )
-                : {},
-            enabled: typeof obj.enabled === 'boolean' ? obj.enabled : true,
-            description: typeof obj.description === 'string' ? obj.description.trim() || null : null,
-          };
-          if (existingIdx >= 0) {
-            nextServers[existingIdx] = candidate;
-            updated += 1;
-          } else {
-            nextServers.push(candidate);
-            added += 1;
-          }
-        }
-        setServers(nextServers);
-        if (nextServers.length > 0 && !selectedServerId) {
-          setSelectedServerId(nextServers[0].id);
-        }
-        result = { added, updated, skipped, errors };
-      }
+      const result = await importMcpServersJson(importRaw.trim());
       setImportResult(result);
-      setActionNotice({
-        tone: 'success',
-        message: t('importSummary', {
-          added: result.added,
-          updated: result.updated,
-          skipped: result.skipped,
-        }),
-      });
+      void loadData();
     } catch (err) {
       setImportError(errorMessage(err));
     } finally {
@@ -1050,7 +751,7 @@ export function McpSkillsPage() {
   // Copy raw JSON
   const handleCopyRawJson = async (server: McpServer) => {
     try {
-      await copyTextToClipboard(JSON.stringify(server, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify(server, null, 2));
       setJsonCopied(true);
       setTimeout(() => setJsonCopied(false), 2000);
     } catch {
@@ -1061,7 +762,7 @@ export function McpSkillsPage() {
   // Copy skill path
   const handleCopySkillPath = async (path: string) => {
     try {
-      await copyTextToClipboard(path);
+      await navigator.clipboard.writeText(path);
       setSkillPathCopied(true);
       setTimeout(() => setSkillPathCopied(false), 2000);
     } catch {
@@ -1091,14 +792,6 @@ export function McpSkillsPage() {
             <Upload size={14} aria-hidden="true" />
             <span>{t('import')}</span>
           </button>
-          <button
-            type="button"
-            className="secondary-button ghost"
-            onClick={() => void handleExport()}
-          >
-            {exportCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-            <span>{exportCopied ? t('copied') : t('export')}</span>
-          </button>
           <div className="mcp-more-menu-wrap" ref={moreMenuRef}>
             <button
               type="button"
@@ -1116,6 +809,7 @@ export function McpSkillsPage() {
                   type="button"
                   role="menuitem"
                   className="mcp-menu-item"
+                  disabled={servers.length === 0}
                   onClick={() => {
                     setMoreOpen(false);
                     void handleExport();
@@ -1218,7 +912,7 @@ export function McpSkillsPage() {
               {/* Filter chips */}
               <SegmentedControl
                 className="mcp-filter-chips"
-                aria-label={t('serverFilter')}
+                aria-label="Server filter"
                 value={serverFilter}
                 onChange={setServerFilter}
                 buttonClassName="mcp-filter-chip"
@@ -1522,8 +1216,8 @@ export function McpSkillsPage() {
                         <table className="mcp-kv-table">
                           <thead>
                             <tr>
-                              <th>{t('keyColumn')}</th>
-                              <th>{t('valueColumn')}</th>
+                              <th>Key</th>
+                              <th>Value</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1546,8 +1240,8 @@ export function McpSkillsPage() {
                         <table className="mcp-kv-table">
                           <thead>
                             <tr>
-                              <th>{t('headerColumn')}</th>
-                              <th>{t('valueColumn')}</th>
+                              <th>Header</th>
+                              <th>Value</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1631,7 +1325,7 @@ export function McpSkillsPage() {
                 {/* Source Filter chips */}
                 <SegmentedControl
                   className="mcp-filter-chips"
-                  aria-label={t('skillSource')}
+                  aria-label="Skill source"
                   value={skillSourceFilter}
                   onChange={setSkillSourceFilter}
                   buttonClassName="mcp-filter-chip"
@@ -2073,7 +1767,7 @@ export function McpSkillsPage() {
                       onClick={() =>
                         setFormEnv((prev) => prev.filter((_, idx) => idx !== index))
                       }
-                      aria-label={t('remove')}
+                      aria-label="Remove"
                     >
                       <X size={15} aria-hidden="true" />
                     </button>
@@ -2133,7 +1827,7 @@ export function McpSkillsPage() {
                       onClick={() =>
                         setFormHeaders((prev) => prev.filter((_, idx) => idx !== index))
                       }
-                      aria-label={t('remove')}
+                      aria-label="Remove"
                     >
                       <X size={15} aria-hidden="true" />
                     </button>
@@ -2241,10 +1935,7 @@ export function McpSkillsPage() {
                   rows={10}
                   placeholder={`{\n  "mcpServers": {\n    "example": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]\n    }\n  }\n}`}
                   value={importRaw}
-                  onChange={(e) => {
-                    setImportRaw(e.target.value);
-                    if (importError) setImportError(null);
-                  }}
+                  onChange={(e) => setImportRaw(e.target.value)}
                   style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, lineHeight: 1.5 }}
                 />
               </div>
