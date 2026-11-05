@@ -12,6 +12,9 @@ import {
 import {
   axisScale,
   buildCalendarGrid,
+  calendarMinColumns,
+  calendarMonthStarts,
+  calendarSpanDays,
   buildHourGrid,
   buildStackedSeries,
   buildTokenStructure,
@@ -38,7 +41,8 @@ const HEAT_CELL = 13;
 const HEAT_GAP = 3;
 const HEAT_LEFT = 30;
 const HEAT_TOP = 18;
-const CALENDAR_MIN_DAYS = 364;
+const CALENDAR_TAIL = 24;
+const YEAR_LABEL_WIDTH = 72;
 
 export function agentSourceColor(source: string, sources: string[]): string {
   const index = sources.indexOf(source);
@@ -258,7 +262,7 @@ function BarChart({ bars, max, metric, kind, width, label }: {
               ) : null}
               {index % every === 0 ? (
                 <text className="agent-usage-axis-label" x={BAR_LEFT + (index + 0.5) * slot} y={height - 6} textAnchor="middle">
-                  {formatAgentUsageAxisLabel(bar.bucket, kind)}
+                  {formatAgentUsageAxisLabel(bar.bucket, kind, bars[index - every]?.bucket)}
                 </text>
               ) : null}
             </g>
@@ -276,8 +280,6 @@ const localDay = (date: Date): string => [
   String(date.getDate()).padStart(2, '0'),
 ].join('-');
 
-const dayDistance = (start: string, end: string): number => Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000);
-
 export function AgentUsageActivity({ report, locale }: { report: AgentUsageReport; locale: string }) {
   const { t } = useI18n();
   const weekdays = useMemo(() => {
@@ -285,9 +287,11 @@ export function AgentUsageActivity({ report, locale }: { report: AgentUsageRepor
     const monday = Date.UTC(2024, 0, 1);
     return Array.from({ length: 7 }, (_, index) => format.format(new Date(monday + index * 86_400_000)));
   }, [locale]);
+  const today = localDay(new Date());
+  const calendarMinWidth = HEAT_LEFT + calendarMinColumns(report.calendar[0]?.date ?? today, today) * (HEAT_CELL + HEAT_GAP) + CALENDAR_TAIL;
   return (
     <div className="agent-usage-activity-grid">
-      <div className="agent-usage-activity-block" data-view="calendar">
+      <div className="agent-usage-activity-block" data-view="calendar" style={{ flexBasis: calendarMinWidth }}>
         <div className="agent-usage-activity-heading">
           <h4>{t('usage.agentUsage.view.calendar')}</h4>
           <span>{t('usage.agentUsage.calendarHint')}</span>
@@ -318,17 +322,18 @@ function CalendarHeatmap({ report, weekdays, locale, label }: {
 }) {
   const [tip, setTip] = useState<Tip | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const available = useWidth(scrollRef);
   const end = localDay(new Date());
   const first = report.calendar[0]?.date ?? end;
-  const days = Math.max(CALENDAR_MIN_DAYS, dayDistance(first, end)) + 1;
-  const grid = buildCalendarGrid(report.calendar, end, days);
+  const pitch = HEAT_CELL + HEAT_GAP;
+  const grid = buildCalendarGrid(report.calendar, end, calendarSpanDays(first, end, Math.floor((available - CALENDAR_TAIL) / pitch)));
   const thresholds = heatThresholds(report.calendar.map((row) => row.totalTokens));
   const costs = new Map(report.calendar.map((row) => [row.date, row.costUSD]));
-  const pitch = HEAT_CELL + HEAT_GAP;
-  const width = grid.length * pitch + 24;
+  const width = grid.length * pitch + CALENDAR_TAIL;
   const height = HEAT_TOP + 7 * pitch;
   const monthFormat = new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' });
-  const months = grid.map((week, index) => index > 0 && week[0].date.slice(0, 7) !== grid[index - 1][0].date.slice(0, 7));
+  const yearMonthFormat = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', timeZone: 'UTC' });
+  const monthStarts = calendarMonthStarts(grid, end);
   useLayoutEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
@@ -351,10 +356,15 @@ function CalendarHeatmap({ report, weekdays, locale, label }: {
       <svg className="agent-usage-svg" viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={label}>
         {grid.map((week, weekIndex) => {
           const x = weekIndex * pitch;
+          const monthStart = monthStarts[weekIndex];
+          const yearLabel = monthStart?.slice(5, 7) === '01';
           return (
             <g key={week[0].date}>
-              {months[weekIndex] ? (
-                <text className="agent-usage-axis-label" x={x} y={11}>{monthFormat.format(new Date(`${week[week.length - 1].date}T00:00:00Z`))}</text>
+              {monthStart ? (
+                <text className="agent-usage-axis-label" x={yearLabel && x + YEAR_LABEL_WIDTH > width ? width : x} y={11}
+                  textAnchor={yearLabel && x + YEAR_LABEL_WIDTH > width ? 'end' : undefined}>
+                  {(yearLabel ? yearMonthFormat : monthFormat).format(new Date(`${monthStart}T00:00:00Z`))}
+                </text>
               ) : null}
               {week.map((day, dayIndex) => {
                 const y = HEAT_TOP + dayIndex * pitch;
