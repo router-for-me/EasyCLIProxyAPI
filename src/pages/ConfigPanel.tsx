@@ -35,6 +35,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react';
 import { open } from '../services/platform';
 import {
   AlertCircle,
+  ArrowRight,
   Search,
   ChevronRight,
   Bug,
@@ -311,10 +312,15 @@ export function ConfigPanelPage() {
 
   const handleProxySave = async () => {
     if (proxyAction !== null) return;
+    const normalizedDraft = {
+      ...proxyDraft,
+      listenHost: proxyDraft.listenHost.trim() || '0.0.0.0',
+    };
+    setProxyDraft(normalizedDraft);
     setProxyAction('save');
     proxyFeedback.clearNotice();
     try {
-      const state = await applyReverseProxyConfig(proxyDraft);
+      const state = await applyReverseProxyConfig(normalizedDraft);
       setProxyState(state);
       setBackendNotReady(false);
       setProxyDirty(false);
@@ -1693,26 +1699,22 @@ export function ConfigPanelPage() {
                 />
               </div>
 
+              <p className="config-diagnostics-intro">
+                {st('reverseProxyEnableHint')}
+              </p>
+
               <div className="config-network-label">
                 <strong>{st('reverseProxyRouteTitle')}</strong>
               </div>
 
-              <div className="config-network-grid">
+              <div className={`config-network-grid config-network-route${proxyDraft.enabled ? '' : ' is-muted'}`}>
                 <div className="config-network-field">
-                  <span className="config-field-label">
-                    <span>{st('reverseProxyRoutePublic')}</span>
-                  </span>
                   <span>
-                    {`https://${(!proxyDraft.listenHost || proxyDraft.listenHost === '0.0.0.0') ? (window.location.hostname || 'your-domain') : proxyDraft.listenHost}:${proxyDraft.listenPort || 443}`} <span aria-hidden="true">→</span>
-                  </span>
-                </div>
-
-                <div className="config-network-field">
-                  <span className="config-field-label">
-                    <span>{st('reverseProxyRouteLocal')}</span>
-                  </span>
-                  <span>
-                    {`127.0.0.1:${proxyDraft.targetPort || settings?.port || 8317}`}
+                    <code>{`0.0.0.0:${proxyDraft.listenPort || 443}（HTTPS）`}</code>
+                    {' '}
+                    <ArrowRight size={14} aria-hidden="true" />
+                    {' '}
+                    <code>{`127.0.0.1:${proxyDraft.targetPort || (settings?.port ?? 8317)}`}</code>
                   </span>
                 </div>
 
@@ -1746,7 +1748,7 @@ export function ConfigPanelPage() {
                 {st('reverseProxyCertIntro')}
               </p>
 
-              <div className="config-network-grid">
+              <div className={`config-network-grid${proxyDraft.enabled ? '' : ' is-muted'}`}>
                 <div className="config-network-field">
                   <span className="config-field-label">
                     <label htmlFor="config-input-reverse-proxy-cert-path">{st('reverseProxyCertPath')}</label>
@@ -1851,21 +1853,11 @@ export function ConfigPanelPage() {
                 <div className="config-network-grid">
                   <div className="config-network-field">
                     <span className="config-field-label">
-                      <label htmlFor="config-input-reverse-proxy-listen-host">{st('reverseProxyListenHost')}</label>
+                      <span>{st('reverseProxyListenHost')}</span>
                       <SettingsHelp label={st('reverseProxyListenHost')}>{st('reverseProxyListenHostHint')}</SettingsHelp>
                     </span>
-                    <input
-                      id="config-input-reverse-proxy-listen-host"
-                      className="config-network-input"
-                      type="text"
-                      value={proxyDraft.listenHost}
-                      disabled={controlsDisabled || proxyAction !== null}
-                      placeholder="0.0.0.0"
-                      onChange={(event) => {
-                        setProxyDraft(prev => ({ ...prev, listenHost: event.currentTarget.value }));
-                        setProxyDirty(true);
-                      }}
-                    />
+                    <code>0.0.0.0</code>
+                    <small>{st('reverseProxyBindHint')}</small>
                   </div>
 
                   <div className="config-network-field">
@@ -1898,7 +1890,9 @@ export function ConfigPanelPage() {
                 </Notice>
               ) : null}
 
-              {renderFeedback(proxyFeedback)}
+              <div aria-live="polite">
+                {renderFeedback(proxyFeedback)}
+              </div>
             </div>
           )}
 

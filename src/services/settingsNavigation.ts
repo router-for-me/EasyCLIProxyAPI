@@ -64,6 +64,7 @@ export const settingsMessages = {
   ),
   reverseProxyAdvancedTitle: text('高级设置', 'Advanced settings', '高度な設定'),
   reverseProxyAdvancedHint: text('通常保持默认即可。', 'Usually keeping default values is recommended.', '通常はデフォルトのままで問題ありません。'),
+  reverseProxyBindHint: text('监听所有网卡（不可修改）', 'Listens on all network interfaces (read-only)', 'すべてのネットワークインターフェースでリッスン（変更不可）'),
   reverseProxyHardeningOk: text(
     '内核保护已就绪：只监听 127.0.0.1，trusted-proxies 已设置。',
     'Core protection is ready: listening only on 127.0.0.1, trusted-proxies configured.',
