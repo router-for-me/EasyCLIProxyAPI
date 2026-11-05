@@ -172,22 +172,41 @@ pub(crate) fn resolve_api_access_remark(
         }
     }
 
-    let Some((_, api_key_hashes)) =
-        api_access_locator_identity(&query.provider_section, &query.locator)
-    else {
-        return Ok(String::new());
-    };
-    Ok(api_key_hashes
+    let api_key_hashes = query
+        .locator
+        .api_keys
         .iter()
-        .find_map(|hash| {
-            config.api_access_remarks.iter().find(|entry| {
+        .filter_map(|key| api_access_key_hash(key))
+        .collect::<Vec<_>>();
+    if api_key_hashes.is_empty() {
+        return Ok(String::new());
+    }
+
+    if let Some(remark) = api_key_hashes.iter().find_map(|hash| {
+        config
+            .api_access_remarks
+            .iter()
+            .find(|entry| {
                 entry.provider_section == query.provider_section
-                    && entry.record_hash.is_empty()
                     && entry.api_key_hash == *hash
+                    && !entry.remark.trim().is_empty()
             })
-        })
-        .map(|entry| entry.remark.clone())
-        .unwrap_or_default())
+            .map(|entry| entry.remark.clone())
+    }) {
+        return Ok(remark);
+    }
+
+    if let Some(remark) = api_key_hashes.iter().find_map(|hash| {
+        config
+            .api_access_remarks
+            .iter()
+            .find(|entry| entry.api_key_hash == *hash && !entry.remark.trim().is_empty())
+            .map(|entry| entry.remark.clone())
+    }) {
+        return Ok(remark);
+    }
+
+    Ok(String::new())
 }
 
 fn apply_api_access_remark_update(
