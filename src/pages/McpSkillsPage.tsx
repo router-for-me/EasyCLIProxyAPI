@@ -330,6 +330,8 @@ export function McpSkillsPage() {
   const [formHeaders, setFormHeaders] = useState<Array<{ id: string; key: string; value: string }>>([]);
   const [formEnabled, setFormEnabled] = useState(true);
   const [formDescription, setFormDescription] = useState('');
+  const [formTouched, setFormTouched] = useState<Record<string, boolean>>({});
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [savingServer, setSavingServer] = useState(false);
 
   // Raw JSON disclosure copy state
@@ -384,6 +386,11 @@ export function McpSkillsPage() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedSkill]);
+
+  // Reset pending delete confirmation when the selected server changes
+  useEffect(() => {
+    setConfirmingDeleteServerId(null);
+  }, [selectedServerId]);
 
   // Load initial data
   const loadData = useCallback(async () => {
@@ -529,13 +536,6 @@ export function McpSkillsPage() {
       const errText = errorMessage(err) || t('toggleFailed');
       setActionNotice({ tone: 'error', message: `${t('toggleFailed')}: ${errText}` });
       setRowErrors((prev) => ({ ...prev, [server.id]: errText }));
-      setTimeout(() => {
-        setRowErrors((prev) => {
-          const copy = { ...prev };
-          delete copy[server.id];
-          return copy;
-        });
-      }, 4000);
     }
   };
 
@@ -586,13 +586,6 @@ export function McpSkillsPage() {
       const errText = errorMessage(err) || t('toggleFailed');
       setActionNotice({ tone: 'error', message: `${t('toggleFailed')}: ${errText}` });
       setRowErrors((prev) => ({ ...prev, [skill.path]: errText }));
-      setTimeout(() => {
-        setRowErrors((prev) => {
-          const copy = { ...prev };
-          delete copy[skill.path];
-          return copy;
-        });
-      }, 4000);
     }
   };
 
@@ -672,6 +665,8 @@ export function McpSkillsPage() {
     setFormHeaders([]);
     setFormEnabled(true);
     setFormDescription('');
+    setFormTouched({});
+    setSubmitAttempted(false);
     setServerDialogOpen(true);
   };
 
@@ -700,6 +695,8 @@ export function McpSkillsPage() {
     );
     setFormEnabled(server.enabled);
     setFormDescription(server.description ?? '');
+    setFormTouched({});
+    setSubmitAttempted(false);
     setServerDialogOpen(true);
   };
 
@@ -728,6 +725,8 @@ export function McpSkillsPage() {
     );
     setFormEnabled(server.enabled);
     setFormDescription(server.description ?? '');
+    setFormTouched({});
+    setSubmitAttempted(false);
     setServerDialogOpen(true);
   };
 
@@ -765,8 +764,16 @@ export function McpSkillsPage() {
     return { isValid, nameError, commandError, urlError };
   }, [formName, formTransport, formCommand, formUrl, dialogServerId, servers, locale]);
 
+  const markFieldTouched = (field: 'name' | 'command' | 'url') => {
+    setFormTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  };
+
+  const showFieldError = (field: 'name' | 'command' | 'url') =>
+    submitAttempted || Boolean(formTouched[field]);
+
   // Save server
   const handleSaveServer = async () => {
+    setSubmitAttempted(true);
     if (!formValidation.isValid) return;
     setSavingServer(true);
 
@@ -902,7 +909,7 @@ export function McpSkillsPage() {
           const url = typeof obj.url === 'string' ? obj.url.trim() : null;
           if (!name || (transport === 'stdio' && !command) || (transport !== 'stdio' && !url)) {
             skipped += 1;
-            errors.push(`${name || 'unnamed'}: invalid server configuration`);
+            errors.push(`${name || 'unnamed'}: ${t('invalidServerConfig')}`);
             continue;
           }
           const existingIdx = nextServers.findIndex(
@@ -990,69 +997,6 @@ export function McpSkillsPage() {
           <h1>{t('title')}</h1>
           <p>{t('description')}</p>
         </div>
-        <div className="mcp-header-actions">
-          <button
-            type="button"
-            className="secondary-button ghost"
-            onClick={() => {
-              setImportRaw('');
-              setImportResult(null);
-              setImportError(null);
-              setImportDialogOpen(true);
-            }}
-          >
-            <Upload size={14} aria-hidden="true" />
-            <span>{t('import')}</span>
-          </button>
-          <button
-            type="button"
-            className="secondary-button ghost"
-            onClick={() => void handleExport()}
-          >
-            {exportCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-            <span>{exportCopied ? t('copied') : t('export')}</span>
-          </button>
-          <div className="mcp-more-menu-wrap" ref={moreMenuRef}>
-            <button
-              type="button"
-              className="secondary-button compact-button"
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              onClick={() => setMoreOpen((v) => !v)}
-            >
-              <span>{t('more')}</span>
-              <ChevronDown size={13} aria-hidden="true" />
-            </button>
-            {moreOpen && (
-              <div className="mcp-more-dropdown surface-panel" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="mcp-menu-item"
-                  onClick={() => {
-                    setMoreOpen(false);
-                    void handleExport();
-                  }}
-                >
-                  {exportCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-                  <span>{exportCopied ? t('copied') : t('export')}</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="mcp-menu-item"
-                  onClick={() => {
-                    setMoreOpen(false);
-                    void handleOpenFolder();
-                  }}
-                >
-                  <FolderOpen size={14} aria-hidden="true" />
-                  <span>{t('openFolder')}</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
       </header>
 
       {/* Action error notice */}
@@ -1079,7 +1023,7 @@ export function McpSkillsPage() {
               value: 'mcp',
               id: 'mcp-subpage-tab-servers',
               panelId: 'mcp-panel-servers',
-              label: t('tabMcp'),
+              label: `${t('tabMcp')} (${servers.length})`,
             },
             {
               value: 'skills',
@@ -1112,7 +1056,7 @@ export function McpSkillsPage() {
                       type="button"
                       className="icon-button quiet"
                       onClick={() => setServerSearch('')}
-                      aria-label={t('cancel')}
+                      aria-label={t('clearSearch')}
                     >
                       <X size={14} aria-hidden="true" />
                     </button>
@@ -1126,6 +1070,59 @@ export function McpSkillsPage() {
                   <Plus size={15} aria-hidden="true" />
                   <span>{t('addServer')}</span>
                 </button>
+              </div>
+
+              {/* Server-level actions */}
+              <div className="mcp-header-actions">
+                <button
+                  type="button"
+                  className="secondary-button ghost"
+                  onClick={() => {
+                    setImportRaw('');
+                    setImportResult(null);
+                    setImportError(null);
+                    setImportDialogOpen(true);
+                  }}
+                >
+                  <Upload size={14} aria-hidden="true" />
+                  <span>{t('import')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button ghost"
+                  onClick={() => void handleExport()}
+                >
+                  {exportCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                  <span>{exportCopied ? t('copied') : t('export')}</span>
+                </button>
+                <div className="mcp-more-menu-wrap" ref={moreMenuRef}>
+                  <button
+                    type="button"
+                    className="secondary-button compact-button"
+                    aria-haspopup="menu"
+                    aria-expanded={moreOpen}
+                    onClick={() => setMoreOpen((v) => !v)}
+                  >
+                    <span>{t('more')}</span>
+                    <ChevronDown size={13} aria-hidden="true" />
+                  </button>
+                  {moreOpen && (
+                    <div className="mcp-more-dropdown surface-panel" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="mcp-menu-item"
+                        onClick={() => {
+                          setMoreOpen(false);
+                          void handleOpenFolder();
+                        }}
+                      >
+                        <FolderOpen size={14} aria-hidden="true" />
+                        <span>{t('openFolder')}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Filter chips and count bar (hidden while the list is empty) */}
@@ -1241,37 +1238,36 @@ export function McpSkillsPage() {
                         : server.url ?? '';
 
                     return (
-                      <button
+                      <div
                         key={server.id}
-                        type="button"
                         role="listitem"
                         className={`mcp-server-row-button ${isSelected ? 'active' : ''}`}
-                        onClick={() => setSelectedServerId(server.id)}
                       >
-                        <div className="mcp-server-row-left">
+                        <button
+                          type="button"
+                          className="mcp-server-row-select"
+                          aria-pressed={isSelected}
+                          onClick={() => setSelectedServerId(server.id)}
+                        >
                           <span
                             className={`mcp-status-dot ${server.enabled ? 'active' : 'inactive'}`}
                             aria-hidden="true"
                           />
-                          <div className="mcp-server-row-info">
-                            <div className="mcp-server-row-heading">
+                          <span className="mcp-server-row-info">
+                            <span className="mcp-server-row-heading">
                               <span className="mcp-server-name">{server.name}</span>
                               <span
                                 className={`mcp-transport-badge transport-${server.transport}`}
                               >
                                 {server.transport}
                               </span>
-                            </div>
+                            </span>
                             <span className="mcp-server-row-desc-line" title={cmdOrUrl}>
                               {cmdOrUrl || t('none')}
                             </span>
-                          </div>
-                        </div>
-                        <div
-                          className="mcp-server-row-right"
-                          onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => e.stopPropagation()}
-                        >
+                          </span>
+                        </button>
+                        <div className="mcp-server-row-right">
                           {rowErrors[server.id] && (
                             <span className="mcp-row-error" role="alert" title={rowErrors[server.id]}>
                               {rowErrors[server.id]}
@@ -1281,14 +1277,11 @@ export function McpSkillsPage() {
                             checked={server.enabled}
                             aria-checked={server.enabled}
                             size="sm"
-                            aria-label={`${server.name} status`}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              void handleToggleServer(server);
-                            }}
+                            aria-label={t('enabledStatus', { name: server.name })}
+                            onChange={() => void handleToggleServer(server)}
                           />
                         </div>
-                      </button>
+                      </div>
                     );
                   })
                 )}
@@ -1337,9 +1330,14 @@ export function McpSkillsPage() {
                     </div>
                     {confirmingDeleteServerId === selectedServer.id ? (
                       <div className="mcp-delete-confirm-box">
-                        <span>
-                          {t('deleteConfirmTitle', { name: selectedServer.name })}
-                        </span>
+                        <div className="mcp-delete-confirm-text">
+                          <span className="mcp-delete-confirm-title">
+                            {t('deleteConfirmTitle', { name: selectedServer.name })}
+                          </span>
+                          <span className="mcp-delete-confirm-desc">
+                            {t('deleteConfirmDesc')}
+                          </span>
+                        </div>
                         <div className="mcp-delete-confirm-actions">
                           <button
                             type="button"
@@ -1539,7 +1537,7 @@ export function McpSkillsPage() {
                       type="button"
                       className="icon-button quiet"
                       onClick={() => setSkillSearch('')}
-                      aria-label={t('cancel')}
+                      aria-label={t('clearSearch')}
                     >
                       <X size={14} aria-hidden="true" />
                     </button>
@@ -1584,22 +1582,32 @@ export function McpSkillsPage() {
                 )}
               </div>
 
-              {skills.length > 0 && (
-                <div className="skills-toolbar-right">
-                  <span className="skills-count-text">
-                    {t('skillsCount', {
-                      count: filteredSkills.length,
-                      total: skills.length,
-                    })}
-                  </span>
-                  <Switch
-                    checked={skillEnabledOnly}
-                    size="sm"
-                    label={t('enabledOnly')}
-                    onChange={(e) => setSkillEnabledOnly(e.target.checked)}
-                  />
-                </div>
-              )}
+              <div className="skills-toolbar-right">
+                <button
+                  type="button"
+                  className="secondary-button ghost"
+                  onClick={() => void handleOpenFolder()}
+                >
+                  <FolderOpen size={14} aria-hidden="true" />
+                  <span>{t('openFolder')}</span>
+                </button>
+                {skills.length > 0 && (
+                  <>
+                    <span className="skills-count-text">
+                      {t('skillsCount', {
+                        count: filteredSkills.length,
+                        total: skills.length,
+                      })}
+                    </span>
+                    <Switch
+                      checked={skillEnabledOnly}
+                      size="sm"
+                      label={t('enabledOnly')}
+                      onChange={(e) => setSkillEnabledOnly(e.target.checked)}
+                    />
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Layout when a skill is selected vs normal grid */}
@@ -1675,58 +1683,55 @@ export function McpSkillsPage() {
                     {t('noSkillSearchResultsHint')}
                   </EmptyState>
                 ) : (
-                  <div className="skills-grid">
+                  <div className="skills-grid" role="list">
                     {filteredSkills.map((skill) => {
                       const isSelected = selectedSkill?.id === skill.id;
                       return (
-                        <button
+                        <div
                           key={skill.id}
-                          type="button"
+                          role="listitem"
                           className={`skill-card ${isSelected ? 'active' : ''}`}
-                          onClick={() => handleSelectSkill(skill)}
                         >
-                          <div className="skill-card-header">
-                            <div className="skill-card-heading">
-                              <h3 className="skill-card-name" title={skill.name}>
+                          <button
+                            type="button"
+                            className="skill-card-select"
+                            aria-pressed={isSelected}
+                            onClick={() => handleSelectSkill(skill)}
+                          >
+                            <span className="skill-card-heading">
+                              <span className="skill-card-name" title={skill.name}>
                                 {skill.name}
-                              </h3>
+                              </span>
                               <span className={`skill-source-badge source-${skill.source}`}>
                                 {sourceBadgeLabel(skill.source)}
                               </span>
-                            </div>
-                            <div
-                              className="skill-card-switch-wrap"
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => e.stopPropagation()}
-                            >
-                              {rowErrors[skill.path] && (
-                                <span className="mcp-row-error" role="alert" title={rowErrors[skill.path]}>
-                                  {rowErrors[skill.path]}
-                                </span>
-                              )}
-                              <Switch
-                                checked={skill.enabled}
-                                aria-checked={skill.enabled}
-                                size="sm"
-                                aria-label={`${skill.name} status`}
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  void handleToggleSkill(skill);
-                                }}
-                              />
-                            </div>
-                          </div>
+                            </span>
 
-                          <p className="skill-card-description" title={skill.description}>
-                            {skill.description || t('noDescription')}
-                          </p>
+                            <span className="skill-card-description" title={skill.description}>
+                              {skill.description || t('noDescription')}
+                            </span>
 
-                          <div className="skill-card-meta-line muted">
-                            <span className="skill-card-file-count">{t('filesCount', { count: skill.fileCount })}</span>
-                            <span className="skill-card-meta-dot">·</span>
-                            <span className="skill-card-path" title={skill.path}>{skill.path}</span>
+                            <span className="skill-card-meta-line muted">
+                              <span className="skill-card-file-count">{t('filesCount', { count: skill.fileCount })}</span>
+                              <span className="skill-card-meta-dot">·</span>
+                              <span className="skill-card-path" title={skill.path}>{skill.path}</span>
+                            </span>
+                          </button>
+                          <div className="skill-card-switch-wrap">
+                            {rowErrors[skill.path] && (
+                              <span className="mcp-row-error" role="alert" title={rowErrors[skill.path]}>
+                                {rowErrors[skill.path]}
+                              </span>
+                            )}
+                            <Switch
+                              checked={skill.enabled}
+                              aria-checked={skill.enabled}
+                              size="sm"
+                              aria-label={t('enabledStatus', { name: skill.name })}
+                              onChange={() => void handleToggleSkill(skill)}
+                            />
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -1753,7 +1758,7 @@ export function McpSkillsPage() {
                           <span
                             className={`skill-source-badge source-${selectedSkill.source}`}
                           >
-                            {selectedSkill.source}
+                            {sourceBadgeLabel(selectedSkill.source)}
                           </span>
                         </div>
                         <div className="skill-detail-header-controls">
@@ -1766,7 +1771,7 @@ export function McpSkillsPage() {
                             checked={selectedSkill.enabled}
                             aria-checked={selectedSkill.enabled}
                             size="sm"
-                            aria-label={`${selectedSkill.name} status`}
+                            aria-label={t('enabledStatus', { name: selectedSkill.name })}
                             onChange={() => void handleToggleSkill(selectedSkill)}
                           />
                           <button
@@ -1863,7 +1868,7 @@ export function McpSkillsPage() {
             <div className="mcp-form-field">
               <label htmlFor="mcp-field-name">
                 <span>{t('serverName')}</span>
-                {formValidation.nameError && (
+                {showFieldError('name') && formValidation.nameError && (
                   <span className="mcp-field-error">{formValidation.nameError}</span>
                 )}
               </label>
@@ -1874,19 +1879,26 @@ export function McpSkillsPage() {
                 placeholder={t('serverNamePlaceholder')}
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
+                onBlur={() => markFieldTouched('name')}
               />
             </div>
 
             {/* Transport Selector */}
             <div className="mcp-form-field">
-              <label>
+              <div className="mcp-form-field-label" id="mcp-transport-label">
                 <span>{t('transport')}</span>
-              </label>
-              <div className="mcp-transport-selector">
+              </div>
+              <div
+                className="mcp-transport-selector"
+                role="radiogroup"
+                aria-labelledby="mcp-transport-label"
+              >
                 {(['stdio', 'http', 'sse'] as const).map((trans) => (
                   <button
                     key={trans}
                     type="button"
+                    role="radio"
+                    aria-checked={formTransport === trans}
                     className={`mcp-transport-option ${formTransport === trans ? 'selected' : ''}`}
                     onClick={() => setFormTransport(trans)}
                   >
@@ -1906,7 +1918,7 @@ export function McpSkillsPage() {
                 <div className="mcp-form-field">
                   <label htmlFor="mcp-field-command">
                     <span>{t('command')}</span>
-                    {formValidation.commandError && (
+                    {showFieldError('command') && formValidation.commandError && (
                       <span className="mcp-field-error">{formValidation.commandError}</span>
                     )}
                   </label>
@@ -1917,6 +1929,7 @@ export function McpSkillsPage() {
                     placeholder={t('commandPlaceholder')}
                     value={formCommand}
                     onChange={(e) => setFormCommand(e.target.value)}
+                    onBlur={() => markFieldTouched('command')}
                   />
                 </div>
 
@@ -1939,7 +1952,7 @@ export function McpSkillsPage() {
               <div className="mcp-form-field">
                 <label htmlFor="mcp-field-url">
                   <span>{t('url')}</span>
-                  {formValidation.urlError && (
+                  {showFieldError('url') && formValidation.urlError && (
                     <span className="mcp-field-error">{formValidation.urlError}</span>
                   )}
                 </label>
@@ -1950,13 +1963,14 @@ export function McpSkillsPage() {
                   placeholder={t('urlPlaceholder')}
                   value={formUrl}
                   onChange={(e) => setFormUrl(e.target.value)}
+                  onBlur={() => markFieldTouched('url')}
                 />
               </div>
             )}
 
             {/* Environment Variables */}
             <div className="mcp-form-field">
-              <label>
+              <div className="mcp-form-field-label">
                 <span>{t('env')}</span>
                 <button
                   type="button"
@@ -1971,7 +1985,7 @@ export function McpSkillsPage() {
                   <Plus size={13} aria-hidden="true" />
                   <span>{t('addEnv')}</span>
                 </button>
-              </label>
+              </div>
               <div className="mcp-kv-editor">
                 {formEnv.map((pair, index) => (
                   <div key={pair.id} className="mcp-kv-row">
@@ -2016,7 +2030,7 @@ export function McpSkillsPage() {
 
             {/* Headers */}
             <div className="mcp-form-field">
-              <label>
+              <div className="mcp-form-field-label">
                 <span>{t('headers')}</span>
                 <button
                   type="button"
@@ -2031,7 +2045,7 @@ export function McpSkillsPage() {
                   <Plus size={13} aria-hidden="true" />
                   <span>{t('addHeader')}</span>
                 </button>
-              </label>
+              </div>
               <div className="mcp-kv-editor">
                 {formHeaders.map((pair, index) => (
                   <div key={pair.id} className="mcp-kv-row">
