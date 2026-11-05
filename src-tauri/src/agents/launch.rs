@@ -60,7 +60,7 @@ fn linux_terminal_definitions() -> &'static [(
             "GNOME Terminal",
         ),
         ("konsole", "konsole", &["-e"], "Konsole"),
-        ("xfce4-terminal", "xfce4-terminal", &["-e"], "Xfce Terminal"),
+        ("xfce4-terminal", "xfce4-terminal", &["-x"], "Xfce Terminal"),
         ("mate-terminal", "mate-terminal", &["--"], "MATE Terminal"),
         ("kitty", "kitty", &["-e"], "Kitty"),
         ("alacritty", "alacritty", &["-e"], "Alacritty"),
@@ -129,7 +129,15 @@ pub(crate) fn launch_agent(
     desktop_executable_path: Option<String>,
     working_directory: Option<String>,
     deepseek_harness_options: Option<DeepSeekHarnessLaunchOptions>,
+    custom_arguments: Option<String>,
 ) -> Result<(), String> {
+    let custom_arguments = parse_custom_launch_arguments(custom_arguments.as_deref())?;
+    if target.as_deref() == Some("app") && !custom_arguments.is_empty() {
+        return Err("Custom startup arguments are only supported for CLI launches".into());
+    }
+    if client.trim().eq_ignore_ascii_case("deepseek-harness") {
+        validate_deepseek_custom_arguments(&custom_arguments)?;
+    }
     let home = app
         .path()
         .home_dir()
@@ -162,7 +170,7 @@ pub(crate) fn launch_agent(
             &executable,
             PI_AGENT_NAME,
             &launch_directory,
-            &[],
+            &custom_arguments,
             &[],
             &[],
             &terminal,
@@ -185,16 +193,22 @@ pub(crate) fn launch_agent(
         .map(|target| target.id.as_str())
         .unwrap_or("cli");
     let requested_target = requested_target.unwrap_or(default_target);
+    if requested_target != "cli" && !custom_arguments.is_empty() {
+        return Err("Custom startup arguments are only supported for CLI launches".into());
+    }
     match (client, requested_target) {
         (AgentClient::ClaudeDesktop, "app") => launch_claude_desktop(&home, executable_override),
         (AgentClient::AntigravityCli, "cli")
             if antigravity_has_marker(client, &agent_config_paths(client, &home))? => {
+            validate_managed_antigravity_arguments(&custom_arguments)?;
             if !status.configured {
                 return Err("Antigravity CLI configuration does not match CPA. Apply the configuration again".into());
             }
             let executable = env::current_exe().map_err(|_| "Unable to locate CPA launch adapter")?;
             let directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
-            launch_cli_agent(&executable, client.name(), &directory, &antigravity_cli_helper_arguments(&home), &[], &[], &terminal)
+            let mut arguments = antigravity_cli_helper_arguments(&home);
+            arguments.extend(custom_arguments);
+            launch_cli_agent(&executable, client.name(), &directory, &arguments, &[], &[], &terminal)
         }
         (AgentClient::CopilotCli, "cli") if copilot_has_marker(client, &agent_config_paths(client, &home))? => {
             if !status.configured { return Err("Copilot CLI configuration does not match CPA. Apply it again".into()); }
@@ -202,7 +216,8 @@ pub(crate) fn launch_agent(
                 .or_else(|| find_agent_executable(client, &home)).ok_or("Copilot CLI not found")?;
             let adapter = env::current_exe().map_err(|_| "Unable to locate CPA launch adapter")?;
             let directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
-            let args = vec!["--cpa-copilot-cli".into(), path_to_string(&agent_config_paths(client, &home)[0]), path_to_string(&executable)];
+            let mut args = vec!["--cpa-copilot-cli".into(), path_to_string(&agent_config_paths(client, &home)[0]), path_to_string(&executable)];
+            args.extend(custom_arguments);
             launch_cli_agent(&adapter, client.name(), &directory, &args, &[], &[], &terminal)
         }
         (AgentClient::VscodeCopilot, "app") => {
@@ -243,8 +258,9 @@ pub(crate) fn launch_agent(
             let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
             if client == AgentClient::DeepSeekHarness {
                 let mode = deepseek_harness_launch_mode(deepseek_harness_options.as_ref())?;
-                let arguments =
-                    agent_cli_launch_arguments(client, deepseek_harness_options.as_ref())?;
+                let arguments = deepseek_harness_arguments_with_custom(
+                    deepseek_harness_options.as_ref(), &custom_arguments,
+                )?;
                 return launch_managed_deepseek_harness(
                     deepseek_process_state.inner(),
                     &executable,
@@ -259,7 +275,8 @@ pub(crate) fn launch_agent(
             } else {
                 &[]
             };
-            let arguments = agent_cli_launch_arguments(client, deepseek_harness_options.as_ref())?;
+            let mut arguments = agent_cli_launch_arguments(client, deepseek_harness_options.as_ref())?;
+            arguments.extend(custom_arguments);
             launch_cli_agent(
                 &executable,
                 client.name(),
@@ -275,6 +292,38 @@ pub(crate) fn launch_agent(
     }
 }
 
+
+fn parse_custom_launch_arguments(source: Option<&str>) -> Result<Vec<String>, String> {
+    let source = source.unwrap_or_default();
+    if source.chars().any(|character| character.is_ascii_control() && character != '\t') {
+        return Err("Startup arguments cannot contain newlines or control characters".into());
+    }
+    shlex::split(source).ok_or_else(|| "Startup arguments contain an unclosed quote or trailing escape".into())
+}
+
+fn validate_deepseek_custom_arguments(arguments: &[String]) -> Result<(), String> {
+    if arguments.iter().any(|argument| matches!(argument.split('=').next().unwrap_or_default(),
+        "--profile" | "--patch" | "--host" | "--port" | "--trusted-host" | "--no-open" | "--open")) {
+        return Err("Use the structured DeepSeek Harness controls for profile, patch, host, port, trusted-host and browser options".into());
+    }
+    Ok(())
+}
+
+fn deepseek_harness_arguments_with_custom(
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+    custom_arguments: &[String],
+) -> Result<Vec<String>, String> {
+    validate_deepseek_custom_arguments(custom_arguments)?;
+    let mut arguments = build_deepseek_harness_launch_arguments(options)?;
+    let task = if deepseek_harness_launch_mode(options)? == "headless" {
+        arguments.pop()
+    } else {
+        None
+    };
+    arguments.extend_from_slice(custom_arguments);
+    arguments.extend(task);
+    Ok(arguments)
+}
 
 fn deepseek_harness_launch_mode(
     options: Option<&DeepSeekHarnessLaunchOptions>,
@@ -562,9 +611,8 @@ fn spawn_managed_deepseek_harness(
 
         const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        let mut command = windows_command_for_executable(executable, false);
+        let mut command = windows_literal_cli_command(executable, arguments)?;
         command
-            .args(arguments)
             .current_dir(working_directory)
             .creation_flags(
                 (if cfg!(test) {
@@ -1386,7 +1434,7 @@ fn launch_windows_claude_store_app() -> Result<(), String> {
     launch_windows_store_app(&app_id, "Claude Desktop")
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -1458,6 +1506,29 @@ fn launch_cli_agent(
 }
 
 #[cfg(target_os = "linux")]
+fn linux_cli_terminal_command(
+    program: &Path,
+    terminal_arguments: &[&str],
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+    environment_to_remove: &[&str],
+    environment_to_set: &[(&str, &str)],
+) -> Command {
+    let mut command = Command::new(program);
+    command.args(terminal_arguments).arg(executable).args(arguments)
+        .current_dir(working_directory).stdin(Stdio::null())
+        .stdout(Stdio::null()).stderr(Stdio::null());
+    for key in environment_to_remove {
+        command.env_remove(key);
+    }
+    for (key, value) in environment_to_set {
+        command.env(key, value);
+    }
+    command
+}
+
+#[cfg(target_os = "linux")]
 fn launch_cli_agent(
     executable: &Path,
     label: &str,
@@ -1477,21 +1548,10 @@ fn launch_cli_agent(
         if program_on_path(program).is_none() {
             continue;
         }
-        let mut command = Command::new(program);
-        command
-            .args(arguments)
-            .arg(executable)
-            .args(command_arguments)
-            .current_dir(working_directory)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        for key in environment_to_remove {
-            command.env_remove(key);
-        }
-        for (key, value) in environment_to_set {
-            command.env(key, value);
-        }
+        let mut command = linux_cli_terminal_command(
+            Path::new(program), arguments, executable, working_directory,
+            command_arguments, environment_to_remove, environment_to_set,
+        );
         match command.spawn() {
             Ok(_) => return Ok(()),
             Err(error) => last_error = Some(error.to_string()),
@@ -1506,17 +1566,23 @@ fn launch_cli_agent(
     })
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
+fn windows_powershell_script_invocation(executable: &Path, arguments: &[String]) -> String {
+    let arguments = arguments.iter().map(|argument| windows_powershell_single_quoted_literal(argument)).collect::<Vec<_>>().join(", ");
+    format!("$cpaLaunchArguments = @({arguments}); & {} @cpaLaunchArguments", windows_powershell_single_quoted_literal(&path_to_string(executable)))
+}
+
+#[cfg(any(target_os = "windows", test))]
 fn windows_powershell_cli_script(
     executable: &Path,
     working_directory: &Path,
     arguments: &[String],
 ) -> String {
     let directory = windows_powershell_single_quoted_literal(&path_to_string(working_directory));
+    if executable.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ps1")) {
+        return format!("Set-Location -LiteralPath {directory}; {}", windows_powershell_script_invocation(executable, arguments));
+    }
     let executable = windows_powershell_single_quoted_literal(&path_to_string(executable));
-    if arguments
-        .first()
-        .is_some_and(|arg| matches!(arg.as_str(), "--cpa-antigravity-cli" | "--cpa-copilot-cli"))
     {
         let arguments = arguments
             .iter()
@@ -1555,19 +1621,71 @@ fn windows_powershell_cli_script(
             windows_powershell_single_quoted_literal(&arguments),
         );
     }
-    let arguments = arguments
-        .iter()
-        .map(|argument| windows_powershell_single_quoted_literal(argument))
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!(
-        "Set-Location -LiteralPath {directory}; \
-         try {{ & {executable} {arguments}; \
-         if ($LASTEXITCODE -ne 0) {{ Write-Host 'Exit code:' $LASTEXITCODE; \
-         Write-Host 'Executable:' {executable}; Write-Host 'Command:' {executable} {arguments} }} \
-         }} catch {{ Write-Host $_.Exception.Message; \
-         Write-Host 'Executable:' {executable}; Write-Host 'Command:' {executable} {arguments} }}"
-    )
+}
+
+#[cfg(any(windows, test))]
+fn windows_literal_cli_invocation(executable: &Path, arguments: &[String]) -> Result<(PathBuf, Vec<String>), String> {
+    let extension = executable.extension().and_then(|value| value.to_str()).unwrap_or_default();
+    if ["js", "mjs", "cjs"].iter().any(|value| extension.eq_ignore_ascii_case(value)) {
+        let node = program_on_path("node.exe").ok_or("Node.js executable was not found")?;
+        let mut forwarded = vec![path_to_string(executable)];
+        forwarded.extend_from_slice(arguments);
+        return Ok((node, forwarded));
+    }
+    if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat") {
+        let source = fs::read_to_string(executable).map_err(|_| "Unable to read CLI startup wrapper")?;
+        let pattern = regex::Regex::new(r#"(?i)"%dp0%[\\/]([^"\r\n]+\.(?:js|mjs|cjs))""#).unwrap();
+        let script = pattern.captures(&source).and_then(|capture| capture.get(1))
+            .filter(|_| source.to_ascii_lowercase().contains("node"))
+            .ok_or("This batch wrapper cannot safely forward literal arguments. Select the CLI executable or its JavaScript entry point instead")?;
+        let directory = executable.parent().ok_or("CLI wrapper directory is missing")?;
+        let script = directory.join(script.as_str());
+        if !script.is_file() { return Err("CLI wrapper entry point was not found".into()); }
+        let node = directory.join("node.exe");
+        let node = if node.is_file() { node } else { program_on_path("node.exe").ok_or("Node.js executable was not found")? };
+        let mut forwarded = vec![path_to_string(&script)];
+        forwarded.extend_from_slice(arguments);
+        return Ok((node, forwarded));
+    }
+    Ok((executable.to_path_buf(), arguments.to_vec()))
+}
+
+#[cfg(any(windows, test))]
+fn windows_encoded_script(script: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>())
+}
+
+#[cfg(any(windows, test))]
+fn windows_encoded_cli_launch_arguments(
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+    terminal: &str,
+) -> Vec<String> {
+    let script = windows_powershell_cli_script(executable, working_directory, arguments);
+    let mut shell_arguments = vec!["-NoLogo".into(), "-NoProfile".into()];
+    if terminal != "cmd" {
+        shell_arguments.push("-NoExit".into());
+    }
+    if executable.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ps1")) {
+        shell_arguments.extend(["-ExecutionPolicy".into(), "Bypass".into()]);
+    }
+    shell_arguments.extend(["-EncodedCommand".into(), windows_encoded_script(&script)]);
+    shell_arguments
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_literal_cli_command(executable: &Path, arguments: &[String]) -> Result<Command, String> {
+    let (executable, arguments) = windows_literal_cli_invocation(executable, arguments)?;
+    if executable.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ps1")) {
+        let mut command = Command::new(windows_powershell_executable());
+        command.args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &windows_encoded_script(&windows_powershell_script_invocation(&executable, &arguments))]);
+        return Ok(command);
+    }
+    let mut command = Command::new(executable);
+    command.args(arguments);
+    Ok(command)
 }
 
 #[cfg(target_os = "windows")]
@@ -1581,6 +1699,28 @@ fn windows_cli_launch_command(
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    if !arguments.is_empty() {
+        let (literal_executable, literal_arguments) = windows_literal_cli_invocation(executable, arguments)?;
+        let mut command = if terminal == "windows-terminal" {
+            let mut command = Command::new(program_on_path("wt.exe").ok_or("Windows Terminal not found")?);
+            command.args(["-d", &path_to_string(working_directory), "--"]).arg(windows_powershell_executable());
+            command
+        } else if terminal == "cmd" {
+            let mut command = Command::new(windows_command_processor());
+            command.args(["/D", "/K"]);
+            command.arg(windows_powershell_executable());
+            command
+        } else if matches!(terminal, "auto" | "powershell") {
+            Command::new(windows_powershell_executable())
+        } else {
+            return Err(format!("Failed to start {label}: selected terminal is unsupported"));
+        };
+        command.args(windows_encoded_cli_launch_arguments(
+            &literal_executable, working_directory, &literal_arguments, terminal,
+        ));
+        if terminal != "windows-terminal" { command.creation_flags(CREATE_NEW_CONSOLE); }
+        return Ok(command);
+    }
     let is_batch_script = executable
         .extension()
         .and_then(|extension| extension.to_str())
@@ -1702,6 +1842,228 @@ fn launch_cli_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    struct ArgumentRecorder(PathBuf);
+
+    #[cfg(target_os = "linux")]
+    impl ArgumentRecorder {
+        fn new() -> Self {
+            let directory = env::temp_dir().join(format!("cpa-argv-{}-{}", std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+            fs::create_dir_all(&directory).unwrap();
+            Self(directory)
+        }
+
+        fn script(&self, name: &str, body: &str) -> PathBuf {
+            use std::os::unix::fs::PermissionsExt;
+            let path = self.0.join(name);
+            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        }
+
+        fn read(&self, name: &str) -> Vec<String> {
+            let bytes = fs::read(self.0.join(name)).unwrap();
+            bytes.strip_suffix(&[0]).unwrap().split(|byte| *byte == 0)
+                .map(|value| String::from_utf8(value.to_vec()).unwrap()).collect()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for ArgumentRecorder {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn custom_arguments_linux_shared_terminal_records_generic_and_pi_argv() {
+        let recorder = ArgumentRecorder::new();
+        let terminal = recorder.script("terminal", "printf '%s\\0' \"$1\" > prefix; shift; exec \"$@\"");
+        let executable = recorder.script("cli recorder", "printf '%s\\0' \"$@\" > argv; printf '%s\\0' \"$PWD\" \"${ANTHROPIC_API_KEY-unset}\" \"$CPA_ARGV_TEST\" > context");
+        let custom = parse_custom_launch_arguments(Some("'' 'two words' 'a\"b' \"it's literal\" 'C:\\Work files\\' '日本語' --verbose --verbose '$(exit 91); & | %PATH% !bang! ^' --cpa-copilot-cli")).unwrap();
+        for client in [None, Some(AgentClient::Codex), Some(AgentClient::ClaudeCode)] {
+            let mut arguments = client.map(|client| agent_cli_launch_arguments(client, None).unwrap()).unwrap_or_default();
+            arguments.extend_from_slice(&custom);
+            for (_, _, prefix, _) in linux_terminal_definitions() {
+                let removals = if client == Some(AgentClient::ClaudeCode) { &["ANTHROPIC_API_KEY"][..] } else { &[] };
+                let mut command = linux_cli_terminal_command(&terminal, prefix, &executable, &recorder.0,
+                    &arguments, removals, &[("CPA_ARGV_TEST", "literal value")]);
+                if removals.is_empty() { command.env("ANTHROPIC_API_KEY", "inherited fixture"); }
+                assert!(command.status().unwrap().success());
+                assert_eq!(recorder.read("prefix"), *prefix);
+                assert_eq!(recorder.read("argv"), arguments);
+                assert_eq!(recorder.read("context"), [path_to_string(&recorder.0),
+                    if removals.is_empty() { "inherited fixture".into() } else { "unset".into() }, "literal value".into()]);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn custom_arguments_linux_managed_initial_and_restart_record_exact_argv() {
+        struct ProcessFixture(DeepSeekHarnessProcessState);
+        impl Drop for ProcessFixture {
+            fn drop(&mut self) {
+                if let Ok(mut process) = self.0.process.lock() {
+                    if let Some(process) = process.as_mut() {
+                        let _ = process.child.kill();
+                        let _ = process.child.wait();
+                    }
+                }
+            }
+        }
+        let recorder = ArgumentRecorder::new();
+        let executable = recorder.script("harness recorder", "printf '%s\\0' \"$@\" > argv; printf '%s\\0' \"$PWD\" > context; exec /bin/sleep 60");
+        let custom = parse_custom_launch_arguments(Some("'' 'two words' 'a\"b' '日本語' 'C:\\Work\\' --verbose --verbose '$(exit 91); & | %PATH% !bang!'")).unwrap();
+        let stop = |child: &mut Child| -> Result<(), String> {
+            child.kill().map_err(|error| error.to_string())?;
+            child.wait().map_err(|error| error.to_string())?;
+            Ok(())
+        };
+        for mode in ["web", "acp", "sdk", "sdk-minimal", "headless", "custom"] {
+            let mut options = deepseek_harness_options(mode);
+            options.web_port = Some(0);
+            options.task = Some("review repository".into());
+            options.profile = Some("tui-dev".into());
+            let arguments = deepseek_harness_arguments_with_custom(Some(&options), &custom).unwrap();
+            let fixture = ProcessFixture(DeepSeekHarnessProcessState::default());
+            let state = &fixture.0;
+            launch_managed_deepseek_harness(state, &executable, &recorder.0, &arguments, mode, Some(&options)).unwrap();
+            let verify = || {
+                for _ in 0..100 {
+                    if fs::read(recorder.0.join("context")).is_ok() { break; }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                let received = recorder.read("argv");
+                assert_eq!(received, arguments, "{mode}");
+                assert_eq!(received.windows(custom.len()).filter(|window| *window == custom.as_slice()).count(), 1);
+                assert_eq!(recorder.read("context"), [path_to_string(&recorder.0)]);
+                fs::remove_file(recorder.0.join("context")).unwrap();
+            };
+            verify();
+            if mode == "web" {
+                restart_managed_deepseek_harness_with(state, stop, spawn_managed_deepseek_harness).unwrap();
+                verify();
+            }
+            let mut process = state.process.lock().unwrap().take().unwrap();
+            stop(&mut process.child).unwrap();
+        }
+    }
+
+    #[test]
+    fn custom_arguments_shared_parsing_cases() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!("../../../tests/fixtures/cli-arguments.json")).unwrap();
+        for fixture in cases.as_array().unwrap() {
+            let result = parse_custom_launch_arguments(fixture["source"].as_str());
+            if fixture["expected"].is_null() { assert!(result.is_err()); }
+            else { assert_eq!(serde_json::json!(result.unwrap()), fixture["expected"]); }
+        }
+        assert!(parse_custom_launch_arguments(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn custom_arguments_deepseek_order_and_conflicts() {
+        for mode in ["web", "acp", "sdk", "sdk-minimal", "headless", "custom"] {
+            let mut options = deepseek_harness_options(mode);
+            options.task = Some("review repository".into());
+            options.profile = Some("tui-dev".into());
+            let generated = build_deepseek_harness_launch_arguments(Some(&options)).unwrap();
+            let custom = parse_custom_launch_arguments(Some("--verbose --verbose 'two words' ''")).unwrap();
+            validate_deepseek_custom_arguments(&custom).unwrap();
+            let combined = deepseek_harness_arguments_with_custom(Some(&options), &custom).unwrap();
+            let prefix = generated.len() - usize::from(mode == "headless");
+            assert_eq!(&combined[..prefix], &generated[..prefix]);
+            assert_eq!(&combined[prefix..prefix + custom.len()], &custom);
+            if mode == "headless" { assert_eq!(combined.last(), generated.last()); }
+        }
+        for option in ["--profile", "--patch", "--host", "--port", "--trusted-host", "--no-open", "--open"] {
+            assert!(validate_deepseek_custom_arguments(&[option.into()]).is_err());
+            assert!(validate_deepseek_custom_arguments(&[format!("{option}=value")]).is_err());
+        }
+    }
+
+    #[test]
+    fn custom_arguments_windows_encoded_launch_preserves_script_execution_policy() {
+        use base64::Engine;
+        let directory = Path::new(r"C:\Users\Test User\project's [work]");
+        let custom = vec!["two words".into(), String::new(), "$(x); & | 'quoted'".into()];
+        for executable in ["client.ps1", "client.PS1", "client.exe"] {
+            let (program, forwarded) = windows_literal_cli_invocation(Path::new(executable), &custom).unwrap();
+            for terminal in ["auto", "powershell", "cmd", "windows-terminal"] {
+                let values = windows_encoded_cli_launch_arguments(&program, directory, &forwarded, terminal);
+                let mut expected = vec!["-NoLogo", "-NoProfile"];
+                if terminal != "cmd" {
+                    expected.push("-NoExit");
+                }
+                if executable != "client.exe" {
+                    expected.extend(["-ExecutionPolicy", "Bypass"]);
+                }
+                expected.push("-EncodedCommand");
+                assert_eq!(&values[..values.len() - 1], &expected, "{terminal}: {executable}");
+                let bytes = base64::engine::general_purpose::STANDARD.decode(values.last().unwrap()).unwrap();
+                let script = String::from_utf16(&bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>()).unwrap();
+                assert_eq!(script, windows_powershell_cli_script(&program, directory, &custom));
+                assert_eq!(script.contains("$cpaLaunchArguments = @("), executable != "client.exe");
+                assert!(!script.contains("Set-ExecutionPolicy"));
+            }
+        }
+    }
+
+    #[test]
+    fn custom_arguments_windows_wrappers_encode_shell_data() {
+        use base64::Engine;
+        let directory = env::temp_dir().join(format!("cpa-literal-wrapper-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let unknown = directory.join("unknown.cmd");
+        fs::write(&unknown, "@echo off\r\necho %*\r\n").unwrap();
+        assert!(windows_literal_cli_invocation(&unknown, &["%PATH%".into()]).is_err());
+        let shim = directory.join("known.cmd");
+        fs::write(&shim, "@echo off\r\n\"%dp0%\\node.exe\" \"%dp0%\\entry.js\" %*\r\n").unwrap();
+        fs::write(directory.join("node.exe"), []).unwrap();
+        fs::write(directory.join("entry.js"), []).unwrap();
+        let arguments = vec!["%PATH% !bang! $(x); & | `x`".into(), String::new(), "a\"b".into(), "C:\\path with spaces\\".into()];
+        let (program, forwarded) = windows_literal_cli_invocation(&shim, &arguments).unwrap();
+        assert_eq!(program, directory.join("node.exe"));
+        assert_eq!(&forwarded[1..], &arguments);
+        let script = windows_powershell_cli_script(&program, &directory, &arguments);
+        let encoded = windows_encoded_script(&script);
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        assert_eq!(String::from_utf16(&bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>()).unwrap(), script);
+        assert!(script.contains("ProcessStartInfo"));
+        assert!(script.contains("UseShellExecute = $false"));
+        assert!(script.contains(r#"\"a\"b\""#.trim_matches('\\')) == false);
+        assert!(script.contains(r#""" "a\"b" "C:\path with spaces\\""#));
+        let script = windows_powershell_cli_script(&directory.join("client.ps1"), &directory, &arguments);
+        assert!(script.contains("$cpaLaunchArguments = @("));
+        assert!(script.contains(", '', 'a\"b', 'C:\\path with spaces\\'"));
+        assert!(!script.contains(" -File "));
+        #[cfg(windows)]
+        for terminal in ["auto", "powershell", "cmd"] {
+            let command = windows_cli_launch_command(&shim, "fixture", &directory, &arguments, terminal).unwrap();
+            let values = command.get_args().map(|value| value.to_string_lossy().into_owned()).collect::<Vec<_>>();
+            let encoded = values.last().unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+            let script = String::from_utf16(&bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>()).unwrap();
+            assert!(script.contains("ProcessStartInfo"));
+            assert!(script.contains("UseShellExecute = $false"));
+            assert!(!values[..values.len() - 1].iter().any(|value| value.contains("%PATH%")));
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_arguments_shell_transport_is_literal() {
+        let arguments = parse_custom_launch_arguments(Some("'$(exit 91)' '`exit 92`' ';' '&' '|' '日本語' '' 'a\"b' \"it's literal\" 'C:\\Program Files\\' '%PATH%' '!test!'")).unwrap();
+        let source = format!("printf '%s\\0' {}", arguments.iter().map(|value| shell_single_quote(value)).collect::<Vec<_>>().join(" "));
+        let output = Command::new("sh").args(["-c", &source]).output().unwrap();
+        assert!(output.status.success());
+        let received = output.stdout.split(|value| *value == 0).collect::<Vec<_>>();
+        assert_eq!(&received[..received.len() - 1], arguments.iter().map(|value| value.as_bytes()).collect::<Vec<_>>());
+    }
 
     #[cfg(unix)]
     #[test]
@@ -1855,11 +2217,9 @@ mod tests {
                 }
                 assert_eq!(&arguments[..4], ["-NoLogo", "-NoProfile", "-NoExit", "-Command"]);
                 assert!(arguments[4].contains("Set-Location -LiteralPath 'C:\\Users\\Test User\\project''s [work]'"));
-                assert!(arguments[4].contains(&format!("try {{ & '{executable}'")));
-                assert!(arguments[4].contains("if ($LASTEXITCODE -ne 0)"));
-                assert!(arguments[4].contains("catch { Write-Host $_.Exception.Message"));
-                assert!(arguments[4].contains(&format!("Write-Host 'Executable:' '{executable}'")));
-                assert!(arguments[4].contains(&format!("Write-Host 'Command:' '{executable}'")));
+                assert!(arguments[4].contains("System.Diagnostics.ProcessStartInfo"));
+                assert!(arguments[4].contains("WaitForExit()"));
+                assert!(!arguments[4].contains("Write-Host"));
             }
         }
     }
@@ -1872,13 +2232,10 @@ mod tests {
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
         )).join("project's [work]");
         fs::create_dir_all(&directory).unwrap();
-        let batch = directory.join("test client.cmd");
-        fs::write(&batch, "@echo off\r\necho %CD%\r\necho %~1\r\necho %CPA_LAUNCH_TEST%\r\nexit /b 0\r\n").unwrap();
         let powershell = directory.join("test client.ps1");
         fs::write(&powershell, "[Console]::WriteLine([Environment]::CurrentDirectory); [Console]::WriteLine($args[0]); [Console]::WriteLine($env:CPA_LAUNCH_TEST)").unwrap();
         let native = windows_powershell_executable();
         for (executable, arguments) in [
-            (batch, vec!["two words".to_string()]),
             (powershell, vec!["two words".to_string()]),
             (native, vec!["-NoProfile".into(), "-Command".into(),
                 "[Console]::WriteLine([Environment]::CurrentDirectory); [Console]::WriteLine('two words'); [Console]::WriteLine($env:CPA_LAUNCH_TEST)".into()]),
@@ -1927,11 +2284,12 @@ mod tests {
         let source = r#"
 using System;
 using System.IO;
+using System.Text;
 using System.Threading;
 class GuiHelper {
     static void Main(string[] args) {
         Thread.Sleep(350);
-        File.WriteAllLines(Path.Combine(Environment.CurrentDirectory, "arguments.txt"), args);
+        File.WriteAllLines(Path.Combine(Environment.CurrentDirectory, "arguments.txt"), Array.ConvertAll(args, value => Convert.ToBase64String(Encoding.UTF8.GetBytes(value))));
         File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "finished.txt"), "done");
     }
 }
@@ -1962,8 +2320,8 @@ class GuiHelper {
         };
         run(&script);
         fs::rename(compiled, &executable).unwrap();
-        for helper_flag in ["--cpa-antigravity-cli", "--cpa-copilot-cli"] {
-            let arguments = vec![
+        for helper_flag in ["--cpa-antigravity-cli", "--cpa-copilot-cli", "--user-option"] {
+            let mut arguments = vec![
                 helper_flag.into(),
                 path_to_string(&directory),
                 "trailing slash \\".into(),
@@ -1971,6 +2329,12 @@ class GuiHelper {
                 "literal $value & [x] 'quoted'".into(),
                 String::new(),
             ];
+            let cases: serde_json::Value = serde_json::from_str(include_str!("../../../tests/fixtures/cli-arguments.json")).unwrap();
+            for fixture in cases.as_array().unwrap() {
+                if let Some(expected) = fixture["expected"].as_array() {
+                    arguments.extend(expected.iter().map(|value| value.as_str().unwrap().to_string()));
+                }
+            }
             let script = format!(
                 "{}; if (![IO.File]::Exists({})) {{ throw 'GUI helper is still running' }}",
                 windows_powershell_cli_script(&executable, &directory, &arguments),
@@ -1980,9 +2344,11 @@ class GuiHelper {
             );
             run(&script);
             let received = fs::read_to_string(directory.join("arguments.txt")).unwrap();
+            use base64::Engine;
+            let received = received.lines().map(|line| String::from_utf8(base64::engine::general_purpose::STANDARD.decode(line).unwrap()).unwrap()).collect::<Vec<_>>();
             assert_eq!(
-                received.lines().collect::<Vec<_>>(),
-                arguments.iter().map(String::as_str).collect::<Vec<_>>()
+                received,
+                arguments
             );
             fs::remove_file(directory.join("finished.txt")).unwrap();
         }
@@ -2151,6 +2517,8 @@ class GuiHelper {
                 "pwd >> launches.txt; sleep 60".to_string(),
             ],
         );
+        let mut arguments = arguments;
+        arguments.extend(parse_custom_launch_arguments(Some("'' 'two words' 'a\"b' 'C:\\workspace\\' '--verbose' '--verbose'")).unwrap());
         let mut options = deepseek_harness_options("web");
         options.web_port = Some(0);
         options.trusted_hosts = vec!["localhost".to_string()];

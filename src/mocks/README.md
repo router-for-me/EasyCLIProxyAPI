@@ -35,7 +35,11 @@ quota windows, a disabled account, an exhausted account with model cooldown,
 an expired OAuth token, an empty upstream quota response, unknown remaining quota,
 a paid API account and an account with no recent requests.
 
-Quota replies pass through the normal application parsers. Codex and Claude reset
+Quota replies pass through the normal application parsers. Reset-credit
+balances are independent of Claude's fictional $100 cloud-session pool ($23.50
+used, $76.50 remaining), displayed alongside a scoped Fable window without duplication.
+Cloud-session balances do not prove paid request routing; see `docs/claude-credits.md`.
+Codex and Claude reset
 credits are tracked per account: consuming one decreases its balance and refreshes
 its usage windows. Credential edits, enable/disable, cooldown reset, deletion,
 JSON import/replacement and OAuth cancellation update the same in-memory state.

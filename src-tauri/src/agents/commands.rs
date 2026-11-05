@@ -1436,6 +1436,7 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
         return Ok(None);
     }
     let mut requested = requested.ok_or("Reconfigure the Claude Desktop model and alias")?;
+    requested.response_language = None;
     let resolve =
         |model: &str| resolve_available_agent_model(models, &validate_agent_model(model)?);
     if let Some(entries) = requested.desktop_models.as_mut() {
@@ -1470,6 +1471,7 @@ pub(crate) fn resolve_claude_desktop_model_mappings(
         manage_subagent_model: requested.manage_subagent_model,
         startup_model: requested.startup_model.map(|value| value.trim().to_string()),
         subagent_model: requested.subagent_model.map(|value| value.trim().to_string()),
+        response_language: None,
     }))
 }
 
@@ -1515,6 +1517,7 @@ pub(crate) fn resolve_claude_code_model_mappings(
         manage_subagent_model: requested.manage_subagent_model,
         startup_model: normalize_override(requested.startup_model)?,
         subagent_model: normalize_override(requested.subagent_model)?,
+        response_language: requested.response_language,
     }))
 }
 

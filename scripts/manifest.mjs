@@ -56,8 +56,14 @@ export async function generatePortableUpdateManifest({
   const tag = isPreviewChannel
     ? normalizedRawTag
     : (normalizedRawTag.startsWith('v') ? normalizedRawTag : `v${normalizedRawTag}`);
+  let defaultPreviewVersion;
+  if (normalizedRawTag.startsWith('preview-')) {
+    const previewSuffix = normalizedRawTag.slice('preview-'.length);
+    const base = (await readAppVersion()).replace(/[-+].*$/, '');
+    defaultPreviewVersion = previewSuffix ? `${base}-preview.${previewSuffix}` : `${base}-preview`;
+  }
   const version = isPreviewChannel
-    ? (String(requestedVersion ?? '').trim() || await readAppVersion())
+    ? (String(requestedVersion ?? '').trim() || defaultPreviewVersion || await readAppVersion())
     : tag.slice(1);
   const packageTag = `v${version}`;
 

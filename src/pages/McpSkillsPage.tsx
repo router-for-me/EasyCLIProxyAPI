@@ -7,6 +7,7 @@ import {
   Edit3,
   ExternalLink,
   FolderOpen,
+  Info,
   Plus,
   RotateCw,
   Search,
@@ -254,11 +255,18 @@ export function McpSkillsPage() {
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Global inline error / warning banner
-  const [banner, setBanner] = useState<{ tone: NoticeLevel; message: string } | null>(null);
+  // Errors and action feedback
+  const [serversError, setServersError] = useState<string | null>(null);
+  const [serversTone, setServersTone] = useState<'warn' | 'error'>('error');
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+  const [skillsTone, setSkillsTone] = useState<'warn' | 'error'>('error');
+  const [actionNotice, setActionNotice] = useState<{ tone: NoticeLevel; message: string } | null>(null);
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
 
-  // Export feedback
+  // Export & more menu feedback
   const [exportCopied, setExportCopied] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   // MCP Servers master-detail state
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
@@ -301,6 +309,27 @@ export function McpSkillsPage() {
   const [skillDetailError, setSkillDetailError] = useState<string | null>(null);
   const [skillPathCopied, setSkillPathCopied] = useState(false);
 
+  // Close more menu on click outside or Escape
+  useEffect(() => {
+    if (!moreOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMoreOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handleOutsideClick);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', handleOutsideClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [moreOpen]);
+
   // Close selected skill on Escape
   useEffect(() => {
     if (!selectedSkill) return;
@@ -316,29 +345,35 @@ export function McpSkillsPage() {
   // Load initial data
   const loadData = useCallback(async () => {
     setLoading(true);
-    setBanner(null);
+    setServersError(null);
+    setServersTone('error');
+    setSkillsError(null);
+    setSkillsTone('error');
+
     try {
-      const [serversRes, skillsRes] = await Promise.all([
-        listMcpServers(),
-        listSkills(),
-      ]);
-      setServers(serversRes);
-      setSkills(skillsRes);
-      if (serversRes.length > 0 && !selectedServerId) {
+      const serversRes = await listMcpServers();
+      setServers(Array.isArray(serversRes) ? serversRes : []);
+      if (Array.isArray(serversRes) && serversRes.length > 0 && !selectedServerId) {
         setSelectedServerId(serversRes[0].id);
       }
     } catch (err) {
       const isMissing = isBackendMissingError(err);
-      setBanner({
-        tone: isMissing ? 'warn' : 'error',
-        message: isMissing ? t('backendNotReady') : `${t('loadFailed')}: ${errorMessage(err)}`,
-      });
-      // Fallback empty data so UI empty states and forms can still be tested/viewed
+      setServersTone(isMissing ? 'warn' : 'error');
+      setServersError(isMissing ? t('backendNotReady') : `${t('loadFailed')}: ${errorMessage(err)}`);
       setServers([]);
-      setSkills([]);
-    } finally {
-      setLoading(false);
     }
+
+    try {
+      const skillsRes = await listSkills();
+      setSkills(Array.isArray(skillsRes) ? skillsRes : []);
+    } catch (err) {
+      const isMissing = isBackendMissingError(err);
+      setSkillsTone(isMissing ? 'warn' : 'error');
+      setSkillsError(isMissing ? t('backendNotReady') : `${t('loadFailed')}: ${errorMessage(err)}`);
+      setSkills([]);
+    }
+
+    setLoading(false);
   }, [selectedServerId, locale]);
 
   useEffect(() => {
@@ -406,30 +441,75 @@ export function McpSkillsPage() {
     void fetchSkillDetail(skill.path);
   };
 
-  // Toggle server enabled
+  // Toggle server enabled (optimistic with revert and inline error)
   const handleToggleServer = async (server: McpServer) => {
+    const previousEnabled = server.enabled;
+    const nextEnabled = !previousEnabled;
+
+    setServers((prev) =>
+      prev.map((s) => (s.id === server.id ? { ...s, enabled: nextEnabled } : s))
+    );
+    setRowErrors((prev) => {
+      if (!prev[server.id]) return prev;
+      const copy = { ...prev };
+      delete copy[server.id];
+      return copy;
+    });
+
     try {
-      await setMcpServerEnabled(server.id, !server.enabled);
-      setServers((prev) =>
-        prev.map((s) => (s.id === server.id ? { ...s, enabled: !s.enabled } : s))
-      );
+      await setMcpServerEnabled(server.id, nextEnabled);
     } catch (err) {
-      setBanner({ tone: 'error', message: `${t('toggleFailed')}: ${errorMessage(err)}` });
+      setServers((prev) =>
+        prev.map((s) => (s.id === server.id ? { ...s, enabled: previousEnabled } : s))
+      );
+      const errText = errorMessage(err) || t('toggleFailed');
+      setRowErrors((prev) => ({ ...prev, [server.id]: errText }));
+      setTimeout(() => {
+        setRowErrors((prev) => {
+          const copy = { ...prev };
+          delete copy[server.id];
+          return copy;
+        });
+      }, 4000);
     }
   };
 
-  // Toggle skill enabled
+  // Toggle skill enabled (optimistic with revert and inline error)
   const handleToggleSkill = async (skill: SkillEntry) => {
+    const previousEnabled = skill.enabled;
+    const nextEnabled = !previousEnabled;
+
+    setSkills((prev) =>
+      prev.map((s) => (s.path === skill.path ? { ...s, enabled: nextEnabled } : s))
+    );
+    if (selectedSkill?.path === skill.path) {
+      setSelectedSkill((prev) => (prev ? { ...prev, enabled: nextEnabled } : null));
+    }
+    setRowErrors((prev) => {
+      if (!prev[skill.path]) return prev;
+      const copy = { ...prev };
+      delete copy[skill.path];
+      return copy;
+    });
+
     try {
-      await setSkillEnabled(skill.path, !skill.enabled);
+      await setSkillEnabled(skill.path, nextEnabled);
+    } catch (err) {
       setSkills((prev) =>
-        prev.map((s) => (s.path === skill.path ? { ...s, enabled: !s.enabled } : s))
+        prev.map((s) => (s.path === skill.path ? { ...s, enabled: previousEnabled } : s))
       );
       if (selectedSkill?.path === skill.path) {
-        setSelectedSkill((prev) => (prev ? { ...prev, enabled: !prev.enabled } : null));
+        setSelectedSkill((prev) => (prev ? { ...prev, enabled: previousEnabled } : null));
       }
-    } catch (err) {
-      setBanner({ tone: 'error', message: `${t('toggleFailed')}: ${errorMessage(err)}` });
+      const errText = errorMessage(err) || t('toggleFailed');
+      setRowErrors((prev) => ({ ...prev, [skill.path]: errText }));
+      setTimeout(() => {
+        setRowErrors((prev) => {
+          const copy = { ...prev };
+          delete copy[skill.path];
+          return copy;
+        });
+      }, 4000);
     }
   };
 
@@ -444,7 +524,7 @@ export function McpSkillsPage() {
         setSelectedServerId(remaining.length > 0 ? remaining[0].id : null);
       }
     } catch (err) {
-      setBanner({ tone: 'error', message: `${t('delete')}: ${errorMessage(err)}` });
+      setActionNotice({ tone: 'error', message: `${t('delete')}: ${errorMessage(err)}` });
     }
   };
 
@@ -453,7 +533,7 @@ export function McpSkillsPage() {
     try {
       await openMcpSkillsDirectory();
     } catch (err) {
-      setBanner({ tone: 'error', message: `${t('openFolderFailed')}: ${errorMessage(err)}` });
+      setActionNotice({ tone: 'error', message: `${t('openFolderFailed')}: ${errorMessage(err)}` });
     }
   };
 
@@ -465,7 +545,22 @@ export function McpSkillsPage() {
       setExportCopied(true);
       setTimeout(() => setExportCopied(false), 2500);
     } catch (err) {
-      setBanner({ tone: 'error', message: `${t('exportFailed')}: ${errorMessage(err)}` });
+      setActionNotice({ tone: 'error', message: `${t('exportFailed')}: ${errorMessage(err)}` });
+    }
+  };
+
+  const sourceBadgeLabel = (source: SkillSource): string => {
+    switch (source) {
+      case 'openclaw':
+        return t('sourceOpenClaw');
+      case 'workshop':
+        return t('sourceWorkshop');
+      case 'project':
+        return t('sourceProject');
+      case 'custom':
+        return t('sourceCustom');
+      default:
+        return source;
     }
   };
 
@@ -624,7 +719,7 @@ export function McpSkillsPage() {
       setSelectedServerId(serverToSave.id);
       setServerDialogOpen(false);
     } catch (err) {
-      setBanner({ tone: 'error', message: `${t('save')}: ${errorMessage(err)}` });
+      setActionNotice({ tone: 'error', message: `${t('save')}: ${errorMessage(err)}` });
     } finally {
       setSavingServer(false);
     }
@@ -686,7 +781,7 @@ export function McpSkillsPage() {
         <div className="mcp-header-actions">
           <button
             type="button"
-            className="secondary-button"
+            className="secondary-button ghost"
             onClick={() => {
               setImportRaw('');
               setImportResult(null);
@@ -694,46 +789,64 @@ export function McpSkillsPage() {
               setImportDialogOpen(true);
             }}
           >
-            <Upload size={15} aria-hidden="true" />
+            <Upload size={14} aria-hidden="true" />
             <span>{t('import')}</span>
           </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => void handleExport()}
-            disabled={servers.length === 0}
-          >
-            {exportCopied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-            <span>{exportCopied ? t('copied') : t('export')}</span>
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void handleOpenFolder()}>
-            <FolderOpen size={15} aria-hidden="true" />
-            <span>{t('openFolder')}</span>
-          </button>
+          <div className="mcp-more-menu-wrap" ref={moreMenuRef}>
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((v) => !v)}
+            >
+              <span>{t('more')}</span>
+              <ChevronDown size={13} aria-hidden="true" />
+            </button>
+            {moreOpen && (
+              <div className="mcp-more-dropdown surface-panel" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="mcp-menu-item"
+                  disabled={servers.length === 0}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void handleExport();
+                  }}
+                >
+                  {exportCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                  <span>{exportCopied ? t('copied') : t('export')}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="mcp-menu-item"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void handleOpenFolder();
+                  }}
+                >
+                  <FolderOpen size={14} aria-hidden="true" />
+                  <span>{t('openFolder')}</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Inline banner for errors or backend not ready */}
-      {banner && (
-        <Notice
-          tone={banner.tone}
-          variant="box"
-          onDismiss={() => setBanner(null)}
-          action={
-            banner.tone === 'warn' ? (
-              <button
-                type="button"
-                className="secondary-button compact-button"
-                onClick={() => void loadData()}
-              >
-                <RotateCw size={13} aria-hidden="true" />
-                <span>{t('retry')}</span>
-              </button>
-            ) : undefined
-          }
-        >
-          {banner.message}
-        </Notice>
+      {/* Action error notice */}
+      {actionNotice && (
+        <div className="mcp-action-notice-wrap">
+          <Notice
+            tone={actionNotice.tone}
+            variant="box"
+            onDismiss={() => setActionNotice(null)}
+          >
+            {actionNotice.message}
+          </Notice>
+        </div>
       )}
 
       {/* Segmented Navigation Tabs */}
@@ -745,13 +858,13 @@ export function McpSkillsPage() {
           items={[
             {
               value: 'mcp',
-              id: 'mcp-tab-servers',
+              id: 'mcp-subpage-tab-servers',
               panelId: 'mcp-panel-servers',
               label: t('tabMcp'),
             },
             {
               value: 'skills',
-              id: 'mcp-tab-skills',
+              id: 'mcp-subpage-tab-skills',
               panelId: 'mcp-panel-skills',
               label: `${t('tabSkills')} (${skills.length})`,
             },
@@ -761,7 +874,7 @@ export function McpSkillsPage() {
 
       {/* MCP Servers Tab Panel */}
       {activeTab === 'mcp' && (
-        <div id="mcp-panel-servers" role="tabpanel" aria-labelledby="mcp-tab-servers">
+        <div id="mcp-panel-servers" role="tabpanel" aria-labelledby="mcp-subpage-tab-servers">
           <div className="mcp-servers-container">
             {/* Left Column: Search, Filter Chips, Server List */}
             <aside className="mcp-servers-sidebar">
@@ -834,28 +947,51 @@ export function McpSkillsPage() {
               {/* Server List */}
               <div className="mcp-server-list" role="list">
                 {loading ? (
-                  Array.from({ length: 4 }).map((_, idx) => (
-                    <div key={idx} className="mcp-skeleton-bar" style={{ height: 60 }} />
-                  ))
-                ) : servers.length === 0 ? (
-                  <EmptyState
-                    variant="compact"
-                    icon={<Blocks size={32} />}
-                    title={t('noServers')}
-                    action={
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={handleOpenAddDialog}
+                  <div className="mcp-skeleton-list" aria-busy="true">
+                    {Array.from({ length: 4 }).map((_, idx) => (
+                      <div key={idx} className="mcp-skeleton-row" />
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    {serversError && (
+                      <div
+                        className={`mcp-inline-error-strip${serversTone === 'warn' ? ' mcp-inline-error-strip--warn' : ''}`}
+                        role="alert"
                       >
-                        <Plus size={15} aria-hidden="true" />
-                        <span>{t('addServer')}</span>
-                      </button>
-                    }
-                  >
-                    {t('noServersHint')}
-                  </EmptyState>
-                ) : filteredServers.length === 0 ? (
+                        <div className="mcp-inline-error-body">
+                          <Info size={14} className="mcp-inline-error-icon" aria-hidden="true" />
+                          <span className="mcp-inline-error-msg">{serversError}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="secondary-button compact-button"
+                          onClick={() => void loadData()}
+                        >
+                          <RotateCw size={12} aria-hidden="true" />
+                          <span>{t('retry')}</span>
+                        </button>
+                      </div>
+                    )}
+                    {servers.length === 0 ? (
+                      <EmptyState
+                        variant="compact"
+                        icon={<Blocks size={28} />}
+                        title={t('noServers')}
+                        action={
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={handleOpenAddDialog}
+                          >
+                            <Plus size={14} aria-hidden="true" />
+                            <span>{t('addServer')}</span>
+                          </button>
+                        }
+                      >
+                        {t('noServersHint')}
+                      </EmptyState>
+                    ) : filteredServers.length === 0 ? (
                   <EmptyState
                     variant="compact"
                     title={t('noSearchResults')}
@@ -914,8 +1050,14 @@ export function McpSkillsPage() {
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => e.stopPropagation()}
                         >
+                          {rowErrors[server.id] && (
+                            <span className="mcp-row-error" role="alert" title={rowErrors[server.id]}>
+                              {rowErrors[server.id]}
+                            </span>
+                          )}
                           <Switch
                             checked={server.enabled}
+                            aria-checked={server.enabled}
                             size="sm"
                             aria-label={`${server.name} status`}
                             onChange={(e) => {
@@ -928,13 +1070,32 @@ export function McpSkillsPage() {
                     );
                   })
                 )}
+                  </>
+                )}
               </div>
             </aside>
 
             {/* Right Column: Server Detail Panel */}
             <main className="mcp-servers-detail">
-              {selectedServer ? (
-                <article className="mcp-detail-panel">
+              {loading ? (
+                <div className="mcp-detail-skeleton surface-panel" aria-busy="true">
+                  <div className="mcp-skeleton-header">
+                    <div className="mcp-skeleton-bar" style={{ width: '40%', height: 20 }} />
+                    <div className="mcp-skeleton-bar" style={{ width: 80, height: 28 }} />
+                  </div>
+                  <div className="mcp-skeleton-bar" style={{ width: '65%', height: 13, marginTop: 12 }} />
+                  <div className="mcp-skeleton-divider" />
+                  <div className="mcp-skeleton-grid">
+                    <div className="mcp-skeleton-bar" style={{ width: '30%', height: 13 }} />
+                    <div className="mcp-skeleton-bar" style={{ width: '60%', height: 13 }} />
+                    <div className="mcp-skeleton-bar" style={{ width: '30%', height: 13 }} />
+                    <div className="mcp-skeleton-bar" style={{ width: '85%', height: 13 }} />
+                    <div className="mcp-skeleton-bar" style={{ width: '30%', height: 13 }} />
+                    <div className="mcp-skeleton-bar" style={{ width: '45%', height: 13 }} />
+                  </div>
+                </div>
+              ) : selectedServer ? (
+                <article className="mcp-detail-panel surface-panel">
                   {/* Detail Header */}
                   <header className="mcp-detail-header">
                     <div className="mcp-detail-title-group">
@@ -1124,17 +1285,8 @@ export function McpSkillsPage() {
                   </details>
                 </article>
               ) : (
-                <div className="mcp-detail-empty">
-                  <Blocks size={40} aria-hidden="true" />
-                  <p>{t('selectServerHint')}</p>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    onClick={handleOpenAddDialog}
-                  >
-                    <Plus size={15} aria-hidden="true" />
-                    <span>{t('addServer')}</span>
-                  </button>
+                <div className="mcp-detail-placeholder surface-panel">
+                  <p className="mcp-placeholder-text">{t('selectServerHint')}</p>
                 </div>
               )}
             </main>
@@ -1144,7 +1296,7 @@ export function McpSkillsPage() {
 
       {/* Skills Tab Panel */}
       {activeTab === 'skills' && (
-        <div id="mcp-panel-skills" role="tabpanel" aria-labelledby="mcp-tab-skills">
+        <div id="mcp-panel-skills" role="tabpanel" aria-labelledby="mcp-subpage-tab-skills">
           <div className="skills-view-wrapper">
             {/* Top Toolbar */}
             <div className="skills-toolbar">
@@ -1232,18 +1384,40 @@ export function McpSkillsPage() {
                 {loading ? (
                   <div className="skills-grid">
                     {Array.from({ length: 6 }).map((_, idx) => (
-                      <div key={idx} className="mcp-skeleton-bar" style={{ height: 160 }} />
+                      <div key={idx} className="mcp-skeleton-card" />
                     ))}
                   </div>
-                ) : skills.length === 0 ? (
-                  <EmptyState
-                    variant="compact"
-                    icon={<Sparkles size={36} />}
-                    title={t('noSkills')}
-                  >
-                    {t('noSkillsHint')}
-                  </EmptyState>
-                ) : filteredSkills.length === 0 ? (
+                ) : (
+                  <>
+                    {skillsError && (
+                      <div
+                        className={`mcp-inline-error-strip${skillsTone === 'warn' ? ' mcp-inline-error-strip--warn' : ''}`}
+                        role="alert"
+                        style={{ marginBottom: 16 }}
+                      >
+                        <div className="mcp-inline-error-body">
+                          <Info size={14} className="mcp-inline-error-icon" aria-hidden="true" />
+                          <span className="mcp-inline-error-msg">{skillsError}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="secondary-button compact-button"
+                          onClick={() => void loadData()}
+                        >
+                          <RotateCw size={12} aria-hidden="true" />
+                          <span>{t('retry')}</span>
+                        </button>
+                      </div>
+                    )}
+                    {skills.length === 0 ? (
+                      <EmptyState
+                        variant="compact"
+                        icon={<Sparkles size={36} />}
+                        title={t('noSkills')}
+                      >
+                        {t('noSkillsHint')}
+                      </EmptyState>
+                    ) : filteredSkills.length === 0 ? (
                   <EmptyState
                     variant="compact"
                     title={t('noSkillSearchResults')}
@@ -1275,30 +1449,27 @@ export function McpSkillsPage() {
                           onClick={() => handleSelectSkill(skill)}
                         >
                           <div className="skill-card-header">
-                            <h3 className="skill-card-name" title={skill.name}>
-                              {skill.name}
-                            </h3>
-                            <span className={`skill-source-badge source-${skill.source}`}>
-                              {skill.source}
-                            </span>
-                          </div>
-
-                          <p className="skill-card-description" title={skill.description}>
-                            {skill.description || t('noDescription')}
-                          </p>
-
-                          <div className="skill-card-footer">
-                            <span className="skill-card-meta">
-                              <span>{t('filesCount', { count: skill.fileCount })}</span>
-                              <span>·</span>
-                              <span title={skill.root}>{skill.root || skill.path}</span>
-                            </span>
+                            <div className="skill-card-heading">
+                              <h3 className="skill-card-name" title={skill.name}>
+                                {skill.name}
+                              </h3>
+                              <span className={`skill-source-badge source-${skill.source}`}>
+                                {sourceBadgeLabel(skill.source)}
+                              </span>
+                            </div>
                             <div
+                              className="skill-card-switch-wrap"
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={(e) => e.stopPropagation()}
                             >
+                              {rowErrors[skill.path] && (
+                                <span className="mcp-row-error" role="alert" title={rowErrors[skill.path]}>
+                                  {rowErrors[skill.path]}
+                                </span>
+                              )}
                               <Switch
                                 checked={skill.enabled}
+                                aria-checked={skill.enabled}
                                 size="sm"
                                 aria-label={`${skill.name} status`}
                                 onChange={(e) => {
@@ -1308,10 +1479,22 @@ export function McpSkillsPage() {
                               />
                             </div>
                           </div>
+
+                          <p className="skill-card-description" title={skill.description}>
+                            {skill.description || t('noDescription')}
+                          </p>
+
+                          <div className="skill-card-meta-line muted">
+                            <span className="skill-card-file-count">{t('filesCount', { count: skill.fileCount })}</span>
+                            <span className="skill-card-meta-dot">·</span>
+                            <span className="skill-card-path" title={skill.path}>{skill.path}</span>
+                          </div>
                         </button>
                       );
                     })}
                   </div>
+                )}
+                  </>
                 )}
               </div>
 
@@ -1337,8 +1520,14 @@ export function McpSkillsPage() {
                           </span>
                         </div>
                         <div className="skill-detail-header-controls">
+                          {rowErrors[selectedSkill.path] && (
+                            <span className="mcp-row-error" role="alert" title={rowErrors[selectedSkill.path]}>
+                              {rowErrors[selectedSkill.path]}
+                            </span>
+                          )}
                           <Switch
                             checked={selectedSkill.enabled}
+                            aria-checked={selectedSkill.enabled}
                             size="sm"
                             aria-label={`${selectedSkill.name} status`}
                             onChange={() => void handleToggleSkill(selectedSkill)}

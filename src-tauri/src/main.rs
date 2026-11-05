@@ -44,6 +44,8 @@ mod usage;
 mod windows_frame;
 mod window_material;
 mod window_activity;
+#[cfg(any(windows, test))]
+mod webview_recovery;
 
 #[cfg(test)]
 use configuration_watcher::nearest_existing_watch_directory;
@@ -1230,6 +1232,8 @@ struct ClaudeDesktopModelMappings {
     /// Optional explicit model written to CLAUDE_CODE_SUBAGENT_MODEL.
     #[serde(default)]
     subagent_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response_language: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -1307,6 +1311,7 @@ impl ClaudeDesktopModelMappings {
             manage_subagent_model: true,
             startup_model: None,
             subagent_model: None,
+            response_language: None,
         }
     }
 }
@@ -2647,6 +2652,16 @@ fn main() {
             return;
         }
 
+        #[cfg(windows)]
+        if matches!(
+            event,
+            tauri::WindowEvent::Resized(_)
+                | tauri::WindowEvent::ScaleFactorChanged { .. }
+                | tauri::WindowEvent::Focused(true)
+        ) {
+            webview_recovery::request(window.app_handle());
+        }
+
         if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
             window_activity::sync(window.app_handle());
         }
@@ -2719,6 +2734,7 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 windows_frame::install(&window)?;
                 window.set_decorations(false)?;
+                webview_recovery::install(&window)?;
             }
             if let Some(window) = app.get_webview_window("main") {
                 window.set_background_color(Some(tauri::window::Color(255, 255, 255, 255)))?;
@@ -2924,6 +2940,7 @@ fn main() {
             mcp_servers::save_mcp_server,
             mcp_servers::delete_mcp_server,
             mcp_servers::set_mcp_server_enabled,
+            mcp_servers::sync_mcp_server_to_openclaw,
             mcp_servers::import_mcp_servers_json,
             mcp_servers::export_mcp_servers_json,
             mcp_servers::open_mcp_skills_directory,
@@ -3098,6 +3115,8 @@ fn main() {
             ..
         } => show_main_window(app_handle),
         tauri::RunEvent::ExitRequested { api, code, .. } => {
+            #[cfg(windows)]
+            webview_recovery::stop(app_handle);
             let process_state = app_handle.state::<CoreProcessState>();
             if process_state.shutdown_complete.load(Ordering::Acquire) {
                 return;
@@ -3126,6 +3145,8 @@ fn main() {
             });
         }
         tauri::RunEvent::Exit => {
+            #[cfg(windows)]
+            webview_recovery::stop(app_handle);
             usage::stop_usage_collector(app_handle);
             let deepseek_process_state = app_handle.state::<DeepSeekHarnessProcessState>();
             if let Err(error) = stop_managed_deepseek_harness(deepseek_process_state.inner()) {

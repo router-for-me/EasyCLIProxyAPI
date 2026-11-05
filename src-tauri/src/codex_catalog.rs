@@ -644,6 +644,26 @@ fn prepare_catalog_with_customizations(
         },
     );
 
+    if !customizations.model_order().is_empty() {
+        let rank: std::collections::HashMap<String, usize> = customizations
+            .model_order()
+            .iter()
+            .enumerate()
+            .map(|(index, slug)| (slug.clone(), index))
+            .collect();
+        entries.sort_by_key(|entry| {
+            rank.get(&normalize_id(&string_value(&entry.value, "slug")))
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+        for (position, entry) in entries.iter_mut().enumerate() {
+            entry.value.insert(
+                "priority".to_string(),
+                Value::Number((position as i64 + 1).into()),
+            );
+        }
+    }
+
     let models = entries
         .iter()
         .map(|entry| AgentModelOption {

@@ -35,6 +35,12 @@ const path = require('node:path');
     for (const name of ['codex-personal.json', 'claude-team.json', 'kimi-personal.json', 'devin-team.json', 'xai-subscription.json', 'antigravity-team-with-a-long-account-name.json']) {
       await card(name).locator('[role="progressbar"]').first().waitFor();
     }
+    const claude = card('claude-team.json');
+    assert.equal(await claude.getByText('Cloud session credits', { exact: true }).count(), 1);
+    await claude.getByText('Used $23.50 · Limit $100.00 · Remaining $76.50', { exact: true }).waitFor();
+    await claude.getByText('Weekly Fable limit', { exact: true }).waitFor({ state: 'attached' });
+    await claude.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: '/tmp/ecpa_issue-338-claude-cloud-credits-1102_ui_credential-cloud-credits.png', fullPage: true });
     assert.equal(await card('codex-disabled.json').getByRole('switch').getAttribute('aria-checked'), 'false');
     await card('codex-disabled.json').getByRole('switch').click();
     await page.waitForFunction(() => document.querySelector('.auth-card-filename[title="codex-disabled.json"]')?.closest('.auth-file-card')?.querySelector('[role="switch"]')?.getAttribute('aria-checked') === 'true');
@@ -43,6 +49,13 @@ const path = require('node:path');
     await page.getByRole('alertdialog').getByRole('button', { name: 'Clear cooldown', exact: true }).click();
     await cooling.locator('.auth-file-health-compact').waitFor({ state: 'hidden' });
     await page.screenshot({ path: 'bin-work/browser-mock-credentials.png', fullPage: true });
+    await page.getByRole('button', { name: 'Quota Lookup', exact: true }).click();
+    await page.getByRole('radio', { name: /^Claude,/ }).click();
+    await page.locator('header').getByRole('button', { name: 'Refresh Quota', exact: true }).click();
+    await page.getByText('Used $23.50 · Limit $100.00 · Remaining $76.50', { exact: true }).first().waitFor();
+    assert.equal(await page.getByText('Cloud session credits', { exact: true }).count(), 1);
+    assert.equal(await page.getByText('Weekly Fable limit', { exact: true }).count(), 1);
+    await page.screenshot({ path: '/tmp/ecpa_issue-338-claude-cloud-credits-1102_ui_quota-cloud-credits.png', fullPage: true });
     assert.deepEqual(errors, []);
     assert.deepEqual(externalRequests, []);
     console.log('PASS: real app browser mock, six provider quotas, pagination, credential toggle and cooldown reset without external requests.');

@@ -1,4 +1,5 @@
 import { readAgentConfigDirectories, writeAgentConfigDirectories } from '../services/agentConfigDirectories';
+import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
 import { pollWhileActive } from '../services/windowActivity';
 import { Notice } from '../components/Notice';
 import { Tabs } from '../components/Tabs';
@@ -128,6 +129,7 @@ import { Dialog } from '../components/Dialog';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { requestAppNavigation } from '../navigation';
 import { Select } from '../components/Select';
+import { ClaudeResponseLanguage } from './ClaudeResponseLanguage';
 
 const setupErrors: Record<string, MessageKey> = {
   COPILOT_SETUP_REQUIRED: 'agents.copilotSetup.required',
@@ -655,6 +657,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [clearError, setClearError] = useState('');
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [launchDirectoryDialogOpen, setLaunchDirectoryDialogOpen] = useState(false);
+  const [customArgumentDrafts, setCustomArgumentDrafts] = useState<Partial<Record<AgentClientId, string>>>({});
+  const customArguments = customArgumentDrafts[selected] ?? '';
+  const parsedCustomArguments = parseAgentLaunchArguments(customArguments);
+  const customArgumentConflict = selected === 'deepseek-harness' && parsedCustomArguments !== null && hasDeepSeekArgumentConflict(parsedCustomArguments);
+  const customArgumentsInvalid = parsedCustomArguments === null || customArgumentConflict;
   const [codexCatalogDialogOpen, setCodexCatalogDialogOpen] = useState(false);
   const [codexSubagentDialogOpen, setCodexSubagentDialogOpen] = useState(false);
   const [zcodeCatalogDialogOpen, setZcodeCatalogDialogOpen] = useState(false);
@@ -992,6 +999,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         manageSubagentModel: source.manageSubagentModel !== false,
         startupModel: source.startupModel?.trim() || 'opus',
         subagentModel: source.subagentModel ?? '',
+        responseLanguage: source.responseLanguage ?? null,
       };
       return sameAgentModelMappings(currentClientDraft, next)
         ? current
@@ -1255,6 +1263,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     resolved.disableAutoCompact = claudeModelMappingsDraft.disableAutoCompact;
     resolved.startupModel = claudeModelMappingsDraft.startupModel.trim() || 'opus';
     resolved.subagentModel = claudeModelMappingsDraft.subagentModel.trim();
+    resolved.responseLanguage = claudeModelMappingsDraft.responseLanguage ?? null;
     resolved.manageDefaultModel = resolved.startupModel.length > 0;
     resolved.manageSubagentModel = resolved.subagentModel.length > 0;
     return resolved;
@@ -1636,6 +1645,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         desktopExecutablePath: executablePaths[`${selected}:app`] ?? null,
         workingDirectory,
         deepseekHarnessOptions: deepSeekHarnessOptions,
+        ...(target.id === 'cli' && customArguments ? { customArguments } : {}),
       });
       if (selected === 'deepseek-harness') {
         await loadDeepSeekHarnessProcessStatus();
@@ -1753,6 +1763,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
   const launchFromDirectoryDialog = async () => {
     if (!launchDirectoryTarget) return;
+    if (launchDirectoryTarget.id === 'cli' && customArgumentsInvalid) return;
     const workingDirectory = launchDirectory.trim();
     if (!workingDirectory) {
       setLaunchDirectoryError(t('agents.launchDirectory.directoryRequired'));
@@ -2198,6 +2209,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       </label>
                     </div>
                   </div>
+                  <ClaudeResponseLanguage
+                    value={claudeModelMappingsDraft.responseLanguage}
+                    disabled={busy || loading}
+                    onChange={(responseLanguage) => editClaudeModelMappings((current) => ({ ...current, responseLanguage }))}
+                  />
                   <ClaudeCodeModelInputs
                         routes={claudeModelMappingsDraft}
                         models={models}
@@ -2657,6 +2673,28 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               </div>
             </div>
           ) : null}
+          {launchDirectoryTarget?.id === 'cli' ? (
+            <div className="agent-custom-arguments surface-section surface-muted">
+              <label className="config-dialog-field" htmlFor="agent-custom-arguments">
+                <span>{t('agents.customArguments.label')}</span>
+                <textarea id="agent-custom-arguments" className="config-dialog-text-input" rows={3}
+                  value={customArguments} disabled={busy} spellCheck={false} autoComplete="off"
+                  aria-describedby={`agent-custom-arguments-help${customArgumentsInvalid ? ' agent-custom-arguments-error' : ''}`}
+                  aria-invalid={customArgumentsInvalid}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setCustomArgumentDrafts((current) => ({ ...current, [selected]: value }));
+                  }} />
+              </label>
+              <p id="agent-custom-arguments-help">{t('agents.customArguments.summary')}</p>
+              <details>
+                <summary>{t('agents.customArguments.details')}</summary>
+                <p>{t('agents.customArguments.help')}</p>
+              </details>
+              {isDeepSeekHarnessClient ? <p>{t('agents.customArguments.deepseek')}</p> : null}
+              {customArgumentsInvalid ? <p id="agent-custom-arguments-error" role="alert">{t(customArgumentConflict ? 'agents.customArguments.conflict' : 'agents.customArguments.error')}</p> : null}
+            </div>
+          ) : null}
           {launchDirectoryError ? (
             <MessageNotice message={launchDirectoryError} onDismiss={() => setLaunchDirectoryError('')} />
           ) : null}
@@ -2676,7 +2714,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
               type="button"
               className="primary-button"
               onClick={() => void launchFromDirectoryDialog()}
-              disabled={busy || !launchDirectory.trim() || !launchDirectoryTarget}
+              disabled={busy || !launchDirectory.trim() || !launchDirectoryTarget || (launchDirectoryTarget.id === 'cli' && customArgumentsInvalid)}
             >
               {busyAction === 'launch' || busyAction === 'launch-cli'
                 ? <LoaderCircle size={16} className="spin" />

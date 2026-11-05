@@ -308,6 +308,16 @@ const OBJECT_PATHS: &[&str] = &[
     "credentials/concurrency",
     "credentials/in-flight",
     "client/codex",
+    "client/codex/web-search-result-cache",
+    "server/response-compression",
+    "server/discovery",
+    "requests/streaming",
+    "routing/retry",
+    "upstream",
+    "upstream/codex",
+    "upstream/claude",
+    "upstream/claude/header-defaults",
+    "upstream/xai",
     "observability/pprof",
     "multimedia",
     "oauth/providers",
@@ -325,6 +335,11 @@ const OBJECT_PATHS: &[&str] = &[
 ];
 const FIELD_GROUPS: &[(&str, &str, &str)] = &[
     ("server", "string", "github-token"),
+    ("server", "uint", "max-request-body-bytes"),
+    ("server", "strings", "trusted-proxies"),
+    ("server/response-compression", "bool", "enabled"),
+    ("server/response-compression", "uint", "min-bytes"),
+    ("server/discovery", "bool", "enabled"),
     ("management", "bool", "allow-remote disable-control-panel disable-auto-update-panel"),
     ("management", "string", "base-url panel-github-repository"),
     ("credentials/concurrency", "string", "cpa-heartbeat-timeout cpa-cancel-bound reclaim-grace cleanup-interval release-flush-interval release-max-backoff busy-retry-min busy-retry-max"),
@@ -332,12 +347,20 @@ const FIELD_GROUPS: &[(&str, &str, &str)] = &[
     ("credentials/in-flight", "string", "snapshot-interval stale-after staging-retention"),
     ("credentials/in-flight", "uint", "max-part-bytes max-part-count max-revision-bytes max-aggregate-groups max-details max-string-bytes"),
     ("routing", "bool", "session-affinity-subagents force-model-prefix"),
+    ("routing", "rebind-on", "session-affinity-rebind-on"),
+    ("routing/retry", "uint", "request-retry max-retry-credentials max-retry-interval"),
     ("routing/cooldown", "bool", "save-cooldown-status"),
     ("routing/cooldown", "int", "transient-error-cooldown-seconds"),
     ("requests", "bool", "passthrough-headers"),
     ("requests", "int", "nonstream-keepalive-interval"),
+    ("requests", "uint", "tls-handshake-timeout-seconds"),
     ("requests/streaming", "int", "keepalive-seconds"),
+    ("requests/streaming", "bool", "send-keepalive-before-ft"),
+    ("requests/streaming", "uint", "bootstrap-retries"),
     ("client/codex", "bool", "enable-apply-patch optimize-multi-agent-v2"),
+    ("client/codex/web-search-result-cache", "bool", "enabled"),
+    ("client/codex/web-search-result-cache", "string", "ttl"),
+    ("client/codex/web-search-result-cache", "uint", "limit"),
     ("oauth", "int", "auth-auto-refresh-workers"),
     ("oauth", "auth-dir", "auth-dir"),
     ("oauth/providers/aistudio", "bool", "ws-auth"),
@@ -360,6 +383,14 @@ const FIELD_GROUPS: &[(&str, &str, &str)] = &[
     ("oauth/providers/antigravity/connection-pool", "uint", "max-idle-conns-per-host"),
     ("oauth/providers/devin", "strings", "sensitive-words"),
     ("oauth/providers/xai", "bool", "inject-x-search"),
+    ("upstream/codex", "bool", "upstream-request-compression websocket-compression response-steering disable-codex-cloaking stream-bootstrap-buffering orphan-delegation-compatibility model-level-cooling"),
+    ("upstream/codex", "uint", "upstream-request-compression-min-bytes"),
+    ("upstream/codex", "string", "stream-bootstrap-timeout"),
+    ("upstream/claude", "bool", "tool-search model-level-cooling disable-claude-cloak-mode disable-cloaking-model-list"),
+    ("upstream/claude", "uint", "session-date-pin-days"),
+    ("upstream/claude/header-defaults", "string", "user-agent package-version runtime-version os arch timeout timezone"),
+    ("upstream/claude/header-defaults", "bool", "stabilize-device-profile"),
+    ("upstream/xai", "bool", "inject-x-search"),
     ("multimedia", "image-mode", "disable-image-generation"),
     ("multimedia", "string", "gpt-image-2-base-model video-result-auth-cache-ttl"),
     ("observability/logs", "bool", "request-log"),
@@ -548,6 +579,7 @@ fn validate_string(path: &[String], value: &str) -> bool {
             | "idle-conn-timeout"
             | "stream-bootstrap-timeout"
             | "video-result-auth-cache-ttl"
+            | "ttl"
     ) {
         return duration_nanos(value)
             .is_some_and(|nanos| !path.starts_with(&parts("credentials")) || nanos > 0);
@@ -691,6 +723,11 @@ fn validate_value(path: &[String], value: &Json, before: &Json) -> Result<(), St
             }
         }
         Some("bool") if value.is_boolean() => {}
+        Some("rebind-on") => {
+            if !matches!(value.as_str(), Some("any" | "quota")) {
+                return Err(error());
+            }
+        }
         Some("auth-dir") => {
             let value = value.as_str().ok_or_else(error)?;
             if value.trim().is_empty()
@@ -1077,6 +1114,8 @@ fn prepare_patch(
                 "server/host",
                 "server/port",
                 "server/tls",
+                "server/trusted-proxies",
+                "server/discovery",
                 "management",
                 "oauth/auth-dir",
             ]

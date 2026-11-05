@@ -1,18 +1,14 @@
-- If you have any questions or suggestions about the app, please contact us through our [QQ group](https://qm.qq.com/q/3queDaIG) or [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues). We will respond as soon as possible.
+- If you have any questions or suggestions about the software, please reach us through the [QQ group](https://qm.qq.com/q/3queDaIG) or [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues) and we will get back to you as soon as possible.
 
 ## Fixed
 
-- **The apply button no longer greys out silently**: on the routing page, when the plan fails validation the reason now appears next to "Apply plan" instead of leaving a disabled button with no explanation.
-- **Session lifetime format guidance**: entering a session lifetime without a unit (for example `3`) now highlights the field and shows "Session lifetime must be a duration with a unit, e.g. 1h, 30m or 1h30m." The field still only accepts durations with a unit; `1h`, `30m` and `1h30m` all apply normally.
+- **Preview builds always offered an older build**: the integer type used to parse the preview tag timestamp was too small, so a stamp like `202611041750` always overflowed and "find the latest preview build" silently failed. It now parses as a 64-bit integer, so updates point at the newest preview build again.
+- **Reverse proxy disabled state was lost on restart**: turning the reverse proxy off and restarting the app brought the switch back to enabled. The state is now saved and restored correctly.
+- **Reverse proxy restart flag was overwritten**: after changing reverse proxy settings, the restart-required marker is no longer cleared by later writes, and the core config path resolves correctly.
 
 ## Improved
 
-- **Gateway policy field descriptions**: request retries, retry credentials, maximum retry wait, transient cooldown and the disable-cooldown switch each gained a one-line description, instead of a bare label and number box.
-
-## Added
-
-- **MCP servers and agent skills in one page**: a new "MCP & Skills" page lists the MCP servers and the agent skills the app can see, with a detail panel for each.
-  - Servers show their transport (stdio, HTTP or SSE), command or URL, the arguments and environment they run with, and whether they are enabled. You can add, edit, delete, enable or disable a server, and import or export the whole list as JSON.
-  - Skills are grouped by where they come from (OpenClaw, the project, the workshop or a custom directory), show their description, path and file count, and can be toggled on or off. Files from a skill are shown in a reading pane.
-  - A chip filter on each tab narrows the list by transport or by source, and the page keeps working down to the 640px window minimum.
-- **Built-in reverse proxy**: an optional reverse proxy service can now terminate TLS for the local core service, configurable from the settings page with certificate and listen port.
+- **Unique tags for preview builds**: every preview build now uses a unique timestamped tag and older preview releases are pruned automatically, so builds no longer overwrite each other.
+- **Clearer download channel description**: the version management page now distinguishes preview and stable download targets and explains what each channel contains.
+- **Better MCP and Skill page states**: a failed load shows an inline error strip and an empty state instead of a blank page, and list spacing and layout were polished.
+- **MCP entries sync to OpenClaw config**: MCP servers and agent skills can now be written through to the OpenClaw configuration instead of being copied by hand.

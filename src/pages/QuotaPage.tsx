@@ -23,7 +23,9 @@ import devinIcon from '../assets/icons/devin.svg';
 import geminiIcon from '../assets/icons/gemini.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import metaIcon from '../assets/icons/meta.svg';
-import { managementApi, readBoolean, readString, responseList } from '../services/managementApi';
+import zaiIcon from '../assets/icons/zai.svg';
+import { loadZaiCodingPlanFiles } from '../services/zaiQuota';
+import { managementApi, normalizeAuthIndex, readBoolean, readString, responseList } from '../services/managementApi';
 import { formatQuotaReset, useQuotaClock } from '../services/quotaTime';
 import {
   formatQuotaTimestamp,
@@ -58,10 +60,11 @@ const providerMeta: Record<QuotaDisplayProvider, { label: string; icon: string }
   xai: { label: 'xAI', icon: grokIcon },
   devin: { label: 'Devin', icon: devinIcon },
   meta: { label: 'Muse', icon: metaIcon },
+  zai: { label: 'z.ai', icon: zaiIcon },
   antigravity: { label: 'Antigravity', icon: antigravityIcon },
 };
 
-const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'devin', 'meta', 'plugin'];
+const providerOrder: QuotaDisplayProvider[] = ['claude', 'antigravity', 'codex', 'xai', 'kimi', 'zai', 'devin', 'meta', 'plugin'];
 const REFRESH_CONCURRENCY = 4;
 
 // Stacked matches .real-quota-grid (minmax(min(300px, 100%), 1fr), 12px gap); Compact uses narrower columns and 8px gaps.
@@ -95,8 +98,19 @@ export function QuotaPage() {
     setLoading(true);
     setError('');
     try {
-      const payload = await managementApi.get('/credentials');
-      const allFiles = sortAuthFilesByPriority(dedupeAuthFiles(responseList(payload, 'files')));
+      const [payload, zaiFiles] = await Promise.all([
+        managementApi.get('/credentials'),
+        loadZaiCodingPlanFiles(),
+      ]);
+      const listed = dedupeAuthFiles(responseList(payload, 'files'));
+      const listedIndexes = new Set(listed.map((file) => normalizeAuthIndex(file.auth_index ?? file.authIndex)).filter(Boolean));
+      const allFiles = sortAuthFilesByPriority([
+        ...listed,
+        ...zaiFiles.filter((file) => {
+          const authIndex = normalizeAuthIndex(file.auth_index);
+          return authIndex && !listedIndexes.has(authIndex);
+        }),
+      ]);
       const nextFiles = allFiles.filter((file) => !readBoolean(file, 'disabled') && quotaProviderForFile(file));
       setFiles(nextFiles);
       const validQuotaKeys = new Set(allFiles.map(quotaKey));
@@ -375,12 +389,13 @@ export function QuotaCard({
           const percent = row.remainingPercent !== null && Number.isFinite(row.remainingPercent)
             ? Math.max(0, Math.min(100, row.remainingPercent)) : null;
           return <div className="real-quota-row" key={index} title={group.label ? row.detail : undefined}>
-            <div className="quota-window-summary"><span title={glance ? row.windowLabel || row.label : undefined}>{row.windowLabel || row.label}</span><div className="quota-window-status">
+            <div className="quota-window-summary"><span title={glance ? row.windowLabel || row.label : row.help}>{row.windowLabel || row.label}</span><div className="quota-window-status">
               <strong>{row.quotaAvailable ? t('quota.service.antigravity.available') : percent === null ? '—' : glance ? `${Math.round(percent)}%` : t('quota.remaining', { percent: Math.round(percent) })}</strong>
               {reset ? <small title={formatQuotaReset(row.resetAtMs, row.reset, locale, now)}>{reset}</small> : null}
             </div></div>
             {percent !== null ? <div className="real-quota-track" role="progressbar" aria-label={row.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: percent + '%', background: requestRateColor(percent / 100) }} /></div> : null}
             {!group.label && row.detail ? <small>{row.detail}</small> : null}
+            {row.help ? <details><summary>{t('quota.service.cloud.how')}</summary><small>{row.help}</small></details> : null}
           </div>;
         })}
       </section>)}</div> : null}

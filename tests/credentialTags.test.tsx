@@ -3,11 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider } from '../src/i18n';
 import { AuthFileBatchDialog } from '../src/components/AuthFileBatchDialog';
 import { dedupeAuthFiles } from '../src/services/authFiles';
-import { batchAddCredentialTag, batchRemoveCredentialTag } from '../src/services/authFileOperations';
+import { batchAddCredentialTag, batchRemoveCredentialTag, renameCredentialTag } from '../src/services/authFileOperations';
 import { loadAuthFileSettings, saveAuthFileSettings } from '../src/services/authFileSettings';
 import {
   CREDENTIAL_TAGS_STORAGE_KEY, getCredentialTags, mergeCredentialTags,
   resolveCredentialTags, setCredentialTags,
+  parseCredentialTagInput, replaceCredentialTag,
 } from '../src/services/credentialTags';
 
 const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -98,11 +99,53 @@ describe('credential tag persistence', () => {
     ]);
   });
 
-  it('keeps local settings on backend failure and still reports the failure', async () => {
+  it('keeps previous local settings on backend failure and reports the failure', async () => {
     const api = { get: async () => ({}), patch: async () => { throw new Error('Offline'); } };
     const original = await loadAuthFileSettings('one.json', api);
     await expect(saveAuthFileSettings('one.json', original, { ...original, tags: 'weekly' }, api)).rejects.toThrow('Offline');
-    expect(getCredentialTags('one.json')).toEqual(['weekly']);
+    expect(getCredentialTags('one.json')).toEqual([]);
+  });
+
+  it('normalizes comma-separated, full-width and multiline input without empty or duplicate tags', () => {
+    expect(parseCredentialTagInput(' team, team，日本語\n weekly , ,')).toEqual(['team', '日本語', 'weekly']);
+    expect(replaceCredentialTag(['old', 'keep', 'team'], 'old', ' team ')).toEqual(['team', 'keep']);
+    expect(replaceCredentialTag(['old', 'keep'], 'old', '')).toEqual(['keep']);
+  });
+
+  it('merges renamed tags, preserves unrelated tags and reports partial failures honestly', async () => {
+    const files = [{ name: 'one.json', tags: ['old', 'keep', 'team'] }, { name: 'two.json', tags: ['old'] }, { name: 'three.json', tags: [] }];
+    files.forEach(file => setCredentialTags(file.name, file.tags));
+    const writes: unknown[] = [];
+    const api = { patch: async (_path: string, body: Record<string, unknown>) => {
+      writes.push(body);
+      if (body.name === 'two.json') throw new Error('Offline');
+    } };
+    const results = await renameCredentialTag(files, 'old', ' team ', api);
+    expect(results.map(result => result.success)).toEqual([true, false]);
+    expect(getCredentialTags('one.json')).toEqual(['team', 'keep']);
+    expect(getCredentialTags('two.json')).toEqual(['old']);
+    expect(files[1].tags).toEqual(['old']);
+    expect(writes).toHaveLength(2);
+    expect(await renameCredentialTag(files, 'team', ' , ', api)).toEqual([]);
+    expect(await renameCredentialTag(files, 'team', 'team', api)).toEqual([]);
+    expect(await renameCredentialTag(files, 'team', '', api)).toEqual([]);
+    expect(writes).toHaveLength(2);
+    await batchRemoveCredentialTag(files, 'team', api);
+    expect(getCredentialTags('one.json')).toEqual(['keep']);
+    expect(files).toHaveLength(3);
+  });
+
+  it('adds normalized input in a single write per affected credential and retains failed state', async () => {
+    const files = [{ name: 'one.json', tags: ['keep'] }, { name: 'two.json', tags: ['team', 'weekly'] }];
+    const writes: unknown[] = [];
+    const api = { patch: async (_path: string, body: unknown) => { writes.push(body); } };
+    expect(await batchAddCredentialTag([], 'team', api)).toEqual([]);
+    expect(await batchAddCredentialTag(files, ' , ，\n', api)).toEqual([]);
+    expect(await batchAddCredentialTag(files, ' team，weekly, team ', api)).toEqual([{ id: 'one.json', success: true }]);
+    expect(writes).toEqual([{ name: 'one.json', tags: ['keep', 'team', 'weekly'] }]);
+    const results = await batchRemoveCredentialTag(files, 'weekly', { patch: async () => { throw new Error('Offline'); } });
+    expect(results.every(result => !result.success)).toBe(true);
+    expect(getCredentialTags('one.json')).toEqual(['keep', 'team', 'weekly']);
   });
 
   it('persists batch additions and removals across lists with no backend tags', async () => {
