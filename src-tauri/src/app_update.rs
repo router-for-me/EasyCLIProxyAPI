@@ -1,3 +1,4 @@
+use super::plugins::{plugin_github_token, read_plugin_github_settings};
 use super::*;
 
 pub(crate) const PORTABLE_UPDATE_HELPER_ACK_FILE: &str = "update-helper-started.ack";
@@ -315,13 +316,14 @@ async fn resolve_app_update(
     let requested_source = config.selected_download_candidate();
     let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
     let update_channel = normalize_update_channel(&config.update_channel);
+    let github_token = gui_github_token(&config).await;
     let mut channel_tag = update_channel_tag(&update_channel);
     if channel_tag.as_deref() == Some(PREVIEW_CHANNEL_MARKER) {
         // Resolve the rolling preview channel to the newest timestamped release.
         // Never fall back to a fixed tag: a preview build must not be silently
         // offered the stable release, and a deleted rolling tag would otherwise
         // turn every update check into a 404.
-        match fetch_latest_preview_tag(&client).await {
+        match fetch_latest_preview_tag(&client, github_token.as_deref()).await {
             Some(tag) => channel_tag = Some(tag),
             None => {
                 return Err(
@@ -487,6 +489,22 @@ fn app_update_metadata_request(client: &reqwest::Client, url: &str) -> reqwest::
         .query(&[("_", nonce)])
         .header(reqwest::header::CACHE_CONTROL, "no-cache")
         .header(reqwest::header::PRAGMA, "no-cache")
+}
+
+/// Reads the configured GitHub token the same way the plugin store does, so a
+/// panel update check does not spend the 60 anonymous requests per hour.
+async fn gui_github_token(
+    config: &GuiConfigFile,
+) -> Option<String> {
+    let response = management_http_client()
+        .ok()?
+        .get(management_endpoint(config, "config/server").ok()?)
+        .header("Authorization", management_authorization(config).ok()?)
+        .send()
+        .await
+        .ok()?;
+    let settings = read_plugin_github_settings(response).await.ok()?;
+    plugin_github_token(&settings, std::env::var("GITHUB_TOKEN").ok())
 }
 
 pub(crate) fn configured_gitcode_gui_repository() -> Option<&'static str> {
@@ -794,21 +812,25 @@ pub(crate) fn portable_update_target() -> Option<(&'static str, &'static str)> {
 }
 
 /// Returns the newest `preview-<stamp>` release tag from the GitHub releases list.
-async fn fetch_latest_preview_tag(client: &reqwest::Client) -> Option<String> {
-    if let Some(tag) = fetch_preview_tags_from_api(client).await {
+async fn fetch_latest_preview_tag(client: &reqwest::Client, token: Option<&str>) -> Option<String> {
+    if let Some(tag) = fetch_preview_tags_from_api(client, token).await {
         return Some(tag);
     }
     fetch_preview_tags_from_atom(client).await
 }
 
-async fn fetch_preview_tags_from_api(client: &reqwest::Client) -> Option<String> {
-    let response = client
+async fn fetch_preview_tags_from_api(
+    client: &reqwest::Client,
+    token: Option<&str>,
+) -> Option<String> {
+    let mut request = client
         .get(GUI_RELEASES_API_URL)
         .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .send()
-        .await
-        .ok()?;
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json");
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }

@@ -1,3 +1,4 @@
+use crate::plugins::plugin_github_token;
 use super::support::*;
 use super::*;
 
@@ -705,6 +706,25 @@ fn preview_url_whitelist_rejects_the_retired_rolling_tag() {
     // Anything that is not a `v*` tag, a `preview-*` tag or a timestamp is not a
     // preview release the client should trust.
     assert!(select_latest_preview_tag(&["only-preview".to_string()]).is_none());
+}
+
+#[test]
+fn github_token_prefers_configured_setting_over_environment() {
+    let settings = serde_json::json!({ "github-token": "  configured-token  " });
+    assert_eq!(
+        plugin_github_token(&settings, Some("env-token".to_string())).as_deref(),
+        Some("configured-token")
+    );
+}
+
+#[test]
+fn github_token_falls_back_to_environment_and_ignores_blanks() {
+    let empty = serde_json::json!({ "github-token": "   " });
+    assert_eq!(
+        plugin_github_token(&empty, Some("env-token".to_string())).as_deref(),
+        Some("env-token")
+    );
+    assert_eq!(plugin_github_token(&empty, None), None);
 }
 
 #[test]

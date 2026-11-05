@@ -52,7 +52,7 @@ pub(crate) async fn get_plugin_latest_releases(
         .await)
 }
 
-async fn read_plugin_github_settings(
+pub(crate) async fn read_plugin_github_settings(
     response: reqwest::Response,
 ) -> Result<serde_json::Value, String> {
     if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -73,7 +73,7 @@ async fn fetch_plugin_release(
     read_plugin_release(response).await
 }
 
-fn plugin_github_token(
+pub(crate) fn plugin_github_token(
     settings: &serde_json::Value,
     environment: Option<String>,
 ) -> Option<String> {
