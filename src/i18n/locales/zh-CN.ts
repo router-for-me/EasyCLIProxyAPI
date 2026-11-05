@@ -1211,6 +1211,7 @@ export const zhCN: Record<string, string> = {
   'config.tls.error.selectFileFailed': '选择文件失败：{error}',
   'config.tls.restartHint': '保存 TLS 设置后，正在运行的内核会自动重启。',
   'config.tls.error.pathsRequired': '启用 TLS 前必须填写证书和私钥路径',
+  'config.reverseProxy.error.pathsRequired': '启用反向代理前必须填写证书和私钥路径',
   'config.tls.notice.saved': 'TLS 设置已保存，将在下次启动内核时生效',
   'config.tls.notice.savedAndRestarted': 'TLS 设置已保存，内核已重启',
   'config.software.title': '软件设置',

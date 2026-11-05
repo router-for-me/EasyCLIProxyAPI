@@ -26,7 +26,6 @@ import type { CoreConfigSettings, CoreApiKey, SoftwareSettings, CloseBehavior, C
 import {
   getReverseProxyState,
   applyReverseProxyConfig,
-  stopReverseProxy,
   type ReverseProxyConfig,
   type ReverseProxyState,
 } from '../services/reverseProxy';
@@ -262,6 +261,7 @@ export function ConfigPanelPage() {
   const [proxyDirty, setProxyDirty] = useState(false);
   const [backendNotReady, setBackendNotReady] = useState(false);
   const [proxyFileSelecting, setProxyFileSelecting] = useState<'cert' | 'key' | null>(null);
+  const [proxyPathErrors, setProxyPathErrors] = useState<{ cert: boolean; key: boolean }>({ cert: false, key: false });
   const [proxyDraft, setProxyDraft] = useState<ReverseProxyConfig>({
     enabled: false,
     listenHost: '0.0.0.0',
@@ -287,34 +287,22 @@ export function ConfigPanelPage() {
     }
   };
 
-  const handleProxyToggle = async (enabled: boolean) => {
+  const handleProxyToggle = (enabled: boolean) => {
     if (controlsDisabled || proxyAction !== null) return;
-    const previousDraft = proxyDraft;
-    const nextDraft = { ...proxyDraft, enabled };
-    setProxyDraft(nextDraft);
-    setProxyAction(enabled ? 'save' : 'stop');
-    proxyFeedback.clearNotice();
-    try {
-      let state = await applyReverseProxyConfig(nextDraft);
-      if (!enabled && state.running) {
-        state = await stopReverseProxy();
-      }
-      setProxyState(state);
-      setBackendNotReady(false);
-      setProxyDirty(false);
-      proxyFeedback.showNotice(st('reverseProxySaved'), 'success');
-    } catch (error) {
-      setProxyDraft(previousDraft);
-      setBackendNotReady(true);
-      const errorText = error instanceof Error ? error.message : String(error);
-      proxyFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: errorText } }, 'error');
-    } finally {
-      setProxyAction(null);
-    }
+    setProxyDraft(prev => ({ ...prev, enabled }));
+    setProxyDirty(true);
+    if (!enabled) setProxyPathErrors({ cert: false, key: false });
   };
 
   const handleProxySave = async () => {
     if (proxyAction !== null) return;
+    const certMissing = !proxyDraft.certPath.trim();
+    const keyMissing = !proxyDraft.keyPath.trim();
+    if (proxyDraft.enabled && (certMissing || keyMissing)) {
+      setProxyPathErrors({ cert: certMissing, key: keyMissing });
+      return;
+    }
+    setProxyPathErrors({ cert: false, key: false });
     const normalizedDraft = {
       ...proxyDraft,
       listenHost: proxyDraft.listenHost.trim() || '0.0.0.0',
@@ -353,8 +341,10 @@ export function ConfigPanelPage() {
       if (typeof selected !== 'string') return;
       if (target === 'cert') {
         setProxyDraft(prev => ({ ...prev, certPath: selected }));
+        setProxyPathErrors(prev => prev.cert ? { ...prev, cert: false } : prev);
       } else {
         setProxyDraft(prev => ({ ...prev, keyPath: selected }));
+        setProxyPathErrors(prev => prev.key ? { ...prev, key: false } : prev);
       }
       setProxyDirty(true);
     } catch (error) {
@@ -1765,10 +1755,12 @@ export function ConfigPanelPage() {
                       value={proxyDraft.certPath}
                       disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
                       placeholder={st('reverseProxyCertPlaceholder')}
+                      aria-invalid={proxyPathErrors.cert}
                       onChange={(event) => {
                         const value = event.currentTarget.value;
                         setProxyDraft(prev => ({ ...prev, certPath: value }));
                         setProxyDirty(true);
+                        if (proxyPathErrors.cert) setProxyPathErrors(prev => ({ ...prev, cert: false }));
                       }}
                     />
                     <button
@@ -1782,6 +1774,11 @@ export function ConfigPanelPage() {
                       {proxyFileSelecting === 'cert' ? t('common.processing') : t('config.tls.browse')}
                     </button>
                   </div>
+                  {proxyPathErrors.cert ? (
+                    <span className="config-form-message error" role="alert">
+                      {t('config.reverseProxy.error.pathsRequired')}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="config-network-field">
@@ -1797,10 +1794,12 @@ export function ConfigPanelPage() {
                       value={proxyDraft.keyPath}
                       disabled={controlsDisabled || proxyAction !== null || proxyFileSelecting !== null}
                       placeholder={st('reverseProxyKeyPlaceholder')}
+                      aria-invalid={proxyPathErrors.key}
                       onChange={(event) => {
                         const value = event.currentTarget.value;
                         setProxyDraft(prev => ({ ...prev, keyPath: value }));
                         setProxyDirty(true);
+                        if (proxyPathErrors.key) setProxyPathErrors(prev => ({ ...prev, key: false }));
                       }}
                     />
                     <button
@@ -1814,6 +1813,11 @@ export function ConfigPanelPage() {
                       {proxyFileSelecting === 'key' ? t('common.processing') : t('config.tls.browse')}
                     </button>
                   </div>
+                  {proxyPathErrors.key ? (
+                    <span className="config-form-message error" role="alert">
+                      {t('config.reverseProxy.error.pathsRequired')}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
