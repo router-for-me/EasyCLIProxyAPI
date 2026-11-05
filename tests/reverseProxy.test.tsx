@@ -67,8 +67,20 @@ describe('reverse proxy contract and settings card', () => {
   it('includes all required i18n keys across all locales in settingsMessages', () => {
     const requiredKeys: (keyof typeof settingsMessages)[] = [
       'reverseProxyTitle',
+      'reverseProxyIntro',
       'reverseProxyEnable',
       'reverseProxyEnableHint',
+      'reverseProxyRouteTitle',
+      'reverseProxyRoutePublic',
+      'reverseProxyRouteLocal',
+      'reverseProxyCertTitle',
+      'reverseProxyCertIntro',
+      'reverseProxyAdvancedTitle',
+      'reverseProxyAdvancedHint',
+      'reverseProxyBindHint',
+      'reverseProxyHardeningOk',
+      'reverseProxyHardeningPending',
+      'reverseProxyHardeningFailed',
       'reverseProxyListenHost',
       'reverseProxyListenHostHint',
       'reverseProxyListenPort',
@@ -77,8 +89,14 @@ describe('reverse proxy contract and settings card', () => {
       'reverseProxyTargetPortHint',
       'reverseProxyCertPath',
       'reverseProxyCertPathHint',
+      'reverseProxyCertPlaceholder',
       'reverseProxyKeyPath',
       'reverseProxyKeyPathHint',
+      'reverseProxyKeyPlaceholder',
+      'reverseProxySelectCertTitle',
+      'reverseProxySelectKeyTitle',
+      'reverseProxyCertFile',
+      'reverseProxyKeyFile',
       'reverseProxyStart',
       'reverseProxyStop',
       'reverseProxyRunning',
@@ -88,8 +106,8 @@ describe('reverse proxy contract and settings card', () => {
       'reverseProxyStatusListening',
       'reverseProxyStatusTarget',
       'reverseProxyStatusRequests',
-      'reverseProxySecurityWarning',
       'reverseProxyBackendNotReady',
+      'reverseProxySaved',
     ];
     for (const key of requiredKeys) {
       expect(settingsMessages[key]).toBeDefined();
@@ -99,17 +117,18 @@ describe('reverse proxy contract and settings card', () => {
     }
   });
 
-  it('contains the security warning mentioning 127.0.0.1, trusted-proxies, and allow-remote: false', () => {
-    const warning = settingsMessages.reverseProxySecurityWarning;
-    expect(warning.zh).toContain('127.0.0.1');
-    expect(warning.zh).toContain('trusted-proxies');
-    expect(warning.zh).toContain('allow-remote: false');
-    expect(warning.en).toContain('127.0.0.1');
-    expect(warning.en).toContain('trusted-proxies');
-    expect(warning.en).toContain('allow-remote: false');
-    expect(warning.ja).toContain('127.0.0.1');
-    expect(warning.ja).toContain('trusted-proxies');
-    expect(warning.ja).toContain('allow-remote: false');
+  it('describes core protection via loopback bind and trusted-proxies in every locale', () => {
+    for (const key of ['reverseProxyEnableHint', 'reverseProxyHardeningOk'] as const) {
+      const message = settingsMessages[key];
+      for (const locale of ['zh', 'en', 'ja'] as const) {
+        expect(message[locale]).toContain('127.0.0.1');
+        expect(message[locale]).toContain('trusted-proxies');
+      }
+    }
+    // Listen host is fixed and read-only in every locale
+    expect(settingsMessages.reverseProxyBindHint.zh).toContain('不可修改');
+    expect(settingsMessages.reverseProxyBindHint.en).toContain('read-only');
+    expect(settingsMessages.reverseProxyBindHint.ja).toContain('変更不可');
   });
 
   it('places config-native-reverse-proxy after config-native-tls with expected classes', () => {
@@ -138,22 +157,58 @@ describe('reverse proxy contract and settings card', () => {
 
     // Required controls
     expect(configPanelSrc).toContain('aria-checked={proxyDraft.enabled}');
-    expect(configPanelSrc).toContain('config-input-reverse-proxy-listen-host');
+    expect(configPanelSrc).toContain('disabled={proxyControlsDisabled}');
     expect(configPanelSrc).toContain('config-input-reverse-proxy-listen-port');
     expect(configPanelSrc).toContain('config-input-reverse-proxy-target-port');
     expect(configPanelSrc).toContain('config-input-reverse-proxy-cert-path');
     expect(configPanelSrc).toContain('config-input-reverse-proxy-key-path');
 
-    // Status block
+    // PEM inputs are controlled by the draft
+    expect(configPanelSrc).toContain('value={proxyDraft.certPath}');
+    expect(configPanelSrc).toContain('value={proxyDraft.keyPath}');
+
+    // Listen host is not editable: fixed 0.0.0.0 shown read-only in advanced settings
+    expect(configPanelSrc).not.toContain('config-input-reverse-proxy-listen-host');
+    expect(configPanelSrc).toContain("<summary>{st('reverseProxyAdvancedTitle')}</summary>");
+    expect(configPanelSrc).toContain('<code>0.0.0.0</code>');
+    expect(configPanelSrc).toContain("st('reverseProxyBindHint')");
+
+    // Status block with running/stopped state
     expect(configPanelSrc).toContain('st(\'reverseProxyStatus\')');
     expect(configPanelSrc).toContain('st(\'reverseProxyStatusRunning\')');
     expect(configPanelSrc).toContain('st(\'reverseProxyStatusListening\')');
     expect(configPanelSrc).toContain('st(\'reverseProxyStatusTarget\')');
     expect(configPanelSrc).toContain('st(\'reverseProxyStatusRequests\')');
+    expect(configPanelSrc).toContain("proxyState?.running ? st('reverseProxyRunning') : st('reverseProxyStopped')");
+
+    // Core protection notices driven by hardening state
+    expect(configPanelSrc).toContain('proxyState?.hardening');
+    expect(configPanelSrc).toContain('st(\'reverseProxyHardeningOk\')');
+    expect(configPanelSrc).toContain('st(\'reverseProxyHardeningPending\')');
+    expect(configPanelSrc).toContain('st(\'reverseProxyHardeningFailed\')');
+
+    // Inline errors for missing or invalid PEM files
+    expect(configPanelSrc).toContain('config.error.reverseProxyPathsRequired');
+    expect(configPanelSrc).toContain('reverseProxyPathErrors(error)');
+    expect(configPanelSrc).toContain('config-reverse-proxy-cert-path-error');
+    expect(configPanelSrc).toContain('config-reverse-proxy-key-path-error');
 
     // Error alert & backend not ready
     expect(configPanelSrc).toContain('Notice tone="error"');
+    expect(configPanelSrc).toContain('Notice tone="warn"');
     expect(configPanelSrc).toContain('st(\'reverseProxyBackendNotReady\')');
     expect(configPanelSrc).toContain('config-key-row skeleton');
+  });
+
+  it('persists proxy config through the backend service contract', () => {
+    const serviceSrc = readFileSync(join(root, 'src/services/reverseProxy.ts'), 'utf8');
+    expect(serviceSrc).toContain("'reverse_proxy_get_state'");
+    expect(serviceSrc).toContain("'reverse_proxy_apply'");
+    expect(serviceSrc).toContain('config?: ReverseProxyConfig | null');
+
+    const configPanelSrc = readFileSync(join(root, 'src/pages/ConfigPanel.tsx'), 'utf8');
+    expect(configPanelSrc).toContain('applyReverseProxyConfig(normalizedDraft)');
+    expect(configPanelSrc).toContain('setProxyDraft(state.config)');
+    expect(configPanelSrc).toContain('setProxyDraft({ ...DEFAULT_REVERSE_PROXY_DRAFT, ...state.config })');
   });
 });

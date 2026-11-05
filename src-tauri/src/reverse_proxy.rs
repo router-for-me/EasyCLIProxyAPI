@@ -895,6 +895,12 @@ mod tests {
     use super::*;
     use hyper::header::{HeaderMap, HeaderName, HeaderValue, CONNECTION};
 
+    // Serializes tests that read, write, or remove the installed core config
+    // file so the real-TLS fixtures cannot race each other or leak state into
+    // tests that inspect the installed config while running in parallel.
+    static INSTALLED_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
     #[test]
     fn test_accept_errors_have_bounded_backoff() {
         use std::io::{Error, ErrorKind};
@@ -952,6 +958,7 @@ mod tests {
             }
         }
 
+        let _test_guard = INSTALLED_CONFIG_TEST_LOCK.lock().await;
         let config_path = crate::core_runtime::core_install_dir()
             .unwrap()
             .join(crate::CORE_CONFIG_FILE);
@@ -1156,6 +1163,7 @@ mod tests {
         const RATE_LIMIT_JSON: &str =
             r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#;
 
+        let _test_guard = INSTALLED_CONFIG_TEST_LOCK.lock().await;
         let config_path = crate::core_runtime::core_install_dir()
             .unwrap()
             .join(crate::CORE_CONFIG_FILE);
@@ -2296,6 +2304,9 @@ server:
     #[tokio::test]
     async fn test_reverse_proxy_get_state_preserves_restart_required() {
         use tauri::Manager;
+        // Reads the installed core config through the get_state command, so it
+        // must not overlap the real-TLS fixtures that swap that file out.
+        let _test_guard = INSTALLED_CONFIG_TEST_LOCK.lock().await;
         let app = tauri::test::mock_app();
         let manager = ReverseProxyManagerState::new();
         {
