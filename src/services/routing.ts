@@ -86,14 +86,17 @@ export async function readRoutingBoard(
 
       remarkQueries.push(
         { providerSection: section, providerName, baseUrl, apiKeys },
+        { providerSection: section, providerName: '', baseUrl, apiKeys },
         { providerSection: section, providerName, baseUrl: groupBaseUrl, apiKeys: groupKeys },
+        { providerSection: section, providerName: '', baseUrl: groupBaseUrl, apiKeys: groupKeys },
       );
     }
 
     try {
       const resolvedRemarks = await remarkResolver(remarkQueries);
       flatProviders.forEach((member, index) => {
-        const remark = (resolvedRemarks[index * 2] || resolvedRemarks[index * 2 + 1] || '').trim();
+        const memberQueries = resolvedRemarks.slice(index * 4, index * 4 + 4);
+        const remark = (memberQueries.find(r => r && r.trim()) || '').trim();
         if (remark) member.remark = remark;
       });
     } catch {

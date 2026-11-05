@@ -43,7 +43,7 @@ function MemberCard({ member, draft, routeMember, disabled, isAlone, onChange }:
       <button type="button" className="icon-button quiet tiny-button routing-grip" {...attributes} {...listeners} disabled={locked} aria-label={t('routing.drag', { name: displayName })}><GripVertical size={15} /></button>
       <img className="routing-brand" src={brandIcon(member)} alt="" width={20} height={20} />
       <div className="routing-card-text"><strong className="routing-card-name" title={hasDistinctRemark ? `${member.remark} (${member.name})` : member.name}>{displayName}</strong><span className="routing-card-sub">
-        {hasDistinctRemark && <span className="routing-card-raw-name">${member.name} · </span>}
+        {hasDistinctRemark && <span className="routing-card-raw-name">{member.name} · </span>}
         {t(member.kind === 'credential' || member.credentialName ? 'routing.oauth' : 'routing.apiKey')}{t('routing.familyDetail', { family: member.family })}
         {(member.keyCount ?? weights.length) > 1 && t('routing.keyCount', { count: member.keyCount ?? weights.length })}
         {member.prefix && <code>{t('routing.prefixDetail', { prefix: member.prefix })}</code>}
