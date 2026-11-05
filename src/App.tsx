@@ -32,6 +32,7 @@ import {
   Puzzle,
   ServerCog,
   Settings,
+  Sparkles,
   Sprout,
   X,
 } from 'lucide-react';
@@ -49,6 +50,7 @@ import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
 import { RoutingPage } from './pages/routing/RoutingPage';
 import { PluginsPage } from './pages/PluginsPage';
+import { EcpaPluginsPage } from './pages/EcpaPluginsPage';
 import { McpSkillsPage } from './pages/McpSkillsPage';
 import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
@@ -139,6 +141,12 @@ const pages = [
     labelKey: 'app.nav.plugins',
     icon: Puzzle,
     component: PluginsPage,
+  },
+  {
+    id: 'ecpa-plugins',
+    labelKey: 'app.nav.ecpaPlugins',
+    icon: Sparkles,
+    component: EcpaPluginsPage,
   },
   {
     id: 'mcp-skills',
