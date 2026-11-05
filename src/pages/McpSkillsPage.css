@@ -224,6 +224,12 @@
     box-shadow: none;
   }
 
+  .mcp-search-box input::-webkit-search-cancel-button,
+  .mcp-search-box input::-webkit-search-decoration {
+    -webkit-appearance: none;
+    display: none;
+  }
+
   .mcp-search-box:focus-within {
     border-color: var(--primary-color);
     outline: 2px solid var(--primary-color);
@@ -374,6 +380,7 @@
     min-width: 0;
   }
 
+  .mcp-server-name,
   .mcp-server-row-name {
     font-size: 13px;
     font-weight: 600;

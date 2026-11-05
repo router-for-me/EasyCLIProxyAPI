@@ -46,7 +46,7 @@ export const zhCN: Record<string, string> = {
   'agents.subagents.invalidConcurrency': '并发线程数必须是大于 0 的整数。',
 
   'app.nav.plugins': '插件',
-  'app.nav.mcpSkills': 'MCP 与技能',
+  'app.nav.mcpSkills': 'MCP与Skills',
   'app.nav.pluginPages': '插件页面',
   'oauth.vertex.title': 'Vertex JSON 登录',
   'oauth.vertex.locationPlaceholder': 'us-central1',

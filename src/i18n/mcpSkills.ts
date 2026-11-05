@@ -2,7 +2,7 @@ import { getCurrentLocale, type AppLocale } from './index';
 import { createTraditionalMessages } from './traditional';
 
 const messages = {
-  title: ['MCP 与技能', 'MCP & Skills', 'MCP & スキル'],
+  title: ['MCP与Skills', 'MCP & Skills', 'MCP & スキル'],
   description: [
     '管理 MCP 服务器与技能扩展，为智能体提供工具和上下文能力。',
     'Manage MCP servers and skill extensions to provide tools and context for agents.',
@@ -121,6 +121,14 @@ const messages = {
   deleteConfirmDesc: ['此操作将从配置中永久移除此服务器。', 'This action will permanently remove this server.', 'このサーバーを完全に削除します。'],
   none: ['无', 'None', 'なし'],
   retry: ['重试', 'Retry', '再試行'],
+  serverFilter: ['服务器筛选', 'Server filter', 'サーバーフィルター'],
+  skillSource: ['技能来源', 'Skill source', 'スキルソース'],
+  keyColumn: ['键名', 'Key', 'キー'],
+  headerColumn: ['标头', 'Header', 'ヘッダー'],
+  valueColumn: ['值', 'Value', '値'],
+  remove: ['移除', 'Remove', '削除'],
+  serverToggled: ['服务器“{name}”{status}', 'Server "{name}" {status}', 'サーバー「{name}」を{status}にしました'],
+  skillToggled: ['技能“{name}”{status}', 'Skill "{name}" {status}', 'スキル「{name}」を{status}にしました'],
 } as const;
 
 export type McpSkillsMessageKey = keyof typeof messages;
@@ -132,6 +140,9 @@ export function mcpSkillsText(
 ): string {
   const item = messages[key];
   if (!item) return key;
+  if (key === 'title' && locale === 'zh-TW') {
+    return 'MCP 與技能';
+  }
   let text: string = item[locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   if (locale === 'zh-TW') {
     text = createTraditionalMessages({ text }).text;
