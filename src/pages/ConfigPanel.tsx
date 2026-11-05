@@ -235,6 +235,25 @@ export function ConfigPanelPage() {
   }, [activeSubpage]);
 
   useEffect(() => {
+    const focusSearchFromKeyboard = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      const isSlash = event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey;
+      const isShortcutK = event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey) && !event.altKey;
+      if (!isSlash && !isShortcutK) return;
+      const target = event.target;
+      const typingElsewhere = target instanceof HTMLElement
+        && target.closest('input, textarea, select, [contenteditable="true"]')
+        && !(isShortcutK && target === searchRef.current);
+      if (typingElsewhere) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    window.addEventListener('keydown', focusSearchFromKeyboard);
+    return () => window.removeEventListener('keydown', focusSearchFromKeyboard);
+  }, []);
+
+  useEffect(() => {
     if (!pendingDestination) return;
     const frame = window.requestAnimationFrame(() => {
       const target = document.getElementById(pendingDestination.field ?? pendingDestination.target)
@@ -1320,8 +1339,16 @@ export function ConfigPanelPage() {
       <div className="config-settings-layout">
         <div className="config-settings-topnav">
           <Tabs ref={categoryNavigationRef} className="config-subpage-tabs secondary-page-tabs" aria-label={t('config.tabs.label')} value={activeSubpage} onChange={activateConfigSubpage}
-            items={settingsCategories.map(item => ({ value: item.id, id: `config-subpage-tab-${item.id}`, panelId: 'config-subpage-panel', label: <><span>{templateText(item.title, locale)}</span>{categoryDirty(item.id) ? <span className="config-nav-dirty" title={st('dirty')}><span className="sr-only">{st('dirty')}</span></span> : null}</> }))} />
-          <div className="config-settings-search search-control" data-size="default"><Search size={18} aria-hidden="true" /><input ref={searchRef} type="search" aria-label={st('search')} placeholder={st('searchHint')} value={settingsSearch} onChange={event => setSettingsSearch(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Escape') setSettingsSearch(''); }} />{searching ? <button type="button" className="icon-button quiet tiny-button" aria-label={st('clearSearch')} onClick={() => { setSettingsSearch(''); searchRef.current?.focus(); }}><X size={16} /></button> : null}</div>
+            items={settingsCategories.map(item => {
+              const title = templateText(item.title, locale);
+              const dirty = categoryDirty(item.id);
+              return {
+                value: item.id, id: `config-subpage-tab-${item.id}`, panelId: 'config-subpage-panel',
+                title: dirty ? `${title} · ${st('dirty')}` : undefined,
+                label: <><span>{title}</span>{dirty ? <><span className="config-nav-dirty" aria-hidden="true" /><span className="config-nav-dirty-text" aria-hidden="true">{st('dirty')}</span></> : null}</>,
+              };
+            })} />
+          <div className="config-settings-search search-control" data-size="default"><Search size={18} aria-hidden="true" /><input ref={searchRef} type="search" aria-label={st('search')} placeholder={st('searchHint')} value={settingsSearch} onChange={event => setSettingsSearch(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Escape') setSettingsSearch(''); }} />{searching ? <button type="button" className="icon-button quiet tiny-button" aria-label={st('clearSearch')} onClick={() => { setSettingsSearch(''); searchRef.current?.focus(); }}><X size={16} /></button> : <kbd className="config-settings-search-key" aria-hidden="true">/</kbd>}</div>
         </div>
         <div className="config-settings-content" id="config-subpage-panel" role="tabpanel" aria-labelledby={`config-subpage-tab-${activeSubpage}`}>
           {searching ? <section className="config-search-results" aria-label={st('results')}><div className="config-search-heading"><h2>{st('results')}</h2><span role="status">{searchResults.length}</span></div>{searchResults.length ? <div className="surface-card config-search-result-list">{searchResults.map(entry => <button type="button" key={`${entry.target}-${entry.field ?? ''}`} onClick={() => navigateToSetting(entry)}><span className="config-search-result-copy"><strong>{entry.title}</strong><small>{templateText(settingsCategories.find(item => item.id === entry.category)!.title, locale)}{entry.context ? ` / ${entry.context}` : ''}</small></span><ChevronRight size={17} aria-hidden="true" /></button>)}</div> : <EmptyState variant="box" className="config-search-empty">{st('noResults')}</EmptyState>}</section> : null}
