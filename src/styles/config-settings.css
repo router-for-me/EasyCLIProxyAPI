@@ -8,7 +8,7 @@
 .config-settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; min-width: 0; }
 .config-settings-topnav { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; flex-wrap: wrap; background: var(--bg-primary); }
 .config-page .config-subpage-tabs button { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; min-width: 0; }
-.config-nav-dirty { flex: none; width: 6px; height: 6px; margin-left: auto; border-radius: var(--radius-full); background: var(--primary-color); }
+.config-nav-dirty { flex: none; width: 8px; height: 8px; margin-left: auto; border-radius: var(--radius-full); background: var(--primary-color); }
 .config-settings-content { min-width: 0; }
 /* Only flatten page sections. Dialogs may be rendered inside these sections. */
 .config-page .config-settings-cards > section,
@@ -45,6 +45,8 @@
   border-top: 1px solid var(--border-color);
 }
 .config-settings-cards { display: grid; gap: 16px; min-width: 0; }
+.config-settings-content > .config-load-error { margin-bottom: 16px; }
+.config-native-skeleton { display: grid; opacity: 0.75; }
 .config-settings-cards > [hidden], .config-settings-content > [hidden] { display: none; }
 .config-settings-cards > section, .config-settings-content .template-config-card { scroll-margin-top: 80px; }
 .config-settings-content :is(input, select, textarea, button, .template-config-field) { scroll-margin-top: 80px; }
@@ -60,7 +62,7 @@
 .config-settings-content .config-network-section { padding: 20px; }
 .config-settings-content .config-panel-heading { flex-wrap: wrap; gap: 12px; }
 .config-settings-content .config-network-section-heading { flex-wrap: wrap; gap: 10px; }
-.config-card-status { margin-left: auto; color: var(--primary-color); font-size: 11px; }
+.config-card-status { margin-left: auto; color: var(--text-secondary); font-size: 12px; }
 .config-settings-content .config-diagnostics-toggle-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
 .config-settings-content .config-diagnostics-fields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); }
 .config-settings-content .config-management-content { grid-template-columns: minmax(0, 1fr); }
@@ -90,7 +92,7 @@
 .config-input-with-unit > input { flex: 1 1 auto; min-width: 0; }
 .config-input-unit { flex: none; font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
 .config-field-error { display: block; min-width: 0; min-height: 18px; margin: 0; font-size: 12px; line-height: 1.5; color: var(--color-danger-text); }
-.config-inline-status { margin-left: auto; color: var(--text-tertiary); font-size: 11px; font-weight: 400; }
+.config-inline-status { margin-left: auto; color: var(--text-secondary); font-size: 12px; font-weight: 400; }
 .config-settings-content .config-network-port-field .config-network-input { width: 100%; }
 .config-settings-content .config-proxy-heading > .settings-help { margin-right: auto; }
 .config-settings-content .config-diagnostics-setting { padding: 8px 0; border: 0; background: transparent; grid-template-columns: 28px minmax(0, 1fr) 44px; gap: 10px; }
