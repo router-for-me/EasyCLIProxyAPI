@@ -330,9 +330,6 @@ pub fn validate_config(config: &ReverseProxyConfig) -> Result<(), String> {
     if config.listen_host.trim().is_empty() {
         return Err("Listen host cannot be empty".to_string());
     }
-    if config.listen_port == 0 {
-        return Err("Listen port cannot be 0".to_string());
-    }
     if config.target_port == 0 {
         return Err("Target port cannot be 0".to_string());
     }
@@ -473,6 +470,29 @@ struct ReverseProxyInner {
     server_task: Option<tokio::task::JoinHandle<()>>,
 }
 
+fn accept_retry_delay(error: &std::io::Error, consecutive_errors: u32) -> Option<std::time::Duration> {
+    let transient = matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::ConnectionAborted
+    );
+    #[cfg(unix)]
+    let transient = transient
+        || matches!(
+            error.raw_os_error(),
+            Some(libc::EMFILE) | Some(libc::ENFILE)
+        );
+    #[cfg(windows)]
+    let transient = transient || error.raw_os_error() == Some(10024);
+    if !transient || consecutive_errors >= 10 {
+        return None;
+    }
+    Some(std::time::Duration::from_millis(
+        (50_u64 << consecutive_errors.saturating_sub(1).min(2)).min(200),
+    ))
+}
+
 #[derive(Clone, Default)]
 pub struct ReverseProxyManagerState {
     inner: Arc<std::sync::Mutex<ReverseProxyInner>>,
@@ -599,7 +619,10 @@ impl ReverseProxyManagerState {
                 }
             };
 
-        let listening_addr = format!("{}:{}", config.listen_host, config.listen_port);
+        let listening_addr = listener
+            .local_addr()
+            .map_err(|error| format!("Failed to read listener address: {error}"))?
+            .to_string();
         let target_addr = format!("127.0.0.1:{}", config.target_port);
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -634,6 +657,7 @@ impl ReverseProxyManagerState {
             .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
 
         let server_task = tokio::spawn(async move {
+            let mut consecutive_errors = 0;
             loop {
                 tokio::select! {
                     _ = &mut shutdown_rx => {
@@ -642,6 +666,7 @@ impl ReverseProxyManagerState {
                     accept_res = listener.accept() => {
                         match accept_res {
                             Ok((tcp_stream, peer_addr)) => {
+                                consecutive_errors = 0;
                                 let acceptor = acceptor.clone();
                                 let client = client.clone();
                                 let requests_total = requests_total.clone();
@@ -672,6 +697,15 @@ impl ReverseProxyManagerState {
                                 });
                             }
                             Err(error) => {
+                                consecutive_errors += 1;
+                                if let Some(delay) = accept_retry_delay(&error, consecutive_errors) {
+                                    eprintln!("Reverse proxy listener accept retry {consecutive_errors}: {error}");
+                                    tokio::select! {
+                                        _ = &mut shutdown_rx => break,
+                                        _ = tokio::time::sleep(delay) => {}
+                                    }
+                                    continue;
+                                }
                                 let message = format!("Reverse proxy listener accept failed: {error}");
                                 eprintln!("{message}");
                                 if let Some(inner) = inner.upgrade() {
@@ -695,7 +729,7 @@ impl ReverseProxyManagerState {
         });
 
         guard.running = true;
-        guard.listening = Some(listening_addr);
+        guard.listening = Some(listening_addr.clone());
         guard.target = Some(target_addr);
         guard.error = restart_error;
         guard.stored_config = Some(config);
@@ -703,7 +737,7 @@ impl ReverseProxyManagerState {
         guard.shutdown_tx = Some(shutdown_tx);
         guard.server_task = Some(server_task);
         drop(guard);
-        eprintln!("Reverse proxy listening on {bind_addr}");
+        eprintln!("Reverse proxy listening on {listening_addr}");
 
         self.get_state()
     }
@@ -749,8 +783,57 @@ impl ReverseProxyManagerState {
         app: Option<tauri::AppHandle>,
     ) -> Result<ReverseProxyState, String> {
         let _operation = self.operation.lock().await;
-        persist_proxy_config(&config)?;
-        self.apply_inner(config, app).await
+        let persisted = persist_proxy_config(&config);
+        if config.enabled {
+            persisted?;
+            self.apply_inner(config, app).await
+        } else {
+            let stopped = self.apply_inner(config, app).await?;
+            match persisted {
+                Ok(()) => Ok(stopped),
+                Err(error) => self.config_warning(error),
+            }
+        }
+    }
+
+    fn config_warning(&self, error: String) -> Result<ReverseProxyState, String> {
+        let warning = format!("Reverse proxy stopped, but failed to save configuration: {error}");
+        eprintln!("{warning}");
+        self.inner
+            .lock()
+            .map_err(|error| format!("Failed to acquire state lock: {error}"))?
+            .error = Some(warning);
+        self.get_state()
+    }
+
+    async fn stop_and_save(&self) -> Result<ReverseProxyState, String> {
+        let _operation = self.operation.lock().await;
+        self.stop_inner().await?;
+        let saved = (|| {
+            let config = match self.get_state()?.config {
+                Some(config) => Some(config),
+                None => read_installed_proxy_config()?,
+            };
+            if let Some(mut config) = config {
+                config.enabled = false;
+                self.inner
+                    .lock()
+                    .map_err(|error| format!("Failed to acquire state lock: {error}"))?
+                    .stored_config = Some(config.clone());
+                persist_proxy_config(&config)?;
+            }
+            Ok::<_, String>(())
+        })();
+        match saved {
+            Ok(()) => {
+                self.inner
+                    .lock()
+                    .map_err(|error| format!("Failed to acquire state lock: {error}"))?
+                    .error = None;
+                self.get_state()
+            }
+            Err(error) => self.config_warning(error),
+        }
     }
 
     pub async fn restore(&self, app: tauri::AppHandle) -> Result<ReverseProxyState, String> {
@@ -802,23 +885,248 @@ pub async fn reverse_proxy_start(
 
 #[tauri::command]
 pub async fn reverse_proxy_stop(
-    app: tauri::AppHandle,
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
-    let _operation = state.operation.lock().await;
-    if let Some(mut config) = state.get_state()?.config.or(read_installed_proxy_config()?) {
-        config.enabled = false;
-        persist_proxy_config(&config)?;
-        state.apply_inner(config, Some(app)).await
-    } else {
-        state.stop_inner().await
-    }
+    state.stop_and_save().await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use hyper::header::{HeaderMap, HeaderName, HeaderValue, CONNECTION};
+
+    #[test]
+    fn test_accept_errors_have_bounded_backoff() {
+        use std::io::{Error, ErrorKind};
+        use std::time::Duration;
+
+        for kind in [
+            ErrorKind::WouldBlock,
+            ErrorKind::Interrupted,
+            ErrorKind::ConnectionAborted,
+        ] {
+            let error = Error::from(kind);
+            assert_eq!(
+                accept_retry_delay(&error, 1),
+                Some(Duration::from_millis(50))
+            );
+            assert_eq!(
+                accept_retry_delay(&error, 2),
+                Some(Duration::from_millis(100))
+            );
+            assert_eq!(
+                accept_retry_delay(&error, 3),
+                Some(Duration::from_millis(200))
+            );
+            assert_eq!(
+                accept_retry_delay(&error, 9),
+                Some(Duration::from_millis(200))
+            );
+            assert_eq!(accept_retry_delay(&error, 10), None);
+        }
+        assert_eq!(
+            accept_retry_delay(&Error::from(ErrorKind::InvalidInput), 1),
+            None
+        );
+        #[cfg(unix)]
+        for code in [libc::EMFILE, libc::ENFILE] {
+            assert!(accept_retry_delay(&Error::from_raw_os_error(code), 1).is_some());
+            assert!(accept_retry_delay(&Error::from_raw_os_error(code), 10).is_none());
+        }
+        #[cfg(windows)]
+        assert!(accept_retry_delay(&Error::from_raw_os_error(10024), 1).is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires openssl and curl; run explicitly on loopback"]
+    async fn test_tls_forwarding_and_shutdown_with_config_errors() {
+        use std::process::Command;
+        use std::time::Duration;
+        use tauri::Manager;
+
+        struct ConfigFixture(std::path::PathBuf);
+        impl Drop for ConfigFixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+                let _ = std::fs::remove_dir(self.0.parent().unwrap());
+            }
+        }
+
+        let config_path = crate::core_runtime::core_install_dir()
+            .unwrap()
+            .join(crate::CORE_CONFIG_FILE);
+        assert!(
+            !config_path.exists(),
+            "run with an isolated Cargo target directory"
+        );
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        let _fixture = ConfigFixture(config_path.clone());
+        let core_config = "host: 127.0.0.1\ntrusted-proxies: [127.0.0.1]\n";
+        std::fs::write(&config_path, core_config).unwrap();
+
+        let cert_dir = std::env::temp_dir()
+            .join("rp-test")
+            .join(std::process::id().to_string());
+        std::fs::create_dir_all(&cert_dir).unwrap();
+        let cert_path = cert_dir.join("cert.pem");
+        let key_path = cert_dir.join("key.pem");
+        let generated = Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=localhost",
+                "-keyout",
+            ])
+            .arg(&key_path)
+            .arg("-out")
+            .arg(&cert_path)
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "{}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+
+        let backend = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_port = backend.local_addr().unwrap().port();
+        let backend_task = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (stream, _) = backend.accept().await.unwrap();
+                let service = hyper::service::service_fn(
+                    |request: hyper::Request<hyper::body::Incoming>| async move {
+                        assert_eq!(
+                            request.uri().path_and_query().unwrap().as_str(),
+                            "/rp-check?forwarded=yes"
+                        );
+                        assert_eq!(request.headers()["x-forwarded-proto"], "https");
+                        assert_eq!(request.headers()["x-forwarded-for"], "127.0.0.1");
+                        let body = request.into_body().collect().await.unwrap().to_bytes();
+                        assert_eq!(body, "ping through TLS");
+                        Ok::<_, std::convert::Infallible>(
+                            hyper::Response::builder()
+                                .header(hyper::header::CONNECTION, "close")
+                                .body(Full::new(Bytes::from_static(b"pong from loopback target")))
+                                .unwrap(),
+                        )
+                    },
+                );
+                hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let app = tauri::test::mock_app();
+        app.manage(ReverseProxyManagerState::new());
+        let manager = app.state::<ReverseProxyManagerState>();
+        let config = ReverseProxyConfig {
+            enabled: true,
+            listen_host: "127.0.0.1".into(),
+            listen_port: 0,
+            target_port,
+            cert_path: cert_path.to_str().unwrap().into(),
+            key_path: key_path.to_str().unwrap().into(),
+        };
+
+        for scenario in [
+            "normal stop",
+            "stop patch failure",
+            "disabled apply patch failure",
+            "stop read failure",
+        ] {
+            std::fs::write(&config_path, core_config).unwrap();
+            let state = manager.save_and_apply(config.clone(), None).await.unwrap();
+            assert!(state.running);
+            let listen_addr: std::net::SocketAddr = state.listening.unwrap().parse().unwrap();
+            let listen_port = listen_addr.port();
+            assert_ne!(listen_port, 0);
+            let url = format!("https://localhost:{listen_port}/rp-check?forwarded=yes");
+            let response = tokio::task::spawn_blocking(move || {
+                Command::new("curl")
+                    .args([
+                        "--silent",
+                        "--show-error",
+                        "--fail",
+                        "--insecure",
+                        "--noproxy",
+                        "*",
+                        "--max-time",
+                        "5",
+                        "--data-binary",
+                        "ping through TLS",
+                        &url,
+                    ])
+                    .output()
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+            assert!(
+                response.status.success(),
+                "{}",
+                String::from_utf8_lossy(&response.stderr)
+            );
+            assert_eq!(response.stdout, b"pong from loopback target");
+            println!("{scenario}: listen={listen_addr} target=127.0.0.1:{target_port} sent=\"ping through TLS\" response=\"{}\" ({} bytes)", String::from_utf8_lossy(&response.stdout), response.stdout.len());
+
+            if scenario != "normal stop" {
+                std::fs::write(&config_path, "reverse-proxy: [invalid YAML").unwrap();
+            }
+            if scenario == "stop read failure" {
+                manager.inner.lock().unwrap().stored_config = None;
+            }
+            let stopped = if scenario == "disabled apply patch failure" {
+                let mut disabled = config.clone();
+                disabled.enabled = false;
+                manager.save_and_apply(disabled, None).await.unwrap()
+            } else {
+                reverse_proxy_stop(app.state::<ReverseProxyManagerState>())
+                    .await
+                    .unwrap()
+            };
+            assert!(!stopped.running);
+            assert_eq!(stopped.listening, None);
+            if scenario == "normal stop" {
+                assert!(stopped.error.is_none());
+                assert!(!read_installed_proxy_config().unwrap().unwrap().enabled);
+            } else {
+                assert!(stopped
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("failed to save configuration"));
+                println!("warning: {}", stopped.error.unwrap());
+            }
+            if scenario != "stop read failure" {
+                assert!(!stopped.config.unwrap().enabled);
+            }
+            assert!(tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::net::TcpStream::connect(listen_addr)
+            )
+            .await
+            .unwrap()
+            .is_err());
+            let rebound = tokio::net::TcpListener::bind(listen_addr).await.unwrap();
+            println!(
+                "{scenario}: connection refused after stop; rebound {}",
+                rebound.local_addr().unwrap()
+            );
+        }
+        tokio::time::timeout(Duration::from_secs(5), backend_task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(manager.get_state().unwrap().requests_total, 4);
+    }
 
     #[test]
     fn test_proxy_config_persists_paths_in_legacy_and_v8_documents() {
@@ -1002,7 +1310,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_validation_rejecting_empty_or_zero() {
+    fn test_config_validation_allows_ephemeral_listen_port_but_rejects_empty_or_zero_target() {
         let valid_config = ReverseProxyConfig {
             enabled: true,
             listen_host: "0.0.0.0".to_string(),
@@ -1024,7 +1332,7 @@ mod tests {
         // Port 0 listen
         let mut cfg = valid_config.clone();
         cfg.listen_port = 0;
-        assert!(validate_config(&cfg).is_err());
+        assert!(validate_config(&cfg).is_ok());
 
         // Port 0 target
         let mut cfg = valid_config.clone();
