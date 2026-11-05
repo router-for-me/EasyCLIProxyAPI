@@ -3,6 +3,7 @@ import {
   cloneCodexModelConfiguration,
   codexContextSourceHint,
   sameCodexModelConfiguration,
+  setCodexModelsVisibility,
   toggleCodexReasoningLevel,
   validateCodexModelConfiguration,
   type CodexModelConfiguration,
@@ -86,5 +87,35 @@ describe('Codex 模型列表编辑', () => {
       .toBe('agents.catalog.invalidCompact');
     expect(validateCodexModelConfiguration({ ...configuration(), input_modalities: [] }))
       .toBe('agents.catalog.invalidModalities');
+  });
+
+  test('supports batch and single-model visibility updates for targeted slugs only', () => {
+    const models: CodexCatalogEditorModel[] = [
+      {
+        slug: 'gpt-5.2-codex',
+        hasOfficialTemplate: true,
+        customized: false,
+        contextSource: 'client',
+        configuration: configuration(),
+        defaults: configuration(),
+      },
+      {
+        slug: 'gpt-5.1-codex-mini',
+        hasOfficialTemplate: true,
+        customized: false,
+        contextSource: 'client',
+        configuration: configuration(),
+        defaults: configuration(),
+      },
+    ];
+    const hiddenMini = setCodexModelsVisibility(models, ['gpt-5.1-codex-mini'], 'hide');
+    expect(hiddenMini[0].configuration.visibility).toBe('list');
+    expect(hiddenMini[1].configuration.visibility).toBe('hide');
+
+    const allHidden = setCodexModelsVisibility(hiddenMini, ['gpt-5.2-codex', 'gpt-5.1-codex-mini'], 'hide');
+    expect(allHidden.map((model) => model.configuration.visibility)).toEqual(['hide', 'hide']);
+
+    const allShown = setCodexModelsVisibility(allHidden, ['gpt-5.2-codex', 'gpt-5.1-codex-mini'], 'list');
+    expect(allShown.map((model) => model.configuration.visibility)).toEqual(['list', 'list']);
   });
 });

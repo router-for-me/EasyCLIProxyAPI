@@ -1,6 +1,7 @@
 type GenerationSpeedInput = {
   outputTokens: number;
   latencyMs: number;
+  ttftMs?: number | null;
 };
 
 type CacheReadRateInput = {
@@ -39,6 +40,7 @@ export const calculateTokenComposition = (tokens: {
 export const calculateGenerationSpeed = ({
   outputTokens,
   latencyMs,
+  ttftMs,
 }: GenerationSpeedInput): number | null => {
   if (
     !Number.isFinite(outputTokens) ||
@@ -49,7 +51,11 @@ export const calculateGenerationSpeed = ({
     return null;
   }
 
-  const speed = outputTokens / (latencyMs / 1_000);
+  const generationMs =
+    ttftMs != null && Number.isFinite(ttftMs) && ttftMs > 0 && latencyMs > ttftMs
+      ? latencyMs - ttftMs
+      : latencyMs;
+  const speed = outputTokens / (generationMs / 1_000);
   return Number.isFinite(speed) && speed > 0 ? speed : null;
 };
 

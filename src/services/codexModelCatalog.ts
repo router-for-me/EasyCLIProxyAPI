@@ -120,6 +120,18 @@ export function toggleCodexReasoningLevel(
   return { ...configuration, supported_reasoning_levels: supported, default_reasoning_level: nextDefault };
 }
 
+export function setCodexModelsVisibility(
+  models: CodexCatalogEditorModel[],
+  targetSlugs: Iterable<string>,
+  visibility: 'list' | 'hide',
+): CodexCatalogEditorModel[] {
+  const targets: Record<string, true> = Object.create(null);
+  for (const slug of targetSlugs) targets[slug] = true;
+  return models.map((model) => targets[model.slug] && model.configuration.visibility !== visibility
+    ? { ...model, configuration: { ...model.configuration, visibility } }
+    : model);
+}
+
 export function validateCodexModelConfiguration(configuration: CodexModelConfiguration): MessageKey | null {
   if (!configuration.base_instructions.trim()) return 'agents.catalog.invalidPrompt';
   if (!configuration.display_name.trim() || configuration.display_name.length > 4_000

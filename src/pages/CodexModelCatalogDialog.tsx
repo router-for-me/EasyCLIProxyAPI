@@ -10,6 +10,7 @@ import {
   moveCodexModel,
   orderCodexModelsBySlugs,
   sameCodexModelConfiguration,
+  setCodexModelsVisibility,
   toggleCodexReasoningLevel,
   validateCodexModelConfiguration,
   type CodexCatalogEditorModel,
@@ -113,6 +114,12 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
     value: CodexModelConfiguration[Key],
   ) => updateActive((current) => ({ ...current, [field]: value }));
 
+  const applyVisibility = (slugs: string[], visibility: 'list' | 'hide') => {
+    setModels((current) => setCodexModelsVisibility(current, slugs, visibility));
+    setError('');
+    setNotice('');
+  };
+
   const reorderModel = (slug: string, offset: number) => {
     const from = models.findIndex((model) => model.slug === slug);
     if (from < 0) return;
@@ -122,6 +129,9 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
     setError('');
     setNotice('');
   };
+
+  const canShowFiltered = filteredModels.some((model) => model.configuration.visibility !== 'list');
+  const canHideFiltered = filteredModels.some((model) => model.configuration.visibility !== 'hide');
 
   const resetOrder = () => {
     if (!snapshot) return;
@@ -222,6 +232,24 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
             <Search size={15} aria-hidden />
             <input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder={t('agents.catalog.search')} />
           </div>
+          <div className="codex-catalog-batch-actions">
+            <button
+              type="button"
+              className="secondary-button tiny-button"
+              onClick={() => applyVisibility(filteredModels.map((model) => model.slug), 'list')}
+              disabled={loading || saving || !canShowFiltered}
+            >
+              {t('agents.catalog.showAll')}
+            </button>
+            <button
+              type="button"
+              className="secondary-button tiny-button"
+              onClick={() => applyVisibility(filteredModels.map((model) => model.slug), 'hide')}
+              disabled={loading || saving || !canHideFiltered}
+            >
+              {t('agents.catalog.hideAll')}
+            </button>
+          </div>
           <div className="codex-catalog-models" role="listbox" aria-label={t('agents.catalog.title')}>
             {loading ? (
               <div className="codex-catalog-state"><LoaderCircle size={18} className="spin" />{t('agents.catalog.loading')}</div>
@@ -229,20 +257,32 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
               const customized = !sameCodexModelConfiguration(model.configuration, model.defaults);
               const index = models.findIndex((candidate) => candidate.slug === model.slug);
               const reorderable = !search.trim();
+              const visible = model.configuration.visibility === 'list';
               return (
                 <div className="codex-catalog-row" key={model.slug}>
                   <button
                     type="button"
                     role="option"
                     aria-selected={model.slug === selectedSlug}
-                    className={model.slug === selectedSlug ? 'active' : ''}
+                    className={`${model.slug === selectedSlug ? 'active' : ''}${visible ? '' : ' is-hidden'}`.trim()}
                     onClick={() => setSelectedSlug(model.slug)}
                   >
-                    <strong>{model.configuration.display_name}</strong>
+                    <div className="codex-catalog-model-row-top">
+                      <strong>{model.configuration.display_name}</strong>
+                      <span className="codex-catalog-model-toggle" onClick={(event) => event.stopPropagation()}>
+                        <Switch
+                          size="sm"
+                          checked={visible}
+                          aria-label={`${model.configuration.display_name}: ${t('agents.catalog.visible')}`}
+                          onChange={(event) => applyVisibility([model.slug], event.currentTarget.checked ? 'list' : 'hide')}
+                        />
+                      </span>
+                    </div>
                     <span>{model.slug}</span>
                     <small>
                       {model.hasOfficialTemplate ? t('agents.catalog.official') : t('agents.catalog.fallback')}
                       {customized ? ` · ${t('agents.catalog.customized')}` : ''}
+                      {!visible ? ` · ${t('agents.catalog.hidden')}` : ''}
                     </small>
                   </button>
                   {reorderable ? (
