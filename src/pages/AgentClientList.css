@@ -22,6 +22,27 @@
   height: 56px;
   padding: 8px;
   gap: 8px;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.agents-page .agent-client-list .agent-list-items button:hover:not(:disabled, .active) {
+  background: var(--color-surface-hover);
+}
+
+.agents-page .agent-client-list .agent-list-items button.active,
+.agents-page .agent-client-list .agent-list-items button.active:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+}
+
+.agents-page .agent-client-list .agent-list-items button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents-page .agent-client-list .agent-list-items button { transition: none; }
 }
 
 .agents-page .agent-list-items button > span {

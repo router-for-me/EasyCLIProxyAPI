@@ -5,15 +5,23 @@ import { validateAppVersion } from './version.mjs';
 
 export const releaseNotesLanguages = [
   { locale: 'zh-CN', label: '简体中文', missing: '暂未提供该版本的简体中文更新说明。' },
-  { locale: 'zh-TW', label: '繁體中文', missing: '暫未提供此版本的繁體中文更新說明。' },
   { locale: 'en', label: 'English', missing: 'Release notes for this version are not available in English.' },
-  { locale: 'ja', label: '日本語', missing: 'このバージョンの日本語の更新内容はありません。' },
 ];
 
 // Only explicitly authored translations are published. Missing languages stay missing.
 export async function resolveReleaseNotes({ root = process.cwd(), tag }) {
-  const version = validateAppVersion(String(tag ?? '').trim().replace(/^v/, ''), 'release tag');
-  const directory = join(root, 'docs', 'release-notes', `v${version}`);
+  const rawTag = String(tag ?? '').trim();
+  if (!rawTag || rawTag.includes('..') || !/^[A-Za-z0-9_.-]+$/.test(rawTag)) {
+    throw new Error(`Invalid release tag: ${tag}`);
+  }
+  let dirName = rawTag;
+  try {
+    const version = validateAppVersion(rawTag.replace(/^v/, ''), 'release tag');
+    dirName = `v${version}`;
+  } catch {
+    // Non-semver tags (e.g. only-preview) use rawTag as the release-notes directory name
+  }
+  const directory = join(root, 'docs', 'release-notes', dirName);
   const notes = {};
   for (const { locale } of releaseNotesLanguages) {
     try {
@@ -40,7 +48,10 @@ export function validateReleaseNotes(notes) {
 
 export function releaseNotesBody(notes) {
   validateReleaseNotes(notes);
-  const languages = ['en', 'zh-CN'].map((locale) => releaseNotesLanguages.find((language) => language.locale === locale));
+  const order = ['en', 'zh-CN'];
+  const authored = order.filter((locale) => notes[locale]?.trim());
+  const published = authored.length ? authored : ['en'];
+  const languages = published.map((locale) => releaseNotesLanguages.find((language) => language.locale === locale));
   return `${languages.map(({ locale, label, missing }) => (
     `# ${label}\n\n${notes[locale]?.trim() || missing}`
   )).join('\n\n---\n\n')}\n`;

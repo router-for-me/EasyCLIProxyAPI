@@ -1,4 +1,4 @@
-import { isTauri as nativeIsTauri } from '@tauri-apps/api/core';
+import { isTauri as nativeIsTauri, invoke } from '@tauri-apps/api/core';
 import { getVersion as nativeGetVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow as nativeWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview as nativeWebview } from '@tauri-apps/api/webview';
@@ -6,6 +6,7 @@ import { open as nativeOpen, save as nativeSave } from '@tauri-apps/plugin-dialo
 
 export const isTauri = (): boolean => nativeIsTauri();
 export const getVersion = (): Promise<string> => nativeGetVersion();
+export { invoke };
 
 type FileFilter = { name: string; extensions: string[] };
 type FileDialogOptions = { title?: string; defaultPath?: string; filters?: FileFilter[] };

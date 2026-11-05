@@ -1,4 +1,85 @@
 @layer components {
+.config-dialog.credential-tag-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(680px, 100%);
+  height: auto;
+  max-height: calc(100dvh - 32px);
+  min-width: 0;
+  overflow-y: auto;
+}
+.credential-tag-manager > * { flex-shrink: 0; }
+.credential-tag-manager > p { margin: 0; color: var(--text-secondary); }
+.credential-tag-manager input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+}
+.credential-tag-manager input:hover { border-color: var(--border-hover); }
+.credential-tag-manager :is(input, button):focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  border-color: var(--primary-color);
+}
+.credential-tag-manager .filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.credential-tag-manager .filter-chip:hover:not(:disabled) {
+  border-color: var(--primary-color);
+  background: var(--bg-hover);
+  color: var(--primary-color);
+}
+.credential-tag-manager .credential-tag-count {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.credential-tag-manager > .filter-chip { align-self: flex-start; }
+.credential-tag-manager-list { display: grid; gap: 8px; min-width: 0; }
+.credential-tag-manager-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.credential-tag-manager-label { justify-self: start; min-width: 0; text-align: start; }
+.credential-tag-manager-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.credential-tag-manager-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; }
+.config-dialog.credential-tag-manager .credential-tag-manager-actions > button { flex: 0 0 auto; width: auto; padding: 6px 8px; font-size: var(--font-size-caption); }
+.credential-tag-manager-row:has(.credential-tag-rename) { grid-template-columns: minmax(0, 1fr); }
+.credential-tag-manager-row:has(.credential-tag-rename) .credential-tag-manager-actions { justify-content: flex-start; }
+.credential-tag-rename { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.credential-tag-rename input { flex: 1 1 160px; min-width: 0; }
+.credential-tag-rename small { flex-basis: 100%; color: var(--text-secondary); }
+@media (max-width: 540px) {
+  .credential-tag-manager-row { grid-template-columns: minmax(0, 1fr); }
+  .credential-tag-manager-actions { justify-content: flex-start; }
+}
 .auth-files-page {
   --auth-muted: var(--auth-file-muted);
   --auth-text: var(--auth-file-text);
@@ -68,24 +149,6 @@
   font-weight: var(--font-weight-medium);
 }
 
-.auth-tag-add-trigger.filter-chip {
-  padding: 2px 6px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-tertiary);
-  font-size: var(--font-size-caption);
-  line-height: 1.4;
-  cursor: pointer;
-}
-
-.auth-tag-add-trigger.filter-chip:hover,
-.auth-tag-add-trigger.filter-chip.active {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-  background: var(--bg-card);
-}
-
 .auth-active-tag-badge.filter-chip {
   display: inline-flex;
   align-items: center;
@@ -105,114 +168,6 @@
   background: var(--bg-secondary);
 }
 
-.auth-card-quick-tag-editor {
-  margin-top: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 2;
-}
-
-.auth-quick-tag-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.auth-quick-tag-header strong {
-  font-size: var(--font-size-meta);
-  color: var(--text-primary);
-}
-
-.auth-quick-tag-current {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-}
-
-.auth-quick-tag-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font-size: var(--font-size-caption);
-}
-
-.auth-quick-tag-badge .credential-tag-remove {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-}
-
-.auth-quick-tag-badge .credential-tag-remove:hover {
-  color: var(--text-primary);
-}
-
-.auth-quick-tag-input-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.auth-quick-tag-input {
-  flex: 1;
-  min-width: 100px;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--font-size-caption);
-}
-
-.auth-quick-tag-pool {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--border-color);
-}
-
-.auth-quick-tag-pool-label {
-  font-size: var(--font-size-caption);
-  color: var(--text-tertiary);
-}
-
-.auth-quick-tag-pool-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.auth-quick-tag-pool-btn.filter-chip {
-  padding: 1px 6px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-
-.auth-quick-tag-pool-btn.filter-chip:hover {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-}
 .auth-files-page .auth-files-toolbar .auth-files-filters select { appearance: none; -webkit-appearance: none; width: auto; min-width: 0; max-width: 100%; height: 32px; padding: 0 30px 0 11px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); outline: 0; box-shadow: none; background-color: var(--color-surface); background-image: var(--select-arrow); background-repeat: no-repeat; background-position: right 9px center; background-size: 14px; color: var(--color-text-primary); font: inherit; font-size: 12px; font-weight: 650; line-height: 30px; cursor: pointer; }
 .auth-files-page .auth-files-toolbar .auth-files-filters select::-ms-expand { display: none; }
 .auth-files-page .auth-files-toolbar .auth-files-filters select:hover { border-color: var(--border-hover); }
@@ -235,6 +190,26 @@
 .auth-file-card > .auth-credential-row { flex: 1 0 auto; grid-template-rows: auto auto auto auto 1fr auto; }
 /* An expanded cooldown list grows its card; do not stretch the neighbours' main rows with it. */
 .auth-file-card-grid:has(.auth-file-health-compact > details[open]) .auth-file-card > .auth-credential-row { flex: none; }
+/* Card layouts (components/CardLayout): only Even rows (the default) lines the action rows up across a row. */
+.auth-file-card-grid:not([data-layout='even']) .auth-file-card > .auth-credential-row { flex: none; }
+.auth-file-card-grid[data-layout='compact'] .auth-file-card { padding: 10px 12px; }
+/* Compact glance card: logo, name, plan and the lowest quota, with status; the rest opens from the toggle. */
+.auth-file-card[data-glance] > .auth-credential-row { grid-template-areas: "identity status"; grid-template-rows: auto; }
+.auth-file-card[data-glance] :is(.auth-list-plan, .auth-list-recent, .auth-list-usage, .auth-list-quota, .auth-card-actions, .auth-list-status small, .auth-card-filename, .auth-card-provider),
+.auth-file-card[data-glance] > :not(.auth-credential-row) { display: none; }
+.auth-file-card[data-glance] .auth-card-header .provider-logo { width: 28px; height: 28px; }
+.auth-file-card[data-glance] .auth-card-identity { gap: 4px; }
+.auth-card-glance-line { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--auth-muted); font-size: 12px; line-height: 18px; white-space: nowrap; }
+.auth-card-glance-line > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.auth-card-glance-line:empty { display: none; }
+.auth-card-glance-line > .auth-card-glance-plan { flex: none; max-width: 9em; text-transform: capitalize; }
+.auth-list-status .auth-card-glance-toggle { flex: none; width: auto; margin-top: 4px; }
+.auth-file-card[data-glance] .auth-list-status { flex-direction: row; align-items: center; gap: 6px; }
+.auth-file-card[data-glance] .auth-list-status .auth-card-glance-toggle { margin-top: 0; }
+.auth-file-card[data-glance] .auth-status-badge { padding: 1px 6px; font-size: 11px; }
+.auth-card-glance-toggle svg { transition: transform .15s ease; }
+.auth-card-glance-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
+.auth-files-toolbar .auth-files-layout-control { margin-left: auto; }
 /* The enable switch sits beside small buttons, so it uses their height instead of the 34px compact size. */
 .auth-list-main-actions .auth-card-toggle { min-height: auto; margin-top: 0; padding: 5px 10px; }
 .auth-card-header { display: flex; gap: 10px; align-items: center; min-width: 0; }

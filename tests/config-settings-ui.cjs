@@ -4,17 +4,15 @@ const path = require('node:path');
 
 const categories = ['general', 'aliases', 'routing', 'requests', 'oauth', 'diagnostics', 'software'];
 const viewports = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 }, { width: 640, height: 600 }, { width: 964, height: 700 }, { width: 1280, height: 800 }, { width: 1600, height: 1000 }];
+const scalarFields = '.template-config-field:is([data-field-type="string"], [data-field-type="number"], [data-field-type="select"]), :is(#config-native-retry, #config-native-routing) .config-network-field:has(input[type="text"], input[type="number"], select)';
 
 (async () => {
   let server;
   let browser;
-  let base = 'http://127.0.0.1:1420/';
+  let base;
   const runtimeErrors = [];
   try {
-    try {
-      const response = await fetch(base, { signal: AbortSignal.timeout(3000) });
-      if (!response.ok) throw new Error(String(response.status));
-    } catch {
+    {
       const { createServer } = await import('vite');
       const react = (await import('@vitejs/plugin-react')).default;
       server = await createServer({
@@ -23,7 +21,7 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 },
         plugins: [react()],
         optimizeDeps: { entries: ['index.html'] },
         logLevel: 'error',
-        server: { host: '127.0.0.1', port: 1421, strictPort: false },
+        server: { host: '127.0.0.1', port: 0, strictPort: false },
       });
       await server.listen();
       base = `http://127.0.0.1:${server.httpServer.address().port}/`;
@@ -125,6 +123,107 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 },
             await page.screenshot({ path: path.join(path.resolve(process.env.SETTINGS_SCREENSHOT_DIR), 'settings-reachability-failure.png') });
           }
           assert.equal(metrics.reachable, true, `${label} ${context}: control must remain reachable: ${JSON.stringify(metrics)}`);
+        };
+        const scalarLayout = async category => {
+          const originalViewport = page.viewportSize();
+          const scrollState = await page.evaluateHandle(() => ({
+            left: scrollX,
+            top: scrollY,
+            elements: [...document.querySelectorAll('*')]
+              .filter(element => element.scrollTop || element.scrollLeft
+                || element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth)
+              .map(element => ({ element, left: element.scrollLeft, top: element.scrollTop })),
+          }));
+          try {
+            await settle();
+            const geometry = await page.locator(scalarFields).evaluateAll(fields => {
+              const failures = [];
+              const types = [];
+              const overlaps = (first, second) => first.left < second.right - 1 && second.left < first.right - 1
+                && first.top < second.bottom - 1 && second.top < first.bottom - 1;
+              const contains = (outer, inner) => inner.left >= outer.left - 1 && inner.right <= outer.right + 1
+                && inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1;
+              for (const field of fields) {
+                const row = field.getBoundingClientRect();
+                if (!row.width || !row.height) continue;
+                const caption = field.querySelector('.template-config-label, .config-field-label');
+                const label = caption.querySelector('label');
+                const control = field.querySelector('.template-config-control') || field.querySelector('input, select');
+                const captionBox = caption.getBoundingClientRect();
+                const labelBox = label.getBoundingClientRect();
+                const controlBox = control.getBoundingClientRect();
+                const style = getComputedStyle(label);
+                const canvas = document.createElement('canvas').getContext('2d');
+                canvas.font = style.font;
+                const text = label.textContent.trim();
+                const naturalWidth = canvas.measureText(text).width;
+                const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+                const fragments = [];
+                while (walker.nextNode()) {
+                  if (!walker.currentNode.textContent.trim()) continue;
+                  const range = document.createRange();
+                  range.selectNodeContents(walker.currentNode);
+                  fragments.push(...range.getClientRects());
+                }
+                const tools = [...caption.querySelectorAll('button')].map(button => button.getBoundingClientRect());
+                const toolWidth = tools.length ? captionBox.right - Math.min(...tools.map(tool => tool.left)) + 8 : 0;
+                const readableWidth = Math.min(naturalWidth, 160, row.width - toolWidth);
+                const lineCount = new Set(fragments.map(fragment => Math.round(fragment.top))).size;
+                const reasons = [];
+                if (!fragments.length || labelBox.width < readableWidth - 2) reasons.push('squeezed text');
+                if (lineCount > Math.ceil(naturalWidth / readableWidth) + 1) reasons.push('excessive wrapping');
+                if (fragments.some(fragment => !contains(captionBox, fragment) || !contains(row, fragment)
+                  || overlaps(fragment, controlBox) || tools.some(tool => overlaps(fragment, tool)))) reasons.push('clipped or overlapping text');
+                if (style.textOverflow === 'ellipsis' || style.webkitLineClamp !== 'none'
+                  || ['hidden', 'clip'].includes(style.overflowX) || ['hidden', 'clip'].includes(style.overflowY)) reasons.push('hidden or truncated text');
+                if (!contains(row, controlBox) || controlBox.width < 48 || controlBox.height < 24
+                  || overlaps(captionBox, controlBox) || tools.some(tool => !contains(row, tool) || tool.width < 20 || tool.height < 20
+                    || overlaps(tool, controlBox))) reasons.push('unusable control or tools');
+                if (field.scrollWidth > field.clientWidth + 1) reasons.push('field overflow');
+                const input = field.querySelector('input, select, [role="combobox"]');
+                types.push({ native: !field.matches('.template-config-field'), type: field.dataset.fieldType || input.type });
+                if (reasons.length) failures.push({ id: field.id || input.id, text, naturalWidth, readableWidth, labelWidth: labelBox.width, lineCount, reasons });
+              }
+              return { failures, types };
+            });
+            assert.ok(geometry.types.some(field => !field.native), `${label} ${category}: template scalar coverage is nonempty`);
+            if (category !== 'oauth') assert.ok(geometry.types.some(field => field.native), `${label} ${category}: native row coverage is nonempty`);
+            assert.deepEqual(geometry.failures, [], `${label} ${category}: actual label text must wrap readably without clipping or control overlap`);
+            const fields = page.locator(scalarFields).filter({ visible: true });
+            for (const type of ['select', 'text', 'number']) {
+              const input = fields.locator(type === 'select' ? 'select, [role="combobox"]' : `input[type="${type}"]`).first();
+              if (await input.count()) {
+                await reachable(input, `${category} ${type} control`);
+                await input.focus();
+                assert.equal(await input.evaluate(element => document.activeElement === element), true, `${label} ${category}: ${type} control accepts focus`);
+              }
+            }
+            for (const selector of ['.settings-help-trigger', '.template-config-reset']) {
+              const tool = fields.locator(selector).first();
+              if (await tool.count()) {
+                assert.equal(await tool.isEnabled(), true, `${label} ${category}: ${selector} remains enabled`);
+                await reachable(tool, `${category} ${selector}`);
+              }
+            }
+            if (process.env.SETTINGS_SCREENSHOT_DIR && [640, 1280].includes(viewport.width)) {
+              const fs = require('node:fs');
+              const directory = path.resolve(process.env.SETTINGS_SCREENSHOT_DIR);
+              fs.mkdirSync(directory, { recursive: true });
+              await page.setViewportSize({ width: viewport.width, height: 800 });
+              await page.locator('.config-settings-topnav').scrollIntoViewIfNeeded();
+              await noOverflow(`${category} screenshot`);
+              await page.screenshot({ path: path.join(directory, `ecpa_issue-479-settings-labels-1102_ui_${category}_${locale}_${viewport.width}x800.png`), fullPage: true });
+            }
+          } finally {
+            await page.setViewportSize(originalViewport);
+            await settle();
+            await page.evaluate(state => {
+              for (const { element, left, top } of state.elements) element.scrollTo({ left, top, behavior: 'instant' });
+              window.scrollTo({ left: state.left, top: state.top, behavior: 'instant' });
+            }, scrollState);
+            await settle();
+            await scrollState.dispose();
+          }
         };
         const hasDirtyMarker = async id => page.locator(`#config-subpage-tab-${id}`).evaluate(element =>
           Boolean(element.querySelector('.config-nav-dirty, .config-settings-dirty, [data-dirty="true"]'))
@@ -278,6 +377,7 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 },
         }
         await templateVisible('extensions-plugins', false);
         await noOverflow('routing and stability');
+        await scalarLayout('routing');
         await tab('requests');
         assert.equal(await retrySection.isVisible(), true);
         if (viewport.width >= 964) {
@@ -335,6 +435,7 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 },
           assert.ok(Math.abs(leftSave.y + leftSave.height - rightSave.y - rightSave.height) <= 1, 'paired save buttons share a bottom baseline');
         }
         await noOverflow('model and request behavior');
+        await scalarLayout('requests');
         assert.equal(await page.locator('#config-native-aliases').isVisible(), false, 'aliases are separate from model and request settings');
         await tab('aliases');
         await templateVisible('request-behavior', false);
@@ -383,6 +484,7 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 },
         await tab('oauth');
         for (const id of ['oauth-common', 'oauth-models', 'oauth-codex', 'oauth-media', 'oauth-claude', 'oauth-others']) await templateVisible(id);
         await noOverflow('upstream credentials');
+        await scalarLayout('oauth');
         await tab('requests');
         assert.equal(await page.locator('.config-settings-views').count(), 0, `${label}: secondary pagination is removed`);
         await tab('diagnostics');
@@ -541,7 +643,10 @@ const viewports = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 },
     assert.deepEqual(runtimeErrors, [], 'Settings navigation must not produce runtime errors');
     console.log('PASS: seven settings categories including independent model aliases, adaptive cards, search, retained drafts, save feedback, and Chinese/English responsive layouts.');
   } finally {
-    if (browser) await browser.close();
-    if (server) await server.close();
+    try {
+      if (browser) await browser.close();
+    } finally {
+      if (server) await server.close();
+    }
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });

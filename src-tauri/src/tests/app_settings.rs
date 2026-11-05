@@ -160,6 +160,11 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("request-retry = 3"));
     assert!(content.contains("max-retry-credentials = 0"));
     assert!(content.contains("max-retry-interval = 30"));
+    assert!(content.contains("transient-error-cooldown-seconds = -1"));
+    assert_eq!(
+        config.transient_error_cooldown_seconds,
+        DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS
+    );
     assert!(content.contains("streaming-bootstrap-retries = 0"));
 }
 
@@ -196,14 +201,18 @@ fn silent_start_defaults_off_and_requires_tray_support() {
         silent_start: true,
         ..GuiConfigFile::default()
     };
+    let desktop = cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows"
+    ));
+    assert_eq!(should_start_hidden_for_launch(&enabled, true), desktop);
     assert_eq!(
-        should_start_hidden(&enabled),
-        cfg!(any(
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "windows"
-        ))
+        should_start_hidden_for_launch(&enabled, false),
+        desktop && !cfg!(target_os = "linux"),
+        "on Linux a launch from the app menu or a shortcut must show the window"
     );
+    assert!(!should_start_hidden_for_launch(&legacy, true));
 }
 
 #[test]
@@ -356,9 +365,27 @@ fn core_start_on_launch_defaults_on_and_can_be_disabled() {
 
     let disabled = GuiConfigFile {
         start_core_on_launch: false,
+        run_on_startup: false,
         ..GuiConfigFile::default()
     };
     assert!(!should_start_core_on_launch(&disabled));
+}
+
+#[test]
+fn core_start_on_launch_restores_previous_running_state() {
+    for start_core_on_launch in [false, true] {
+        for run_on_startup in [false, true] {
+            let config = GuiConfigFile {
+                start_core_on_launch,
+                run_on_startup,
+                ..GuiConfigFile::default()
+            };
+            assert_eq!(
+                should_start_core_on_launch(&config),
+                start_core_on_launch || run_on_startup
+            );
+        }
+    }
 }
 
 #[test]

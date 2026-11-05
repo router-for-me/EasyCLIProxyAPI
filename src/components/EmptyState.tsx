@@ -17,6 +17,6 @@ export function EmptyState({ variant = 'page', tone, icon, title, children, acti
     {icon ? <span className="empty-state-icon" aria-hidden="true">{icon}</span> : null}
     {title ? <strong className="empty-state-title">{title}</strong> : null}
     {children != null && children !== false ? <span className="empty-state-description">{children}</span> : null}
-    {action}
+    {action != null && action !== false ? <div className="empty-state-actions">{action}</div> : null}
   </div>;
 }

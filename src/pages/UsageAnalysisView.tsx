@@ -44,7 +44,7 @@ export function UsageAnalysisView({ analysis, overview, range }: {
       <UsageActivityChart timeline={overview.timeline} range={range} />
       <section className="surface-card usage-analysis-context">
         <CategorySummary title={t('usage.analysis.sources')} items={analysis.upstreams ?? []} />
-        <CategorySummary title={t('usage.analysis.keys')} items={analysis.apiKeys} />
+        <CategorySummary title={t('usage.analysis.keys')} items={analysis.apiKeys} selectableMetric />
       </section>
     </div>
   );
@@ -167,21 +167,40 @@ function RequestResults({ overview, models }: { overview: AnalysisOverview; mode
   );
 }
 
-function CategorySummary({ title, items }: { title: string; items: UsageCategory[] }) {
+function CategorySummary({ title, items, selectableMetric = false }: { title: string; items: UsageCategory[]; selectableMetric?: boolean }) {
   const { t, locale, formatNumber } = useI18n();
   const privacy = usePrivacyMask();
-  const ranked = [...items].sort((a, b) => b.requests - a.requests || b.tokens - a.tokens)
+  const [metric, setMetric] = useState<'tokens' | 'requests'>('tokens');
+  const selectedMetric = selectableMetric ? metric : 'requests';
+  const ranked = [...items].sort((left, right) => right[selectedMetric] - left[selectedMetric]
+    || right.requests - left.requests || right.tokens - left.tokens || (selectableMetric ? left.key.localeCompare(right.key) : 0))
     .map((item) => ({ ...item, label: privacy.text(item.label) }));
-  const total = sum(items, 'requests');
+  const total = sum(items, selectedMetric);
   const first = ranked[0];
-  return <details className="usage-context-detail">
+  const categoryCount = <small>{t(items.length === 1 ? 'usage.analysis.categoryCountOne' : 'usage.analysis.categoryCount', { count: items.length })}</small>;
+  const metrics = (item: UsageCategory) => <span className="usage-context-metrics">
+    {([selectedMetric, selectedMetric === 'tokens' ? 'requests' : 'tokens'] as const).map((value, index) =>
+      <span key={value} className={index === 0 ? 'usage-context-primary' : undefined} title={formatNumber(item[value])}>
+        {value === 'tokens' ? `${formatUsageNumber(item.tokens, locale)} Token`
+          : t('usage.analysis.requestCount', { count: formatUsageNumber(item.requests, locale) })}
+      </span>)}
+  </span>;
+  const detail = <details className="usage-context-detail">
     <summary>
-      <div className="usage-context-heading"><span>{title}</span><small>{t(items.length === 1 ? 'usage.analysis.categoryCountOne' : 'usage.analysis.categoryCount', { count: items.length })}</small></div>
-      <strong title={first?.label}>{first?.label || '—'}</strong>
-      <div className="usage-context-caption"><span>{items.length === 1 ? t('usage.analysis.singleCategory')
-        : first ? t('usage.analysis.leadingShare', { percent: formatNumber(total ? first.requests / total * 100 : 0, { maximumFractionDigits: 1 }) }) : '—'}</span><ChevronDown size={14} aria-hidden="true" /></div>
+      <div className="usage-context-heading"><span>{title} {selectableMetric && categoryCount}</span>{!selectableMetric && categoryCount}</div>
+      {selectableMetric ? <div className="usage-context-leader"><strong title={first?.label}>{first?.label || '—'}</strong>{first && metrics(first)}</div>
+        : <strong title={first?.label}>{first?.label || '—'}</strong>}
+      <div className="usage-context-caption"><span>{items.length === 1 && !selectableMetric ? t('usage.analysis.singleCategory')
+        : first ? t('usage.analysis.leadingShare', { percent: formatNumber(total > 0 ? first[selectedMetric] / total * 100 : 0, { maximumFractionDigits: 1 }) }) : '—'}</span><ChevronDown size={14} aria-hidden="true" /></div>
     </summary>
     <ul>{ranked.map(item => <li key={item.key}><span title={item.label}>{item.label}</span>
-      <strong title={formatNumber(item.requests)}>{t('usage.analysis.requestCount', { count: formatUsageNumber(item.requests, locale) })}</strong></li>)}</ul>
+      {selectableMetric ? <div className="usage-context-values">{metrics(item)}
+        <small>{formatNumber(total > 0 ? item[selectedMetric] / total * 100 : 0, { maximumFractionDigits: 1 })}%</small></div>
+        : <strong title={formatNumber(item.requests)}>{t('usage.analysis.requestCount', { count: formatUsageNumber(item.requests, locale) })}</strong>}</li>)}</ul>
   </details>;
+  return selectableMetric ? <section className="usage-context-key-panel" aria-label={title}>
+    <SegmentedControl className="usage-analysis-metric" aria-label={t('usage.analysis.keyMetricLabel')} value={metric} onChange={setMetric}
+      items={(['tokens', 'requests'] as const).map(value => ({ value, label: t(value === 'tokens' ? 'usage.analysis.metricTokens' : 'usage.analysis.metricRequests') }))} />
+    {detail}
+  </section> : detail;
 }

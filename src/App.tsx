@@ -19,6 +19,7 @@ import {
   Eye,
   EyeOff,
   Gauge,
+  GitBranch,
   History,
   House,
   Languages,
@@ -27,9 +28,11 @@ import {
   MessageCircle,
   Network,
   PackageOpen,
+  Blocks,
   Puzzle,
   ServerCog,
   Settings,
+  Sparkles,
   Sprout,
   X,
 } from 'lucide-react';
@@ -45,7 +48,10 @@ import { QuotaPage } from './pages/QuotaPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
+import { RoutingPage } from './pages/routing/RoutingPage';
 import { PluginsPage } from './pages/PluginsPage';
+import { EcpaPluginsPage } from './pages/EcpaPluginsPage';
+import { McpSkillsPage } from './pages/McpSkillsPage';
 import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
 import { usePluginNavLayout } from './components/usePluginNavLayout';
@@ -57,6 +63,7 @@ import {
   type PluginNavOverride,
 } from './services/pluginNavigation';
 import { languageOptions, useI18n } from './i18n';
+import { getUpdateChannel, setUpdateChannel } from './services/appUpdates';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
 import { canOpenAppPage, requestAppNavigation } from './navigation';
@@ -118,6 +125,12 @@ const pages = [
     component: ConfigPanelPage,
   },
   {
+    id: 'routing',
+    labelKey: 'app.nav.routing',
+    icon: GitBranch,
+    component: RoutingPage,
+  },
+  {
     id: 'versions',
     labelKey: 'app.nav.versions',
     icon: PackageOpen,
@@ -128,6 +141,18 @@ const pages = [
     labelKey: 'app.nav.plugins',
     icon: Puzzle,
     component: PluginsPage,
+  },
+  {
+    id: 'ecpa-plugins',
+    labelKey: 'app.nav.ecpaPlugins',
+    icon: Sparkles,
+    component: EcpaPluginsPage,
+  },
+  {
+    id: 'mcp-skills',
+    labelKey: 'app.nav.mcpSkills',
+    icon: Blocks,
+    component: McpSkillsPage,
   },
 ] as const;
 
@@ -162,7 +187,32 @@ function App() {
 
 function AppContent() {
   const { locale, setLocale, t } = useI18n();
-  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
+  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing, check: appUpdateCheck } = useAppUpdate();
+  const logoTapRef = useRef<{ count: number; timer: number | null }>({ count: 0, timer: null });
+  const handleLogoTap = useCallback(() => {
+    const tap = logoTapRef.current;
+    tap.count += 1;
+    if (tap.timer !== null) window.clearTimeout(tap.timer);
+    tap.timer = window.setTimeout(() => {
+      tap.count = 0;
+      tap.timer = null;
+    }, 3000);
+    if (tap.count >= 5) {
+      tap.count = 0;
+      if (tap.timer !== null) {
+        window.clearTimeout(tap.timer);
+        tap.timer = null;
+      }
+      void (async () => {
+        const current = await getUpdateChannel().catch(() => 'stable');
+        const next = current === 'preview' ? 'stable' : 'preview';
+        const applied = await setUpdateChannel(next as 'stable' | 'preview').catch(() => null);
+        if (applied && typeof appUpdateCheck === 'function') {
+          await appUpdateCheck();
+        }
+      })();
+    }
+  }, [appUpdateCheck]);
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<AppPageId>('home');
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -192,6 +242,17 @@ function AppContent() {
     : resolvePluginNavLayout(autoPluginLayout, pluginEntries.length, pluginNavOverride);
   const pluginNavExpanded = pluginNavLayout === 'expanded';
   const pluginChildActive = pluginEntries.some((entry) => entry.route === active);
+  // The top bar's nav row scrolls sideways on phones: keep the active item inside it.
+  useLayoutEffect(() => {
+    const row = navElement?.querySelector<HTMLElement>('button.active');
+    if (!navElement || !row) return;
+    const box = navElement.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    // Line the item up with the row's start, where the row's scroll snapping puts it anyway.
+    if (rect.left < box.left || rect.right > box.right) navElement.scrollLeft += rect.left - box.left;
+    if (rect.top < box.top) navElement.scrollTop += rect.top - box.top;
+    else if (rect.bottom > box.bottom) navElement.scrollTop += rect.bottom - box.bottom;
+  }, [navElement, active, pluginEntries.length, pluginNavExpanded]);
   const activePage = pages.find((page) => page.id === active);
   const ActivePage = activePage?.component;
   const selectedLanguage = languageOptions.find((option) => option.value === locale)
@@ -211,8 +272,8 @@ function AppContent() {
   }, [active, coreReady]);
 
   useEffect(() => {
-    if (!coreReady) void closePluginWebview().catch(() => undefined);
-  }, [coreReady]);
+    if (status !== null && !status.ready) void closePluginWebview().catch(() => undefined);
+  }, [status]);
 
   useEffect(() => {
     if (pluginEntriesFetched && isPluginRoute(active) && !pluginEntry) {
@@ -369,7 +430,7 @@ function AppContent() {
         {active !== "easy" ? (
           <aside className="sidebar">
             <div className="sidebar-brand" title={t('app.desktopConsole')}>
-              <img src={appLogo} alt="" className="brand-mark brand-logo" />
+              <img src={appLogo} alt="" className="brand-mark brand-logo" onClick={handleLogoTap} />
               <div className="sidebar-brand-text">
                 <strong>EasyCLIProxyAPI</strong>
                 <span>{t('app.desktopConsole')}</span>

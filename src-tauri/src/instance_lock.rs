@@ -62,15 +62,20 @@ pub(crate) fn acquire_app_instance_guard_for(
 }
 
 #[cfg(unix)]
+fn app_instance_lock_path(executable_dir: &Path) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "{APP_INSTANCE_LOCK_PREFIX}-{}.lock",
+        app_instance_key(executable_dir)
+    ))
+}
+
+#[cfg(unix)]
 pub(crate) fn acquire_app_instance_guard_for(
     executable_dir: &Path,
 ) -> Result<AppInstanceGuard, String> {
     use std::{fs::OpenOptions, os::fd::AsRawFd};
 
-    let lock_path = std::env::temp_dir().join(format!(
-        "{APP_INSTANCE_LOCK_PREFIX}-{}.lock",
-        app_instance_key(executable_dir)
-    ));
+    let lock_path = app_instance_lock_path(executable_dir);
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -88,6 +93,108 @@ pub(crate) fn acquire_app_instance_guard_for(
     }
 
     Ok(AppInstanceGuard { _file: file })
+}
+
+// Launching the app again from the menu or a shortcut only finds the lock above.
+// Linux has no Dock reopen event, so the running copy listens on a socket next to
+// its lock and shows the main window when a later launch asks it to.
+#[cfg(target_os = "linux")]
+const APP_ACTIVATION_REQUEST: &[u8] = b"show\n";
+#[cfg(target_os = "linux")]
+const APP_ACTIVATION_CONNECT_ATTEMPTS: u32 = 10;
+
+#[cfg(target_os = "linux")]
+pub(crate) fn app_activation_socket_path(executable_dir: &Path) -> std::path::PathBuf {
+    app_instance_lock_path(executable_dir).with_extension("sock")
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn start_app_activation_listener<F>(on_activate: F) -> Result<(), String>
+where
+    F: Fn() + Send + 'static,
+{
+    let executable_dir = super::executable_dir()?;
+    start_app_activation_listener_for(&executable_dir, on_activate)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn start_app_activation_listener_for<F>(
+    executable_dir: &Path,
+    on_activate: F,
+) -> Result<(), String>
+where
+    F: Fn() + Send + 'static,
+{
+    use std::{
+        io::Read,
+        os::unix::{fs::PermissionsExt, net::UnixListener},
+    };
+
+    let socket_path = app_activation_socket_path(executable_dir);
+    // Only the lock holder gets here, so a socket left on disk belongs to a copy that has exited.
+    match fs::remove_file(&socket_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Failed to remove the stale application activation socket: {error}"
+            ))
+        }
+    }
+    let listener = UnixListener::bind(&socket_path).map_err(|error| {
+        format!("Failed to listen for application activation requests: {error}")
+    })?;
+    if let Err(error) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)) {
+        eprintln!("Failed to restrict the application activation socket: {error}");
+    }
+
+    std::thread::Builder::new()
+        .name("app-activation".to_string())
+        .spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else {
+                    continue;
+                };
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+                let mut request = Vec::new();
+                if stream
+                    .take(APP_ACTIVATION_REQUEST.len() as u64 + 1)
+                    .read_to_end(&mut request)
+                    .is_ok()
+                    && request == APP_ACTIVATION_REQUEST
+                {
+                    on_activate();
+                }
+            }
+        })
+        .map_err(|error| format!("Failed to start the application activation listener: {error}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn request_running_app_activation() -> bool {
+    super::executable_dir().is_ok_and(|executable_dir| {
+        request_running_app_activation_for(&executable_dir, APP_ACTIVATION_CONNECT_ATTEMPTS)
+    })
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn request_running_app_activation_for(executable_dir: &Path, attempts: u32) -> bool {
+    use std::{io::Write, os::unix::net::UnixStream};
+
+    let socket_path = app_activation_socket_path(executable_dir);
+    for attempt in 1..=attempts {
+        match UnixStream::connect(&socket_path) {
+            Ok(mut stream) => return stream.write_all(APP_ACTIVATION_REQUEST).is_ok(),
+            // The running copy starts listening during setup; a launch made while it is
+            // still starting can briefly find no listener.
+            Err(_) if attempt < attempts => {
+                std::thread::sleep(std::time::Duration::from_millis(200))
+            }
+            Err(_) => {}
+        }
+    }
+    false
 }
 
 #[cfg(windows)]

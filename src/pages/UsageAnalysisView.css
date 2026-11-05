@@ -134,8 +134,23 @@
 .usage-analysis-no-failures strong { font-size: 12px; font-weight: 500; }
 .usage-analysis-no-failures p { font-size: 11px; margin-top: 3px; }
 .usage-analysis-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; }
-.usage-context-detail { min-width: 0; padding: 15px 18px; }
-.usage-context-detail + .usage-context-detail { border-left: 1px solid var(--border-secondary); }
+.usage-context-detail { min-width: 0; padding: 10px 18px; }
+.usage-analysis-context > :nth-child(2) { border-left: 1px solid var(--border-secondary); }
+.usage-context-key-panel { position: relative; min-width: 0; padding: 10px 18px; }
+.usage-context-key-panel .usage-context-detail { padding: 0; }
+.usage-context-key-panel .usage-analysis-metric { position: absolute; top: 5px; right: 18px; }
+.usage-context-key-panel .usage-context-heading { padding-right: 150px; }
+.usage-context-key-panel .usage-context-heading > span { white-space: nowrap; }
+.usage-context-leader { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.usage-context-leader > strong { flex: 1 1 120px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 550; }
+.usage-context-metrics { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.usage-context-metrics > span { white-space: nowrap; }
+.usage-context-primary { color: var(--text-secondary); font-weight: 550; }
+.usage-context-values { flex: 0 1 auto; min-width: 0; text-align: right; }
+.usage-context-values .usage-context-metrics { justify-content: flex-end; }
+.usage-context-values small { color: var(--text-tertiary); white-space: nowrap; }
+.usage-context-key-panel li { flex-wrap: wrap; align-items: baseline; }
+.usage-context-key-panel li > span { flex: 1 1 120px; overflow-wrap: break-word; }
 .usage-context-detail summary { list-style: none; cursor: pointer; }
 .usage-context-detail summary::-webkit-details-marker { display: none; }
 .usage-context-detail summary:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 4px; border-radius: var(--radius-sm); }
@@ -159,7 +174,7 @@
   .usage-analysis-primary { grid-template-columns: minmax(0, 1fr); }
   .usage-results-chart { grid-template-columns: 150px minmax(100px, 1fr); max-width: 430px; width: 100%; margin: 0 auto; }
   .usage-analysis-context { grid-template-columns: minmax(0, 1fr); }
-  .usage-context-detail + .usage-context-detail { border-left: 0; border-top: 1px solid var(--border-secondary); }
+  .usage-analysis-context > :nth-child(2) { border-left: 0; border-top: 1px solid var(--border-secondary); }
   .usage-context-detail { padding-block: 13px; }
 }
 

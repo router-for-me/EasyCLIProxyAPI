@@ -1,4 +1,7 @@
 @layer components {
+.auth-batch-tag-chips { max-height: 180px; overflow-y: auto; }
+.auth-batch-tag-chips input { flex: 1 1 100%; min-width: 0; }
+.auth-batch-tag-chips .filter-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .model-discovery-dialog.auth-batch-dialog {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 0;

@@ -468,6 +468,17 @@ pub(crate) fn mapping_revision(client: &str, paths: &[PathBuf]) -> Result<String
 pub(crate) fn create_agent_config_backup(
     app: tauri::AppHandle,
     client: String,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<BackupSummary, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+        create_agent_config_backup_in_directories(app, client)
+    })
+}
+
+pub(crate) fn create_agent_config_backup_in_directories(
+    app: tauri::AppHandle,
+    client: String,
 ) -> Result<BackupSummary, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
@@ -480,6 +491,17 @@ pub(crate) fn create_agent_config_backup(
 pub(crate) fn list_agent_config_backups(
     app: tauri::AppHandle,
     client: String,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<BackupList, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+        list_agent_config_backups_in_directories(app, client)
+    })
+}
+
+pub(crate) fn list_agent_config_backups_in_directories(
+    app: tauri::AppHandle,
+    client: String,
 ) -> Result<BackupList, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
@@ -490,6 +512,18 @@ pub(crate) fn list_agent_config_backups(
 
 #[tauri::command]
 pub(crate) fn delete_agent_config_backup(
+    app: tauri::AppHandle,
+    client: String,
+    id: String,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<(), String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+        delete_agent_config_backup_in_directories(app, client, id)
+    })
+}
+
+pub(crate) fn delete_agent_config_backup_in_directories(
     app: tauri::AppHandle,
     client: String,
     id: String,

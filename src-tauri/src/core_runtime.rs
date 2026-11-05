@@ -169,6 +169,168 @@ pub(crate) async fn check_latest_core(
     })
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreReleaseVersion {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+}
+
+#[tauri::command]
+pub(crate) async fn list_core_versions(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<Vec<CoreVersionOption>, String> {
+    let platform = current_core_platform()?;
+    let config = gui_config_state.snapshot()?;
+    let client = http_client(&config.proxy_url, &config.custom_download_mirrors)?;
+    let repository = configured_gitcode_core_repository();
+    let mut failures = Vec::new();
+    for candidate in version_download_source_candidates(
+        config.selected_download_candidate(),
+        repository.is_some(),
+        &config.custom_download_mirrors,
+    ) {
+        let result = fetch_core_versions_from_source(&client, &candidate, repository).await;
+        match result {
+            Ok(releases) => {
+                let versions = core_version_options(releases, &platform);
+                if !versions.is_empty() {
+                    return Ok(versions);
+                }
+                failures.push(format!(
+                    "{}: No selectable kernel versions",
+                    candidate.display_name()
+                ));
+            }
+            Err(error) => failures.push(format!("{}: {error}", candidate.display_name())),
+        }
+    }
+    Err(format!(
+        "All kernel version list sources failed: {}",
+        failures.join("；")
+    ))
+}
+
+pub(crate) async fn fetch_core_versions_from_source(
+    client: &reqwest::Client,
+    source: &VersionDownloadCandidate,
+    repository: Option<&str>,
+) -> Result<Vec<CoreReleaseVersion>, String> {
+    if source.source == VersionDownloadSource::Gitcode {
+        let repository = repository.ok_or("GitCode kernel repository is not configured")?;
+        return fetch_core_version_list(
+            client,
+            &format!("https://api.gitcode.com/api/v5/repos/{repository}/releases?per_page=100"),
+        )
+        .await;
+    }
+    let api_result =
+        fetch_core_version_list(client, &version_source_url(source, CORE_RELEASES_API_URL)).await;
+    let api_error = match api_result {
+        Ok(releases)
+            if releases.iter().any(|release| {
+                !release.draft
+                    && semver::Version::parse(release.tag_name.trim().trim_start_matches('v'))
+                        .is_ok()
+            }) =>
+        {
+            return Ok(releases)
+        }
+        Ok(_) => "No selectable kernel versions".to_string(),
+        Err(error) => error,
+    };
+    let atom_result = async {
+        let body = client
+            .get(version_source_url(source, RELEASE_ATOM_URL))
+            .header(
+                reqwest::header::ACCEPT,
+                "application/atom+xml,application/xml,text/xml",
+            )
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .text()
+            .await
+            .map_err(|error| error.to_string())?;
+        let releases = core_versions_from_atom(&body);
+        if releases.is_empty() {
+            return Err("Atom feed did not return version tags".to_string());
+        }
+        Ok(releases)
+    }
+    .await;
+    atom_result
+        .map_err(|error| format!("Release API failed: {api_error}; Atom feed failed: {error}"))
+}
+
+async fn fetch_core_version_list(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<Vec<CoreReleaseVersion>, String> {
+    client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::USER_AGENT, USER_AGENT)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to query CPA kernel versions: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Failed to read CPA kernel versions: {error}"))?
+        .json::<Vec<CoreReleaseVersion>>()
+        .await
+        .map_err(|error| format!("Failed to parse CPA kernel versions: {error}"))
+}
+
+pub(crate) fn core_versions_from_atom(xml: &str) -> Vec<CoreReleaseVersion> {
+    xml.split("<entry>")
+        .skip(1)
+        .filter_map(|entry| {
+            let entry = entry.split_once("</entry>")?.0;
+            let tag_name = release_tag_from_atom(&format!("<entry>{entry}</entry>"))?;
+            let version = semver::Version::parse(tag_name.trim_start_matches('v')).ok()?;
+            Some(CoreReleaseVersion {
+                tag_name,
+                draft: false,
+                prerelease: !version.pre.is_empty(),
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn core_version_options(
+    releases: Vec<CoreReleaseVersion>,
+    platform: &CorePlatform,
+) -> Vec<CoreVersionOption> {
+    let mut versions = Vec::new();
+    for release in releases {
+        if release.draft {
+            continue;
+        }
+        let Ok(parsed) = semver::Version::parse(release.tag_name.trim().trim_start_matches('v'))
+        else {
+            continue;
+        };
+        let version = normalize_version(&parsed.to_string());
+        versions.push(CoreVersionOption {
+            asset_name: core_release_asset_name(&version, &platform),
+            version,
+            prerelease: release.prerelease || !parsed.pre.is_empty(),
+        });
+    }
+    versions.sort_by(|left, right| {
+        let left_version = semver::Version::parse(left.version.trim_start_matches('v')).ok();
+        let right_version = semver::Version::parse(right.version.trim_start_matches('v')).ok();
+        right_version.cmp(&left_version)
+    });
+    versions.dedup_by(|left, right| left.version == right.version);
+    versions
+}
+
 #[tauri::command]
 pub(crate) fn detect_bundled_core() -> Result<Option<BundledCoreInfo>, String> {
     bundled_core_archive().map(|value| value.map(|(info, _)| info))
@@ -348,17 +510,34 @@ pub(crate) async fn install_core_version(
                 &staged.staging_dir,
                 &rollback_dir,
                 || {
-                    if was_running && !process_state.is_shutting_down() {
-                        start_core_process_inner(process_state.inner(), &config)
+                    if should_restore_core_after_install(
+                        was_running,
+                        &config,
+                        process_state.is_shutting_down(),
+                    ) {
+                        start_core_process_inner(process_state.inner(), &config)?;
+                        if let Err(error) = gui_config_state.set_run_on_startup(true) {
+                            let _ = stop_core_process_inner(process_state.inner());
+                            return Err(error);
+                        }
+                        Ok(())
                     } else {
                         Ok(())
                     }
                 },
             );
             let swap_and_restore = match swap_and_restore {
-                Err(error) if was_running && !process_state.is_shutting_down() => {
+                Err(error)
+                    if should_restore_core_after_install(
+                        was_running,
+                        &config,
+                        process_state.is_shutting_down(),
+                    ) => {
                     match start_core_process_inner(process_state.inner(), &config) {
-                        Ok(()) => Err(error),
+                        Ok(()) => combine_install_and_restart_results(
+                            Err(error),
+                            gui_config_state.set_run_on_startup(true).map(|_| ()),
+                        ),
                         Err(resume_error) => Err(format!(
                             "{error}; failed to start the previous kernel again: {resume_error}"
                         )),
@@ -367,13 +546,18 @@ pub(crate) async fn install_core_version(
                 other => other,
             };
             emit_current_core_status(&app, process_state.inner(), config.port);
-            swap_and_restore.map(|()| CoreInstallResult {
-                version: staged.version,
-                asset_name: staged.asset_name,
-                install_dir: path_to_string(&staged.install_dir),
-                binary_path: Some(path_to_string(
-                    &staged.install_dir.join(&staged.binary_relative_path),
-                )),
+            swap_and_restore.and_then(|()| {
+                if let Ok(Some(bundled)) = detect_bundled_core() {
+                    mark_bundled_core_version_handled(&staged.install_dir, &bundled.version)?;
+                }
+                Ok(CoreInstallResult {
+                    version: staged.version,
+                    asset_name: staged.asset_name,
+                    install_dir: path_to_string(&staged.install_dir),
+                    binary_path: Some(path_to_string(
+                        &staged.install_dir.join(&staged.binary_relative_path),
+                    )),
+                })
             })
         });
 
@@ -400,7 +584,14 @@ where
     let config = gui_config_state.snapshot()?;
     let was_running = pause_core_for_install(app, process_state, &config)?;
     let result = install();
-    restore_core_after_install(app, process_state, &config, was_running, result)
+    restore_core_after_install(
+        app,
+        process_state,
+        gui_config_state,
+        &config,
+        was_running,
+        result,
+    )
 }
 
 fn pause_core_for_install(
@@ -429,15 +620,29 @@ pub(crate) fn pause_core_process_for_install(
     Ok(was_running)
 }
 
+pub(crate) fn should_restore_core_after_install(
+    was_running: bool,
+    config: &GuiConfigFile,
+    shutting_down: bool,
+) -> bool {
+    !shutting_down && (was_running || should_start_core_on_launch(config))
+}
+
 fn restore_core_after_install<T>(
     app: &tauri::AppHandle,
     process_state: &CoreProcessState,
+    gui_config_state: &GuiConfigState,
     config: &GuiConfigFile,
     was_running: bool,
     install_result: Result<T, String>,
 ) -> Result<T, String> {
-    let restart_result = if was_running && !process_state.is_shutting_down() {
+    let restart_result = if should_restore_core_after_install(
+        was_running,
+        config,
+        process_state.is_shutting_down(),
+    ) {
         start_core_process_inner(process_state, config)
+            .and_then(|()| gui_config_state.set_run_on_startup(true).map(|_| ()))
     } else {
         Ok(())
     };
@@ -1099,6 +1304,52 @@ pub(crate) fn build_http_client_with_proxy(
         .map_err(|error| format!("{error_prefix}: {error}"))
 }
 
+pub(crate) fn update_request_error(error: reqwest::Error) -> String {
+    let error = error.without_url();
+    let mut causes = Vec::new();
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(cause) = source {
+        let message = cause.to_string().to_ascii_lowercase();
+        let category = if message.contains("unknownissuer") || message.contains("unknown issuer") {
+            "TLS certificate issuer is not trusted"
+        } else if message.contains("notvalidforname") || message.contains("not valid for name") {
+            "TLS certificate hostname mismatch"
+        } else if message.contains("certificate") {
+            "TLS certificate validation failed"
+        } else if message.contains("tunnel") || message.contains("proxy") {
+            "Proxy connection failed"
+        } else if message.contains("dns") || message.contains("resolve") {
+            "DNS resolution failed"
+        } else if message.contains("refused") {
+            "Connection refused"
+        } else {
+            source = cause.source();
+            continue;
+        };
+        if !causes.contains(&category) {
+            causes.push(category);
+        }
+        source = cause.source();
+    }
+    if error.is_timeout() {
+        causes.push("Request timed out");
+    }
+    if let Some(status) = error.status() {
+        return format!("HTTP status {status}");
+    }
+    if error.is_decode() {
+        causes.push("Invalid HTTP response body");
+    } else if error.is_body() {
+        causes.push("Failed to read HTTP response body");
+    } else if error.is_connect() && causes.is_empty() {
+        causes.push("Network connection failed");
+    }
+    if causes.is_empty() {
+        return "HTTP request failed".to_string();
+    }
+    causes.join(": ")
+}
+
 pub(crate) fn http_client(
     proxy_url: &str,
     custom_mirrors: &[String],
@@ -1566,7 +1817,7 @@ pub(crate) fn start_core_process_inner(
         return Err("CPA kernel is already running".to_string());
     }
     let management_address = core_management_address(&gui_config.host, gui_config.port)?;
-    if TcpStream::connect_timeout(&management_address, Duration::from_millis(250)).is_ok() {
+    if !wait_for_core_port_release(management_address) {
         return Err(format!(
             "Port {} is in use by another program. Change the port and try again",
             gui_config.port
@@ -1615,6 +1866,31 @@ pub(crate) fn start_core_process_inner(
 
     process_state.store_child(child)?;
     Ok(())
+}
+
+pub(crate) fn wait_for_core_port_release(address: SocketAddr) -> bool {
+    retry_core_operation(3, Duration::from_millis(200), || {
+        if TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok() {
+            Err(())
+        } else {
+            Ok(())
+        }
+    })
+    .is_ok()
+}
+
+pub(crate) fn retry_core_operation<T, E>(
+    attempts: usize,
+    delay: Duration,
+    mut operation: impl FnMut() -> Result<T, E>,
+) -> Result<T, E> {
+    for _ in 1..attempts {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(_) => thread::sleep(delay),
+        }
+    }
+    operation()
 }
 
 pub(crate) fn wait_for_core_management_port(
@@ -2315,17 +2591,47 @@ pub(crate) fn process_executable_path(process_id: u32) -> Option<PathBuf> {
     Some(PathBuf::from(OsString::from_wide(&buffer)))
 }
 
+pub(crate) fn core_processes_ready(process_ids: &[u32], address: SocketAddr) -> bool {
+    process_ids
+        .iter()
+        .any(|process_id| is_process_alive(*process_id))
+        && TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
+}
+
 pub(crate) fn adopt_existing_core_processes(
     process_state: &CoreProcessState,
+    config: &GuiConfigFile,
 ) -> Result<Vec<u32>, String> {
     let install_dir = core_install_dir()?;
     let Some(binary_path) = find_core_binary(&install_dir) else {
         process_state.clear_adopted_processes()?;
         return Ok(Vec::new());
     };
-    let process_ids = find_core_process_ids(&binary_path);
+    let process_ids = find_core_process_ids(&binary_path)
+        .into_iter()
+        .filter(|process_id| is_process_alive(*process_id))
+        .collect::<Vec<_>>();
+    if !process_ids.is_empty() {
+        let address = core_management_address(&config.host, config.port)?;
+        let ready = retry_core_operation(3, Duration::from_millis(400), || {
+            process_state.ensure_active()?;
+            if core_processes_ready(&process_ids, address) {
+                Ok(())
+            } else {
+                Err("CPA kernel is not ready for adoption".to_string())
+            }
+        });
+        if ready.is_err() {
+            process_state.adopt_process_ids(&binary_path, process_ids)?;
+            stop_core_process_inner(process_state)?;
+            return Ok(Vec::new());
+        }
+    }
     process_state.adopt_process_ids(&binary_path, process_ids.clone())?;
-    Ok(process_ids)
+    Ok(process_ids
+        .into_iter()
+        .filter(|process_id| is_process_alive(*process_id))
+        .collect())
 }
 
 pub(crate) fn shutdown_managed_core(
@@ -3033,17 +3339,47 @@ pub(crate) fn core_binary_name() -> &'static str {
     }
 }
 
+/// Passed by the autostart entry, so a launch at login can stay in the tray while a launch
+/// from the app menu or a shortcut shows the window.
+pub(crate) const AUTOSTART_ARGUMENT: &str = "--autostart";
+
 pub(crate) fn should_start_hidden(config: &GuiConfigFile) -> bool {
+    should_start_hidden_for_launch(config, launched_by_autostart())
+}
+
+/// On Linux a hidden instance is hard to reach: tray hosts call Activate, which the
+/// appindicator item does not handle, and there is no Dock reopen event. Silent start
+/// therefore applies to autostart launches only; macOS and Windows keep it for every launch.
+pub(crate) fn should_start_hidden_for_launch(config: &GuiConfigFile, autostart: bool) -> bool {
     config.silent_start
         && cfg!(any(
             target_os = "linux",
             target_os = "macos",
             target_os = "windows"
         ))
+        && (autostart || !cfg!(target_os = "linux"))
+}
+
+fn launched_by_autostart() -> bool {
+    std::env::args_os().any(|argument| argument == AUTOSTART_ARGUMENT) || launched_by_session_autostart()
+}
+
+// Autostart entries written before the argument existed: gnome-session sets DESKTOP_AUTOSTART_ID,
+// and systemd-xdg-autostart-generator runs them as app-<desktop id>@autostart.service.
+#[cfg(target_os = "linux")]
+fn launched_by_session_autostart() -> bool {
+    std::env::var_os("DESKTOP_AUTOSTART_ID").is_some()
+        || fs::read_to_string("/proc/self/cgroup")
+            .is_ok_and(|cgroup| cgroup.lines().any(|line| line.ends_with("@autostart.service")))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn launched_by_session_autostart() -> bool {
+    false
 }
 
 pub(crate) fn should_start_core_on_launch(config: &GuiConfigFile) -> bool {
-    config.start_core_on_launch
+    config.start_core_on_launch || config.run_on_startup
 }
 
 pub(crate) fn configure_initial_main_window(

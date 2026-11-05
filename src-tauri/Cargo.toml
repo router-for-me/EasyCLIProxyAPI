@@ -15,23 +15,30 @@ chrono = { version = "0.4", features = ["serde"] }
 flate2 = "1"
 futures-util = "0.3"
 getrandom = "0.3"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server"] }
 json5 = "0.4"
 notify = "7"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["gzip", "json", "multipart", "rustls-tls", "socks", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["gzip", "json", "multipart", "rustls-tls", "rustls-tls-native-roots", "socks", "stream"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
+rustls = "0.23"
+rustls-pemfile = "2"
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_norway = "0.9"
 serde_yaml = "0.9"
 sha2 = "0.10"
+shlex = "2"
 tar = "0.4"
 tauri = { version = "~2.12.4", features = ["macos-private-api", "tray-icon", "unstable"] }
 tauri-plugin-autostart = "2.7.0"
 tauri-plugin-dialog = "2.8.3"
 tauri-plugin-opener = "2.7.2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tokio-rustls = "0.26"
 tokio-util = "0.7"
 toml = "0.8"
 toml_edit = "0.20"
@@ -55,6 +62,8 @@ objc2-foundation = "0.3"
 window-vibrancy = "0.8.1"
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "0.39.1"
+windows = "0.62.2"
 window-vibrancy = "0.8.1"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
@@ -62,10 +71,12 @@ windows-sys = { version = "0.59", features = [
   "Win32_Security",
   "Win32_Storage_FileSystem",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Diagnostics_Debug",
   "Win32_System_Environment",
   "Win32_System_Console",
   "Win32_System_JobObjects",
   "Win32_System_Registry",
+  "Win32_System_RemoteDesktop",
   "Win32_System_Threading",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",

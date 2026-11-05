@@ -10,6 +10,11 @@ const text = (provider: string, key: string, label: TemplateText, placeholder?: 
   ({ path: providerPath(provider, key), type: 'string', label, placeholder });
 const number = (provider: string, key: string, label: TemplateText, defaultValue: number, max?: number): TemplateConfigField =>
   ({ path: providerPath(provider, key), type: 'number', label, defaultValue, min: 0, max });
+const upstreamPath = (provider: string, key: string) => ['upstream', provider, ...key.split('.')];
+const upstreamFlag = (provider: string, key: string, label: TemplateText, defaultValue = false, description?: TemplateText): TemplateConfigField =>
+  ({ path: upstreamPath(provider, key), type: 'boolean', label, defaultValue, description });
+const upstreamNumber = (provider: string, key: string, label: TemplateText, defaultValue: number, max?: number, description?: TemplateText): TemplateConfigField =>
+  ({ path: upstreamPath(provider, key), type: 'number', label, defaultValue, min: 0, max, description });
 
 export const oauthAliasShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
   name: { ...nonemptyText, label: T('上游模型', 'Upstream model', '上流モデル') },
@@ -50,6 +55,10 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
       structuredField(['oauth', 'request-scoped-errors'], T('上游错误处理', 'Upstream error rules', '上流エラールール'), { type: 'map', item: errorRulesShape }),
     ] },
   { id: 'oauth-codex', title: T('Codex OAuth 行为', 'Codex OAuth behavior', 'Codex OAuth の動作'), fields: [
+    upstreamFlag('codex', 'upstream-request-compression', T('压缩 Codex 上游请求体', 'Compress upstream Codex requests', '上流 Codex リクエストを圧縮'), false,
+      T('向上游 Codex 发送请求时压缩请求体。', 'Compress request bodies sent to upstream Codex.', '上流の Codex に送信するリクエスト本文を圧縮します。')),
+    upstreamFlag('codex', 'websocket-compression', T('启用 Codex WebSocket 压缩', 'Enable Codex WebSocket compression', 'Codex WebSocket 圧縮を有効化'), false,
+      T('在与上游 Codex 建立 WebSocket 连接时启用压缩扩展。', 'Enable compression extensions for WebSocket connections to upstream Codex.', '上流 Codex との WebSocket 接続で圧縮拡張を有効化します。')),
     flag('codex', 'response-steering', T('双向 WebSocket 引导（实验性）', 'Full-duplex response steering (experimental)', '双方向レスポンス制御（実験的）')),
     flag('codex', 'disable-codex-cloaking', T('禁用 Codex 客户端伪装', 'Disable Codex client cloaking', 'Codex 偽装を無効化')),
     flag('codex', 'stream-bootstrap-buffering', T('缓冲流式启动事件', 'Buffer stream bootstrap events', 'ストリーム開始イベントをバッファー'), false,
@@ -83,9 +92,14 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
       structuredField(providerPath('codex', 'live-media-relay.ice-servers'), T('STUN / TURN 服务器', 'STUN / TURN servers', 'STUN / TURN サーバー'), iceServersShape),
     ] },
   { id: 'oauth-claude', title: T('Claude OAuth 行为', 'Claude OAuth behavior', 'Claude OAuth の動作'), fields: [
+    upstreamFlag('claude', 'tool-search', T('启用 Claude 原生工具搜索', 'Enable Claude native tool search', 'Claude ネイティブツール検索を有効化'), false,
+      T('启用 Claude 上游原生客户端工具搜索能力。', 'Enable native client tool search for Claude upstream requests.', 'Claude 上流リクエストでネイティブクライアントツール検索を有効化します。')),
+    upstreamNumber('claude', 'session-date-pin-days', T('伪装当前日期锁定天数', 'Cloaked date pin duration (days)', '偽装日付の固定期間 (日)'), 0, undefined,
+      T('会话中锁定的伪装系统日期天数，0 表示不锁定。', 'Number of days to pin cloaked system date within a session (0 disables pinning).', 'セッション内で偽装システム日付を固定する日数（0 で無効）。')),
+    upstreamFlag('claude', 'disable-cloaking-model-list', T('模型列表返回原始 ID', 'Return original model IDs in list', 'モデル一覧で元の ID を返す'), false,
+      T('在模型列表中直接返回上游原始模型 ID，不进行伪装。', 'Return upstream original model IDs directly in model lists without cloaking.', 'モデル一覧で偽装を行わず、上流の元のモデル ID を返します。')),
     flag('claude', 'model-level-cooling', T('仅冷却发生限额的模型', 'Limit cooldown to the affected model', '対象モデルのみクールダウン')),
     flag('claude', 'disable-claude-cloak-mode', T('禁用 Claude 请求伪装', 'Disable Claude request cloaking', 'Claude リクエストの偽装を無効化')),
-    flag('claude', 'claude-code.disable-cloaking-model-list', T('返回原始模型列表', 'Return original model IDs', '元のモデル ID を返す')),
     ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン')], ['os', T('操作系统', 'Operating system', 'OS')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン')]].map(([key, label]) => text('claude', `header-defaults.${key}`, label as TemplateText)),
     flag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定')),
   ] },

@@ -369,10 +369,10 @@ pub(crate) struct UsageStorageSettings {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelPrice {
     model: String,
-    prompt: f64,
-    completion: f64,
-    cache_read: f64,
-    cache_creation: f64,
+    pub(crate) prompt: f64,
+    pub(crate) completion: f64,
+    pub(crate) cache_read: f64,
+    pub(crate) cache_creation: f64,
     prompt_configured: bool,
     completion_configured: bool,
     cache_read_configured: bool,
@@ -1504,11 +1504,14 @@ pub(crate) fn query_model_usage_calibration(model_id: &str) -> Option<ModelUsage
                 let is_effort_failure = (failure_status == Some(400) || failure_status == Some(422))
                     && failure_body.as_deref().map(|body| {
                         let lower = body.to_ascii_lowercase();
-                        lower.contains("effort") 
-                            || lower.contains("reasoning") 
-                            || lower.contains("thinking") 
-                            || lower.contains("thought")
-                            || lower.contains("unsupported")
+                        let mentions_reasoning = lower.contains("effort")
+                            || lower.contains("reasoning")
+                            || lower.contains("thinking")
+                            || lower.contains("thought");
+                        let rejects_parameter = lower.contains("unsupported")
+                            || lower.contains("not supported")
+                            || lower.contains("invalid");
+                        mentions_reasoning && rejects_parameter
                     }).unwrap_or(false);
                 if is_effort_failure {
                     failed_efforts.insert(effort);
@@ -4138,7 +4141,7 @@ fn canonical_model_tail(value: &str) -> String {
         .collect()
 }
 
-fn normalized_model_tail(value: &str) -> String {
+pub(crate) fn normalized_model_tail(value: &str) -> String {
     value
         .trim()
         .rsplit('/')
@@ -4710,6 +4713,33 @@ fn query_window_minutes(query: &UsageQuery, first: Option<i64>, last: Option<i64
 
 fn usage_root_dir() -> Result<PathBuf, String> {
     Ok(core_base_dir()?.join(USAGE_DIR_NAME))
+}
+
+pub(crate) fn usage_database_path() -> Result<PathBuf, String> {
+    Ok(usage_root_dir()?.join(USAGE_DATABASE_FILE))
+}
+
+pub(crate) fn load_agent_usage_prices() -> HashMap<String, ModelPrice> {
+    let prices = usage_database_path()
+        .ok()
+        .filter(|path| path.is_file())
+        .and_then(|path| {
+            Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .ok()
+        })
+        .and_then(|connection| load_model_prices(&connection).ok());
+    prices.unwrap_or_else(|| bundled_model_prices().unwrap_or_default())
+}
+
+pub(crate) fn resolve_agent_usage_price<'a>(
+    prices: &'a HashMap<String, ModelPrice>,
+    model: &str,
+) -> Option<&'a ModelPrice> {
+    find_model_price(prices, model)
 }
 
 fn record_local_hour(record: &UsageRecord) -> String {
@@ -5742,6 +5772,7 @@ mod tests {
             api_access_remarks: Vec::new(),
             management_secret_key: "123456".to_string(),
             debug: false,
+            update_channel: "stable".to_string(),
             commercial_mode: false,
             logging_to_file: false,
             logs_max_total_size_mb: crate::DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
@@ -5764,6 +5795,7 @@ mod tests {
             request_retry: crate::DEFAULT_REQUEST_RETRY,
             max_retry_credentials: crate::DEFAULT_MAX_RETRY_CREDENTIALS,
             max_retry_interval: crate::DEFAULT_MAX_RETRY_INTERVAL,
+            transient_error_cooldown_seconds: crate::DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: crate::DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
         };
         let record = normalize_usage_record(

@@ -332,6 +332,15 @@ pub(crate) fn merge_core_config_yaml(
         let document: serde_norway::Value = serde_norway::from_str(current)
             .map_err(|error| format!("Failed to parse kernel configuration: {error}"))?;
         startup_config.disable_cooling = core_config_settings_from_value(&document)?.disable_cooling;
+        let transient_error_cooldown_seconds = document.as_mapping().and_then(|root| {
+            nested_yaml_value(root, &["routing", "cooldown", "transient-error-cooldown-seconds"])
+                .or_else(|| nested_yaml_value(root, &["transient-error-cooldown-seconds"]))
+        });
+        if let Some(value) = transient_error_cooldown_seconds {
+            startup_config.transient_error_cooldown_seconds = value
+                .as_i64()
+                .ok_or_else(|| "transient-error-cooldown-seconds must be an integer".to_string())?;
+        }
     }
     startup_config.usage_statistics_enabled = config.usage_statistics_disabled != Some(true);
     let managed = apply_gui_managed_settings(&base, &startup_config)?;
@@ -467,6 +476,13 @@ pub(crate) fn patch_core_network_routing_yaml(
         )?;
         set_core_yaml_schema_value(
             document,
+            &["transient-error-cooldown-seconds"],
+            &["routing", "cooldown", "transient-error-cooldown-seconds"],
+            serde_norway::to_value(config.transient_error_cooldown_seconds)
+                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
+        )?;
+        set_core_yaml_schema_value(
+            document,
             &["request-retry"],
             &["routing", "retry", "request-retry"],
             serde_norway::to_value(config.request_retry)
@@ -525,6 +541,13 @@ pub(crate) fn patch_core_retry_yaml(
             &["disable-cooling"],
             &["routing", "cooldown", "disable-cooling"],
             serde_norway::Value::Bool(config.disable_cooling),
+        )?;
+        set_core_yaml_schema_value(
+            document,
+            &["transient-error-cooldown-seconds"],
+            &["routing", "cooldown", "transient-error-cooldown-seconds"],
+            serde_norway::to_value(config.transient_error_cooldown_seconds)
+                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
         )?;
         set_core_yaml_schema_value(
             document,
@@ -749,6 +772,13 @@ pub(crate) fn apply_gui_managed_settings(
         )?;
         changed |= set_core_yaml_schema_value(
             document,
+            &["transient-error-cooldown-seconds"],
+            &["routing", "cooldown", "transient-error-cooldown-seconds"],
+            serde_norway::to_value(config.transient_error_cooldown_seconds)
+                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
+        )?;
+        changed |= set_core_yaml_schema_value(
+            document,
             &["request-retry"],
             &["routing", "retry", "request-retry"],
             serde_norway::to_value(config.request_retry)
@@ -932,13 +962,29 @@ pub(crate) fn retry_windows_file_replace(
     }
 }
 
+#[cfg(any(windows, test))]
+pub(crate) fn is_wsl_path(path: &Path) -> bool {
+    let normalized = path
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    let unc = normalized
+        .strip_prefix("\\\\?\\unc\\")
+        .or_else(|| normalized.strip_prefix("\\\\"));
+    unc.and_then(|value| value.split_once('\\'))
+        .is_some_and(|(server, share)| {
+            (server.eq_ignore_ascii_case("wsl$") || server.eq_ignore_ascii_case("wsl.localhost"))
+                && !share.split('\\').next().unwrap_or_default().is_empty()
+        })
+}
+
 #[cfg(windows)]
 pub(crate) fn replace_file_atomically(
     temporary_path: &Path,
     destination_path: &Path,
 ) -> io::Result<()> {
     use std::{os::windows::ffi::OsStrExt, ptr};
-    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+    use windows_sys::Win32::{Foundation::ERROR_NOT_SUPPORTED, Storage::FileSystem::ReplaceFileW};
 
     let destination = destination_path
         .as_os_str()
@@ -952,7 +998,7 @@ pub(crate) fn replace_file_atomically(
         .collect::<Vec<_>>();
     retry_windows_file_replace(
         || {
-            if !destination_path.exists() {
+            if is_wsl_path(destination_path) || !destination_path.exists() {
                 return fs::rename(temporary_path, destination_path);
             }
             let replaced = unsafe {
@@ -966,7 +1012,11 @@ pub(crate) fn replace_file_atomically(
                 )
             };
             if replaced == 0 {
-                return Err(io::Error::last_os_error());
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32) {
+                    return fs::rename(temporary_path, destination_path);
+                }
+                return Err(error);
             }
             Ok(())
         },
@@ -1481,6 +1531,7 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         || presence.request_retry.is_none()
         || presence.max_retry_credentials.is_none()
         || presence.max_retry_interval.is_none()
+        || presence.transient_error_cooldown_seconds.is_none()
         || presence.streaming_bootstrap_retries.is_none();
     if missing_core_settings && !gui_parse_failed {
         if let Ok(core_settings) = read_installed_core_config_settings() {
@@ -1562,6 +1613,9 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
             }
             if presence.max_retry_interval.is_none() {
                 config.max_retry_interval = core_settings.max_retry_interval;
+            }
+            if presence.transient_error_cooldown_seconds.is_none() {
+                config.transient_error_cooldown_seconds = core_settings.transient_error_cooldown_seconds;
             }
             if presence.streaming_bootstrap_retries.is_none() {
                 config.streaming_bootstrap_retries = core_settings.streaming_bootstrap_retries;
@@ -1658,9 +1712,15 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.host = core_settings.host.clone();
     config.port = core_settings.port;
     config.allow_lan = !is_loopback_host(&core_settings.host);
-    config.auth_dir = core_settings.auth_dir.clone();
-    config.api_keys =
-        merge_core_api_keys_with_gui_metadata(&config.api_keys, &core_settings.api_keys, None);
+    // A kernel configuration without these fields falls back to kernel defaults;
+    // keep the GUI selection and key list (with remarks) instead of replacing them.
+    if core_settings.auth_dir_configured {
+        config.auth_dir = core_settings.auth_dir.clone();
+    }
+    if core_settings.api_keys_configured {
+        config.api_keys =
+            merge_core_api_keys_with_gui_metadata(&config.api_keys, &core_settings.api_keys, None);
+    }
     if let Some(secret_key) = core_settings
         .management_secret_key
         .as_deref()
@@ -1684,6 +1744,7 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.request_retry = core_settings.request_retry;
     config.max_retry_credentials = core_settings.max_retry_credentials;
     config.max_retry_interval = core_settings.max_retry_interval;
+    config.transient_error_cooldown_seconds = core_settings.transient_error_cooldown_seconds;
     config.streaming_bootstrap_retries = core_settings.streaming_bootstrap_retries;
 }
 
@@ -2315,6 +2376,10 @@ pub(crate) fn write_gui_config_to_path(
         (
             "max-retry-interval",
             value(i64::from(config.max_retry_interval)),
+        ),
+        (
+            "transient-error-cooldown-seconds",
+            value(config.transient_error_cooldown_seconds),
         ),
         (
             "streaming-bootstrap-retries",

@@ -1,3 +1,4 @@
+use crate::plugins::plugin_github_token;
 use super::support::*;
 use super::*;
 
@@ -22,6 +23,8 @@ fn app_update_comparison_uses_semantic_versions() {
     assert!(is_app_update_available("v0.2.0-beta.1", "v0.2.0").unwrap());
     assert!(!is_app_update_available("v0.2.0", "v0.2.0").unwrap());
     assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
+    assert!(!is_app_update_available("v0.3.6-preview.20261103-1929", "v0.3.6-preview.20261103-1929").unwrap());
+    assert!(is_app_update_available("v0.3.6-preview.20261102-1830", "v0.3.6-preview.20261103-1929").unwrap());
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -460,6 +463,107 @@ fn portable_update_test_manifest(version: &str) -> PortableUpdateManifest {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn proxy_ca_native_roots_connect_regression() {
+    if let Ok(proxy) = std::env::var("CPA_TLS_FIXTURE_PROXY") {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let check_client = build_http_client_with_proxy(
+                reqwest::Client::builder().timeout(Duration::from_secs(5)),
+                &proxy,
+                "fixture client",
+            ).unwrap();
+            let download_client = http_client(&proxy, &[]).unwrap();
+            let webpki_only = build_http_client_with_proxy(
+                reqwest::Client::builder().tls_built_in_native_certs(false)
+                    .timeout(Duration::from_secs(5)),
+                &proxy, "public roots fixture client",
+            ).unwrap();
+            let error = fetch_portable_update_manifest_url(&webpki_only, "https://update.test/manifest.json")
+                .await.unwrap_err();
+            assert!(error.contains("issuer is not trusted"), "{error}");
+            for client in [&check_client, &download_client] {
+                let manifest = fetch_portable_update_manifest_url(
+                    client, "https://update.test/manifest.json",
+                ).await.unwrap();
+                assert_eq!(manifest.version, "1.2.3");
+                let archive = client.get("https://update.test/archive").send().await
+                    .unwrap().error_for_status().unwrap().bytes().await.unwrap();
+                assert_eq!(archive.as_ref(), b"fixture archive");
+                for (host, expected) in [
+                    ("untrusted.test", "issuer is not trusted"),
+                    ("mismatch.test", "hostname mismatch"),
+                ] {
+                    let error = fetch_portable_update_manifest_url(
+                        client, &format!("https://private-user:private-password@{host}/secret-path?token=private-token"),
+                    ).await.unwrap_err();
+                    assert!(error.contains(expected), "{error}");
+                    for secret in ["private-user", "private-password", "secret-path", "private-token", host, "proxy-password"] {
+                        assert!(!error.contains(secret), "{error}");
+                    }
+                }
+                let port = std::env::var("CPA_TLS_FIXTURE_PLAIN").unwrap();
+                for host in ["localhost", "127.0.0.1"] {
+                    assert_eq!(client.get(format!("http://{host}:{port}/archive"))
+                        .send().await.unwrap().bytes().await.unwrap().as_ref(), b"fixture archive");
+                }
+                let ipv6_port = std::env::var("CPA_TLS_FIXTURE_IPV6").unwrap();
+                assert_eq!(client.get(format!("http://[::1]:{ipv6_port}/archive"))
+                    .send().await.unwrap().bytes().await.unwrap().as_ref(), b"fixture archive");
+            }
+            let tls_address = std::env::var("CPA_TLS_FIXTURE_TLS").unwrap().parse().unwrap();
+            let direct = build_http_client_with_proxy(
+                reqwest::Client::builder().resolve("update.test", tls_address)
+                    .timeout(Duration::from_secs(5)),
+                "", "direct fixture client",
+            ).unwrap();
+            direct.get(format!("https://update.test:{}/archive", tls_address.port()))
+                .send().await.unwrap().error_for_status().unwrap();
+            let failed_proxy = build_http_client_with_proxy(
+                reqwest::Client::builder().timeout(Duration::from_secs(5)),
+                &std::env::var("CPA_TLS_FIXTURE_FAILED_PROXY").unwrap(), "fixture client",
+            ).unwrap();
+            let error = fetch_portable_update_manifest_url(&failed_proxy, "https://update.test/manifest.json")
+                .await.unwrap_err();
+            assert!(error.contains("Proxy connection failed"), "{error}");
+            assert!(!error.contains("proxy-password"), "{error}");
+        });
+        return;
+    }
+    let manifest = portable_update_test_manifest("1.2.3");
+    let assets = manifest
+        .assets
+        .iter()
+        .map(|(name, asset)| {
+            (
+                name.clone(),
+                serde_json::json!({
+                    "url": asset.url, "sha256": asset.sha256, "sizeBytes": asset.size_bytes,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>();
+    let payload = serde_json::json!({
+        "schemaVersion": manifest.schema_version, "version": manifest.version,
+        "publishedAt": manifest.published_at, "releaseUrl": manifest.release_url,
+        "assets": assets,
+    });
+    let status = Command::new("python3")
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/fixtures/proxy_ca.py"))
+        .arg(std::env::current_exe().unwrap())
+        .env("CPA_TLS_MANIFEST", payload.to_string())
+        .status()
+        .expect("Python 3 and OpenSSL are required for the isolated TLS fixture");
+    assert!(
+        status.success(),
+        "isolated TLS/CONNECT fixture failed: {status}"
+    );
+}
+
 #[test]
 fn portable_update_manifest_uses_only_explicit_locale_release_notes() {
     let mut value = serde_json::json!({
@@ -569,6 +673,74 @@ fn portable_update_manifest_requires_both_matching_github_assets() {
         "{APP_RELEASE_DOWNLOAD_PREFIX}v9.9.9/EasyCLIProxyAPI-v1.2.3-{display}-amd64.{suffix}"
     );
     assert!(validate_portable_update_manifest(&mismatched_tag).is_err());
+
+    let mut preview_manifest = portable_update_test_manifest("0.3.6-preview");
+    preview_manifest.release_url =
+        "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/preview-20261104-1623".to_string();
+    for arch in ["amd64", "aarch64"] {
+        preview_manifest
+            .assets
+            .get_mut(&format!("{platform}-{arch}"))
+            .unwrap()
+            .url = format!(
+            "{APP_RELEASE_DOWNLOAD_PREFIX}preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-{display}-{arch}.{suffix}"
+        );
+    }
+    assert!(validate_portable_update_manifest(&preview_manifest).is_ok());
+}
+
+#[test]
+fn preview_channel_marker_is_not_a_release_tag() {
+    assert_eq!(
+        update_channel_tag("preview"),
+        Some(PREVIEW_CHANNEL_MARKER.to_string())
+    );
+    assert_eq!(normalize_update_channel("preview"), "preview");
+    // A deleted rolling tag must never be produced as a channel tag.
+    assert_ne!(update_channel_tag("preview").as_deref(), Some("only-preview"));
+}
+
+#[test]
+fn portable_update_asset_file_name_extracts_package_name() {
+    assert_eq!(
+        portable_update_asset_file_name(
+            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip"
+        ),
+        Some("EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip".to_string())
+    );
+    assert_eq!(
+        portable_update_asset_file_name(
+            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz"
+        ),
+        Some("EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz".to_string())
+    );
+}
+
+#[test]
+fn preview_url_whitelist_rejects_the_retired_rolling_tag() {
+    assert!(select_latest_preview_tag(&["preview-20261104-1623".to_string()]).is_some());
+    // Anything that is not a `v*` tag, a `preview-*` tag or a timestamp is not a
+    // preview release the client should trust.
+    assert!(select_latest_preview_tag(&["only-preview".to_string()]).is_none());
+}
+
+#[test]
+fn github_token_prefers_configured_setting_over_environment() {
+    let settings = serde_json::json!({ "github-token": "  configured-token  " });
+    assert_eq!(
+        plugin_github_token(&settings, Some("env-token".to_string())).as_deref(),
+        Some("configured-token")
+    );
+}
+
+#[test]
+fn github_token_falls_back_to_environment_and_ignores_blanks() {
+    let empty = serde_json::json!({ "github-token": "   " });
+    assert_eq!(
+        plugin_github_token(&empty, Some("env-token".to_string())).as_deref(),
+        Some("env-token")
+    );
+    assert_eq!(plugin_github_token(&empty, None), None);
 }
 
 #[test]
@@ -595,6 +767,99 @@ fn portable_update_asset_accepts_only_the_configured_gitcode_fallback() {
         Some("another-owner/EasyCLIProxyAPI"),
     )
     .is_err());
+
+    for fallback in [
+        gitcode_release_attachment_url("mirror-owner/EasyCLIProxyAPI", "v9.9.9", &filename),
+        gitcode_release_attachment_url("mirror-owner/EasyCLIProxyAPI", "v1.2.3", "wrong.zip"),
+        "https://untrusted.example.com/package.zip".to_string(),
+    ] {
+        asset.fallback_urls = vec![fallback];
+        assert!(validate_portable_update_asset_fallbacks_for_repository(
+            &asset,
+            "v1.2.3",
+            &[&filename],
+            Some("mirror-owner/EasyCLIProxyAPI"),
+        )
+        .is_err());
+    }
+
+    let fallback = gitcode_release_attachment_url(
+        "mirror-owner/EasyCLIProxyAPI",
+        "v1.2.3",
+        &filename,
+    );
+    asset.fallback_urls = vec![fallback.clone(), fallback];
+    assert!(validate_portable_update_asset_fallbacks_for_repository(
+        &asset,
+        "v1.2.3",
+        &[&filename],
+        Some("mirror-owner/EasyCLIProxyAPI"),
+    )
+    .is_err());
+}
+
+#[test]
+fn portable_update_unconfigured_fallbacks_are_accepted_but_never_downloaded() {
+    let mut asset = portable_update_test_asset("1.2.3", "amd64");
+    let (_, display, suffix) = portable_update_asset_platform().unwrap();
+    let filename = format!("EasyCLIProxyAPI-v1.2.3-{display}-amd64.{suffix}");
+    let fallback = gitcode_release_attachment_url(
+        "mirror-owner/EasyCLIProxyAPI",
+        "v1.2.3",
+        &filename,
+    );
+    for fallbacks in [
+        vec![],
+        vec![fallback.clone()],
+        vec![fallback.clone(), fallback],
+        vec!["https://untrusted.example.com/package.zip".to_string()],
+        vec!["not a URL".to_string()],
+    ] {
+        asset.fallback_urls = fallbacks;
+        validate_portable_update_asset_fallbacks_for_repository(
+            &asset,
+            "v1.2.3",
+            &[&filename],
+            None,
+        )
+        .unwrap();
+
+        let mut manifest = portable_update_test_manifest("1.2.3");
+        for manifest_asset in manifest.assets.values_mut() {
+            manifest_asset.fallback_urls = asset.fallback_urls.clone();
+        }
+        manifest.full_assets = Some(manifest.assets.clone());
+        validate_portable_update_manifest_for_repository(&manifest, None).unwrap();
+
+        for source in [
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+            VersionDownloadCandidate::custom("https://mirror.example.com/"),
+        ] {
+            let mut expected = vec![asset.url.clone()];
+            if source.proxy_prefix().is_some() {
+                expected.insert(0, version_source_url(&source, &asset.url));
+            }
+            assert_eq!(
+                portable_update_download_urls_for_repository(&asset, &source, None),
+                expected,
+                "{source:?}",
+            );
+        }
+
+        for invalid_primary in [
+            "https://untrusted.example.com/package.zip".to_string(),
+            asset.url.replace("v1.2.3/", "v9.9.9/"),
+        ] {
+            let mut invalid_manifest = manifest.clone();
+            invalid_manifest.assets.values_mut().next().unwrap().url = invalid_primary;
+            assert!(
+                validate_portable_update_manifest_for_repository(&invalid_manifest, None).is_err()
+            );
+        }
+    }
 }
 
 #[test]
@@ -608,23 +873,26 @@ fn portable_update_download_order_respects_gitcode_preference() {
         &filename,
     )];
 
-    let github_first = portable_update_download_urls(
+    let github_first = portable_update_download_urls_for_repository(
         &asset,
         &VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+        Some("mirror-owner/EasyCLIProxyAPI"),
     );
     assert_eq!(update_download_source_name(&github_first[0]), "GitHub");
     assert_eq!(update_download_source_name(&github_first[1]), "GitCode");
 
-    let gitcode_first = portable_update_download_urls(
+    let gitcode_first = portable_update_download_urls_for_repository(
         &asset,
         &VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+        Some("mirror-owner/EasyCLIProxyAPI"),
     );
     assert_eq!(update_download_source_name(&gitcode_first[0]), "GitCode");
     assert_eq!(update_download_source_name(&gitcode_first[1]), "GitHub");
 
-    let mirror_first = portable_update_download_urls(
+    let mirror_first = portable_update_download_urls_for_repository(
         &asset,
         &VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+        Some("mirror-owner/EasyCLIProxyAPI"),
     );
     assert_eq!(
         update_download_source_name(&mirror_first[0]),
@@ -632,6 +900,25 @@ fn portable_update_download_order_respects_gitcode_preference() {
     );
     assert_eq!(update_download_source_name(&mirror_first[1]), "GitHub");
     assert_eq!(update_download_source_name(&mirror_first[2]), "GitCode");
+
+    for source in [
+        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+        VersionDownloadCandidate::custom("https://mirror.example.com/"),
+    ] {
+        assert_eq!(
+            portable_update_download_urls_for_repository(
+                &asset,
+                &source,
+                Some("mirror-owner/EasyCLIProxyAPI"),
+            ),
+            vec![
+                version_source_url(&source, &asset.url),
+                asset.url.clone(),
+                asset.fallback_urls[0].clone(),
+            ],
+        );
+    }
 }
 
 #[test]
@@ -1379,4 +1666,98 @@ fn release_asset_names_cover_the_six_supported_gui_targets() {
             format!("CLIProxyAPI_7.2.83_{os}_{arch}.{archive_kind}")
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn update_runtime_ack_rejects_gui_only_ack_and_times_out_without_deleting_backups() {
+    let root = agent_test_home("update-runtime-no-ack");
+    let backup = root.join("old-app");
+    fs::write(&backup, b"recoverable old app").unwrap();
+    let ack = root.join("update-started.ack");
+    // The old GUI setup acknowledgement is not runtime readiness.
+    fs::write(&ack, env!("CARGO_PKG_VERSION")).unwrap();
+    let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+    let result = wait_for_update_runtime_ack(
+        &mut child,
+        &ack,
+        env!("CARGO_PKG_VERSION"),
+        Duration::from_millis(75),
+    );
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(result.unwrap_err().contains("Timed out"));
+    assert_eq!(fs::read(&backup).unwrap(), b"recoverable old app");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_core_startup_failure_never_publishes_runtime_ack() {
+    let root = agent_test_home("update-runtime-core-failure");
+    let ack = root.join("update-started.ack");
+    let result = acknowledge_update_runtime_with_probe(&ack, true, || {
+        Err("forced core bind failure".to_string())
+    });
+    assert_eq!(result.unwrap_err(), "forced core bind failure");
+    assert!(!ack.exists());
+    assert!(!ack.with_extension("pending").exists());
+    // A probe without a kernel process cannot release a backup either.
+    assert!(acknowledge_update_runtime_with_probe(&ack, true, || Ok((0, 3))).is_err());
+    assert!(!ack.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn update_runtime_ack_records_kernel_only_when_one_was_expected() {
+    let root = agent_test_home("update-runtime-core-optional");
+    let ack = root.join("update-started.ack");
+    // A fresh setup without credentials serves an empty model list.
+    acknowledge_update_runtime_with_probe(&ack, true, || Ok((42, 0))).unwrap();
+    let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&ack).unwrap()).unwrap();
+    assert_eq!(receipt["core"], serde_json::json!({"pid": 42, "model_count": 0}));
+    assert_eq!(receipt["gui_pid"], std::process::id());
+
+    acknowledge_update_runtime_with_probe(&ack, false, || -> Result<(u32, usize), String> {
+        panic!("the kernel must not be probed when it was not expected to start")
+    })
+    .unwrap();
+    let receipt: serde_json::Value = serde_json::from_slice(&fs::read(&ack).unwrap()).unwrap();
+    assert!(receipt["core"].is_null());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn update_runtime_ack_is_bound_to_live_gui_pid_and_target_version() {
+    let root = agent_test_home("update-runtime-ack-binding");
+    let ack_path = root.join("update-started.ack");
+    let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+    for (pid, version, core, accepted) in [
+        (child.id() + 1, "1.2.3", serde_json::json!({"pid": 42, "model_count": 1}), false),
+        (child.id(), "1.2.2", serde_json::json!({"pid": 42, "model_count": 1}), false),
+        (child.id(), "1.2.3", serde_json::json!({"pid": 0, "model_count": 1}), false),
+        (child.id(), "1.2.3", serde_json::json!({"pid": 42, "model_count": 0}), true),
+        (child.id(), "1.2.3", serde_json::Value::Null, true),
+    ] {
+        fs::write(
+            &ack_path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1, "version": version, "gui_pid": pid, "core": core,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            wait_for_update_runtime_ack(&mut child, &ack_path, "1.2.3", Duration::ZERO).is_ok(),
+            accepted
+        );
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        wait_for_update_runtime_ack(&mut child, &ack_path, "1.2.3", Duration::ZERO)
+            .unwrap_err()
+            .contains("exited")
+    );
+    fs::remove_dir_all(root).unwrap();
 }

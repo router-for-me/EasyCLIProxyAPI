@@ -76,14 +76,14 @@ export function ZCodeModelCatalogDialog({
   ) => {
     if (!selectedModel) return;
     setModels((prev) =>
-      prev.map((m) => (m.id === selectedId ? { ...m, configuration: updater(m.configuration) } : m))
+      prev.map((m) => (m.id === selectedId ? { ...m, configuration: { ...updater(m.configuration), isManual: true } } : m))
     );
   };
 
   const toggleReasoningLevel = (level: string) => {
     if (!selectedModel) return;
     updateSelectedConfig((prev) => {
-      const base = prev.reasoningLevels.length ? prev.reasoningLevels : (selectedModel.defaults.reasoningLevels || []);
+      const base = prev.reasoningLevels;
       const exists = base.includes(level);
       const nextLevels = exists
         ? base.filter((l) => l !== level)
@@ -202,7 +202,7 @@ export function ZCodeModelCatalogDialog({
                 <div>
                   <h3>{selectedModel.id}</h3>
                   <span className="customized">
-                    已由 CPA 代管下发规格（ZCode 软件端显示为手动自定义配置，关闭其内部智能配置）
+                    已由 CPA 代管下发规格（ZCode 软件端显示为手动自定义配置，关闭其内部默认配置）
                   </span>
                 </div>
               </div>
@@ -247,9 +247,7 @@ export function ZCodeModelCatalogDialog({
                 <legend>思考等级 (reasoningLevel)</legend>
                 <div className="codex-catalog-chips">
                   {COMMON_REASONING_LEVELS.map((level) => {
-                    const activeLevels = selectedModel.configuration.reasoningLevels.length
-                      ? selectedModel.configuration.reasoningLevels
-                      : selectedModel.defaults.reasoningLevels;
+                    const activeLevels = selectedModel.configuration.reasoningLevels;
                     const checked = activeLevels.includes(level);
                     return (
                       <label key={level} className={checked ? "selected" : ""}>

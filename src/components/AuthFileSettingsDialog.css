@@ -143,7 +143,11 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
 }
+.credential-tag-pool input { width: 100%; min-width: 0; }
+.filter-chip.credential-tag-pool-item { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .filter-chip.credential-tag-pool-item {
   cursor: pointer;
   padding: 2px 7px;

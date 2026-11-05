@@ -19,14 +19,14 @@ describe('browser mock options', () => {
 });
 
 describe('browser mock runtime', () => {
-  test('persists normalized credential tags through fields, download and list routes', async () => {
+  test('persists tags in downloads while omitting them from the core list response', async () => {
     const runtime = createBrowserMockRuntime('running');
     const request = (method: string, path: string, extra = {}) => runtime.invoke('management_request', { request: { method, path, ...extra } });
     await request('PATCH', '/credentials/fields', { body: { name: 'codex-personal.json', tags: [' team ', '', 'team', 'production', null] } });
     expect(await request('GET', '/credentials/download', { query: { name: 'codex-personal.json' } }))
       .toMatchObject({ tags: ['team', 'production'] });
     const listed = await request('GET', '/credentials') as { files: Array<{ name: string; tags?: string[] }> };
-    expect(listed.files.find(file => file.name === 'codex-personal.json')?.tags).toEqual(['team', 'production']);
+    expect(listed.files.find(file => file.name === 'codex-personal.json')).not.toHaveProperty('tags');
     await request('PATCH', '/credentials/fields', { body: { name: 'codex-personal.json', note: 'unchanged tags' } });
     expect(await request('GET', '/credentials/download', { query: { name: 'codex-personal.json' } }))
       .toMatchObject({ tags: ['team', 'production'], note: 'unchanged tags' });
@@ -107,6 +107,13 @@ describe('browser mock runtime', () => {
 
   test('latency simulation also works outside a browser', async () => {
     expect(await createBrowserMockRuntime('running', undefined, 1).invoke('get_core_status')).toMatchObject({ ready: true });
+  });
+
+  test('lists selectable core versions for downgrade support', async () => {
+    const runtime = createBrowserMockRuntime('running');
+    const versions = await runtime.invoke('list_core_versions') as Array<{ version: string; assetName: string }>;
+    expect(versions.map((item) => item.version)).toEqual(['7.3.16', '7.3.15', '7.3.14']);
+    expect(versions[1].assetName).toBe('CLIProxyAPI_7.3.15_windows_amd64.zip');
   });
 
   for (const scenario of ['running', 'empty'] as const) {

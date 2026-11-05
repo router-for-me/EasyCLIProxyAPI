@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { validateAppVersion } from './version.mjs';
+import { readAppVersion, validateAppVersion } from './version.mjs';
 import { validateReleaseNotes } from './release-notes.mjs';
 
 export function portableUpdateManifestName(platform) {
@@ -31,6 +31,7 @@ export async function generatePortableUpdateManifest({
   repository,
   gitcodeRepository,
   tag: rawTag,
+  version: requestedVersion,
   publishedAt = new Date().toISOString(),
   releaseNotes,
 }) {
@@ -50,8 +51,21 @@ export async function generatePortableUpdateManifest({
   const resolvedRepository = repository ?? 'router-for-me/EasyCLIProxyAPI';
   const resolvedGitcodeRepository = String(gitcodeRepository ?? '').trim();
   const normalizedRawTag = String(rawTag ?? '').trim();
-  const tag = normalizedRawTag.startsWith('v') ? normalizedRawTag : `v${normalizedRawTag}`;
-  const version = tag.slice(1);
+  const isOnlyPreview = normalizedRawTag === 'only-preview';
+  const isPreviewChannel = isOnlyPreview || normalizedRawTag.startsWith('preview-');
+  const tag = isPreviewChannel
+    ? normalizedRawTag
+    : (normalizedRawTag.startsWith('v') ? normalizedRawTag : `v${normalizedRawTag}`);
+  let defaultPreviewVersion;
+  if (normalizedRawTag.startsWith('preview-')) {
+    const previewSuffix = normalizedRawTag.slice('preview-'.length);
+    const base = (await readAppVersion()).replace(/[-+].*$/, '');
+    defaultPreviewVersion = previewSuffix ? `${base}-preview.${previewSuffix}` : `${base}-preview`;
+  }
+  const version = isPreviewChannel
+    ? (String(requestedVersion ?? '').trim() || defaultPreviewVersion || await readAppVersion())
+    : tag.slice(1);
+  const packageTag = `v${version}`;
 
   validateAppVersion(version, 'release tag');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(resolvedRepository)) {
@@ -68,7 +82,7 @@ export async function generatePortableUpdateManifest({
 
   const assets = {};
   for (const arch of ['amd64', 'aarch64']) {
-    const filename = `EasyCLIProxyAPI-${tag}-${platformSpec.display}-${arch}.${platformSpec.suffix}`;
+    const filename = `EasyCLIProxyAPI-${packageTag}-${platformSpec.display}-${arch}.${platformSpec.suffix}`;
     const path = join(resolvedDirectory, filename);
     const [contents, metadata] = await Promise.all([readFile(path), stat(path)]);
     if (!metadata.isFile() || metadata.size === 0) {
@@ -79,7 +93,7 @@ export async function generatePortableUpdateManifest({
       sha256: createHash('sha256').update(contents).digest('hex'),
       sizeBytes: metadata.size,
     };
-    if (resolvedGitcodeRepository) {
+    if (resolvedGitcodeRepository && !isPreviewChannel) {
       asset.fallbackUrls = [gitcodeReleaseAttachmentUrl(
         resolvedGitcodeRepository,
         tag,
@@ -132,6 +146,7 @@ async function main() {
       repository: args.get('--repository'),
       gitcodeRepository: args.get('--gitcode-repository'),
       tag: args.get('--tag'),
+      version: args.get('--version'),
       publishedAt,
       releaseNotes,
     });

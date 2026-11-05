@@ -1,9 +1,11 @@
 import { isThemeSelection, type ThemeSelection } from '../themes/types';
+import type { AppUpdateInfo } from '../services/appUpdates';
 import { applyTemplateChanges, readTemplatePath, sameTemplateValue, type TemplateConfigChange } from '../services/templateConfig';
 import { requestBucketRangeLabel } from '../services/authFileRequests';
 import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
 import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
+import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
 
 export type BrowserMockScenario = 'running' | 'stopped' | 'empty' | 'error';
 export type BrowserMockMode = BrowserMockScenario | 'off';
@@ -506,10 +508,14 @@ function createState(scenario: BrowserMockScenario) {
         en: '## Browser Mock release\n\n- Added UI mock mode',
       },
       publishedAt: isoHoursAgo(18),
+      currentBuildAt: null,
       autoUpdateSupported: true,
+      downloadUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
+      downloadFileName: 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
       downloadSizeBytes: 48 * 1024 * 1024,
       unsupportedReason: null,
-    },
+      updateChannel: 'stable',
+    } as AppUpdateInfo,
     appUpdateTask: {
       running: false,
       cancellable: false,
@@ -521,6 +527,11 @@ function createState(scenario: BrowserMockScenario) {
       message: null,
     },
     coreLatest: { version: '7.3.16', assetName: 'CLIProxyAPI_7.3.16_windows_amd64.zip' },
+    coreVersions: [
+      { version: '7.3.16', assetName: 'CLIProxyAPI_7.3.16_windows_amd64.zip', prerelease: false },
+      { version: '7.3.15', assetName: 'CLIProxyAPI_7.3.15_windows_amd64.zip', prerelease: false },
+      { version: '7.3.14', assetName: 'CLIProxyAPI_7.3.14_windows_amd64.zip', prerelease: false },
+    ],
     coreInstallTask: {
       running: false,
       cancellable: false,
@@ -613,9 +624,10 @@ function createState(scenario: BrowserMockScenario) {
     codexCatalog: {
       defaultAutoReviewModel: null as string | null,
       revision: 'mock-catalog-r1',
-      models: ['gpt-5.2-codex', 'gpt-5.1-codex'].map((slug) => {
+      defaultOrder: ['gpt-5.2-codex', 'gpt-5.1-codex'],
+      models: ['gpt-5.2-codex', 'gpt-5.1-codex', 'gpt-5.1-codex-mini'].map((slug) => {
         const configuration = {
-          display_name: slug === 'gpt-5.2-codex' ? 'GPT-5.2 Codex' : 'GPT-5.1 Codex',
+          display_name: slug === 'gpt-5.2-codex' ? 'GPT-5.2 Codex' : slug === 'gpt-5.1-codex' ? 'GPT-5.1 Codex' : slug,
           description: 'Browser Mock model catalog',
           context_window: 272_000,
           max_context_window: 400_000,
@@ -880,7 +892,7 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
     }
   }
   if (method === 'GET' && path === '/credentials') {
-    return { files: clone(state.authFiles), observed_at: new Date().toISOString() };
+    return { files: clone(state.authFiles).map(({ tags, ...file }) => file), observed_at: new Date().toISOString() };
   }
   if (method === 'GET' && path === '/credentials/download') {
     const file = findAuthFile(state, readString(query.name));
@@ -973,6 +985,255 @@ const ERROR_SCENARIO_COMMANDS = new Set([
   'get_agent_config_statuses',
 ]);
 
+
+const MOCK_AGENT_SOURCES = ['claude', 'codex', 'mcode', 'opencode', 'omp', 'pi', 'copilot', 'gemini', 'antigravity', 'kimi', 'zcode'];
+
+type MockAgentCounter = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  costUSD: number;
+  samples: number;
+};
+
+const emptyMockCounter = (): MockAgentCounter => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  reasoningTokens: 0,
+  totalTokens: 0,
+  costUSD: 0,
+  samples: 0,
+});
+
+const addMockCounter = (target: MockAgentCounter, value: MockAgentCounter) => {
+  target.inputTokens += value.inputTokens;
+  target.outputTokens += value.outputTokens;
+  target.cacheReadTokens += value.cacheReadTokens;
+  target.cacheCreationTokens += value.cacheCreationTokens;
+  target.reasoningTokens += value.reasoningTokens;
+  target.totalTokens += value.totalTokens;
+  target.costUSD += value.costUSD;
+  target.samples += value.samples;
+};
+
+function mockAgentUsageReport(range: string, selected: string[], groupBy: string, granularity: string, cleared: boolean, customStart = '', customEnd = '') {
+  const generatedAt = new Date().toISOString();
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const dayKey = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const historyDays = 120;
+  const dayOffset = (value: string) => Math.round((today.getTime() - new Date(`${value}T00:00:00`).getTime()) / 86_400_000);
+  const customEndOffset = /^\d{4}-\d{2}-\d{2}$/.test(customEnd) ? Math.max(0, dayOffset(customEnd)) : 0;
+  const customSpan = /^\d{4}-\d{2}-\d{2}$/.test(customStart) ? Math.max(1, dayOffset(customStart) - customEndOffset + 1) : 1;
+  const endOffset = range === 'custom' ? customEndOffset : 0;
+  const span = range === 'today' ? 1 : range === '7d' ? 7 : range === '30d' ? 30 : range === 'custom' ? customSpan : historyDays;
+  const hourAllowed = range !== 'all' && endOffset + span <= 30;
+  const hourly = range === 'today' || (range === 'custom' && span === 1 && hourAllowed);
+  const kind = granularity === 'hour' && hourAllowed ? 'hour'
+    : granularity === 'hour' || granularity === 'day' ? 'day'
+      : granularity === 'week' || granularity === 'month' ? granularity
+        : hourly ? 'hour' : span > 92 ? 'week' : 'day';
+  const end = new Date(today);
+  end.setDate(end.getDate() - endOffset);
+  const start = new Date(end);
+  start.setDate(start.getDate() - (span - 1));
+  const bucketOf = (date: Date, hour: number) => {
+    if (kind === 'hour') return `${dayKey(date)}T${pad(hour)}`;
+    if (kind === 'month') return dayKey(date).slice(0, 7);
+    if (kind === 'week') {
+      const monday = new Date(date);
+      monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+      return dayKey(monday);
+    }
+    return dayKey(date);
+  };
+  const inWindow = (date: Date, hour: number) => {
+    if (range === 'today') return dayKey(date) === dayKey(today) && hour <= now.getHours();
+    return true;
+  };
+  const report = {
+    schemaVersion: 2,
+    generatedAt,
+    lastSyncAt: cleared ? '' : generatedAt,
+    syncing: false,
+    bucket: kind,
+    rangeStart: dayKey(start),
+    rangeEnd: dayKey(end),
+    totals: { ...emptyMockCounter(), days: 0 },
+    previous: range === 'all' || cleared ? null : { totalTokens: 0, costUSD: 0 },
+    sources: [] as Record<string, unknown>[],
+    timeline: [] as Record<string, unknown>[],
+    calendar: [] as { date: string; totalTokens: number; costUSD: number }[],
+    hourly: [] as { weekday: number; hour: number; totalTokens: number; samples: number }[],
+  };
+  const timeline = new Map<string, MockAgentCounter>();
+  for (let offset = 0; offset < span; offset += 1) {
+    const date = new Date(start);
+    date.setDate(date.getDate() + offset);
+    for (let hour = 0; hour < 24; hour += 1) {
+      if (inWindow(date, hour) && (kind === 'hour' ? true : hour === 0)) timeline.set(bucketOf(date, hour), emptyMockCounter());
+      if (kind === 'hour' && dayKey(date) === dayKey(today) && hour >= now.getHours()) break;
+    }
+  }
+  const finish = () => {
+    report.timeline = [...timeline.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([bucket, counter]) => ({ bucket, ...counter }));
+    return report;
+  };
+  if (cleared) {
+    report.sources = MOCK_AGENT_SOURCES.map((source) => ({ source, status: 'empty', archivedAt: '', error: '', totals: { ...emptyMockCounter(), days: 0 }, models: [], series: [] }));
+    return finish();
+  }
+
+  const profiles = [
+    { source: 'claude', models: ['claude-opus-4-1', 'claude-sonnet-4-5'], base: 260_000, rate: 0.0000062, status: 'ok', idle: [2, 9] },
+    { source: 'codex', models: ['gpt-5.2-codex', 'gpt-5'], base: 150_000, rate: 0.0000042, status: 'ok', idle: [3, 4, 11] },
+    { source: 'pi', models: ['deepseek-v4.1-flash'], base: 52_000, rate: 0, status: 'archived', idle: [0, 1, 5] },
+  ];
+  const included = (source: string) => selected.length === 0 || selected.includes(source);
+  const calendar = new Map<string, MockAgentCounter>();
+  const activeDays = new Set<string>();
+  const hourWeights = Array.from({ length: 24 }, (_, hour) => Math.max(0, Math.sin(((hour - 7) / 16) * Math.PI)));
+  const weightSum = hourWeights.reduce((sum, value) => sum + value, 0);
+  const sample = (profile: typeof profiles[number], offsetFromToday: number) => {
+    const counter = emptyMockCounter();
+    if (profile.idle.includes(offsetFromToday % 13)) return counter;
+    const wave = 0.55 + 0.45 * Math.sin((offsetFromToday + profile.base % 7) / 2.4);
+    counter.inputTokens = Math.round(profile.base * wave);
+    counter.outputTokens = Math.round(counter.inputTokens * 0.22);
+    counter.cacheReadTokens = Math.round(counter.inputTokens * 1.8);
+    counter.cacheCreationTokens = Math.round(counter.inputTokens * 0.16);
+    counter.reasoningTokens = Math.round(counter.outputTokens * 0.3);
+    counter.totalTokens = counter.inputTokens + counter.outputTokens + counter.cacheReadTokens + counter.cacheCreationTokens;
+    counter.costUSD = Number((counter.totalTokens * profile.rate).toFixed(4));
+    counter.samples = Math.round(6 + wave * 18);
+    return counter;
+  };
+  const scale = (counter: MockAgentCounter, factor: number): MockAgentCounter => ({
+    inputTokens: Math.round(counter.inputTokens * factor),
+    outputTokens: Math.round(counter.outputTokens * factor),
+    cacheReadTokens: Math.round(counter.cacheReadTokens * factor),
+    cacheCreationTokens: Math.round(counter.cacheCreationTokens * factor),
+    reasoningTokens: Math.round(counter.reasoningTokens * factor),
+    totalTokens: Math.round(counter.totalTokens * factor),
+    costUSD: counter.costUSD * factor,
+    samples: Math.round(counter.samples * factor),
+  });
+  const cells = new Map<string, { totalTokens: number; samples: number }>();
+
+  profiles.forEach((profile) => {
+    const totals = emptyMockCounter();
+    const days = new Set<string>();
+    const sourceBuckets = new Map<string, MockAgentCounter>();
+    for (let offset = 0; offset < span; offset += 1) {
+      const date = new Date(start);
+      date.setDate(date.getDate() + offset);
+      const fromToday = endOffset + span - 1 - offset;
+      const daily = sample(profile, fromToday);
+      if (!daily.totalTokens) continue;
+      for (let hour = 0; hour < 24; hour += 1) {
+        if (!hourWeights[hour] || !inWindow(date, hour)) continue;
+        if (dayKey(date) === dayKey(today) && hour > now.getHours()) continue;
+        const counter = scale(daily, hourWeights[hour] / weightSum);
+        addMockCounter(totals, counter);
+        days.add(dayKey(date));
+        if (!included(profile.source)) continue;
+        const bucket = bucketOf(date, hour);
+        const sourceCounter = sourceBuckets.get(bucket) ?? emptyMockCounter();
+        addMockCounter(sourceCounter, counter);
+        sourceBuckets.set(bucket, sourceCounter);
+        addMockCounter(timeline.get(bucket) ?? (timeline.set(bucket, emptyMockCounter()).get(bucket) as MockAgentCounter), counter);
+        addMockCounter(report.totals, counter);
+        activeDays.add(dayKey(date));
+      }
+    }
+    for (let fromToday = 0; included(profile.source) && fromToday < historyDays; fromToday += 1) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - fromToday);
+      const daily = sample(profile, fromToday);
+      if (!daily.totalTokens) continue;
+      const dayCounter = calendar.get(dayKey(date)) ?? emptyMockCounter();
+      addMockCounter(dayCounter, daily);
+      calendar.set(dayKey(date), dayCounter);
+      for (let hour = 0; fromToday < 30 && hour < 24; hour += 1) {
+        if (!hourWeights[hour]) continue;
+        const counter = scale(daily, hourWeights[hour] / weightSum);
+        const key = `${(date.getDay() + 6) % 7}-${hour}`;
+        const cell = cells.get(key) ?? { totalTokens: 0, samples: 0 };
+        cell.totalTokens += counter.totalTokens;
+        cell.samples += counter.samples;
+        cells.set(key, cell);
+      }
+    }
+    if (report.previous && included(profile.source)) {
+      for (let offset = 0; offset < (range === 'today' ? 1 : span); offset += 1) {
+        const previous = sample(profile, endOffset + span + offset);
+        report.previous.totalTokens += range === 'today' ? Math.round(previous.totalTokens * 0.6) : previous.totalTokens;
+        report.previous.costUSD += range === 'today' ? previous.costUSD * 0.6 : previous.costUSD;
+      }
+    }
+    const shares = profile.models.map((_, index) => profile.models.length === 1 ? 1 : index === 0 ? 0.72 : 0.28);
+    report.sources.push({
+      source: profile.source,
+      status: profile.status,
+      archivedAt: profile.status === 'archived' ? new Date(today.getTime() - 86_400_000 * 21).toISOString() : '',
+      error: '',
+      totals: { ...totals, days: days.size },
+      models: included(profile.source) && totals.totalTokens > 0 ? profile.models.map((model, index) => ({
+        model,
+        inputTokens: Math.round(totals.inputTokens * shares[index]),
+        outputTokens: Math.round(totals.outputTokens * shares[index]),
+        cacheCreationTokens: Math.round(totals.cacheCreationTokens * shares[index]),
+        cacheReadTokens: Math.round(totals.cacheReadTokens * shares[index]),
+        reasoningOutputTokens: Math.round(totals.reasoningTokens * shares[index]),
+        totalTokens: Math.round(totals.totalTokens * shares[index]),
+        costUSD: Number((totals.costUSD * shares[index]).toFixed(4)),
+        priced: profile.rate > 0,
+        prompt: profile.rate > 0 ? 3 : null,
+        completion: profile.rate > 0 ? 15 : null,
+        cacheRead: profile.rate > 0 ? 0.3 : null,
+        cacheCreation: profile.rate > 0 ? 3.75 : null,
+        days: days.size,
+      })) : [],
+      series: [...sourceBuckets.entries()].sort(([left], [right]) => left.localeCompare(right)).flatMap(([bucket, counter]) => (
+        groupBy === 'model'
+          ? profile.models.map((model, index) => ({ bucket: `${bucket}|${model}`, ...scale(counter, shares[index]) }))
+          : [{ bucket, ...counter }]
+      )),
+    });
+  });
+
+  MOCK_AGENT_SOURCES.forEach((source) => {
+    if (report.sources.some((entry) => entry.source === source)) return;
+    report.sources.push({
+      source,
+      status: source === 'opencode' ? 'ok' : 'empty',
+      archivedAt: '',
+      error: '',
+      totals: { ...emptyMockCounter(), days: 0 },
+      models: [],
+      series: [],
+    });
+  });
+
+  report.calendar = [...calendar.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([date, counter]) => ({
+    date,
+    totalTokens: counter.totalTokens,
+    costUSD: counter.costUSD,
+  }));
+  report.hourly = [...cells.entries()].map(([key, cell]) => {
+    const [weekday, hour] = key.split('-').map(Number);
+    return { weekday, hour, totalTokens: cell.totalTokens, samples: cell.samples };
+  });
+  report.totals.days = activeDays.size;
+  return finish();
+}
+
 export function createBrowserMockRuntime(
   scenario: BrowserMockScenario,
   emitEvent: EmitMockEvent = () => {},
@@ -981,7 +1242,36 @@ export function createBrowserMockRuntime(
   onPluginWebview?: (state: PluginWebviewMockState) => void,
 ): BrowserMockRuntime {
   const state = createState(scenario);
+  const applyMockUpdateChannel = (channel: string) => {
+    const normalized = channel.trim() || 'stable';
+    state.appUpdateInfo.updateChannel = normalized;
+    if (normalized.startsWith('preview')) {
+      const tag = normalized === 'preview' ? 'preview-20261104-1623' : normalized;
+      state.appUpdateInfo.latestVersion = '0.3.0-preview.202611041623';
+      state.appUpdateInfo.currentBuildAt = isoHoursAgo(42);
+      state.appUpdateInfo.releaseUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/${tag}`;
+      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-preview.202611041623-Windows-amd64.zip';
+      state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/${tag}/${state.appUpdateInfo.downloadFileName}`;
+    } else {
+      state.appUpdateInfo.latestVersion = '0.3.0';
+      state.appUpdateInfo.currentBuildAt = null;
+      state.appUpdateInfo.releaseUrl = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip';
+      state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/${state.appUpdateInfo.downloadFileName}`;
+    }
+  };
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const mockChannel = params.get('mockChannel');
+    if (mockChannel) applyMockUpdateChannel(mockChannel);
+    const mockAutoUpdate = params.get('mockAutoUpdate');
+    if (mockAutoUpdate === '0' || mockAutoUpdate === 'false') {
+      state.appUpdateInfo.autoUpdateSupported = false;
+      state.appUpdateInfo.unsupportedReason = 'This application is not a portable version that supports automatic upgrades. Manually download the first supported version';
+    }
+  }
   let usageViewPreferences: Record<string, string> = {};
+  let agentUsageCleared = false;
   let privacyMode: boolean | null = null;
   let themeSelection: ThemeSelection | null = null;
   if (scenario === 'empty') {
@@ -1048,7 +1338,13 @@ export function createBrowserMockRuntime(
       case 'restore_codex_official_config':
       case 'create_agent_config_backup':
       case 'restore_agent_config_backup':
-      case 'launch_agent': return null;
+      case 'launch_agent': {
+        const arguments_ = parseAgentLaunchArguments(String(payload.customArguments ?? ''));
+        if (!arguments_) throw new Error('Invalid startup arguments');
+        if (payload.target === 'app' && arguments_.length) throw new Error('Custom arguments require a CLI target');
+        if (payload.client === 'deepseek-harness' && hasDeepSeekArgumentConflict(arguments_)) throw new Error('Use structured DeepSeek controls for these options');
+        return null;
+      }
 
       case 'get_core_status': return clone(state.coreStatus);
       case 'main_window_active': return !document.hidden;
@@ -1072,6 +1368,39 @@ export function createBrowserMockRuntime(
         return clone(state.coreStatus);
       }
       case 'get_usage_view_preferences': return clone(usageViewPreferences);
+      case 'get_agent_usage': {
+        const query = asObject(payload.query);
+        const range = typeof query.range === 'string' ? query.range : '7d';
+        const sources = Array.isArray(query.sources) ? query.sources.filter((entry): entry is string => typeof entry === 'string') : [];
+        const groupBy = query.groupBy === 'model' ? 'model' : 'source';
+        const granularity = typeof query.granularity === 'string' ? query.granularity : '';
+        const customStart = typeof query.start === 'string' ? query.start : '';
+        const customEnd = typeof query.end === 'string' ? query.end : '';
+        return mockAgentUsageReport(range, sources, groupBy, granularity, agentUsageCleared || !state.coreStatus.installed || scenario === 'empty', customStart, customEnd);
+      }
+      case 'sync_agent_usage': {
+        if (scenario === 'error') throw new Error('Browser Mock: Agent usage sync failed');
+        return {
+          skipped: false,
+          changedFiles: 3,
+          scannedFiles: 835,
+          durationMs: 118,
+          lastSyncAt: new Date().toISOString(),
+        };
+      }
+      case 'get_agent_usage_storage': {
+        return {
+          databaseSizeBytes: agentUsageCleared ? 0 : 4_718_592,
+          dailyRows: agentUsageCleared ? 0 : 1_540,
+          hourlyRows: agentUsageCleared ? 0 : 8_640,
+          fileRows: agentUsageCleared ? 0 : 835,
+          lastSyncAt: agentUsageCleared ? '' : new Date().toISOString(),
+        };
+      }
+      case 'clear_agent_usage_history': {
+        agentUsageCleared = true;
+        return null;
+      }
       case 'save_usage_view_preferences': {
         const values = asObject(payload.values);
         if (!payload.values || typeof payload.values !== 'object' || Array.isArray(payload.values) || Object.keys(values).length > 100
@@ -1112,7 +1441,7 @@ export function createBrowserMockRuntime(
           else if (key === 'requestLog' || key === 'pluginsEnabled') syncValues[key] = false;
         }
         Object.assign(state.coreConfig, syncValues);
-        const restartRequired = changes.some((change) => !sameTemplateValue(readTemplatePath(before, change.path), readTemplatePath(state.extendedConfig, change.path)) && ['server.host', 'server.port', 'server.tls', 'management', 'oauth.auth-dir'].some((prefix) => change.path.join('.') === prefix || change.path.join('.').startsWith(`${prefix}.`)));
+        const restartRequired = changes.some((change) => !sameTemplateValue(readTemplatePath(before, change.path), readTemplatePath(state.extendedConfig, change.path)) && ['server.host', 'server.port', 'server.tls', 'server.trusted-proxies', 'server.discovery', 'management', 'oauth.auth-dir'].some((prefix) => change.path.join('.') === prefix || change.path.join('.').startsWith(`${prefix}.`)));
         emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
         return { config: clone(state.extendedConfig), restartRequired };
       }
@@ -1180,6 +1509,13 @@ export function createBrowserMockRuntime(
 
       case 'check_app_update': return clone(state.appUpdateInfo);
       case 'get_app_update_task': return clone(state.appUpdateTask);
+      case 'get_update_channel': return state.appUpdateInfo.updateChannel ?? 'stable';
+      case 'list_update_channels': return ['stable', 'preview', 'preview-20261104-1623'];
+      case 'set_update_channel': {
+        const channel = String(payload.channel ?? 'stable');
+        applyMockUpdateChannel(channel);
+        return state.appUpdateInfo.updateChannel;
+      }
       case 'start_app_update': {
         Object.assign(state.appUpdateTask, {
           running: true,
@@ -1200,6 +1536,7 @@ export function createBrowserMockRuntime(
         return null;
       }
       case 'check_latest_core': return clone(state.coreLatest);
+      case 'list_core_versions': return clone(state.coreVersions);
       case 'get_core_install_task': return clone(state.coreInstallTask);
       case 'install_core_version':
       case 'install_bundled_core': {
@@ -1398,6 +1735,7 @@ export function createBrowserMockRuntime(
       };
       case 'apply_usage_model_prices': return { imported: asArray(payload.prices).length };
 
+      case 'get_agent_environment_options': return { supported: false, defaultDirectory: '/home/user/.config', distributions: [] };
       case 'get_agent_config_statuses':
       case 'refresh_agent_config_statuses': return clone(state.agentStatuses);
       case 'get_core_models': {
@@ -1518,6 +1856,11 @@ export function createBrowserMockRuntime(
           const update = models.find((item) => item.slug === model.slug);
           return update ? { ...model, configuration: clone(asObject(update.configuration)) as typeof model.configuration, customized: true } : model;
         });
+        const requestOrder = models.map((item) => String(item.slug));
+        state.codexCatalog.models = requestOrder
+          .map((slug) => state.codexCatalog.models.find((model) => model.slug === slug))
+          .filter((model): model is NonNullable<typeof model> => Boolean(model))
+          .concat(state.codexCatalog.models.filter((model) => !requestOrder.includes(model.slug)));
         state.codexCatalog.revision = `mock-catalog-${Date.now()}`;
         return { snapshot: clone(state.codexCatalog), synchronizationError: null };
       }

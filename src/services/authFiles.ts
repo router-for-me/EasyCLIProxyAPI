@@ -1,13 +1,10 @@
 import { isRecord, managementApi, readBoolean, readString } from './managementApi';
 import { getCurrentLocale, translate } from '../i18n';
+import { normalizeAuthFileTags } from './credentialTags';
+export { normalizeAuthFileTags } from './credentialTags';
 
 export type AuthFileRecord = Record<string, unknown>;
 export type AuthFileSnapshot = Map<string, string>;
-
-export const normalizeAuthFileTags = (value: unknown): string[] =>
-  Array.isArray(value)
-    ? [...new Set(value.filter((tag): tag is string => typeof tag === 'string').map(tag => tag.trim()).filter(Boolean))]
-    : [];
 
 export const countAuthFileTags = (files: AuthFileRecord[]): Map<string, number> => {
   const counts = new Map<string, number>();

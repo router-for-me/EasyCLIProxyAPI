@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider, translate } from '../src/i18n';
 import { AuthFileBatchDialog } from '../src/components/AuthFileBatchDialog';
+import { AuthFileSettingsDialog } from '../src/components/AuthFileSettingsDialog';
+import { AuthFileManagementPage } from '../src/pages/AuthFileManagementPage';
 import { countAuthFileTags } from '../src/services/authFiles';
 
 describe('credential tag component interactions', () => {
@@ -10,6 +12,34 @@ describe('credential tag component interactions', () => {
     { name: 'codex-b.json', provider: 'codex', source: 'file', tags: ['team'] },
     { name: 'claude-c.json', provider: 'claude', source: 'file', tags: ['staging'] },
   ];
+
+  it('renders the management page without misleading tag totals or inline tag editors', () => {
+    const html = renderToStaticMarkup(<I18nProvider><AuthFileManagementPage /></I18nProvider>);
+    expect(html).toContain('All tags</option>');
+    expect(html).not.toContain('All tags (');
+    expect(html).not.toContain('auth-tag-add-trigger');
+    expect(html).not.toContain('auth-card-quick-tag-editor');
+  });
+
+  it('keeps settings saving disabled until credential metadata is loaded', () => {
+    const html = renderToStaticMarkup(<I18nProvider><AuthFileSettingsDialog
+      name="test.json" existingTags={['weekly']} onClose={() => {}} onSaved={() => {}}
+    /></I18nProvider>);
+    expect(html).toContain('credential-settings-dialog');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toMatch(/type="submit"[^>]*disabled=""/);
+    expect(html).not.toContain('credential-tag-input');
+  });
+
+  it('renders only the all-tags option when a batch has no tags', () => {
+    const html = renderToStaticMarkup(<I18nProvider><AuthFileBatchDialog
+      files={[{ name: 'test.json', provider: 'codex', source: 'file' }]}
+      onClose={() => {}} onChanged={async () => {}}
+    /></I18nProvider>);
+    expect(html).toContain('All tags</option>');
+    expect(html).not.toContain('All tags (');
+    expect(html).not.toContain('auth-batch-tag-badge');
+  });
 
   it('renders tag filter with counts and tag badges in AuthFileBatchDialog', () => {
     const html = renderToStaticMarkup(
@@ -22,13 +52,12 @@ describe('credential tag component interactions', () => {
       </I18nProvider>
     );
 
-    // Should contain tag filter options with counts
     expect(html).toContain('team (2)');
     expect(html).toContain('xai-weekly (1)');
     expect(html).toContain('staging (1)');
-    expect(html).toContain('All tags (3)');
+    expect(html).toContain('All tags</option>');
+    expect(html).not.toContain('All tags (');
 
-    // Should display tags on credential rows
     expect(html).toContain('auth-batch-tags');
     expect(html).toContain('auth-batch-tag-badge');
     expect(html).toContain('Select group by tag');
@@ -48,6 +77,10 @@ describe('credential tag component interactions', () => {
       expect(filterBy).toContain('team');
       expect(addSuccess).toContain('3');
       expect(addSuccess).toContain('team');
+      for (const key of ['authFiles.tags.label', 'authFiles.tags.all', 'authFiles.tags.hint',
+        'authFiles.tags.selectGroup', 'authFiles.tags.inputPlaceholder', 'authFiles.tags.batchRemoveSuccess'] as const) {
+        expect(translate(locale, key)).not.toBe(key);
+      }
     }
   });
 

@@ -16,6 +16,7 @@ export type SelectMenuOption = {
   value: string;
   label: string;
   group?: string;
+  disabled?: boolean;
 };
 
 type MenuLayout = {
@@ -64,12 +65,16 @@ export function SelectMenu({
   onChange,
   ariaLabel,
   disabled = false,
+  className,
+  maxDropdownHeight = 280,
 }: {
   value: string;
   options: SelectMenuOption[];
   onChange: (value: string) => void;
   ariaLabel: string;
   disabled?: boolean;
+  className?: string;
+  maxDropdownHeight?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -98,23 +103,24 @@ export function SelectMenu({
     const edgeGap = 12;
     const triggerGap = 6;
     const measured = menu ? measureMenu(menu) : null;
-    const contentWidth = measured && measured.width > 0 ? measured.width : rect.width;
-    const contentHeight = measured && measured.height > 0
+    const contentWidth = Math.max(rect.width, measured && measured.width > 0 ? measured.width : 0);
+    const measuredHeight = measured && measured.height > 0
       ? measured.height
       : Math.max(options.length, 1) * 36 + 12;
+    const contentHeight = Math.min(measuredHeight, maxDropdownHeight);
     const spaceBelow = Math.max(0, window.innerHeight - edgeGap - rect.bottom - triggerGap);
     const spaceAbove = Math.max(0, rect.top - triggerGap - edgeGap);
     const placeAbove = spaceBelow < contentHeight && spaceAbove > spaceBelow;
     const available = placeAbove ? spaceAbove : spaceBelow;
     const maxWidth = Math.max(edgeGap, window.innerWidth - edgeGap * 2);
-    const width = Math.min(320, maxWidth, contentWidth);
-    const height = Math.min(contentHeight, Math.max(available, Math.min(contentHeight, 36)));
+    const width = Math.min(maxWidth, Math.max(rect.width, Math.min(360, contentWidth)));
+    const height = Math.max(36, Math.min(contentHeight, available));
     const maxLeft = Math.max(edgeGap, window.innerWidth - edgeGap - width);
     const left = Math.min(Math.max(edgeGap, rect.left), maxLeft);
     const desiredTop = placeAbove ? rect.top - triggerGap - height : rect.bottom + triggerGap;
     const top = Math.min(Math.max(edgeGap, desiredTop), Math.max(edgeGap, window.innerHeight - edgeGap - height));
     setLayout({ top, left, width, height });
-  }, [options.length]);
+  }, [options.length, maxDropdownHeight]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -160,7 +166,15 @@ export function SelectMenu({
     setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
   }, [open, options, value]);
 
+  useEffect(() => {
+    if (!open) return;
+    const option = menuRef.current?.querySelector<HTMLElement>(`#${listboxId}-option-${activeIndex}`);
+    option?.scrollIntoView({ block: 'nearest' });
+  }, [open, activeIndex, listboxId]);
+
   const choose = (next: string) => {
+    const target = options.find((opt) => opt.value === next);
+    if (target?.disabled) return;
     onChange(next);
     setOpen(false);
     rootRef.current?.querySelector('button')?.focus();
@@ -168,7 +182,14 @@ export function SelectMenu({
 
   const moveActive = (offset: number) => {
     if (!options.length) return;
-    setActiveIndex((current) => (current + offset + options.length) % options.length);
+    let nextIndex = activeIndex;
+    for (let step = 0; step < options.length; step += 1) {
+      nextIndex = (nextIndex + offset + options.length) % options.length;
+      if (!options[nextIndex]?.disabled) {
+        setActiveIndex(nextIndex);
+        return;
+      }
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -183,7 +204,7 @@ export function SelectMenu({
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       moveActive(-1);
-    } else if ((event.key === 'Enter' || event.key === ' ') && options[activeIndex]) {
+    } else if ((event.key === 'Enter' || event.key === ' ') && options[activeIndex] && !options[activeIndex].disabled) {
       event.preventDefault();
       choose(options[activeIndex].value);
     } else if (event.key === 'Escape') {
@@ -193,7 +214,7 @@ export function SelectMenu({
   };
 
   return (
-    <div className={`select-menu ${open ? 'open' : ''}`} ref={rootRef}>
+    <div className={`select-menu ${open ? 'open' : ''}${className ? ` ${className}` : ''}`} ref={rootRef}>
       <button
         type="button"
         className="select-menu-trigger"
@@ -214,7 +235,7 @@ export function SelectMenu({
         <div className="select-menu-theme-scope" ref={themeScopeRef}>
           <div
             ref={menuRef}
-            className="select-menu-dropdown"
+            className={`select-menu-dropdown${className ? ` ${className}-dropdown` : ''}`}
             data-theme-surface="overlay"
             style={layout
               ? { top: layout.top, left: layout.left, width: layout.width, height: layout.height }
@@ -233,11 +254,13 @@ export function SelectMenu({
                       role="option"
                       id={`${listboxId}-option-${index}`}
                       aria-selected={isSelected}
+                      aria-disabled={option.disabled}
+                      disabled={option.disabled}
                       aria-label={option.group ? `${option.group}: ${option.label}` : undefined}
-                      className={`select-menu-option${isSelected ? ' selected' : ''}${index === activeIndex ? ' active' : ''}`}
+                      className={`select-menu-option${isSelected ? ' selected' : ''}${index === activeIndex ? ' active' : ''}${option.disabled ? ' disabled' : ''}`}
                       key={option.value || option.label}
-                      onMouseEnter={() => setActiveIndex(index)}
-                      onClick={() => choose(option.value)}
+                      onMouseEnter={() => !option.disabled && setActiveIndex(index)}
+                      onClick={() => !option.disabled && choose(option.value)}
                     >
                       <span title={option.label}>{option.label}</span>
                       {isSelected ? <Check size={15} aria-hidden /> : null}

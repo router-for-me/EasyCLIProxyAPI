@@ -57,6 +57,35 @@ describe('plugin credential quotas', () => {
 });
 
 describe("batch tag operations", () => {
+  it("copies explicit legacy labels verbatim and skips credentials already carrying them", async () => {
+    for (const label of ["中文，标签", "legacy\nlabel", "legacy,label"]) {
+      const patches: unknown[] = [];
+      const api = { patch: (async (_path: string, body: unknown) => { patches.push(body); }) as typeof managementApi.patch };
+      const existing = { name: `existing-${label}.json`, tags: ["keep", label] };
+      const target = { name: `target-${label}.json`, tags: ["unrelated"] };
+
+      expect(await batchAddCredentialTag([existing, target], [label], api)).toEqual([{ id: target.name, success: true }]);
+      expect(patches).toEqual([{ name: target.name, tags: ["unrelated", label] }]);
+      expect(existing.tags).toEqual(["keep", label]);
+      expect(target.tags).toEqual(["unrelated", label]);
+      expect(await batchAddCredentialTag([existing, target], [label], api)).toEqual([]);
+      expect(patches).toHaveLength(1);
+    }
+  });
+
+  it("still parses raw text without reinterpreting existing labels", async () => {
+    const patches: unknown[] = [];
+    const api = { patch: (async (_path: string, body: unknown) => { patches.push(body); }) as typeof managementApi.patch };
+    const file = { name: "raw-text-legacy.json", tags: ["中文，标签", "legacy\nlabel", "unrelated"] };
+    const expected = [...file.tags, "fresh", "weekly", "nightly"];
+
+    expect(await batchAddCredentialTag([file], " fresh，weekly\nnightly, fresh ", api)).toEqual([{ id: file.name, success: true }]);
+    expect(file.tags).toEqual(expected);
+    expect(patches).toEqual([{ name: file.name, tags: expected }]);
+    expect(await batchAddCredentialTag([file], "fresh，weekly\nnightly", api)).toEqual([]);
+    expect(patches).toHaveLength(1);
+  });
+
   it("adds tags to credentials without duplicates and calls managementApi patch", async () => {
     const patches: Array<{ path: string; body: Record<string, unknown> }> = [];
     const mockApi = {

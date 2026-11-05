@@ -154,7 +154,20 @@ async fn validate_codex_openai_proxy_auth(config: &str, auth: &str) -> Result<()
 }
 
 #[tauri::command]
-pub(crate) async fn set_codex_openai_provider(app: tauri::AppHandle, enabled: bool) -> Result<AgentConfigActionResult, String> {
+pub(crate) async fn set_codex_openai_provider(
+    app: tauri::AppHandle,
+    enabled: bool,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES
+        .scope(directories, async move {
+            set_codex_openai_provider_in_directories(app, enabled).await
+        })
+        .await
+}
+
+pub(crate) async fn set_codex_openai_provider_in_directories(app: tauri::AppHandle, enabled: bool) -> Result<AgentConfigActionResult, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let directory = codex_configuration_directory(&home);
     let paths = vec![directory.join("config.toml"), directory.join("auth.json")];
@@ -424,6 +437,16 @@ pub(crate) fn close_codex_configuration(home: &Path) -> Result<AgentConfigAction
 #[tauri::command]
 pub(crate) fn close_codex_config_modification(
     app: tauri::AppHandle,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+        close_codex_config_modification_in_directories(app)
+    })
+}
+
+pub(crate) fn close_codex_config_modification_in_directories(
+    app: tauri::AppHandle,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
@@ -643,6 +666,16 @@ pub(crate) fn apply_codex_cpa_configuration(
 #[tauri::command]
 pub(crate) fn restore_codex_official_config(
     app: tauri::AppHandle,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+        restore_codex_official_config_in_directories(app)
+    })
+}
+
+pub(crate) fn restore_codex_official_config_in_directories(
+    app: tauri::AppHandle,
 ) -> Result<AgentConfigActionResult, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let _guard = AGENT_CONFIG_FILE_LOCK
@@ -736,7 +769,18 @@ pub(crate) fn switch_codex_remote_compaction(home: &Path, enabled: bool) -> Resu
 }
 
 #[tauri::command]
-pub(crate) fn set_codex_remote_compaction(app: tauri::AppHandle, enabled: bool) -> Result<AgentConfigActionResult, String> {
+pub(crate) fn set_codex_remote_compaction(
+    app: tauri::AppHandle,
+    enabled: bool,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+        set_codex_remote_compaction_in_directories(app, enabled)
+    })
+}
+
+pub(crate) fn set_codex_remote_compaction_in_directories(app: tauri::AppHandle, enabled: bool) -> Result<AgentConfigActionResult, String> {
     let _guard = AGENT_CONFIG_FILE_LOCK.lock().map_err(|_| "Agent configuration file lock is poisoned")?;
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let result = switch_codex_remote_compaction(&home, enabled)?;
@@ -745,13 +789,34 @@ pub(crate) fn set_codex_remote_compaction(app: tauri::AppHandle, enabled: bool) 
 }
 
 #[tauri::command]
-pub(crate) fn get_codex_subagent_config(app: tauri::AppHandle) -> Result<CodexSubagentConfig, String> {
+pub(crate) fn get_codex_subagent_config(
+    app: tauri::AppHandle,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<CodexSubagentConfig, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+        get_codex_subagent_config_in_directories(app)
+    })
+}
+
+pub(crate) fn get_codex_subagent_config_in_directories(app: tauri::AppHandle) -> Result<CodexSubagentConfig, String> {
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     read_codex_subagent_config(&home)
 }
 
 #[tauri::command]
-pub(crate) fn save_codex_subagent_config(app: tauri::AppHandle, config: CodexSubagentConfig) -> Result<AgentConfigActionResult, String> {
+pub(crate) fn save_codex_subagent_config(
+    app: tauri::AppHandle,
+    config: CodexSubagentConfig,
+    config_directories: Option<AgentConfigDirectories>,
+) -> Result<AgentConfigActionResult, String> {
+    let directories = validate_agent_config_directories(config_directories)?;
+    AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+        save_codex_subagent_config_in_directories(app, config)
+    })
+}
+
+pub(crate) fn save_codex_subagent_config_in_directories(app: tauri::AppHandle, config: CodexSubagentConfig) -> Result<AgentConfigActionResult, String> {
     let _guard = AGENT_CONFIG_FILE_LOCK.lock().map_err(|_| "Agent configuration file lock is poisoned")?;
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
     let result = write_codex_subagent_config(&home, config)?;

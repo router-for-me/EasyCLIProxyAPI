@@ -375,8 +375,12 @@ fn configuration_root_candidates(home: &Path) -> Vec<PathBuf> {
         roots.push(custom.join(".zcode"));
         roots.push(custom.join(".zcode").join("v2"));
     }
-    if let Some(parent) = copilot_config_paths(AgentClient::VscodeCopilot, home)[0].parent() { roots.push(parent.to_path_buf()); }
-    if let Some(parent) = copilot_config_paths(AgentClient::CopilotCli, home)[0].parent() { roots.push(parent.to_path_buf()); }
+    if let Some(parent) = copilot_config_paths(AgentClient::VscodeCopilot, home)[0].parent() {
+        roots.push(parent.to_path_buf());
+    }
+    if let Some(parent) = copilot_config_paths(AgentClient::CopilotCli, home)[0].parent() {
+        roots.push(parent.to_path_buf());
+    }
     #[cfg(target_os = "macos")]
     {
         let support = home.join("Library/Application Support");
@@ -423,6 +427,11 @@ fn configuration_root_candidates(home: &Path) -> Vec<PathBuf> {
                 roots.push(path);
             }
         }
+    }
+    if let Ok(custom) = AGENT_CONFIG_DIRECTORIES
+        .try_with(|directories| directories.values().map(PathBuf::from).collect::<Vec<_>>())
+    {
+        roots.extend(custom);
     }
     roots
 }

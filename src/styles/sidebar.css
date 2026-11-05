@@ -108,6 +108,7 @@
 
 .nav-section button,
 .sidebar-link {
+  position: relative;
   display: flex;
   flex: none;
   align-items: center;
@@ -171,6 +172,25 @@
 
 .nav-section button.active > svg:first-child {
   color: var(--ui-accent);
+}
+
+.nav-section button.active::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  top: 50%;
+  width: 3px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--ui-accent);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.nav-section button:focus-visible,
+.sidebar-link:focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 1px;
 }
 
 .nav-section button:disabled {
@@ -454,6 +474,12 @@
 /* ---------- Motion & contrast preferences ---------- */
 
 @media (prefers-reduced-motion: reduce) {
+  .nav-section button,
+  .sidebar-link,
+  .nav-section button > svg:first-child,
+  .sidebar-link > svg:first-child {
+    transition: none;
+  }
   .nav-update-indicator.processing {
     animation: none;
   }
@@ -474,6 +500,12 @@
 
   .nav-section button.active {
     box-shadow: inset 0 0 0 1px var(--ui-accent);
+  }
+}
+
+@media (forced-colors: active) {
+  .nav-section button.active::before {
+    background: Highlight;
   }
 }
 
@@ -521,6 +553,11 @@
     gap: 0;
     height: 36px;
     padding: 0;
+  }
+
+  .nav-section button.active::before {
+    height: 12px;
+    width: 2px;
   }
 
   .sidebar .nav-section .nav-plugin-children button,

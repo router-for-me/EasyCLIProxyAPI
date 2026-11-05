@@ -30,7 +30,7 @@ describe('localized release notes publication', () => {
     }
     expect(await resolveReleaseNotes({ root, tag: '1.2.3' })).toEqual(translations);
     const body = releaseNotesBody(translations);
-    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN']}`);
+    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN'].trim()}\n\n---\n\n# 繁體中文\n\n${translations['zh-TW'].trim()}\n\n---\n\n# 日本語\n\n${translations.ja.trim()}\n`);
   }));
 
   test('never copies another language into a missing or blank translation', () => withNotesRoot(async (root, directory) => {
@@ -38,10 +38,19 @@ describe('localized release notes publication', () => {
     await writeFile(join(directory, 'en.md'), ' \n');
     const notes = await resolveReleaseNotes({ root, tag: 'v1.2.3' });
     expect(notes).toEqual({ 'zh-CN': '## 新增\n\n- 中文独有正文。\n' });
-    const englishSection = releaseNotesBody(notes).split('# English\n\n')[1].split('\n\n---\n\n')[0].trim();
-    expect(englishSection).toBe('Release notes for this version are not available in English.');
-    expect(englishSection).not.toContain('中文独有正文');
+    const body = releaseNotesBody(notes);
+    expect(body).toBe(`# 简体中文\n\n## 新增\n\n- 中文独有正文。\n`);
+    expect(body).not.toContain('English');
+    expect(body).not.toContain('Release notes for this version are not available');
   }));
+
+  test('publishes every authored locale in English, Simplified, Traditional, Japanese order', () => {
+    const all = {
+      'zh-CN': 'A\n', 'zh-TW': 'B\n', en: 'C\n', ja: 'D\n',
+    };
+    expect(releaseNotesBody(all)).toBe('# English\n\nC\n\n---\n\n# 简体中文\n\nA\n\n---\n\n# 繁體中文\n\nB\n\n---\n\n# 日本語\n\nD\n');
+    expect(releaseNotesBody({ en: 'only\n' })).toBe('# English\n\nonly\n');
+  });
 
   test('missing versions and legacy flat files produce no translations', () => withNotesRoot(async (root) => {
     await writeFile(join(root, 'docs', 'release-notes', 'v1.2.3.md'), 'Legacy single-language text');
@@ -79,10 +88,33 @@ describe('localized release notes publication', () => {
     const notes = JSON.parse(await readFile(jsonPath, 'utf8'));
     expect(notes).toEqual(translations);
     const body = await readFile(bodyPath, 'utf8');
-    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN']}`);
+    expect(body).toBe(`# English\n\n${translations.en.trim()}\n\n---\n\n# 简体中文\n\n${translations['zh-CN'].trim()}\n\n---\n\n# 繁體中文\n\n${translations['zh-TW'].trim()}\n\n---\n\n# 日本語\n\n${translations.ja.trim()}\n`);
   }));
 
   test('rejects tags that could escape the release notes directory', () => withNotesRoot(async (root) => {
     await expect(resolveReleaseNotes({ root, tag: '../../README' })).rejects.toThrow('Invalid release tag');
+  }));
+
+  test('supports non-semver preview tags like only-preview', () => withNotesRoot(async (root) => {
+    expect(await resolveReleaseNotes({ root, tag: 'only-preview' })).toEqual({});
+    const previewDir = join(root, 'docs', 'release-notes', 'only-preview');
+    await mkdir(previewDir, { recursive: true });
+    await writeFile(join(previewDir, 'en.md'), '## Preview\n\n- Preview notes.\n');
+    expect(await resolveReleaseNotes({ root, tag: 'only-preview' })).toEqual({
+      en: '## Preview\n\n- Preview notes.\n',
+    });
+  }));
+
+  test('CLI supports non-semver preview tags like only-preview', () => withNotesRoot(async (root) => {
+    const script = fileURLToPath(new URL('../scripts/release-notes.mjs', import.meta.url));
+    const jsonPath = join(root, 'notes.json');
+    const bodyPath = join(root, 'notes.md');
+    const result = spawnSync('node', [script, '--tag', 'only-preview', '--output', jsonPath, '--body-output', bodyPath], {
+      cwd: root, encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(await readFile(jsonPath, 'utf8'))).toEqual({});
+    expect(await readFile(bodyPath, 'utf8')).toContain('Release notes for this version are not available in English.');
   }));
 });

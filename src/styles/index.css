@@ -13,6 +13,7 @@
 @import './config-settings.css' layer(components);
 @import './subpage-navigation.css' layer(components);
 @import '../pages/UsageEventsView.css' layer(components);
+@import '../pages/AgentUsageView.css' layer(components);
 @import './usage-subpages.css' layer(components);
 @import '../components/SelectMenu.css';
 @import '../pages/AgentClientList.css' layer(components);
