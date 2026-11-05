@@ -1,11 +1,10 @@
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Blocks,
   Check,
   ChevronDown,
   Copy,
   Edit3,
-  ExternalLink,
   FolderOpen,
   Info,
   Plus,
@@ -1126,45 +1125,48 @@ export function McpSkillsPage() {
                 </div>
               </div>
 
-              {/* Filter chips */}
-              <SegmentedControl
-                className="mcp-filter-chips"
-                aria-label={t('serverFilter')}
-                value={serverFilter}
-                onChange={setServerFilter}
-                buttonClassName="mcp-filter-chip"
-                selectedClassName="active"
-                items={(['all', 'enabled', 'stdio', 'http', 'sse'] as const).map((filterKey) => ({
-                  value: filterKey,
-                  label: (
-                    <>
-                      <span>{t(filterKey)}</span>
-                      <span className="mcp-chip-count">
-                        {filterKey === 'all'
-                          ? servers.length
-                          : filterKey === 'enabled'
-                          ? servers.filter((s) => s.enabled).length
-                          : servers.filter((s) => s.transport === filterKey).length}
-                      </span>
-                    </>
-                  ),
-                }))}
-              />
-
-              {/* Server count bar */}
-              <div className="mcp-list-meta-bar">
-                <span>
-                  {t('serverCount', {
-                    count: filteredServers.length,
-                    total: servers.length,
-                  })}
-                </span>
-              </div>
+              {/* Filter chips and count bar (hidden while the list is empty) */}
+              {servers.length > 0 && (
+                <>
+                  <SegmentedControl
+                    className="mcp-filter-chips"
+                    aria-label={t('serverFilter')}
+                    value={serverFilter}
+                    onChange={setServerFilter}
+                    buttonClassName="mcp-filter-chip"
+                    selectedClassName="active"
+                    items={(['all', 'enabled', 'stdio', 'http', 'sse'] as const).map((filterKey) => ({
+                      value: filterKey,
+                      label: (
+                        <>
+                          <span>{t(filterKey)}</span>
+                          <span className="mcp-chip-count">
+                            {filterKey === 'all'
+                              ? servers.length
+                              : filterKey === 'enabled'
+                              ? servers.filter((s) => s.enabled).length
+                              : servers.filter((s) => s.transport === filterKey).length}
+                          </span>
+                        </>
+                      ),
+                    }))}
+                  />
+                  <div className="mcp-list-meta-bar">
+                    <span>
+                      {t('serverCount', {
+                        count: filteredServers.length,
+                        total: servers.length,
+                      })}
+                    </span>
+                  </div>
+                </>
+              )}
 
               {/* Server List */}
               <div className="mcp-server-list" role="list">
                 {loading ? (
                   <div className="mcp-skeleton-list" aria-busy="true">
+                    <span className="sr-only">{t('loading')}</span>
                     {Array.from({ length: 4 }).map((_, idx) => (
                       <div key={idx} className="mcp-skeleton-row" />
                     ))}
@@ -1292,19 +1294,20 @@ export function McpSkillsPage() {
             <main className="mcp-servers-detail">
               {loading ? (
                 <div className="mcp-detail-skeleton surface-panel" aria-busy="true">
+                  <span className="sr-only">{t('loading')}</span>
                   <div className="mcp-skeleton-header">
-                    <div className="mcp-skeleton-bar" style={{ width: '40%', height: 20 }} />
-                    <div className="mcp-skeleton-bar" style={{ width: 80, height: 28 }} />
+                    <div className="mcp-skeleton-bar" />
+                    <div className="mcp-skeleton-bar" />
                   </div>
-                  <div className="mcp-skeleton-bar" style={{ width: '65%', height: 13, marginTop: 12 }} />
+                  <div className="mcp-skeleton-bar mcp-skeleton-bar--lead" />
                   <div className="mcp-skeleton-divider" />
                   <div className="mcp-skeleton-grid">
-                    <div className="mcp-skeleton-bar" style={{ width: '30%', height: 13 }} />
-                    <div className="mcp-skeleton-bar" style={{ width: '60%', height: 13 }} />
-                    <div className="mcp-skeleton-bar" style={{ width: '30%', height: 13 }} />
-                    <div className="mcp-skeleton-bar" style={{ width: '85%', height: 13 }} />
-                    <div className="mcp-skeleton-bar" style={{ width: '30%', height: 13 }} />
-                    <div className="mcp-skeleton-bar" style={{ width: '45%', height: 13 }} />
+                    <div className="mcp-skeleton-bar" />
+                    <div className="mcp-skeleton-bar" />
+                    <div className="mcp-skeleton-bar" />
+                    <div className="mcp-skeleton-bar" />
+                    <div className="mcp-skeleton-bar" />
+                    <div className="mcp-skeleton-bar" />
                   </div>
                 </div>
               ) : selectedServer ? (
@@ -1320,8 +1323,7 @@ export function McpSkillsPage() {
                           {selectedServer.transport}
                         </span>
                         <span
-                          className={`mcp-status-dot ${selectedServer.enabled ? 'active' : 'inactive'}`}
-                          style={{ width: 10, height: 10 }}
+                          className={`mcp-status-dot mcp-status-dot--lg ${selectedServer.enabled ? 'active' : 'inactive'}`}
                           aria-hidden="true"
                         />
                       </div>
@@ -1504,7 +1506,9 @@ export function McpSkillsPage() {
                 </article>
               ) : (
                 <div className="mcp-detail-placeholder surface-panel">
-                  <p className="mcp-placeholder-text">{t('selectServerHint')}</p>
+                  <p className="mcp-placeholder-text">
+                    {servers.length === 0 ? t('noServersDetailHint') : t('selectServerHint')}
+                  </p>
                 </div>
               )}
             </main>
@@ -1540,40 +1544,42 @@ export function McpSkillsPage() {
                   )}
                 </div>
 
-                {/* Source Filter chips */}
-                <SegmentedControl
-                  className="mcp-filter-chips"
-                  aria-label={t('skillSource')}
-                  value={skillSourceFilter}
-                  onChange={setSkillSourceFilter}
-                  buttonClassName="mcp-filter-chip"
-                  selectedClassName="active"
-                  items={(['all', 'openclaw', 'workshop', 'project', 'custom'] as const).map(
-                    (sourceKey) => ({
-                      value: sourceKey,
-                      label: (
-                        <>
-                          <span>
-                            {sourceKey === 'all'
-                              ? t('all')
-                              : sourceKey === 'openclaw'
-                              ? t('sourceOpenClaw')
-                              : sourceKey === 'workshop'
-                              ? t('sourceWorkshop')
-                              : sourceKey === 'project'
-                              ? t('sourceProject')
-                              : t('sourceCustom')}
-                          </span>
-                          <span className="mcp-chip-count">
-                            {sourceKey === 'all'
-                              ? skills.length
-                              : skills.filter((s) => s.source === sourceKey).length}
-                          </span>
-                        </>
-                      ),
-                    })
-                  )}
-                />
+                {/* Source Filter chips (hidden while the list is empty) */}
+                {skills.length > 0 && (
+                  <SegmentedControl
+                    className="mcp-filter-chips"
+                    aria-label={t('skillSource')}
+                    value={skillSourceFilter}
+                    onChange={setSkillSourceFilter}
+                    buttonClassName="mcp-filter-chip"
+                    selectedClassName="active"
+                    items={(['all', 'openclaw', 'workshop', 'project', 'custom'] as const).map(
+                      (sourceKey) => ({
+                        value: sourceKey,
+                        label: (
+                          <>
+                            <span>
+                              {sourceKey === 'all'
+                                ? t('all')
+                                : sourceKey === 'openclaw'
+                                ? t('sourceOpenClaw')
+                                : sourceKey === 'workshop'
+                                ? t('sourceWorkshop')
+                                : sourceKey === 'project'
+                                ? t('sourceProject')
+                                : t('sourceCustom')}
+                            </span>
+                            <span className="mcp-chip-count">
+                              {sourceKey === 'all'
+                                ? skills.length
+                                : skills.filter((s) => s.source === sourceKey).length}
+                            </span>
+                          </>
+                        ),
+                      })
+                    )}
+                  />
+                )}
               </div>
 
               <div className="skills-toolbar-right">
@@ -1585,30 +1591,34 @@ export function McpSkillsPage() {
                   <FolderOpen size={14} aria-hidden="true" />
                   <span>{t('openFolder')}</span>
                 </button>
-                <span className="skills-count-text">
-                  {t('skillsCount', {
-                    count: filteredSkills.length,
-                    total: skills.length,
-                  })}
-                </span>
-                <Switch
-                  checked={skillEnabledOnly}
-                  size="sm"
-                  label={t('enabledOnly')}
-                  onChange={(e) => setSkillEnabledOnly(e.target.checked)}
-                />
+                {skills.length > 0 && (
+                  <>
+                    <span className="skills-count-text">
+                      {t('skillsCount', {
+                        count: filteredSkills.length,
+                        total: skills.length,
+                      })}
+                    </span>
+                    <Switch
+                      checked={skillEnabledOnly}
+                      size="sm"
+                      label={t('enabledOnly')}
+                      onChange={(e) => setSkillEnabledOnly(e.target.checked)}
+                    />
+                  </>
+                )}
               </div>
             </div>
 
             {/* Layout when a skill is selected vs normal grid */}
             <div
-              style={{ marginTop: 20 }}
-              className={selectedSkill ? 'skills-split-container' : undefined}
+              className={`skills-content-wrap${selectedSkill ? ' skills-split-container' : ''}`}
             >
               {/* Cards Grid */}
               <div className={selectedSkill ? 'skills-split-list' : undefined}>
                 {loading ? (
-                  <div className="skills-grid">
+                  <div className="skills-grid" aria-busy="true">
+                    <span className="sr-only">{t('loading')}</span>
                     {Array.from({ length: 6 }).map((_, idx) => (
                       <div key={idx} className="mcp-skeleton-card" />
                     ))}
@@ -1617,9 +1627,8 @@ export function McpSkillsPage() {
                   <>
                     {skillsError && (
                       <div
-                        className={`mcp-inline-error-strip${skillsTone === 'warn' ? ' mcp-inline-error-strip--warn' : ''}`}
+                        className={`mcp-inline-error-strip mcp-inline-error-strip--spaced${skillsTone === 'warn' ? ' mcp-inline-error-strip--warn' : ''}`}
                         role="alert"
-                        style={{ marginBottom: 16 }}
                       >
                         <div className="mcp-inline-error-body">
                           <Info size={14} className="mcp-inline-error-icon" aria-hidden="true" />
@@ -1640,6 +1649,16 @@ export function McpSkillsPage() {
                         variant="compact"
                         icon={<Sparkles size={36} />}
                         title={t('noSkills')}
+                        action={
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={() => void handleOpenFolder()}
+                          >
+                            <FolderOpen size={14} aria-hidden="true" />
+                            <span>{t('openFolder')}</span>
+                          </button>
+                        }
                       >
                         {t('noSkillsHint')}
                       </EmptyState>
@@ -1786,21 +1805,23 @@ export function McpSkillsPage() {
 
                     <div className="skill-prose-scroll">
                       {loadingSkillDetail ? (
-                        <div>
+                        <div aria-busy="true">
+                          <span className="sr-only">{t('loading')}</span>
                           <p>{t('loadingSkill')}</p>
-                          <div className="mcp-skeleton-bar" style={{ width: '90%' }} />
-                          <div className="mcp-skeleton-bar" style={{ width: '100%' }} />
-                          <div className="mcp-skeleton-bar" style={{ width: '75%' }} />
-                          <div className="mcp-skeleton-bar" style={{ width: '85%' }} />
+                          <div className="mcp-skeleton-lines">
+                            <div className="mcp-skeleton-bar" />
+                            <div className="mcp-skeleton-bar" />
+                            <div className="mcp-skeleton-bar" />
+                            <div className="mcp-skeleton-bar" />
+                          </div>
                         </div>
                       ) : skillDetailError ? (
                         <Notice tone="error">
                           <p>{skillDetailError}</p>
                           <button
                             type="button"
-                            className="secondary-button compact-button"
+                            className="secondary-button compact-button mcp-retry-button"
                             onClick={() => void fetchSkillDetail(selectedSkill.path)}
-                            style={{ marginTop: 8 }}
                           >
                             <RotateCw size={12} aria-hidden="true" />
                             <span>{t('retry')}</span>
@@ -1919,12 +1940,11 @@ export function McpSkillsPage() {
                   </label>
                   <textarea
                     id="mcp-field-args"
-                    className="config-dialog-text-input"
+                    className="config-dialog-text-input mcp-code-input"
                     rows={4}
                     placeholder={t('argsPlaceholder')}
                     value={formArgs}
                     onChange={(e) => setFormArgs(e.target.value)}
-                    style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
                   />
                 </div>
               </>
@@ -2084,7 +2104,7 @@ export function McpSkillsPage() {
             </div>
 
             {/* Enabled switch */}
-            <div className="mcp-form-field" style={{ paddingTop: 4 }}>
+            <div className="mcp-form-field mcp-form-field--tight">
               <Switch
                 checked={formEnabled}
                 label={t('enableOnSave')}
@@ -2163,7 +2183,7 @@ export function McpSkillsPage() {
             ) : (
               <div className="mcp-form-field">
                 <textarea
-                  className="config-dialog-text-input"
+                  className="config-dialog-text-input mcp-code-input"
                   rows={10}
                   placeholder={`{\n  "mcpServers": {\n    "example": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]\n    }\n  }\n}`}
                   value={importRaw}
@@ -2171,7 +2191,6 @@ export function McpSkillsPage() {
                     setImportRaw(e.target.value);
                     if (importError) setImportError(null);
                   }}
-                  style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, lineHeight: 1.5 }}
                 />
               </div>
             )}
