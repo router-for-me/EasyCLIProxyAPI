@@ -1193,7 +1193,20 @@ pub(crate) fn is_app_update_available(current: &str, latest: &str) -> Result<boo
         semver::Version::parse(value.trim().trim_start_matches('v'))
             .map_err(|error| format!("Failed to parse version {value}: {error}"))
     };
-    Ok(parse(latest)? > parse(current)?)
+    let current_version = parse(current)?;
+    let latest_version = parse(latest)?;
+    if latest_version > current_version {
+        return Ok(true);
+    }
+    // Allow updating from a prerelease / PR / dev build to a stable release with equal or greater base version
+    if !current_version.pre.is_empty()
+        && latest_version.pre.is_empty()
+        && (latest_version.major, latest_version.minor, latest_version.patch)
+            >= (current_version.major, current_version.minor, current_version.patch)
+    {
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
