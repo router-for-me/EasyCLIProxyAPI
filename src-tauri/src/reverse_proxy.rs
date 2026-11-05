@@ -1128,6 +1128,498 @@ mod tests {
         assert_eq!(manager.get_state().unwrap().requests_total, 4);
     }
 
+    #[tokio::test]
+    #[ignore = "requires openssl and curl; run explicitly on loopback"]
+    async fn test_loopback_proxy_real_tls_requests_and_sse_streaming() {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        struct TestCleanup {
+            config_path: std::path::PathBuf,
+            cert_dir: std::path::PathBuf,
+        }
+        impl Drop for TestCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.config_path);
+                if let Some(parent) = self.config_path.parent() {
+                    let _ = std::fs::remove_dir(parent);
+                }
+                let _ = std::fs::remove_dir_all(&self.cert_dir);
+            }
+        }
+
+        const MESSAGE_JSON: &str =
+            r#"{"model":"claude-test","max_tokens":64,"messages":[{"role":"user","content":"ping"}]}"#;
+        const AUTH_ERROR_JSON: &str =
+            r#"{"type":"error","error":{"type":"authentication_error","message":"invalid api key"}}"#;
+        const RATE_LIMIT_JSON: &str =
+            r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#;
+
+        let config_path = crate::core_runtime::core_install_dir()
+            .unwrap()
+            .join(crate::CORE_CONFIG_FILE);
+        assert!(
+            !config_path.exists(),
+            "run with an isolated Cargo target directory"
+        );
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        let cert_dir = std::env::temp_dir()
+            .join("rp-loopback-test")
+            .join(std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&cert_dir);
+        std::fs::create_dir_all(&cert_dir).unwrap();
+        let _cleanup = TestCleanup {
+            config_path: config_path.clone(),
+            cert_dir: cert_dir.clone(),
+        };
+        std::fs::write(&config_path, "host: 127.0.0.1\ntrusted-proxies: [127.0.0.1]\n").unwrap();
+
+        let cert_path = cert_dir.join("cert.pem");
+        let key_path = cert_dir.join("key.pem");
+        let generated = Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=localhost",
+                "-addext",
+                "subjectAltName=DNS:localhost",
+                "-keyout",
+            ])
+            .arg(&key_path)
+            .arg("-out")
+            .arg(&cert_path)
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "{}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let cacert = cert_path.to_str().unwrap().to_string();
+
+        // Local HTTP upstream pretending to be the API. Requests are verified
+        // here so header and JSON body preservation is checked end to end.
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_port = upstream.local_addr().unwrap().port();
+        let release_second_event = Arc::new(tokio::sync::Barrier::new(2));
+        let upstream_gate = release_second_event.clone();
+        let upstream_task = tokio::spawn(async move {
+            loop {
+                let (stream, _) = upstream.accept().await.unwrap();
+                let gate = upstream_gate.clone();
+                let service = hyper::service::service_fn(
+                    move |request: hyper::Request<hyper::body::Incoming>| {
+                        let gate = gate.clone();
+                        async move {
+                            let path = request
+                                .uri()
+                                .path_and_query()
+                                .map(|pq| pq.as_str().to_string())
+                                .unwrap_or_default();
+                            assert_eq!(request.method(), hyper::Method::POST);
+                            assert_eq!(
+                                request.headers()["authorization"],
+                                "Bearer sk-test-token"
+                            );
+                            assert_eq!(request.headers()["content-type"], "application/json");
+                            assert_eq!(request.headers()["x-forwarded-proto"], "https");
+                            assert_eq!(request.headers()["x-forwarded-for"], "127.0.0.1");
+                            let api_key = request.headers()["x-api-key"]
+                                .to_str()
+                                .unwrap()
+                                .to_string();
+                            let accepts_sse = request.headers()["accept"] == "text/event-stream";
+                            let body = request.into_body().collect().await.unwrap().to_bytes();
+                            assert_eq!(
+                                body,
+                                Bytes::from_static(MESSAGE_JSON.as_bytes()),
+                                "request JSON body was not preserved"
+                            );
+                            match path.as_str() {
+                                "/v1/messages?x=1" => {
+                                    let (status, retry_after, payload) = match api_key.as_str() {
+                                        "key-401" => (
+                                            hyper::StatusCode::UNAUTHORIZED,
+                                            None,
+                                            AUTH_ERROR_JSON,
+                                        ),
+                                        "key-429" => (
+                                            hyper::StatusCode::TOO_MANY_REQUESTS,
+                                            Some("30"),
+                                            RATE_LIMIT_JSON,
+                                        ),
+                                        other => panic!("unexpected x-api-key: {other}"),
+                                    };
+                                    let mut builder = hyper::Response::builder()
+                                        .status(status)
+                                        .header("content-type", "application/json")
+                                        .header("connection", "close");
+                                    if let Some(retry_after) = retry_after {
+                                        builder = builder.header("retry-after", retry_after);
+                                    }
+                                    Ok::<_, std::convert::Infallible>(
+                                        builder
+                                            .body(Full::new(Bytes::from(payload)).boxed())
+                                            .unwrap(),
+                                    )
+                                }
+                                "/v1/messages?stream=true" => {
+                                    assert_eq!(api_key, "key-stream");
+                                    assert!(accepts_sse, "accept header was not preserved");
+                                    // Second event is gated: it is only produced after
+                                    // the test has observed the first event at the
+                                    // client, proving the proxy does not buffer.
+                                    let frames = futures_util::stream::unfold(
+                                        (gate, 0u8),
+                                        |(gate, step)| async move {
+                                            match step {
+                                                0 => Some((
+                                                    Ok::<_, std::convert::Infallible>(
+                                                        hyper::body::Frame::data(
+                                                            Bytes::from_static(
+                                                                b"event: message_start\ndata: {\"type\":\"message_start\"}\n\n",
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    (gate, 1),
+                                                )),
+                                                1 => {
+                                                    gate.wait().await;
+                                                    Some((
+                                                        Ok(hyper::body::Frame::data(
+                                                            Bytes::from_static(
+                                                                b"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+                                                            ),
+                                                        )),
+                                                        (gate, 2),
+                                                    ))
+                                                }
+                                                _ => None,
+                                            }
+                                        },
+                                    );
+                                    Ok(hyper::Response::builder()
+                                        .status(hyper::StatusCode::OK)
+                                        .header("content-type", "text/event-stream")
+                                        .header("cache-control", "no-cache")
+                                        .header("connection", "close")
+                                        .body(http_body_util::StreamBody::new(frames).boxed())
+                                        .unwrap())
+                                }
+                                other => panic!("unexpected upstream path: {other}"),
+                            }
+                        }
+                    },
+                );
+                tokio::spawn(async move {
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+
+        // Same manager/start code the Tauri commands use.
+        let manager = ReverseProxyManagerState::new();
+        let config = ReverseProxyConfig {
+            enabled: true,
+            listen_host: "127.0.0.1".into(),
+            listen_port: 0,
+            target_port,
+            cert_path: cert_path.to_str().unwrap().into(),
+            key_path: key_path.to_str().unwrap().into(),
+        };
+        let state = manager.save_and_apply(config.clone(), None).await.unwrap();
+        assert!(state.running);
+        let listen_addr: std::net::SocketAddr = state.listening.unwrap().parse().unwrap();
+        let base = format!("https://localhost:{}", listen_addr.port());
+        println!("proxy listening on {listen_addr}, upstream 127.0.0.1:{target_port}");
+
+        fn curl(args: Vec<String>) -> std::process::Output {
+            Command::new("curl").args(&args).output().unwrap()
+        }
+        fn split_response(output: &[u8]) -> (String, Vec<u8>) {
+            let split = output
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .expect("missing header/body separator");
+            (
+                String::from_utf8_lossy(&output[..split]).to_string(),
+                output[split + 4..].to_vec(),
+            )
+        }
+
+        // TLS is real: the same request fails certificate verification without
+        // the CA bundle.
+        let denied = tokio::task::spawn_blocking({
+            let base = base.clone();
+            move || {
+                curl(vec![
+                    "--noproxy".into(),
+                    "*".into(),
+                    "--silent".into(),
+                    "--show-error".into(),
+                    "--max-time".into(),
+                    "5".into(),
+                    format!("{base}/v1/messages?x=1"),
+                ])
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !denied.status.success(),
+            "request without --cacert unexpectedly succeeded"
+        );
+        println!(
+            "no --cacert: curl failed as expected: {}",
+            String::from_utf8_lossy(&denied.stderr).trim()
+        );
+
+        for (api_key, expected_status, expected_body, expect_retry_after) in [
+            ("key-401", "401", AUTH_ERROR_JSON, false),
+            ("key-429", "429", RATE_LIMIT_JSON, true),
+        ] {
+            let cacert = cacert.clone();
+            let base = base.clone();
+            let out = tokio::task::spawn_blocking(move || {
+                curl(vec![
+                    "--noproxy".into(),
+                    "*".into(),
+                    "--cacert".into(),
+                    cacert,
+                    "--silent".into(),
+                    "--show-error".into(),
+                    "--include".into(),
+                    "--max-time".into(),
+                    "10".into(),
+                    "-H".into(),
+                    "authorization: Bearer sk-test-token".into(),
+                    "-H".into(),
+                    format!("x-api-key: {api_key}"),
+                    "-H".into(),
+                    "content-type: application/json".into(),
+                    "--data-binary".into(),
+                    MESSAGE_JSON.into(),
+                    format!("{base}/v1/messages?x=1"),
+                ])
+            })
+            .await
+            .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let (head, body) = split_response(&out.stdout);
+            assert!(
+                head.starts_with(&format!("HTTP/1.1 {expected_status}")),
+                "status line was not preserved: {head}"
+            );
+            assert!(
+                head.to_ascii_lowercase()
+                    .contains("content-type: application/json"),
+                "response content-type was not preserved: {head}"
+            );
+            if expect_retry_after {
+                assert!(
+                    head.to_ascii_lowercase().contains("retry-after: 30"),
+                    "retry-after header was not preserved: {head}"
+                );
+            }
+            assert_eq!(
+                body,
+                expected_body.as_bytes(),
+                "response body was not preserved"
+            );
+            println!(
+                "POST /v1/messages?x=1 (x-api-key={api_key}): status={expected_status}, body={}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+
+        // SSE: the upstream holds the second event behind a barrier; the first
+        // event must still reach the curl client, proving incremental delivery.
+        let mut child = Command::new("curl")
+            .args([
+                "--noproxy",
+                "*",
+                "--cacert",
+                &cacert,
+                "--silent",
+                "--show-error",
+                "--no-buffer",
+                "--max-time",
+                "15",
+                "-H",
+                "authorization: Bearer sk-test-token",
+                "-H",
+                "x-api-key: key-stream",
+                "-H",
+                "accept: text/event-stream",
+                "-H",
+                "content-type: application/json",
+                "--data-binary",
+                MESSAGE_JSON,
+                "-w",
+                "\n__STATUS__:%{http_code} __CTYPE__:%{content_type}\n",
+            ])
+            .arg(format!("{base}/v1/messages?stream=true"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let stream_started = Instant::now();
+        let reader = tokio::task::spawn_blocking(move || {
+            let mut collected = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                match stdout.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        collected.extend_from_slice(&buf[..n]);
+                        let _ = chunk_tx.send(buf[..n].to_vec());
+                    }
+                }
+            }
+            let status = child.wait().unwrap();
+            (collected, status)
+        });
+
+        let mut received: Vec<u8> = Vec::new();
+        let mut chunk_count = 0usize;
+        let first_arrival = tokio::time::timeout(Duration::from_secs(10), async {
+            while !received
+                .windows(b"message_start".len())
+                .any(|w| w == b"message_start")
+            {
+                match chunk_rx.recv().await {
+                    Some(chunk) => {
+                        chunk_count += 1;
+                        println!(
+                            "stream chunk #{chunk_count}: {} bytes at {:?}",
+                            chunk.len(),
+                            stream_started.elapsed()
+                        );
+                        received.extend_from_slice(&chunk);
+                    }
+                    None => break,
+                }
+            }
+        })
+        .await;
+        assert!(
+            first_arrival.is_ok(),
+            "first SSE event did not reach the client while the upstream held the second event"
+        );
+        let early = String::from_utf8_lossy(&received).to_string();
+        assert!(early.contains("message_start"));
+        assert!(
+            !early.contains("message_stop"),
+            "second event arrived before the barrier was released"
+        );
+        println!(
+            "first SSE event reached curl at {:?} while upstream still holds event two",
+            stream_started.elapsed()
+        );
+
+        release_second_event.wait().await;
+        let (collected, status) = tokio::time::timeout(Duration::from_secs(10), reader)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(status.success());
+        let streamed = String::from_utf8_lossy(&collected).to_string();
+        let first_pos = streamed.find("message_start").unwrap();
+        let second_pos = streamed.find("message_stop").unwrap();
+        assert!(first_pos < second_pos, "SSE events out of order: {streamed}");
+        assert!(
+            streamed.contains("__STATUS__:200"),
+            "unexpected status write-out: {streamed}"
+        );
+        assert!(
+            streamed.contains("__CTYPE__:text/event-stream"),
+            "unexpected content-type write-out: {streamed}"
+        );
+        println!("SSE stream completed: {streamed:?}");
+
+        // Upstream unreachable: the listener must keep answering with 502.
+        upstream_task.abort();
+        let _ = upstream_task.await;
+        for attempt in 1..=2 {
+            let cacert = cacert.clone();
+            let base = base.clone();
+            let out = tokio::task::spawn_blocking(move || {
+                curl(vec![
+                    "--noproxy".into(),
+                    "*".into(),
+                    "--cacert".into(),
+                    cacert,
+                    "--silent".into(),
+                    "--show-error".into(),
+                    "--include".into(),
+                    "--max-time".into(),
+                    "10".into(),
+                    "-H".into(),
+                    "authorization: Bearer sk-test-token".into(),
+                    "-H".into(),
+                    "x-api-key: key-401".into(),
+                    "-H".into(),
+                    "content-type: application/json".into(),
+                    "--data-binary".into(),
+                    MESSAGE_JSON.into(),
+                    format!("{base}/v1/messages?x=1"),
+                ])
+            })
+            .await
+            .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let (head, body) = split_response(&out.stdout);
+            assert!(
+                head.starts_with("HTTP/1.1 502"),
+                "expected 502 for dead upstream, got: {head}"
+            );
+            assert!(
+                String::from_utf8_lossy(&body).contains("Bad Gateway"),
+                "unexpected 502 body: {}",
+                String::from_utf8_lossy(&body)
+            );
+            println!(
+                "upstream down attempt {attempt}: status=502 body={}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+        assert!(manager.get_state().unwrap().running);
+        tokio::net::TcpStream::connect(listen_addr)
+            .await
+            .expect("listener died after upstream failure");
+
+        let stopped = manager.stop_and_save().await.unwrap();
+        assert!(!stopped.running);
+        assert!(tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::net::TcpStream::connect(listen_addr)
+        )
+        .await
+        .unwrap()
+        .is_err());
+        assert_eq!(manager.get_state().unwrap().requests_total, 5);
+        println!("stopped cleanly; total forwarded requests: 5");
+    }
+
     #[test]
     fn test_proxy_config_persists_paths_in_legacy_and_v8_documents() {
         let config = ReverseProxyConfig {
