@@ -29,6 +29,49 @@ pub struct ReverseProxyConfig {
     pub key_path: String,
 }
 
+fn read_proxy_config_document(
+    document: &serde_norway::Value,
+) -> Result<Option<ReverseProxyConfig>, String> {
+    document
+        .get("reverse-proxy")
+        .map(|value| {
+            serde_norway::from_value(value.clone())
+                .map_err(|error| format!("Failed to read reverse proxy configuration: {error}"))
+        })
+        .transpose()
+}
+
+fn patch_proxy_config_document(
+    document: &mut serde_norway::Value,
+    config: &ReverseProxyConfig,
+) -> Result<bool, String> {
+    let value = serde_norway::to_value(config)
+        .map_err(|error| format!("Failed to serialize reverse proxy configuration: {error}"))?;
+    set_core_yaml_path_value(document, &["reverse-proxy"], value)
+}
+
+fn read_installed_proxy_config() -> Result<Option<ReverseProxyConfig>, String> {
+    let _config_guard = lock_core_config_file()?;
+    let config_path = crate::core_runtime::core_install_dir()?.join(crate::CORE_CONFIG_FILE);
+    if !config_path.is_file() {
+        return Ok(None);
+    }
+    let (_, document) = read_core_config_document()?;
+    read_proxy_config_document(document.get())
+}
+
+fn persist_proxy_config(config: &ReverseProxyConfig) -> Result<(), String> {
+    let mut patched = false;
+    patch_existing_core_config(|document| {
+        patched = true;
+        patch_proxy_config_document(document, config)
+    })?;
+    if !patched {
+        return Err("Kernel configuration has not been generated. Start the CPA kernel first".to_string());
+    }
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReverseProxyHardening {
@@ -434,6 +477,7 @@ struct ReverseProxyInner {
 pub struct ReverseProxyManagerState {
     inner: Arc<std::sync::Mutex<ReverseProxyInner>>,
     requests_total: Arc<AtomicU64>,
+    operation: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ReverseProxyManagerState {
@@ -443,10 +487,22 @@ impl ReverseProxyManagerState {
     }
 
     pub fn get_state(&self) -> Result<ReverseProxyState, String> {
-        let guard = self
+        let mut guard = self
             .inner
             .lock()
             .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
+        if guard.running
+            && guard
+                .server_task
+                .as_ref()
+                .is_some_and(|task| task.is_finished())
+        {
+            guard.running = false;
+            guard.listening = None;
+            guard.target = None;
+            guard.error = Some("Reverse proxy listener task stopped unexpectedly".to_string());
+            eprintln!("Reverse proxy listener task stopped unexpectedly");
+        }
         Ok(ReverseProxyState {
             running: guard.running,
             listening: guard.listening.clone(),
@@ -458,7 +514,13 @@ impl ReverseProxyManagerState {
         })
     }
 
+    #[cfg(test)]
     pub async fn stop(&self) -> Result<ReverseProxyState, String> {
+        let _operation = self.operation.lock().await;
+        self.stop_inner().await
+    }
+
+    async fn stop_inner(&self) -> Result<ReverseProxyState, String> {
         let (shutdown_tx, server_task) = {
             let mut guard = self
                 .inner
@@ -480,57 +542,62 @@ impl ReverseProxyManagerState {
         self.get_state()
     }
 
+    #[cfg(test)]
     pub async fn start<A: Into<Option<tauri::AppHandle>>>(
         &self,
         config: ReverseProxyConfig,
         app: A,
     ) -> Result<ReverseProxyState, String> {
-        let app = app.into();
-        self.stop().await?;
+        let _operation = self.operation.lock().await;
+        self.start_inner(config, app.into()).await
+    }
+
+    fn fail_start(&self, error: String) -> Result<ReverseProxyState, String> {
+        eprintln!("Reverse proxy failed: {error}");
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
+        guard.error = Some(error.clone());
+        guard.running = false;
+        guard.listening = None;
+        guard.target = None;
+        Err(error)
+    }
+
+    async fn start_inner(
+        &self,
+        config: ReverseProxyConfig,
+        app: Option<tauri::AppHandle>,
+    ) -> Result<ReverseProxyState, String> {
+        self.stop_inner().await?;
+        self.inner
+            .lock()
+            .map_err(|e| format!("Failed to acquire state lock: {e}"))?
+            .stored_config = Some(config.clone());
 
         if let Err(err) = validate_config(&config) {
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
-            guard.error = Some(err.clone());
-            guard.running = false;
-            guard.listening = None;
-            guard.target = None;
-            return Err(err);
+            return self.fail_start(err);
         }
 
         let tls_config = match load_tls_config(&config) {
             Ok(c) => c,
             Err(err) => {
-                let mut guard = self
-                    .inner
-                    .lock()
-                    .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
-                guard.error = Some(err.clone());
-                guard.running = false;
-                guard.listening = None;
-                guard.target = None;
-                return Err(err);
+                return self.fail_start(err);
             }
         };
 
         let bind_addr = format!("{}:{}", config.listen_host, config.listen_port);
-        let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
-            Ok(l) => l,
-            Err(err) => {
-                let err_msg = format!("Failed to bind listener on {bind_addr}: {err}");
-                let mut guard = self
-                    .inner
-                    .lock()
-                    .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
-                guard.error = Some(err_msg.clone());
-                guard.running = false;
-                guard.listening = None;
-                guard.target = None;
-                return Err(err_msg);
-            }
-        };
+        let listener =
+            match tokio::net::TcpListener::bind((config.listen_host.as_str(), config.listen_port))
+                .await
+            {
+                Ok(l) => l,
+                Err(err) => {
+                    let err_msg = format!("Failed to bind listener on {bind_addr}: {err}");
+                    return self.fail_start(err_msg);
+                }
+            };
 
         let listening_addr = format!("{}:{}", config.listen_host, config.listen_port);
         let target_addr = format!("127.0.0.1:{}", config.target_port);
@@ -541,6 +608,30 @@ impl ReverseProxyManagerState {
             Client::builder(TokioExecutor::new()).build_http();
         let requests_total = self.requests_total.clone();
         let target_port = config.target_port;
+
+        let (mut hardening, mut restart_error) = match apply_core_hardening() {
+            Ok(h) => (h, None),
+            Err(err) => (ReverseProxyHardening::default(), Some(err)),
+        };
+
+        if hardening.restart_required {
+            if let Some(app_handle) = app {
+                if let Err(err) = crate::core_runtime::restart_core_process(app_handle).await {
+                    restart_error = Some(format!("Failed to restart CPA kernel: {err}"));
+                } else {
+                    hardening.restart_required = false;
+                }
+            }
+        }
+        if let Some(error) = &restart_error {
+            eprintln!("Reverse proxy hardening failed: {error}");
+        }
+
+        let inner = Arc::downgrade(&self.inner);
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
 
         let server_task = tokio::spawn(async move {
             loop {
@@ -559,7 +650,10 @@ impl ReverseProxyManagerState {
                                 tokio::spawn(async move {
                                     let tls_stream = match acceptor.accept(tcp_stream).await {
                                         Ok(s) => s,
-                                        Err(_) => return,
+                                        Err(error) => {
+                                            eprintln!("Reverse proxy TLS handshake failed for {peer_addr}: {error}");
+                                            return;
+                                        }
                                     };
 
                                     let io = TokioIo::new(tls_stream);
@@ -577,55 +671,58 @@ impl ReverseProxyManagerState {
                                         .await;
                                 });
                             }
-                            Err(_) => {
-                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            Err(error) => {
+                                let message = format!("Reverse proxy listener accept failed: {error}");
+                                eprintln!("{message}");
+                                if let Some(inner) = inner.upgrade() {
+                                    if let Ok(mut guard) = inner.lock() {
+                                        guard.error = Some(message);
+                                    }
+                                }
+                                break;
                             }
                         }
                     }
                 }
             }
-        });
-
-        let (mut hardening, mut restart_error) = match apply_core_hardening() {
-            Ok(h) => (h, None),
-            Err(err) => (ReverseProxyHardening::default(), Some(err)),
-        };
-
-        if hardening.restart_required {
-            if let Some(app_handle) = app {
-                if let Err(err) = crate::core_runtime::restart_core_process(app_handle).await {
-                    restart_error = Some(format!("Failed to restart CPA kernel: {err}"));
-                    hardening.restart_required = true;
-                } else {
-                    hardening.restart_required = false;
+            if let Some(inner) = inner.upgrade() {
+                if let Ok(mut guard) = inner.lock() {
+                    guard.running = false;
+                    guard.listening = None;
+                    guard.target = None;
                 }
             }
-        }
+        });
 
-        {
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
-            guard.running = true;
-            guard.listening = Some(listening_addr);
-            guard.target = Some(target_addr);
-            guard.error = restart_error;
-            guard.stored_config = Some(config);
-            guard.hardening = hardening;
-            guard.shutdown_tx = Some(shutdown_tx);
-            guard.server_task = Some(server_task);
-        }
+        guard.running = true;
+        guard.listening = Some(listening_addr);
+        guard.target = Some(target_addr);
+        guard.error = restart_error;
+        guard.stored_config = Some(config);
+        guard.hardening = hardening;
+        guard.shutdown_tx = Some(shutdown_tx);
+        guard.server_task = Some(server_task);
+        drop(guard);
+        eprintln!("Reverse proxy listening on {bind_addr}");
 
         self.get_state()
     }
 
+    #[cfg(test)]
     pub async fn apply<A: Into<Option<tauri::AppHandle>>>(
         &self,
         config: ReverseProxyConfig,
         app: A,
     ) -> Result<ReverseProxyState, String> {
-        let app = app.into();
+        let _operation = self.operation.lock().await;
+        self.apply_inner(config, app.into()).await
+    }
+
+    async fn apply_inner(
+        &self,
+        config: ReverseProxyConfig,
+        app: Option<tauri::AppHandle>,
+    ) -> Result<ReverseProxyState, String> {
         {
             let mut guard = self
                 .inner
@@ -635,9 +732,33 @@ impl ReverseProxyManagerState {
         }
 
         if config.enabled {
-            self.start(config, app).await
+            self.start_inner(config, app).await
         } else {
-            self.stop().await
+            self.stop_inner().await?;
+            self.inner
+                .lock()
+                .map_err(|e| format!("Failed to acquire state lock: {e}"))?
+                .error = None;
+            self.get_state()
+        }
+    }
+
+    async fn save_and_apply(
+        &self,
+        config: ReverseProxyConfig,
+        app: Option<tauri::AppHandle>,
+    ) -> Result<ReverseProxyState, String> {
+        let _operation = self.operation.lock().await;
+        persist_proxy_config(&config)?;
+        self.apply_inner(config, app).await
+    }
+
+    pub async fn restore(&self, app: tauri::AppHandle) -> Result<ReverseProxyState, String> {
+        let _operation = self.operation.lock().await;
+        match read_installed_proxy_config() {
+            Ok(Some(config)) => self.apply_inner(config, Some(app)).await,
+            Ok(None) => self.get_state(),
+            Err(error) => self.fail_start(error),
         }
     }
 }
@@ -647,6 +768,9 @@ pub async fn reverse_proxy_get_state(
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
     let mut current = state.get_state()?;
+    if current.config.is_none() {
+        current.config = read_installed_proxy_config()?;
+    }
     let previous_restart_required = current.hardening.restart_required;
     let mut hardening = read_installed_core_hardening();
     hardening.restart_required = previous_restart_required;
@@ -663,29 +787,85 @@ pub async fn reverse_proxy_apply(
     config: ReverseProxyConfig,
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
-    state.apply(config, app).await
+    state.save_and_apply(config, Some(app)).await
 }
 
 #[tauri::command]
 pub async fn reverse_proxy_start(
     app: tauri::AppHandle,
-    config: ReverseProxyConfig,
+    mut config: ReverseProxyConfig,
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
-    state.start(config, app).await
+    config.enabled = true;
+    state.save_and_apply(config, Some(app)).await
 }
 
 #[tauri::command]
 pub async fn reverse_proxy_stop(
+    app: tauri::AppHandle,
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
-    state.stop().await
+    let _operation = state.operation.lock().await;
+    if let Some(mut config) = state.get_state()?.config.or(read_installed_proxy_config()?) {
+        config.enabled = false;
+        persist_proxy_config(&config)?;
+        state.apply_inner(config, Some(app)).await
+    } else {
+        state.stop_inner().await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use hyper::header::{HeaderMap, HeaderName, HeaderValue, CONNECTION};
+
+    #[test]
+    fn test_proxy_config_persists_paths_in_legacy_and_v8_documents() {
+        let config = ReverseProxyConfig {
+            enabled: true,
+            listen_host: "0.0.0.0".to_string(),
+            listen_port: 8443,
+            target_port: 8317,
+            cert_path: r"C:\TLS files\cert.pem".to_string(),
+            key_path: r"C:\TLS files\key.pem".to_string(),
+        };
+        for source in [
+            "# keep\nport: 8317\n",
+            "# keep\nconfig-version: 8\nserver:\n  port: 8317\n",
+        ] {
+            let saved = crate::core_config::patch_core_yaml_document(source, |document| {
+                patch_proxy_config_document(document, &config)
+            })
+            .unwrap()
+            .unwrap();
+            assert!(saved.contains("# keep"));
+            let document: serde_norway::Value = serde_norway::from_str(&saved).unwrap();
+            assert_eq!(
+                read_proxy_config_document(&document).unwrap(),
+                Some(config.clone())
+            );
+            assert!(
+                crate::core_config::patch_core_yaml_document(&saved, |document| {
+                    patch_proxy_config_document(document, &config)
+                })
+                .unwrap()
+                .is_none()
+            );
+            let mut disabled = config.clone();
+            disabled.enabled = false;
+            let saved = crate::core_config::patch_core_yaml_document(&saved, |document| {
+                patch_proxy_config_document(document, &disabled)
+            })
+            .unwrap()
+            .unwrap();
+            let document: serde_norway::Value = serde_norway::from_str(&saved).unwrap();
+            assert_eq!(
+                read_proxy_config_document(&document).unwrap(),
+                Some(disabled)
+            );
+        }
+    }
 
     #[test]
     fn test_target_url_construction() {
@@ -962,10 +1142,33 @@ mod tests {
             key_path: key_file.to_str().unwrap().to_string(),
         };
 
-        let state = manager.start(config.clone(), None).await.unwrap();
+        let mut disabled = config.clone();
+        disabled.enabled = false;
+        let state = manager.apply(disabled.clone(), None).await.unwrap();
+        assert!(!state.running);
+        assert_eq!(state.config, Some(disabled));
+        let state = manager.apply(config.clone(), None).await.unwrap();
         assert!(state.running);
         assert_eq!(state.listening, Some(format!("127.0.0.1:{proxy_port}")));
         assert_eq!(state.target, Some(format!("127.0.0.1:{target_port}")));
+
+        let conflicting = ReverseProxyManagerState::new();
+        let error = conflicting.start(config.clone(), None).await.unwrap_err();
+        assert!(error.contains("Failed to bind listener"));
+        let failed_state = conflicting.get_state().unwrap();
+        assert!(!failed_state.running);
+        assert_eq!(failed_state.listening, None);
+        assert_eq!(failed_state.target, None);
+        assert_eq!(failed_state.error, Some(error));
+        assert!(conflicting.inner.lock().unwrap().server_task.is_none());
+        assert!(!manager
+            .inner
+            .lock()
+            .unwrap()
+            .server_task
+            .as_ref()
+            .unwrap()
+            .is_finished());
 
         // 4. Client sends request to proxy over HTTPS
         let client = reqwest::Client::builder()
@@ -995,6 +1198,9 @@ mod tests {
         assert_eq!(state.listening, None);
         assert_eq!(state.target, None);
         assert_eq!(state.requests_total, 1);
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", proxy_port))
+            .await
+            .is_err());
 
         let _ = backend_task.await;
 
@@ -1048,7 +1254,13 @@ mod tests {
         let state = manager.get_state().unwrap();
         assert!(!state.running);
         assert!(state.error.is_some());
-        assert!(state.error.unwrap().contains("Certificate file does not exist"));
+        assert!(state
+            .error
+            .unwrap()
+            .contains("Certificate file does not exist"));
+        assert_eq!(state.listening, None);
+        assert_eq!(state.target, None);
+        assert!(manager.inner.lock().unwrap().server_task.is_none());
     }
 
     #[test]

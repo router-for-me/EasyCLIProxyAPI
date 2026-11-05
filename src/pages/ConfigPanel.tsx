@@ -26,7 +26,9 @@ import type { CoreConfigSettings, CoreApiKey, SoftwareSettings, CloseBehavior, C
 import {
   getReverseProxyState,
   applyReverseProxyConfig,
+  reverseProxyPathErrors,
   type ReverseProxyConfig,
+  type ReverseProxyPathField,
   type ReverseProxyState,
 } from '../services/reverseProxy';
 import { CoolingToggle } from '../components/settings/CoolingToggle';
@@ -298,6 +300,7 @@ export function ConfigPanelPage() {
   const [proxyDirty, setProxyDirty] = useState(false);
   const [backendNotReady, setBackendNotReady] = useState(false);
   const [proxyFileSelecting, setProxyFileSelecting] = useState<'cert' | 'key' | null>(null);
+  const proxyFileSelectingRef = useRef(false);
   const [proxyDraft, setProxyDraft] = useState<ReverseProxyConfig>(DEFAULT_REVERSE_PROXY_DRAFT);
 
   const loadReverseProxy = async () => {
@@ -306,11 +309,12 @@ export function ConfigPanelPage() {
       const state = await getReverseProxyState();
       setProxyState(state);
       if (state.config) {
-        setProxyDraft(state.config);
+        setProxyDraft({ ...DEFAULT_REVERSE_PROXY_DRAFT, ...state.config });
       }
       setBackendNotReady(false);
-    } catch {
+    } catch (error) {
       setBackendNotReady(true);
+      proxyFeedback.showNotice(String(error), 'error');
     } finally {
       setProxyInitialLoading(false);
     }
@@ -347,11 +351,25 @@ export function ConfigPanelPage() {
     if (!enabled) setProxyFieldErrors({});
   };
 
+  const updateProxyPath = (field: ReverseProxyPathField, value: string) => {
+    if (proxyFileSelectingRef.current) return;
+    setProxyDraft(prev => ({ ...prev, [field]: value }));
+    setProxyDirty(true);
+    try {
+      const errors = validateReverseProxyDraft({ ...proxyDraft, [field]: value });
+      setProxyFieldErrors(prev => ({ ...prev, [field]: errors[field] }));
+    } catch (error) {
+      setProxyFieldErrors(prev => ({ ...prev, [field]: String(error) }));
+    }
+  };
+
   const handleProxySave = async () => {
-    if (proxyAction !== null) return;
+    if (proxyControlsDisabled || proxyFileSelectingRef.current) return;
     const normalizedDraft = {
       ...proxyDraft,
       listenHost: proxyDraft.listenHost.trim() || '0.0.0.0',
+      certPath: proxyDraft.certPath.trim(),
+      keyPath: proxyDraft.keyPath.trim(),
     };
     proxyFeedback.clearNotice();
     const fieldErrors = validateReverseProxyDraft(normalizedDraft);
@@ -365,18 +383,27 @@ export function ConfigPanelPage() {
     try {
       const state = await applyReverseProxyConfig(normalizedDraft);
       setProxyState(state);
+      if (state.config) setProxyDraft(state.config);
       setBackendNotReady(false);
       setProxyDirty(false);
-      proxyFeedback.showNotice(st('reverseProxySaved'), 'success');
-    } catch {
-      setBackendNotReady(true);
+      proxyFeedback.showNotice(state.error || st('reverseProxySaved'), state.error ? 'error' : 'success');
+    } catch (error) {
+      setProxyFieldErrors(prev => ({ ...prev, ...reverseProxyPathErrors(error) }));
+      proxyFeedback.showNotice(String(error), 'error');
+      try {
+        setProxyState(await getReverseProxyState());
+        setBackendNotReady(false);
+      } catch {
+        setBackendNotReady(true);
+      }
     } finally {
       setProxyAction(null);
     }
   };
 
   const selectProxyFile = async (target: 'cert' | 'key') => {
-    if (proxyControlsDisabled || proxyFileSelecting !== null) return;
+    if (proxyControlsDisabled || proxyFileSelectingRef.current) return;
+    proxyFileSelectingRef.current = true;
     setProxyFileSelecting(target);
     try {
       const selected = await open({
@@ -400,11 +427,29 @@ export function ConfigPanelPage() {
       clearProxyFieldError(target === 'cert' ? 'certPath' : 'keyPath');
     } catch (error) {
       const message = t('config.tls.error.selectFileFailed', { error: String(error) });
+      setProxyFieldErrors(prev => ({ ...prev, [target === 'cert' ? 'certPath' : 'keyPath']: message }));
       proxyFeedback.showNotice(message, 'error');
     } finally {
+      proxyFileSelectingRef.current = false;
       setProxyFileSelecting(null);
     }
   };
+
+  useEffect(() => {
+    if (activeSubpage !== 'proxy' || proxyAction !== null || proxyInitialLoading) return;
+    let disposed = false;
+    const timer = window.setInterval(() => {
+      void getReverseProxyState().then(state => {
+        if (!disposed) setProxyState(state);
+      }).catch(error => {
+        if (!disposed) proxyFeedback.showNotice(String(error), 'error');
+      });
+    }, 2000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [activeSubpage, proxyAction, proxyInitialLoading]);
 
   useEffect(() => {
     let disposed = false;
@@ -1269,7 +1314,7 @@ export function ConfigPanelPage() {
   const diagnosticsControlsDisabled = coreUnavailable || busyAction === 'logging' || busyAction === 'open-logs';
   const tlsControlsDisabled = tlsSettingsLoading || tlsSettings === null || busyAction === 'tls';
   const softwareControlsDisabled = softwareSettingsLoading || softwareSettings === null || busyAction === 'software';
-  const proxyControlsDisabled = coreUnavailable || proxyAction !== null;
+  const proxyControlsDisabled = coreUnavailable || proxyInitialLoading || proxyAction !== null || proxyFileSelecting !== null;
   const activateConfigSubpage = (subpage: ConfigSubpage) => {
     setSettingsSearch('');
     setActiveSubpage(subpage);
@@ -1945,6 +1990,11 @@ export function ConfigPanelPage() {
                   <div className="config-tls-path-control">
                     <input
                       id="config-input-reverse-proxy-cert-path"
+                      name="rp-cert-path-nofill"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
                       className={`config-network-input ${proxyFieldErrors.certPath ? 'error' : ''}`}
                       type="text"
                       value={proxyDraft.certPath}
@@ -1953,10 +2003,7 @@ export function ConfigPanelPage() {
                       aria-invalid={Boolean(proxyFieldErrors.certPath)}
                       aria-describedby={proxyFieldErrors.certPath ? 'config-reverse-proxy-cert-path-error' : undefined}
                       onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        setProxyDraft(prev => ({ ...prev, certPath: value }));
-                        setProxyDirty(true);
-                        clearProxyFieldError('certPath');
+                        updateProxyPath('certPath', event.currentTarget.value);
                       }}
                     />
                     <button
@@ -1981,6 +2028,11 @@ export function ConfigPanelPage() {
                   <div className="config-tls-path-control">
                     <input
                       id="config-input-reverse-proxy-key-path"
+                      name="rp-key-path-nofill"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
                       className={`config-network-input ${proxyFieldErrors.keyPath ? 'error' : ''}`}
                       type="text"
                       value={proxyDraft.keyPath}
@@ -1989,10 +2041,7 @@ export function ConfigPanelPage() {
                       aria-invalid={Boolean(proxyFieldErrors.keyPath)}
                       aria-describedby={proxyFieldErrors.keyPath ? 'config-reverse-proxy-key-path-error' : undefined}
                       onChange={(event) => {
-                        const value = event.currentTarget.value;
-                        setProxyDraft(prev => ({ ...prev, keyPath: value }));
-                        setProxyDirty(true);
-                        clearProxyFieldError('keyPath');
+                        updateProxyPath('keyPath', event.currentTarget.value);
                       }}
                     />
                     <button

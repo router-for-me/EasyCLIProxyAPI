@@ -2912,6 +2912,14 @@ fn main() {
 
                 process_state.set_starting(false);
 
+                let proxy_app = core_app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let manager = proxy_app.state::<reverse_proxy::ReverseProxyManagerState>();
+                    if let Err(error) = manager.restore(proxy_app.clone()).await {
+                        eprintln!("Failed to restore reverse proxy listener: {error}");
+                    }
+                });
+
                 if let Ok(status) =
                     current_core_status(Some(process_state.inner()), Some(config.port))
                 {

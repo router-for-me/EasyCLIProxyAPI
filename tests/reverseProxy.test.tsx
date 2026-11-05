@@ -5,10 +5,32 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { Switch } from '../src/components/Switch';
 import { settingsCategories, settingsMessages } from '../src/services/settingsNavigation';
 import type { ReverseProxyConfig, ReverseProxyState } from '../src/services/reverseProxy';
+import { reverseProxyPathErrors } from '../src/services/reverseProxy';
 
 const root = join(import.meta.dir, '..');
 
 describe('reverse proxy contract and settings card', () => {
+  it('keeps PEM inputs out of browser autofill', () => {
+    const source = readFileSync(join(root, 'src/pages/ConfigPanel.tsx'), 'utf8');
+    for (const field of ['cert', 'key']) {
+      const input = source.match(new RegExp(`<input\\s+id="config-input-reverse-proxy-${field}-path"[\\s\\S]*?/>`))?.[0];
+      expect(input).toBeDefined();
+      for (const attribute of [`name="rp-${field}-path-nofill"`, 'autoComplete="off"', 'autoCorrect="off"', 'autoCapitalize="off"', 'spellCheck={false}']) {
+        expect(input).toContain(attribute);
+      }
+      expect(input).toContain(`updateProxyPath('${field === 'cert' ? 'certPath' : 'keyPath'}', event.currentTarget.value)`);
+    }
+  });
+
+  it('maps missing or invalid PEM errors to inline path errors', () => {
+    const certError = 'Certificate file does not exist: /missing/cert.pem';
+    const keyError = 'Failed to read private key file: /missing/key.pem';
+    const tlsError = 'Invalid TLS certificate/key configuration: mismatch';
+    expect(reverseProxyPathErrors(certError)).toEqual({ certPath: certError });
+    expect(reverseProxyPathErrors(new Error(keyError)).keyPath).toContain(keyError);
+    expect(reverseProxyPathErrors(tlsError)).toEqual({ certPath: tlsError, keyPath: tlsError });
+    expect(reverseProxyPathErrors('Failed to bind listener on 0.0.0.0:443')).toEqual({});
+  });
   it('conforms to the frozen reverse proxy contract types', () => {
     const config: ReverseProxyConfig = {
       enabled: true,
