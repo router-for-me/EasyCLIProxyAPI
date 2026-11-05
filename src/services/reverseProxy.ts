@@ -22,7 +22,6 @@ export type ReverseProxyState = {
   requestsTotal: number;
   error: string | null;
   hardening?: ReverseProxyHardening;
-  config?: ReverseProxyConfig | null;
 };
 
 export const getReverseProxyState = async (): Promise<ReverseProxyState> => {

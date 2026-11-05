@@ -1,4 +1,4 @@
-const alwaysAvailablePages = new Set(['easy', 'home', 'versions', 'config', 'usage-records', 'agents', 'ecpa-plugins']);
+const alwaysAvailablePages = new Set(['easy', 'home', 'versions', 'config', 'usage-records', 'agents']);
 const coreRequiredPages = new Set(['routing']);
 
 export function isAlwaysAvailablePage(pageId: string) {

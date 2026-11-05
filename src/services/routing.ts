@@ -1,7 +1,6 @@
 import { isRecord, managementApi, readString, type ManagementJson } from './managementApi';
 import { providerEntries } from './providerEntries';
 import { cleanProviderGroup } from './providerGroups';
-import { resolveApiAccessRemarks, type ApiAccessRemarkQuery, type ProviderSection } from './apiAccessRemarks';
 import { getCurrentLocale, translate } from '../i18n';
 
 export const routingFamilies = ['codex', 'claude', 'gemini', 'interactions', 'vertex', 'xai', 'meta', 'openai-compatibility'] as const;
@@ -22,7 +21,6 @@ export type RoutingMember = {
   disabled: boolean; unavailable: boolean; runtimeOnly: boolean;
   kind?: 'provider' | 'credential'; keyCount?: number; prefix?: string;
   familyIndex?: number; groupIndex?: number; keyIndex?: number; credentialName?: string;
-  remark?: string;
 };
 export type RoutingBoard = {
   revision: string; settings: RoutingSettings; members: RoutingMember[]; partial: string[];
@@ -36,12 +34,7 @@ const canonical = (value: unknown): string => JSON.stringify(value, (_key, item)
   isRecord(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
 const message = (key: 'conflict' | 'invalid' | 'partial' | 'writeFailed') => translate(getCurrentLocale(), `routing.${key}`);
 
-export type RemarkResolver = (queries: ApiAccessRemarkQuery[]) => Promise<string[]>;
-
-export async function readRoutingBoard(
-  api: RoutingApi = managementApi,
-  remarkResolver: RemarkResolver = queries => resolveApiAccessRemarks({ queries }),
-): Promise<RoutingBoard> {
+export async function readRoutingBoard(api: RoutingApi = managementApi): Promise<RoutingBoard> {
   const partial: string[] = [];
   const groups: RoutingBoard['groups'] = {};
   const sources = await Promise.all(routingFamilies.map(async family => {
@@ -68,45 +61,9 @@ export async function readRoutingBoard(
       partial.push(family); return [];
     }
   }));
-  const flatProviders = sources.flat();
-  if (flatProviders.length > 0) {
-    const remarkQueries: ApiAccessRemarkQuery[] = [];
-    for (const member of flatProviders) {
-      const family = member.family;
-      const section = (family === 'openai-compatibility' ? family : `${family}-api-key`) as ProviderSection;
-      const group = groups[family]?.[member.groupIndex!];
-      const keys = group && Array.isArray(group.keys) ? group.keys.filter(isRecord) : [];
-      const record = member.keyIndex === undefined ? group : keys[member.keyIndex];
-      const singleKey = record ? readString(record, 'api-key', 'apiKey') : '';
-      const groupKeys = keys.map(k => readString(k, 'api-key', 'apiKey')).filter(Boolean);
-      const apiKeys = singleKey ? [singleKey] : groupKeys;
-      const baseUrl = (record ? readString(record, 'base-url', 'baseUrl') : '') || (group ? readString(group, 'base-url', 'baseUrl') : '');
-      const groupBaseUrl = group ? readString(group, 'base-url', 'baseUrl') : '';
-      const providerName = group ? readString(group, 'name') : '';
-
-      remarkQueries.push(
-        { providerSection: section, providerName, baseUrl, apiKeys },
-        { providerSection: section, providerName: '', baseUrl, apiKeys },
-        { providerSection: section, providerName, baseUrl: groupBaseUrl, apiKeys: groupKeys },
-        { providerSection: section, providerName: '', baseUrl: groupBaseUrl, apiKeys: groupKeys },
-      );
-    }
-
-    try {
-      const resolvedRemarks = await remarkResolver(remarkQueries);
-      flatProviders.forEach((member, index) => {
-        const memberQueries = resolvedRemarks.slice(index * 4, index * 4 + 4);
-        const remark = (memberQueries.find(r => r && r.trim()) || '').trim();
-        if (remark) member.remark = remark;
-      });
-    } catch {
-      // Graceful fallback for non-Tauri or test environments
-    }
-  }
-
   const credentials = await api.get<unknown>('/credentials');
   if (!isRecord(credentials) || !Array.isArray(credentials.files) || !credentials.files.every(isRecord)) throw new Error(message('invalid'));
-  const members = [...flatProviders, ...credentials.files.map((file, index): RoutingMember => {
+  const members = [...sources.flat(), ...credentials.files.map((file, index): RoutingMember => {
     const name = readString(file, 'name');
     return {
       key: `credential:${name || readString(file, 'auth_index') || index}`, name: name || readString(file, 'provider'),

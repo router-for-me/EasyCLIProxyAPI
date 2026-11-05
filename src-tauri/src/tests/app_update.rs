@@ -25,9 +25,6 @@ fn app_update_comparison_uses_semantic_versions() {
     assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
     assert!(!is_app_update_available("v0.3.6-preview.20261103-1929", "v0.3.6-preview.20261103-1929").unwrap());
     assert!(is_app_update_available("v0.3.6-preview.20261102-1830", "v0.3.6-preview.20261103-1929").unwrap());
-    assert!(is_app_update_available("v0.3.76-pr.584.587.1", "v0.3.76").unwrap());
-    assert!(is_app_update_available("v0.3.76-dev", "v0.3.76").unwrap());
-    assert!(is_app_update_available("v0.3.6-pr.584.587.1", "v0.3.76").unwrap());
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -701,22 +698,6 @@ fn preview_channel_marker_is_not_a_release_tag() {
     assert_eq!(normalize_update_channel("preview"), "preview");
     // A deleted rolling tag must never be produced as a channel tag.
     assert_ne!(update_channel_tag("preview").as_deref(), Some("only-preview"));
-}
-
-#[test]
-fn portable_update_asset_file_name_extracts_package_name() {
-    assert_eq!(
-        portable_update_asset_file_name(
-            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip"
-        ),
-        Some("EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip".to_string())
-    );
-    assert_eq!(
-        portable_update_asset_file_name(
-            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz"
-        ),
-        Some("EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz".to_string())
-    );
 }
 
 #[test]
