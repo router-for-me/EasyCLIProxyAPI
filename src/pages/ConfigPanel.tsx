@@ -81,6 +81,7 @@ import { templateMessages, templateText } from '../i18n/templateConfig';
 import {
   settingsCategories, settingsTemplateGroups,
   allSettingsTemplateGroups, settingsMessages, takeRequestedSettingField, type SettingsCategory,
+  getLanIpv4, resolveReverseProxySaveConfig,
 } from '../services/settingsNavigation';
 import { Select } from '../components/Select';
 
@@ -302,12 +303,17 @@ export function ConfigPanelPage() {
   const [proxyFileSelecting, setProxyFileSelecting] = useState<'cert' | 'key' | null>(null);
   const proxyFileSelectingRef = useRef(false);
   const [proxyDraft, setProxyDraft] = useState<ReverseProxyConfig>(DEFAULT_REVERSE_PROXY_DRAFT);
+  const [proxyLanIp, setProxyLanIp] = useState<string | null>(null);
 
   const loadReverseProxy = async () => {
     setProxyInitialLoading(true);
     try {
-      const state = await getReverseProxyState();
+      const [state, lanIp] = await Promise.all([
+        getReverseProxyState(),
+        getLanIpv4().catch(() => null),
+      ]);
       setProxyState(state);
+      setProxyLanIp(lanIp);
       if (state.config) {
         setProxyDraft({ ...DEFAULT_REVERSE_PROXY_DRAFT, ...state.config });
       }
@@ -322,13 +328,13 @@ export function ConfigPanelPage() {
 
   const validateReverseProxyDraft = (draft: ReverseProxyConfig): ReverseProxyFieldError => {
     const errors: ReverseProxyFieldError = {};
-    if (!isValidPort(draft.listenPort)) {
-      errors.listenPort = t('config.error.portRange');
-    }
-    if (!isValidPort(draft.targetPort)) {
-      errors.targetPort = t('config.error.portRange');
-    }
     if (draft.enabled) {
+      if (!isValidPort(draft.listenPort)) {
+        errors.listenPort = t('config.error.portRange');
+      }
+      if (!isValidPort(draft.targetPort)) {
+        errors.targetPort = t('config.error.portRange');
+      }
       if (!draft.certPath.trim()) errors.certPath = t('config.error.reverseProxyPathsRequired');
       if (!draft.keyPath.trim()) errors.keyPath = t('config.error.reverseProxyPathsRequired');
     }
@@ -372,16 +378,17 @@ export function ConfigPanelPage() {
       keyPath: proxyDraft.keyPath.trim(),
     };
     proxyFeedback.clearNotice();
-    const fieldErrors = validateReverseProxyDraft(normalizedDraft);
+    const saveConfig = resolveReverseProxySaveConfig(normalizedDraft, proxyState?.config);
+    const fieldErrors = validateReverseProxyDraft(saveConfig);
     setProxyFieldErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) {
       proxyFeedback.showNotice(Object.values(fieldErrors)[0], 'error');
       return;
     }
-    setProxyDraft(normalizedDraft);
+    setProxyDraft(saveConfig);
     setProxyAction('save');
     try {
-      const state = await applyReverseProxyConfig(normalizedDraft);
+      const state = await applyReverseProxyConfig(saveConfig);
       setProxyState(state);
       if (state.config) setProxyDraft(state.config);
       setBackendNotReady(false);
@@ -1929,15 +1936,19 @@ export function ConfigPanelPage() {
               </div>
 
               <p className="config-diagnostics-intro">
-                {st('reverseProxyEnableHint')}
+                {st('reverseProxyEnableHint')} {st('reverseProxySaveApplyHint')}
               </p>
 
               <div className="config-network-label">
                 <strong>{st('reverseProxyRouteTitle')}</strong>
               </div>
+              <p className="config-diagnostics-intro">
+                {st('reverseProxyRouteClientHint')}
+              </p>
 
               <div className={`config-network-grid config-network-route${proxyDraft.enabled ? '' : ' is-muted'}`}>
                 <div className="config-network-field">
+                  <span className="config-field-label"><span>{st('reverseProxyRoutePreview')}</span></span>
                   <span>
                     <code>{`0.0.0.0:${proxyDraft.listenPort || 443}(HTTPS)`}</code>
                     {' '}
@@ -1973,6 +1984,21 @@ export function ConfigPanelPage() {
                   <span id="config-reverse-proxy-listen-port-error" className="config-field-error" role="alert">{proxyFieldErrors.listenPort || ' '}</span>
                 </div>
               </div>
+
+              {proxyState?.running && proxyState.listening ? (
+                <div className="config-network-grid" aria-label={st('reverseProxyRouteTitle')}>
+                  <div className="config-network-field">
+                    <span className="config-field-label"><span>{st('reverseProxyRoutePublic')}</span></span>
+                    <span>
+                      <code>{`https://${proxyLanIp ?? `<${st('reverseProxyRouteHostPlaceholder')}>`}:${proxyState.listening.split(':').pop() ?? ''}`}</code>
+                    </span>
+                  </div>
+                  <div className="config-network-field">
+                    <span className="config-field-label"><span>{st('reverseProxyRouteLocal')}</span></span>
+                    <span><code>{proxyState.target ?? '—'}</code></span>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="config-network-label">
                 <strong>{st('reverseProxyCertTitle')}</strong>

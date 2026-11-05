@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Switch } from '../src/components/Switch';
-import { settingsCategories, settingsMessages } from '../src/services/settingsNavigation';
+import { resolveReverseProxySaveConfig, settingsCategories, settingsMessages } from '../src/services/settingsNavigation';
 import type { ReverseProxyConfig, ReverseProxyState } from '../src/services/reverseProxy';
 import { reverseProxyPathErrors } from '../src/services/reverseProxy';
 
@@ -108,6 +108,10 @@ describe('reverse proxy contract and settings card', () => {
       'reverseProxyStatusRequests',
       'reverseProxyBackendNotReady',
       'reverseProxySaved',
+      'reverseProxyRoutePreview',
+      'reverseProxyRouteClientHint',
+      'reverseProxyRouteHostPlaceholder',
+      'reverseProxySaveApplyHint',
     ];
     for (const key of requiredKeys) {
       expect(settingsMessages[key]).toBeDefined();
@@ -207,8 +211,66 @@ describe('reverse proxy contract and settings card', () => {
     expect(serviceSrc).toContain('config?: ReverseProxyConfig | null');
 
     const configPanelSrc = readFileSync(join(root, 'src/pages/ConfigPanel.tsx'), 'utf8');
-    expect(configPanelSrc).toContain('applyReverseProxyConfig(normalizedDraft)');
+    expect(configPanelSrc).toContain('applyReverseProxyConfig(saveConfig)');
     expect(configPanelSrc).toContain('setProxyDraft(state.config)');
     expect(configPanelSrc).toContain('setProxyDraft({ ...DEFAULT_REVERSE_PROXY_DRAFT, ...state.config })');
+  });
+
+  it('lets a disabled save with an invalid draft reach the backend using the last saved config', () => {
+    const saved: ReverseProxyConfig = {
+      enabled: true,
+      listenHost: '0.0.0.0',
+      listenPort: 443,
+      targetPort: 8317,
+      certPath: '/saved/cert.pem',
+      keyPath: '/saved/key.pem',
+    };
+    // The user cleared the listen port (draft port 0) and emptied the PEM paths,
+    // then toggled the switch off: the apply payload must carry enabled=false with
+    // the last saved values, discarding the invalid draft fields entirely.
+    const draft: ReverseProxyConfig = {
+      enabled: false,
+      listenHost: '0.0.0.0',
+      listenPort: 0,
+      targetPort: 0,
+      certPath: '',
+      keyPath: '',
+    };
+    const payload = resolveReverseProxySaveConfig(draft, saved);
+    expect(payload).toEqual({ ...saved, enabled: false });
+    expect(payload.listenPort).toBe(443);
+    expect(payload.certPath).toBe('/saved/cert.pem');
+    // Without a saved config the draft still goes through untouched except enabled=false.
+    expect(resolveReverseProxySaveConfig(draft, null)).toEqual(draft);
+    // Enabled drafts keep strict validation semantics and pass through unchanged.
+    expect(resolveReverseProxySaveConfig(saved, null)).toEqual(saved);
+
+    const configPanelSrc = readFileSync(join(root, 'src/pages/ConfigPanel.tsx'), 'utf8');
+    // Save resolves the disabled payload from the last saved config before applying.
+    expect(configPanelSrc).toContain('resolveReverseProxySaveConfig(normalizedDraft, proxyState?.config)');
+    expect(configPanelSrc).toContain('validateReverseProxyDraft(saveConfig)');
+    // Port validation only runs while the draft is enabled so clearing a port
+    // cannot block toggling the listener off.
+    const validator = configPanelSrc.match(/const validateReverseProxyDraft = \(draft: ReverseProxyConfig\): ReverseProxyFieldError => \{([\s\S]*?)return errors;/)?.[1];
+    expect(validator).toBeDefined();
+    expect(validator!.indexOf('if (draft.enabled)')).toBeGreaterThanOrEqual(0);
+    expect(validator!.indexOf('isValidPort(draft.listenPort)')).toBeGreaterThan(validator!.indexOf('if (draft.enabled)'));
+  });
+
+  it('labels the draft route as a listen-bind preview and only advertises real client addresses', () => {
+    const configPanelSrc = readFileSync(join(root, 'src/pages/ConfigPanel.tsx'), 'utf8');
+    // Draft 0.0.0.0:port is explicitly a bind preview, not a client address.
+    expect(configPanelSrc).toContain("st('reverseProxyRoutePreview')");
+    expect(configPanelSrc).toContain("st('reverseProxyRouteClientHint')");
+    expect(configPanelSrc).toContain("st('reverseProxySaveApplyHint')");
+    // Running address uses the detected LAN IP and the actual saved listen port.
+    expect(configPanelSrc).toContain('https://${proxyLanIp');
+    expect(configPanelSrc).toContain("st('reverseProxyRouteHostPlaceholder')");
+    expect(configPanelSrc).toContain("st('reverseProxyRoutePublic')");
+    expect(configPanelSrc).toContain("st('reverseProxyRouteLocal')");
+    expect(configPanelSrc).toContain('proxyState.listening');
+    // Wildcard or placeholder hostnames are never shown as a client address.
+    expect(configPanelSrc).not.toContain('tauri.localhost');
+    expect(configPanelSrc).not.toMatch(/https?:\/\/0\.0\.0\.0/);
   });
 });
