@@ -104,13 +104,28 @@
   gap: 6px;
   grid-column: 1;
   min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 .quota-page .quota-note-editor input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 26px;
-  padding: 0 8px;
-  font-size: 12px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+.quota-page .quota-note-editor input:focus-visible {
+  outline: none;
+}
+.quota-page .quota-note-editor:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus-ring);
 }
 .quota-page .quota-account-icon { width: 22px; height: 22px; flex: 0 0 auto; }
 .quota-page .real-quota-card-header strong { color: var(--color-text-primary); font-size: var(--font-size-body); }
