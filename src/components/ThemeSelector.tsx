@@ -65,7 +65,6 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
   const resolvedId = useResolvedThemeId();
   const custom = useCustomThemeStatus();
   useAnimeBackdropState();
-  const animeBackdrop = getAnimeBackdropInfo();
   const [openFailed, setOpenFailed] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -79,6 +78,8 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
   const slot = (appearance: ThemeAppearance) =>
     fixed?.appearance === appearance ? fixed.id : registry.resolveSystem(appearance, systemThemes).id;
   const current = registry.get(resolvedId) ?? registry.get('light')!;
+  const activeTheme = mode === 'system' ? current : (fixed ?? current);
+  const animeBackdrop = getAnimeBackdropInfo(activeTheme.id);
   const themeName = (theme: ThemeDefinition) => theme.name ? localizeThemeLabel(theme.name, locale) : t(theme.nameKey!);
   const themeDescription = (theme: ThemeDefinition) => theme.description ? localizeThemeLabel(theme.description, locale)
     : theme.descriptionKey ? t(theme.descriptionKey) : '';
@@ -142,18 +143,12 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
         if (!ctx) { setUploadFailed(true); return; }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const converted = canvas.toDataURL('image/webp', 0.85);
-        if (setCustomAnimeBackdropImage(converted)) {
-          const animeTheme = registry.get('anime-light');
-          if (animeTheme) chooseTheme(animeTheme);
-        } else {
+        if (!setCustomAnimeBackdropImage(converted, activeTheme.id)) {
           setUploadFailed(true);
         }
       };
       img.onerror = () => {
-        if (setCustomAnimeBackdropImage(result)) {
-          const animeTheme = registry.get('anime-light');
-          if (animeTheme) chooseTheme(animeTheme);
-        } else {
+        if (!setCustomAnimeBackdropImage(result, activeTheme.id)) {
           setUploadFailed(true);
         }
       };
@@ -162,12 +157,19 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
     reader.onerror = () => setUploadFailed(true);
     reader.readAsDataURL(file);
   };
-  const animePresets: { id: AnimeWallpaperPreset; label: string }[] = [
-    { id: 'starlight', label: t('app.theme.anime.preset.starlight') },
-    { id: 'sakura-sky', label: t('app.theme.anime.preset.sakuraSky') },
-    ...(animeBackdrop.hasCustomImage ? [{ id: 'custom' as const, label: t('app.theme.anime.preset.custom') }] : []),
-    { id: 'none', label: t('app.theme.anime.preset.none') },
-  ];
+  const animePresets: { id: AnimeWallpaperPreset; label: string }[] = activeTheme.id === 'anime-light'
+    ? [
+        { id: 'starlight', label: t('app.theme.anime.preset.starlight') },
+        { id: 'sakura-sky', label: t('app.theme.anime.preset.sakuraSky') },
+        ...(animeBackdrop.hasCustomImage ? [{ id: 'custom' as const, label: t('app.theme.anime.preset.custom') }] : []),
+        { id: 'none', label: t('app.theme.anime.preset.none') },
+      ]
+    : [
+        { id: 'none', label: t('app.theme.anime.preset.none') },
+        { id: 'starlight', label: t('app.theme.anime.preset.starlight') },
+        { id: 'sakura-sky', label: t('app.theme.anime.preset.sakuraSky') },
+        ...(animeBackdrop.hasCustomImage ? [{ id: 'custom' as const, label: t('app.theme.anime.preset.custom') }] : []),
+      ];
   const modes: { id: Mode; label: string; Icon: typeof Sun }[] = [
     { id: 'light', label: t('app.theme.light'), Icon: Sun },
     { id: 'dark', label: t('app.theme.dark'), Icon: Moon },
@@ -193,30 +195,34 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
             onClick={() => { search.current?.focus(); retryThemeSave(); }}>{t('app.theme.retrySave')}</button> : undefined}>
           {issueText}
         </Notice> : null}
-        <div className="theme-selector-preferences">
-          <SegmentedControl className="theme-selector-modes" aria-label={t('app.theme.label')} value={mode} onChange={chooseMode}
-            buttonClassName="theme-selector-mode" selectedClassName="selected"
-            items={modes.map(({ id, label: modeLabel, Icon }) => ({ value: id, label: <><Icon size={14} aria-hidden="true" />{modeLabel}</> }))} />
+        <div className="theme-selector-toolbar">
+          <div className="theme-selector-preferences">
+            <SegmentedControl className="theme-selector-modes" aria-label={t('app.theme.label')} value={mode} onChange={chooseMode}
+              buttonClassName="theme-selector-mode" selectedClassName="selected"
+              items={modes.map(({ id, label: modeLabel, Icon }) => ({ value: id, label: <><Icon size={14} aria-hidden="true" />{modeLabel}</> }))} />
+          </div>
+          <div className="theme-selector-filters">
+            <label className="theme-selector-search search-control" data-size="default">
+              <Search size={15} aria-hidden="true" />
+              <input ref={search} type="search" className="config-dialog-text-input"
+                aria-label={t('app.theme.catalog.search')} placeholder={t('app.theme.catalog.searchHint')}
+                value={query} onChange={event => setQuery(event.target.value)} />
+            </label>
+            <Select className="config-dialog-text-input" aria-label={t('app.theme.catalog.source')} value={source}
+              onChange={event => setSource(event.target.value as Source)}>
+              <option value="all">{t('app.theme.catalog.all')}</option>
+              <option value="builtin">{t('app.theme.catalog.builtin')}</option>
+              <option value="custom">{t('app.theme.catalog.custom')}</option>
+            </Select>
+          </div>
+        </div>
+        <div className="theme-selector-status-bar">
           <p className="theme-selector-current">{t('app.theme.current', { name })}</p>
           {mode === 'system' ? <p className="theme-selector-system-hint">{t('app.theme.catalog.systemHint')}</p> : null}
+          <p className="theme-selector-count" aria-live="polite" aria-atomic="true">
+            {t('app.theme.catalog.count', { count: matches.length, total: registry.themes.length })}
+          </p>
         </div>
-        <div className="theme-selector-filters">
-          <label className="theme-selector-search search-control" data-size="default">
-            <Search size={16} aria-hidden="true" />
-            <input ref={search} type="search" className="config-dialog-text-input"
-              aria-label={t('app.theme.catalog.search')} placeholder={t('app.theme.catalog.searchHint')}
-              value={query} onChange={event => setQuery(event.target.value)} />
-          </label>
-          <Select className="config-dialog-text-input" aria-label={t('app.theme.catalog.source')} value={source}
-            onChange={event => setSource(event.target.value as Source)}>
-            <option value="all">{t('app.theme.catalog.all')}</option>
-            <option value="builtin">{t('app.theme.catalog.builtin')}</option>
-            <option value="custom">{t('app.theme.catalog.custom')}</option>
-          </Select>
-        </div>
-        <p className="theme-selector-count" aria-live="polite" aria-atomic="true">
-          {t('app.theme.catalog.count', { count: matches.length, total: registry.themes.length })}
-        </p>
         <div className="theme-selector-results">
           {customProblems.length ? <details className="theme-selector-problems">
             <summary>{t('app.theme.catalog.problems', { count: customProblems.length })}</summary>
@@ -238,91 +244,94 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
                   onClick={() => chooseTheme(theme)}>
                   <ThemeThumbnail theme={theme} />
                   <span className="theme-selector-name">{themeName(theme)}</span>
+                  {current.id === theme.id ? <span className="theme-selector-active">{t('app.theme.catalog.current')}</span> : null}
                   <span className="theme-selector-description">{themeDescription(theme)}</span>
                   <span className="theme-selector-id">{theme.id}</span>
                   <span className="theme-selector-meta">
                     <span>{t(builtinIds.has(theme.id) ? 'app.theme.catalog.builtin' : 'app.theme.catalog.custom')}</span>
-                    {current.id === theme.id ? <span className="theme-selector-active">{t('app.theme.catalog.current')}</span> : null}
                   </span>
                   {chosen === theme.id ? <Check className="theme-selector-check" size={16} aria-hidden="true" /> : null}
                 </button>)}
               </div>
-              {appearance === 'light' && (chosen === 'anime-light' || current.id === 'anime-light') ? (
-                <div className="theme-selector-anime-backdrop surface-section">
-                  <div className="theme-selector-anime-header">
-                    <strong>{t('app.theme.anime.backdropTitle')}</strong>
-                    <div className="theme-selector-anime-actions">
-                      <input
-                        ref={backdropInput}
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp,image/avif"
-                        hidden
-                        onChange={handleBackdropUpload}
-                      />
-                      <button
-                        type="button"
-                        className="secondary-button compact-button"
-                        data-action="upload-anime-backdrop"
-                        onClick={() => backdropInput.current?.click()}
-                      >
-                        <ImagePlus size={14} aria-hidden="true" />
-                        {t('app.theme.anime.upload')}
-                      </button>
-                      {animeBackdrop.hasCustomImage ? (
-                        <button
-                          type="button"
-                          className="secondary-button compact-button"
-                          data-action="clear-anime-backdrop"
-                          onClick={() => {
-                            setUploadFailed(!setCustomAnimeBackdropImage(null));
-                          }}
-                        >
-                          <Trash2 size={14} aria-hidden="true" />
-                          {t('app.theme.anime.clearCustom')}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <SegmentedControl
-                    className="theme-selector-modes theme-selector-anime-presets"
-                    aria-label={t('app.theme.anime.backdropTitle')}
-                    value={animeBackdrop.preset}
-                    onChange={(preset) => {
-                      setUploadFailed(!setAnimeBackdropPreset(preset));
-                    }}
-                    buttonClassName="theme-selector-mode"
-                    selectedClassName="selected"
-                    items={animePresets.map(({ id, label: presetLabel }) => ({ value: id, label: presetLabel }))}
-                  />
-                  {uploadFailed ? (
-                    <Notice tone="error" variant="text">{t('app.theme.anime.uploadFailed')}</Notice>
-                  ) : null}
-                </div>
-              ) : null}
             </div>;
           }) : <EmptyState variant="compact" icon={<Search size={24} />} title={t('app.theme.catalog.empty')}
             action={<button type="button" className="secondary-button compact-button" onClick={resetFilters}>
               {t('app.theme.catalog.reset')}
             </button>} />}
         </div>
+        <div className="theme-selector-anime-backdrop surface-section">
+          <div className="theme-selector-anime-row">
+            <div className="theme-selector-anime-header">
+              <strong>{t('app.theme.anime.backdropTitle')}</strong>
+              <span className="theme-selector-anime-target">{themeName(activeTheme)}</span>
+            </div>
+            <SegmentedControl
+              className="theme-selector-modes theme-selector-anime-presets"
+              aria-label={t('app.theme.anime.backdropTitle')}
+              value={animeBackdrop.preset}
+              onChange={(preset) => {
+                setUploadFailed(!setAnimeBackdropPreset(preset, activeTheme.id));
+              }}
+              buttonClassName="theme-selector-mode"
+              selectedClassName="selected"
+              items={animePresets.map(({ id, label: presetLabel }) => ({ value: id, label: presetLabel }))}
+            />
+            <div className="theme-selector-anime-actions">
+              <input
+                ref={backdropInput}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/avif"
+                hidden
+                onChange={handleBackdropUpload}
+              />
+              <button
+                type="button"
+                className="secondary-button compact-button"
+                data-action="upload-anime-backdrop"
+                onClick={() => backdropInput.current?.click()}
+              >
+                <ImagePlus size={14} aria-hidden="true" />
+                {t('app.theme.anime.upload')}
+              </button>
+              {animeBackdrop.hasCustomImage ? (
+                <button
+                  type="button"
+                  className="secondary-button compact-button"
+                  data-action="clear-anime-backdrop"
+                  onClick={() => {
+                    setUploadFailed(!setCustomAnimeBackdropImage(null, activeTheme.id));
+                  }}
+                >
+                  <Trash2 size={14} aria-hidden="true" />
+                  {t('app.theme.anime.clearCustom')}
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {uploadFailed ? (
+            <Notice tone="error" variant="text">{t('app.theme.anime.uploadFailed')}</Notice>
+          ) : null}
+        </div>
         <div className="theme-selector-footer">
           {customText ? <Notice className="theme-selector-custom-notice" tone={custom.failed || openFailed ? 'error' : 'warn'} variant="text">
             {customText}
           </Notice> : null}
-          <p className="theme-selector-hint">{t('app.theme.custom.folderHint')}</p>
-          <div className="theme-selector-actions">
-            <button type="button" className="secondary-button compact-button" data-action="theme-diy-guide"
-              onClick={() => setGuideOpen(true)}>
-              <Palette size={15} aria-hidden="true" />{t('app.theme.diy.title')}
-            </button>
-            <div className="theme-selector-file-actions">
-            <button type="button" className="secondary-button compact-button" data-action="open-themes" onClick={openDirectory}>
-              <FolderOpen size={15} aria-hidden="true" />{t('app.theme.custom.openFolder')}
-            </button>
-            <button type="button" className="secondary-button compact-button" data-action="reload-themes" disabled={custom.loading}
-              onClick={() => { setOpenFailed(false); void reloadCustomThemes(); }}>
-              <RefreshCw size={15} aria-hidden="true" />{t('app.theme.custom.reload')}
-            </button>
+          <div className="theme-selector-footer-row">
+            <p className="theme-selector-hint">{t('app.theme.custom.folderHint')}</p>
+            <div className="theme-selector-actions">
+              <button type="button" className="secondary-button compact-button" data-action="theme-diy-guide"
+                onClick={() => setGuideOpen(true)}>
+                <Palette size={15} aria-hidden="true" />{t('app.theme.diy.title')}
+              </button>
+              <div className="theme-selector-file-actions">
+                <button type="button" className="secondary-button compact-button" data-action="open-themes" onClick={openDirectory}>
+                  <FolderOpen size={15} aria-hidden="true" />{t('app.theme.custom.openFolder')}
+                </button>
+                <button type="button" className="secondary-button compact-button" data-action="reload-themes" disabled={custom.loading}
+                  onClick={() => { setOpenFailed(false); void reloadCustomThemes(); }}>
+                  <RefreshCw size={15} aria-hidden="true" />{t('app.theme.custom.reload')}
+                </button>
+              </div>
             </div>
           </div>
         </div>
