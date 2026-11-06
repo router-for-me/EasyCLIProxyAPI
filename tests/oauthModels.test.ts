@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  mergeOAuthModelDefinitions,
   modelMatchesRule,
   normalizeOAuthExcludedRules,
   oauthExcludedRulesFromPayload,
@@ -58,5 +59,21 @@ describe('OAuth model exclusion rules', () => {
     expect(modelMatchesRule('gpt-5x4', 'gpt-5.4')).toBe(false);
     expect(openOAuthModelNames([...models, { id: 'future-model' }], ['*']).size).toBe(0);
     expect(openOAuthModelNames(models, []).size).toBe(models.length);
+  });
+  it("merges credential models with provider model definitions deduplicating case-insensitively", () => {
+    const credModels = [
+      { id: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash (Dynamic)" },
+      { id: "gemini-3.1-flash-image", displayName: "Nano Banana 2" },
+    ];
+    const providerDefs = [
+      { id: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash (Static)" },
+      { id: "imagen-3.0-generate-002", displayName: "Imagen 3" },
+    ];
+    const merged = mergeOAuthModelDefinitions(credModels, providerDefs);
+    expect(merged).toEqual([
+      { id: "gemini-3.1-flash-image", displayName: "Nano Banana 2" },
+      { id: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash (Dynamic)" },
+      { id: "imagen-3.0-generate-002", displayName: "Imagen 3" },
+    ]);
   });
 });
