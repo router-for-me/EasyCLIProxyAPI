@@ -389,13 +389,12 @@ export function QuotaCard({
           const percent = row.remainingPercent !== null && Number.isFinite(row.remainingPercent)
             ? Math.max(0, Math.min(100, row.remainingPercent)) : null;
           return <div className="real-quota-row" key={index} title={group.label ? row.detail : undefined}>
-            <div className="quota-window-summary"><span title={glance ? row.windowLabel || row.label : row.help}>{row.windowLabel || row.label}</span><div className="quota-window-status">
+            <div className="quota-window-summary"><span>{row.windowLabel || row.label}</span><div className="quota-window-status">
               <strong>{row.quotaAvailable ? t('quota.service.antigravity.available') : percent === null ? '—' : glance ? `${Math.round(percent)}%` : t('quota.remaining', { percent: Math.round(percent) })}</strong>
               {reset ? <small title={formatQuotaReset(row.resetAtMs, row.reset, locale, now)}>{reset}</small> : null}
             </div></div>
             {percent !== null ? <div className="real-quota-track" role="progressbar" aria-label={row.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: percent + '%', background: requestRateColor(percent / 100) }} /></div> : null}
             {!group.label && row.detail ? <small>{row.detail}</small> : null}
-            {row.help ? <details><summary>{t('quota.service.cloud.how')}</summary><small>{row.help}</small></details> : null}
           </div>;
         })}
       </section>)}</div> : null}

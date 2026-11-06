@@ -46,14 +46,13 @@ export function AuthFileQuotaPanel({ quota, file, disabled, onRefresh, onReset, 
       : reset;
     const tone = percent === null ? 'unknown' : percent <= 10 ? 'low' : percent <= 30 ? 'medium' : 'high';
     return <div className={`credential-quota-row ${tone}`} style={percent === null ? undefined : { '--quota-color': requestRateColor(percent / 100) } as CSSProperties} key={`${row.label}-${index}`}>
-      <div className="credential-quota-label"><span title={row.help || row.label}>{row.label}</span><strong>{row.quotaAvailable ? t('quota.service.antigravity.available') : percent === null ? '—' : `${Math.round(percent)}%`}</strong></div>
+      <div className="credential-quota-label"><span title={row.label}>{row.label}</span><strong>{row.quotaAvailable ? t('quota.service.antigravity.available') : percent === null ? '—' : `${Math.round(percent)}%`}</strong></div>
       <div className="credential-quota-track" role={percent === null ? undefined : 'progressbar'} aria-label={`${row.label} · ${t('authFiles.settings.quotaRemaining')}`}
         aria-valuemin={percent === null ? undefined : 0} aria-valuemax={percent === null ? undefined : 100} aria-valuenow={percent ?? undefined}>
         {percent === null ? <span className="sr-only">{t('authFiles.settings.quotaUnknown')}</span> : <i style={{ width: `${percent}%` }} />}
       </div>
       {reset ? <small className={dense ? 'credential-quota-reset-time' : undefined} title={dense ? reset : undefined}>{resetText}</small> : null}
       {row.detail ? <small className={dense ? 'credential-quota-row-detail' : undefined} title={dense ? row.detail : undefined}>{row.detail}</small> : null}
-      {row.help ? <details><summary>{t('quota.service.cloud.how')}</summary><small>{row.help}</small></details> : null}
     </div>;
   };
   return (

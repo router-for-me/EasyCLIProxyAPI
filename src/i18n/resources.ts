@@ -20,8 +20,6 @@ export const zhTW: Record<MessageKey, string> = {
   'quota.service.cloud.used': '已用 {value}',
   'quota.service.cloud.limit': '上限 {value}',
   'quota.service.cloud.remaining': '剩餘 {value}',
-  'quota.service.cloud.how': '如何使用額度？',
-  'quota.service.cloud.help': '此處僅唯讀顯示 OAuth 雲端工作階段餘額；顯示餘額並不證明一般 Messages API 請求可使用它。訂閱額度與已啟用的額外用量遵循 OAuth 帳號的上游規則。如需使用 Anthropic Console API 額度，請用 Console 金鑰設定 Claude API 金鑰供應商，再透過代理選擇其模型。這些餘額不能互換。',
   'agents.customArguments.label': '自訂啟動參數（選填）',
   'agents.customArguments.summary': '以空格分隔參數，含空格的值請加引號。不執行 Shell 命令，草稿僅保留至本次工作階段結束。',
   'agents.customArguments.details': '引號與跳脫規則',

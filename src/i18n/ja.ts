@@ -698,8 +698,6 @@ export const jaOverrides = {
   'quota.service.cloud.used': '使用済み {value}',
   'quota.service.cloud.limit': '上限 {value}',
   'quota.service.cloud.remaining': '残高 {value}',
-  'quota.service.cloud.how': 'クレジットの使い方',
-  'quota.service.cloud.help': 'OAuth クラウドセッション残高は読み取り専用です。残高の表示だけでは通常の Messages API で利用できると確認できません。サブスクリプション枠と有効な追加使用量は OAuth アカウントの上流ルールに従います。Anthropic Console API クレジットは、Console キーを Claude API キープロバイダーに設定し、プロキシ経由でそのモデルを選択して利用します。各残高は相互に交換できません。',
   'quota.service.error.resetCreditsInvalid': 'リセット回数 API のデータ形式を認識できません',
   'quota.confirm.title': '「{name}」の Codex クォータをリセットしますか？',
   'quota.confirm.cost': 'この操作では手動リセットを 1 回消費します。',

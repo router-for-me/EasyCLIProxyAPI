@@ -666,8 +666,6 @@ export const zhCN: Record<string, string> = {
   'quota.service.cloud.used': '已用 {value}',
   'quota.service.cloud.limit': '上限 {value}',
   'quota.service.cloud.remaining': '剩余 {value}',
-  'quota.service.cloud.how': '如何使用额度？',
-  'quota.service.cloud.help': '此处仅只读展示 OAuth 云端会话余额；显示余额并不证明普通 Messages API 请求可使用它。订阅额度与已启用的额外用量遵循 OAuth 账号的上游规则。如需使用 Anthropic Console API 额度，请用 Console 密钥配置 Claude API 密钥提供商，再通过代理选择其模型。这些余额不能互换。',
   'quota.service.error.resetCreditsInvalid': '重置次数接口返回了无法识别的数据',
   'quota.confirm.title': '确认重置“{name}”的 Codex 额度吗？',
   'quota.confirm.cost': '本操作将消耗 1 次主动重置机会。',
