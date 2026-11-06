@@ -91,7 +91,7 @@ const CATALOG = [
   {
     id: 'aistudio2api', name: 'AIStudio2API', description: 'Expose Google AI Studio models through an OpenAI-compatible endpoint in this browser demo.',
     source_id: 'ecpa', source_name: 'ECPA Featured', source_url: ECPA_SOURCE,
-    repository: 'jianli9158/cpa-plugin-aistudio2api', author: 'ECPA', version: '1.1.5',
+    repository: 'jianli9158/cpa-plugin-aistudio2api', author: 'jianli9158', version: '1.1.5',
     install_type: 'github-release', auth_required: false, auth_configured: false,
     platforms: [{ goos: 'windows', goarch: 'amd64' }, { goos: 'linux', goarch: 'amd64' }],
     license: 'MIT', tags: ['api', 'gemini'], logo: '', homepage: '', config_fields: [], menus: [],
