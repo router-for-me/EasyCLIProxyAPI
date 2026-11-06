@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import bundledRegistry from '../src/data/ecpaRegistry.json';
-import { buildEcpaStoreMap, ECPA_REGISTRY_URL, getBundledEcpaRegistry, isInstallableEcpaEntry, parseEcpaRegistry, resolveEcpaStoreEntry } from '../src/services/ecpaPlugins';
-import { normalizePluginStore } from '../src/services/plugins';
+import { buildEcpaStoreMap, ECPA_REGISTRY_URL, getBundledEcpaRegistry, getEcpaPluginDescription, isInstallableEcpaEntry, parseEcpaRegistry, resolveEcpaStoreEntry } from '../src/services/ecpaPlugins';
+import { getPluginStoreLocalizedDescription, normalizePluginStore } from '../src/services/plugins';
 
 describe('ecpaPlugins parser', () => {
   it('parses the bundled registry, rejects schema_version 2, and drops entries missing id', () => {
@@ -43,6 +43,22 @@ describe('ecpaPlugins parser', () => {
     expect(isInstallableEcpaEntry(entry)).toBe(true);
     expect(isInstallableEcpaEntry({ ...entry, repository: '  ' })).toBe(false);
     expect(isInstallableEcpaEntry({ ...entry, id: '' })).toBe(false);
+  });
+
+  it('picks the localized description and falls back to the top-level one', () => {
+    const parsed = parseEcpaRegistry({
+      schema_version: 1,
+      plugins: [{ id: 'demo', name: 'Demo', description: 'English', locales: { 'zh-CN': { description: ' 中文 ' }, empty: { description: '   ' } } }],
+    });
+    const entry = parsed!.plugins[0];
+    expect(entry.locales).toEqual({ 'zh-CN': { description: '中文' } });
+    expect(getEcpaPluginDescription(entry, 'zh-CN')).toBe('中文');
+    expect(getEcpaPluginDescription(entry, 'en')).toBe('English');
+    expect(getEcpaPluginDescription(entry, 'zh-TW')).toBe('中文');
+    expect(getEcpaPluginDescription(entry, 'ja')).toBe('English');
+    const store = normalizePluginStore({ plugins: [{ id: 'demo', description: 'English', locales: { 'zh-CN': { description: '中文' } } }] }).plugins[0];
+    expect(getPluginStoreLocalizedDescription(store, 'zh-CN')).toBe('中文');
+    expect(getPluginStoreLocalizedDescription({ ...store, locales: {} }, 'zh-CN')).toBe('English');
   });
 
   it('resolves the featured source by id without borrowing another source identity', () => {

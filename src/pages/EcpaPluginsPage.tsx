@@ -10,6 +10,7 @@ import {
   ECPA_REGISTRY_URL,
   fetchEcpaRegistry,
   getBundledEcpaRegistry,
+  getEcpaPluginDescription,
   isInstallableEcpaEntry,
   resolveEcpaStoreEntry,
   readEcpaGitHubToken,
@@ -191,12 +192,12 @@ export function EcpaPluginsPage() {
         return false;
       }
       if (!query) return true;
-      const haystack = [plugin.id, plugin.name, plugin.description]
+      const haystack = [plugin.id, plugin.name, plugin.description, getEcpaPluginDescription(plugin, locale)]
         .join(' ')
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [plugins, search, selectedTag]);
+  }, [plugins, search, selectedTag, locale]);
 
   const handleClearFilters = () => {
     setSearch('');
@@ -335,7 +336,7 @@ export function EcpaPluginsPage() {
       {filteredPlugins.length > 0 ? (
         <div className="ecpa-plugin-grid">
           {filteredPlugins.map((plugin) => {
-            const description = plugin.description;
+            const description = getEcpaPluginDescription(plugin, locale);
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
             const entry = resolveEcpaStoreEntry(storeEntries, plugin.id);
