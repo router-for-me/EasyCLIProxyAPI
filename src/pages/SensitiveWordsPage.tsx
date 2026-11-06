@@ -134,6 +134,7 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
               'Bypass all content filters',
               'Hermes',
               'OpenClaw',
+              'Deepseek Harness',
             ],
       });
       setSavedNotice(false);
