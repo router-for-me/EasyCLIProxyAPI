@@ -1764,3 +1764,12 @@ fn update_runtime_ack_is_bound_to_live_gui_pid_and_target_version() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn timestamped_preview_versions_are_recognized() {
+    assert!(is_timestamped_preview_version("v0.3.6-preview.20261106-1137"));
+    assert!(is_timestamped_preview_version("0.3.6-preview.20261106-1137"));
+    assert!(!is_timestamped_preview_version("v0.3.6"));
+    assert!(!is_timestamped_preview_version("v0.3.6-preview-Linux-amd64"));
+    assert!(!is_timestamped_preview_version("v0.3.6-dev"));
+}
