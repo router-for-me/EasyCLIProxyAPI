@@ -112,7 +112,8 @@ const addEcpaStoreEntries = () => {
       install_type: 'github-release', installed: false },
     { id: 'quota-snapshot', name: 'Quota Snapshot', source_id: 'ecpa', source_name: 'ECPA Featured',
       source_url: ECPA_SOURCE_URL, repository: 'ecpa/quota-snapshot', version: '0.4.1',
-      install_type: 'github-release', installed: true },
+      install_type: 'github-release', installed: true, installed_version: '0.3.0',
+      install_source_status: 'matched' },
   );
 };
 if (params.has('ecpa-registered')) {
@@ -133,7 +134,13 @@ mockIPC(async (command, args) => {
     return '/plugins/windows/amd64/local-demo-v1.0.0.dll';
   }
   if (command === 'get_plugin_support') return state.supported;
-  if (command === 'get_plugin_latest_releases') return (args?.repositories as string[]).map(repository => ({ repository, version: state.latestReleaseVersion, error: null }));
+  if (command === 'get_plugin_latest_releases') {
+    return (args?.repositories as string[]).map(repository => ({
+      repository,
+      version: repository.includes('quota-snapshot') ? '0.4.1' : state.latestReleaseVersion,
+      error: null,
+    }));
+  }
   if (command === 'open_external_url' || command === 'restart_core_process') return null;
   if (command !== 'management_request') return null;
   const request = args?.request as Request;
