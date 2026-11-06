@@ -904,7 +904,7 @@ export const en: Record<MessageKey, string> = {
   'usage.stat.tps': 'TPS',
   'usage.stat.performanceMeta': '{samples} samples · RPM {rpm}',
   'usage.stat.rpm': 'RPM',
-  'usage.stat.performanceMetaTitle': 'TPS {tps} (weighted by total latency), {samples} valid samples, RPM {rpm}, average latency {latency} ms',
+  'usage.stat.performanceMetaTitle': 'TPS {tps} (output tokens per second from total latency, averaged per request), {samples} valid samples, RPM {rpm}, average latency {latency} ms',
   'usage.stat.cacheHitRate': 'Cache Hit Rate',
   'usage.stat.cacheHitMeta': 'Read {hit} · Input {input}',
   'usage.stat.cacheHitMetaTitle': 'Cache hit rate {rate}%, cache read {hit} tokens, input {input} tokens',

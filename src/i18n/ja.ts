@@ -921,7 +921,7 @@ export const jaOverrides = {
   'usage.stat.tps': 'TPS',
   'usage.stat.performanceMeta': '{samples} 件 · RPM {rpm}',
   'usage.stat.rpm': 'RPM',
-  'usage.stat.performanceMetaTitle': 'TPS {tps}（総レイテンシで加重）、有効サンプル {samples} 件、RPM {rpm}、平均レイテンシ {latency} ms',
+  'usage.stat.performanceMetaTitle': 'TPS {tps}（output_tokens ÷ 総レイテンシ、リクエストごとの平均）、有効サンプル {samples} 件、RPM {rpm}、平均レイテンシ {latency} ms',
   'usage.stat.cacheHitRate': 'キャッシュヒット率',
   'usage.stat.cacheHitMeta': '読取 {hit} · 入力 {input}',
   'usage.stat.cacheHitMetaTitle': 'キャッシュヒット率 {rate}%、読取 {hit} Token、入力 {input} Token',
