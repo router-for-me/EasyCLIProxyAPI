@@ -30,7 +30,10 @@ pub struct ReverseProxyConfig {
     pub enabled: bool,
     pub listen_host: String, // "0.0.0.0"
     pub listen_port: u16,    // 443
-    pub target_port: u16,    // core port, e.g. 8317
+    // 0 means "follow the kernel port"; a nonzero value is an explicit target
+    // that is never rewritten to the kernel port.
+    #[serde(default)]
+    pub target_port: u16,    // e.g. 8317
     pub cert_path: String,
     pub key_path: String,
 }
@@ -57,18 +60,16 @@ fn patch_proxy_config_document(
 }
 
 pub(crate) fn prepare_core_start(document: &mut serde_norway::Value) -> Result<bool, String> {
-    let Some(mut config) = read_proxy_config_document(document)? else {
+    let Some(config) = read_proxy_config_document(document)? else {
         return Ok(false);
     };
     if !config.enabled {
         return Ok(false);
     }
-    let mut changed = harden_core_config_document(document)?;
-    if let Some(port) = configured_core_port(document)? {
-        config.target_port = port;
-        changed |= patch_proxy_config_document(document, &config)?;
-    }
-    Ok(changed)
+    // The persisted target port is the configured contract, not a cache of the
+    // kernel port: an explicit nonzero target is preserved and a 0 target keeps
+    // following the kernel port at forwarding time, so neither is rewritten here.
+    harden_core_config_document(document)
 }
 
 fn configured_core_port(document: &serde_norway::Value) -> Result<Option<u16>, String> {
@@ -85,17 +86,16 @@ fn configured_core_port(document: &serde_norway::Value) -> Result<Option<u16>, S
     }).transpose()
 }
 
-fn core_forward_client(config: &mut ReverseProxyConfig) -> Result<(ProxyClient, bool), String> {
+fn core_forward_client(config: &ReverseProxyConfig) -> Result<(ProxyClient, bool, u16), String> {
     let mut roots = rustls::RootCertStore::empty();
     let mut tls_enabled = false;
+    let mut core_port = None;
     {
         let _config_guard = lock_core_config_file()?;
         let install_dir = crate::core_runtime::core_install_dir()?;
         if install_dir.join(crate::CORE_CONFIG_FILE).is_file() {
             let (_, document) = read_core_config_document()?;
-            if let Some(port) = configured_core_port(document.get())? {
-                config.target_port = port;
-            }
+            core_port = configured_core_port(document.get())?;
             let tls = crate::core_config::core_tls_settings_from_value(document.get())?;
             tls_enabled = tls.enabled;
             if tls_enabled {
@@ -113,10 +113,17 @@ fn core_forward_client(config: &mut ReverseProxyConfig) -> Result<(ProxyClient, 
             }
         }
     }
+    let target_port = match config.target_port {
+        0 => core_port.ok_or_else(|| {
+            "Reverse proxy target port follows the kernel port, but no kernel port is configured"
+                .to_string()
+        })?,
+        port => port,
+    };
     let tls = rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth();
     let connector = hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(tls)
         .https_or_http().enable_http1().build();
-    Ok((Client::builder(TokioExecutor::new()).build(connector), tls_enabled))
+    Ok((Client::builder(TokioExecutor::new()).build(connector), tls_enabled, target_port))
 }
 
 fn read_installed_proxy_config() -> Result<Option<ReverseProxyConfig>, String> {
@@ -409,9 +416,8 @@ pub fn validate_config(config: &ReverseProxyConfig) -> Result<(), String> {
     if config.listen_host.trim().is_empty() {
         return Err("Listen host cannot be empty".to_string());
     }
-    if config.target_port == 0 {
-        return Err("Target port cannot be 0".to_string());
-    }
+    // target_port 0 is the "follow the kernel port" sentinel; it is resolved to
+    // the effective kernel port when the forwarding client is built.
     if config.cert_path.trim().is_empty() {
         return Err("Certificate path cannot be empty".to_string());
     }
@@ -696,7 +702,7 @@ impl ReverseProxyManagerState {
 
     async fn start_candidate_inner(
         &self,
-        mut config: ReverseProxyConfig,
+        config: ReverseProxyConfig,
         app: Option<tauri::AppHandle>,
         persist: bool,
     ) -> Result<ReverseProxyState, String> {
@@ -782,7 +788,7 @@ impl ReverseProxyManagerState {
             eprintln!("Reverse proxy hardening failed: {error}");
         }
 
-        let (client, target_tls) = match core_forward_client(&mut config) {
+        let (client, target_tls, target_port) = match core_forward_client(&config) {
             Ok(target) => target,
             Err(error) => return self.fail_start(error),
         };
@@ -791,7 +797,6 @@ impl ReverseProxyManagerState {
                 return self.fail_start(error);
             }
         }
-        let target_port = config.target_port;
         let target_addr = format!("127.0.0.1:{target_port}");
 
         self.stop_inner().await?;
@@ -1977,7 +1982,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_validation_allows_ephemeral_listen_port_but_rejects_empty_or_zero_target() {
+    fn test_config_validation_allows_ephemeral_listen_port_and_auto_target() {
         let valid_config = ReverseProxyConfig {
             enabled: true,
             listen_host: "0.0.0.0".to_string(),
@@ -2001,10 +2006,11 @@ mod tests {
         cfg.listen_port = 0;
         assert!(validate_config(&cfg).is_ok());
 
-        // Port 0 target
+        // Port 0 target means "follow the kernel port" and is resolved when
+        // the forwarding client is built, so it stays a valid draft value.
         let mut cfg = valid_config.clone();
         cfg.target_port = 0;
-        assert!(validate_config(&cfg).is_err());
+        assert!(validate_config(&cfg).is_ok());
 
         // Empty cert path
         let mut cfg = valid_config.clone();

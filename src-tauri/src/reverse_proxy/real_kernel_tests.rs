@@ -78,13 +78,22 @@ fn enabled_proxy_startup_preserves_tls_and_management_while_hardening_both_schem
         assert!(prepare_core_start(&mut document).unwrap());
         let hardening = read_core_hardening(&document);
         assert!(hardening.loopback_bind && hardening.trusted_proxies);
-        assert_eq!(read_proxy_config_document(&document).unwrap().unwrap().target_port, 12345);
+        // An explicit target survives kernel start preparation untouched.
+        assert_eq!(read_proxy_config_document(&document).unwrap().unwrap().target_port, 54321);
         assert!(crate::core_config::core_tls_settings_from_value(&document).unwrap().enabled);
         let server = if core_config_uses_v8(&document) { &document["server"] } else { &document };
         assert_eq!(server["trusted-proxies"][0], "192.0.2.1");
         let management = if core_config_uses_v8(&document) { &document["management"] } else { &document["remote-management"] };
         assert_eq!(management["allow-remote"], false);
         assert!(!prepare_core_start(&mut document).unwrap());
+        // A 0 target means "follow the kernel port"; it stays 0 in the saved
+        // document so the effective endpoint keeps tracking core port changes.
+        let mut auto = config.clone();
+        auto.target_port = 0;
+        patch_proxy_config_document(&mut document, &auto).unwrap();
+        assert!(!prepare_core_start(&mut document).unwrap());
+        assert_eq!(read_proxy_config_document(&document).unwrap().unwrap().target_port, 0);
+        patch_proxy_config_document(&mut document, &config).unwrap();
         let mut disabled = config.clone();
         disabled.enabled = false;
         patch_proxy_config_document(&mut document, &disabled).unwrap();
@@ -388,7 +397,14 @@ async fn real_kernel_messages_chain() {
         enabled: true,
         listen_host: "127.0.0.1".into(),
         listen_port: free_port(),
-        target_port: port,
+        // The stale and restart cases move the kernel port after the proxy is
+        // configured; a 0 target keeps following the effective kernel port
+        // instead of pinning the forwarding to a stale value.
+        target_port: if case == "stale" || case.starts_with("restart") {
+            0
+        } else {
+            port
+        },
         cert_path: cert.to_str().unwrap().into(),
         key_path: key.to_str().unwrap().into(),
     };
@@ -488,7 +504,38 @@ async fn real_kernel_messages_chain() {
         let restored = manager.get_state().unwrap();
         assert_eq!(restored.listening, Some(address.to_string()));
         assert_eq!(restored.target, Some(format!("127.0.0.1:{}", gui.port)));
+        assert_eq!(restored.config.as_ref().unwrap().target_port, 0);
+        assert_eq!(
+            read_installed_proxy_config().unwrap().unwrap().target_port,
+            0,
+            "auto target must stay 0 in the saved config"
+        );
         println!("production restart retargeted active proxy: {restored:?}");
+
+        // An explicit target is not rewritten by kernel start preparation and
+        // is not retargeted when the kernel port changes again.
+        let mut explicit = config.clone();
+        explicit.target_port = port;
+        let applied = manager.save_and_apply(explicit.clone(), None).await.unwrap();
+        assert!(applied.running, "{applied:?}");
+        assert_eq!(applied.target, Some(format!("127.0.0.1:{port}")));
+        assert_eq!(read_installed_proxy_config().unwrap(), Some(explicit.clone()));
+        crate::core_runtime::run_core_command(
+            fixture.app.handle().clone(),
+            crate::core_runtime::restart_core_process_with_state,
+        )
+        .await
+        .unwrap();
+        let restored = manager.get_state().unwrap();
+        assert_eq!(
+            restored.target,
+            Some(format!("127.0.0.1:{port}")),
+            "explicit target must not follow the kernel port"
+        );
+        assert_eq!(read_installed_proxy_config().unwrap(), Some(explicit.clone()));
+        println!("production restart preserved explicit proxy target: {restored:?}");
+        let applied = manager.save_and_apply(config.clone(), None).await.unwrap();
+        assert_eq!(applied.target, Some(format!("127.0.0.1:{}", gui.port)));
     }
     let saved: serde_norway::Value =
         serde_norway::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
