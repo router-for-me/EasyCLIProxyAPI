@@ -18,9 +18,9 @@ const boardWith = (...members: RoutingMember[]): RoutingBoard => ({
 });
 const render = (content: ReactNode) => renderToStaticMarkup(<I18nProvider>{content}</I18nProvider>);
 
-function ladder(board: RoutingBoard) {
+function ladder(board: RoutingBoard, hideDisabled = false) {
   const draft = draftFromBoard(board);
-  return render(<TierLadder board={board} draft={draft} tierPriorities={diffPlan(board, draft)!.tierPriorities} preview={resolveRoute(board, draft)} disabled={false} onChange={() => {}} />);
+  return render(<TierLadder board={board} draft={draft} tierPriorities={diffPlan(board, draft)!.tierPriorities} preview={resolveRoute(board, draft)} disabled={false} hideDisabled={hideDisabled} onChange={() => {}} />);
 }
 
 describe('routing tier arrangement', () => {
@@ -138,6 +138,7 @@ describe('routing components', () => {
     const html = render(<RoutingPage />);
     expect(html).toContain('Apply plan');
     expect(html).toContain('Discard changes');
+    expect(html).toContain('Hide disabled');
     const board = boardWith();
     const policy = render(<PolicyStrip settings={board.settings} disabled={false} onChange={() => {}} />);
     expect(policy).toContain('Gateway policy');
@@ -160,6 +161,33 @@ describe('routing components', () => {
     const validMarkup = render(<PolicyStrip settings={board.settings} disabled={false} onChange={() => {}} />);
     expect(validMarkup).not.toContain('routing-ttl-error');
     expect(validMarkup).not.toContain('role="alert"');
+  });
+
+  it('toggles visibility of disabled credentials and tiers in TierLadder', () => {
+    const board = boardWith(
+      member('active-1', 10),
+      member('disabled-1', 10, { disabled: true }),
+      member('disabled-alone', 0, { disabled: true }),
+    );
+    const normalHtml = ladder(board, false);
+    expect(normalHtml).toContain('active-1');
+    expect(normalHtml).toContain('disabled-1');
+    expect(normalHtml).toContain('disabled-alone');
+    expect(normalHtml).toContain('Disabled');
+    expect(normalHtml).toContain('Tier 1');
+    expect(normalHtml).toContain('Tier 2');
+
+    const hiddenHtml = ladder(board, true);
+    expect(hiddenHtml).toContain('active-1');
+    expect(hiddenHtml).not.toContain('disabled-1');
+    expect(hiddenHtml).not.toContain('disabled-alone');
+    expect(hiddenHtml).not.toContain('Disabled');
+    expect(hiddenHtml).toContain('Tier 1');
+    expect(hiddenHtml).not.toContain('Tier 2');
+
+    const allDisabledBoard = boardWith(member('d1', 10, { disabled: true }), member('d2', 0, { disabled: true }));
+    const allHiddenHtml = ladder(allDisabledBoard, true);
+    expect(allHiddenHtml).toContain('No routing credentials configured.');
   });
 
   it('shows serving shares, standby status, metadata and quick tier controls', () => {
