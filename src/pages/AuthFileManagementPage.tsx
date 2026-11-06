@@ -745,7 +745,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
         void loadFiles(false);
       }} /> : null}
 
-      {modelViewName ? <AuthFileModelsDialog name={modelViewName} displayName={shownNameFor(modelViewName)} onClose={() => setModelViewName(null)} /> : null}
+      {modelViewName ? <AuthFileModelsDialog name={modelViewName} displayName={shownNameFor(modelViewName)} provider={providerKey(files.find((file) => fileName(file) === modelViewName) ?? {})} onClose={() => setModelViewName(null)} /> : null}
 
       {oauthModelTarget ? (
         <Dialog className="model-discovery-dialog auth-model-dialog" backdropClassName="model-discovery-backdrop" labelledBy="oauth-model-title" onClose={closeOauthModels} closeDisabled={oauthModelSaving} dismissOnBackdrop>
