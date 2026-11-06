@@ -127,10 +127,19 @@ pub(crate) async fn run_core_command<R: tauri::Runtime>(
     let status = run_core_command_without_proxy(app.clone(), operation).await?;
     if status.running {
         if let Some(manager) = app.try_state::<crate::reverse_proxy::ReverseProxyManagerState>() {
-            if let Err(error) = manager.restore_after_core_start().await {
+            if let Err(error) = manager
+                .restore_after_core_start(app.state::<CoreProcessState>().inner())
+                .await
+            {
                 eprintln!("Failed to restore reverse proxy after kernel start: {error}");
             }
         }
+        return tauri::async_runtime::spawn_blocking(move || {
+            let port = app.state::<GuiConfigState>().snapshot()?.port;
+            current_core_status(Some(app.state::<CoreProcessState>().inner()), Some(port))
+        })
+        .await
+        .map_err(|error| format!("Kernel background task failed: {error}"))?;
     }
     Ok(status)
 }
@@ -1855,15 +1864,16 @@ pub(crate) fn start_core_process_inner(
         }
         return Err("CPA kernel is already running".to_string());
     }
-    let management_address = core_management_address(&gui_config.host, gui_config.port)?;
+    let config_path = merge_core_config_for_start(&install_dir, gui_config)?;
+    let effective_config = read_installed_core_config_settings()?;
+    let management_address = core_management_address(&effective_config.host, effective_config.port)?;
     if !wait_for_core_port_release(management_address) {
         return Err(format!(
             "Port {} is in use by another program. Change the port and try again",
-            gui_config.port
+            effective_config.port
         ));
     }
 
-    let config_path = merge_core_config_for_start(&install_dir, gui_config)?;
     let config_path = path_to_string(&config_path);
     let log_path = core_start_log_path(&install_dir, &gui_config.auth_dir)?;
     let start_once = || {

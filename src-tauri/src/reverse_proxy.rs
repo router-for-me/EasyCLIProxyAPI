@@ -989,16 +989,26 @@ impl ReverseProxyManagerState {
         }
     }
 
-    pub(crate) async fn restore_after_core_start(&self) -> Result<ReverseProxyState, String> {
+    pub(crate) async fn restore_after_core_start(
+        &self,
+        process_state: &crate::CoreProcessState,
+    ) -> Result<ReverseProxyState, String> {
         let _operation = self.operation.lock().await;
-        match read_installed_proxy_config() {
+        if process_state.is_shutting_down() || process_state.managed_pid().is_none() {
+            return self.stop_inner().await;
+        }
+        let result = match read_installed_proxy_config() {
             Ok(Some(config)) => self.apply_inner(config, None).await,
             Ok(None) => self.get_state(),
             Err(error) => {
                 self.stop_inner().await?;
                 self.fail_start(error)
             }
+        };
+        if process_state.is_shutting_down() || process_state.managed_pid().is_none() {
+            return self.stop_inner().await;
         }
+        result
     }
 }
 

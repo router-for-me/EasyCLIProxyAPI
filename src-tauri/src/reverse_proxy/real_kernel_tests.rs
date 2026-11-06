@@ -101,6 +101,43 @@ fn enabled_proxy_startup_preserves_tls_and_management_while_hardening_both_schem
     );
 }
 
+#[test]
+fn enabled_proxy_effective_endpoint_uses_loopback_for_lan_and_ipv6() {
+    for host in ["192.168.100.184", "::"] {
+        for tls_enabled in [false, true] {
+            for yaml in [
+                format!("host: '{host}'\nport: 12345\ntls: {{enable: {tls_enabled}}}\n"),
+                format!("config-version: 8\nserver: {{host: '{host}', port: 12345, tls: {{enable: {tls_enabled}}}}}\n"),
+            ] {
+                let mut document = serde_norway::from_str(&yaml).unwrap();
+                patch_proxy_config_document(
+                    &mut document,
+                    &ReverseProxyConfig {
+                        enabled: true,
+                        target_port: 12345,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                prepare_core_start(&mut document).unwrap();
+                let settings =
+                    crate::core_config::core_config_settings_from_value(&document).unwrap();
+                let tls = crate::core_config::core_tls_settings_from_value(&document).unwrap();
+                assert_eq!(settings.host, "127.0.0.1");
+                assert_eq!(settings.port, 12345);
+                assert_eq!(tls.enabled, tls_enabled);
+                assert_eq!(
+                    crate::core_config::core_origin(&settings.host, settings.port, tls.enabled),
+                    format!(
+                        "{}://127.0.0.1:12345",
+                        if tls_enabled { "https" } else { "http" }
+                    ),
+                );
+            }
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run scripts/prove-reverse-proxy.sh with CPA_V8_TEST_CORE; isolated executable directory required"]
 async fn real_kernel_messages_chain() {
@@ -232,7 +269,7 @@ async fn real_kernel_messages_chain() {
         upstream,
     };
     let case = std::env::var("CPA_RP_CASE").unwrap_or_else(|_| "http".into());
-    let native_tls = case == "tls";
+    let native_tls = case == "tls" || case.starts_with("tls-");
     let port = free_port();
     let config_path = directory.join(crate::CORE_CONFIG_FILE);
     let initial = format!("config-version: 8\nserver:\n  host: 127.0.0.1\n  port: {port}\n  trusted-proxies: [127.0.0.1]\n  tls: {{enable: {native_tls}, cert: cert.pem, key: key.pem}}\nmanagement: {{secret-key: local-management-key, disable-control-panel: true, disable-auto-update-panel: true, allow-remote: false}}\noauth: {{auth-dir: '{}' }}\napi-keys:\n  claude:\n    - name: local-proof\n      base-url: http://127.0.0.1:{upstream_port}\n      models: [{{name: claude-proof}}]\n      keys: [{{api-key: local-upstream-key}}]\n", directory.join("auth").display());
@@ -254,6 +291,24 @@ async fn real_kernel_messages_chain() {
         request_retry: 0,
         ..GuiConfigFile::default()
     };
+    if case.ends_with("lan") || case.ends_with("ipv6") {
+        gui.host = if case.ends_with("lan") {
+            "192.168.100.184"
+        } else {
+            "::"
+        }
+        .into();
+        gui.allow_lan = true;
+        let config = ReverseProxyConfig {
+            enabled: true,
+            listen_host: "127.0.0.1".into(),
+            listen_port: free_port(),
+            target_port: port,
+            cert_path: cert.to_str().unwrap().into(),
+            key_path: key.to_str().unwrap().into(),
+        };
+        persist_proxy_config(&config).unwrap();
+    }
     fixture.app.manage(crate::GuiConfigState::new(gui.clone()));
     if case == "manual" {
         let config = ReverseProxyConfig {
@@ -266,12 +321,26 @@ async fn real_kernel_messages_chain() {
         };
         persist_proxy_config(&config).unwrap();
     }
-    crate::core_runtime::run_core_command(
+    let started = crate::core_runtime::run_core_command(
         fixture.app.handle().clone(),
         crate::core_runtime::start_core_process_with_state,
     )
     .await
     .unwrap();
+    assert!(started.running && started.ready);
+    if case.ends_with("lan") || case.ends_with("ipv6") {
+        assert!(fixture
+            .app
+            .state::<ReverseProxyManagerState>()
+            .get_state()
+            .unwrap()
+            .running);
+        assert!(
+            tokio::net::TcpStream::connect((std::net::Ipv6Addr::LOCALHOST, port))
+                .await
+                .is_err()
+        );
+    }
     if case == "manual" {
         let state = fixture
             .app
@@ -345,9 +414,65 @@ async fn real_kernel_messages_chain() {
     let state = manager.save_and_apply(config.clone(), None).await.unwrap();
     assert!(state.running, "{state:?}");
     let address: std::net::SocketAddr = state.listening.unwrap().parse().unwrap();
-    if case == "restart" {
+    if case == "stop-race" {
+        crate::core_runtime::run_core_command(
+            fixture.app.handle().clone(),
+            crate::core_runtime::stop_core_process_with_state,
+        )
+        .await
+        .unwrap();
+        manager.stop().await.unwrap();
+        let operation = manager.operation.lock().await;
+        let start = crate::core_runtime::run_core_command(
+            fixture.app.handle().clone(),
+            crate::core_runtime::start_core_process_with_state,
+        );
+        tokio::pin!(start);
+        assert!(tokio::time::timeout(Duration::from_secs(3), &mut start)
+            .await
+            .is_err());
+        assert!(fixture.app.state::<CoreProcessState>().managed_pid().is_some());
+        drop(
+            crate::core_runtime::lock_core_operation(
+                fixture.app.state::<CoreProcessState>().inner(),
+            )
+            .expect("start must release the core lock while proxy restoration is blocked"),
+        );
+        let stopped = tokio::time::timeout(
+            Duration::from_secs(3),
+            crate::core_runtime::run_core_command(
+                fixture.app.handle().clone(),
+                crate::core_runtime::stop_core_process_with_state,
+            ),
+        )
+        .await
+        .expect("stop must not wait for the proxy operation lock")
+        .unwrap();
+        assert!(!stopped.running);
+        drop(operation);
+        let status = tokio::time::timeout(Duration::from_secs(3), &mut start)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!status.running, "delayed start returned stale running status");
+        assert!(!status.ready);
+        assert!(status.process_id.is_none());
+        assert!(
+            !manager.get_state().unwrap().running,
+            "delayed start revived the proxy"
+        );
+        assert!(tokio::net::TcpStream::connect(address).await.is_err());
+        println!("delayed start returned stopped status without reviving the proxy");
+        return;
+    }
+    if case == "restart" || case.starts_with("restart-") {
         gui.port = free_port();
-        gui.host = "0.0.0.0".into();
+        gui.host = match case.as_str() {
+            "restart-lan" => "192.168.100.184",
+            "restart-ipv6" => "::",
+            _ => "0.0.0.0",
+        }
+        .into();
         gui.allow_lan = true;
         fixture
             .app
