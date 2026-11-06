@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { I18nProvider, supportedLocales, translate } from '../src/i18n';
 import { readRoutingBoard, validateRoutingPlan, type RoutingBoard, type RoutingMember } from '../src/services/routing';
 import { RoutingPage } from '../src/pages/routing/RoutingPage';
-import { ConfirmationDialog } from '../src/components/ConfirmationDialog';
+import { Dialog } from '../src/components/Dialog';
 import { PolicyStrip } from '../src/pages/routing/PolicyStrip';
 import { TierLadder } from '../src/pages/routing/TierLadder';
 import { assignTierPriorities, diffPlan, draftFromBoard, moveMember, resolveRoute, splitMember, stepMember, tiersFromMembers } from '../src/pages/routing/routingPlan';
@@ -204,11 +204,20 @@ describe('routing components', () => {
     }
   });
 
-  it('renders the shared confirmation dialog in every supported locale', () => {
+  it('renders the routing apply confirmation dialog in every supported locale', () => {
     for (const locale of supportedLocales) {
-      const html = render(<ConfirmationDialog title={translate(locale, 'routing.reviewTitle')} message={translate(locale, 'routing.reviewHint', { count: 3 })} onDecision={() => {}} />);
+      const html = render(<Dialog alert className="close-dialog routing-confirm-dialog" labelledBy="routing-confirm-title" describedBy="routing-confirm-description" onClose={() => {}}>
+        <div className="close-dialog-heading"><h2 id="routing-confirm-title">{translate(locale, 'routing.reviewTitle')}</h2></div>
+        <p id="routing-confirm-description">{translate(locale, 'routing.reviewHint', { count: 3 })}</p>
+        <div className="close-dialog-actions">
+          <button type="button" className="close-choice-button secondary-button"><span>{translate(locale, 'common.cancel')}</span></button>
+          <button type="button" className="close-choice-button primary-button"><span>{translate(locale, 'routing.apply')}</span></button>
+        </div>
+      </Dialog>);
       expect(html).toContain('3');
-      expect(html).toContain('app-confirm-dialog');
+      expect(html).toContain('routing-confirm-dialog');
+      expect(html).toContain('close-dialog-actions');
+      expect(html.match(/close-choice-button/g)?.length).toBe(2);
       expect(html).not.toContain('routing-change-list');
     }
   });

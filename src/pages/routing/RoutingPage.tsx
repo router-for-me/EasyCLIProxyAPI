@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { GitBranch, RefreshCw, Save } from 'lucide-react';
-import { ConfirmationDialog } from '../../components/ConfirmationDialog';
+import { Dialog } from '../../components/Dialog';
 import { useI18n } from '../../i18n';
 import { APP_NAVIGATION_REQUEST_EVENT, type AppNavigationRequest } from '../../navigation';
 import { applyRoutingPlan, readRoutingBoard, validateRoutingPlan, type RoutingBoard } from '../../services/routing';
@@ -63,7 +63,13 @@ export function RoutingPage() {
       <button type="button" className="primary-button" disabled={disabled || !dirty || !!invalidReason} onClick={() => setPendingConfirm(true)}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button>
       {dirty && invalidReason && <p className="routing-action-hint" role="status">{invalidReason}</p>}
     </div></header>
-    {pendingConfirm && <ConfirmationDialog title={t('routing.reviewTitle')} message={t('routing.reviewHint', { count: diff?.changes.length ?? 0 })} confirmText={t('routing.apply')} onDecision={(ok) => { setPendingConfirm(false); if (ok) void apply(); }} />}
+    {pendingConfirm && <Dialog alert className="close-dialog routing-confirm-dialog" backdropClassName="close-dialog-backdrop" tabIndex={-1} labelledBy="routing-confirm-title" describedBy="routing-confirm-description" onClose={() => setPendingConfirm(false)} closeDisabled={busy}>
+      <div className="close-dialog-heading"><h2 id="routing-confirm-title">{t('routing.reviewTitle')}</h2></div>
+      <p id="routing-confirm-description">{t('routing.reviewHint', { count: diff?.changes.length ?? 0 })}</p>
+      <div className="close-dialog-actions">
+        <button type="button" className="close-choice-button secondary-button" disabled={busy} onClick={() => setPendingConfirm(false)}><span>{t('common.cancel')}</span></button>
+        <button type="button" className="close-choice-button primary-button" disabled={busy} onClick={() => { setPendingConfirm(false); void apply(); }}><span>{busy ? t('routing.saving') : t('routing.apply')}</span></button>
+      </div></Dialog>}
     {error && <p role="alert" className="routing-error">{error}</p>}
     {board?.partial.length ? <p role="alert" className="routing-error">{t('routing.partial')} ({board.partial.join(', ')})</p> : null}
     <div role="status" className="routing-status">{saved ? t('routing.saved') : dirty ? t('routing.dirty') : busy ? t('routing.loading') : ''}</div>

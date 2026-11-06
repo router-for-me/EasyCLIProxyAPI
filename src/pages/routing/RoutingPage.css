@@ -89,3 +89,5 @@
 .routing-setting-row-described .routing-setting-text { display: flex; flex-direction: column; gap: 2px; }
 .routing-setting-hint { font-size: 11px; line-height: 1.35; color: var(--text-secondary); max-width: 42ch; }
 
+
+.routing-confirm-dialog .close-choice-button { min-height: 44px; }
