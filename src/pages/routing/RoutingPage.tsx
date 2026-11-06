@@ -18,10 +18,10 @@ function ChangeRows({ changes, describe }: { changes: RoutingChange[]; describe:
 
 export function RoutingReviewDialog({ changes, describe, busy, onClose, onConfirm }: { changes: RoutingChange[]; describe: (change: RoutingChange) => DescribedChange; busy: boolean; onClose: () => void; onConfirm: () => void }) {
   const { t } = useI18n();
-  return <Dialog className="routing-review-dialog" title={t('routing.reviewTitle')} onClose={onClose} closeDisabled={busy}
+  return <Dialog className="config-dialog routing-review-dialog" title={t('routing.reviewTitle')} onClose={onClose} closeDisabled={busy}
     actions={<><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('common.cancel')}</button><button type="button" className="primary-button" disabled={busy} onClick={onConfirm}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button></>}>
     <p className="routing-review-hint">{t('routing.reviewHint', { count: changes.length })}</p>
-    <div className="routing-change-list"><ChangeRows changes={changes} describe={describe} /></div>
+    <div className="routing-change-list">{changes.map((change, index) => { const described = describe(change); return <div key={index}><strong>{described.name || t('routing.title')}</strong><span className="routing-change-field">{described.field}</span><span className="routing-change-value">{described.detail}</span></div>; })}</div>
   </Dialog>;
 }
 

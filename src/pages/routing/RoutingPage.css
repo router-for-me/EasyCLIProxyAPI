@@ -46,8 +46,16 @@
 .routing-change-list strong { font-weight: 600; }
 .routing-change-list span { color: var(--text-secondary); }
 .routing-change-list--popover { position: absolute; z-index: 10; top: calc(100% + 8px); right: 0; width: min(380px, 80vw); max-height: 360px; overflow: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; box-shadow: 0 8px 24px var(--color-accent-shadow); }
-.routing-review-dialog .routing-change-list { margin-top: 12px; max-height: 46vh; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 4px 12px; background: var(--bg-elevated, var(--bg-card)); }
-.routing-review-hint { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.routing-review-dialog.config-dialog { display: flex; flex-direction: column; gap: 14px; grid-template-rows: none; width: min(520px, 100%); height: auto; max-height: min(78vh, 640px); padding: 22px; }
+.routing-review-dialog .config-dialog-heading { flex: none; }
+.routing-review-dialog .routing-review-hint { flex: none; margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+.routing-review-dialog .routing-change-list { flex: 1 1 auto; min-height: 0; margin-top: 0; max-height: 46vh; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 0 14px; background: var(--bg-elevated, var(--bg-card)); }
+.routing-review-dialog .routing-change-list > div { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--border-color); font-size: 12px; line-height: 1.45; }
+.routing-review-dialog .routing-change-list > div:last-child { border-bottom: none; }
+.routing-review-dialog .routing-change-list strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.routing-review-dialog .routing-change-list .routing-change-field { color: var(--text-secondary); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.routing-review-dialog .routing-change-list .routing-change-value { color: var(--text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.routing-review-dialog .config-dialog-actions { flex: none; }
 .routing-flow-entry, .routing-flow-exit { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 14px; min-height: 40px; font-size: 12px; }
 .routing-flow-entry > span:last-child, .routing-flow-exit > span:last-child { color: var(--text-tertiary); }
 .routing-flow-node { width: 12px; height: 12px; margin: 0 4px; border-radius: var(--radius-full); background: var(--primary-color); flex-shrink: 0; }
