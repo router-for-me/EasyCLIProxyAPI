@@ -111,6 +111,8 @@ import {
 } from '../services/deepSeekHarnessLaunch';
 import type { ModelOption } from '../services/modelService';
 import { AgentModelPicker } from '../components/AgentModelPicker';
+import { AgentModelRoutePicker, AgentModelFallbackContext } from '../components/AgentModelRoutePicker';
+import type { AgentModelFallback } from '../services/agentModelFallback';
 import { claudeDesktopAliasSuggestions, claudeDesktopDefaultAliases, createDefaultDesktopModels, desktopAliasNotice, desktopEntryValidation, desktopModelEntries, desktopModelId, desktopModelValidation, isClaudeDesktopModel, selectedDesktopModelEntries, suffixCollidingDesktopAliases, type ClaudeDesktopModelMapping } from '../services/claudeDesktopModels';
 import { getCurrentLocale, translate, useI18n } from '../i18n';
 import { CodexSessionsPanel } from './CodexSessionsPanel';
@@ -642,7 +644,25 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const [busyAction, setBusyAction] = useState<
     'backup' | 'apply' | 'close-config' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'remote-compaction' | 'approval-model' | 'native-oauth' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | 'restart-deepseek' | null
   >(null);
-  const busy = busyAction !== null;
+  const [fallbackEditors, setFallbackEditors] = useState<Record<string, { busy: boolean; dirty: boolean }>>({});
+  const fallbackBusy = Object.values(fallbackEditors).some(editor => editor.busy);
+  const fallbackDirty = Object.values(fallbackEditors).some(editor => editor.dirty);
+  const onFallbackState = useCallback((slot: string, state: { busy: boolean; dirty: boolean }) => {
+    setFallbackEditors(current => {
+      if (!state.busy && !state.dirty && !current[slot]) return current;
+      const next = { ...current };
+      if (state.busy || state.dirty) next[slot] = state; else delete next[slot];
+      return next;
+    });
+  }, []);
+  const rememberFallbackModel = (route: AgentModelFallback) => {
+    const source = models.find(model => model.name === route.primary);
+    const option: ModelOption = { ...source, name: route.model, alias: route.primary, isAlias: route.model !== route.primary };
+    const next = [...models.filter(model => model.name !== route.model), option];
+    agentModelsCache[selected] = next;
+    setModelData({ client: selected, models: next });
+  };
+  const busy = busyAction !== null || fallbackBusy;
   // Codex drains running turns before restarting its daemon, which can take about a minute, so the
   // restart only locks its own controls instead of the page-wide busy state.
   const [cliServiceRestarting, setCliServiceRestarting] = useState(() => codexCliServiceRestart !== null);
@@ -1020,7 +1040,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const configurationActionLabel = t(nativeOauth ? 'agents.modify.update'
     : connectionState === 'not-configured' ? selected === 'codex' ? 'agents.modify.apply' : 'agents.modify.connect'
     : connectionState === 'needs-update' ? 'agents.modify.repair' : 'agents.modify.update');
-  const configurationWriteBlocked = loading || !activeStatus || connectionState === 'invalid';
+  const configurationWriteBlocked = loading || fallbackDirty || !activeStatus || connectionState === 'invalid';
   const formValues: AgentFormValues = {
     model: isClaudeModelMappingClient ? '' : selectedModel,
     oauthConfiguration: selected === 'codex' && oauthConfiguration,
@@ -1929,7 +1949,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             <div className="agent-desktop-model-fields">
               <div className="agent-desktop-model-field">
                 <span>{t('agents.claudeDesktopMapping.model')}</span>
-                <AgentModelPicker models={claudeMappingModels} value={entry.model} loading={modelLoading} error={modelError}
+                <AgentModelRoutePicker slot={`desktop-${index}`} models={claudeMappingModels} value={entry.model} loading={modelLoading} error={modelError}
                   allowCustomValue disabled={busy || loading || !canConfigureActiveClient}
                   onChange={(model) => updateDesktopEntry(index, { model, ...(isClaudeDesktopModel(model) && !entry.alias.trim() ? { alias: '' } : {}) })}
                   onRefresh={refreshModels} />
@@ -1981,6 +2001,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   );
 
   return (
+    <AgentModelFallbackContext.Provider value={{ client: selected, models, onPrepared: rememberFallbackModel, onState: onFallbackState }}>
     <section className={`page management-page agents-page${embedded ? ' agents-page-embedded' : ''}`}>
       {embedded ? (
         <header className="management-header">
@@ -2034,7 +2055,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                 {activeStatus && !activeStatus.installed ? <Notice tone="warn" variant="text" className="agent-detection-help" action={<button type="button" className="link-button" onClick={() => setActiveSubpage('management')}>{t('agents.executablePath.openManagement')}</button>}>{t('agents.executablePath.notDetected')}</Notice> : null}
               {selected === 'claude-desktop' ? desktopModelEditor : <div className="agent-minimal-field">
                 <label htmlFor="embedded-agent-model">{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</label>
-                <AgentModelPicker
+                <AgentModelRoutePicker slot={isClaudeModelMappingClient ? 'sonnet' : 'default'}
                   models={isClaudeModelMappingClient ? claudeMappingModels : models}
                   value={isClaudeModelMappingClient ? claudeModelMappingsDraft.sonnet : savedSelectedModel}
                   preserveValue={!isClaudeModelMappingClient}
@@ -2137,7 +2158,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   <div className="agent-section-heading">
                     <div><strong>{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</strong></div>
                   </div>
-                  <AgentModelPicker
+                  <AgentModelRoutePicker slot="default"
                     models={models}
                     value={savedSelectedModel}
                     preserveValue
@@ -2787,5 +2808,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       ) : null}
       {confirmationDialog}
     </section>
+    </AgentModelFallbackContext.Provider>
   );
 }

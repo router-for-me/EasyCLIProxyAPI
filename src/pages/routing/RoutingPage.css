@@ -92,3 +92,20 @@
 .routing-setting-row-described .routing-setting-text { display: flex; flex-direction: column; gap: 2px; }
 .routing-setting-hint { font-size: 11px; line-height: 1.35; color: var(--text-secondary); max-width: 42ch; }
 
+.routing-aside { position: static; display: flex; flex-direction: column; gap: 18px; }
+.routing-fallback-conditions { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.routing-fallback-conditions legend { padding: 0; font-size: 12px; font-weight: 600; }
+.routing-fallback-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.routing-fallback-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid var(--border-color); border-radius: var(--radius-full); font-size: 11px; color: var(--text-secondary); cursor: pointer; }
+.routing-fallback-chip .binary-control-label { gap: 5px; font-size: 11px; }
+.routing-fallback-chip-on { color: var(--primary-color); background: var(--color-accent-soft); border-color: color-mix(in srgb, var(--primary-color) 40%, var(--border-color)); }
+.routing-fallback-chains { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.routing-fallback-chains > button { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; }
+.routing-fallback-chain { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "model model remove" "arrow targets targets"; align-items: center; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color); }
+.routing-fallback-chain input { width: 100%; min-width: 0; font-family: monospace; font-size: 11px; }
+.routing-fallback-chain > input:first-child { grid-area: model; }
+.routing-fallback-chain > span { grid-area: arrow; padding-left: 6px; color: var(--text-tertiary); }
+.routing-fallback-chain > input:nth-of-type(2) { grid-area: targets; }
+.routing-fallback-chain > button { grid-area: remove; }
+.routing-fallback-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.routing-fallback-actions > button { display: inline-flex; align-items: center; gap: 6px; }
