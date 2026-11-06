@@ -41,34 +41,11 @@
 .routing-summary-pill { border-radius: var(--radius-full); color: var(--primary-color); background: var(--color-accent-soft); padding: 5px 9px; font-size: 11px; cursor: pointer; }
 .routing-changes { position: relative; }
 .routing-change-list { display: flex; flex-direction: column; gap: 0; }
-.routing-change-list > div { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--border-color); font-size: 12px; }
-.routing-change-list > div:last-child { border-bottom: none; }
-.routing-change-list strong { font-weight: 600; }
-.routing-change-list span { color: var(--text-secondary); }
 .routing-change-list--popover { position: absolute; z-index: 10; top: calc(100% + 8px); right: 0; width: min(380px, 80vw); max-height: 360px; overflow: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; box-shadow: 0 8px 24px var(--color-accent-shadow); }
-/* Review dialog: its own column layout; the shared .config-dialog grid is a fixed 5-row form. */
-.routing-review-dialog.config-dialog { display: flex; flex-direction: column; gap: 14px; grid-template-rows: none; width: min(560px, 100%); height: auto; max-height: min(78vh, 640px); padding: 22px; text-align: left; }
-.routing-review-dialog .config-dialog-heading { flex: none; }
-.routing-review-dialog .routing-review-hint { flex: none; margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
-.routing-review-dialog .routing-change-list {
-  flex: 1 1 auto; min-height: 0; margin-top: 0; padding: 2px 0;
-  display: flex; flex-direction: column; overflow-y: auto;
-  border: 1px solid var(--color-border-strong, var(--border-color)); border-radius: var(--radius-md);
-  background: var(--bg-card);
-}
-.routing-review-dialog .routing-change-list > div {
-  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr) auto;
-  gap: 14px; align-items: baseline; padding: 11px 16px;
-  border-bottom: 1px solid var(--color-border-subtle, var(--border-color));
-  font-size: 12.5px; line-height: 1.5;
-}
-.routing-review-dialog .routing-change-list > div:last-child { border-bottom: none; }
-.routing-review-dialog .routing-change-list > div:nth-child(even) { background: var(--bg-secondary); }
-.routing-review-dialog .routing-change-list strong { min-width: 0; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
-.routing-review-dialog .routing-change-list .routing-change-field { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
-.routing-review-dialog .routing-change-list .routing-change-value { color: var(--text-primary); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; padding-left: 4px; }
-.routing-review-dialog .config-dialog-actions { flex: none; margin-top: 2px; padding-top: 14px; border-top: 1px solid var(--color-border-subtle, var(--border-color)); display: flex; justify-content: flex-end; gap: 10px; }
-.routing-review-dialog .config-dialog-actions button { min-width: 96px; }
+/* Review dialog: a compact tip; the shared .config-dialog grid is a fixed 5-row form. */
+.routing-review-dialog.config-dialog { display: flex; flex-direction: column; gap: 12px; grid-template-rows: none; width: min(400px, 100%); height: auto; padding: 20px 22px; }
+.routing-review-dialog .routing-review-hint { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+.routing-review-dialog .config-dialog-actions { margin-top: 4px; }
 .routing-flow-entry, .routing-flow-exit { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 14px; min-height: 40px; font-size: 12px; }
 .routing-flow-entry > span:last-child, .routing-flow-exit > span:last-child { color: var(--text-tertiary); }
 .routing-flow-node { width: 12px; height: 12px; margin: 0 4px; border-radius: var(--radius-full); background: var(--primary-color); flex-shrink: 0; }

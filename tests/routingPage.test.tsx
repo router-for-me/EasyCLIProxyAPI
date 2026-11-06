@@ -203,14 +203,11 @@ describe('routing components', () => {
     }
   });
 
-  it('renders one change-list row per pending change inside the review dialog', () => {
-    const board = boardWith(member('a'), member('b'));
-    const draft = draftFromBoard(board);
-    draft.weights.a = [3];
-    const changes = diffPlan(board, draft)!.changes;
-    const html = render(<RoutingReviewDialog changes={changes} describe={change => ({ name: change.key, field: 'Priority', detail: '0 → 10' })} busy={false} onClose={() => {}} onConfirm={() => {}} />);
-    const dialogHtml = html.slice(html.indexOf('routing-review-dialog'));
-    expect(dialogHtml.match(/<div><strong>/g)).toHaveLength(1);
+  it('renders a short hint with the change count inside the review dialog', () => {
+    const html = render(<RoutingReviewDialog count={3} busy={false} onClose={() => {}} onConfirm={() => {}} />);
+    expect(html).toContain('3');
+    expect(html).toContain('routing-review-hint');
+    expect(html).not.toContain('routing-change-list');
   });
 
   it('translates routing review dialog copy in every supported locale', () => {
