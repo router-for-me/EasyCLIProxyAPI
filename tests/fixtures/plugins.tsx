@@ -103,8 +103,9 @@ if (params.has('ecpa')) {
     },
   }));
 }
-if (params.has('ecpa-registered')) {
-  state.settings['store-sources'].push(ECPA_SOURCE_URL);
+// The page registers the ECPA source itself; the store then serves these entries.
+const addEcpaStoreEntries = () => {
+  if (storeEntries.some(entry => entry.source_url === ECPA_SOURCE_URL)) return;
   storeEntries.push(
     { id: 'aistudio2api', name: 'AIStudio2API', source_id: 'ecpa', source_name: 'ECPA Featured',
       source_url: ECPA_SOURCE_URL, repository: 'stark-shadow/aistudio2api', version: '1.2.0',
@@ -113,6 +114,10 @@ if (params.has('ecpa-registered')) {
       source_url: ECPA_SOURCE_URL, repository: 'ecpa/quota-snapshot', version: '0.4.1',
       install_type: 'github-release', installed: true },
   );
+};
+if (params.has('ecpa-registered')) {
+  state.settings['store-sources'].push(ECPA_SOURCE_URL);
+  addEcpaStoreEntries();
 }
 
 mockIPC(async (command, args) => {
@@ -150,7 +155,11 @@ mockIPC(async (command, args) => {
   };
   if (request.path === '/config/plugins') {
     if (request.method === 'GET') return structuredClone(state.settings);
-    if (request.method === 'PATCH') { Object.assign(state.settings, request.body); return { status: 'ok' }; }
+    if (request.method === 'PATCH') {
+      Object.assign(state.settings, request.body);
+      if (state.settings['store-sources'].includes(ECPA_SOURCE_URL)) addEcpaStoreEntries();
+      return { status: 'ok' };
+    }
   }
   const configMatch = /^\/config\/plugins\/configs\/([^/]+)(\/enabled)?$/.exec(request.path);
   if (configMatch) {
