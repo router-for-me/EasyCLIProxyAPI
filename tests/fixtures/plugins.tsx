@@ -90,7 +90,8 @@ if (params.has('ecpa')) {
       plugins: [
         { id: 'aistudio2api', name: 'AIStudio2API', description: 'Expose Google AI Studio models through an OpenAI-compatible endpoint.',
           author: 'ECPA', version: '1.2.0', repository: 'stark-shadow/aistudio2api', license: 'MIT',
-          tags: ['api', 'gemini'], install: { type: 'github-release' } },
+          tags: ['api', 'gemini'], install: { type: 'github-release' },
+          locales: { 'zh-CN': { description: '通过 OpenAI 兼容接口对外提供 Google AI Studio 模型。' } } },
         { id: 'quota-snapshot', name: 'Quota Snapshot', description: 'Snapshot provider quota usage into a daily report.',
           author: 'Community', version: '0.4.1', repository: 'ecpa/quota-snapshot', license: 'Apache-2.0',
           tags: ['quota'], install: { type: 'github-release' } },
