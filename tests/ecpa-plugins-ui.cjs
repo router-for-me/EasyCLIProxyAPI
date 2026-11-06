@@ -35,11 +35,6 @@ const fs = require('node:fs');
     console.log('cards:', await page.locator('.ecpa-plugin-card').count());
     await page.screenshot({ path: path.join(outDir, 'ecpa-default.png'), fullPage: true });
 
-    await page.locator('.ecpa-token-toggle').click();
-    await page.locator('#ecpa-token-panel').waitFor();
-    await page.screenshot({ path: path.join(outDir, 'ecpa-token-panel.png'), fullPage: true });
-    await page.locator('.ecpa-token-toggle').click();
-
     await page.getByRole('searchbox').fill('quota');
     await page.locator('.ecpa-clear-filters').waitFor();
     await page.screenshot({ path: path.join(outDir, 'ecpa-filtered.png'), fullPage: true });
@@ -50,8 +45,15 @@ const fs = require('node:fs');
     await degraded.screenshot({ path: path.join(outDir, 'ecpa-unavailable-card.png') });
     await page.close();
 
+    // Without a pre-registered source the page registers it silently.
     const unregistered = await open('ecpa&locale=en');
-    await unregistered.screenshot({ path: path.join(outDir, 'ecpa-unregistered.png'), fullPage: true });
+    await unregistered.waitForFunction(() =>
+      (window.pluginsFixture?.requests ?? []).some(request =>
+        request.method === 'PATCH' && request.path === '/config/plugins'
+        && Array.isArray(request.body?.['store-sources'])
+        && request.body['store-sources'].some(url => String(url).includes('ecpa-plugins-store'))));
+    await unregistered.locator('.ecpa-plugin-card:not(.is-unavailable)').first().waitFor();
+    await unregistered.screenshot({ path: path.join(outDir, 'ecpa-auto-registered.png'), fullPage: true });
     await unregistered.close();
 
     console.log('Screenshots: ' + outDir);

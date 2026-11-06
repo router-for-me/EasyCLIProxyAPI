@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, Copy, ExternalLink, Eye, EyeOff, KeyRound, Puzzle, Search, TriangleAlert, X } from 'lucide-react';
+import { Check, Copy, ExternalLink, KeyRound, Puzzle, Search, TriangleAlert, X } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
 import { PluginLogo } from '../components/ProviderLogo';
 import { useI18n } from '../i18n';
 import { openExternalUrl } from '../services/appSettings';
 import {
-  clearEcpaGitHubToken,
   buildEcpaStoreMap,
   ECPA_REGISTRY_URL,
   fetchEcpaRegistry,
@@ -14,11 +13,12 @@ import {
   isInstallableEcpaEntry,
   resolveEcpaStoreEntry,
   readEcpaGitHubToken,
-  writeEcpaGitHubToken,
   type EcpaPluginEntry,
 } from '../services/ecpaPlugins';
 import { safePluginWebURL } from '../services/pluginResources';
 import { getPluginSupport, pluginsApi, pluginStoreApi, type PluginStoreEntry, type PluginStoreInstallResult } from '../services/plugins';
+import { openSettingField } from '../services/settingsNavigation';
+import { GitHubTokenHint, isGitHubRateLimit } from './PluginRateLimitHint';
 import { PluginInstallDialog } from './PluginInstallDialog';
 import { pluginText } from '../i18n/plugins';
 import { useConfirmation } from '../components/ConfirmationDialog';
@@ -31,17 +31,17 @@ const ALL_TAG = '';
 export function EcpaPluginsPage() {
   const { t, locale } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
-  const [supported, setSupported] = useState(false);
-  const [registered, setRegistered] = useState(false);
-  const [sourceRegistered, setSourceRegistered] = useState(false);
-  const [registering, setRegistering] = useState(false);
+  // `null` means the check has not settled yet, so cards stay neutral instead of
+  // flashing an unavailable reason while the source is verified or registered.
+  const [supported, setSupported] = useState<boolean | null>(null);
+  const [registered, setRegistered] = useState<boolean | null>(null);
+  const [storeLoaded, setStoreLoaded] = useState(false);
   const [storeEntries, setStoreEntries] = useState(new Map<string, PluginStoreEntry>());
   const [storeError, setStoreError] = useState('');
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [restartRequired, setRestartRequired] = useState(false);
   const mounted = useRef(false);
-  const registrationPending = useRef(false);
 
   const reloadStore = async () => {
     const result = await pluginStoreApi.list();
@@ -56,36 +56,42 @@ export function EcpaPluginsPage() {
     void getPluginSupport().then(async available => {
       if (!active) return;
       setSupported(available);
-      if (!available) return;
-      await Promise.all([
-        pluginsApi.getSettings().then(settings => {
-          if (active) setRegistered(settings.storeSources.includes(ECPA_REGISTRY_URL));
-        }),
-        pluginStoreApi.list().then(result => {
-          if (!active) return;
-          setStoreEntries(buildEcpaStoreMap(result.plugins));
-          setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
-        }),
-      ]);
-    }).catch(reason => { if (active) setStoreError(String(reason)); });
-    return () => { active = false; mounted.current = false; };
-  }, []);
-
-  const registerSource = async () => {
-    if (registrationPending.current) return;
-    registrationPending.current = true;
-    setRegistering(true); setStoreError('');
-    try {
-      const settings = await pluginsApi.getSettings();
-      if (!settings.storeSources.includes(ECPA_REGISTRY_URL)) {
-        await pluginsApi.updateSettings({ storeSources: [...settings.storeSources, ECPA_REGISTRY_URL] });
+      if (!available) {
+        setRegistered(false);
+        setStoreLoaded(true);
+        return;
       }
-      if (!mounted.current) return;
-      setRegistered(true); setSourceRegistered(true);
-      await reloadStore();
-    } catch (reason) { if (mounted.current) setStoreError(String(reason)); }
-    finally { registrationPending.current = false; if (mounted.current) setRegistering(false); }
-  };
+      // The featured registry is a default plugin source: register it silently so
+      // installs work on the first visit, including for upgraded installs that
+      // predate the source. Failures surface through the store error notice.
+      let sourceReady = false;
+      try {
+        const settings = await pluginsApi.getSettings();
+        sourceReady = settings.storeSources.includes(ECPA_REGISTRY_URL);
+        if (!sourceReady) {
+          await pluginsApi.updateSettings({ storeSources: [...settings.storeSources, ECPA_REGISTRY_URL] });
+          sourceReady = true;
+        }
+      } catch (reason) {
+        if (active) setStoreError(String(reason));
+      }
+      if (!active) return;
+      setRegistered(sourceReady);
+      try {
+        await reloadStore();
+      } catch (reason) {
+        if (active) setStoreError(String(reason));
+      } finally {
+        if (active) setStoreLoaded(true);
+      }
+    }).catch(reason => {
+      if (!active) return;
+      setStoreError(String(reason));
+      setStoreLoaded(true);
+    });
+    return () => { active = false; mounted.current = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const installed = async (result: PluginStoreInstallResult) => {
     setInstallEntry(null);
@@ -96,16 +102,14 @@ export function EcpaPluginsPage() {
     catch (reason) { if (mounted.current) setStoreError(String(reason)); }
   };
   const [plugins, setPlugins] = useState<EcpaPluginEntry[]>(() => getBundledEcpaRegistry().plugins);
-  const [token, setToken] = useState<string>(() => readEcpaGitHubToken());
-  const [showToken, setShowToken] = useState(false);
-  const [tokenPanelOpen, setTokenPanelOpen] = useState(false);
+  // A token previously entered here still applies; new tokens are configured in
+  // Settings > Server > GitHub Token (see openSettingField below).
+  const token = useMemo(() => readEcpaGitHubToken(), []);
   const [tokenInvalid, setTokenInvalid] = useState(false);
-  const [usedFallback, setUsedFallback] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedTag, setSelectedTag] = useState<string>(ALL_TAG);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const tokenInputRef = useRef<HTMLInputElement>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadRef = useRef(true);
 
@@ -131,9 +135,6 @@ export function EcpaPluginsPage() {
       setTokenInvalid(result.tokenInvalid);
       if (result.registry) {
         setPlugins(result.registry.plugins);
-        setUsedFallback(false);
-      } else if (result.usedFallback) {
-        setUsedFallback(true);
       }
     });
 
@@ -172,19 +173,6 @@ export function EcpaPluginsPage() {
     });
   }, [plugins, search, selectedTag]);
 
-  const handleTokenChange = (nextValue: string) => {
-    setToken(nextValue);
-    setTokenInvalid(false);
-    writeEcpaGitHubToken(nextValue);
-  };
-
-  const handleClearToken = () => {
-    setToken('');
-    setTokenInvalid(false);
-    clearEcpaGitHubToken();
-    tokenInputRef.current?.focus();
-  };
-
   const handleClearFilters = () => {
     setSearch('');
     setSelectedTag(ALL_TAG);
@@ -216,7 +204,14 @@ export function EcpaPluginsPage() {
   };
 
   const hasActiveFilter = Boolean(search.trim()) || selectedTag !== ALL_TAG;
-  const tokenConfigured = Boolean(token.trim());
+  const sourceReady = supported === true && registered === true && storeLoaded;
+
+  const tokenSettingsLink = (muted = false) => (
+    <button type="button" className={`link-button ecpa-token-settings-link${muted ? ' muted' : ''}`} onClick={() => openSettingField(['server', 'github-token'])}>
+      <KeyRound size={13} aria-hidden="true" />
+      {t('ecpaPlugins.tokenSettings')}
+    </button>
+  );
 
   return (
     <div className="ecpa-plugins-page" role="region" aria-label={t('ecpaPlugins.title')}>
@@ -225,15 +220,9 @@ export function EcpaPluginsPage() {
           <h1>{t('ecpaPlugins.title')}</h1>
           <span className="ecpa-plugins-total">{t('ecpaPlugins.resultCount', { count: plugins.length })}</span>
         </div>
-        <p className="ecpa-plugins-subtitle">{t('ecpaPlugins.subtitle')}</p>
+        <p className="ecpa-plugins-subtitle">{t('ecpaPlugins.subtitle')} {tokenSettingsLink(true)}</p>
       </header>
-      {supported && !registered && <Notice tone="info" className="ecpa-plugin-banner" action={
-        <button type="button" className="secondary-button compact-button" disabled={registering} onClick={() => void registerSource()}>
-          {registering ? t('common.loading') : t('ecpaPlugins.registerSource')}
-        </button>
-      }>{t('ecpaPlugins.registerSourceHint')}</Notice>}
-      {sourceRegistered && <Notice tone="info">{t('ecpaPlugins.sourceRegistered')}</Notice>}
-      {storeError && <Notice tone="error">{storeError}</Notice>}
+      {storeError && <Notice tone="error">{storeError}{isGitHubRateLimit(storeError) ? <GitHubTokenHint /> : null}</Notice>}
       {restartRequired && <Notice tone="info" icon={false} className="plugin-banner" action={
         <button type="button" className="secondary-button" onClick={async () => {
           if (!await askConfirmation({ title: pluginText('restartButton', locale), message: pluginText('restartConfirm', locale) })) return;
@@ -241,19 +230,10 @@ export function EcpaPluginsPage() {
           catch (reason) { if (mounted.current) setStoreError(String(reason)); }
         }}>{pluginText('restartButton', locale)}</button>
       }>{t('ecpaPlugins.restartRequired')}</Notice>}
-      {(tokenInvalid || usedFallback) ? (
-        <div className="ecpa-plugin-banners">
-          {tokenInvalid ? (
-            <Notice tone="warn" className="ecpa-plugin-banner">
-              {t('ecpaPlugins.token.invalid')}
-            </Notice>
-          ) : null}
-          {usedFallback ? (
-            <Notice tone="info" className="ecpa-plugin-banner">
-              {t('ecpaPlugins.fallbackHint')}
-            </Notice>
-          ) : null}
-        </div>
+      {tokenInvalid ? (
+        <Notice tone="warn" className="ecpa-plugin-banner">
+          {t('ecpaPlugins.token.invalid')} {tokenSettingsLink()}
+        </Notice>
       ) : null}
       <div className="ecpa-plugins-controls">
         <div className="ecpa-plugin-search search-control" data-size="default">
@@ -281,65 +261,7 @@ export function EcpaPluginsPage() {
             <X size={15} aria-hidden="true" />
           </button>
         </div>
-
-        <button
-          type="button"
-          className="secondary-button ghost compact-button ecpa-token-toggle"
-          aria-expanded={tokenPanelOpen}
-          aria-controls="ecpa-token-panel"
-          onClick={() => setTokenPanelOpen((open) => !open)}
-        >
-          <KeyRound size={15} aria-hidden="true" />
-          <span>{t('ecpaPlugins.token.label')}</span>
-          <span className={`ecpa-token-state${tokenConfigured ? ' is-set' : ''}`}>
-            {t(tokenConfigured ? 'ecpaPlugins.token.configured' : 'ecpaPlugins.token.optional')}
-          </span>
-          <ChevronDown size={14} className="ecpa-token-chevron" aria-hidden="true" />
-        </button>
       </div>
-
-      {tokenPanelOpen ? (
-        <div className="ecpa-token-panel" id="ecpa-token-panel" role="group" aria-label={t('ecpaPlugins.storeOptions')}>
-          <label className="ecpa-token-label" htmlFor="ecpa-github-token-input">
-            {t('ecpaPlugins.token.label')}
-          </label>
-          <div className="ecpa-token-input-wrap">
-            <KeyRound size={15} aria-hidden="true" />
-            <input
-              id="ecpa-github-token-input"
-              ref={tokenInputRef}
-              type={showToken ? 'text' : 'password'}
-              value={token}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => handleTokenChange(event.target.value)}
-              placeholder={t('ecpaPlugins.token.placeholder')}
-              aria-label={t('ecpaPlugins.token.label')}
-            />
-            <button
-              type="button"
-              className="icon-button quiet ghost tiny-button"
-              aria-label={t(showToken ? 'ecpaPlugins.token.hide' : 'ecpaPlugins.token.show')}
-              title={t(showToken ? 'ecpaPlugins.token.hide' : 'ecpaPlugins.token.show')}
-              aria-pressed={showToken}
-              onClick={() => setShowToken((current) => !current)}
-            >
-              {showToken ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
-            </button>
-            <button
-              type="button"
-              className="icon-button quiet ghost tiny-button"
-              disabled={!token}
-              aria-label={t('ecpaPlugins.token.clear')}
-              title={t('ecpaPlugins.token.clear')}
-              onClick={handleClearToken}
-            >
-              <X size={15} aria-hidden="true" />
-            </button>
-          </div>
-          <p className="ecpa-token-hint">{t('ecpaPlugins.token.hint')}</p>
-        </div>
-      ) : null}
 
       <div className="ecpa-results-bar">
         <div className="ecpa-tag-bar" role="group" aria-label={t('ecpaPlugins.tagFilter')}>
@@ -383,9 +305,10 @@ export function EcpaPluginsPage() {
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
             const entry = resolveEcpaStoreEntry(storeEntries, plugin.id);
-            const unavailable = !supported ? t('ecpaPlugins.installUnavailable.unsupported')
+            const unavailable = supported === false ? t('ecpaPlugins.installUnavailable.unsupported')
               : !isInstallableEcpaEntry(plugin) ? t('ecpaPlugins.installUnavailable.noRepository')
-              : !registered ? t('ecpaPlugins.installUnavailable.sourceNotRegistered')
+              : registered === false ? t('ecpaPlugins.installUnavailable.sourceNotRegistered')
+              : !sourceReady ? ''
               : !entry ? t('ecpaPlugins.installUnavailable.notFound') : '';
             return (
               <article
@@ -446,13 +369,13 @@ export function EcpaPluginsPage() {
                   </button>
                   <button
                     type="button"
-                    className="icon-button quiet ecpa-repo-button"
+                    className="secondary-button compact-button ecpa-repo-button"
                     disabled={!repoUrl}
-                    aria-label={t('ecpaPlugins.openRepo')}
-                    title={t('ecpaPlugins.openRepo')}
+                    title={repoUrl || t('ecpaPlugins.openRepo')}
                     onClick={() => handleOpenRepository(plugin.repository)}
                   >
                     <ExternalLink size={15} aria-hidden="true" />
+                    {t('ecpaPlugins.openRepo')}
                   </button>
                   {unavailable ? (
                     <button
@@ -470,7 +393,7 @@ export function EcpaPluginsPage() {
                     </span>
                   ) : (
                     <button type="button" className="primary-button compact-button"
-                      disabled={installEntry !== null}
+                      disabled={installEntry !== null || !entry}
                       onClick={() => {
                         if (!entry) return;
                         setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
