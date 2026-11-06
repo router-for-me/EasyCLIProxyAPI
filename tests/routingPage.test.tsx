@@ -163,27 +163,35 @@ describe('routing components', () => {
     expect(validMarkup).not.toContain('role="alert"');
   });
 
-  it('toggles visibility of disabled credentials and tiers in TierLadder', () => {
+  it('toggles visibility of disabled credentials and tiers in TierLadder with continuous numbering and preserved split action', () => {
     const board = boardWith(
       member('active-1', 10),
       member('disabled-1', 10, { disabled: true }),
       member('disabled-alone', 0, { disabled: true }),
+      member('active-2', -10),
     );
     const normalHtml = ladder(board, false);
     expect(normalHtml).toContain('active-1');
     expect(normalHtml).toContain('disabled-1');
     expect(normalHtml).toContain('disabled-alone');
+    expect(normalHtml).toContain('active-2');
     expect(normalHtml).toContain('Disabled');
     expect(normalHtml).toContain('Tier 1');
     expect(normalHtml).toContain('Tier 2');
+    expect(normalHtml).toContain('Tier 3');
 
     const hiddenHtml = ladder(board, true);
     expect(hiddenHtml).toContain('active-1');
     expect(hiddenHtml).not.toContain('disabled-1');
     expect(hiddenHtml).not.toContain('disabled-alone');
+    expect(hiddenHtml).toContain('active-2');
     expect(hiddenHtml).not.toContain('Disabled');
+    // Numbering remains continuous: visual Tier 1 (priority 10) and visual Tier 2 (priority -10), omitting Tier 3
     expect(hiddenHtml).toContain('Tier 1');
-    expect(hiddenHtml).not.toContain('Tier 2');
+    expect(hiddenHtml).toContain('Tier 2');
+    expect(hiddenHtml).not.toContain('Tier 3');
+    // Split button is preserved on active-1 because its tier still contains hidden peer disabled-1
+    expect(hiddenHtml).toContain('Split into a separate tier');
 
     const allDisabledBoard = boardWith(member('d1', 10, { disabled: true }), member('d2', 0, { disabled: true }));
     const allHiddenHtml = ladder(allDisabledBoard, true);
