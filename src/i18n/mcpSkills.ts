@@ -2,7 +2,7 @@ import { getCurrentLocale, type AppLocale } from './index';
 import { createTraditionalMessages } from './traditional';
 
 const messages = {
-  title: ['MCP 与技能', 'MCP & Skills', 'MCP & スキル'],
+  title: ['MCP与Skills', 'MCP & Skills', 'MCP & スキル'],
   description: [
     '管理 MCP 服务器与技能扩展，为智能体提供工具和上下文能力。',
     'Manage MCP servers and skill extensions to provide tools and context for agents.',
@@ -19,6 +19,9 @@ const messages = {
   duplicate: ['复制配置', 'Duplicate', '設定を複製'],
   delete: ['删除', 'Delete', '削除'],
   confirmDelete: ['确认删除', 'Confirm delete', '削除の確認'],
+  editServer: ['编辑 {name}', 'Edit {name}', '{name} を編集'],
+  duplicateServer: ['复制 {name}', 'Duplicate {name}', '{name} を複製'],
+  deleteServer: ['删除 {name}', 'Delete {name}', '{name} を削除'],
   cancel: ['取消', 'Cancel', 'キャンセル'],
   save: ['保存', 'Save', '保存'],
   saving: ['保存中…', 'Saving...', '保存中…'],
@@ -48,6 +51,12 @@ const messages = {
   noSearchResults: ['没有匹配的服务器', 'No matching servers', '一致するサーバーがありません'],
   noSearchResultsHint: ['请尝试调整搜索关键词或重置筛选条件。', 'Try adjusting your search terms or resetting filters.', '検索キーワードを変更するかフィルターをリセットしてください。'],
   resetFilters: ['重置筛选', 'Reset filters', 'フィルターをリセット'],
+  loading: ['正在加载…', 'Loading…', '読み込み中…'],
+  noServersDetailHint: [
+    '添加服务器后将在此显示详情。',
+    'Server details will appear here after you add one.',
+    'サーバーを追加すると、ここに詳細が表示されます。',
+  ],
   selectServerHint: [
     '从左侧列表选择一个 MCP 服务器查看详情，或点击新建服务器。',
     'Select an MCP server from the list to view details, or add a new server.',
@@ -67,7 +76,11 @@ const messages = {
   searchSkillsPlaceholder: ['搜索技能名称或描述…', 'Search skills by name or description...', 'スキル名または説明を検索…'],
   skillsCount: ['显示 {count} / {total} 个技能', 'Showing {count} / {total} skills', '{count} / {total} 件のスキルを表示'],
   noSkills: ['暂无可用技能', 'No skills found', '利用可能なスキルがありません'],
-  noSkillsHint: ['将技能文件夹放入技能目录中，核心将自动加载识别。', 'Place skill folders in the skills directory to make them available.', 'スキルフォルダをスキルディレクトリに配置すると自動認識されます。'],
+  noSkillsHint: [
+    '将技能文件夹放入应用同级目录的 skills 文件夹，或 ~/.openclaw/skills、~/.openclaw/agents/*/agent/workshop-skills 目录中，核心将自动加载识别。',
+    'Place skill folders in the skills folder next to the app executable, or in ~/.openclaw/skills and ~/.openclaw/agents/*/agent/workshop-skills. The core loads them automatically.',
+    'アプリと同じディレクトリの skills フォルダ、または ~/.openclaw/skills、~/.openclaw/agents/*/agent/workshop-skills にスキルフォルダを配置すると自動で認識されます。',
+  ],
   noSkillSearchResults: ['没有匹配的技能', 'No matching skills', '一致するスキルがありません'],
   noSkillSearchResultsHint: ['请尝试调整搜索关键词或重置筛选。', 'Try adjusting your search terms or resetting filters.', '検索キーワードまたはフィルターを変更してください。'],
   filesCount: ['{count} 个文件', '{count} files', '{count} 個のファイル'],
@@ -110,6 +123,9 @@ const messages = {
   importSummary: ['成功添加 {added} 个，更新 {updated} 个，跳过 {skipped} 个。', 'Added {added}, updated {updated}, skipped {skipped}.', '追加: {added}、更新: {updated}、スキップ: {skipped}。'],
   importErrors: ['错误列表：', 'Errors:', 'エラー一覧：'],
   invalidJson: ['无效的 JSON 格式，请检查语法。', 'Invalid JSON syntax. Please check your input.', '無効な JSON 構文です。入力を確認してください。'],
+  invalidServerConfig: ['服务器配置无效', 'invalid server configuration', 'サーバー設定が無効です'],
+  enabledStatus: ['{name} 启用状态', '{name} status', '{name} の有効状態'],
+  clearSearch: ['清除搜索', 'Clear search', '検索をクリア'],
   backendNotReady: ['后端服务尚未就绪或未实现对应命令。页面以预览状态展示。', 'Backend service is not ready or commands are missing. Showing preview state.', 'バックエンドサービスが準備中か未実装です。プレビュー状態で表示しています。'],
   serverSaved: ['服务器已成功保存', 'Server saved successfully', 'サーバーを保存しました'],
   serverDeleted: ['服务器已成功删除', 'Server deleted successfully', 'サーバーを削除しました'],
@@ -121,6 +137,14 @@ const messages = {
   deleteConfirmDesc: ['此操作将从配置中永久移除此服务器。', 'This action will permanently remove this server.', 'このサーバーを完全に削除します。'],
   none: ['无', 'None', 'なし'],
   retry: ['重试', 'Retry', '再試行'],
+  serverFilter: ['服务器筛选', 'Server filter', 'サーバーフィルター'],
+  skillSource: ['技能来源', 'Skill source', 'スキルソース'],
+  keyColumn: ['键名', 'Key', 'キー'],
+  headerColumn: ['标头', 'Header', 'ヘッダー'],
+  valueColumn: ['值', 'Value', '値'],
+  remove: ['移除', 'Remove', '削除'],
+  serverToggled: ['服务器“{name}”{status}', 'Server "{name}" {status}', 'サーバー「{name}」を{status}にしました'],
+  skillToggled: ['技能“{name}”{status}', 'Skill "{name}" {status}', 'スキル「{name}」を{status}にしました'],
 } as const;
 
 export type McpSkillsMessageKey = keyof typeof messages;
@@ -132,6 +156,9 @@ export function mcpSkillsText(
 ): string {
   const item = messages[key];
   if (!item) return key;
+  if (key === 'title' && locale === 'zh-TW') {
+    return 'MCP 與技能';
+  }
   let text: string = item[locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   if (locale === 'zh-TW') {
     text = createTraditionalMessages({ text }).text;

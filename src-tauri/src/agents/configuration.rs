@@ -1286,12 +1286,55 @@ pub(crate) fn claude_desktop_inference_model(
     if let Some(tier) = claude_desktop_family_tier(route_model) {
         entry.insert("anthropicFamilyTier".to_string(), serde_json::json!(tier));
         entry.insert("isFamilyDefault".to_string(), serde_json::json!(true));
+        let listed = if use_source { source_model } else { route_model };
+        if !is_recognized_claude_model_id(listed) {
+            if let Some(behaves_as) = claude_desktop_behaves_as(tier) {
+                entry.insert("behavesAs".to_string(), serde_json::json!(behaves_as));
+            }
+        }
     }
     if enable_1m {
         entry.insert("supports1m".to_string(), serde_json::json!(true));
         entry.insert("prefer1m".to_string(), serde_json::json!(true));
     }
     serde_json::Value::Object(entry)
+}
+
+// Claude Desktop resolves a listed model's effort levels by looking the
+// behavesAs id up in its own table (eyn in its app.asar), keyed on the
+// lowercased id with a date suffix and an "anthropic." prefix removed.
+// These are that table's keys: opus 5, sonnet 5 and fable 5.1 report the
+// full low/medium/high/xhigh/max ladder, while haiku 4.5 reports thinking
+// modes and no effort ladder at all. An id the table has no entry for gets
+// no effort picker, so a "newer" sounding name such as claude-opus-5-5 is
+// worse than useless here. A route that is already a real Claude model
+// needs no mapping, and older Desktop builds ignore the key.
+pub(crate) fn claude_desktop_behaves_as(tier: &str) -> Option<&'static str> {
+    match tier {
+        "opus" => Some("claude-opus-5"),
+        "sonnet" => Some("claude-sonnet-5"),
+        "haiku" => Some("claude-haiku-4-5"),
+        "fable" => Some("claude-fable-5-1"),
+        _ => None,
+    }
+}
+
+// A Claude model id Desktop and Claude Code both recognize:
+// claude-<tier>-<digits>(-<digits>)*. Our generated route ids carry a
+// trailing word (`claude-opus-5-cpa`), which is not recognized.
+fn is_recognized_claude_model_id(name: &str) -> bool {
+    let lowered = name.trim().to_ascii_lowercase();
+    let Some(rest) = lowered.strip_prefix("claude-") else { return false };
+    let mut parts = rest.split('-');
+    let Some(tier) = parts.next() else { return false };
+    if !matches!(tier, "opus" | "sonnet" | "haiku" | "fable" | "mythos") {
+        return false;
+    }
+    let Some(version) = parts.next() else { return false };
+    if version.is_empty() || !version.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    parts.all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
 }
 
 pub(crate) fn claude_desktop_family_tier(route_model: &str) -> Option<&'static str> {
@@ -3914,11 +3957,9 @@ pub(crate) fn build_zcode_agent_config(
         }
         let specs = ensure_json_object_entry(config_obj, "optionSpecs");
         if let Some(mot) = inferred_mot {
-            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({
-                "max": mot,
-                "map": "{\"max_tokens\": maxOutputTokens}",
-            }));
+            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
         }
+        if let Some(mot_obj) = specs.get_mut("maxOutputTokens").and_then(serde_json::Value::as_object_mut) { mot_obj.remove("map"); }
         if !option.reasoning_levels.is_empty() {
             let is_generated_map = |m: &str| {
                 m == ZCODE_CPA_REASONING_MAP || m == "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"

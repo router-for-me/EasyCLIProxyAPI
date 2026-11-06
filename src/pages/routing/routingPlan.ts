@@ -25,7 +25,7 @@ export function tiersFromMembers(members: readonly RoutingMember[]): RoutingTier
     .sort(([left], [right]) => right - left)
     .map(([priority, peers]) => ({
       id: `p${priority}`,
-      memberKeys: peers.sort((left, right) => left.name.localeCompare(right.name)).map((member) => member.key),
+      memberKeys: peers.sort((left, right) => (left.remark || left.name).localeCompare(right.remark || right.name)).map((member) => member.key),
     }));
 }
 

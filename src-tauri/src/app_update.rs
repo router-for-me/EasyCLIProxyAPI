@@ -1,3 +1,4 @@
+use super::plugins::{plugin_github_token, read_plugin_github_settings};
 use super::*;
 
 pub(crate) const PORTABLE_UPDATE_HELPER_ACK_FILE: &str = "update-helper-started.ack";
@@ -315,13 +316,14 @@ async fn resolve_app_update(
     let requested_source = config.selected_download_candidate();
     let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
     let update_channel = normalize_update_channel(&config.update_channel);
+    let github_token = gui_github_token(&config).await;
     let mut channel_tag = update_channel_tag(&update_channel);
     if channel_tag.as_deref() == Some(PREVIEW_CHANNEL_MARKER) {
         // Resolve the rolling preview channel to the newest timestamped release.
         // Never fall back to a fixed tag: a preview build must not be silently
         // offered the stable release, and a deleted rolling tag would otherwise
         // turn every update check into a 404.
-        match fetch_latest_preview_tag(&client).await {
+        match fetch_latest_preview_tag(&client, github_token.as_deref()).await {
             Some(tag) => channel_tag = Some(tag),
             None => {
                 return Err(
@@ -349,20 +351,38 @@ async fn resolve_app_update(
     }
     let latest_version = normalize_version(&manifest.version);
     let current_build_at = local_portable_app_built_at();
-    let update_available = is_app_update_available(&current_version, &latest_version)?;
+    let local_manifest = read_local_portable_app_manifest();
+    let is_test_env = is_test_or_prerelease_version(&current_version)
+        || local_manifest.as_ref().is_some_and(|m| {
+            is_test_or_prerelease_version(&m.version)
+                || normalize_version(&m.version) != current_version
+        });
+    let mut update_available = is_app_update_available(&current_version, &latest_version)?;
+    if !update_available && is_test_env {
+        update_available = true;
+    }
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
-    let portable_support = target
-        .map(|(_, arch)| {
-            validate_local_portable_app_manifest(arch)
-                .map(|supported| supported || is_preview)
-                .or_else(|error| if is_preview { Ok(true) } else { Err(error) })
-        })
-        .transpose()?;
+    let download_url = asset.as_ref().map(|value| value.url.clone());
+    let download_file_name = download_url
+        .as_deref()
+        .and_then(portable_update_asset_file_name);
+    let download_size_bytes = asset.as_ref().map(|value| value.size_bytes);
+    let mut manifest_error = None;
+    let portable_support = target.map(|(_, arch)| match validate_local_portable_app_manifest(arch) {
+        Ok(supported) => supported || is_preview || is_test_env,
+        Err(_) if is_preview || is_test_env => true,
+        Err(error) => {
+            manifest_error = Some(error);
+            false
+        }
+    });
     let auto_update_supported = portable_support == Some(true) && asset.is_some();
     let unsupported_reason = if auto_update_supported {
         None
+    } else if let Some(error) = manifest_error {
+        Some(error)
     } else if portable_support != Some(true) {
         Some("This application is not a portable version that supports automatic upgrades. Manually download the first supported version".to_string())
     } else {
@@ -373,7 +393,7 @@ async fn resolve_app_update(
         let (_, arch) = target.expect("portable target checked above");
         Some(PendingAppUpdate {
             version: latest_version.clone(),
-            asset: asset.clone().expect("portable asset checked above"),
+            asset: asset.expect("portable asset checked above"),
             arch: arch.to_string(),
         })
     } else {
@@ -388,7 +408,9 @@ async fn resolve_app_update(
         published_at: manifest.published_at,
         current_build_at,
         auto_update_supported,
-        download_size_bytes: asset.map(|value| value.size_bytes),
+        download_url,
+        download_file_name,
+        download_size_bytes,
         unsupported_reason,
         update_channel: update_channel.clone(),
     };
@@ -487,6 +509,22 @@ fn app_update_metadata_request(client: &reqwest::Client, url: &str) -> reqwest::
         .query(&[("_", nonce)])
         .header(reqwest::header::CACHE_CONTROL, "no-cache")
         .header(reqwest::header::PRAGMA, "no-cache")
+}
+
+/// Reads the configured GitHub token the same way the plugin store does, so a
+/// panel update check does not spend the 60 anonymous requests per hour.
+async fn gui_github_token(
+    config: &GuiConfigFile,
+) -> Option<String> {
+    let response = management_http_client()
+        .ok()?
+        .get(management_endpoint(config, "config/server").ok()?)
+        .header("Authorization", management_authorization(config).ok()?)
+        .send()
+        .await
+        .ok()?;
+    let settings = read_plugin_github_settings(response).await.ok()?;
+    plugin_github_token(&settings, std::env::var("GITHUB_TOKEN").ok())
 }
 
 pub(crate) fn configured_gitcode_gui_repository() -> Option<&'static str> {
@@ -727,6 +765,21 @@ fn validate_portable_update_asset_catalog(
     Ok(())
 }
 
+pub(crate) fn portable_update_asset_file_name(url: &str) -> Option<String> {
+    if let Ok(parsed) = reqwest::Url::parse(url) {
+        if let Some(segments) = parsed.path_segments() {
+            if let Some(name) = segments.rev().find(|segment| !segment.is_empty()) {
+                return Some(name.to_string());
+            }
+        }
+    }
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
 pub(crate) fn validate_portable_update_asset(asset: &PortableUpdateAsset) -> Result<(), String> {
     let url = reqwest::Url::parse(&asset.url).map_err(|_| "Invalid application update download URL".to_string())?;
     if url.scheme() != "https"
@@ -794,21 +847,25 @@ pub(crate) fn portable_update_target() -> Option<(&'static str, &'static str)> {
 }
 
 /// Returns the newest `preview-<stamp>` release tag from the GitHub releases list.
-async fn fetch_latest_preview_tag(client: &reqwest::Client) -> Option<String> {
-    if let Some(tag) = fetch_preview_tags_from_api(client).await {
+async fn fetch_latest_preview_tag(client: &reqwest::Client, token: Option<&str>) -> Option<String> {
+    if let Some(tag) = fetch_preview_tags_from_api(client, token).await {
         return Some(tag);
     }
     fetch_preview_tags_from_atom(client).await
 }
 
-async fn fetch_preview_tags_from_api(client: &reqwest::Client) -> Option<String> {
-    let response = client
+async fn fetch_preview_tags_from_api(
+    client: &reqwest::Client,
+    token: Option<&str>,
+) -> Option<String> {
+    let mut request = client
         .get(GUI_RELEASES_API_URL)
         .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .send()
-        .await
-        .ok()?;
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json");
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -934,14 +991,35 @@ pub(crate) fn local_portable_app_manifest_path() -> Result<PathBuf, String> {
     Ok(executable_dir.join(PORTABLE_APP_MANIFEST_FILE))
 }
 
-pub(crate) fn local_portable_app_built_at() -> Option<String> {
+pub(crate) fn read_local_portable_app_manifest() -> Option<PortableAppManifest> {
     let path = local_portable_app_manifest_path().ok()?;
     let contents = fs::read_to_string(path).ok()?;
-    let manifest = serde_json::from_str::<PortableAppManifest>(&contents).ok()?;
+    serde_json::from_str::<PortableAppManifest>(&contents).ok()
+}
+
+pub(crate) fn local_portable_app_built_at() -> Option<String> {
+    let manifest = read_local_portable_app_manifest()?;
     manifest
         .built_at
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty() && chrono::DateTime::parse_from_rfc3339(value).is_ok())
+}
+
+pub(crate) fn is_test_or_prerelease_version(version: &str) -> bool {
+    let trimmed = version.trim().trim_start_matches('v');
+    let lower = trimmed.to_ascii_lowercase();
+    lower.contains("preview")
+        || lower.contains("pr.")
+        || lower.contains("-pr")
+        || lower.contains("dev")
+        || lower.contains("test")
+        || lower.contains("alpha")
+        || lower.contains("beta")
+        || lower.contains("rc")
+        || lower.contains("dirty")
+        || semver::Version::parse(trimmed)
+            .map(|v| !v.pre.is_empty())
+            .unwrap_or(false)
 }
 
 pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Result<bool, String> {
@@ -953,14 +1031,18 @@ pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Resul
         fs::read_to_string(&path).map_err(|error| format!("Failed to read portable version marker: {error}"))?;
     let manifest = serde_json::from_str::<PortableAppManifest>(&contents)
         .map_err(|error| format!("Failed to parse portable version marker: {error}"))?;
+    let binary_version = env!("CARGO_PKG_VERSION");
+    let version_matches = normalize_version(&manifest.version) == normalize_version(binary_version);
+    let is_test_environment = is_test_or_prerelease_version(&manifest.version)
+        || is_test_or_prerelease_version(binary_version)
+        || !version_matches;
+
     Ok(manifest.schema_version == 1
         && manifest.application == "EasyCLIProxyAPI"
         && Some(manifest.platform.as_str()) == portable_update_platform_key()
         && manifest.arch == expected_arch
         && manifest.auto_update
-        && (normalize_version(&manifest.version) == normalize_version(env!("CARGO_PKG_VERSION"))
-            || env!("CARGO_PKG_VERSION").to_ascii_lowercase().contains("preview")
-            || manifest.version.to_ascii_lowercase().contains("preview")))
+        && (version_matches || is_test_environment))
 }
 
 #[tauri::command]
@@ -3087,3 +3169,4 @@ pub(crate) fn set_update_channel(
     gui_config_state.set_update_channel(&channel)?;
     Ok(channel)
 }
+

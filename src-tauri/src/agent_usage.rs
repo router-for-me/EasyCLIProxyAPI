@@ -369,8 +369,20 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
             roots.push(home.join(format!(".{source}/agent/sessions")));
             roots.push(home.join(format!(".{source}/sessions")));
         }
-        "mcode" | "zcode" => {
-            roots.push(home.join(format!(".{source}/sessions")));
+        "mcode" => {
+            roots.push(home.join(".mcode/sessions"));
+        }
+        "zcode" => {
+            if let Some(custom) = env_directory("ZCODE_DATA_BASE_DIR") {
+                roots.push(custom.join(".zcode").join("cli").join("db"));
+            }
+            if let Some(custom_dir) = read_zcode_custom_data_dir(home) {
+                roots.push(custom_dir.join(".zcode").join("cli").join("db"));
+            }
+            roots.push(home.join(".zcode").join("cli").join("db"));
+            roots.push(home.join(".zcode").join("sessions"));
+            extensions.push("sqlite");
+            extensions.push("db");
         }
         "kimi" => {
             let root = env_directory("KIMI_CODE_HOME").unwrap_or_else(|| home.join(".kimi-code"));
@@ -446,6 +458,23 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
                 && !name.eq_ignore_ascii_case("ezcpa-connection.json")
         });
     }
+    if source == "zcode" {
+        files.retain(|path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("db") {
+                name.eq_ignore_ascii_case("db.sqlite") || name.eq_ignore_ascii_case("model_usage.db")
+            } else {
+                ext.eq_ignore_ascii_case("jsonl")
+            }
+        });
+    }
     files.sort();
     files.dedup();
     files
@@ -501,7 +530,10 @@ pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) 
     if !metadata.is_file() {
         return Ok(());
     }
-    if extension.eq_ignore_ascii_case("db") {
+    if extension.eq_ignore_ascii_case("db") || extension.eq_ignore_ascii_case("sqlite") {
+        if source == "zcode" {
+            return read_zcode_database(path, delta);
+        }
         return read_opencode_database(path, delta);
     }
 
@@ -578,9 +610,13 @@ pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) 
                 codex_model = value["payload"]["model"].as_str().map(sanitize_model_name);
             }
             if let Some(mut sample) = extract_codex_usage(&value) {
-                if value
-                    .pointer("/payload/info/total_token_usage")
-                    .is_some_and(Value::is_object)
+                let has_last = value
+                    .pointer("/payload/info/last_token_usage")
+                    .is_some_and(Value::is_object);
+                if !has_last
+                    && value
+                        .pointer("/payload/info/total_token_usage")
+                        .is_some_and(Value::is_object)
                 {
                     let current = sample.counter.clone();
                     sample.counter.input_tokens = current
@@ -664,6 +700,111 @@ fn read_opencode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> 
         if let Ok(value) = serde_json::from_str::<Value>(&data) {
             add_value_usage(&value, "opencode", path, delta);
         }
+    }
+    Ok(())
+}
+
+fn read_zcode_custom_data_dir(home: &Path) -> Option<PathBuf> {
+    let settings_path = home.join(".zcode").join("v2").join("setting.json");
+    let content = fs::read_to_string(settings_path).ok()?;
+    let value: Value = serde_json::from_str(&content).ok()?;
+    let dir = value.get("dataBaseDir")?.as_str()?.trim();
+    if dir.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(dir);
+    if path.is_dir() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn read_zcode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> {
+    if fs::metadata(path).map(|m| m.len() == 0).unwrap_or(true) {
+        return Ok(());
+    }
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| ())?;
+    let _ = connection.busy_timeout(std::time::Duration::from_secs(2));
+
+    let table_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'model_usage')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    if !table_exists {
+        return Ok(());
+    }
+
+    let mut statement = connection
+        .prepare(
+            "SELECT started_at, coalesce(model_id, 'unknown'), \
+                    coalesce(input_tokens, 0), coalesce(output_tokens, 0), \
+                    coalesce(cache_read_input_tokens, 0), coalesce(cache_creation_input_tokens, 0), \
+                    coalesce(reasoning_tokens, 0), coalesce(computed_total_tokens, 0) \
+             FROM model_usage \
+             WHERE lower(coalesce(provider_id, '')) NOT LIKE 'account:%' \
+               AND lower(coalesce(provider_id, '')) NOT LIKE 'official%' \
+             ORDER BY started_at ASC",
+        )
+        .map_err(|_| ())?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2).unwrap_or(0).max(0) as u64,
+                row.get::<_, i64>(3).unwrap_or(0).max(0) as u64,
+                row.get::<_, i64>(4).unwrap_or(0).max(0) as u64,
+                row.get::<_, i64>(5).unwrap_or(0).max(0) as u64,
+                row.get::<_, i64>(6).unwrap_or(0).max(0) as u64,
+                row.get::<_, i64>(7).unwrap_or(0).max(0) as u64,
+            ))
+        })
+        .map_err(|_| ())?;
+
+    for row in rows {
+        let (started_at, model, input, output, cache_read, cache_creation, reasoning, computed_total) =
+            row.map_err(|_| ())?;
+        let Some(timestamp) = Local.timestamp_millis_opt(started_at).single() else {
+            continue;
+        };
+        let day = timestamp.format("%Y-%m-%d").to_string();
+        let hour = timestamp.hour() as u8;
+        let model = sanitize_model_name(&model);
+
+        let mut counter = UsageCounter::default();
+        counter.cache_read_tokens = cache_read;
+        counter.cache_creation_tokens = cache_creation;
+        counter.reasoning_tokens = reasoning;
+        counter.output_tokens = output;
+        counter.input_tokens = input.saturating_sub(cache_read);
+        if computed_total > 0 {
+            counter.total_tokens = computed_total;
+        } else {
+            counter.total_tokens = counter
+                .input_tokens
+                .saturating_add(output)
+                .saturating_add(cache_read)
+                .saturating_add(cache_creation);
+        }
+        counter.samples = 1;
+
+        add_counter(
+            delta.daily.entry((day.clone(), model.clone())).or_default(),
+            &counter,
+        );
+        add_counter(
+            delta.hourly.entry((day, hour, model)).or_default(),
+            &counter,
+        );
     }
     Ok(())
 }
@@ -782,9 +923,9 @@ fn extract_codex_usage(value: &Value) -> Option<UsageSample> {
     let usage = info
         .and_then(|object| {
             object
-                .get("total_token_usage")
+                .get("last_token_usage")
                 .and_then(Value::as_object)
-                .or_else(|| object.get("last_token_usage").and_then(Value::as_object))
+                .or_else(|| object.get("total_token_usage").and_then(Value::as_object))
         })
         .or_else(|| payload.get("usage").and_then(Value::as_object))?;
     let mut sample = sample_from_map(usage)?;
@@ -1408,8 +1549,7 @@ mod tests {
             (local_timestamp(2026, 10, 30, 12), 160, 30, 50),
         ] {
             writeln!(file, "{}", json!({"timestamp": timestamp, "payload": {"type": "token_count", "info": {
-                "total_token_usage": {"input_tokens": input, "cached_input_tokens": cached, "output_tokens": output},
-                "last_token_usage": {"input_tokens": 9999}
+                "total_token_usage": {"input_tokens": input, "cached_input_tokens": cached, "output_tokens": output}
             }}})).unwrap();
         }
         drop(file);
@@ -1427,6 +1567,61 @@ mod tests {
             .unwrap();
         assert_eq!(second.input_tokens, 50);
         assert_eq!(second.total_tokens, 80);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn counts_codex_last_token_usage_when_present() {
+        let root = test_directory("codex-last-usage");
+        let path = root.join("rollout.jsonl");
+        let mut file = File::create(&path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"type": "turn_context", "payload": {"model": "gpt-test"}})
+        )
+        .unwrap();
+        for (timestamp, total, last) in [
+            (
+                local_timestamp(2026, 10, 29, 12),
+                (1000, 200, 600),
+                (40, 10, 12),
+            ),
+            (
+                local_timestamp(2026, 10, 29, 12),
+                (2500, 500, 1400),
+                (60, 15, 18),
+            ),
+            (
+                local_timestamp(2026, 10, 30, 12),
+                (9000, 900, 4000),
+                (25, 5, 7),
+            ),
+        ] {
+            writeln!(file, "{}", json!({"timestamp": timestamp, "payload": {"type": "token_count", "info": {
+                "total_token_usage": {"input_tokens": total.0, "cached_input_tokens": total.1, "output_tokens": total.2},
+                "last_token_usage": {"input_tokens": last.0, "cached_input_tokens": last.1, "output_tokens": last.2}
+            }}})).unwrap();
+        }
+        drop(file);
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "codex", &mut delta).unwrap();
+        let first = delta
+            .daily
+            .get(&("2026-10-29".to_string(), "gpt-test".to_string()))
+            .unwrap();
+        assert_eq!(first.input_tokens, 75);
+        assert_eq!(first.output_tokens, 30);
+        assert_eq!(first.cache_read_tokens, 25);
+        assert_eq!(first.total_tokens, 130);
+        let second = delta
+            .daily
+            .get(&("2026-10-30".to_string(), "gpt-test".to_string()))
+            .unwrap();
+        assert_eq!(second.input_tokens, 20);
+        assert_eq!(second.output_tokens, 7);
+        assert_eq!(second.cache_read_tokens, 5);
+        assert_eq!(second.total_tokens, 32);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1695,5 +1890,107 @@ mod tests {
         drop(guard);
         assert!(SyncGuard::acquire(&flag).is_some());
         assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn reads_zcode_sqlite_database_filtering_account_providers() {
+        let root = test_directory("zcode-db");
+        let path = root.join("db.sqlite");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE model_usage (
+                    id TEXT PRIMARY KEY,
+                    started_at INTEGER NOT NULL,
+                    model_id TEXT,
+                    provider_id TEXT,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    cache_read_input_tokens INTEGER,
+                    cache_creation_input_tokens INTEGER,
+                    reasoning_tokens INTEGER,
+                    computed_total_tokens INTEGER
+                );",
+            )
+            .unwrap();
+        let timestamp = Local
+            .with_ymd_and_hms(2026, 11, 2, 14, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        connection
+            .execute(
+                "INSERT INTO model_usage VALUES ('1', ?1, 'deepseek-v4.1-flash', 'cpa-gui', 100, 20, 30, 10, 5, 120);",
+                [timestamp],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO model_usage VALUES ('2', ?1, 'GLM-5.3-Flash', 'account:bigmodel-start-plan', 500, 50, 0, 0, 0, 550);",
+                [timestamp],
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut delta = FileDelta::default();
+        read_zcode_database(&path, &mut delta).unwrap();
+        let total = delta_total(&delta);
+        assert_eq!(total.total_tokens, 120);
+        assert_eq!(total.output_tokens, 20);
+        assert_eq!(total.cache_read_tokens, 30);
+        assert_eq!(total.cache_creation_tokens, 10);
+        assert_eq!(total.input_tokens, 70);
+        assert_eq!(delta.daily.len(), 1);
+        assert!(delta
+            .daily
+            .contains_key(&("2026-11-02".to_string(), "deepseek-v4.1-flash".to_string())));
+        assert!(!delta
+            .daily
+            .contains_key(&("2026-11-02".to_string(), "glm-5.3-flash".to_string())));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discovers_zcode_custom_data_dir() {
+        let home = test_directory("zcode-home");
+        let v2 = home.join(".zcode").join("v2");
+        fs::create_dir_all(&v2).unwrap();
+        let custom = test_directory("zcode-custom");
+        let custom_str = custom.to_string_lossy().replace(r#"\"#, r#"\\"#);
+        fs::write(
+            v2.join("setting.json"),
+            format!(r#"{{"dataBaseDir": "{custom_str}"}}"#),
+        )
+        .unwrap();
+        assert_eq!(read_zcode_custom_data_dir(&home), Some(custom.clone()));
+        fs::remove_dir_all(home).unwrap();
+        fs::remove_dir_all(custom).unwrap();
+    }
+
+    #[test]
+    fn codex_prefers_last_token_usage_without_subagent_history_inflation() {
+        let sample = extract_codex_usage(&json!({
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 800000000,
+                        "output_tokens": 1000000,
+                        "cached_input_tokens": 700000000,
+                        "total_tokens": 801000000
+                    },
+                    "last_token_usage": {
+                        "input_tokens": 500,
+                        "output_tokens": 50,
+                        "cached_input_tokens": 100,
+                        "total_tokens": 550
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(sample.counter.input_tokens, 400);
+        assert_eq!(sample.counter.output_tokens, 50);
+        assert_eq!(sample.counter.cache_read_tokens, 100);
+        assert_eq!(sample.counter.total_tokens, 550);
     }
 }

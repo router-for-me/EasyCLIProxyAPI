@@ -1,3 +1,4 @@
+use crate::plugins::plugin_github_token;
 use super::support::*;
 use super::*;
 
@@ -24,6 +25,9 @@ fn app_update_comparison_uses_semantic_versions() {
     assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
     assert!(!is_app_update_available("v0.3.6-preview.20261103-1929", "v0.3.6-preview.20261103-1929").unwrap());
     assert!(is_app_update_available("v0.3.6-preview.20261102-1830", "v0.3.6-preview.20261103-1929").unwrap());
+    assert!(is_app_update_available("v0.3.76-pr.584.587.1", "v0.3.76").unwrap());
+    assert!(is_app_update_available("v0.3.76-dev", "v0.3.76").unwrap());
+    assert!(is_app_update_available("v0.3.6-pr.584.587.1", "v0.3.76").unwrap());
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -700,11 +704,46 @@ fn preview_channel_marker_is_not_a_release_tag() {
 }
 
 #[test]
+fn portable_update_asset_file_name_extracts_package_name() {
+    assert_eq!(
+        portable_update_asset_file_name(
+            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip"
+        ),
+        Some("EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip".to_string())
+    );
+    assert_eq!(
+        portable_update_asset_file_name(
+            "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz"
+        ),
+        Some("EasyCLIProxyAPI-v0.3.6-preview-Linux-amd64.tar.gz".to_string())
+    );
+}
+
+#[test]
 fn preview_url_whitelist_rejects_the_retired_rolling_tag() {
     assert!(select_latest_preview_tag(&["preview-20261104-1623".to_string()]).is_some());
     // Anything that is not a `v*` tag, a `preview-*` tag or a timestamp is not a
     // preview release the client should trust.
     assert!(select_latest_preview_tag(&["only-preview".to_string()]).is_none());
+}
+
+#[test]
+fn github_token_prefers_configured_setting_over_environment() {
+    let settings = serde_json::json!({ "github-token": "  configured-token  " });
+    assert_eq!(
+        plugin_github_token(&settings, Some("env-token".to_string())).as_deref(),
+        Some("configured-token")
+    );
+}
+
+#[test]
+fn github_token_falls_back_to_environment_and_ignores_blanks() {
+    let empty = serde_json::json!({ "github-token": "   " });
+    assert_eq!(
+        plugin_github_token(&empty, Some("env-token".to_string())).as_deref(),
+        Some("env-token")
+    );
+    assert_eq!(plugin_github_token(&empty, None), None);
 }
 
 #[test]

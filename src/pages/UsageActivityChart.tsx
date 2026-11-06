@@ -12,12 +12,16 @@ import {
   type PreparedTrendPoint,
   type UsageTimelinePoint,
 } from '../services/usageTrend';
+import { axisGutter } from '../services/agentUsageCharts';
 import './UsageActivityChart.css';
 
 type UsageActivityChartProps = {
   timeline: UsageTimelinePoint[];
   range?: { start?: string; end?: string };
 };
+
+const AXIS_LEFT = 40;
+const AXIS_LABEL_GAP = 10;
 
 // Merge neighboring intervals on narrow screens without dropping their requests.
 function mergeIntervals(points: PreparedTrendPoint[], limit: number): PreparedTrendPoint[] {
@@ -64,15 +68,15 @@ export function UsageActivityChart({ timeline, range }: UsageActivityChartProps)
   }, []);
 
   const chart = useMemo(() => {
-    const left = 40;
     const right = width - 8;
     const top = 14;
     const baseline = 128;
-    const plotWidth = right - left;
-    const points = mergeIntervals(series.points, Math.max(12, Math.min(72, Math.floor(plotWidth / 10))));
+    const points = mergeIntervals(series.points, Math.max(12, Math.min(72, Math.floor((right - AXIS_LEFT) / 10))));
     const start = points[0]?.start ?? new Date(0);
     const end = points[points.length - 1]?.end ?? start;
     const maximum = niceCeiling(points.reduce((value, point) => Math.max(value, point.requests, point.success + point.failure + point.canceled), 1));
+    const left = axisGutter(trendAxisTicks(maximum, 3).map((tick) => formatNumber(tick, { notation: 'compact', maximumFractionDigits: 1 })), AXIS_LEFT, AXIS_LABEL_GAP);
+    const plotWidth = right - left;
     const peakIndex = points.reduce((best, point, index) => point.requests > (points[best]?.requests ?? -1) ? index : best, 0);
     const compactSameDay = start.toDateString() === end.toDateString();
     // Edge labels are anchored inward, so space ticks 1.5 label widths apart
@@ -99,7 +103,7 @@ export function UsageActivityChart({ timeline, range }: UsageActivityChartProps)
       return { x, width: barWidth, center: (x0 + x1) / 2, left: x0, right: x1, layers };
     });
     return { points, left, right, top, baseline, plotWidth, start, end, maximum, peakIndex, compactSameDay, timeTicks, showTime, bars };
-  }, [series, width]);
+  }, [series, width, formatNumber]);
 
   useEffect(() => setActiveIndex(null), [series, chart.points.length]);
 
@@ -167,7 +171,7 @@ export function UsageActivityChart({ timeline, range }: UsageActivityChartProps)
         >
           {trendAxisTicks(chart.maximum, 3).map((tick) => {
             const y = chart.baseline - tick / chart.maximum * (chart.baseline - chart.top);
-            return <g key={tick} className="usage-activity-axis"><line x1={chart.left} x2={chart.right} y1={y} y2={y} /><text x={chart.left - 10} y={y + 3} textAnchor="end">{formatNumber(tick, { notation: 'compact', maximumFractionDigits: 1 })}</text></g>;
+            return <g key={tick} className="usage-activity-axis"><line x1={chart.left} x2={chart.right} y1={y} y2={y} /><text x={chart.left - AXIS_LABEL_GAP} y={y + 3} textAnchor="end">{formatNumber(tick, { notation: 'compact', maximumFractionDigits: 1 })}</text></g>;
           })}
           {activeBar && <rect className="usage-activity-highlight" x={activeBar.left} y={chart.top - 5} width={Math.max(0, activeBar.right - activeBar.left)} height={chart.baseline - chart.top + 5} rx="3" />}
           {chart.bars.map((bar, index) => <g key={chart.points[index].hour} className="usage-activity-bar" data-requests={chart.points[index].requests} data-success={chart.points[index].success} data-failure={chart.points[index].failure} data-canceled={chart.points[index].canceled}>

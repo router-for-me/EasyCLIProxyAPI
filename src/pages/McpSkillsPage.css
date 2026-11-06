@@ -224,6 +224,12 @@
     box-shadow: none;
   }
 
+  .mcp-search-box input::-webkit-search-cancel-button,
+  .mcp-search-box input::-webkit-search-decoration {
+    -webkit-appearance: none;
+    display: none;
+  }
+
   .mcp-search-box:focus-within {
     border-color: var(--primary-color);
     outline: 2px solid var(--primary-color);
@@ -312,8 +318,6 @@
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
     background: var(--bg-card);
-    text-align: left;
-    cursor: pointer;
     transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
     box-sizing: border-box;
   }
@@ -329,17 +333,25 @@
     box-shadow: 0 0 0 1px var(--primary-color);
   }
 
-  .mcp-server-row-button:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 2px;
-  }
-
-  .mcp-server-row-left {
+  .mcp-server-row-select {
     display: flex;
     align-items: center;
     gap: 10px;
     min-width: 0;
     flex: 1;
+    padding: 0;
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+  }
+
+  .mcp-server-row-select:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
   }
 
   .mcp-status-dot {
@@ -347,6 +359,11 @@
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
+  }
+
+  .mcp-status-dot--lg {
+    width: 10px;
+    height: 10px;
   }
 
   .mcp-status-dot.active {
@@ -374,6 +391,7 @@
     min-width: 0;
   }
 
+  .mcp-server-name,
   .mcp-server-row-name {
     font-size: 13px;
     font-weight: 600;
@@ -427,16 +445,62 @@
     gap: 8px;
   }
 
+  .mcp-server-row-actions {
+    display: none;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .mcp-server-row-button:hover .mcp-server-row-actions,
+  .mcp-server-row-button:focus-within .mcp-server-row-actions,
+  .mcp-server-row-button.active .mcp-server-row-actions {
+    display: inline-flex;
+  }
+
+  .mcp-row-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .mcp-row-action-btn:hover {
+    background: var(--bg-card);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+  }
+
+  .mcp-row-action-btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 1px;
+  }
+
+  .mcp-row-action-btn--danger:hover {
+    color: var(--danger-color, #ef4444);
+    border-color: color-mix(in srgb, var(--danger-color, #ef4444) 40%, transparent);
+    background: color-mix(in srgb, var(--danger-color, #ef4444) 10%, transparent);
+  }
+
   .mcp-row-error {
     font-size: 11px;
     color: var(--danger-color, #ef4444);
     background: color-mix(in srgb, var(--danger-color, #ef4444) 10%, transparent);
     padding: 1px 6px;
     border-radius: var(--radius-sm);
-    max-width: 140px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    min-width: 0;
     line-height: 1.4;
     animation: mcpFadeIn 150ms ease;
   }
@@ -483,6 +547,10 @@
   .mcp-inline-error-icon {
     flex-shrink: 0;
     color: var(--danger-color, #ef4444);
+  }
+
+  .mcp-inline-error-strip--spaced {
+    margin-bottom: 16px;
   }
 
   .mcp-inline-error-strip--warn .mcp-inline-error-icon {
@@ -574,20 +642,39 @@
 
   .mcp-delete-confirm-box {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
     padding: 10px 14px;
     border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--danger-color, #ef4444) 10%, var(--bg-secondary));
     border: 1px solid color-mix(in srgb, var(--danger-color, #ef4444) 30%, transparent);
     color: var(--text-primary);
     font-size: 12px;
+    min-width: 0;
+  }
+
+  .mcp-delete-confirm-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .mcp-delete-confirm-title {
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  .mcp-delete-confirm-desc {
+    color: var(--text-tertiary);
+    overflow-wrap: anywhere;
   }
 
   .mcp-delete-confirm-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 6px;
     flex-shrink: 0;
   }
@@ -613,13 +700,13 @@
   /* Detail Key/Value grid */
   .mcp-detail-grid {
     display: grid;
-    grid-template-columns: 120px minmax(0, 1fr);
+    grid-template-columns: minmax(96px, 140px) minmax(0, 1fr);
     gap: 12px 16px;
     font-size: 13px;
     line-height: 1.5;
   }
 
-  @media (max-width: 640px) {
+  @media (max-width: 900px) {
     .mcp-detail-grid {
       grid-template-columns: 1fr;
       gap: 6px;
@@ -798,6 +885,11 @@
     color: var(--text-tertiary);
   }
 
+  .skills-content-wrap {
+    margin-top: 20px;
+    min-width: 0;
+  }
+
   /* Skills grid layout */
   .skills-grid {
     display: grid;
@@ -869,14 +961,12 @@
   /* Skill Card */
   .skill-card {
     display: flex;
-    flex-direction: column;
+    align-items: flex-start;
     gap: 10px;
     padding: 14px 16px;
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-color);
     background: var(--bg-card);
-    text-align: left;
-    cursor: pointer;
     transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
     box-sizing: border-box;
     position: relative;
@@ -894,17 +984,25 @@
     background: var(--ui-accent-soft);
   }
 
-  .skill-card:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 2px;
+  .skill-card-select {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
   }
 
-  .skill-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-width: 0;
+  .skill-card-select:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
   }
 
   .skill-card-heading {
@@ -916,6 +1014,7 @@
   }
 
   .skill-card-name {
+    display: block;
     margin: 0;
     font-size: 14px;
     font-weight: 600;
@@ -930,6 +1029,7 @@
     align-items: center;
     gap: 6px;
     flex-shrink: 0;
+    align-self: flex-start;
   }
 
   .skill-source-badge {
@@ -1265,10 +1365,69 @@
   }
 
   .mcp-skeleton-bar {
+    height: 13px;
     border-radius: var(--radius-sm);
     background: var(--bg-secondary);
     position: relative;
     overflow: hidden;
+  }
+
+  .mcp-skeleton-header .mcp-skeleton-bar:first-child {
+    width: 40%;
+    height: 20px;
+  }
+
+  .mcp-skeleton-header .mcp-skeleton-bar:last-child {
+    width: 80px;
+    height: 28px;
+  }
+
+  .mcp-skeleton-bar--lead {
+    width: 65%;
+    margin-top: 12px;
+  }
+
+  .mcp-skeleton-grid .mcp-skeleton-bar:nth-child(odd) {
+    width: 30%;
+  }
+
+  .mcp-skeleton-grid .mcp-skeleton-bar:nth-child(2) {
+    width: 60%;
+  }
+
+  .mcp-skeleton-grid .mcp-skeleton-bar:nth-child(4) {
+    width: 85%;
+  }
+
+  .mcp-skeleton-grid .mcp-skeleton-bar:nth-child(6) {
+    width: 45%;
+  }
+
+  .mcp-skeleton-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .mcp-skeleton-lines .mcp-skeleton-bar {
+    height: 12px;
+  }
+
+  .mcp-skeleton-lines .mcp-skeleton-bar:nth-child(1) {
+    width: 90%;
+  }
+
+  .mcp-skeleton-lines .mcp-skeleton-bar:nth-child(2) {
+    width: 100%;
+  }
+
+  .mcp-skeleton-lines .mcp-skeleton-bar:nth-child(3) {
+    width: 75%;
+  }
+
+  .mcp-skeleton-lines .mcp-skeleton-bar:nth-child(4) {
+    width: 85%;
   }
 
   .mcp-skeleton-divider {
@@ -1330,7 +1489,22 @@
     gap: 6px;
   }
 
-  .mcp-form-field label {
+  .mcp-form-field--tight {
+    padding-top: 4px;
+  }
+
+  .mcp-code-input {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .mcp-retry-button {
+    margin-top: 8px;
+  }
+
+  .mcp-form-field label,
+  .mcp-form-field-label {
     font-size: 12px;
     font-weight: 600;
     color: var(--text-primary);
@@ -1359,6 +1533,8 @@
 
   .mcp-transport-option {
     appearance: none;
+    min-width: 0;
+    overflow-wrap: anywhere;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     background: var(--bg-secondary);

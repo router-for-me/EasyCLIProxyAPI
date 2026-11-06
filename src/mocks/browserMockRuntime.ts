@@ -1,4 +1,5 @@
 import { isThemeSelection, type ThemeSelection } from '../themes/types';
+import type { AppUpdateInfo } from '../services/appUpdates';
 import { applyTemplateChanges, readTemplatePath, sameTemplateValue, type TemplateConfigChange } from '../services/templateConfig';
 import { requestBucketRangeLabel } from '../services/authFileRequests';
 import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
@@ -507,11 +508,14 @@ function createState(scenario: BrowserMockScenario) {
         en: '## Browser Mock release\n\n- Added UI mock mode',
       },
       publishedAt: isoHoursAgo(18),
+      currentBuildAt: null,
       autoUpdateSupported: true,
+      downloadUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
+      downloadFileName: 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
       downloadSizeBytes: 48 * 1024 * 1024,
       unsupportedReason: null,
       updateChannel: 'stable',
-    },
+    } as AppUpdateInfo,
     appUpdateTask: {
       running: false,
       cancellable: false,
@@ -1017,20 +1021,27 @@ const addMockCounter = (target: MockAgentCounter, value: MockAgentCounter) => {
   target.samples += value.samples;
 };
 
-function mockAgentUsageReport(range: string, selected: string[], groupBy: string, granularity: string, cleared: boolean) {
+function mockAgentUsageReport(range: string, selected: string[], groupBy: string, granularity: string, cleared: boolean, customStart = '', customEnd = '') {
   const generatedAt = new Date().toISOString();
   const now = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
   const dayKey = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const historyDays = 120;
-  const span = range === 'today' ? 1 : range === '24h' ? 2 : range === '7d' ? 7 : range === '30d' ? 30 : historyDays;
-  const hourly = range === 'today' || range === '24h';
-  const kind = granularity === 'hour' && range !== 'all' ? 'hour'
+  const dayOffset = (value: string) => Math.round((today.getTime() - new Date(`${value}T00:00:00`).getTime()) / 86_400_000);
+  const customEndOffset = /^\d{4}-\d{2}-\d{2}$/.test(customEnd) ? Math.max(0, dayOffset(customEnd)) : 0;
+  const customSpan = /^\d{4}-\d{2}-\d{2}$/.test(customStart) ? Math.max(1, dayOffset(customStart) - customEndOffset + 1) : 1;
+  const endOffset = range === 'custom' ? customEndOffset : 0;
+  const span = range === 'today' ? 1 : range === '7d' ? 7 : range === '30d' ? 30 : range === 'custom' ? customSpan : historyDays;
+  const hourAllowed = range !== 'all' && endOffset + span <= 30;
+  const hourly = range === 'today' || (range === 'custom' && span === 1 && hourAllowed);
+  const kind = granularity === 'hour' && hourAllowed ? 'hour'
     : granularity === 'hour' || granularity === 'day' ? 'day'
       : granularity === 'week' || granularity === 'month' ? granularity
-        : hourly ? 'hour' : range === 'all' && span > 92 ? 'week' : 'day';
-  const start = new Date(today);
+        : hourly ? 'hour' : span > 92 ? 'week' : 'day';
+  const end = new Date(today);
+  end.setDate(end.getDate() - endOffset);
+  const start = new Date(end);
   start.setDate(start.getDate() - (span - 1));
   const bucketOf = (date: Date, hour: number) => {
     if (kind === 'hour') return `${dayKey(date)}T${pad(hour)}`;
@@ -1044,11 +1055,6 @@ function mockAgentUsageReport(range: string, selected: string[], groupBy: string
   };
   const inWindow = (date: Date, hour: number) => {
     if (range === 'today') return dayKey(date) === dayKey(today) && hour <= now.getHours();
-    if (range === '24h') {
-      const time = new Date(date);
-      time.setHours(hour);
-      return now.getTime() - time.getTime() < 24 * 3_600_000 && time.getTime() <= now.getTime();
-    }
     return true;
   };
   const report = {
@@ -1058,7 +1064,7 @@ function mockAgentUsageReport(range: string, selected: string[], groupBy: string
     syncing: false,
     bucket: kind,
     rangeStart: dayKey(start),
-    rangeEnd: dayKey(today),
+    rangeEnd: dayKey(end),
     totals: { ...emptyMockCounter(), days: 0 },
     previous: range === 'all' || cleared ? null : { totalTokens: 0, costUSD: 0 },
     sources: [] as Record<string, unknown>[],
@@ -1127,7 +1133,7 @@ function mockAgentUsageReport(range: string, selected: string[], groupBy: string
     for (let offset = 0; offset < span; offset += 1) {
       const date = new Date(start);
       date.setDate(date.getDate() + offset);
-      const fromToday = span - 1 - offset;
+      const fromToday = endOffset + span - 1 - offset;
       const daily = sample(profile, fromToday);
       if (!daily.totalTokens) continue;
       for (let hour = 0; hour < 24; hour += 1) {
@@ -1165,10 +1171,10 @@ function mockAgentUsageReport(range: string, selected: string[], groupBy: string
       }
     }
     if (report.previous && included(profile.source)) {
-      for (let offset = 0; offset < (hourly ? 1 : span); offset += 1) {
-        const previous = sample(profile, span + offset);
-        report.previous.totalTokens += hourly ? Math.round(previous.totalTokens * 0.6) : previous.totalTokens;
-        report.previous.costUSD += hourly ? previous.costUSD * 0.6 : previous.costUSD;
+      for (let offset = 0; offset < (range === 'today' ? 1 : span); offset += 1) {
+        const previous = sample(profile, endOffset + span + offset);
+        report.previous.totalTokens += range === 'today' ? Math.round(previous.totalTokens * 0.6) : previous.totalTokens;
+        report.previous.costUSD += range === 'today' ? previous.costUSD * 0.6 : previous.costUSD;
       }
     }
     const shares = profile.models.map((_, index) => profile.models.length === 1 ? 1 : index === 0 ? 0.72 : 0.28);
@@ -1236,6 +1242,34 @@ export function createBrowserMockRuntime(
   onPluginWebview?: (state: PluginWebviewMockState) => void,
 ): BrowserMockRuntime {
   const state = createState(scenario);
+  const applyMockUpdateChannel = (channel: string) => {
+    const normalized = channel.trim() || 'stable';
+    state.appUpdateInfo.updateChannel = normalized;
+    if (normalized.startsWith('preview')) {
+      const tag = normalized === 'preview' ? 'preview-20261104-1623' : normalized;
+      state.appUpdateInfo.latestVersion = '0.3.0-preview.202611041623';
+      state.appUpdateInfo.currentBuildAt = isoHoursAgo(42);
+      state.appUpdateInfo.releaseUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/${tag}`;
+      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-preview.202611041623-Windows-amd64.zip';
+      state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/${tag}/${state.appUpdateInfo.downloadFileName}`;
+    } else {
+      state.appUpdateInfo.latestVersion = '0.3.0';
+      state.appUpdateInfo.currentBuildAt = null;
+      state.appUpdateInfo.releaseUrl = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip';
+      state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/${state.appUpdateInfo.downloadFileName}`;
+    }
+  };
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const mockChannel = params.get('mockChannel');
+    if (mockChannel) applyMockUpdateChannel(mockChannel);
+    const mockAutoUpdate = params.get('mockAutoUpdate');
+    if (mockAutoUpdate === '0' || mockAutoUpdate === 'false') {
+      state.appUpdateInfo.autoUpdateSupported = false;
+      state.appUpdateInfo.unsupportedReason = 'This application is not a portable version that supports automatic upgrades. Manually download the first supported version';
+    }
+  }
   let usageViewPreferences: Record<string, string> = {};
   let agentUsageCleared = false;
   let privacyMode: boolean | null = null;
@@ -1340,7 +1374,9 @@ export function createBrowserMockRuntime(
         const sources = Array.isArray(query.sources) ? query.sources.filter((entry): entry is string => typeof entry === 'string') : [];
         const groupBy = query.groupBy === 'model' ? 'model' : 'source';
         const granularity = typeof query.granularity === 'string' ? query.granularity : '';
-        return mockAgentUsageReport(range, sources, groupBy, granularity, agentUsageCleared || !state.coreStatus.installed || scenario === 'empty');
+        const customStart = typeof query.start === 'string' ? query.start : '';
+        const customEnd = typeof query.end === 'string' ? query.end : '';
+        return mockAgentUsageReport(range, sources, groupBy, granularity, agentUsageCleared || !state.coreStatus.installed || scenario === 'empty', customStart, customEnd);
       }
       case 'sync_agent_usage': {
         if (scenario === 'error') throw new Error('Browser Mock: Agent usage sync failed');
@@ -1474,10 +1510,11 @@ export function createBrowserMockRuntime(
       case 'check_app_update': return clone(state.appUpdateInfo);
       case 'get_app_update_task': return clone(state.appUpdateTask);
       case 'get_update_channel': return state.appUpdateInfo.updateChannel ?? 'stable';
+      case 'list_update_channels': return ['stable', 'preview', 'preview-20261104-1623'];
       case 'set_update_channel': {
         const channel = String(payload.channel ?? 'stable');
-        state.appUpdateInfo.updateChannel = channel;
-        return channel;
+        applyMockUpdateChannel(channel);
+        return state.appUpdateInfo.updateChannel;
       }
       case 'start_app_update': {
         Object.assign(state.appUpdateTask, {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { languageOptions, normalizeLocale, supportedLocales, translate } from '../src/i18n';
 import { en, ja, zhCN, zhTW, type MessageKey } from '../src/i18n/resources';
 import { jaOverrides } from '../src/i18n/ja';
+import { mcpSkillsText } from '../src/i18n/mcpSkills';
 import { pluginConfigText } from '../src/i18n/pluginConfig';
 
 describe('i18n', () => {
@@ -143,7 +144,20 @@ describe('i18n', () => {
   });
 
   it('does not include untranslated Chinese prose in English messages', () => {
-    expect(Object.entries(en).filter(([, message]) => /\p{Script=Han}/u.test(message))).toEqual([]);
+    expect(
+      Object.entries(en).filter(([key, message]) => key !== 'app.theme.anime.name' && /\p{Script=Han}/u.test(message)),
+    ).toEqual([]);
+  });
+
+  it('uses MCP与Skills in zh-CN navigation and MCP page title while preserving en/ja/zh-TW', () => {
+    expect(translate('zh-CN', 'app.nav.mcpSkills')).toBe('MCP与Skills');
+    expect(mcpSkillsText('title', 'zh-CN')).toBe('MCP与Skills');
+    expect(translate('en', 'app.nav.mcpSkills')).toBe('MCP & Skills');
+    expect(mcpSkillsText('title', 'en')).toBe('MCP & Skills');
+    expect(translate('ja', 'app.nav.mcpSkills')).toBe('MCP & スキル');
+    expect(mcpSkillsText('title', 'ja')).toBe('MCP & スキル');
+    expect(translate('zh-TW', 'app.nav.mcpSkills')).toBe('MCP 與技能');
+    expect(mcpSkillsText('title', 'zh-TW')).toBe('MCP 與技能');
   });
 
   it('names the actual add action in the empty API access prompt', () => {

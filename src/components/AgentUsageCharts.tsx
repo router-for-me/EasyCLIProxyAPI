@@ -10,8 +10,12 @@ import {
   type AgentUsageReport,
 } from '../services/agentUsage';
 import {
+  axisGutter,
   axisScale,
   buildCalendarGrid,
+  calendarMinColumns,
+  calendarMonthStarts,
+  calendarSpanDays,
   buildHourGrid,
   buildStackedSeries,
   buildTokenStructure,
@@ -32,13 +36,15 @@ export const STRUCTURE_COLORS = ['#10b981', '#a7f3d0', '#3b82f6', '#f59e0b'];
 const OTHER_COLOR = '#94a3b8';
 const BAR_TOP = 16;
 const BAR_LEFT = 44;
+const AXIS_LABEL_GAP = 8;
 const TOOLTIP_WIDTH = 220;
 const SPARSE_BARS = 16;
 const HEAT_CELL = 13;
 const HEAT_GAP = 3;
 const HEAT_LEFT = 30;
 const HEAT_TOP = 18;
-const CALENDAR_MIN_DAYS = 364;
+const CALENDAR_TAIL = 24;
+const YEAR_LABEL_WIDTH = 72;
 
 export function agentSourceColor(source: string, sources: string[]): string {
   const index = sources.indexOf(source);
@@ -179,15 +185,16 @@ function BarChart({ bars, max, metric, kind, width, label }: {
   const sparse = bars.length <= SPARSE_BARS;
   const { ceiling, step } = axisScale(max);
   const right = width - 4;
-  const plotWidth = right - BAR_LEFT;
+  const ticks = Array.from({ length: Math.round(ceiling / step) + 1 }, (_, index) => index * step);
+  const left = axisGutter(ticks.map((tick) => valueText(tick, metric)), BAR_LEFT, AXIS_LABEL_GAP);
+  const plotWidth = right - left;
   const slot = plotWidth / Math.max(1, bars.length);
   const barWidth = Math.max(1, Math.min(sparse ? 64 : 32, slot * (slot > 6 ? 0.62 : 0.9)));
   const every = labelStep(bars.length, plotWidth, kind === 'hour' ? 96 : 64);
-  const ticks = Array.from({ length: Math.round(ceiling / step) + 1 }, (_, index) => index * step);
   const scale = (value: number) => (ceiling > 0 ? (value / ceiling) * (baseline - BAR_TOP) : 0);
   const activeBar = active === null ? null : bars[active];
   const tip: Tip | null = activeBar && active !== null ? {
-    x: BAR_LEFT + (active + 0.5) * slot,
+    x: left + (active + 0.5) * slot,
     y: 0,
     title: formatAgentUsageBucket(activeBar.bucket, kind),
     total: valueText(activeBar.segments.reduce((sum, segment) => sum + segment.value, 0), metric),
@@ -196,7 +203,7 @@ function BarChart({ bars, max, metric, kind, width, label }: {
   } : null;
   const move = (event: PointerEvent<SVGSVGElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    setActive(slotIndexAt(((event.clientX - bounds.left) / bounds.width) * width, BAR_LEFT, plotWidth, bars.length));
+    setActive(slotIndexAt(((event.clientX - bounds.left) / bounds.width) * width, left, plotWidth, bars.length));
   };
   const keyDown = (event: KeyboardEvent<SVGSVGElement>) => {
     const last = bars.length - 1;
@@ -227,17 +234,17 @@ function BarChart({ bars, max, metric, kind, width, label }: {
           const y = baseline - scale(tick);
           return (
             <g key={tick} className={`agent-usage-axis${tick === 0 ? ' baseline' : ''}`}>
-              <line x1={BAR_LEFT} x2={right} y1={y} y2={y} />
-              <text x={BAR_LEFT - 8} y={y + 3} textAnchor="end">{valueText(tick, metric)}</text>
+              <line x1={left} x2={right} y1={y} y2={y} />
+              <text x={left - AXIS_LABEL_GAP} y={y + 3} textAnchor="end">{valueText(tick, metric)}</text>
             </g>
           );
         })}
         {active !== null ? (
-          <rect className="agent-usage-highlight" x={BAR_LEFT + active * slot} y={BAR_TOP - 4} width={slot} height={baseline - BAR_TOP + 4} rx="3" />
+          <rect className="agent-usage-highlight" x={left + active * slot} y={BAR_TOP - 4} width={slot} height={baseline - BAR_TOP + 4} rx="3" />
         ) : null}
         {bars.map((bar, index) => {
           let cursor = 0;
-          const x = BAR_LEFT + index * slot + (slot - barWidth) / 2;
+          const x = left + index * slot + (slot - barWidth) / 2;
           const visible = bar.segments.filter((segment) => segment.value > 0);
           return (
             <g key={bar.bucket} className="agent-usage-bar" data-bucket={bar.bucket}>
@@ -257,8 +264,8 @@ function BarChart({ bars, max, metric, kind, width, label }: {
                 </text>
               ) : null}
               {index % every === 0 ? (
-                <text className="agent-usage-axis-label" x={BAR_LEFT + (index + 0.5) * slot} y={height - 6} textAnchor="middle">
-                  {formatAgentUsageAxisLabel(bar.bucket, kind)}
+                <text className="agent-usage-axis-label" x={left + (index + 0.5) * slot} y={height - 6} textAnchor="middle">
+                  {formatAgentUsageAxisLabel(bar.bucket, kind, bars[index - every]?.bucket)}
                 </text>
               ) : null}
             </g>
@@ -276,8 +283,6 @@ const localDay = (date: Date): string => [
   String(date.getDate()).padStart(2, '0'),
 ].join('-');
 
-const dayDistance = (start: string, end: string): number => Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000);
-
 export function AgentUsageActivity({ report, locale }: { report: AgentUsageReport; locale: string }) {
   const { t } = useI18n();
   const weekdays = useMemo(() => {
@@ -285,9 +290,11 @@ export function AgentUsageActivity({ report, locale }: { report: AgentUsageRepor
     const monday = Date.UTC(2024, 0, 1);
     return Array.from({ length: 7 }, (_, index) => format.format(new Date(monday + index * 86_400_000)));
   }, [locale]);
+  const today = localDay(new Date());
+  const calendarMinWidth = HEAT_LEFT + calendarMinColumns(report.calendar[0]?.date ?? today, today) * (HEAT_CELL + HEAT_GAP) + CALENDAR_TAIL;
   return (
     <div className="agent-usage-activity-grid">
-      <div className="agent-usage-activity-block" data-view="calendar">
+      <div className="agent-usage-activity-block" data-view="calendar" style={{ flexBasis: calendarMinWidth }}>
         <div className="agent-usage-activity-heading">
           <h4>{t('usage.agentUsage.view.calendar')}</h4>
           <span>{t('usage.agentUsage.calendarHint')}</span>
@@ -318,17 +325,18 @@ function CalendarHeatmap({ report, weekdays, locale, label }: {
 }) {
   const [tip, setTip] = useState<Tip | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const available = useWidth(scrollRef);
   const end = localDay(new Date());
   const first = report.calendar[0]?.date ?? end;
-  const days = Math.max(CALENDAR_MIN_DAYS, dayDistance(first, end)) + 1;
-  const grid = buildCalendarGrid(report.calendar, end, days);
+  const pitch = HEAT_CELL + HEAT_GAP;
+  const grid = buildCalendarGrid(report.calendar, end, calendarSpanDays(first, end, Math.floor((available - CALENDAR_TAIL) / pitch)));
   const thresholds = heatThresholds(report.calendar.map((row) => row.totalTokens));
   const costs = new Map(report.calendar.map((row) => [row.date, row.costUSD]));
-  const pitch = HEAT_CELL + HEAT_GAP;
-  const width = grid.length * pitch + 24;
+  const width = grid.length * pitch + CALENDAR_TAIL;
   const height = HEAT_TOP + 7 * pitch;
   const monthFormat = new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' });
-  const months = grid.map((week, index) => index > 0 && week[0].date.slice(0, 7) !== grid[index - 1][0].date.slice(0, 7));
+  const yearMonthFormat = new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', timeZone: 'UTC' });
+  const monthStarts = calendarMonthStarts(grid, end);
   useLayoutEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
@@ -351,10 +359,15 @@ function CalendarHeatmap({ report, weekdays, locale, label }: {
       <svg className="agent-usage-svg" viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={label}>
         {grid.map((week, weekIndex) => {
           const x = weekIndex * pitch;
+          const monthStart = monthStarts[weekIndex];
+          const yearLabel = monthStart?.slice(5, 7) === '01';
           return (
             <g key={week[0].date}>
-              {months[weekIndex] ? (
-                <text className="agent-usage-axis-label" x={x} y={11}>{monthFormat.format(new Date(`${week[week.length - 1].date}T00:00:00Z`))}</text>
+              {monthStart ? (
+                <text className="agent-usage-axis-label" x={yearLabel && x + YEAR_LABEL_WIDTH > width ? width : x} y={11}
+                  textAnchor={yearLabel && x + YEAR_LABEL_WIDTH > width ? 'end' : undefined}>
+                  {(yearLabel ? yearMonthFormat : monthFormat).format(new Date(`${monthStart}T00:00:00Z`))}
+                </text>
               ) : null}
               {week.map((day, dayIndex) => {
                 const y = HEAT_TOP + dayIndex * pitch;

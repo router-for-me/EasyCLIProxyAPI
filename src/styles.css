@@ -816,11 +816,14 @@ textarea:focus-visible {
   align-items: center;
 }
 
-.app-module-card .version-card-actions {
+.app-module-card .version-card-actions,
+.app-module-card .version-card-actions.actions-count-2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.app-module-card .version-card-actions.has-install-now {
+.app-module-card .version-card-actions.has-install-now,
+.app-module-card .version-card-actions.actions-count-3,
+.app-module-card .version-card-actions:has(> :nth-child(3)) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -1467,7 +1470,10 @@ textarea:focus-visible {
 
   .version-card-actions,
   .app-module-card .version-card-actions,
+  .app-module-card .version-card-actions.actions-count-2,
+  .app-module-card .version-card-actions.actions-count-3,
   .app-module-card .version-card-actions.has-install-now,
+  .app-module-card .version-card-actions:has(> :nth-child(3)),
   .core-module-card .version-card-actions {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -6729,6 +6735,9 @@ textarea:focus-visible {
   align-items: center;
   gap: 4px;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .codex-catalog-row > button[role='option'] {
@@ -6736,6 +6745,8 @@ textarea:focus-visible {
   gap: 2px;
   width: 100%;
   min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
   padding: 9px 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);

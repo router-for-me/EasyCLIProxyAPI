@@ -525,6 +525,38 @@ fn claude_desktop_omits_unsupported_context_window_when_1m_is_off() {
 }
 
 #[test]
+fn claude_desktop_inference_entries_declare_behaves_as_per_tier() {
+    let models: Vec<AgentModelOption> = Vec::new();
+    let opus = claude_desktop_inference_model(CLAUDE_DESKTOP_OPUS_MODEL_ID, "gpt-6.1-sol", false, &models);
+    assert_eq!(opus["behavesAs"], "claude-opus-5");
+    assert_eq!(opus["anthropicFamilyTier"], "opus");
+
+    let sonnet = claude_desktop_inference_model(CLAUDE_DESKTOP_SONNET_MODEL_ID, "gemini-4-argon-high", false, &models);
+    assert_eq!(sonnet["behavesAs"], "claude-sonnet-5");
+
+    let haiku = claude_desktop_inference_model(CLAUDE_DESKTOP_HAIKU_MODEL_ID, "gemini-3.8-flash-high", false, &models);
+    assert_eq!(haiku["behavesAs"], "claude-haiku-4-5");
+
+    let untiered = claude_desktop_inference_model("custom-route", "gpt-6.1-sol", false, &models);
+    assert!(untiered.get("behavesAs").is_none());
+}
+
+#[test]
+fn claude_desktop_behaves_as_uses_ids_desktop_knows() {
+    // Desktop looks behavesAs up in an exact-match table, so every value must
+    // be one of its own keys rather than a newer-sounding variant.
+    for (tier, expected) in [
+        ("opus", "claude-opus-5"),
+        ("sonnet", "claude-sonnet-5"),
+        ("haiku", "claude-haiku-4-5"),
+        ("fable", "claude-fable-5-1"),
+    ] {
+        assert_eq!(claude_desktop_behaves_as(tier), Some(expected), "{tier}");
+    }
+    assert_eq!(claude_desktop_behaves_as("mythos"), None);
+}
+
+#[test]
 fn codex_agent_config_uses_managed_provider_without_losing_comments() {
     let rendered = build_codex_agent_config(
         Some("# keep this comment\napproval_policy = \"on-request\"\n"),

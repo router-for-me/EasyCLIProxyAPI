@@ -4,15 +4,25 @@ import {
   formatAgentUsageCompact,
   formatAgentUsageNumber,
   normalizeAgentUsageReport,
+  AGENT_USAGE_PRESETS,
+  agentUsageDay,
+  agentUsageHourAvailable,
+  agentUsagePresetRange,
+  rangeGranularity,
   type AgentUsageBucketRow,
   type AgentUsageReport,
 } from '../src/services/agentUsage';
 import {
   buildCalendarGrid,
   buildHourGrid,
+  calendarMinColumns,
+  calendarMonthStarts,
+  calendarSpanDays,
   buildModelRanking,
   buildStackedSeries,
   buildTokenStructure,
+  axisGutter,
+  axisLabelWidth,
   axisScale,
   cacheHitRate,
   heatLevel,
@@ -254,6 +264,23 @@ describe('Agent usage browser mock', () => {
     expect(week.previous?.totalTokens).toBeGreaterThan(0);
   });
 
+  it('serves a custom date range ending before today', async () => {
+    const mock = createBrowserMockRuntime('running');
+    const now = new Date();
+    const day = (offset: number) => agentUsageDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset));
+    const custom = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: 'custom', start: day(9), end: day(3) } }));
+    expect(custom.bucket).toBe('day');
+    expect(custom.rangeStart).toBe(day(9));
+    expect(custom.rangeEnd).toBe(day(3));
+    expect(custom.timeline.map((row) => row.bucket)).toEqual([9, 8, 7, 6, 5, 4, 3].map(day));
+    expect(custom.previous?.totalTokens).toBeGreaterThan(0);
+    const single = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: 'custom', start: day(2), end: day(2) } }));
+    expect(single.bucket).toBe('hour');
+    expect(single.timeline).toHaveLength(24);
+    const old = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: 'custom', start: day(60), end: day(1), granularity: 'hour' } }));
+    expect(old.bucket).toBe('day');
+  });
+
   it('supports syncing, storage inspection and clearing history', async () => {
     const mock = createBrowserMockRuntime('running');
     const synced = await mock.invoke('sync_agent_usage') as { changedFiles: number };
@@ -322,6 +349,16 @@ describe('agent usage chart geometry', () => {
     expect(labelStep(30, 0, 64)).toBe(30);
   });
 
+  it('widens the axis gutter to fit the widest tick label', () => {
+    expect(axisLabelWidth('$250.00')).toBeGreaterThan(axisLabelWidth('$0.00'));
+    expect(axisLabelWidth('999.9万')).toBeGreaterThan(axisLabelWidth('500K'));
+    expect(axisGutter(['$0.00', '$9.99'], 44, 8)).toBe(44);
+    expect(axisGutter(['0', '1000万'], 40, 10)).toBe(axisLabelWidth('1000万') + 10);
+    expect(axisGutter(['$0.00', '$250.00'], 44, 8)).toBe(axisLabelWidth('$250.00') + 8);
+    expect(axisGutter(['0', '20K'], 44, 8)).toBe(44);
+    expect(axisGutter([], 44, 8)).toBe(44);
+  });
+
   it('scales sparkline points to the peak value', () => {
     expect(sparklinePoints([], 100, 20)).toBe('');
     expect(sparklinePoints([0, 5, 10], 100, 20)).toBe('0,20 50,10 100,0');
@@ -346,5 +383,76 @@ describe('agent usage chart scales', () => {
     expect(heatLevel(7, heatThresholds([7, 7]))).toBe(4);
     expect(heatThresholds([0, 0])).toEqual([]);
     expect(heatLevel(5, [])).toBe(1);
+  });
+});
+
+describe('agent usage range changes and year boundaries', () => {
+  it('keeps the chosen granularity unless hourly data is unavailable', () => {
+    expect(rangeGranularity('week', true)).toBe('week');
+    expect(rangeGranularity('hour', true)).toBe('hour');
+    expect(rangeGranularity('hour', false)).toBe('day');
+    expect(rangeGranularity('month', false)).toBe('month');
+    expect(rangeGranularity('', true)).toBe('');
+  });
+
+  it('allows hourly buckets only where hourly history is kept', () => {
+    const now = new Date(2026, 10, 5, 10);
+    expect(agentUsageHourAvailable('today', '', now)).toBe(true);
+    expect(agentUsageHourAvailable('30d', '', now)).toBe(true);
+    expect(agentUsageHourAvailable('all', '', now)).toBe(false);
+    expect(agentUsageHourAvailable('custom', '2026-10-07', now)).toBe(true);
+    expect(agentUsageHourAvailable('custom', '2026-10-06', now)).toBe(false);
+  });
+
+  it('resolves quick picks to local calendar dates', () => {
+    const now = new Date(2026, 0, 7, 10);
+    const ranges = Object.fromEntries(AGENT_USAGE_PRESETS.map((preset) => [preset, agentUsagePresetRange(preset, now)]));
+    expect(ranges).toEqual({
+      yesterday: { start: '2026-01-06', end: '2026-01-06' },
+      thisWeek: { start: '2026-01-05', end: '2026-01-07' },
+      lastWeek: { start: '2025-12-29', end: '2026-01-04' },
+      thisMonth: { start: '2026-01-01', end: '2026-01-07' },
+      lastMonth: { start: '2025-12-01', end: '2025-12-31' },
+      last90Days: { start: '2025-10-10', end: '2026-01-07' },
+      thisYear: { start: '2026-01-01', end: '2026-01-07' },
+      lastYear: { start: '2025-01-01', end: '2025-12-31' },
+    });
+    expect(agentUsagePresetRange('thisWeek', new Date(2026, 10, 8, 23))).toEqual({ start: '2026-11-02', end: '2026-11-08' });
+    expect(agentUsagePresetRange('lastMonth', new Date(2026, 2, 31))).toEqual({ start: '2026-02-01', end: '2026-02-28' });
+  });
+
+  it('shows the year on axis labels that cross into a new year', () => {
+    expect(formatAgentUsageAxisLabel('2027-01-04', 'week', '2026-12-28')).toBe('2027-01-04');
+    expect(formatAgentUsageAxisLabel('2027-01-01T00', 'hour', '2026-12-31T23')).toBe('2027-01-01 00:00');
+    expect(formatAgentUsageAxisLabel('2026-12-28', 'day', '2026-12-21')).toBe('12-28');
+    expect(formatAgentUsageAxisLabel('2027-01', 'month', '2026-12')).toBe('2027-01');
+  });
+
+  it('sizes the calendar to the available columns unless history is longer', () => {
+    const fit = buildCalendarGrid([], '2026-11-05', calendarSpanDays('2026-10-20', '2026-11-05', 40));
+    expect(fit).toHaveLength(40);
+    expect(fit.at(-1)?.some((day) => day.date === '2026-11-05')).toBe(true);
+    const long = calendarSpanDays('2025-01-01', '2026-11-05', 40);
+    expect(long).toBe(674);
+    expect(buildCalendarGrid([], '2026-11-05', long).length).toBeGreaterThan(40);
+    const yearSpan = buildCalendarGrid([], '2027-01-03', calendarSpanDays('2026-12-01', '2027-01-03', 10));
+    expect(yearSpan).toHaveLength(10);
+    expect(yearSpan.at(-1)?.at(-1)?.date).toBe('2027-01-03');
+    expect(calendarSpanDays('bad', '2026-11-05', 0)).toBe(4);
+  });
+
+  it('labels each month at the week that contains its first day, never in the future', () => {
+    const grid = buildCalendarGrid([], '2027-01-03', calendarSpanDays('2026-11-20', '2027-01-03', 8));
+    const starts = calendarMonthStarts(grid, '2027-01-03');
+    expect(starts.filter(Boolean)).toEqual(['2026-12-01', '2027-01-01']);
+    expect(starts.at(-1)).toBe('2027-01-01');
+    const before = buildCalendarGrid([], '2026-12-31', calendarSpanDays('2026-12-01', '2026-12-31', 6));
+    expect(calendarMonthStarts(before, '2026-12-31').filter(Boolean)).toEqual(['2026-12-01']);
+  });
+
+  it('reserves calendar columns for the recorded history between a floor and a cap', () => {
+    expect(calendarMinColumns('2026-11-04', '2026-11-05')).toBe(8);
+    expect(calendarMinColumns('2026-08-01', '2026-11-05')).toBe(15);
+    expect(calendarMinColumns('2024-01-01', '2026-11-05')).toBe(26);
   });
 });

@@ -88,10 +88,18 @@
   }
 
   .agent-usage-activity-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
     gap: 10px 32px;
+  }
+
+  .agent-usage-activity-block[data-view="calendar"] {
+    flex: 1 1 auto;
+  }
+
+  .agent-usage-activity-block[data-view="hours"] {
+    flex: none;
   }
 
   .agent-usage-calendar {
@@ -133,7 +141,7 @@
 
   .agent-usage-heat-legend {
     display: flex;
-    grid-column: 1 / -1;
+    flex-basis: 100%;
     align-items: center;
     justify-content: flex-end;
     gap: 4px;
@@ -153,12 +161,6 @@
 
   .agent-usage-heat-legend span:last-child {
     margin-left: 2px;
-  }
-
-  @container workspace (max-width: 1180px) {
-    .agent-usage-activity-grid {
-      grid-template-columns: minmax(0, 1fr);
-    }
   }
 
   .agent-usage-tooltip {

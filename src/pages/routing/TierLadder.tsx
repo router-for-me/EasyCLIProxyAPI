@@ -18,7 +18,7 @@ import grok from '../../assets/icons/grok.svg';
 
 const brands: [string, string][] = [['antigravity', antigravity], ['copilot', copilot], ['codex', codex], ['claude', claude], ['deepseek', deepseek], ['kimi', kimi], ['vertex', vertex], ['gemini', gemini], ['meta', meta], ['xai', grok], ['grok', grok]];
 function brandIcon(member: RoutingMember) {
-  const identity = `${member.family} ${member.name}`.toLowerCase();
+  const identity = `${member.family} ${member.name} ${member.remark ?? ''}`.toLowerCase();
   return brands.find(([brand]) => identity.includes(brand))?.[1] ?? openai;
 }
 
@@ -32,15 +32,18 @@ function MemberCard({ member, draft, routeMember, disabled, isAlone, onChange }:
   const state = routeMember?.state;
   const weights = draft.weights[member.key] ?? member.weights;
   const step = (direction: 'up' | 'down') => onChange({ ...draft, tiers: stepMember(draft.tiers, member.key, direction) });
+  const displayName = member.remark || member.name;
+  const hasDistinctRemark = Boolean(member.remark && member.remark !== member.name);
   return <article ref={setNodeRef} className={`routing-card${isDragging ? ' routing-card-dragging' : ''}`} tabIndex={locked ? undefined : 0}
     style={transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined}
-    aria-label={t('routing.drag', { name: member.name })} onKeyDown={event => {
+    aria-label={t('routing.drag', { name: displayName })} onKeyDown={event => {
       if (!locked && event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) { event.preventDefault(); step(event.key === 'ArrowUp' ? 'up' : 'down'); }
     }}>
     <div className="routing-card-face">
-      <button type="button" className="icon-button quiet tiny-button routing-grip" {...attributes} {...listeners} disabled={locked} aria-label={t('routing.drag', { name: member.name })}><GripVertical size={15} /></button>
+      <button type="button" className="icon-button quiet tiny-button routing-grip" {...attributes} {...listeners} disabled={locked} aria-label={t('routing.drag', { name: displayName })}><GripVertical size={15} /></button>
       <img className="routing-brand" src={brandIcon(member)} alt="" width={20} height={20} />
-      <div className="routing-card-text"><strong className="routing-card-name" title={member.name}>{member.name}</strong><span className="routing-card-sub">
+      <div className="routing-card-text"><strong className="routing-card-name" title={hasDistinctRemark ? `${member.remark} (${member.name})` : member.name}>{displayName}</strong><span className="routing-card-sub">
+        {hasDistinctRemark && <span className="routing-card-raw-name">{member.name} · </span>}
         {t(member.kind === 'credential' || member.credentialName ? 'routing.oauth' : 'routing.apiKey')}{t('routing.familyDetail', { family: member.family })}
         {(member.keyCount ?? weights.length) > 1 && t('routing.keyCount', { count: member.keyCount ?? weights.length })}
         {member.prefix && <code>{t('routing.prefixDetail', { prefix: member.prefix })}</code>}

@@ -9,6 +9,7 @@ import {
   STRUCTURE_COLORS,
   type AgentUsageView as AgentUsageViewMode,
 } from '../components/AgentUsageCharts';
+import { AgentUsageRangePopover, type AgentUsageCustomRange } from '../components/AgentUsageRangePopover';
 import { BrandIcon } from '../components/BrandIcon';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
@@ -18,10 +19,12 @@ import {
   AGENT_USAGE_GRANULARITIES,
   AGENT_USAGE_GROUP_BY,
   AGENT_USAGE_TIME_RANGES,
+  agentUsageHourAvailable,
   formatAgentUsageBucket,
   formatAgentUsageCompact,
   formatAgentUsageNumber,
   getAgentUsage,
+  rangeGranularity,
   syncAgentUsage,
   type AgentUsageGranularity,
   type AgentUsageGroupBy,
@@ -82,6 +85,8 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
   const [error, setError] = useState('');
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<AgentUsageTimeRange>('7d');
+  const [customRange, setCustomRange] = useState<AgentUsageCustomRange | null>(null);
+  const [rangeAnchor, setRangeAnchor] = useState<HTMLElement | null>(null);
   const [granularity, setGranularity] = useState<AgentUsageGranularity | ''>('');
   const [groupBy, setGroupBy] = useState<AgentUsageGroupBy>('source');
   const [metric, setMetric] = useState<AgentUsageMetric>('totalTokens');
@@ -90,11 +95,15 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
   const [showAllModels, setShowAllModels] = useState(false);
   const mountedRef = useRef(false);
   const openedRef = useRef(false);
-  const filtersRef = useRef({ range: timeRange, sources: selectedSources, groupBy, granularity });
+  const currentFilters = () => ({
+    range: timeRange, sources: selectedSources, groupBy, granularity,
+    ...(timeRange === 'custom' && customRange ? { start: customRange.start, end: customRange.end } : {}),
+  });
+  const filtersRef = useRef(currentFilters());
   const reloadAtRef = useRef(0);
   const requestRef = useRef(0);
   const localSyncRef = useRef(false);
-  filtersRef.current = { range: timeRange, sources: selectedSources, groupBy, granularity };
+  filtersRef.current = currentFilters();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -183,12 +192,25 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
 
   useEffect(() => {
     if (report) void loadReport();
-  }, [timeRange, selectedSources, groupBy, granularity]);
+  }, [timeRange, customRange, selectedSources, groupBy, granularity]);
 
-  const changeRange = (next: AgentUsageTimeRange) => {
+  const changeRange = (next: AgentUsageTimeRange, dates: AgentUsageCustomRange | null = null) => {
     setTimeRange(next);
-    setGranularity('');
+    setCustomRange(dates);
+    setGranularity(rangeGranularity(granularity || report?.bucket || '', agentUsageHourAvailable(next, dates?.start ?? '', new Date())));
   };
+
+  const chooseRange = (next: AgentUsageTimeRange) => {
+    if (next !== 'custom') {
+      changeRange(next);
+      return;
+    }
+    const anchor = document.querySelector<HTMLButtonElement>('.agent-usage-range [data-value="custom"]');
+    anchor?.focus();
+    setRangeAnchor((current) => current ? null : anchor);
+  };
+
+  const closeRange = useCallback(() => setRangeAnchor(null), []);
 
   const toggleSource = (source: string) => {
     setSelectedSources((current) => current.includes(source)
@@ -256,10 +278,18 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
   }));
   const tokenPartsTotal = tokenParts.reduce((sum, part) => sum + part.value, 0);
   const full = (value: number) => formatAgentUsageNumber(value, locale);
+  const hourAvailable = agentUsageHourAvailable(timeRange, customRange?.start ?? '', new Date());
 
   return (
     <section className="agent-usage-view" aria-label={t('usage.agentUsage.title')} aria-busy={syncing}>
       {error ? <Notice tone="error">{error}</Notice> : null}
+      {rangeAnchor ? (
+        <AgentUsageRangePopover anchor={rangeAnchor} initial={customRange} onClose={closeRange}
+          onApply={(dates) => {
+            setRangeAnchor(null);
+            changeRange('custom', dates);
+          }} />
+      ) : null}
       <div className="agent-usage-toolbar">
         <div className="agent-usage-title-row">
           <h2>{t('usage.agentUsage.title')}</h2>
@@ -276,15 +306,17 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
         </div>
         <div className="agent-usage-toolbar-actions">
           <SegmentedControl className="usage-analysis-metric agent-usage-range" aria-label={t('usage.agentUsage.timeRange')}
-            value={timeRange} onChange={changeRange}
-            items={AGENT_USAGE_TIME_RANGES.map((range) => ({ value: range, label: t(`usage.agentUsage.range.${range}`) }))} />
+            value={timeRange} onChange={chooseRange}
+            items={AGENT_USAGE_TIME_RANGES.map((range) => range === 'custom' && timeRange === 'custom' && customRange
+              ? { value: range, label: customRange.preset ? t(`usage.agentUsage.preset.${customRange.preset}`) : `${customRange.start} ~ ${customRange.end}`, title: `${customRange.start} ~ ${customRange.end}` }
+              : { value: range, label: t(`usage.agentUsage.range.${range}`) })} />
           <SegmentedControl className="usage-analysis-metric agent-usage-granularity" aria-label={t('usage.agentUsage.granularity')}
             value={report.bucket} onChange={(next) => setGranularity(next as AgentUsageGranularity)}
             items={AGENT_USAGE_GRANULARITIES.map((item) => ({
               value: item,
               label: t(`usage.agentUsage.granularity.${item}`),
-              disabled: item === 'hour' && timeRange === 'all',
-              title: item === 'hour' && timeRange === 'all' ? t('usage.agentUsage.hourUnavailable') : undefined,
+              disabled: item === 'hour' && !hourAvailable,
+              title: item === 'hour' && !hourAvailable ? t('usage.agentUsage.hourUnavailable') : undefined,
             }))} />
           <button type="button" className="secondary-button compact-button agent-usage-sync" disabled={syncing} onClick={() => void runSync()}>
             <RefreshCw size={14} className={syncing ? 'agent-usage-spin' : ''} aria-hidden="true" />{t('usage.agentUsage.syncNow')}

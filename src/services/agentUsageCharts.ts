@@ -119,6 +119,23 @@ export function buildCalendarGrid(
   return weeks;
 }
 
+export function calendarSpanDays(firstDate: string, endDate: string, columns: number): number {
+  const end = Date.parse(`${endDate}T00:00:00Z`);
+  const first = Date.parse(`${firstDate}T00:00:00Z`);
+  const history = Number.isFinite(first) && first <= end ? Math.round((end - first) / 86_400_000) + 1 : 1;
+  const lastWeekDays = (new Date(end).getUTCDay() + 6) % 7 + 1;
+  return Math.max(history, Math.max(0, columns - 1) * 7 + lastWeekDays);
+}
+
+export function calendarMinColumns(firstDate: string, endDate: string, floor = 8, cap = 26): number {
+  const weeks = Math.ceil(calendarSpanDays(firstDate, endDate, 0) / 7) + 1;
+  return Math.min(cap, Math.max(floor, weeks));
+}
+
+export function calendarMonthStarts(grid: AgentUsageCalendarCell[][], endDate: string): (string | null)[] {
+  return grid.map((week) => week.find((day) => day.date.endsWith('-01') && day.date <= endDate)?.date ?? null);
+}
+
 export function buildHourGrid(rows: AgentUsageHourRow[]): number[][] {
   const grid = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
   rows.forEach((row) => {
@@ -198,6 +215,20 @@ export function slotIndexAt(x: number, left: number, plotWidth: number, count: n
 export function labelStep(count: number, plotWidth: number, spacing: number): number {
   const fit = Math.max(1, Math.floor(plotWidth / Math.max(1, spacing)));
   return Math.max(1, Math.ceil(count / fit));
+}
+
+export function axisLabelWidth(text: string): number {
+  let width = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    width += char === '.' || char === ',' || char === ' ' ? 3.5 : code > 0x7f ? 11.5 : 7;
+  }
+  return Math.ceil(width);
+}
+
+export function axisGutter(labels: string[], minimum: number, padding: number): number {
+  const widest = labels.reduce((max, label) => Math.max(max, axisLabelWidth(label)), 0);
+  return Math.max(minimum, widest + padding);
 }
 
 export function axisScale(max: number): { ceiling: number; step: number } {

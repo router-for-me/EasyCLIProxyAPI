@@ -9,6 +9,16 @@ export type ReverseProxyConfig = {
   keyPath: string;
 };
 
+export type ReverseProxyPathField = 'certPath' | 'keyPath';
+
+export const reverseProxyPathErrors = (error: unknown): Partial<Record<ReverseProxyPathField, string>> => {
+  const message = String(error);
+  const errors: Partial<Record<ReverseProxyPathField, string>> = {};
+  if (/certificate|cert.*pem/i.test(message)) errors.certPath = message;
+  if (/private key|key.*pem|certificate\/key/i.test(message)) errors.keyPath = message;
+  return errors;
+};
+
 export type ReverseProxyHardening = {
   loopbackBind: boolean;
   trustedProxies: boolean;
@@ -22,6 +32,7 @@ export type ReverseProxyState = {
   requestsTotal: number;
   error: string | null;
   hardening?: ReverseProxyHardening;
+  config?: ReverseProxyConfig | null;
 };
 
 export const getReverseProxyState = async (): Promise<ReverseProxyState> => {

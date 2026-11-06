@@ -29,6 +29,7 @@ export const generalTemplateGroups: readonly TemplateConfigGroup[] = [
       field('server.response-compression.enabled', 'boolean', '启用下行响应压缩', 'Enable response compression', 'レスポンス圧縮を有効化', false, text('启用后对大于阈值的响应使用 gzip 压缩。', 'Compress responses larger than the threshold using gzip.', '有効にすると閾値を超えるレスポンスを gzip 圧縮します。')),
       field('server.response-compression.min-bytes', 'number', '压缩最小阈值 (字节)', 'Compression minimum bytes', '圧縮の最小サイズ (バイト)', 1024, text('触发下行响应压缩的最小字节数阈值。', 'Minimum response size in bytes before compression is applied.', 'レスポンス圧縮を適用する最小サイズ（バイト）の閾値。'), { min: 0 }),
       field('server.discovery.enabled', 'boolean', '启用局域网 mDNS 服务发现', 'Enable mDNS service discovery', 'mDNS サービス検出を有効化', false, text('通过 mDNS 在局域网中广播服务，修改后重启内核生效。', 'Broadcast the service over mDNS on the local network. Core restarts after saving.', 'ローカルネットワーク上で mDNS によりサービスを検出可能にします。保存後にコアを再起動します。'), { restart: true }),
+      field('server.trusted-proxies', 'string-list', '受信任的代理地址', 'Trusted proxies', '信頼するプロキシ', [], text('每行一个 IP 或 CIDR；仅信任来自这些地址的转发头。', 'One IP or CIDR per line. Forwarded headers are trusted only from these addresses.', '1 行に 1 つの IP または CIDR。これらのアドレスからの転送ヘッダーのみ信頼します。')),
     ],
   },
   {
@@ -53,6 +54,7 @@ export const routingTemplateGroups: readonly TemplateConfigGroup[] = [
           { value: 'any', label: text('任意错误', 'Any error', '任意のエラー') },
         ],
       }),
+      field('routing.retry.request-retry', 'number', '单请求重试轮数', 'Request retry rounds', 'リクエストの再試行ラウンド数', 0, text('单个请求最多执行的重试轮数，0 沿用默认。', 'Maximum retry rounds for a single request (0 uses default).', '1 リクエストあたりの最大再試行ラウンド数（0 で既定値）。'), { min: 0 }),
       field('routing.retry.max-retry-credentials', 'number', '单轮最大尝试凭据数', 'Max credentials per retry round', '再試行ごとの最大認証情報数', 0, text('单次失败重试轮次中最多尝试更换的凭据数量，0 沿用默认。', 'Maximum number of credentials to attempt during a retry round (0 uses default).', '1 回の再試行ラウンドで切り替える認証情報の最大数（0 で既定値）。'), { min: 0 }),
       field('routing.retry.max-retry-interval', 'number', '凭据冷却等待上限 (秒)', 'Max cooldown wait (seconds)', 'クールダウン待ちの上限 (秒)', 0, text('等待凭据冷却恢复的最大等待时间（秒），0 沿用默认。', 'Maximum wait time in seconds for credentials to exit cooldown (0 uses default).', '認証情報のクールダウン解除を待機する最大秒数（0 で既定値）。'), { min: 0 }),
       field('routing.force-model-prefix', 'boolean', '强制模型前缀匹配', 'Enforce model prefix matching', 'モデル接頭辞の一致を必須にする', false, text('无前缀模型请求只使用无前缀凭据，前缀等于模型名的情况除外。', 'Unprefixed requests only use credentials without a prefix, except when prefix equals model name.', '接頭辞のないモデル要求には接頭辞のない認証情報のみを使用します。接頭辞とモデル名が一致する場合を除きます。')),
