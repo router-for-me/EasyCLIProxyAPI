@@ -3957,11 +3957,9 @@ pub(crate) fn build_zcode_agent_config(
         }
         let specs = ensure_json_object_entry(config_obj, "optionSpecs");
         if let Some(mot) = inferred_mot {
-            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({
-                "max": mot,
-                "map": "{\"max_tokens\": maxOutputTokens}",
-            }));
+            specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
         }
+        if let Some(mot_obj) = specs.get_mut("maxOutputTokens").and_then(serde_json::Value::as_object_mut) { mot_obj.remove("map"); }
         if !option.reasoning_levels.is_empty() {
             let is_generated_map = |m: &str| {
                 m == ZCODE_CPA_REASONING_MAP || m == "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"
