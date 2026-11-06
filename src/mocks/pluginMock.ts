@@ -56,6 +56,7 @@ const text = (value: unknown): string => typeof value === 'string' ? value : '';
 const has = (value: JsonObject, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 const clone = <T,>(value: T): T => structuredClone(value);
 const COMMUNITY_SOURCE = 'https://plugins.example.invalid/community.json';
+const ECPA_SOURCE = 'https://raw.githubusercontent.com/stark-shadow/ecpa-plugins-store/main/registry.json';
 const MAX_EXTRA_PAGES = 30;
 const NOT_FOUND = 'Management API error (404): not_found';
 const CONFIG_SAVED = { status: 'ok', 'config-version': 8 };
@@ -86,6 +87,14 @@ const CATALOG = [
     install_type: 'github-release', auth_required: false, auth_configured: false,
     platforms: [{ goos: 'windows', goarch: 'amd64' }, { goos: 'linux', goarch: 'amd64' }],
     license: 'MIT', tags: ['response', 'demo'], logo: '', homepage: '', config_fields: [], menus: [],
+  },
+  {
+    id: 'aistudio2api', name: 'AIStudio2API', description: 'Expose Google AI Studio models through an OpenAI-compatible endpoint in this browser demo.',
+    source_id: 'ecpa', source_name: 'ECPA Featured', source_url: ECPA_SOURCE,
+    repository: 'jianli9158/cpa-plugin-aistudio2api', author: 'ECPA', version: '1.1.5',
+    install_type: 'github-release', auth_required: false, auth_configured: false,
+    platforms: [{ goos: 'windows', goarch: 'amd64' }, { goos: 'linux', goarch: 'amd64' }],
+    license: 'MIT', tags: ['api', 'gemini'], logo: '', homepage: '', config_fields: [], menus: [],
   },
 ];
 

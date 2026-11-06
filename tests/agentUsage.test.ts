@@ -21,6 +21,8 @@ import {
   buildModelRanking,
   buildStackedSeries,
   buildTokenStructure,
+  axisGutter,
+  axisLabelWidth,
   axisScale,
   cacheHitRate,
   heatLevel,
@@ -345,6 +347,16 @@ describe('agent usage chart geometry', () => {
     expect(labelStep(7, 600, 64)).toBe(1);
     expect(labelStep(720, 600, 96)).toBe(120);
     expect(labelStep(30, 0, 64)).toBe(30);
+  });
+
+  it('widens the axis gutter to fit the widest tick label', () => {
+    expect(axisLabelWidth('$250.00')).toBeGreaterThan(axisLabelWidth('$0.00'));
+    expect(axisLabelWidth('999.9万')).toBeGreaterThan(axisLabelWidth('500K'));
+    expect(axisGutter(['$0.00', '$9.99'], 44, 8)).toBe(44);
+    expect(axisGutter(['0', '1000万'], 40, 10)).toBe(axisLabelWidth('1000万') + 10);
+    expect(axisGutter(['$0.00', '$250.00'], 44, 8)).toBe(axisLabelWidth('$250.00') + 8);
+    expect(axisGutter(['0', '20K'], 44, 8)).toBe(44);
+    expect(axisGutter([], 44, 8)).toBe(44);
   });
 
   it('scales sparkline points to the peak value', () => {

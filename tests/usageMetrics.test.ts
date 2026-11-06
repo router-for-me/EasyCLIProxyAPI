@@ -14,6 +14,19 @@ describe('generation speed', () => {
     expect(formatGenerationSpeed(input)).toBe('32.5 t/s');
   });
 
+  test('subtracts TTFT when streaming TTFT is positive and smaller than elapsed latency', () => {
+    expect(calculateGenerationSpeed({ outputTokens: 102, latencyMs: 10_500, ttftMs: 10_400 })).toBeCloseTo(1_020, 4);
+    expect(formatGenerationSpeed({ outputTokens: 102, latencyMs: 10_500, ttftMs: 10_400 })).toBe('1020.0 t/s');
+    expect(formatGenerationSpeed({ outputTokens: 414, latencyMs: 38_900, ttftMs: 35_100 })).toBe('108.9 t/s');
+    expect(formatGenerationSpeed({ outputTokens: 790, latencyMs: 13_700, ttftMs: 9_890 })).toBe('207.3 t/s');
+  });
+
+  test('falls back to total latency when TTFT is zero, null, or not less than elapsed latency', () => {
+    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 0 })).toBe('32.5 t/s');
+    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: null })).toBe('32.5 t/s');
+    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 10_600 })).toBe('32.5 t/s');
+  });
+
   test.each([
     { outputTokens: 344, latencyMs: 0 },
     { outputTokens: 344, latencyMs: -1 },

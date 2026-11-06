@@ -10,6 +10,7 @@ import {
   type AgentUsageReport,
 } from '../services/agentUsage';
 import {
+  axisGutter,
   axisScale,
   buildCalendarGrid,
   calendarMinColumns,
@@ -35,6 +36,7 @@ export const STRUCTURE_COLORS = ['#10b981', '#a7f3d0', '#3b82f6', '#f59e0b'];
 const OTHER_COLOR = '#94a3b8';
 const BAR_TOP = 16;
 const BAR_LEFT = 44;
+const AXIS_LABEL_GAP = 8;
 const TOOLTIP_WIDTH = 220;
 const SPARSE_BARS = 16;
 const HEAT_CELL = 13;
@@ -183,15 +185,16 @@ function BarChart({ bars, max, metric, kind, width, label }: {
   const sparse = bars.length <= SPARSE_BARS;
   const { ceiling, step } = axisScale(max);
   const right = width - 4;
-  const plotWidth = right - BAR_LEFT;
+  const ticks = Array.from({ length: Math.round(ceiling / step) + 1 }, (_, index) => index * step);
+  const left = axisGutter(ticks.map((tick) => valueText(tick, metric)), BAR_LEFT, AXIS_LABEL_GAP);
+  const plotWidth = right - left;
   const slot = plotWidth / Math.max(1, bars.length);
   const barWidth = Math.max(1, Math.min(sparse ? 64 : 32, slot * (slot > 6 ? 0.62 : 0.9)));
   const every = labelStep(bars.length, plotWidth, kind === 'hour' ? 96 : 64);
-  const ticks = Array.from({ length: Math.round(ceiling / step) + 1 }, (_, index) => index * step);
   const scale = (value: number) => (ceiling > 0 ? (value / ceiling) * (baseline - BAR_TOP) : 0);
   const activeBar = active === null ? null : bars[active];
   const tip: Tip | null = activeBar && active !== null ? {
-    x: BAR_LEFT + (active + 0.5) * slot,
+    x: left + (active + 0.5) * slot,
     y: 0,
     title: formatAgentUsageBucket(activeBar.bucket, kind),
     total: valueText(activeBar.segments.reduce((sum, segment) => sum + segment.value, 0), metric),
@@ -200,7 +203,7 @@ function BarChart({ bars, max, metric, kind, width, label }: {
   } : null;
   const move = (event: PointerEvent<SVGSVGElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    setActive(slotIndexAt(((event.clientX - bounds.left) / bounds.width) * width, BAR_LEFT, plotWidth, bars.length));
+    setActive(slotIndexAt(((event.clientX - bounds.left) / bounds.width) * width, left, plotWidth, bars.length));
   };
   const keyDown = (event: KeyboardEvent<SVGSVGElement>) => {
     const last = bars.length - 1;
@@ -231,17 +234,17 @@ function BarChart({ bars, max, metric, kind, width, label }: {
           const y = baseline - scale(tick);
           return (
             <g key={tick} className={`agent-usage-axis${tick === 0 ? ' baseline' : ''}`}>
-              <line x1={BAR_LEFT} x2={right} y1={y} y2={y} />
-              <text x={BAR_LEFT - 8} y={y + 3} textAnchor="end">{valueText(tick, metric)}</text>
+              <line x1={left} x2={right} y1={y} y2={y} />
+              <text x={left - AXIS_LABEL_GAP} y={y + 3} textAnchor="end">{valueText(tick, metric)}</text>
             </g>
           );
         })}
         {active !== null ? (
-          <rect className="agent-usage-highlight" x={BAR_LEFT + active * slot} y={BAR_TOP - 4} width={slot} height={baseline - BAR_TOP + 4} rx="3" />
+          <rect className="agent-usage-highlight" x={left + active * slot} y={BAR_TOP - 4} width={slot} height={baseline - BAR_TOP + 4} rx="3" />
         ) : null}
         {bars.map((bar, index) => {
           let cursor = 0;
-          const x = BAR_LEFT + index * slot + (slot - barWidth) / 2;
+          const x = left + index * slot + (slot - barWidth) / 2;
           const visible = bar.segments.filter((segment) => segment.value > 0);
           return (
             <g key={bar.bucket} className="agent-usage-bar" data-bucket={bar.bucket}>
@@ -261,7 +264,7 @@ function BarChart({ bars, max, metric, kind, width, label }: {
                 </text>
               ) : null}
               {index % every === 0 ? (
-                <text className="agent-usage-axis-label" x={BAR_LEFT + (index + 0.5) * slot} y={height - 6} textAnchor="middle">
+                <text className="agent-usage-axis-label" x={left + (index + 0.5) * slot} y={height - 6} textAnchor="middle">
                   {formatAgentUsageAxisLabel(bar.bucket, kind, bars[index - every]?.bucket)}
                 </text>
               ) : null}

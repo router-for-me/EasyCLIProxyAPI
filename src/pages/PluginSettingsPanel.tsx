@@ -5,6 +5,7 @@ import { pluginText } from '../i18n/plugins';
 import { isRecord } from '../services/managementApi';
 import { safePluginWebURL } from '../services/pluginResources';
 import { pluginsApi, type PluginSettings } from '../services/plugins';
+import { ECPA_REGISTRY_URL } from '../services/ecpaPlugins';
 
 export function PluginSettingsPanel({ onSaved, globalControl }: { onSaved: () => void; globalControl: ReactNode }) {
   const { t, locale } = useI18n();
@@ -58,7 +59,7 @@ export function PluginSettingsPanel({ onSaved, globalControl }: { onSaved: () =>
       <fieldset className="surface-card plugin-settings-card" disabled={busy}>
         <legend>{pt('registrySettings')}</legend>
         <div className="plugin-settings-columns">
-        <label className="plugin-field">{pt('sources')}<textarea rows={5} value={sources} onChange={e => setSources(e.target.value)} spellCheck={false} /><small>{pt('sourcesHint')}</small></label>
+        <label className="plugin-field">{pt('sources')}<textarea rows={5} value={sources} onChange={e => setSources(e.target.value)} spellCheck={false} /><small>{pt('sourcesHint')}</small><small>{t('ecpaPlugins.sourceAutoHint')} <code>{ECPA_REGISTRY_URL}</code></small></label>
         <label className="plugin-field">{pt('auth')}<textarea rows={5} value={auth} onChange={e => setAuth(e.target.value)} spellCheck={false} /><small>{pt('authHint')}</small></label>
         </div>
       </fieldset>

@@ -324,8 +324,8 @@ function UsageEventCell({
         </td>
       );
     case 'model': {
-      const model = usageModelDetails(record.model, record.alias, record.response_model);
-      const effort = record.reasoning_effort || 'auto';
+      const model = usageModelDetails(record.model, record.alias, record.response_model, record.reasoning_effort);
+      const effort = model.effort || t('usage.effort.unrecorded');
       const tier = record.service_tier?.trim().toLowerCase() ?? '';
       const fast = ['priority', 'fast', 'ultrafast'].includes(tier);
       const modelTitle = [
@@ -453,6 +453,7 @@ function UsageEventCell({
       const value = formatGenerationSpeed({
         outputTokens: record.tokens.output_tokens,
         latencyMs: record.latency_ms,
+        ttftMs: record.ttft_ms,
       });
       return <td className="usage-td-speed align-left" title={value === '—' ? undefined : value}>{value}</td>;
     }
