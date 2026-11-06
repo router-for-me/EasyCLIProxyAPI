@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, KeyRound, Puzzle, Search, TriangleAlert, X } from 'lucide-react';
+import { Check, Copy, ExternalLink, KeyRound, Puzzle, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
 import { PluginLogo } from '../components/ProviderLogo';
@@ -41,6 +41,7 @@ export function EcpaPluginsPage() {
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [restartRequired, setRestartRequired] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(false);
 
   const reloadStore = async () => {
@@ -48,6 +49,21 @@ export function EcpaPluginsPage() {
     if (!mounted.current) return;
     setStoreEntries(buildEcpaStoreMap(result.plugins));
     setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
+  };
+
+  const refreshRegistry = async () => {
+    setRefreshing(true);
+    try {
+      const result = await fetchEcpaRegistry({ token, forceRefresh: true });
+      if (!mounted.current) return;
+      setTokenInvalid(result.tokenInvalid);
+      if (result.registry) setPlugins(result.registry.plugins);
+      await reloadStore();
+    } catch (reason) {
+      if (mounted.current) setStoreError(String(reason));
+    } finally {
+      if (mounted.current) setRefreshing(false);
+    }
   };
 
   useEffect(() => {
@@ -261,6 +277,15 @@ export function EcpaPluginsPage() {
             <X size={15} aria-hidden="true" />
           </button>
         </div>
+        <button
+          type="button"
+          className="secondary-button compact-button ecpa-plugin-refresh"
+          disabled={refreshing}
+          onClick={() => void refreshRegistry()}
+        >
+          <RefreshCw size={15} aria-hidden="true" />
+          {t('common.refresh')}
+        </button>
       </div>
 
       <div className="ecpa-results-bar">
