@@ -86,7 +86,7 @@ describe('Claude cloud credits', () => {
     for (const invalid of [null, NaN, Infinity, -Infinity]) expect(formatClaudeDollars(invalid)).toBeUndefined();
   });
 
-  it('renders once with all balances and routing caveat in both quota surfaces', () => {
+  it('renders once with all balances and no explanatory caveat in both quota surfaces', () => {
     const quota = { status: 'success' as const, rows: rowsFor(balance) };
     const file = { provider: 'claude', name: 'cloud.json' };
     const surfaces = [<QuotaCard file={file} quota={quota} onRefresh={() => {}} />,
@@ -96,7 +96,9 @@ describe('Claude cloud credits', () => {
       expect(html).toContain('Used $23.50 · Limit $100.00 · Remaining $76.50');
       expect(html.match(/role="progressbar"/g)).toHaveLength(1);
       expect(html).not.toContain('Fable');
-      expect(html).toContain('does not establish ordinary Messages API routing support');
+      expect(html).not.toContain('How are credits used?');
+      expect(html).not.toContain('does not establish ordinary Messages API routing support');
+      expect(html).not.toContain('<details>');
     }
   });
 
@@ -106,7 +108,6 @@ describe('Claude cloud credits', () => {
       expect(label).not.toBe('quota.service.cloud.label');
       if (locale !== 'en') expect(label).not.toBe('Cloud session credits');
       expect(translate(locale, 'quota.service.cloud.remaining', { value: '$0.00' })).toContain('$0.00');
-      expect(translate(locale, 'quota.service.cloud.help')).toContain('Messages API');
     }
   });
 

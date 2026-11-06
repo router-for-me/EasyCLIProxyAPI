@@ -40,7 +40,6 @@ export type QuotaRow = {
   reset?: string;
   resetAtMs?: number;
   detail?: string;
-  help?: string;
 };
 export type QuotaState = {
   status: QuotaStatus;
@@ -526,7 +525,6 @@ export const quotaRowsFor = (
         reset: absoluteResetLabel(window.resets_at ?? window.resetsAt),
         resetAtMs: quotaResetFor(window, ['resets_at', 'resetsAt']),
         detail: details.join(' · ') || undefined,
-        help: quotaText('quota.service.cloud.help'),
       });
     }
     const extraUsage = isRecord(value.extra_usage)

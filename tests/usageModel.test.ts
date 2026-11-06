@@ -47,3 +47,25 @@ test('normalizes provider prefixes, thinking suffixes, -latest, and every accept
     expect(usageModelDetails(routed, '', served)).toMatchObject({ mismatch: true });
   }
 });
+
+test('treats Antigravity thinking-tier and -n response variants as matching the routed model and infers effort', () => {
+  expect(usageModelDetails('gemini-3.8-flash-high', '', 'gemini-3.8-flash')).toMatchObject({
+    mismatch: false,
+    showResponseInTooltip: true,
+    effort: 'high',
+  });
+  expect(usageModelDetails('gemini-3.8-flash-high', 'gemini-3.8-flash-high-low', 'gemini-3.8-flash-n', '')).toMatchObject({
+    mismatch: false,
+    showResponseInTooltip: true,
+    effort: 'low',
+  });
+  expect(usageModelDetails('gemini-3.8-flash-high', 'gemini-3.8-flash-high-medium', 'gemini-3.8-flash-n', '')).toMatchObject({
+    mismatch: false,
+    effort: 'medium',
+  });
+});
+
+test('preserves explicit reasoning_effort and leaves missing effort empty when no alias/model tier suffix exists', () => {
+  expect(usageModelDetails('gpt-4o', '', 'gpt-4o', 'auto')).toMatchObject({ effort: 'auto' });
+  expect(usageModelDetails('gpt-4o', '', 'gpt-4o', '')).toMatchObject({ effort: '' });
+});
