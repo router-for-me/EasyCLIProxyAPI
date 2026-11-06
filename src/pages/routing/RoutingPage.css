@@ -42,10 +42,6 @@
 .routing-changes { position: relative; }
 .routing-change-list { display: flex; flex-direction: column; gap: 0; }
 .routing-change-list--popover { position: absolute; z-index: 10; top: calc(100% + 8px); right: 0; width: min(380px, 80vw); max-height: 360px; overflow: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; box-shadow: 0 8px 24px var(--color-accent-shadow); }
-/* Review dialog: a compact tip; the shared .config-dialog grid is a fixed 5-row form. */
-.routing-review-dialog.config-dialog { display: flex; flex-direction: column; gap: 12px; grid-template-rows: none; width: min(400px, 100%); height: auto; padding: 20px 22px; }
-.routing-review-dialog .routing-review-hint { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
-.routing-review-dialog .config-dialog-actions { margin-top: 4px; }
 .routing-flow-entry, .routing-flow-exit { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 14px; min-height: 40px; font-size: 12px; }
 .routing-flow-entry > span:last-child, .routing-flow-exit > span:last-child { color: var(--text-tertiary); }
 .routing-flow-node { width: 12px; height: 12px; margin: 0 4px; border-radius: var(--radius-full); background: var(--primary-color); flex-shrink: 0; }

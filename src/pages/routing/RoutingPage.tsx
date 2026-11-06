@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { GitBranch, RefreshCw, Save } from 'lucide-react';
-import { Dialog } from '../../components/Dialog';
+import { ConfirmationDialog } from '../../components/ConfirmationDialog';
 import { useI18n } from '../../i18n';
 import { APP_NAVIGATION_REQUEST_EVENT, type AppNavigationRequest } from '../../navigation';
 import { applyRoutingPlan, readRoutingBoard, validateRoutingPlan, type RoutingBoard } from '../../services/routing';
@@ -8,14 +8,6 @@ import { diffPlan, draftFromBoard, resolveRoute, type RoutingDraft } from './rou
 import { PolicyStrip } from './PolicyStrip';
 import { TierLadder } from './TierLadder';
 import './RoutingPage.css';
-
-export function RoutingReviewDialog({ count, busy, onClose, onConfirm }: { count: number; busy: boolean; onClose: () => void; onConfirm: () => void }) {
-  const { t } = useI18n();
-  return <Dialog className="config-dialog routing-review-dialog" title={t('routing.reviewTitle')} onClose={onClose} closeDisabled={busy}
-    actions={<><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('common.cancel')}</button><button type="button" className="primary-button" disabled={busy} onClick={onConfirm}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button></>}>
-    <p className="routing-review-hint">{t('routing.reviewHint', { count })}</p>
-  </Dialog>;
-}
 
 export function RoutingPage() {
   const { t } = useI18n();
@@ -25,7 +17,7 @@ export function RoutingPage() {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState(false);
   const diff = board && plan ? diffPlan(board, plan) : null;
   const dirty = !!diff?.changes.length;
   const accept = (value: RoutingBoard) => { setBoard(value); setPlan(draftFromBoard(value)); setNeedsRefresh(false); };
@@ -68,10 +60,10 @@ export function RoutingPage() {
       {diff && dirty && <details className="routing-changes"><summary className="routing-summary-pill">{t('routing.changeCount', { count: diff.changes.length })}</summary><div className="routing-change-list routing-change-list--popover">{diff.changes.map((change, index) => { const described = describeChange(change); return <div key={index}><strong>{described.name || t('routing.title')}</strong><span>{described.field}</span><span>{described.detail}</span></div>; })}</div></details>}
       <button type="button" className="secondary-button" disabled={busy} onClick={() => { if (!dirty || window.confirm(t('routing.leave'))) void refresh(); }}><RefreshCw size={15} />{t('routing.refresh')}</button>
       <button type="button" className="secondary-button" disabled={!dirty || busy} onClick={() => { if (board) { setPlan(draftFromBoard(board)); setSaved(false); } }}>{t('routing.reset')}</button>
-      <button type="button" className="primary-button" disabled={disabled || !dirty || !!invalidReason} onClick={() => setReviewOpen(true)}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button>
+      <button type="button" className="primary-button" disabled={disabled || !dirty || !!invalidReason} onClick={() => setPendingConfirm(true)}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button>
       {dirty && invalidReason && <p className="routing-action-hint" role="status">{invalidReason}</p>}
     </div></header>
-    {reviewOpen && diff && <RoutingReviewDialog count={diff.changes.length} busy={busy} onClose={() => setReviewOpen(false)} onConfirm={() => { setReviewOpen(false); void apply(); }} />}
+    {pendingConfirm && <ConfirmationDialog title={t('routing.reviewTitle')} message={t('routing.reviewHint', { count: diff?.changes.length ?? 0 })} confirmText={t('routing.apply')} onDecision={(ok) => { setPendingConfirm(false); if (ok) void apply(); }} />}
     {error && <p role="alert" className="routing-error">{error}</p>}
     {board?.partial.length ? <p role="alert" className="routing-error">{t('routing.partial')} ({board.partial.join(', ')})</p> : null}
     <div role="status" className="routing-status">{saved ? t('routing.saved') : dirty ? t('routing.dirty') : busy ? t('routing.loading') : ''}</div>

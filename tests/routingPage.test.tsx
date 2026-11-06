@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { I18nProvider, supportedLocales, translate } from '../src/i18n';
 import { readRoutingBoard, validateRoutingPlan, type RoutingBoard, type RoutingMember } from '../src/services/routing';
-import { RoutingPage, RoutingReviewDialog } from '../src/pages/routing/RoutingPage';
+import { RoutingPage } from '../src/pages/routing/RoutingPage';
+import { ConfirmationDialog } from '../src/components/ConfirmationDialog';
 import { PolicyStrip } from '../src/pages/routing/PolicyStrip';
 import { TierLadder } from '../src/pages/routing/TierLadder';
 import { assignTierPriorities, diffPlan, draftFromBoard, moveMember, resolveRoute, splitMember, stepMember, tiersFromMembers } from '../src/pages/routing/routingPlan';
@@ -203,11 +204,13 @@ describe('routing components', () => {
     }
   });
 
-  it('renders a short hint with the change count inside the review dialog', () => {
-    const html = render(<RoutingReviewDialog count={3} busy={false} onClose={() => {}} onConfirm={() => {}} />);
-    expect(html).toContain('3');
-    expect(html).toContain('routing-review-hint');
-    expect(html).not.toContain('routing-change-list');
+  it('renders the shared confirmation dialog in every supported locale', () => {
+    for (const locale of supportedLocales) {
+      const html = render(<ConfirmationDialog title={translate(locale, 'routing.reviewTitle')} message={translate(locale, 'routing.reviewHint', { count: 3 })} onDecision={() => {}} />);
+      expect(html).toContain('3');
+      expect(html).toContain('app-confirm-dialog');
+      expect(html).not.toContain('routing-change-list');
+    }
   });
 
   it('translates routing review dialog copy in every supported locale', () => {
